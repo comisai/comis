@@ -85,6 +85,8 @@ import { stripDiscoverySchemas } from "./schema-stripping.js";
 // invocation. The agent↛memory cut: lcd-ingest imports only the core port type
 // + the core codec — never @comis/memory.
 import { ingestTurnGuarded } from "./lcd-ingest.js";
+import { ingestProjectedConversationHistory } from "../session/context-history-replacement.js";
+import { projectInboundConversation } from "../session/inbound-message-provenance.js";
 // LCD afterTurn leaf-pass trigger. Activates the inert
 // contextThreshold: a thin gated call right after the ingest fires one leaf pass
 // when utilization is over threshold. The body (gating + opts + summarize +
@@ -2122,11 +2124,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
     };
-    // The live canonical AgentMessage[] (pi-executor.ts:1118 reads the same
-    // ref). Typed as unknown on AgentSession — no public SDK type for it.
+    // The SDK JSONL retains rendered current-turn context for forensics.
+    // Re-project the completed branch so LCD receives physical inbound history
+    // and generated locale repair never becomes conversation state.
+    const completedProjection = projectInboundConversation(sm);
     const live =
       ((session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ??
         []) as Parameters<typeof ingestTurnGuarded>[2];
+    if (completedProjection.ok) {
+      session.agent.state.messages = completedProjection.value.messages;
+    }
     const store = deps.contextStore;
 
     // Route the live ingest write through the per-conversation short mutation
@@ -2141,52 +2148,101 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // trace-correlated signal: the symptom otherwise looks like a successful
     // model execution whose channel reply arrived minutes late.
     const ingestStart = deps.clock.now();
-    await store.runOnConversation(conversationRef, () =>
-      ingestTurnGuarded(
+    const onFailClosed = (): void => {
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "fail_closed_rollover",
+        durationMs: Math.max(0, deps.clock.now() - ingestStart),
+        timestamp: deps.clock.now(),
+      });
+    };
+    const onDivergence = (): void => {
+      // The live/store-divergence skip emits a content-free
+      // context:dag_degraded so the divergence persists as a health_signal row
+      // (queryable by the system health view) instead of being a Pino-only WARN.
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "live_store_divergence",
+        durationMs: Math.max(0, deps.clock.now() - ingestStart),
+        timestamp: deps.clock.now(),
+      });
+    };
+    const onRebase = (): void => {
+      // A detected epoch re-base that continues emits a distinct
+      // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
+      // continuation, not degradation) so operators can tell "continued after
+      // restart/JSONL-housekeeping" from "skipped due to corruption".
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "session_rebase",
+        durationMs: Math.max(0, deps.clock.now() - ingestStart),
+        timestamp: deps.clock.now(),
+      });
+    };
+    if (completedProjection.ok) {
+      const projectedIngest = await ingestProjectedConversationHistory({
         store,
         scope,
-        live,
-        deps.clock.now(),
-        deps.logger,
-        () => {
-          deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationRef,
+        sourceMessages: completedProjection.value.sourceMessages,
+        projectedMessages: completedProjection.value.messages,
+        now: deps.clock.now(),
+        logger: deps.logger,
+        onFailClosed,
+        onDivergence,
+        onRebase,
+      });
+      if (!projectedIngest.ok) {
+        deps.logger.warn(
+          {
+            conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
-            reason: "fail_closed_rollover",
+            step: "inbound-history-lcd-reconciliation",
             durationMs: Math.max(0, deps.clock.now() - ingestStart),
-            timestamp: deps.clock.now(),
-          });
+            failureKind: projectedIngest.error.message,
+            hint:
+              "Inspect LCD storage health and structured inbound-provenance "
+              + "records; the completed canonical history could not be persisted.",
+            errorKind: projectedIngest.error.errorKind,
+          },
+          "Completed projected conversation LCD ingest failed",
+        );
+        onDivergence();
+      }
+    } else {
+      deps.logger.warn(
+        {
+          conversationRef,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          step: "inbound-history-projection",
+          durationMs: Math.max(0, deps.clock.now() - ingestStart),
+          hint:
+            "Inspect the active SDK branch and inbound-provenance records; "
+            + "the unprojected live history was retained for this ingest.",
+          errorKind: "resource" as const,
         },
-        // The live/store-divergence skip emits a content-free
-        // context:dag_degraded so the divergence persists as a health_signal row
-        // (queryable by the system health view) instead of being a Pino-only WARN.
-        () => {
-          deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationRef,
-            agentId: scope.agentId,
-            sessionKey: scope.sessionKey,
-            reason: "live_store_divergence",
-            durationMs: Math.max(0, deps.clock.now() - ingestStart),
-            timestamp: deps.clock.now(),
-          });
-        },
-        // A detected epoch re-base that continues emits a distinct
-        // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
-        // continuation, not degradation) so operators can tell "continued after
-        // restart/JSONL-housekeeping" from "skipped due to corruption".
-        () => {
-          deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationRef,
-            agentId: scope.agentId,
-            sessionKey: scope.sessionKey,
-            reason: "session_rebase",
-            durationMs: Math.max(0, deps.clock.now() - ingestStart),
-            timestamp: deps.clock.now(),
-          });
-        },
-      ),
-    );
+        "Completed conversation projection failed before LCD ingest",
+      );
+      await store.runOnConversation(conversationRef, () =>
+        ingestTurnGuarded(
+          store,
+          scope,
+          live,
+          deps.clock.now(),
+          deps.logger,
+          onFailClosed,
+          onDivergence,
+          onRebase,
+        ),
+      );
+    }
     const ingestDurationMs = Math.max(0, deps.clock.now() - ingestStart);
     if (ingestDurationMs >= 1_000) {
       const traceId = tryGetContext()?.traceId;

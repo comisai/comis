@@ -74,6 +74,7 @@ import {
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
+  type ContextStoreScope,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { ok, suppressError, type Result } from "@comis/shared";
@@ -106,6 +107,7 @@ import {
   appendInboundMessageProvenance,
   projectInboundConversation,
 } from "../../session/inbound-message-provenance.js";
+import { ingestProjectedConversationHistory } from "../../session/context-history-replacement.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
@@ -118,7 +120,10 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { appendExecutionResultJournal } from "../../session/execution-result-journal.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
-import { postExecution } from "../executor-post-execution.js";
+import {
+  postExecution,
+  shouldRunContextStorePasses,
+} from "../executor-post-execution.js";
 import { resolveLocale } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
@@ -1072,6 +1077,71 @@ async function runSessionLocked(
       deps.logger.info(
         fields,
         "Structured inbound conversation history projected",
+      );
+    }
+  }
+
+  // The structured provenance projection is the canonical conversation
+  // history. Reconcile an LCD cursor that still names the former rendered
+  // prompt epoch BEFORE context assembly can read it. The helper replaces only
+  // an exact source-anchor match; an unrelated session rebase stays append-only.
+  if (historyProjection.ok && shouldRunContextStorePasses(config)) {
+    const projectedHistoryIngestStartedAt = deps.clock.now();
+    const projectedHistoryScope: ContextStoreScope = {
+      conversationRef: executionConversationRef.value,
+      tenantId: deps.tenantId,
+      agentId: deps.agentId,
+      sessionKey: formatSessionKey(sessionKey),
+    };
+    const projectedHistoryIngest = await ingestProjectedConversationHistory({
+      store: deps.contextStore,
+      scope: projectedHistoryScope,
+      sourceMessages: historyProjection.value.sourceMessages,
+      projectedMessages: historyProjection.value.messages,
+      now: deps.clock.now(),
+      logger: deps.logger,
+    });
+    const durationMs = Math.max(
+      0,
+      deps.clock.now() - projectedHistoryIngestStartedAt,
+    );
+    if (!projectedHistoryIngest.ok) {
+      deps.logger.warn(
+        {
+          agentId: deps.agentId,
+          sessionKey: projectedHistoryScope.sessionKey,
+          conversationRef: projectedHistoryScope.conversationRef,
+          step: "inbound-history-lcd-reconciliation",
+          durationMs,
+          failureKind: projectedHistoryIngest.error.message,
+          hint:
+            "Inspect LCD storage health and the structured inbound-provenance "
+            + "projection; canonical history could not be reconciled before assembly.",
+          errorKind: projectedHistoryIngest.error.errorKind,
+        },
+        "Projected conversation LCD reconciliation failed",
+      );
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: projectedHistoryScope.conversationRef,
+        agentId: projectedHistoryScope.agentId,
+        sessionKey: projectedHistoryScope.sessionKey,
+        reason: "live_store_divergence",
+        durationMs,
+        timestamp: deps.clock.now(),
+        traceId: tryGetContext()?.traceId,
+      });
+    } else if (projectedHistoryIngest.value.mode === "replaced_dirty_epoch") {
+      deps.logger.info(
+        {
+          agentId: deps.agentId,
+          sessionKey: projectedHistoryScope.sessionKey,
+          conversationRef: projectedHistoryScope.conversationRef,
+          step: "inbound-history-lcd-reconciliation",
+          durationMs,
+          deletedMessages: projectedHistoryIngest.value.deletedMessages,
+          retainedMessages: historyProjection.value.messages.length,
+        },
+        "Replaced rendered-prompt LCD epoch with canonical conversation history",
       );
     }
   }
