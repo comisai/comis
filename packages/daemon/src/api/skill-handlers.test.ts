@@ -27,7 +27,8 @@ vi.mock("../skills/bundle-install-helper.js", () => ({
 
 import { createSkillHandlers as createSkillHandlersRaw, type SkillHandlerDeps } from "./skill-handlers.js";
 import type { AppContainer } from "@comis/core";
-import { CapabilityDeniedError } from "@comis/core";
+import { CapabilityDeniedError, SkillsConfigSchema } from "@comis/core";
+import { createSkillRegistry } from "@comis/skills";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 
 // The gated skills.* handlers require an injected _capabilities
@@ -891,8 +892,30 @@ describe("skills.delete handler", () => {
     const wsDir = join(tmpRoot, "ws");
     const skillPath = join(wsDir, "skills", "delete-me");
     fs.mkdirSync(skillPath, { recursive: true });
-    fs.writeFileSync(join(skillPath, "SKILL.md"), "x", "utf-8");
-    const reg = makeRegistry([{ name: "delete-me", location: skillPath }]);
+    fs.writeFileSync(
+      join(skillPath, "SKILL.md"),
+      [
+        "---",
+        "name: delete-me",
+        "description: A deletable test skill",
+        "---",
+        "",
+        "Use this skill for deletion lifecycle tests.",
+      ].join("\n"),
+      "utf-8",
+    );
+    const reg = createSkillRegistry(
+      SkillsConfigSchema.parse({ discoveryPaths: [join(wsDir, "skills")] }),
+      createMockEventBus(),
+      { agentId: "agent-a", tenantId: "test-tenant", userId: "test-user" },
+    );
+    reg.init();
+    expect(reg.getPromptSkillDescriptions()).toEqual([
+      expect.objectContaining({
+        name: "delete-me",
+        location: join(skillPath, "SKILL.md"),
+      }),
+    ]);
     const container = makeContainer();
     (container as { config: { dataDir: string } }).config = { dataDir: join(tmpRoot, "data") };
     const handlers = createSkillHandlers(
@@ -909,7 +932,7 @@ describe("skills.delete handler", () => {
     });
     expect(result.ok).toBe(true);
     expect(fs.existsSync(skillPath)).toBe(false);
-    expect(reg.init).toHaveBeenCalled();
+    expect(reg.getPromptSkillDescriptions()).toEqual([]);
   });
 });
 

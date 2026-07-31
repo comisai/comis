@@ -58,6 +58,7 @@ import {
 } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { rmSync, existsSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import type { RpcHandler } from "./types.js";
 import { runBundleInstallHook } from "../skills/bundle-install-helper.js";
 
@@ -493,6 +494,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
     },
 
     [SkillsDeleteContract.method]: async (rawParams) => {
+      const startedAt = systemNowMs();
       // In-process capability gate (see skills.upload).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:skill");
 
@@ -533,6 +535,14 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         throw new Error(`Skill not found: ${params.name}`);
       }
 
+      // Registry descriptions expose the manifest path, while lifecycle
+      // operations own the complete skill directory for SKILL.md manifests.
+      // Root-level prompt skills are single .md artifacts and remain file
+      // deletions.
+      const skillArtifact = basename(skill.location) === "SKILL.md"
+        ? dirname(skill.location)
+        : skill.location;
+
       // Determine allowed base directories for deletion
       const dataDir = deps.container.config.dataDir || ".";
       const sharedSkillsDir = safePath(dataDir, "skills");
@@ -543,8 +553,8 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       const sharedPrefix = sharedSkillsDir + "/";
       const agentPrefix = agentSkillsDir ? agentSkillsDir + "/" : undefined;
 
-      const isInShared = skill.location === sharedSkillsDir || skill.location.startsWith(sharedPrefix);
-      const isInAgent = agentPrefix && (skill.location === agentSkillsDir || skill.location.startsWith(agentPrefix));
+      const isInShared = skillArtifact.startsWith(sharedPrefix);
+      const isInAgent = agentPrefix && skillArtifact.startsWith(agentPrefix);
 
       // Scope-aware delete validation
       if (scope === "shared") {
@@ -561,11 +571,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         }
       }
 
-      // Use the skill's actual location (directory name may differ from skill name)
-      const skillDir = skill.location;
-
-      // Remove skill directory
-      rmSync(skillDir, { recursive: true, force: true });
+      rmSync(skillArtifact, { recursive: true, force: true });
 
       // Scope-aware re-discovery
       if (scope === "shared" && deps.skillRegistries) {
@@ -575,6 +581,16 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
+
+      deps.logger.info(
+        {
+          skillName: params.name,
+          agentId: callingAgentId,
+          scope,
+          durationMs: systemNowMs() - startedAt,
+        },
+        "Skill deleted",
+      );
 
       const result = { ok: true as const };
       if (IS_DEV) SkillsDeleteContract.response.parse(result);

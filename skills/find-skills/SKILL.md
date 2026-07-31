@@ -1,6 +1,6 @@
 ---
 name: find-skills
-version: 1.0.4
+version: 1.0.5
 description: "MANDATORY: For requests asking whether a skill or specialized capability exists, load this skill and run its catalog workflow before answering. Do not answer from general capabilities or generic web search."
 comis:
   requires:
@@ -16,11 +16,22 @@ Invoke the resolved script by its absolute path while keeping the tool working d
 
 ## Workflow
 
-### Step 1: Understand what they need
+### Step 1: Distinguish installed state from catalog discovery
+
+An installed-state request refers to the agent's current list or asks whether something is already
+"installed", "available", or "in there". For an installed-state request, call `skills_manage` with
+`action: "list"` first and answer only from that result. Do not run the public catalog search unless
+the user separately asks to find an alternative.
+
+A catalog result never proves that a skill is installed. Exit code 0 from `npx skills find` proves
+only that the search completed and returned candidates. Never count a catalog candidate as installed,
+describe it as newly installed, or call the current registry list stale.
+
+### Step 2: Understand what they need
 
 Identify the domain (e.g., React, testing, deployment), the specific task (e.g., writing tests, reviewing PRs), and whether a skill likely exists for it.
 
-### Step 2: Search for skills
+### Step 3: Search for skills
 
 For an existing-skill discovery request, you must run `npx skills find <query>` first through `exec`
 in the execution workspace. Use the non-interactive form:
@@ -38,13 +49,13 @@ Do not substitute generic web search while the native catalog command is availab
 is missing or fails, report that exact limitation and offer direct help; never imply that a catalog
 skill was found.
 
-### Step 3: Present options
+### Step 4: Present options
 
 Present the strongest verified fit as the clear recommendation, including its
 `owner/repo@skill-name` identifier. Mention alternatives only when they materially differ. Do not
 claim details the catalog output did not establish.
 
-### Step 4: Install
+### Step 5: Install
 
 Never copy a skill into `~/.comis/skills/` and never use `npx skills add`; those paths bypass Comis's
 scoped registry, content scan, and approval gate.
