@@ -569,7 +569,9 @@ describe("mcp_manage tool", () => {
             server_name: "x",
           } as never),
         ),
-      ).rejects.toThrow(/\[missing_param\][\s\S]*transport[\s\S]*(command|url)/);
+      ).rejects.toThrow(
+        /\[missing_param\][\s\S]*transport[\s\S]*(command|url)[\s\S]*TOOLS\.md[\s\S]*never guess/iu,
+      );
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
 

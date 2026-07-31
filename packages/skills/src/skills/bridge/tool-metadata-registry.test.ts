@@ -1857,5 +1857,7 @@ describe("tool-metadata-registry -- mcp_manage env parity", () => {
     });
 
     expect(error).toContain("command or url");
+    expect(error).toContain("TOOLS.md");
+    expect(error).toMatch(/never guess/iu);
   });
 });
