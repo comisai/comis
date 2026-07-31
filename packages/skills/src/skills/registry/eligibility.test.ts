@@ -412,6 +412,37 @@ describe("registry integration", () => {
     expect(names).not.toContain("openai-skill");
   });
 
+  it("reports installed skills with unmet runtime requirements in the management inventory", () => {
+    createPromptSkillWithNewFields(tmpDir, "podcast-skill", "Podcast helper", "Podcast body", {
+      requires: { env: ["VOICE_APP_ID", "VOICE_ACCESS_TOKEN"] },
+    });
+    createPromptSkill(tmpDir, "basic-helper", "Basic helper", "Basic body");
+
+    const ctx = createMockEligibilityContext({ availableEnvVars: new Set() });
+    const registry = createSkillRegistry(makeConfig(), createMockEventBus(), auditCtx, mockLogger, ctx);
+    registry.init();
+
+    const inventoryRegistry = registry as unknown as {
+      getPromptSkillInventory(): Array<{
+        name: string;
+        eligible: boolean;
+        ineligibilityReason?: string;
+      }>;
+    };
+    expect(typeof inventoryRegistry.getPromptSkillInventory).toBe("function");
+
+    const inventory = inventoryRegistry.getPromptSkillInventory();
+    expect(inventory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "basic-helper", eligible: true }),
+      expect.objectContaining({
+        name: "podcast-skill",
+        eligible: false,
+        ineligibilityReason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+      }),
+    ]));
+    expect(registry.getPromptSkillDescriptions().map((skill) => skill.name)).not.toContain("podcast-skill");
+  });
+
   it("includes skill when all prerequisites are met", () => {
     createPromptSkillWithNewFields(tmpDir, "full-reqs", "Full requirements skill", "Full body", {
       os: [process.platform],
