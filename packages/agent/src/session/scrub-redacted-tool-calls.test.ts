@@ -218,6 +218,46 @@ describe("scrubRedactedToolCalls", () => {
     expect(content[0].text).toContain("exec");
   });
 
+  it("neutralizes a persisted tool pair whose protocol identity was redacted", () => {
+    const fileEntries = [
+      msg("assistant", [
+        {
+          type: "toolCall",
+          id: "[REDACTED]",
+          name: "[REDACTED]",
+          arguments: { subject: "synthetic report" },
+        },
+      ]),
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "[REDACTED]",
+          toolName: "[REDACTED]",
+          content: [{ type: "text", text: "synthetic result" }],
+        },
+      },
+    ];
+
+    const result = scrubRedactedToolCalls({ fileEntries } as any);
+
+    expect(result).toEqual({
+      scrubbed: true,
+      blocksRewritten: 1,
+      resultsRewritten: 1,
+    });
+    expect((fileEntries[0] as any).message.content).toEqual([
+      expect.objectContaining({ type: "text" }),
+    ]);
+    expect((fileEntries[1] as any).message).toEqual(
+      expect.objectContaining({
+        role: "user",
+        toolCallId: undefined,
+        toolName: undefined,
+      }),
+    );
+  });
+
   it("is idempotent: running twice yields the same fileEntries", () => {
     const fileEntries = [
       msg("assistant", [
