@@ -160,7 +160,12 @@ export function createCronMemoryActionRunners(
     if (request.signal.aborted) return err(serviceError("timeout", "Memory lifecycle was cancelled"));
     const learning = agentConfig?.learning;
     const policy = learning?.enabled
-      ? { evictionEnabled: true, failureEvictionFloor: learning.forget?.failureEvictionFloor }
+      ? {
+          evictionEnabled: true,
+          maxDormantDays: learning.forget?.maxDormantDays,
+          failureEvictionFloor: learning.forget?.failureEvictionFloor,
+          highProofFloor: learning.forget?.highProofFloor,
+        }
       : undefined;
     const result = await deps.memoryLifecycleStore.runLifecycleSweep({
       tenantId: deps.tenantId,
