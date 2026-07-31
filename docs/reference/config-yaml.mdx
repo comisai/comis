@@ -795,7 +795,7 @@ before treating learned guidance as reliable.
 | `sources` | `string[]` | `["tool", "pipeline"]` | Which signal sources may contribute observations (closed set: `tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`) |
 | `reactionMap` | `object` | `{ success: ["👍", "✅"], failure: ["👎", "❌"] }` | Maps an inbound-reaction emoji to an outcome: a reaction added to one of this agent's own outbound messages on Discord/Slack/Telegram is matched against this map and recorded as a `reaction`-source observation (see the note below). Slack short names (`thumbsup`/`white_check_mark`/`thumbsdown`/`x` and the `+1`/`-1` aliases) reconcile to the Unicode defaults automatically. |
 | `judge.enabled` | `boolean` | `true` | Cost-gated LLM judge as the **fallback** outcome source (opt-out). Runs ONE cheap-model pass ONLY when the deterministic resolve is `unknown` — i.e. a conversational turn with no tool/pipeline signal — and records a `judge`-source observation (reward capped at 0.7, always out-ranked by a deterministic signal). Routed via the `outcomeJudge` model tier (below); force-disabled when `memory.enabled` is `false` |
-| `correction.enabled` | `boolean` | `true` | Enable the cost-gated correction detector. A classified follow-up emits a `corrected` soft-failure for the prior trajectory. This signal does not automatically demote a learned skill; attribution, confidence, corroboration, and trend gates still apply. Force-disabled by `memory.enabled: false` |
+| `correction.enabled` | `boolean` | `true` | Enable the cost-gated correction detector. A classified follow-up emits a `corrected` soft-failure for the prior trajectory. When the sender is explicitly named at a non-external trust tier and `learning.reflect.corroboration.mode` is `single_owner`, the correction immediately stales an attributed learned skill and the correction turn cannot add proof to it. Other sources retain the confidence, corroboration, and trend gates. Force-disabled by `memory.enabled: false` |
 | `minConfidenceToLearn` | `number` (0–1) | `0.6` | Minimum fused confidence required before a resolved outcome drives learning |
 | `retentionDays` | `number` | `90` | Age horizon for the `outcome_events` ledger; rows older than this are pruned at daemon startup (anti-DoS, runs regardless of the enable flag). Best-out-of-box `90` (larger outcome corpus for reflection; was `30`) |
 
@@ -824,8 +824,10 @@ the agent in `<available_skills>` and as
 can be tried and receive reuse feedback; `active` is the higher proof tier.
 Mutating, stale, archived, and evicted docs do not surface. Attributed reuse
 labeled `success` can promote a candidate at `reflect.promoteAtProofCount`.
-Corroborated failure plus a weakening trend can demote it. A recorded correction
-does not guarantee demotion or durable behavior change.
+Corroborated failure plus a weakening trend can demote it. A classified
+correction from the explicitly trusted owner in `single_owner` mode immediately
+stales the attributed skill. Other correction sources retain the corroboration
+and trend gates and do not guarantee demotion.
 
 Learned docs are advisory Markdown with no executable column. Procedure docs
 record a deterministic tool-name footprint from `orchestrate` runs resolved as

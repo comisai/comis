@@ -60,6 +60,11 @@ export interface SkillOutcomeDeps {
    *  the NEXT session's freeze captures the new active set (next-session
    *  pickup, never a frozen-snapshot mutation). Absent ⇒ no refresh. */
   refreshSurface?: (agentId: string) => void;
+  /**
+   * The corrected verdict came from the explicitly trusted owner under
+   * single-owner policy, so it directly invalidates the prior procedure.
+   */
+  authoritativeCorrection?: boolean;
 }
 
 /**
@@ -131,10 +136,17 @@ export async function applySkillOutcomeTransitions(
         if (changed) promoted += 1;
       }
     } else if (verdict.outcome === "failure" || verdict.outcome === "corrected") {
-      // Corroboration gate (≥2 distinct-session OR 1 deterministic), THEN
-      // the decay-aware trend — demote ONLY on a WEAKENING standing so a single
-      // corroborated failure on a well-reused skill stays put.
-      if (failureCorroborated(gaugeKey, scope.sessionId, verdict.sources, skillFailureCorroborationTally)) {
+      if (verdict.outcome === "corrected" && skillDeps.authoritativeCorrection === true) {
+        const changed = await runSkillTransition(deps, scope.agentId, "skill_demote", () =>
+          skillStore.demoteByName(skillName, skillScope),
+        );
+        if (changed) {
+          demoted += 1;
+          demotedNames.push(skillName);
+        }
+      } else if (failureCorroborated(gaugeKey, scope.sessionId, verdict.sources, skillFailureCorroborationTally)) {
+        // Non-authoritative failures keep both anti-induced-demotion guards:
+        // corroboration first, then a weakening trend.
         const trend = skillTrend.updateSkillTrend(gaugeKey, "failure", deps.clock.now());
         if (trend === "weakening") {
           const changed = await runSkillTransition(deps, scope.agentId, "skill_demote", () =>

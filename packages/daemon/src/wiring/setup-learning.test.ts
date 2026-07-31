@@ -2490,6 +2490,7 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
         tenantId: "tenant-x",
         sessionId,
         trajectoryId: TRACE,
+        authoritative: false,
         confidence: 0.6,
         timestamp: NOW,
         ...overrides,

@@ -251,6 +251,14 @@ export interface LearningEvents {
     sessionId: string;
     /** The PRIOR trajectory the correction soft-failed (the verdict turn whose skill should demote). */
     trajectoryId: string;
+    /** The CURRENT correction turn, when the channel supplied its trace identity. */
+    correctionTrajectoryId?: string;
+    /**
+     * True only when the operator explicitly named this non-external sender and
+     * selected single-owner corroboration. Such a correction is an authoritative
+     * preference update rather than noisy outcome evidence.
+     */
+    authoritative: boolean;
     /** The capped correction confidence (the soft-failure reward). */
     confidence: number;
     timestamp: number;

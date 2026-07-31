@@ -384,6 +384,10 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   const refreshSurface = deps.refreshLearnedSkillSurface;
   // Idempotency: the per-trajectory resolve-dedup set (see setup-learning-dedup.ts).
   const resolvedTrajectories = new Set<string>();
+  // A correction turn can retain one-turn skill attribution for conversational
+  // continuity. Once that turn is classified as a correction, its inherited skill
+  // credit must not reinforce the procedure the owner just invalidated.
+  const correctionTrajectories = new Set<string>();
   // Last opt-in tool self-grade per trajectory. Generic tool calls may follow the
   // grader, so the completion seam persists this explicit terminal state after them.
   const terminalToolGrades = new Map<string, "success" | "failure">();
@@ -481,7 +485,22 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           deps.learnedSkillStore !== undefined &&
           deps.learningSkillsEnabled?.(scope.agentId) === true
         ) {
-          void applySkillOutcomeTransitions(deps, scope, verdict, {
+          const suppressCorrectionCredit = correctionTrajectories.delete(scope.trajectoryId);
+          const transitionVerdict = suppressCorrectionCredit
+            ? { ...verdict, usedSkillIds: [] }
+            : verdict;
+          if (suppressCorrectionCredit && verdict.usedSkillIds.length > 0) {
+            deps.logger.info(
+              {
+                agentId: scope.agentId,
+                trajectoryId: scope.trajectoryId,
+                suppressedSkillCount: verdict.usedSkillIds.length,
+                step: "correction-skill-credit-suppressed",
+              },
+              "Correction turn skill credit suppressed",
+            );
+          }
+          void applySkillOutcomeTransitions(deps, scope, transitionVerdict, {
             skillStore: deps.learnedSkillStore,
             threshold: deps.learningSkillsPromoteAt?.(scope.agentId) ?? 3,
             skillFailureCorroborationTally,
@@ -823,20 +842,26 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // (markTrajectoryResolved dedup), so the skill demote can ONLY happen here. We re-RESOLVE the prior
   // trajectory (read-only) to recover its CREDITED skills, then run ONLY the GATED skill-transition
   // with a `corrected` verdict — NOT the full resolveAndConsume (which would re-run failure-accrual /
-  // re-emit / double-count). Reuses the SAME corroboration tally + decay-aware trend as the
-  // resolve-seam demote, so the anti-flap belt holds: a single correction never stales a well-reused
-  // skill; a corroborated (≥2 distinct (session,sender)) correction flips active/candidate→stale
-  // (KEPT, not deleted — revivable). Gated default-OFF / no-store ⇒ byte-identical no-op. ----
+  // re-emit / double-count). An explicitly trusted owner under single-owner policy is
+  // authoritative and invalidates the attributed procedure immediately. Other
+  // corrections retain the anti-flap belt: corroboration plus a weakening trend.
+  // Demotion flips active/candidate→stale (KEPT, not deleted — revivable).
+  // Gated default-OFF / no-store ⇒ byte-identical no-op. ----
   deps.eventBus.on("learning:correction_observed", (p) => {
+    if (
+      p.correctionTrajectoryId !== undefined &&
+      !resolvedTrajectories.has(p.correctionTrajectoryId)
+    ) {
+      correctionTrajectories.add(p.correctionTrajectoryId);
+    }
     const skillStore = deps.learnedSkillStore;
     if (skillStore === undefined || deps.learningSkillsEnabled?.(p.agentId) !== true) return;
     void (async (): Promise<void> => {
       const r = await deps.outcomeStore.resolve(p.trajectoryId, { tenantId: p.tenantId, agentId: p.agentId });
       // No credited skill on the corrected turn → nothing to demote (fail-closed, non-fatal).
       if (!r.ok || r.value.usedSkillIds.length === 0) return;
-      // One INFO line per correction that credits ≥1 skill — the re-resolve is OTHERWISE silent until
-      // the 3rd corroborated correction actually demotes (anti-flap), so a single real correction
-      // couldn't be confirmed live. Counts/ids only — the skill COUNT, never the procedure body/id-list
+      // One INFO line per correction that credits ≥1 skill. Counts/ids only —
+      // the skill COUNT, never the procedure body/id-list
       // (memory bodies never reach the logs). Rare + load-bearing (a user correction feeding the demote gate is
       // the acute signal), so INFO (not DEBUG) — diagnosability must not depend on logLevel:debug having
       // been set before the incident.
@@ -848,9 +873,10 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
           trajectoryId: p.trajectoryId,
           creditedSkillCount: r.value.usedSkillIds.length,
           confidence: p.confidence,
+          authoritativeCorrection: p.authoritative,
           step: "correction-demote-reresolve",
         },
-        "Correction re-resolve: feeding prior trajectory's credited skills to the gated demote",
+        "Correction re-resolve: feeding prior trajectory's credited skills to the skill transition",
       );
       const scope: OutcomeScope = { tenantId: p.tenantId, agentId: p.agentId, sessionId: p.sessionId, trajectoryId: p.trajectoryId };
       // An explicit `corrected` verdict carrying the prior turn's credited skills — the demote
@@ -868,6 +894,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
         skillFailureCorroborationTally,
         skillTrend,
         refreshSurface,
+        authoritativeCorrection: p.authoritative,
       });
     })();
   });

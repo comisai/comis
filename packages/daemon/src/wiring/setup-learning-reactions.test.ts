@@ -85,6 +85,11 @@ function makeDeps(over: Partial<LearningReactionsWiringDeps> = {}): {
     reactionRateLimiter: over.reactionRateLimiter ?? makeFakeRateLimiter(),
     reactionMap: over.reactionMap ?? { success: ["👍", "✅"], failure: ["👎", "❌"] },
     resolveSenderTrust: over.resolveSenderTrust ?? ((): string => "admin"),
+    resolveCorrectionAuthority: over.resolveCorrectionAuthority ?? (() => ({
+      senderTrust: "admin",
+      senderTrustExplicit: true,
+      authoritative: false,
+    })),
     correctionDetector: over.correctionDetector,
     correctionEnabled: over.correctionEnabled ?? ((): boolean => true),
     recordSessionTrajectory: over.recordSessionTrajectory,
