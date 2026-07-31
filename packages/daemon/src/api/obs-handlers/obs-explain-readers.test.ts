@@ -189,6 +189,33 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
     expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
   });
 
+  it("readSessionRecords keeps the newest bounded records for a long-lived session", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    const records = Array.from({ length: 5_002 }, (_, index) => JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: index === 5_001 ? "session.summary" : "model.completed",
+      seq: index + 1,
+      sessionId: SESSION_KEY,
+      traceId: index === 5_001 ? "trace-current" : `trace-${index + 1}`,
+      data: {},
+    }));
+    fs.writeFileSync(runtimeFile, `${records.join("\n")}\n`, "utf-8");
+
+    const reader = makeRealReader(dataDir);
+    const bounded = await reader.readSessionRecords(SESSION_KEY);
+
+    expect(bounded).toHaveLength(5_000);
+    expect(bounded[0]!.seq).toBe(3);
+    expect(bounded.at(-1)).toMatchObject({
+      seq: 5_002,
+      type: "session.summary",
+      traceId: "trace-current",
+    });
+  });
+
   it("readSessionRecords recovers a co-located trajectory when workspace recreation omitted its pointer", async () => {
     const dataDir = tmpDataDir();
     const sessionFile = makeRealSessionDir(dataDir);
