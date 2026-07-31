@@ -141,6 +141,21 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.mcp_manage).toMatch(/[Vv]alidation.*fix the arguments|fix the arguments.*validation/i);
   });
 
+  it("mcp_manage active description preserves operator stdio and credential fields", () => {
+    const description = resolveDescription(
+      { name: "mcp_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/command.*executable/i);
+    expect(description).toMatch(/script.*args/i);
+    expect(description).toMatch(/operator.*command.*args.*env/i);
+    expect(description).toMatch(/gateway env_set/i);
+    expect(description).toMatch(/\$\{NAME\}/);
+  });
+
   // OAuth steering drift guard: assert the OAuth handoff block is present in the
   // mcp_manage tool guide. If this fails, someone removed the OAuth steering text — the
   // guard is the final layer of defense against the agent improvising curl/device-code flows.

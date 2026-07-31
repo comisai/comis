@@ -74,6 +74,16 @@ describe("mcp_manage tool", () => {
     expect(tool.description).toContain("connect");
   });
 
+  it("describes the executable, operator-field, and secret-reference connect contract", () => {
+    const tool = createMcpManageTool(mockRpcCall);
+
+    expect(tool.description).toMatch(/command.*executable/i);
+    expect(tool.description).toMatch(/script.*args/i);
+    expect(tool.description).toMatch(/operator.*command.*args.*env/i);
+    expect(tool.description).toMatch(/gateway env_set/i);
+    expect(tool.description).toMatch(/\$\{NAME\}/);
+  });
+
   // -----------------------------------------------------------------------
   // Trust guard
   // -----------------------------------------------------------------------
