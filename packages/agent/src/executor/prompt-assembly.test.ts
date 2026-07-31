@@ -144,7 +144,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt as assembleExecutionPromptRaw, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt as assembleExecutionPromptRaw, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills, getSessionPromptSkillSurfacedCensus, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // sub-agent-language source-grep chokepoint below.
@@ -1393,6 +1393,34 @@ describe("assembleExecutionPrompt", () => {
         sessionKey,
       }));
       expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual([]);
+    });
+
+    it("does not topic-credit a stale learned skill excluded from the model-facing surface", async () => {
+      const stale = { ...skillDoc(), state: "stale" as const };
+      const sessionKey = {
+        tenantId: "t",
+        agentId: "agent-1",
+        userId: "u",
+        channelId: "terminal-skill-credit",
+      } as SessionKey;
+      const formattedKey = formatSessionKey(sessionKey);
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps: {
+          workspaceDir: "/workspace",
+          mentalModelStore: makeSpyStore([stale]).store,
+        },
+        msg: makeMsg({
+          id: "turn-after-demotion",
+          text: "sort the picnic groceries from the park list and keep it under 180 shekels",
+        }),
+        recentUserTurns: [],
+        sessionKey,
+      }));
+
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual([]);
+      expect(getSessionPromptSkillSurfacedCensus(formattedKey)).toBeUndefined();
     });
   });
 
