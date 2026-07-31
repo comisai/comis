@@ -61,7 +61,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 25 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 26 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / promptTimeout /
@@ -94,6 +94,9 @@ export interface IncidentSignals {
       };
   /** The latest selected turn whose locale repair was safety-skipped. */
   responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
+  /** The terminal provider rejected a persisted structured protocol identity
+   *  before generation. Content-free; raw provider prose is never retained. */
+  providerErrorCode?: "invalid_tool_identity";
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;

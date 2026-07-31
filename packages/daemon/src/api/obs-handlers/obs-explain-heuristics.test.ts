@@ -839,7 +839,7 @@ describe("obs-explain-heuristics", () => {
 
   const allMissRecall = { recalls: 2, zeroHits: 2, lastLanes: 3, lastFinalCount: 0, rerankerAvailable: false };
 
-  it("a provider tool-identity rejection outranks an incidental recall miss", () => {
+  it("returns provider_invalid_tool_identity before an incidental recall miss", () => {
     const signals = makeSignals({
       endReason: "error",
       degraded: true,

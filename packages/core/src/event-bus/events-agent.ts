@@ -340,6 +340,9 @@ export interface AgentEvents {
     /** SDK per-turn stop signal (e.g. "stop"|"length"|"tool_use"|"refusal").
      *  Current at the per-turn emit (m.lastStopReason is captured in the same executor case). */
     stopReason?: string;
+    /** Content-free provider protocol classification. The raw provider error
+     *  stays out of durable observability records. */
+    providerErrorCode?: "invalid_tool_identity";
     /** Execution-level finish disposition (e.g. "stop"|"loop_detected"|"budget_exceeded").
      *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end,
      *  so treat this as the init-default "stop"; the flight-recorder's

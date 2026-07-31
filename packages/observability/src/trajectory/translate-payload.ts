@@ -141,6 +141,9 @@ export function translatePayload(
         // refusals/length-stops appear on model.completed (no undefined keys). A FIELD-ONLY
         // add to the already-mapped token_usage case (no new mapping key / case).
         ...(payload.stopReason !== undefined ? { stopReason: payload.stopReason } : {}),
+        ...(payload.providerErrorCode === "invalid_tool_identity"
+          ? { providerErrorCode: payload.providerErrorCode }
+          : {}),
         ...(payload.finishReason !== undefined ? { finishReason: payload.finishReason } : {}),
       };
     }

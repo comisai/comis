@@ -593,6 +593,9 @@ function handleEventRecord(
       t.cacheRead += asNumber(data.cacheReadTokens) ?? 0;
       t.cacheCreation += asNumber(data.cacheCreationTokens) ?? 0;
       acc.modelTokens = t;
+      if (data.providerErrorCode === "invalid_tool_identity") {
+        acc.providerErrorCode = data.providerErrorCode;
+      }
       return;
     }
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
@@ -906,6 +909,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
+    ...(acc.providerErrorCode !== undefined ? { providerErrorCode: acc.providerErrorCode } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),

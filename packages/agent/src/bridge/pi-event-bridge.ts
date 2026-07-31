@@ -112,6 +112,25 @@ const BRACKETED_TOOL_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
  */
 const NODE_PATH_TYPE_USAGE_ERRNO = /\b(?:EISDIR|ENOTDIR):/;
 
+function classifyProviderErrorCode(
+  errorMessage: unknown,
+): "invalid_tool_identity" | undefined {
+  if (typeof errorMessage !== "string") return undefined;
+  const prefix = "Invalid 'input[";
+  const suffix = "].name':";
+  const prefixAt = errorMessage.indexOf(prefix);
+  const suffixAt =
+    prefixAt < 0 ? -1 : errorMessage.indexOf(suffix, prefixAt + prefix.length);
+  const inputIndex =
+    suffixAt < 0 ? "" : errorMessage.slice(prefixAt + prefix.length, suffixAt);
+  const rejectsInputName =
+    inputIndex.length > 0
+    && [...inputIndex].every((character) => character >= "0" && character <= "9")
+    && errorMessage.includes("string does not match pattern")
+    && errorMessage.includes("a-zA-Z0-9_-");
+  return rejectsInputName ? "invalid_tool_identity" : undefined;
+}
+
 function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
   const resolvedLimb = limb ?? "aggregateUsd";
   switch (resolvedLimb) {
@@ -2230,6 +2249,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // vanishes and the emit is byte-for-byte unchanged on a no-tool turn.
             const toolTag =
               m.toolCallHistory.length > 0 ? Array.from(new Set(m.toolCallHistory)) : undefined;
+            const providerErrorCode =
+              m.lastStopReason === "error"
+                ? classifyProviderErrorCode(
+                    (assistantMsg as { errorMessage?: unknown } | undefined)?.errorMessage,
+                  )
+                : undefined;
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
               traceId: tryGetContext()?.traceId ?? deps.executionId,
@@ -2270,6 +2295,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               // SDK per-turn stop signal. RELIABLE — m.lastStopReason is
               // captured earlier in this same turn_end case, BEFORE this emit.
               ...(m.lastStopReason !== undefined && { stopReason: m.lastStopReason }),
+              // Raw provider prose can contain request content. Persist only
+              // the closed protocol classification needed for diagnosis.
+              ...(providerErrorCode !== undefined && { providerErrorCode }),
               // Execution-level finish disposition. m.finishReason settles
               // LATER than turn_end (the safety guards set it),
               // so on a normal turn it is still the

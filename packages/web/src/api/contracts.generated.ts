@@ -11284,6 +11284,35 @@ export const CONTRACTS = {
             }
           ]
         },
+        "responseLocaleRepairSkipped": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "unrecovered_tool_failure"
+            },
+            "expectedScript": {
+              "type": "string",
+              "pattern": "^[A-Z][a-z]{3}$"
+            },
+            "actualScript": {
+              "type": "string",
+              "pattern": "^[A-Z][a-z]{3}$"
+            },
+            "unrecoveredToolFailureCount": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "reason",
+            "expectedScript",
+            "actualScript",
+            "unrecoveredToolFailureCount"
+          ],
+          "additionalProperties": false
+        },
         "toolStats": {
           "type": "object",
           "propertyNames": {
