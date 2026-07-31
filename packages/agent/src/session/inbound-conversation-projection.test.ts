@@ -127,7 +127,7 @@ describe("structured inbound conversation projection", () => {
     const projected = result.value.messages;
     expect(projected.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(textOf(projected[0]!)).toBe(
-      "[telegram] sender-a (2026-09-08T01:46:40.001Z):\nfirst physical message",
+      "[telegram] sender-a (2026-09-10T00:26:40.001Z):\nfirst physical message",
     );
     expect(textOf(projected[0]!)).not.toContain("System context");
     expect(textOf(projected[0]!)).not.toContain("Relevant context from memory");
@@ -185,9 +185,9 @@ describe("structured inbound conversation projection", () => {
       "assistant",
     ]);
     expect(result.value.messages.map(textOf)).toEqual([
-      "[telegram] sender-a (2026-09-08T01:46:40.001Z):\nfirst physical message",
+      "[telegram] sender-a (2026-09-10T00:26:40.001Z):\nfirst physical message",
       "טיוטה",
-      "[telegram] sender-b (2026-09-08T01:46:40.002Z):\n"
+      "[telegram] sender-b (2026-09-10T00:26:40.002Z):\n"
         + "<response-locale-repair locale=\"und-Latn\">typed by the user",
       "second answer",
     ]);
