@@ -330,7 +330,8 @@ export function createMcpManageTool(
       name: "mcp_manage",
       label: "MCP Server Management",
       description:
-        "Manage MCP servers: list, status, connect, disconnect, reconnect.",
+        "Connect and manage MCP servers for an external account or service: "
+          + "list, status, connect, disconnect, reconnect.",
       parameters: McpManageToolParams,
       validActions: VALID_ACTIONS,
       rpcPrefix: "mcp",
