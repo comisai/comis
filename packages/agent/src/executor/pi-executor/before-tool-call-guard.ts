@@ -20,13 +20,17 @@ import { tryCatch } from "@comis/shared";
 
 const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
 
-function explicitModelIdentifiers(sourceText: string): string[] {
+function explicitModelIdentifiers(
+  sourceText: string,
+  knownProviderIdentifiers?: ReadonlySet<string>,
+): string[] {
   const candidates = sourceText.match(TECHNICAL_TOKEN_PATTERN) ?? [];
   return [...new Set(candidates.filter((candidate) => {
     const hasDigit = /\d/.test(candidate);
     const hasSeparator = /[._:/-]/.test(candidate);
     const compactModelId = /^[A-Za-z]{1,8}\d[A-Za-z0-9]*$/.test(candidate);
-    return (hasDigit && hasSeparator) || compactModelId;
+    const knownProvider = knownProviderIdentifiers?.has(candidate.toLowerCase()) === true;
+    return (hasDigit && hasSeparator) || compactModelId || knownProvider;
   }))];
 }
 
@@ -50,6 +54,7 @@ function readMutationConfig(args: unknown): Record<string, unknown> | undefined 
 function explicitModelMutationVerdict(
   sourceText: string | undefined,
   context: unknown,
+  knownProviderIdentifiers?: ReadonlySet<string>,
 ): { block: true; reason: string } | undefined {
   if (!sourceText || context === null || typeof context !== "object") return undefined;
   const call = context as { toolCall?: { name?: string }; args?: unknown };
@@ -58,7 +63,7 @@ function explicitModelMutationVerdict(
   const proposedModel = config?.model;
   if (typeof proposedModel !== "string") return undefined;
 
-  const identifiers = explicitModelIdentifiers(sourceText);
+  const identifiers = explicitModelIdentifiers(sourceText, knownProviderIdentifiers);
   if (identifiers.length === 0) return undefined;
   if (identifiers.length > 1) {
     return {
@@ -78,6 +83,7 @@ function explicitModelMutationVerdict(
     ...(proposedProvider === undefined
       ? []
       : [
+          proposedProvider,
           `${proposedProvider}/${proposedModel}`,
           `${proposedProvider}:${proposedModel}`,
         ]),
@@ -117,6 +123,7 @@ export function createBeforeToolCallGuard(
   turnLoopDetector?: TurnLoopDetector,
   failedToolRedirects?: ReadonlyMap<string, string>,
   explicitMutationSource?: string,
+  knownProviderIdentifiers?: ReadonlySet<string>,
 ) {
   return async (context: unknown, _signal?: AbortSignal) => {
     // Proactive step limit check
@@ -136,6 +143,7 @@ export function createBeforeToolCallGuard(
     const exactModelVerdict = explicitModelMutationVerdict(
       explicitMutationSource,
       context,
+      knownProviderIdentifiers,
     );
     if (exactModelVerdict) return exactModelVerdict;
 

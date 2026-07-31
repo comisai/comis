@@ -1784,6 +1784,10 @@ async function runSessionLocked(
       turnLoopDetector,
       failedToolRedirects,
       msg.text,
+      new Set([
+        ...deps.modelRegistry.getAll().map((model) => model.provider.toLowerCase()),
+        ...[...(deps.providerAliases?.keys() ?? [])].map((provider) => provider.toLowerCase()),
+      ]),
     );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
