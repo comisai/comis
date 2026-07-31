@@ -1342,6 +1342,19 @@ describe("extractPreviousTurnToolNames", () => {
 
     expect(extractPreviousTurnToolNames(messages)).toEqual(new Set(["mcp_manage"]));
   });
+
+  it("retains the latest tool call across an internal background completion turn", () => {
+    const messages = [
+      { role: "user", content: "connect the first one" },
+      { role: "assistant", content: [{ type: "toolCall", name: "mcp_manage" }] },
+      { role: "toolResult", content: [{ type: "text", text: "backgrounded" }] },
+      { role: "assistant", content: [{ type: "text", text: "I will update you." }] },
+      { role: "user", content: "[Background Task Failed: managing MCP servers]" },
+      { role: "assistant", content: [{ type: "text", text: "The connection failed." }] },
+    ];
+
+    expect(extractPreviousTurnToolNames(messages)).toEqual(new Set(["mcp_manage"]));
+  });
 });
 
 // ---------------------------------------------------------------------------
