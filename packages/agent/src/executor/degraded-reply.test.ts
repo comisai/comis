@@ -22,6 +22,7 @@ import {
   buildContextExhaustedReply,
   buildLoopDetectedReply,
   buildDegradedReply,
+  buildProviderRequiresModelReply,
   catalogFromLocalePacks,
   LOCALE_MESSAGE_IDS,
 } from "./degraded-reply.js";
@@ -349,6 +350,30 @@ describe("builders consume the resolved language tag (delegate to i18n)", () => 
     );
     expect(buildDegradedReply("loop_detected", { language: "ru", traceId: "z" })).toBe(
       selectLoopDetectedReply("ru", { traceId: "z" }),
+    );
+  });
+});
+
+describe("buildProviderRequiresModelReply", () => {
+  it("states that configuration was unchanged and requires an exact model", () => {
+    const reply = buildProviderRequiresModelReply();
+
+    expect(reply).toContain("did not change the agent");
+    expect(reply).toContain("provider");
+    expect(reply).toContain("exact model");
+    expect(LOCALE_MESSAGE_IDS).toContain("provider_requires_model");
+  });
+
+  it("uses the operator locale pack without embedding a preferred language", () => {
+    const catalog = catalogFromLocalePacks({
+      he: {
+        provider_requires_model:
+          "הסוכן לא שונה כי הערך הוא ספק ולא מזהה מודל מדויק",
+      },
+    });
+
+    expect(buildProviderRequiresModelReply("he", catalog)).toBe(
+      "הסוכן לא שונה כי הערך הוא ספק ולא מזהה מודל מדויק",
     );
   });
 });

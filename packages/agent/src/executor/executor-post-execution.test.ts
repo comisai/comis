@@ -917,6 +917,18 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/function\s+modelAcknowledgedFailure\s*\(/);
   });
 
+  it("source-grep — provider-as-model failures replace model prose before the generic notice", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceProviderModelFailureGrounding\(/);
+    expect(stripped).toMatch(/buildProviderRequiresModelReply\(/);
+    expect(stripped.indexOf("enforceProviderModelFailureGrounding("))
+      .toBeLessThan(stripped.indexOf("buildToolFailureNotice("));
+    expect(stripped).toMatch(
+      /!providerModelFailureGrounding\.corrected[\s\S]*?buildToolFailureNotice/,
+    );
+  });
+
   it("source-grep — the failure notice is built through the locale seam, not a literal", () => {
     const stripped = readPostExecStripped();
     // It used to be a bare English `[tool failure] <tool> reported an error`

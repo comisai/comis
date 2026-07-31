@@ -845,7 +845,9 @@ describe("createAgentHandlers", () => {
         agentId: "default",
         config: { model: "groq" },
         _trustLevel: "admin",
-      })).rejects.toThrow(/groq.*provider.*not.*model/i);
+      })).rejects.toThrow(
+        /^\[provider_requires_model\].*groq.*provider.*not.*model/i,
+      );
 
       expect(deps.agents["default"]!.model).toBe("gpt-4.1-nano");
       expect(mockPersistToConfig).not.toHaveBeenCalled();

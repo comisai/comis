@@ -1341,6 +1341,92 @@ describe("destructive effect evidence guard", () => {
   });
 });
 
+type ProviderModelFailureGroundingGuard = (params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    failureCode?: string;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "provider_requires_model";
+};
+
+function providerModelFailureGroundingGuard(): ProviderModelFailureGroundingGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceProviderModelFailureGrounding;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ProviderModelFailureGroundingGuard;
+}
+
+describe("provider-model failure grounding guard", () => {
+  const honestResponse =
+    "I did not change the agent. The requested value names a provider, not an exact model.";
+
+  it("replaces model prose after an unrecovered provider-as-model rejection", () => {
+    const guarded = providerModelFailureGroundingGuard()({
+      response:
+        "That model is unavailable. I can switch to a different model from the current provider.",
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: false,
+        failureCode: "provider_requires_model",
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "provider_requires_model",
+    });
+  });
+
+  it("preserves the response after a later successful agent update", () => {
+    const response = "The agent now uses the selected provider and exact model.";
+    const guarded = providerModelFailureGroundingGuard()({
+      response,
+      toolExecResults: [
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: false,
+          failureCode: "provider_requires_model",
+        },
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+        },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({ response, corrected: false });
+  });
+
+  it("does not replace ordinary agent-management failures", () => {
+    const response = "I could not update the agent because the request was rejected.";
+    const guarded = providerModelFailureGroundingGuard()({
+      response,
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: false,
+        failureCode: "model_not_found",
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({ response, corrected: false });
+  });
+});
+
 describe("empty-turn recovery does not narrate an already-delivered reply", () => {
   // LIVE: an onboarding turn sent its question via message({action:"send"}), so the
   // final assistant text was empty. Recovery then posted a SECOND bubble on top of

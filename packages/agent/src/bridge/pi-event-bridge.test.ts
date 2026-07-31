@@ -2976,6 +2976,40 @@ describe("createPiEventBridge", () => {
       expect(result.toolExecResults![1]).toMatchObject({ toolName: "bash", success: false, errorText: "command failed" });
     });
 
+    it("carries a bounded builtin failure code into the execution result", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "agents_manage",
+        toolCallId: "tc-provider-as-model",
+        args: { action: "update" },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "agents_manage",
+        "tc-provider-as-model",
+        true,
+        "[provider_requires_model] The requested value is a provider, not an exact model.",
+      ) as any);
+
+      expect(getResult().toolExecResults?.[0]).toMatchObject({
+        toolName: "agents_manage",
+        action: "update",
+        success: false,
+        errorKind: "validation",
+        failureCode: "provider_requires_model",
+      });
+      const event = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) =>
+          call[0] === "tool:executed"
+          && call[1].toolName === "agents_manage",
+      );
+      expect(event?.[1]).toMatchObject({
+        errorKind: "validation",
+        failureCode: "provider_requires_model",
+      });
+    });
+
     it("carries only content-free message route identity in tool results", () => {
       const { listener, getResult } = createPiEventBridge(deps);
       const privateChannel = "private-channel-a";
