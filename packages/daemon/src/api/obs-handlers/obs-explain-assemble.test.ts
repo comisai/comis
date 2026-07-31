@@ -1596,6 +1596,44 @@ describe("assembleIncidentReport — user surface (activity finalize + skipped d
     expect(report.activityFinalize?.recoveredTurnCount).toBe(1);
   });
 
+  it("tallies pending-background cleanup when a completion re-entry becomes the last snapshot", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          strategy: "EditPlace",
+          outcome: "silent",
+          reason: "BACKGROUND_PENDING",
+          reclassified: false,
+          failedEventCount: 0,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "activity.turn_finalized",
+        seq: 2,
+        sessionKey: SESSION_KEY,
+        data: {
+          strategy: "EditPlace",
+          outcome: "silent",
+          reason: "NO_REPLY",
+          reclassified: false,
+          failedEventCount: 0,
+        },
+      },
+    ]);
+
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 2);
+    expect(report.activityFinalize).toMatchObject({
+      outcome: "silent",
+      reason: "NO_REPLY",
+      backgroundPendingCleanupCount: 1,
+    });
+  });
+
   it("omits both sections when the trajectory carries no such records (undefined, never empty objects)", () => {
     const signals = toIncidentSignals([]);
     const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 0);
