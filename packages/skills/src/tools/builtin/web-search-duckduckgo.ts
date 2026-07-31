@@ -7,7 +7,15 @@
  * (html.duckduckgo.com/html/) to return real web search results for all query types,
  * including news and current events.
  *
- * Uses impit for Chrome TLS fingerprinting to bypass bot detection.
+ * The endpoint only serves results for GET requests carrying the query as a
+ * URL parameter; a form POST is answered with the anomaly challenge page. It
+ * also rate-limits per source IP, and once tripped it keeps serving that
+ * challenge for roughly a minute regardless of client identity — a fresh
+ * connection does not clear it, so a challenge is reported to the caller
+ * rather than retried inside the call's timeout budget.
+ *
+ * impit supplies Chrome TLS and HTTP parity so the request is not rejected for
+ * looking like a bare scripted client.
  *
  * @module
  */
@@ -132,6 +140,10 @@ function extractRealUrl(href: string): string | undefined {
 /**
  * Parse DuckDuckGo HTML search results page.
  * Extracts title, URL, and description from result elements.
+ *
+ * Each result's snippet is taken from the markup between that result's link and
+ * the next one. Pairing links and snippets by ordinal instead would shift every
+ * snippet after a snippetless result onto the wrong URL.
  */
 export function parseDdgHtml(
   html: string,
@@ -141,28 +153,34 @@ export function parseDdgHtml(
   // Match result link elements: <a class="result__a" href="...">Title</a>
   const linkRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
   // Match snippet elements: <a class="result__snippet"...>Description</a>
-  const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/;
 
-  const links: Array<{ href: string; title: string }> = [];
+  // linkStart/linkEnd bound each result's own anchor, so the snippet search
+  // window for a result is exactly the markup up to the next result's anchor.
+  const links: Array<{ href: string; title: string; linkStart: number; linkEnd: number }> = [];
   let match: RegExpExecArray | null;
 
   while ((match = linkRegex.exec(html)) !== null) {
-    links.push({ href: match[1], title: cleanText(match[2]) });
-  }
-
-  const snippets: string[] = [];
-  while ((match = snippetRegex.exec(html)) !== null) {
-    snippets.push(cleanText(match[1]));
+    links.push({
+      href: match[1],
+      title: cleanText(match[2]),
+      linkStart: match.index,
+      linkEnd: match.index + match[0].length,
+    });
   }
 
   for (let i = 0; i < links.length; i++) {
     const realUrl = extractRealUrl(links[i].href);
     if (!realUrl) continue;
 
+    const blockEnd = links[i + 1]?.linkStart ?? html.length;
+    const block = html.slice(links[i].linkEnd, blockEnd);
+    const snippet = snippetRegex.exec(block)?.[1];
+
     results.push({
       title: links[i].title,
       url: realUrl,
-      description: snippets[i] ?? "",
+      description: snippet === undefined ? "" : cleanText(snippet),
     });
   }
 
@@ -173,10 +191,25 @@ export function parseDdgHtml(
  * DuckDuckGo represents a genuine empty result set with a dedicated result
  * row. A plain page with no parsed links is not sufficient evidence: it may be
  * a challenge page, upstream outage, or parser drift.
+ *
+ * Both markers are structural class names. The heading text inside the message
+ * block names the query and is localized, so it cannot be matched literally.
  */
 function isDdgEmptyResultsPage(html: string): boolean {
-  return /\bresult--no-result\b/i.test(html)
-    && /class=["'][^"']*\bno-results\b[^"']*["'][^>]*>\s*No\s+results\.\s*</i.test(html);
+  return /\bresult--no-result\b/i.test(html) && /\bno-results__message\b/i.test(html);
+}
+
+/**
+ * DuckDuckGo serves its anomaly challenge page when the source IP trips the
+ * endpoint's rate limit. It arrives with a 2xx status — commonly 202 — so the
+ * status alone cannot distinguish it from results.
+ *
+ * Matches only the challenge page's own structural markers (its modal class and
+ * the verifier endpoint its form posts to) so that result prose mentioning a
+ * challenge or an anomaly cannot be mistaken for one.
+ */
+function isDdgAnomalyChallenge(html: string): boolean {
+  return /\banomaly-modal\b/i.test(html) || /\/anomaly\.js\b/i.test(html);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,18 +228,17 @@ export async function runDuckDuckGoSearch(params: {
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
   df?: string;
 }): Promise<{ results: Array<{ title: string; url: string; description: string }>; count: number }> {
-  const body = new URLSearchParams({ q: params.query });
+  // The query travels in the URL: the endpoint answers a form POST with its
+  // anomaly challenge page instead of results.
+  const url = new URL(DDG_ENDPOINT);
+  url.searchParams.set("q", params.query);
   if (params.df) {
-    body.set("df", params.df);
+    url.searchParams.set("df", params.df);
   }
   const client = getClient();
 
-  const res = await client.fetch(DDG_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
+  const res = await client.fetch(url.toString(), {
+    method: "GET",
     timeout: params.timeoutSeconds * 1000,
   });
 
@@ -218,6 +250,16 @@ export async function runDuckDuckGoSearch(params: {
   const html = await res.text();
   const rawResults = parseDdgHtml(html);
   if (rawResults.length === 0) {
+    // Classified only when nothing parsed, so that result text quoting any of
+    // these patterns cannot be read as a failure page.
+    if (isDdgAnomalyChallenge(html)) {
+      throw new Error(
+        `DuckDuckGo served its anomaly challenge (HTTP ${res.status}) instead of results. `
+          + "The endpoint rate-limits per source IP and clears after about a minute. "
+          + "Space searches further apart, or configure a keyed web_search provider "
+          + "(tools.web.search.provider: brave, tavily, or exa) for sustained use.",
+      );
+    }
     const errorPage = detectErrorPagePattern(html);
     if (errorPage !== null) {
       const providerReason = `${errorPage.charAt(0).toLowerCase()}${errorPage.slice(1)}`;
