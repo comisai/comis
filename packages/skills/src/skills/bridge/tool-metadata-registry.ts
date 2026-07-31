@@ -274,21 +274,22 @@ export function registerAllToolMetadata(): void {
       "here is the credential",
       "heres the credential",
     ],
-    // connect requires only [server_name] at this pre-flight gate. `transport` is
-    // INFERABLE (stdio from `command`, http from `url`) and the real "command OR
-    // url" requirement is transport-conditional — neither can be expressed as a
-    // flat required-list entry, so both are validated downstream by the handler
-    // (validateConnectParams + transport inference, mcp-manage-tool.ts). Listing
-    // `transport` here HARD-FAILED a valid stdio connect before the handler could
-    // infer it (comis-daniel 2026-07-09: `connect(server_name, command:"npx",
-    // args:[...])` → "[invalid_value] missing … transport"). `auth` ("headers" |
-    // "oauth") is the OAuth opt-in — must be in validKeys so the bridge
-    // schema-validator doesn't reject before execute() runs.
+    // `transport` is inferred from `command` or `url`, so neither transport field
+    // can be represented by the flat required-list contract. The custom check
+    // keeps that disjunction at the pre-approval boundary while still accepting
+    // both stdio and network transports.
     requiredByAction: {
       status:     ["server_name"],
       connect:    ["server_name"],
       disconnect: ["server_name"],
       reconnect:  ["server_name"],
+    },
+    validateInput: (params) => {
+      if (params.action !== "connect") return undefined;
+      const hasCommand = typeof params.command === "string" && params.command.trim().length > 0;
+      const hasUrl = typeof params.url === "string" && params.url.trim().length > 0;
+      if (hasCommand || hasUrl) return undefined;
+      return "mcp_manage connect requires command or url (command for stdio; url for HTTP/SSE)";
     },
   });
 
