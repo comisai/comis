@@ -170,7 +170,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   session_search: "Search full session transcript including evicted content. For stored facts, use memory_search.",
   // ----- Platform -----
   cron: "Manage cron jobs, scheduled tasks, and reminders.",
-  gateway: "Read/patch config, restart gateway, check status.",
+  gateway:
+    "Read/patch config; env_set stores credentials. Use the exact operator-provided secret name or key."
+    + " Never infer it from token contents or the active channel, and never overwrite an unrelated"
+    + " existing secret. Use mcp_manage for MCP connections.",
   image_analyze: "Analyze images (PNG, JPG, GIF, WebP) via vision model. Accepts file paths, URLs, base64, or attachment_url.",
   tts_synthesize: "Text-to-speech synthesis with configurable voice and format.",
   transcribe_audio: "Transcribe audio (MP3, OGG, WAV, M4A) to text. Pass attachment_url from message hint.",

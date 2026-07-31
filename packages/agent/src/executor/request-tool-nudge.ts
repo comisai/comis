@@ -109,6 +109,8 @@ function buildDirective(
     "No matching mutating tool action has succeeded in this turn.",
     `The active mutating tools matched to the current request are: ${toolNames.join(", ")}.`,
     "If the request is applicable, invoke a mutating action on the matching tool now.",
+    "Use exact identifiers from trusted operator policy and the current request; never guess or substitute a nearby target.",
+    "Never infer a secret or credential name from its contents or the active channel.",
     "Read-only list, get, search, status, or inspect actions do not complete a change request.",
     "Otherwise, state the exact current blocker.",
     "Do not repeat the prior answer and do not claim success without a successful current-turn tool result.",
