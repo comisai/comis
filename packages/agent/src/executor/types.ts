@@ -89,6 +89,13 @@ export interface ExecutionResultBase {
    *  unrecovered nudge promotes the clean would-be terminal to the named
    *  degraded cause `narration_stall` at the post-execution chokepoint. */
   narrateNudge?: { fired: boolean; recovered: boolean };
+  /** Small/nano recovery when an action request repeated an earlier answer
+   * without invoking a request-matched mutating tool. */
+  requestToolNudge?: {
+    fired: boolean;
+    recovered: boolean;
+    matchedToolNames: readonly string[];
+  };
   /** Structured error classification for non-successful executions (operator-only, never user-facing). */
   errorContext?: {
     errorType: string;

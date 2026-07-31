@@ -19,6 +19,7 @@ export const AgentExecutionFinishReasonSchema = z.enum([
   "input_too_large",
   "completed_with_tool_errors",
   "narration_stall",
+  "tool_invocation_stall",
   "background_pending",
   "error",
 ]);
@@ -98,6 +99,7 @@ export function classifyAgentFinishErrorKind(
       return "validation";
     case "session_reset":
     case "narration_stall":
+    case "tool_invocation_stall":
       return "internal";
     case "background_pending":
       return "precondition";

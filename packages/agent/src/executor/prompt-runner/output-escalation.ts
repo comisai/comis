@@ -14,6 +14,7 @@ import {
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
+import { runRequestToolNudge } from "../request-tool-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -312,6 +313,7 @@ async function processSuccessPath(
   // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
   // turn; this requires visible text).
   await runNarrateNudgeStep(params);
+  await runRequestToolNudgeStep(params);
 
   // Budget-driven continuation loop
   if (budgetTracker) {
@@ -419,6 +421,37 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     // Stash for the post-execution chokepoint: an unrecovered fire promotes
     // the clean would-be terminal to narration_stall (the soft-false-clean fix).
     result.narrateNudge = { fired: true, recovered: outcome.recovered };
+  }
+}
+
+/** Request-tool nudge step — bounded recovery for an exact stale-answer repeat. */
+async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
+  const { session, agentId, result, deps } = params;
+  if (result.narrateNudge?.fired === true) return;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sessionMessages: unknown[] = (session as any).messages ?? [];
+  const outcome = await runRequestToolNudge({
+    session,
+    messages: sessionMessages,
+    capabilityClass: params.modelProfile?.capabilityClass,
+    requestRelevantToolNames: params.requestRelevantToolNames ?? [],
+    currentToolCallCount: () => params.bridge.getResult().stepsExecuted ?? 0,
+    logger: deps.logger,
+    agentId,
+    getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
+  });
+  if (outcome.recovered && outcome.response) {
+    result.response = outcome.response;
+  }
+  if (outcome.fired) {
+    result.requestToolNudge = {
+      fired: true,
+      recovered: outcome.recovered,
+      matchedToolNames: outcome.matchedToolNames,
+    };
   }
 }
 

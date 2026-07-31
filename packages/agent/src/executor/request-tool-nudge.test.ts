@@ -59,6 +59,7 @@ describe("runRequestToolNudge", () => {
     expect(deps.session.prompt).toHaveBeenCalledTimes(1);
     expect(deps.session.prompt).toHaveBeenCalledWith(
       expect.stringContaining("test_mutating_tool"),
+      { expandPromptTemplates: false, source: "extension" },
     );
     expect(outcome).toMatchObject({
       fired: true,

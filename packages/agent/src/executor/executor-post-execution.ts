@@ -717,6 +717,7 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // (see promoteNarrationStall) — a small/nano turn that ended on intent
   // narration with no tool call and did not recover after the one nudge.
   narration_stall: "narration_stall",
+  tool_invocation_stall: "tool_invocation_stall",
   // Known in-union reasons — explicit, not via the catch-all fallthrough.
   loop_detected: "error",
   session_reset: "error",
@@ -801,6 +802,20 @@ export function promoteNarrationStall(
   }
   if (narrateNudge?.fired === true && narrateNudge.recovered === false) {
     return "narration_stall";
+  }
+  return effectiveFinishReason;
+}
+
+/** Promote an unrecovered repeated-answer action turn to a named failure. */
+export function promoteToolInvocationStall(
+  effectiveFinishReason: string,
+  requestToolNudge: { fired: boolean; recovered: boolean } | undefined,
+): string {
+  if (effectiveFinishReason !== "stop" && effectiveFinishReason !== "end_turn") {
+    return effectiveFinishReason;
+  }
+  if (requestToolNudge?.fired === true && requestToolNudge.recovered === false) {
+    return "tool_invocation_stall";
   }
   return effectiveFinishReason;
 }
@@ -1297,9 +1312,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
   // Stage 3: promote a narrate-without-emit terminal that the one
   // bounded nudge could not recover — same conservative shape as stage 2.
-  const baseEffectiveFinishReason = promoteNarrationStall(
-    promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
-    result.narrateNudge,
+  const baseEffectiveFinishReason = promoteToolInvocationStall(
+    promoteNarrationStall(
+      promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
+      result.narrateNudge,
+    ),
+    result.requestToolNudge,
   );
   const effectiveFinishReasonCandidate = pendingBackground.finishReason ?? baseEffectiveFinishReason;
   const effectiveFinishReason = (
@@ -1436,6 +1454,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         postBatchContinuationFired: result.continuationMetrics.fired,
         postBatchContinuationAttempts: result.continuationMetrics.attempts,
         postBatchContinuationOutcome: result.continuationMetrics.outcome,
+      }),
+      ...(result.requestToolNudge?.fired === true && {
+        requestToolNudgeFired: true,
+        requestToolNudgeRecovered: result.requestToolNudge.recovered,
+        requestToolNudgeMatchedTools: result.requestToolNudge.matchedToolNames,
       }),
       // Thinking token tracking (conditional -- only when thinking tokens detected)
       ...(bridgeResult.thinkingTokens != null && bridgeResult.thinkingTokens > 0 && {
@@ -1767,6 +1790,23 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Resolve the open response-locale policy once and pass the canonical tag to
   // each deterministic degraded-reply builder. Missing locale packs fall back
   // to the injected catalog's English strings.
+  if (effectiveFinishReason === "tool_invocation_stall") {
+    result.response = buildPersistentActionEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    );
+    deps.logger.warn(
+      {
+        step: "request-tool-nudge",
+        matchedToolNames: result.requestToolNudge?.matchedToolNames ?? [],
+        errorKind: "internal" as const,
+        hint:
+          "The model repeated an earlier answer and the bounded continuation still "
+          + "emitted no matched tool call; inspect request-tool-nudge in comis explain.",
+      },
+      "tool_invocation_stall — synthesized honest reply delivered",
+    );
+  }
   if (effectiveFinishReason === "output_starved") {
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage, localeCatalog);
     deps.logger.warn(
@@ -1855,7 +1895,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     effectiveFinishReason === "output_starved" ||
     effectiveFinishReason === "context_exhausted" ||
     effectiveFinishReason === "loop_detected" ||
-    effectiveFinishReason === "narration_stall";
+    effectiveFinishReason === "narration_stall" ||
+    effectiveFinishReason === "tool_invocation_stall";
   if (!isDegradedTurn && shouldRunCritic({ // critic hook (keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,

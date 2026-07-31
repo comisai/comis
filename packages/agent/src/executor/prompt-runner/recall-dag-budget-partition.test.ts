@@ -59,7 +59,12 @@ describe("recall ↔ DAG-budget partition: recalled memory is budgeted as HISTOR
     // carries the recalled-memory block) is ALWAYS the first element and is never dropped,
     // so the recall→H budgeting invariant this test guards is unchanged.
     expect(envelopeSource).toContain(
-      "const fullDynamicPreamble = [dynamicPreamble, keptCapabilityIndex, keptDeferred]",
+      "const fullDynamicPreamble = [\n"
+        + "    dynamicPreamble,\n"
+        + "    requestRelevantToolsContext,\n"
+        + "    keptCapabilityIndex,\n"
+        + "    keptDeferred,\n"
+        + "  ]",
     );
   });
 
