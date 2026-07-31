@@ -191,6 +191,20 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     });
   });
 
+  it("retains content-free pre-session execution diagnostic coverage", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      coverage: {
+        trajectory: { found: false, records: 0 },
+        rollup: { present: false },
+        offloads: { pointersResolved: 0, pointersTotal: 0 },
+        executionDiagnostic: { found: true },
+      },
+    });
+
+    expect(parsed.coverage?.executionDiagnostic).toEqual({ found: true });
+  });
+
   it("accepts a cacheBreaks section ([{reason,count,estCostUsd}]); schemaVersion stays 1", () => {
     const report = {
       ...baseReport(),

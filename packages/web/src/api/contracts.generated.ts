@@ -13084,6 +13084,19 @@ export const CONTRACTS = {
               ],
               "additionalProperties": false
             },
+            "executionDiagnostic": {
+              "type": "object",
+              "properties": {
+                "found": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "found"
+              ],
+              "additionalProperties": false
+            },
             "losslessContext": {
               "type": "object",
               "properties": {

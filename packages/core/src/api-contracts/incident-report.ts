@@ -715,6 +715,16 @@ export const IncidentReportSchema = z.object({
       rollup: z.object({ present: z.boolean() }),
       offloads: z.object({ pointersResolved: z.number(), pointersTotal: z.number() }),
       /**
+       * A durable per-message lifecycle row supplied the exact-trace outcome
+       * when execution ended before a trajectory or session rollup was written.
+       * The row is projected to closed, content-free fields before assembly.
+       */
+      executionDiagnostic: z
+        .object({
+          found: z.literal(true),
+        })
+        .optional(),
+      /**
        * Content-free fallback coverage from the lossless SQLite context store.
        * Present only when trajectory records were unavailable and the bounded
        * tool-outcome projection was read.

@@ -458,6 +458,88 @@ describe("makeRealReader.readLosslessToolEvidence", () => {
   });
 });
 
+describe("makeRealReader.readMessageLifecycleDiagnostic", () => {
+  it("projects only closed content-free fields from the exact trace row", async () => {
+    const queryDiagnostics = vi.fn().mockReturnValue([{
+      category: "message",
+      timestamp: 1_000,
+      severity: "info",
+      message: "diagnostic:message_processed",
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      traceId: "trace-auth",
+      details: JSON.stringify({
+        messageId: "private-message",
+        conversationRef: "private-conversation",
+        agentId: "default",
+        sessionKey: SESSION_KEY,
+        traceId: "trace-auth",
+        channelType: "telegram",
+        channelId: "678314278",
+        status: "error",
+        failureStage: "execution",
+        errorKind: "auth",
+        totalDurationMs: 25,
+        tokensUsed: 0,
+        cost: 0,
+      }),
+    }]);
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(tmpDataDir(), obsStore);
+
+    const evidence = await reader.readMessageLifecycleDiagnostic!("trace-auth");
+
+    expect(evidence).toEqual({
+      sessionKey: SESSION_KEY,
+      traceId: "trace-auth",
+      agentId: "default",
+      channelType: "telegram",
+      channelId: "678314278",
+      status: "error",
+      failureStage: "execution",
+      errorKind: "auth",
+      totalDurationMs: 25,
+      tokensUsed: 0,
+      cost: 0,
+    });
+    expect(evidence).not.toHaveProperty("messageId");
+    expect(evidence).not.toHaveProperty("conversationRef");
+    expect(queryDiagnostics).toHaveBeenCalledWith({
+      category: "message",
+      limit: 1000,
+    });
+  });
+
+  it("rejects a row whose payload conflicts with its indexed authority", async () => {
+    const queryDiagnostics = vi.fn().mockReturnValue([{
+      category: "message",
+      timestamp: 1_000,
+      severity: "info",
+      message: "diagnostic:message_processed",
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      traceId: "trace-auth",
+      details: JSON.stringify({
+        agentId: "default",
+        sessionKey: "default:agent:other:channel:user:peer:user",
+        traceId: "trace-auth",
+        channelType: "telegram",
+        channelId: "678314278",
+        status: "error",
+        failureStage: "execution",
+        errorKind: "auth",
+        totalDurationMs: 25,
+        tokensUsed: 0,
+        cost: 0,
+      }),
+    }]);
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(tmpDataDir(), obsStore);
+
+    expect(await reader.readMessageLifecycleDiagnostic!("trace-auth")).toBeNull();
+  });
+});
+
 describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
   it("returns the row whose sessionKey MATCHES — NOT the most-recent (multi-session RED-pin)", async () => {
     const dataDir = tmpDataDir();

@@ -54,9 +54,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import {
+  ERROR_KINDS,
   parseFormattedSessionKey,
   safePath,
   type ContextBrowsePort,
+  type ErrorKind,
   type EventMap,
   type IncidentGraphRun,
 } from "@comis/core";
@@ -97,6 +99,9 @@ const MAX_TASK_IDENTIFIER_BYTES = 512;
 
 type TaskCheckOutcome = EventMap["scheduler:task_check_terminal"]["outcome"];
 type TaskCheckRecovery = EventMap["scheduler:task_check_terminal"]["recovery"];
+type MessageLifecycleStatus = EventMap["diagnostic:message_processed"]["status"];
+type MessageLifecycleFailureStage =
+  NonNullable<EventMap["diagnostic:message_processed"]["failureStage"]>;
 
 const TASK_CHECK_OUTCOMES: ReadonlySet<TaskCheckOutcome> = new Set([
   "dismissed",
@@ -115,6 +120,21 @@ const TASK_CHECK_RECOVERIES: ReadonlySet<TaskCheckRecovery> = new Set([
   "ownership_recovery",
 ]);
 
+const MESSAGE_LIFECYCLE_STATUSES: ReadonlySet<MessageLifecycleStatus> = new Set([
+  "success",
+  "error",
+  "timeout",
+  "filtered",
+  "aborted",
+]);
+
+const MESSAGE_LIFECYCLE_FAILURE_STAGES: ReadonlySet<MessageLifecycleFailureStage> = new Set([
+  "execution",
+  "delivery",
+]);
+
+const ERROR_KIND_SET: ReadonlySet<string> = new Set(ERROR_KINDS);
+
 /** Content-free durable evidence used both for root resolution and reporting. */
 export interface TaskCheckLifecycleEvidence {
   readonly sessionKey: string;
@@ -128,6 +148,21 @@ export interface TaskCheckLifecycleEvidence {
   readonly deliveredChunks?: number | null;
   readonly failedChunks?: number | null;
   readonly ambiguousChunks?: number | null;
+}
+
+/** Content-free projection of one durable per-message lifecycle row. */
+export interface MessageLifecycleDiagnosticEvidence {
+  readonly sessionKey: string;
+  readonly traceId: string;
+  readonly agentId: string;
+  readonly channelType: string;
+  readonly channelId: string;
+  readonly status: MessageLifecycleStatus;
+  readonly failureStage?: MessageLifecycleFailureStage;
+  readonly errorKind?: ErrorKind;
+  readonly totalDurationMs: number;
+  readonly tokensUsed: number;
+  readonly cost: number;
 }
 
 /** Content-free tool-result evidence reconstructed from the lossless context store. */
@@ -160,6 +195,10 @@ export interface IncidentSourceReader {
    * the bounded session index no longer contains the execution.
    */
   resolveTraceSessionKey?(traceId: string, includeSynthetic?: boolean): Promise<string>;
+  /** Project the exact lifecycle row for a pre-trajectory failure. */
+  readMessageLifecycleDiagnostic?(
+    traceId: string,
+  ): Promise<MessageLifecycleDiagnosticEvidence | null>;
   readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
@@ -224,6 +263,95 @@ const COLOCATED_TRAJECTORY_SUFFIX = ".trajectory.jsonl";
  */
 const MAX_SESSION_ARTIFACT_SCAN = 5_000;
 const MAX_TRAJECTORY_ID_SCAN_BYTES = 64 * 1024;
+
+function finiteNonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function messageLifecycleEvidence(
+  row: ReturnType<ObservabilityStore["queryDiagnostics"]>[number],
+  traceId: string,
+): MessageLifecycleDiagnosticEvidence | null {
+  if (
+    row.message !== "diagnostic:message_processed"
+    || row.traceId !== traceId
+    || row.sessionKey === undefined
+    || row.sessionKey.length === 0
+  ) {
+    return null;
+  }
+  let details: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(row.details ?? "{}") as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    details = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const detailTraceId = nonEmptyString(details.traceId);
+  const detailSessionKey = nonEmptyString(details.sessionKey);
+  const agentId = nonEmptyString(details.agentId) ?? row.agentId;
+  const channelType = nonEmptyString(details.channelType);
+  const channelId = nonEmptyString(details.channelId);
+  const status = details.status;
+  const failureStage = details.failureStage;
+  const errorKind = details.errorKind;
+  const totalDurationMs = finiteNonNegativeNumber(details.totalDurationMs);
+  const tokensUsed = finiteNonNegativeNumber(details.tokensUsed);
+  const cost = finiteNonNegativeNumber(details.cost);
+
+  if (
+    detailTraceId !== traceId
+    || detailSessionKey !== row.sessionKey
+    || agentId === undefined
+    || agentId.length === 0
+    || channelType === undefined
+    || channelId === undefined
+    || typeof status !== "string"
+    || !MESSAGE_LIFECYCLE_STATUSES.has(status as MessageLifecycleStatus)
+    || (
+      failureStage !== undefined
+      && (
+        typeof failureStage !== "string"
+        || !MESSAGE_LIFECYCLE_FAILURE_STAGES.has(
+          failureStage as MessageLifecycleFailureStage,
+        )
+      )
+    )
+    || (
+      errorKind !== undefined
+      && (typeof errorKind !== "string" || !ERROR_KIND_SET.has(errorKind))
+    )
+    || totalDurationMs === undefined
+    || tokensUsed === undefined
+    || cost === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    sessionKey: row.sessionKey,
+    traceId,
+    agentId,
+    channelType,
+    channelId,
+    status: status as MessageLifecycleStatus,
+    ...(failureStage === undefined
+      ? {}
+      : { failureStage: failureStage as MessageLifecycleFailureStage }),
+    ...(errorKind === undefined ? {} : { errorKind: errorKind as ErrorKind }),
+    totalDurationMs,
+    tokensUsed,
+    cost,
+  };
+}
 
 /**
  * True when a resolved session file corresponds to a real session on disk — the
@@ -714,6 +842,21 @@ export function makeRealReader(
         return row.sessionKey;
       }
       return "";
+    },
+
+    async readMessageLifecycleDiagnostic(
+      traceId: string,
+    ): Promise<MessageLifecycleDiagnosticEvidence | null> {
+      if (obsStore === undefined || traceId.length === 0) return null;
+      const rows = obsStore.queryDiagnostics({
+        category: "message",
+        limit: DIAGNOSTICS_QUERY_LIMIT,
+      });
+      for (const row of rows) {
+        const evidence = messageLifecycleEvidence(row, traceId);
+        if (evidence !== null) return evidence;
+      }
+      return null;
     },
 
     async readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
