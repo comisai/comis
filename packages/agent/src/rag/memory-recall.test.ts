@@ -406,6 +406,54 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.length).toBe(1);
   });
 
+  it("excludes a same-session paired memory whose user turn is already in the fresh conversation tail", async () => {
+    const currentSession = formatSessionKey(DEFAULT_SESSION_KEY_OBJ);
+    const input = [
+      makeResult("recent-duplicate", {
+        content:
+          "[user] use gpt-turbo-9\n"
+          + "[agent] that model is unavailable so the agent was left unchanged",
+        sessionKey: currentSession,
+        tags: ["conversation", "paired"],
+        base: 0.9,
+      }),
+      makeResult("distinct-same-session", {
+        content:
+          "[user] keep my concise response preference\n"
+          + "[agent] understood and saved",
+        sessionKey: currentSession,
+        tags: ["conversation", "paired"],
+        base: 0.8,
+      }),
+      makeResult("matching-cross-session", {
+        content:
+          "[user] use gpt-turbo-9\n"
+          + "[agent] that earlier conversation remains available as relationship memory",
+        sessionKey: "default:agent:default:user_a:other-chat",
+        tags: ["conversation", "paired"],
+        base: 0.7,
+      }),
+    ];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig(),
+    );
+
+    const got = await recall.recall(
+      "use groq instead",
+      memoryScope(),
+      DEFAULT_SESSION_KEY_OBJ,
+      ["use gpt-turbo-9"],
+    );
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((result) => result.entry.id);
+    expect(ids).not.toContain("recent-duplicate");
+    expect(ids).toContain("distinct-same-session");
+    expect(ids).toContain("matching-cross-session");
+  });
+
   it("NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
     // Distinct content (so the 200-char dedup fingerprint does NOT collapse them) but
     // contradictory about the same subject. Recall resolves contradictions at READ time
