@@ -27,6 +27,7 @@ import {
   type PromptAssemblyParams,
 } from "./prompt-assembly-shared.js";
 import { renderGroupHistoryContext } from "./prompt-group-history.js";
+import { renderCurrentExecutionSection } from "./prompt-dynamic-preamble.js";
 
 export async function assembleParentCachePrompt(
   params: PromptAssemblyParams,
@@ -56,6 +57,7 @@ export async function assembleParentCachePrompt(
     // Date/time section
     const dateTimeLines = buildDateTimeSection();
     if (dateTimeLines.length > 0) dynamicPreambleParts.push(dateTimeLines.join("\n"));
+    dynamicPreambleParts.push(renderCurrentExecutionSection(params));
 
     // Inbound metadata
     const chatType = resolveChatType(msg);
