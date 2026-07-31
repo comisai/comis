@@ -689,6 +689,41 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).toContain("mcp__primary--forbidden_action");
   });
 
+  it("routes an explicit retry to the single tool used in the previous turn", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("mcp_manage", {
+      isReadOnly: false,
+      searchHint: "mcp server connect inspect external integration account credential",
+    });
+    const tools = [
+      {
+        ...makeTool("mcp_manage"),
+        description: "Connect and inspect an external account through MCP.",
+      },
+      {
+        ...makeTool("mcp_login"),
+        description: "Start OAuth login after an MCP connection requests authentication.",
+      },
+    ] as unknown as ToolDefinition[];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "retry the first one",
+      requestRelevanceText: [
+        "connect the first one",
+        "retry the first one",
+      ].join("\n"),
+      toolNames: tools.map((tool) => tool.name),
+    });
+    (ctx as DeferralContext & { previousTurnToolNames: Set<string> })
+      .previousTurnToolNames = new Set(["mcp_manage"]);
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual(["mcp_manage"]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain("mcp_manage");
+  });
+
   it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
     const logger = createMockLogger();
     registerToolMetadata("models_manage", {
