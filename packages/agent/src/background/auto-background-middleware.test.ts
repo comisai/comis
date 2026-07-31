@@ -3,12 +3,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createConversationRef, safePath } from "@comis/core";
+import { createConversationRef, safePath, scrubSecretsFromText } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTasksConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
+import { projectSessionValueForPersistence } from "../session/sanitize-session-secrets.js";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals so vi.useFakeTimers()
@@ -215,6 +216,32 @@ describe("wrapToolForAutoBackground", () => {
     const tasks = manager.getAllTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.status).toBe("running");
+  });
+
+  it("keeps a registered high-entropy tool label usable across status boundaries", async () => {
+    const toolName = "mcp__background-report--read_assistant_report";
+    const tool = createMockTool({ name: toolName, resolveAfterMs: 200 });
+    const wrapped = wrapToolForAutoBackground(
+      tool,
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+    );
+
+    const result = await wrapped.execute(
+      "call-registered-identity",
+      {},
+      undefined,
+      undefined,
+      undefined,
+    );
+    const projected = projectSessionValueForPersistence(result);
+    const text = (projected.value.content[0] as { text: string }).text;
+
+    expect(projected.redactions).toBe(0);
+    expect(scrubSecretsFromText(text).redactions).toBe(0);
+    expect(text).not.toContain("[REDACTED]");
+    expect((result.details as { toolName: string }).toolName).toBe(toolName);
   });
 
   it("marks deferred work exactly when background ownership is accepted", async () => {
