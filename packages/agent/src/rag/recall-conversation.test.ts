@@ -25,6 +25,24 @@ describe("selectRecentUserTurns", () => {
     ]);
   });
 
+  it("keeps an earlier referent after duplicate failed follow-up attempts", () => {
+    const turns = selectRecentUserTurns([
+      message("user", "check my synthetic account"),
+      message("user", "here is the credential"),
+      message("user", "connect to it"),
+      message("user", "now actually use it"),
+      message("user", "now actually use it"),
+    ]);
+
+    expect(turns).toEqual([
+      "check my synthetic account",
+      "here is the credential",
+      "connect to it",
+      "now actually use it",
+      "now actually use it",
+    ]);
+  });
+
   it("ignores empty user content while joining multiple text blocks", () => {
     const turns = selectRecentUserTurns([
       message("user", "   "),

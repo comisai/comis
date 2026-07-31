@@ -586,6 +586,53 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     );
   });
 
+  it("does not let duplicate deictic retries outweigh the earlier MCP referent", () => {
+    const logger = createMockLogger();
+    const tools = [
+      {
+        ...makeTool("mcp__synthetic--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__synthetic--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
+        ...makeTool("tokens_manage"),
+        description: "Manage API keys and tokens.",
+      },
+    ] as unknown as ToolDefinition[];
+    registerToolMetadata("mcp__synthetic--account_summary", {
+      searchHint: "Return the configured synthetic account summary.",
+    });
+    registerToolMetadata("mcp__synthetic--forbidden_action", {
+      searchHint: "Record a synthetic mutation. Use only on a direct operator request.",
+    });
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "now actually use it",
+      requestRelevanceText: [
+        "i want u to be able to check my test account yourself",
+        "heres the token",
+        "connect to it",
+        "now actually use it",
+        "now actually use it",
+      ].join("\n"),
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "mcp__synthetic--account_summary",
+    ]);
+    expect(result.deferredNames).toContain(
+      "mcp__synthetic--forbidden_action",
+    );
+    expect(result.deferredNames).toContain("tokens_manage");
+  });
+
   it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
     const logger = createMockLogger();
     registerToolMetadata("models_manage", {
