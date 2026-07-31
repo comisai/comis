@@ -7,6 +7,7 @@ import type {
   ErrorKind,
 } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
   ingestTurnGuarded,
@@ -38,20 +39,52 @@ export interface ProjectedConversationIngestOutcome {
   deletedMessages: number;
 }
 
+function canonicalProjectionAnchor(history: AgentMessage[]): string | undefined {
+  const first = history[0];
+  return first === undefined
+    ? undefined
+    : `canonical-projection:${messageEpochAnchor(first)}`;
+}
+
+function projectionChangesHistory(
+  sourceMessages: AgentMessage[],
+  projectedMessages: AgentMessage[],
+): boolean {
+  if (sourceMessages.length !== projectedMessages.length) return true;
+  return sourceMessages.some((message, index) => {
+    const projected = projectedMessages[index];
+    return projected === undefined
+      || messageEpochAnchor(message) !== messageEpochAnchor(projected);
+  });
+}
+
 function replaceHistoryWithinSerializer(
   store: ContextStorePort,
   scope: ContextStoreScope,
   history: AgentMessage[],
   nowMs: number,
   logger: ComisLogger,
+  epochAnchorOverride?: string,
 ): boolean {
   store.deleteConversationLcd(scope);
-  ingestTurnGuarded(store, scope, history, nowMs, logger);
+  ingestTurnGuarded(
+    store,
+    scope,
+    history,
+    nowMs,
+    logger,
+    undefined,
+    undefined,
+    undefined,
+    epochAnchorOverride,
+  );
   const retainedMessages = store.getMessages(scope).length;
   const cursor = store.getIngestCursor(scope);
   const cursorComplete = history.length === 0
     ? cursor === null
-    : cursor?.epochAnchor === messageEpochAnchor(history[0]!)
+    : cursor?.epochAnchor === (
+      epochAnchorOverride ?? messageEpochAnchor(history[0]!)
+    )
       && cursor.ingestedLiveLen === history.length;
   return retainedMessages === history.length && cursorComplete;
 }
@@ -114,6 +147,7 @@ export async function ingestProjectedConversationHistory(
     onDivergence,
     onRebase,
   } = args;
+  const persistenceMessages = convertToLlm(projectedMessages) as AgentMessage[];
   const serialized = await fromPromise(store.runOnConversation(scope.conversationRef, () => {
     const attempted = tryCatch((): ProjectedConversationIngestOutcome | undefined => {
       const safe = isScopeSafeForIngest(scope);
@@ -121,24 +155,23 @@ export async function ingestProjectedConversationHistory(
       const sourceAnchor = sourceMessages[0] === undefined
         ? undefined
         : messageEpochAnchor(sourceMessages[0]);
-      const projectedAnchor = projectedMessages[0] === undefined
-        ? undefined
-        : messageEpochAnchor(projectedMessages[0]);
+      const projectedAnchor = canonicalProjectionAnchor(persistenceMessages);
       const matchesRenderedEpoch = cursor !== null
         && sourceAnchor !== undefined
         && projectedAnchor !== undefined
         && sourceAnchor !== projectedAnchor
         && cursor.epochAnchor === sourceAnchor
-        && cursor.ingestedLiveLen <= sourceMessages.length;
+        && projectionChangesHistory(sourceMessages, projectedMessages);
 
       if (matchesRenderedEpoch) {
         const deletedMessages = store.getMessages(scope).length;
         const complete = replaceHistoryWithinSerializer(
           store,
           scope,
-          projectedMessages,
+          persistenceMessages,
           now,
           logger,
+          projectedAnchor,
         );
         return complete
           ? { mode: "replaced_dirty_epoch", deletedMessages }
@@ -148,12 +181,13 @@ export async function ingestProjectedConversationHistory(
       ingestTurnGuarded(
         store,
         scope,
-        projectedMessages,
+        persistenceMessages,
         now,
         logger,
         onFailClosed,
         onDivergence,
         onRebase,
+        projectedAnchor,
       );
       return { mode: "steady", deletedMessages: 0 };
     });

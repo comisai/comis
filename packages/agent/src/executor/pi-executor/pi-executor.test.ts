@@ -258,6 +258,7 @@ vi.mock("@comis/observability", async (importOriginal) => {
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: vi.fn().mockResolvedValue({ session: mockSession, extensionsResult: {} }),
+  convertToLlm: (messages: unknown[]) => messages,
   sessionEntryToContextMessages: (entry: { type: string; message?: unknown }) =>
     entry.type === "message" && entry.message !== undefined ? [entry.message] : [],
   SettingsManager: {

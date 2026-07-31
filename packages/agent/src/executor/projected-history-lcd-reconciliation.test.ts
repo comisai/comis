@@ -141,7 +141,8 @@ describe("projected conversation LCD reconciliation", () => {
       "System context",
     );
     expect(store.getIngestCursor(SCOPE)).toEqual({
-      epochAnchor: lcdIngest.messageEpochAnchor(projection.value.messages[0]!),
+      epochAnchor:
+        `canonical-projection:${lcdIngest.messageEpochAnchor(projection.value.messages[0]!)}`,
       ingestedLiveLen: 2,
     });
   });
@@ -193,7 +194,8 @@ describe("projected conversation LCD reconciliation", () => {
     const logger = createMockLogger();
     const compactedPrefix = {
       role: "compactionSummary",
-      content: "bounded summary",
+      summary: "bounded summary",
+      tokensBefore: 1_000,
       timestamp: NOW - 10,
     } as unknown as AgentMessage;
     const rawUser = {
@@ -224,12 +226,19 @@ describe("projected conversation LCD reconciliation", () => {
       } as AgentMessage,
       assistant("draft", NOW + 1),
     ];
+    const staleRenderedHistory = [
+      ...sourceMessages,
+      assistant("stale rendered tail", NOW + 4),
+    ];
     lcdIngest.ingestTurnGuarded(
       store,
       SCOPE,
-      sourceMessages,
+      staleRenderedHistory,
       NOW,
       logger,
+    );
+    expect(store.getIngestCursor(SCOPE)?.ingestedLiveLen).toBeGreaterThan(
+      sourceMessages.length,
     );
 
     const first = await ingestProjectedConversationHistory({
@@ -257,9 +266,14 @@ describe("projected conversation LCD reconciliation", () => {
       ok: true,
       value: { mode: "steady", deletedMessages: 0 },
     });
-    expect(store.getMessages(SCOPE)).toHaveLength(3);
+    const retained = store.getMessages(SCOPE);
+    expect(retained).toHaveLength(3);
+    expect(retained[0]?.role).toBe("user");
+    expect(messageText(partsToMessage(retained[0]!) as AgentMessage)).toContain(
+      "bounded summary",
+    );
     expect(store.getIngestCursor(SCOPE)?.epochAnchor).toMatch(
-      /^projected-conversation-v1:/,
+      /^canonical-projection:/,
     );
   });
 });
