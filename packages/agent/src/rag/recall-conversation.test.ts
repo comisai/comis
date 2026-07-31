@@ -3,6 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE } from "@comis/core";
 import {
+  RECENT_USER_TURN_COUNT,
   describeRecentUserTurnSelection,
   selectRecentUserTurns,
 } from "./recall-conversation.js";
@@ -62,6 +63,34 @@ describe("selectRecentUserTurns", () => {
       charCount: turns.join("\n").length,
       saturated: false,
     });
+  });
+
+  it("retains the session intent anchor when distinct follow-ups fill the bound", () => {
+    const turns = selectRecentUserTurns([
+      message("user", "check my synthetic account"),
+      message("user", "here is the credential"),
+      message("user", "connect to it"),
+      message("user", "now use it"),
+      message("user", "why not"),
+      message("user", "connect another one"),
+      message("user", "compare both"),
+      message("user", "connect the first one"),
+      message("user", "retry the first one"),
+      message("user", "retry with the approved map"),
+      message("user", "connect only the second one"),
+    ]);
+
+    expect(turns).toHaveLength(RECENT_USER_TURN_COUNT);
+    expect(turns[0]).toBe("check my synthetic account");
+    expect(turns.slice(1)).toEqual([
+      "why not",
+      "connect another one",
+      "compare both",
+      "connect the first one",
+      "retry the first one",
+      "retry with the approved map",
+      "connect only the second one",
+    ]);
   });
 
   it("ignores empty user content while joining multiple text blocks", () => {
