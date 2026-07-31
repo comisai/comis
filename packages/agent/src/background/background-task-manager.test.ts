@@ -429,6 +429,37 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("fail() identifies missing MCP connection details without retaining the error body", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote(
+        "mcp_manage",
+        new Promise(() => {}),
+        new AbortController(),
+        origin,
+        undefined,
+        CORR,
+      );
+      if (!r.ok) throw new Error("promote failed");
+
+      manager.fail(
+        r.value,
+        new Error(
+          '[missing_param] mcp_manage(action="connect") is missing required parameters: transport, command or url.',
+        ),
+        "dependency",
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({
+          failureCode: "mcp_connection_details_missing",
+        }),
+      );
+      expect(loadTask(dataDir, "agent-1", r.value)?.failureCode).toBe(
+        "mcp_connection_details_missing",
+      );
+    });
+
     it("a promote WITHOUT correlation emits terminals without the fields (pre-upgrade shape)", () => {
       const origin = buildOrigin({ agentId: "agent-1" });
       const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin);

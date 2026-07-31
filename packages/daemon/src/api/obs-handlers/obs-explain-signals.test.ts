@@ -1669,6 +1669,29 @@ describe("toolStats fidelity", () => {
       }),
     ]);
   });
+
+  it("explains an MCP background validation failure from its content-free code", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-mcp",
+          toolName: "mcp_manage",
+          errorKind: "dependency",
+          failureCode: "mcp_connection_details_missing",
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp_manage",
+        failureCode: "mcp_connection_details_missing",
+      }),
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

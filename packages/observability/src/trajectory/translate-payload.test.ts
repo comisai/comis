@@ -289,6 +289,23 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     });
     expect(JSON.stringify(data)).not.toMatch(/secret-looking stack trace/);
   });
+
+  it("failed: retains a closed MCP connection failure code without its error body", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "a1",
+      taskId: "t-2",
+      toolName: "mcp_manage",
+      error: "connection error containing sensitive context",
+      errorKind: "dependency",
+      failureCode: "mcp_connection_details_missing",
+      durationMs: 12,
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 301,
+    });
+
+    expect(data.failureCode).toBe("mcp_connection_details_missing");
+    expect(JSON.stringify(data)).not.toContain("sensitive context");
+  });
 });
 
 // The vision translators forward ONLY content-free
