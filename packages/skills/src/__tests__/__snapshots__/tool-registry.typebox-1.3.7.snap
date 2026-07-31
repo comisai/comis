@@ -1111,6 +1111,10 @@
           "description": "Maximum results. For history: default 10. For env_list: default 100, max 500 (clamped).",
           "type": "number"
         },
+        "overwrite": {
+          "description": "Set true only when the operator explicitly asked to replace the existing secret named by env_key. Without it, env_set refuses to change an existing secret.",
+          "type": "boolean"
+        },
         "section": {
           "description": "Config section name. Required for patch/apply/schema, optional for read. Valid sections: agents, channels, memory, security, routing, daemon, scheduler, gateway, integrations, monitoring, browser, models, providers, messages, approvals. Note: MCP server settings are under 'integrations', not 'mcp'.",
           "type": "string"

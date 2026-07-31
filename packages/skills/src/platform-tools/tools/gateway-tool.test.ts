@@ -818,6 +818,9 @@ describe("gateway tool", () => {
             secretsStoreAvailable: true,
           };
         }
+        if (method === "env.list") {
+          return { secrets: [], total: 0, truncated: false };
+        }
         return { set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret" };
       });
       const tool = createGatewayTool(rpcCall, mockLogger, createApprovedApprovalGate());
@@ -1274,6 +1277,9 @@ describe("gateway tool", () => {
       if (method === "env.set") {
         return { set: true, key: params.key, storage: "encrypted", restarting: true };
       }
+      if (method === "env.list") {
+        return { secrets: [], total: 0, truncated: false };
+      }
       return { stub: true, method, params };
     });
   }
@@ -1295,6 +1301,9 @@ describe("gateway tool", () => {
       }
       if (method === "env.set") {
         return { set: true, key: params.key, storage: "encrypted", restarting: true };
+      }
+      if (method === "env.list") {
+        return { secrets: [], total: 0, truncated: false };
       }
       return { stub: true, method, params };
     });
@@ -1431,6 +1440,9 @@ describe("gateway tool", () => {
         }
         if (method === "env.set") {
           return { set: true, key: params.key, storage: "encrypted", restarting: true };
+        }
+        if (method === "env.list") {
+          return { secrets: [], total: 0, truncated: false };
         }
         return { stub: true, method, params };
       });

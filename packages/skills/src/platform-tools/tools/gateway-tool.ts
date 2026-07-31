@@ -112,6 +112,13 @@ const GatewayToolParams = Type.Object({
       description: "Secret value to store. Required for env_set. Write-only: cannot be read back.",
     }),
   ),
+  overwrite: Type.Optional(
+    Type.Boolean({
+      description:
+        "Set true only when the operator explicitly asked to replace the existing secret named by env_key. " +
+        "Without it, env_set refuses to change an existing secret.",
+    }),
+  ),
   filter: Type.Optional(
     Type.String({
       description:
@@ -426,6 +433,48 @@ export function createGatewayTool(
               };
             }
 
+            const existingSecretCheck = await rpcCall("env.list", {
+              filter: envKey,
+              limit: 2,
+              _trustLevel,
+            }).then((listResult) => {
+              if (typeof listResult !== "object" || listResult === null) {
+                return { known: false, exists: false };
+              }
+              const secrets = (listResult as Record<string, unknown>).secrets;
+              if (!Array.isArray(secrets)) {
+                return { known: false, exists: false };
+              }
+              const exists = secrets.some((entry) =>
+                typeof entry === "object"
+                && entry !== null
+                && (entry as Record<string, unknown>).name === envKey
+              );
+              return { known: true, exists };
+            }).catch(() => ({ known: false, exists: false }));
+            if (!existingSecretCheck.known) {
+              throwToolError(
+                "conflict",
+                `Could not verify whether secret "${envKey}" already exists`,
+                {
+                  hint:
+                    "Retry after env_list is available; secret writes fail closed when overwrite state is unknown",
+                },
+              );
+            }
+            const overwrite = envParams.overwrite === true;
+            if (existingSecretCheck.exists && !overwrite) {
+              throwToolError(
+                "conflict",
+                `Secret "${envKey}" already exists and was not changed`,
+                {
+                  hint:
+                    "Use the exact new secret name from operator policy, or set overwrite:true only when "
+                    + "the operator explicitly requested rotation of this same existing secret",
+                },
+              );
+            }
+
             if (approvalGate === undefined) {
               throwToolError(
                 "permission_denied",
@@ -439,13 +488,17 @@ export function createGatewayTool(
                 hint: "Retry from a resolved agent request scope.",
               });
             }
+            const approvalParams = {
+              action: "env_set",
+              env_key: envKey,
+              ...(overwrite ? { overwrite: true } : {}),
+            };
             const resolution = await approvalGate.requestApproval({
               toolName: "gateway",
               action: "env.set",
-              params: { action: "env_set", env_key: envKey },
+              params: approvalParams,
               fingerprintParams: {
-                action: "env_set",
-                env_key: envKey,
+                ...approvalParams,
                 env_value: envValue,
               },
               ...approvalContext.value,
