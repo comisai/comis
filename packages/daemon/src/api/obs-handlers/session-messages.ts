@@ -265,6 +265,7 @@ export function extractSessionMessages(
     byteCappedFiles: 0,
     totalByteCapReached: false,
     internalExcluded: 0,
+    interactionsExcluded: 0,
     secretRedactions: 0,
     truncated: false,
     matchedBeforeLimit: 0,

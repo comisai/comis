@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Bounded acceptance and identity reconciliation for offline channel messages. */
 
-import { systemDateFrom } from "@comis/core";
+import {
+  parseCallbackData,
+  systemDateFrom,
+  type OriginalInboundMessage,
+} from "@comis/core";
 import type { CompletedProvenanceOccurrence } from "./session-message-provenance.js";
 import type {
   ExtractedChannelMessage,
@@ -42,6 +46,19 @@ export interface PendingUnparsedEvidence {
   agentId: string;
   timestamp: string | null;
   rawText: string;
+}
+
+/** Whether a physical provenance item represents a platform interaction, not typed text. */
+function isNonTextInteraction(
+  message: OriginalInboundMessage,
+  source: "ledger" | "transcript",
+  prior: SeenProvenanceIdentity | undefined,
+): boolean {
+  if (message.interaction === "button_callback") return true;
+  return source === "ledger"
+    && prior === undefined
+    && message.channelType === "telegram"
+    && parseCallbackData(message.text).ok;
 }
 
 /** Classify whether a physical inbound identity was authored inside Comis. */
@@ -238,6 +255,12 @@ export function acceptProvenanceOccurrence(context: ProvenanceAcceptanceContext)
         timestamp: systemDateFrom(occurrence.recordedAt).toISOString(),
         rawText: original.text,
       }, coverage);
+      continue;
+    }
+
+    if (isNonTextInteraction(original, source, prior)) {
+      coverage.interactionsExcluded++;
+      seenIdentities.set(identity, { fingerprint, source, matched: false });
       continue;
     }
 

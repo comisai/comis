@@ -74,6 +74,8 @@ const OriginalInboundMessageSchema = z.strictObject({
     senderId: z.string().min(1),
     text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS),
     timestamp: z.number().int().positive().max(MAX_DATE_EPOCH_MS),
+    /** Present when the physical inbound was a platform interaction, not typed text. */
+    interaction: z.literal("button_callback").optional(),
   });
 
 export type OriginalInboundMessage = z.infer<typeof OriginalInboundMessageSchema>;
@@ -295,6 +297,9 @@ export function getOriginalInboundMessages(
       : message.senderId,
     text: message.text,
     timestamp: message.timestamp,
+    ...(message.metadata?.isButtonCallback === true
+      ? { interaction: "button_callback" as const }
+      : {}),
   }];
 }
 
