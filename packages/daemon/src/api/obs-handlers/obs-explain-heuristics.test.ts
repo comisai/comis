@@ -839,6 +839,25 @@ describe("obs-explain-heuristics", () => {
 
   const allMissRecall = { recalls: 2, zeroHits: 2, lastLanes: 3, lastFinalCount: 0, rerankerAvailable: false };
 
+  it("a provider tool-identity rejection outranks an incidental recall miss", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      modelTokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+    });
+    (
+      signals as IncidentSignals & {
+        providerErrorCode: "invalid_tool_identity";
+      }
+    ).providerErrorCode = "invalid_tool_identity";
+
+    const r = rootCause(signals);
+    expect(r?.code).toBe("provider_invalid_tool_identity");
+    expect(r?.detail).toMatch(/persisted tool-call identity/i);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/toolCall|toolResult/);
+  });
+
   it("background pending outranks an incidental recall miss", () => {
     const r = rootCause(makeSignals({
       endReason: "background_pending",

@@ -201,6 +201,7 @@ function makeTurnEndEvent(usage?: {
   cacheWrite?: number;
   cost?: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
   stopReason?: string;
+  errorMessage?: string;
 }) {
   const defaultUsage = {
     input: usage?.input ?? 100,
@@ -221,6 +222,7 @@ function makeTurnEndEvent(usage?: {
       model: "claude-sonnet-4-5-20250929",
       usage: defaultUsage,
       stopReason: usage?.stopReason ?? "stop",
+      ...(usage?.errorMessage !== undefined ? { errorMessage: usage.errorMessage } : {}),
       timestamp: Date.now(),
     },
     toolResults: [],
@@ -1918,6 +1920,32 @@ describe("createPiEventBridge", () => {
       expect(deps.eventBus.emit).toHaveBeenCalledWith("observability:token_usage", expect.objectContaining({
         stopReason: "refusal",
       }));
+    });
+
+    it("classifies an invalid persisted tool identity without exposing the provider error text", () => {
+      const { listener } = createPiEventBridge(deps);
+      const providerError =
+        "Invalid 'input[16].name': string does not match pattern '^[a-zA-Z0-9_-]+$'.";
+
+      listener(makeTurnEndEvent({
+        stopReason: "error",
+        errorMessage: providerError,
+      }) as any);
+
+      const payload = lastTokenUsagePayload();
+      expect(payload.providerErrorCode).toBe("invalid_tool_identity");
+      expect(JSON.stringify(payload)).not.toContain(providerError);
+    });
+
+    it("does not invent a provider error code for an unrelated provider failure", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeTurnEndEvent({
+        stopReason: "error",
+        errorMessage: "upstream service unavailable",
+      }) as any);
+
+      expect("providerErrorCode" in lastTokenUsagePayload()).toBe(false);
     });
 
     // m.finishReason is initialized to the literal "stop"

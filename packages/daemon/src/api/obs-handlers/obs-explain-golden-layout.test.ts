@@ -232,6 +232,61 @@ function multiExecutionTrajectoryLines(): string {
   ].map((line) => JSON.stringify(line)).join("\n") + "\n";
 }
 
+function providerIdentityErrorTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "prompt.submitted",
+      seq: 1,
+      traceId: "trace-provider-identity-error",
+      data: { inboundKind: "message" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "memory.recalled",
+      seq: 2,
+      traceId: "trace-provider-identity-error",
+      data: {
+        lanes: 3,
+        finalCount: 0,
+        rerankerAvailable: false,
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "model.completed",
+      seq: 3,
+      traceId: "trace-provider-identity-error",
+      data: {
+        inputTokens: 0,
+        outputTokens: 0,
+        stopReason: "error",
+        providerErrorCode: "invalid_tool_identity",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 4,
+      traceId: "trace-provider-identity-error",
+      data: {
+        degraded: true,
+        turnCount: 1,
+        costUsd: 0,
+        toolStats: {},
+        breakerTripCount: 0,
+        topErrorKinds: { validation: 1 },
+        source: "runtime",
+        endReason: "error",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
 function taskTrajectoryLines(): string {
   return [
     {
@@ -462,6 +517,24 @@ function writeRealMetadata(sessionFile: string): void {
   );
 }
 
+function writeProviderIdentityErrorMetadata(sessionFile: string): void {
+  const metadataFile = sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+  fs.writeFileSync(
+    metadataFile,
+    JSON.stringify({
+      traceId: "trace-provider-identity-error",
+      channel: { type: "telegram", id: "678314278" },
+      sessionEnd: {
+        type: "session_end",
+        endReason: "error",
+        degraded: true,
+        costUsd: 0,
+      },
+    }),
+    "utf-8",
+  );
+}
+
 afterEach(() => {
   while (tmpDirs.length > 0) {
     const dir = tmpDirs.pop()!;
@@ -512,6 +585,35 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     // EXACT field-name regression this assertion forbids.
     expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
+  });
+
+  it("diagnoses a provider tool-identity rejection from the real nested session layout", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, providerIdentityErrorTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile,
+    });
+    writeProviderIdentityErrorMetadata(sessionFile);
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir),
+      dataDir,
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "error",
+      degraded: true,
+      severity: "failed",
+    });
+    expect(report.likelyRootCause?.code).toBe("provider_invalid_tool_identity");
+    expect(report.likelyRootCause?.detail).toMatch(/persisted tool-call identity/i);
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toMatch(/toolCall|toolResult/);
+    expect(JSON.stringify(report)).not.toContain("Invalid 'input[");
   });
 
   it("assembles named-agent sessions from their configured workspace", async () => {
