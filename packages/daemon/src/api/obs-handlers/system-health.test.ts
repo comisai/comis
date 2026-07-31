@@ -254,6 +254,87 @@ function makeDeps(overrides?: Partial<ObsHandlerDeps>): ObsHandlerDeps {
 }
 
 describe("assembleSystemHealthReport (bounded read fan-in)", () => {
+  it("counts message failures that ended before session-summary persistence exactly once", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    const existingSession = "default:agent:default:channel-a:user-a:peer:user-a";
+    const missingSession = "default:agent:default:channel-b:user-b:peer:user-b";
+    store.insertDiagnostic({
+      timestamp: now - 300,
+      category: "session_summary",
+      severity: "error",
+      sessionKey: existingSession,
+      traceId: "trace-with-summary",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: true,
+        turnCount: 1,
+        topErrorKinds: { dependency: 1 },
+        endReason: "error",
+      }),
+    });
+    const insertMessageFailure = (
+      sessionKey: string,
+      traceId: string,
+      errorKind: string,
+      timestamp: number,
+    ): void => {
+      store.insertDiagnostic({
+        timestamp,
+        category: "message",
+        severity: "info",
+        agentId: "default",
+        sessionKey,
+        traceId,
+        message: "diagnostic:message_processed",
+        details: JSON.stringify({
+          agentId: "default",
+          sessionKey,
+          traceId,
+          channelType: "telegram",
+          channelId: "channel-a",
+          status: "error",
+          failureStage: "execution",
+          errorKind,
+          totalDurationMs: 20,
+          tokensUsed: 0,
+          cost: 0,
+        }),
+      });
+    };
+    // The matching session summary already owns this execution: do not count
+    // the diagnostic again.
+    insertMessageFailure(existingSession, "trace-with-summary", "dependency", now - 250);
+    // One pre-summary failure merges into the existing session.
+    insertMessageFailure(existingSession, "trace-auth", "auth", now - 200);
+    // One pre-summary failure creates the second system-health session.
+    insertMessageFailure(missingSession, "trace-network", "network", now - 100);
+
+    const report = await assembleSystemHealthReport({
+      obsStore: store,
+      dataDir: makeDataDirWithActivity(),
+      clock: createFakeClock(now),
+    }, 24);
+
+    expect(report.sessions).toMatchObject({
+      total: 2,
+      degraded: 2,
+      hardDegraded: 2,
+    });
+    expect(report.topErrorKinds).toEqual([
+      { kind: "auth", count: 1 },
+      { kind: "dependency", count: 1 },
+      { kind: "network", count: 1 },
+    ]);
+    expect(report.findings).toContainEqual({
+      code: "pre_session_execution_failure",
+      detail: "2 message lifecycle failures had no matching session summary",
+      count: 2,
+      hint: "run comis explain with the incident traceId from the deterministic failure reply",
+    });
+    expect(report.coverage?.sessionSummary).toEqual({ found: true, rows: 1 });
+  });
+
   // WIRING GUARD: assembleSystemHealthReport must QUERY each learning
   // diagnostic category AND thread it into buildFindings. The buildFindings unit tests prove the finding
   // is BUILT from rows; these prove system-health actually QUERIES the category + passes it (the wiring
