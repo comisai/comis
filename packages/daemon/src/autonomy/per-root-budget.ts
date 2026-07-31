@@ -118,6 +118,17 @@ export interface PerRootBudget {
     wallClockMsRemaining: number;
     usdRemaining: number | null;
   };
+  /**
+   * Pure live priced-spend read for one root. This is the same dollar counter
+   * used by the aggregate-USD gate, retained after child completion so a caller
+   * can inspect the completed tree's cost.
+   */
+  spendSnapshot(rootRunId: string): {
+    totalCost: number;
+    capUsd: number;
+    headroomUsd: number;
+    pricingScope: "priced_only";
+  };
 }
 
 /**
@@ -353,6 +364,21 @@ export function createPerRootBudget(deps: {
         tokensRemaining: Math.max(0, config.tokens - usedTokens),
         wallClockMsRemaining: Math.max(0, config.wallClockMs - elapsedMs),
         usdRemaining: Math.max(0, config.aggregateUsd - usedUsd),
+      };
+    },
+
+    spendSnapshot(rootRunId): {
+      totalCost: number;
+      capUsd: number;
+      headroomUsd: number;
+      pricingScope: "priced_only";
+    } {
+      const totalCost = usdTotals.get(rootRunId) ?? 0;
+      return {
+        totalCost,
+        capUsd: config.aggregateUsd,
+        headroomUsd: config.aggregateUsd - totalCost,
+        pricingScope: "priced_only",
       };
     },
   };

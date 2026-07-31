@@ -60,7 +60,7 @@ function makeRootHandler(opts: {
   const deps = {
     boundedAutonomy: opts.boundedAutonomy,
   } as unknown as ObsHandlerDeps;
-  return bindObsSpendHandlers(deps)["obs.billing.byRoot"];
+  return bindObsSpendHandlers(deps)["obs.spend.snapshot"];
 }
 
 describe("obs.spend.snapshot handler", () => {
@@ -178,7 +178,7 @@ describe("obs.spend.snapshot handler", () => {
   });
 });
 
-describe("obs.billing.byRoot handler", () => {
+describe("obs.spend.snapshot current-root scope", () => {
   it("returns the exact priced spend for the trusted current autonomy root", async () => {
     const spendSnapshot = vi.fn(() => ({
       rootRunId: "root-active",
@@ -195,16 +195,20 @@ describe("obs.billing.byRoot handler", () => {
       _trustLevel: "admin",
       _rootRunId: "root-active",
       _agentId: "default",
+      scope: "currentRoot",
     });
 
     expect(spendSnapshot).toHaveBeenCalledWith("root-active");
     expect(result).toEqual({
-      scope: "currentRoot",
-      rootRunId: "root-active",
-      totalCost: 1.25,
-      capUsd: 10,
-      headroomUsd: 8.75,
-      pricingScope: "priced_only",
+      snapshot: {
+        enabled: true,
+        scope: "currentRoot",
+        rootRunId: "root-active",
+        totalCost: 1.25,
+        capUsd: 10,
+        headroomUsd: 8.75,
+        pricingScope: "priced_only",
+      },
     });
   });
 
@@ -220,6 +224,7 @@ describe("obs.billing.byRoot handler", () => {
     await expect(handler({
       _trustLevel: "admin",
       rootRunId: "forged-root",
+      scope: "currentRoot",
     })).rejects.toThrow(/current autonomy root is unavailable/i);
   });
 });

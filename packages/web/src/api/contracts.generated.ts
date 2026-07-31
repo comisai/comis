@@ -13363,7 +13363,12 @@ export const CONTRACTS = {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "scope": {
+          "type": "string",
+          "const": "currentRoot"
+        }
+      },
       "additionalProperties": false
     },
     "response": {

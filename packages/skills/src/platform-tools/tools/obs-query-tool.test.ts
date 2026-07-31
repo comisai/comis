@@ -231,7 +231,7 @@ describe("obs_query tool", () => {
   // -----------------------------------------------------------------------
 
   describe("billing action", () => {
-    it("billing/currentRoot calls the tree-scoped billing RPC", async () => {
+    it("billing/currentRoot calls the tree-scoped live spend RPC", async () => {
       mockRpcCall.mockResolvedValue({
         scope: "currentRoot",
         rootRunId: "root-1",
@@ -247,7 +247,8 @@ describe("obs_query tool", () => {
         } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("obs.billing.byRoot", {
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.spend.snapshot", {
+        scope: "currentRoot",
         _trustLevel: "admin",
       });
     });
@@ -357,7 +358,8 @@ describe("obs_query tool", () => {
         tool.execute("call-b5", { action: "billing" } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("obs.billing.byRoot", {
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.spend.snapshot", {
+        scope: "currentRoot",
         _trustLevel: "admin",
       });
     });

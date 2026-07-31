@@ -51,13 +51,13 @@ const ObsQueryToolParams = Type.Object({
       Type.Literal("system_health"),
       Type.Literal("audit"),
     ],
-    { description: "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)" },
+    { description: "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by current autonomy root/provider/agent/session/daemon total), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)" },
   ),
   sub_action: Type.Optional(
     Type.String({
       description:
         "Sub-action within the category. " +
-        "billing: byProvider | byAgent | bySession | total. " +
+        "billing: currentRoot | byProvider | byAgent | bySession | total. currentRoot is the default and includes spawned descendants. " +
         "delivery: recent | stats. " +
         "channels: all | stale | get.",
     }),
@@ -137,7 +137,7 @@ type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
  *
  * Actions:
  * - **diagnostics** -- Query platform diagnostic data with optional category/limit filters
- * - **billing** -- Query billing data by provider, agent, session, or total
+ * - **billing** -- Query billing data by current root, provider, agent, session, or total
  * - **delivery** -- Query message delivery traces (recent) or aggregated stats
  * - **channels** -- Query channel activity: all channels, stale channels, or a specific channel
  * - **explain** -- Assemble an IncidentReport (root-cause post-mortem) for a session via obs.explain
@@ -150,7 +150,7 @@ type ObsQueryToolParamsType = Static<typeof ObsQueryToolParams>;
  * @returns AgentTool implementing the observability query interface
  */
 const VALID_ACTIONS = ["diagnostics", "billing", "delivery", "channels", "explain", "trace", "session_report", "system_health", "audit"] as const;
-const VALID_BILLING_SUB_ACTIONS = ["byProvider", "byAgent", "bySession", "total"] as const;
+const VALID_BILLING_SUB_ACTIONS = ["currentRoot", "byProvider", "byAgent", "bySession", "total"] as const;
 const VALID_DELIVERY_SUB_ACTIONS = ["recent", "stats"] as const;
 const VALID_CHANNELS_SUB_ACTIONS = ["all", "stale", "get"] as const;
 
@@ -161,7 +161,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
     name: "obs_query",
     label: "Observability Query",
     description:
-      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. Use system_health for failure or degraded counts; diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
+      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. For this task or cost-so-far questions, use billing.currentRoot: it includes spawned descendants. Report runtime cost separately from external purchases. billing.total is daemon-lifetime cost; billing.bySession excludes descendant sessions. Use system_health for failure or degraded counts; diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
     parameters: ObsQueryToolParams,
 
     async execute(
@@ -210,7 +210,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
         }
 
         if (action === "billing") {
-          const rawSubAction = readStringParam(p, "sub_action", false) ?? "total";
+          const rawSubAction = readStringParam(p, "sub_action", false) ?? "currentRoot";
           // Validate sub_action against known billing sub-actions
           if (!VALID_BILLING_SUB_ACTIONS.includes(rawSubAction as typeof VALID_BILLING_SUB_ACTIONS[number])) {
             throwToolError("invalid_value", `Unknown billing sub_action: "${rawSubAction}".`, {
@@ -223,6 +223,13 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
           const ctx = tryGetContext();
           const tl = ctx?.trustLevel ?? "guest";
 
+          if (subAction === "currentRoot") {
+            const result = await rpcCall("obs.spend.snapshot", {
+              scope: "currentRoot",
+              _trustLevel: tl,
+            });
+            return jsonResult(result);
+          }
           if (subAction === "byProvider") {
             const sinceMs = readNumberParam(p, "since_ms", false);
             const result = await rpcCall("obs.billing.byProvider", { sinceMs, _trustLevel: tl });
@@ -235,7 +242,13 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
             return jsonResult(result);
           }
           if (subAction === "bySession") {
-            const sessionKey = readStringParam(p, "session_key");
+            const sessionKey = readStringParam(p, "session_key", false) ?? ctx?.sessionKey;
+            if (sessionKey === undefined) {
+              throwToolError("missing_param", "Current session is unavailable.", {
+                param: "session_key",
+                hint: "Provide session_key explicitly.",
+              });
+            }
             const sinceMs = readNumberParam(p, "since_ms", false);
             const result = await rpcCall("obs.billing.bySession", { sessionKey, sinceMs, _trustLevel: tl });
             return jsonResult(result);

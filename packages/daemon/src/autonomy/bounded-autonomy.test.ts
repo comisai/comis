@@ -111,6 +111,7 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
       "tryOutward",
       "registerRoot",
       "leaseIdsForRoot",
+      "spendSnapshot",
       "cronCount",
       "destroy",
     ] as const) {
@@ -518,6 +519,33 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
     expect(service.tryOutward("agent-PS", "chan-origin", true, 1).ok).toBe(true);
     expect(service.tryOutward("agent-PS", "chan-origin", true, 1).ok).toBe(false);
 
+    service.destroy();
+  });
+
+  it("spendSnapshot delegates to the tree-wide priced-spend counter", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      budget: { aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 },
+    };
+    const { service } = makeService({ config });
+
+    service.registerRoot("root-cost", "lease-cost");
+    expect(
+      service.reserveBudget(
+        "root-cost",
+        "anthropic",
+        "claude-sonnet-4-5-20250929",
+        0.75,
+        100,
+      ).kind,
+    ).toBe("ok");
+
+    expect(service.spendSnapshot("root-cost")).toEqual({
+      totalCost: 0.75,
+      capUsd: 10,
+      headroomUsd: 9.25,
+      pricingScope: "priced_only",
+    });
     service.destroy();
   });
 

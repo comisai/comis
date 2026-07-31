@@ -479,15 +479,17 @@ export const ObsCacheBreaksByReasonContract = defineContract({
   scopes: ["admin"] as const,
 });
 
-/** `obs.spend.snapshot` — the LIVE per-agent/tenant/global spend the kill-switch
- *  sees (served from the live accumulator, NOT the lagging SQL).
- *  Admin-only. The snapshot carries the per-scope spend + the configured ceilings →
- *  headroom + a three-state pricing-coverage count. Content-free (dollar counts +
- *  scope enums + pricing-state counts). The Spend & Governance view consumes it.
- *  Empty request, so the contract-handler-parity gate trivially passes. */
+/** `obs.spend.snapshot` — the LIVE spend the kill-switch sees (served from the
+ *  live accumulator, NOT the lagging SQL). The default response is
+ *  per-agent/tenant/global; `scope:"currentRoot"` selects the trusted autonomy
+ *  tree and includes spawned descendants.
+ *  Admin-only. The snapshot carries spend + configured ceilings/headroom.
+ *  Content-free (dollar counts + scope enums + pricing-state counts). */
 export const ObsSpendSnapshotContract = defineContract({
   method: "obs.spend.snapshot",
-  request: z.object({}),
+  request: z.object({
+    scope: z.literal("currentRoot").optional(),
+  }),
   response: z.object({ snapshot: ObsRecord }),
   scopes: ["admin"] as const,
 });

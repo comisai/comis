@@ -17,8 +17,14 @@ import { systemGetEnv } from "@comis/core";
 // Re-aliased from the cluster slices in api/types.ts. The lossless-context
 // evidence source belongs to MemoryApiDeps; observability consumes that
 // existing port without duplicating its field onto ObservabilityApiDeps.
-import type { MemoryApiDeps, ObservabilityApiDeps } from "../types.js";
-type ObsHandlerDeps = ObservabilityApiDeps & Pick<MemoryApiDeps, "contextBrowse">;
+import type {
+  ChannelsApiDeps,
+  MemoryApiDeps,
+  ObservabilityApiDeps,
+} from "../types.js";
+type ObsHandlerDeps = ObservabilityApiDeps
+  & Pick<MemoryApiDeps, "contextBrowse">
+  & Pick<ChannelsApiDeps, "boundedAutonomy">;
 export type { ObsHandlerDeps };
 
 /**
