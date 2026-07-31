@@ -23,6 +23,7 @@ import {
   buildLoopDetectedReply,
   buildDegradedReply,
   buildProviderRequiresModelReply,
+  buildSenderAuthorityOverclaimReply,
   catalogFromLocalePacks,
   LOCALE_MESSAGE_IDS,
 } from "./degraded-reply.js";
@@ -375,6 +376,29 @@ describe("buildProviderRequiresModelReply", () => {
     expect(buildProviderRequiresModelReply("he", catalog)).toBe(
       "הסוכן לא שונה כי הערך הוא ספק ולא מזהה מודל מדויק",
     );
+  });
+});
+
+describe("buildSenderAuthorityOverclaimReply", () => {
+  it("states that below-admin sender approval cannot grant admin authority", () => {
+    const reply = buildSenderAuthorityOverclaimReply();
+
+    expect(reply).toMatch(/current trust.*admin-only/iu);
+    expect(reply).toMatch(/your approval cannot grant admin access/iu);
+    expect(reply).toMatch(/authorized administrator/iu);
+    expect(reply).toMatch(/cannot.*raise.*own trust/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("sender_authority_overclaim");
+  });
+
+  it("uses an operator-provided open-locale message", () => {
+    const catalog = catalogFromLocalePacks({
+      "x-agent": {
+        sender_authority_overclaim: "localized authority boundary",
+      },
+    });
+
+    expect(buildSenderAuthorityOverclaimReply("x-agent", catalog))
+      .toBe("localized authority boundary");
   });
 });
 

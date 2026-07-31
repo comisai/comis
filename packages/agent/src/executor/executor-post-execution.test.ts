@@ -982,6 +982,17 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/response\.active_model_self_status_guard/);
   });
 
+  it("source-grep — sender authority overclaims are grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceSenderAuthorityGrounding\(/);
+    expect(stripped).toMatch(/senderTrust:\s*params\.senderTrust/);
+    expect(stripped).toMatch(/buildSenderAuthorityOverclaimReply\(/);
+    expect(stripped).toMatch(/response\.sender_authority_grounding_guard/);
+    expect(stripped.indexOf("enforceSenderAuthorityGrounding("))
+      .toBeLessThan(stripped.indexOf("const finishReasonStr"));
+  });
+
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
     const stripped = readPostExecStripped();
     const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");
