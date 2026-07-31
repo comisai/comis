@@ -30,7 +30,12 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { suppressError } from "@comis/shared";
 import { safePath, PathTraversalError, type MentalModel, type MentalModelStorePort, type LearningScope } from "@comis/core";
-import { formatAvailableSkillsXml, type PromptSkillDescription, type SkillRegistry } from "@comis/skills";
+import {
+  formatAvailableSkillsXml,
+  formatUnavailableSkillsXml,
+  type PromptSkillDescription,
+  type SkillRegistry,
+} from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
 
 /** The sibling dot-dir (NOT a skill discoveryPath; the registry skips dot-dirs). */
@@ -188,11 +193,26 @@ export function renderLearnedSkillsXml(args: {
 }): string {
   const { skillRegistry, learnedSkills, workspaceDir } = args;
   const snapshot = skillRegistry.getSnapshot();
-  if (!learnedSkills.some(isSurfaceable)) {
+  const unavailableXml = formatUnavailableSkillsXml(
+    skillRegistry
+      .getPromptSkillInventory()
+      .filter((skill) => !skill.eligible && skill.disableModelInvocation !== true)
+      .map((skill) => ({
+        name: skill.name,
+        reason: skill.reason ?? "unavailable in the current runtime",
+      })),
+  );
+  const availableXml = !learnedSkills.some(isSurfaceable)
+    ? snapshot.prompt
+    : mergeLearnedSkillsXml(snapshot.skills, learnedSkills, workspaceDir);
+  if (!unavailableXml) {
     // Byte-identical default path — no merge, the cached platform prompt verbatim.
-    return snapshot.prompt;
+    return availableXml;
   }
-  return mergeLearnedSkillsXml(snapshot.skills, learnedSkills, workspaceDir);
+  if (!availableXml) return unavailableXml;
+  // Availability facts precede descriptions so the bounded runtime section
+  // retains the honesty-critical state when a long skill list is truncated.
+  return `${unavailableXml}\n${availableXml}`;
 }
 
 /** Build typed read-path attribution beside the display-only XML listing. */
