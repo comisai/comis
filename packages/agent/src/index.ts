@@ -548,6 +548,7 @@ export type { CodeRegion } from "./response-filter/code-regions.js";
 // Thinking tag filter
 export { createThinkingTagFilter } from "./response-filter/thinking-tag-filter.js";
 export {
+  buildExecutionFailureReply,
   buildPipelineTimeoutReply,
   buildBackgroundTaskFailedNotice,
   catalogFromLocalePacks,

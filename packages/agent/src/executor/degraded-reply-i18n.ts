@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
+import type { ErrorKind } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 
 export const CAP_KNOB_BY_CLASS: Readonly<Record<string, string>> = {
@@ -21,6 +22,7 @@ export type LocaleMessageId =
   | "tool_failure_notice"
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
+  | "execution_failed"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
   | "persistent_action_evidence_missing"
@@ -61,6 +63,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + " incomplete.",
   prompt_timeout:
     "The request took too long to process. Please try again with a simpler message.",
+  execution_failed:
+    "I couldn't complete that request because a required service failed. The request was not completed.",
   background_task_failed_notice:
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
@@ -245,6 +249,18 @@ export function selectPromptTimeoutReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "prompt_timeout");
+}
+
+/** Honest terminal reply for an execution rejection before a normal answer. */
+export function selectExecutionFailureReply(
+  locale: string | undefined,
+  opts: { errorKind: ErrorKind; traceId?: string },
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  const incident = opts.traceId === undefined || opts.traceId.length === 0
+    ? ""
+    : `; incident ${opts.traceId}`;
+  return `${catalog.resolve(locale, "execution_failed")} (reason: ${opts.errorKind}${incident})`;
 }
 
 /** Deterministic terminal-state disclosure for a failed background task. */

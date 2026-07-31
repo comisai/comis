@@ -19,6 +19,7 @@
  */
 
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
+import type { ErrorKind } from "@comis/core";
 import {
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
@@ -27,6 +28,7 @@ import {
   selectToolFailureNotice,
   selectToolFailureNoticeUnnamed,
   selectPromptTimeoutReply,
+  selectExecutionFailureReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
   selectPersistentActionEvidenceMissingReply,
@@ -165,6 +167,21 @@ export function buildPromptTimeoutReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectPromptTimeoutReply(language, localeCatalog);
+}
+
+/** Localized reason-coded reply for a turn that rejected before normal output. */
+export function buildExecutionFailureReply(
+  opts: {
+    errorKind: ErrorKind;
+    traceId?: string;
+    language?: string;
+    localeCatalog?: LocaleCatalog;
+  },
+): string {
+  return selectExecutionFailureReply(opts.language, {
+    errorKind: opts.errorKind,
+    traceId: opts.traceId,
+  }, opts.localeCatalog);
 }
 
 /**

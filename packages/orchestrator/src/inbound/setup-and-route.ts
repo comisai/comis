@@ -11,6 +11,7 @@
 import type {
   ChannelPort,
   ConversationRef,
+  ErrorKind,
   EventMap,
   NormalizedMessage,
   SessionKey,
@@ -18,7 +19,9 @@ import type {
   ResolvedTurnScope,
 } from "@comis/core";
 import {
+  ERROR_KINDS,
   formatSessionKey,
+  resolvePlatformDeliveryResult,
   toSafeErrorLogString,
   systemClearTimeout,
   systemNowMs,
@@ -30,6 +33,10 @@ import type {
   AgentExecutor,
   InboundMessageProvenancePlan,
   RunHandle,
+} from "@comis/agent";
+import {
+  buildExecutionFailureReply,
+  catalogFromLocalePacks,
 } from "@comis/agent";
 import { fromPromise, tryCatch } from "@comis/shared";
 
@@ -72,6 +79,18 @@ export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
 };
 
 const SDK_ABORT_SETTLE_TIMEOUT_MS = 1_000;
+
+/** Preserve a typed execution classification without trusting open error data. */
+function classifyExecutionBoundaryError(error: Error): ErrorKind {
+  const classified = tryCatch(() => {
+    if (!("errorKind" in error)) return "internal" as const;
+    const candidate = (error as { errorKind?: unknown }).errorKind;
+    return typeof candidate === "string"
+      ? ERROR_KINDS.find((kind) => kind === candidate) ?? "internal"
+      : "internal";
+  });
+  return classified.ok ? classified.value : "internal";
+}
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -323,6 +342,86 @@ export async function setupAndRoute(
       activityStreamPort: deps.activityStreamPort,
       coordinatorFactory: deps.coordinatorFactory,
       taskCapture: deps.taskCapture,
+    };
+
+    const executeWithFailureReply = async (
+      execution: Promise<void>,
+      effectiveMsg: NormalizedMessage,
+    ): Promise<void> => {
+      const settled = await fromPromise(execution);
+      if (settled.ok) return;
+
+      const errorKind = classifyExecutionBoundaryError(settled.error);
+      const replyLocale = deps.getPlatformReplyLocale?.(agentId);
+      const traceId = tryGetContext()?.traceId;
+      const startedAt = systemNowMs();
+      const delivered = await fromPromise(deps.deliveryService.deliverToChannel(
+        adapter,
+        effectiveMsg.channelId,
+        buildExecutionFailureReply({
+          errorKind,
+          ...(traceId === undefined ? {} : { traceId }),
+          ...(replyLocale?.language === undefined
+            ? {}
+            : { language: replyLocale.language }),
+          localeCatalog: catalogFromLocalePacks(replyLocale?.localePacks),
+        }),
+        {
+          completionMode: "deferred_retry",
+          authority: {
+            tenantId: turnScope.conversation.tenantId,
+            agentId,
+            conversationRef,
+          },
+          destinationEndpoint: turnScope.endpoint,
+          ...(turnScope.endpoint.threadId === undefined
+            ? {}
+            : { threadId: turnScope.endpoint.threadId }),
+          origin: "execution-failure-reply",
+        },
+      ));
+      const platformResult = delivered.ok
+        ? resolvePlatformDeliveryResult(delivered.value)
+        : undefined;
+      const deliveryError = !delivered.ok
+        ? delivered.error
+        : platformResult?.ok === false
+          ? platformResult.error
+          : undefined;
+      if (platformResult?.ok === true && platformResult.value.platform.status === "accepted") {
+        deps.logger.info({
+          step: "execution-failure-reply",
+          channelType: adapter.channelType,
+          errorKind,
+          platformStatus: platformResult.value.platform.status,
+          queueDisposition: platformResult.value.queueDisposition,
+          durationMs: systemNowMs() - startedAt,
+        }, "Execution failure reply delivered");
+      } else if (
+        platformResult?.ok === true
+        && platformResult.value.queueDisposition === "retry_pending"
+      ) {
+        void tryCatch(() => deps.logger.warn({
+          step: "execution-failure-reply",
+          channelType: adapter.channelType,
+          primaryErrorKind: errorKind,
+          platformStatus: platformResult.value.platform.status,
+          queueDisposition: platformResult.value.queueDisposition,
+          durationMs: systemNowMs() - startedAt,
+          errorKind: "platform" as const,
+          hint: "Restore channel delivery; the durable delivery queue retained the reason-coded failure reply for retry.",
+        }, "Execution failure reply queued for retry"));
+      } else {
+        void tryCatch(() => deps.logger.error({
+          step: "execution-failure-reply",
+          channelType: adapter.channelType,
+          primaryErrorKind: errorKind,
+          err: toSafeErrorLogString(deliveryError),
+          errorKind: "platform" as const,
+          hint: "Restore channel delivery and inspect the durable delivery queue; the accepted turn remained classified as failed.",
+        }, "Execution failure reply delivery failed"));
+      }
+      return Promise.reject(settled.error);
     };
 
     // -------------------------------------------------------------------
@@ -601,23 +700,26 @@ export async function setupAndRoute(
             return;
           }
           executionOwnsTyping = true;
-          await executeAndDeliver(
-            execDeps,
-            adapter,
+          await executeWithFailureReply(
+            executeAndDeliver(
+              execDeps,
+              adapter,
+              effectiveMsg,
+              originalMsg,
+              executor,
+              sessionKey,
+              agentId,
+              streamCfg,
+              activePacers,
+              sendOverrides,
+              typingLifecycle,
+              directives,
+              execution.receivedAt,
+              execution.sourceTerminalScope,
+              execution.signal,
+              execution.inboundProvenancePlans,
+            ),
             effectiveMsg,
-            originalMsg,
-            executor,
-            sessionKey,
-            agentId,
-            streamCfg,
-            activePacers,
-            sendOverrides,
-            typingLifecycle,
-            directives,
-            execution.receivedAt,
-            execution.sourceTerminalScope,
-            execution.signal,
-            execution.inboundProvenancePlans,
           );
         } finally {
           execution.signal.removeEventListener("abort", onAbort);
@@ -645,23 +747,26 @@ export async function setupAndRoute(
     // Direct execution path (fallback when commandQueue is not provided)
     // -----------------------------------------------------------------------
     typingOwnershipTransferred = true;
-    await executeAndDeliver(
-      execDeps,
-      adapter,
+    await executeWithFailureReply(
+      executeAndDeliver(
+        execDeps,
+        adapter,
+        msg,
+        originalMsg,
+        executor,
+        sessionKey,
+        agentId,
+        streamCfg,
+        activePacers,
+        sendOverrides,
+        typingLifecycle,
+        directives,
+        resolveIngressReceivedAt(),
+        terminalScope,
+        undefined,
+        [inboundProvenancePlan],
+      ),
       msg,
-      originalMsg,
-      executor,
-      sessionKey,
-      agentId,
-      streamCfg,
-      activePacers,
-      sendOverrides,
-      typingLifecycle,
-      directives,
-      resolveIngressReceivedAt(),
-      terminalScope,
-      undefined,
-      [inboundProvenancePlan],
     );
   } finally {
     if (!typingOwnershipTransferred) releaseTypingOwnership();

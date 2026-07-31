@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ComisLogger, EventMap, TypedEventBus } from "@comis/core";
-import { emitObservationalEventSafely, sanitizeLogString } from "@comis/core";
+import type { ComisLogger, ErrorKind, EventMap, TypedEventBus } from "@comis/core";
+import {
+  ERROR_KINDS,
+  emitObservationalEventSafely,
+  sanitizeLogString,
+} from "@comis/core";
 import { fromPromise, tryCatch } from "@comis/shared";
 
 export type QueueLifecycleEvent =
@@ -35,6 +39,16 @@ export function createQueueObservability(
   const boundedError = (error: Error): string => sanitizeLogString(
     error.message.slice(0, 1_500),
   );
+  const classifyExecutionError = (error: Error): ErrorKind => {
+    const classified = tryCatch(() => {
+      if (!("errorKind" in error)) return "internal" as const;
+      const candidate = (error as { errorKind?: unknown }).errorKind;
+      return typeof candidate === "string"
+        ? ERROR_KINDS.find((kind) => kind === candidate) ?? "internal"
+        : "internal";
+    });
+    return classified.ok ? classified.value : "internal";
+  };
 
   function logQueueEventFailure(
     queueEvent: QueueLifecycleEvent,
@@ -71,7 +85,7 @@ export function createQueueObservability(
       channelType,
       mode,
       err: boundedError(settled.error),
-      errorKind: "internal" as const,
+      errorKind: classifyExecutionError(settled.error),
       hint: "Inspect the execution failure and retry the affected message; the command queue continued processing later work.",
     }, "Command queue background execution failed"));
   }
