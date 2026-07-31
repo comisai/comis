@@ -229,6 +229,7 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
           entityId: agentId,
           actingUser: (rawParams._agentId as string | undefined),
           traceId: (rawParams._traceId as string | undefined),
+          skipRestart: true,
         });
         if (!persistResult.ok) {
           deps.persistDeps.logger.warn(
