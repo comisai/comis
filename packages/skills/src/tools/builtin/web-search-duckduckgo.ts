@@ -255,7 +255,7 @@ export async function runDuckDuckGoSearch(params: {
     if (isDdgAnomalyChallenge(html)) {
       throw new Error(
         `DuckDuckGo served its anomaly challenge (HTTP ${res.status}) instead of results. `
-          + "The endpoint rate-limits per source IP and clears after about a minute. "
+          + "The endpoint applies a rate limit per source IP and clears after about a minute. "
           + "Space searches further apart, or configure a keyed web_search provider "
           + "(tools.web.search.provider: brave, tavily, or exa) for sustained use.",
       );

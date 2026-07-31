@@ -364,8 +364,13 @@ describe("runDuckDuckGoSearch", () => {
         timeoutSeconds: 10,
       });
       await expect(failure).rejects.toThrow(`anomaly challenge (HTTP ${status})`);
-      await expect(failure).rejects.toThrow(/rate-limits per source IP/);
       await expect(failure).rejects.toThrow(/clears after about a minute/);
+      // The web_search failure detector buckets a provider reason by matching this
+      // rule against it. Wording that drifts out of the rule downgrades the verdict
+      // from the rate-limit class to the unrecognized-reason catch-all.
+      await expect(failure).rejects.toThrow(
+        /rate limit|quota exceeded|usage limit|too many requests/i,
+      );
     },
   );
 
