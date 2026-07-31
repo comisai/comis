@@ -470,6 +470,23 @@ describe("resolveDescription", () => {
     expect(result).toContain("Admin required");
   });
 
+  it("distinguishes a dedicated assistant from heartbeat monitoring", () => {
+    const agentsDescription = resolveDescription(
+      { name: "agents_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+    const heartbeatDescription = resolveDescription(
+      { name: "heartbeat_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+
+    expect(agentsDescription).toMatch(/separate.*dedicated.*assistant/isu);
+    expect(heartbeatDescription).toMatch(/explicitly.*heartbeat.*monitor/isu);
+    expect(heartbeatDescription).toMatch(/not.*separate.*assistant/isu);
+  });
+
   it("obs_query requires evidence before reporting runtime cause or cost", () => {
     const result = resolveDescription(
       { name: "obs_query" },
