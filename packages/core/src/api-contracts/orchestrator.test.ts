@@ -1142,10 +1142,10 @@ describe("SubagentKillContract", () => {
     expect(() => SubagentKillContract.request.parse({})).toThrow();
   });
 
-  it("accepts the canonical response shape", () => {
-    expect(() =>
-      SubagentKillContract.response.parse({ killed: true, runId: "r1" }),
-    ).not.toThrow();
+  it("preserves the exact killed-run count in the canonical response", () => {
+    expect(
+      SubagentKillContract.response.parse({ killed: true, runId: "r1", count: 1 }),
+    ).toEqual({ killed: true, runId: "r1", count: 1 });
   });
 });
 

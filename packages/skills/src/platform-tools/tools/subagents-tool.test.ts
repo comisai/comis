@@ -113,6 +113,7 @@ describe("subagents tool", () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({
       killed: true,
       runId: "run-123",
+      count: 1,
     }));
 
     const tool = createSubagentsTool(mockRpcCall);
@@ -123,11 +124,35 @@ describe("subagents tool", () => {
 
     // subagent.kill is registered as "mutate" in action-classifier.ts,
     // so the gate auto-approves and delegates to RPC.
-    const parsed = parseResult(result) as { killed: boolean; runId: string };
+    const parsed = parseResult(result) as { killed: boolean; runId: string; count: number };
     expect(parsed.killed).toBe(true);
     expect(parsed.runId).toBe("run-123");
+    expect(parsed.count).toBe(1);
     expect(mockRpcCall).toHaveBeenCalledWith("subagent.kill", {
       target: "run-123",
+    });
+  });
+
+  it("tree-scoped kill dispatches the trusted current root without requiring a run id", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({
+      killed: true,
+      runId: "tree",
+      count: 3,
+    }));
+    const tool = createSubagentsTool(mockRpcCall);
+
+    const result = await tool.execute("call-tree-kill", {
+      action: "kill",
+      scope: "tree",
+    } as never);
+
+    expect(parseResult(result)).toEqual({
+      killed: true,
+      runId: "tree",
+      count: 3,
+    });
+    expect(mockRpcCall).toHaveBeenCalledWith("subagent.kill", {
+      target: "tree",
     });
   });
 
