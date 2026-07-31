@@ -1897,6 +1897,9 @@ describe("consecutive summary-ref head (defensive coalesce)", () => {
     // Both summaries' content survives inside the ONE coalesced user message, each
     // with its OWN [LCD summary …] trusted header (not a flattened blob).
     const coalesced = summaryBearingUserMsgs[0]!;
+    expect(
+      (coalesced as unknown as { compactionSummary?: boolean }).compactionSummary,
+    ).toBe(true);
     const text = JSON.stringify((coalesced as unknown as { content: unknown }).content);
     expect(text).toContain(SUMMARY_A);
     expect(text).toContain(SUMMARY_B);
