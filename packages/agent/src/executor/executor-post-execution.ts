@@ -140,6 +140,7 @@ import {
 } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
+import { recoverFinalResponseLocaleFailure } from "./prompt-runner/response-locale-enforcement.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -1203,6 +1204,75 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     recordLastResponseTs(formattedKey, capturedRetention.getRetention(), deps.clock);
   }
 
+  const pendingBackground = reconcilePendingBackgroundTurn({
+    response: result.response ?? "",
+    executionId,
+    tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
+  });
+  if (pendingBackground.finishReason !== undefined) {
+    result.response = pendingBackground.response;
+  }
+
+  // Run the deterministic current-model self-status guard before terminal
+  // classification. Locale enforcement may have failed closed on the model's
+  // mismatched draft; this guard can replace that draft with the exact captured
+  // runtime identity, which must be re-evaluated before the bookend and session
+  // summary decide whether the turn is degraded.
+  const activeModelSelfStatus = enforceActiveModelSelfStatus({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    provider: params.provider,
+    modelId: params.modelId,
+  });
+  if (activeModelSelfStatus.corrected) {
+    result.response = activeModelSelfStatus.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        provider: params.provider,
+        modelId: params.modelId,
+        errorKind: "validation" as const,
+        hint:
+          "The model omitted or contradicted the captured execution identity; inspect the "
+          + "system-prompt report and current-turn transcript in comis explain.",
+      },
+      "Current model self-status replaced with captured runtime identity",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.active_model_self_status_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "current_model_status",
+        reason: activeModelSelfStatus.reason,
+      },
+    });
+  }
+  if (
+    activeModelSelfStatus.corrected
+    && recoverFinalResponseLocaleFailure(result, params.responseLocalePolicy)
+  ) {
+    deps.logger.info(
+      {
+        step: "response-locale-recovery",
+        provider: params.provider,
+        modelId: params.modelId,
+        durationMs: 0,
+      },
+      "Final response guard satisfied the captured locale policy",
+    );
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "locale_fidelity",
+      succeeded: true,
+      timestamp: deps.clock.now(),
+    });
+  }
+
   // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
   // The bookend must log effectiveFinishReason (not result.finishReason) so that
   // an output_starved turn — which carries result.finishReason="stop" until promoted here —
@@ -1229,20 +1299,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
     result.narrateNudge,
   );
-  const pendingBackground = reconcilePendingBackgroundTurn({
-    response: result.response ?? "",
-    executionId,
-    tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
-  });
   const effectiveFinishReasonCandidate = pendingBackground.finishReason ?? baseEffectiveFinishReason;
   const effectiveFinishReason = (
     effectiveFinishReasonCandidate === "end_turn"
       ? "stop"
       : effectiveFinishReasonCandidate
   ) as AgentExecutionFinishReason;
-  if (pendingBackground.finishReason !== undefined) {
-    result.response = pendingBackground.response;
-  }
   settleExecutionResult(result, effectiveFinishReason, {
     sideEffectSummary: bridgeResult.sideEffectSummary ?? result.sideEffectSummary,
     toolExecResults: bridgeResult.toolExecResults,
@@ -1560,39 +1622,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "configuration_failure",
         reason: providerModelFailureGrounding.reason,
         requiredTool: "agents_manage",
-      },
-    });
-  }
-  const activeModelSelfStatus = enforceActiveModelSelfStatus({
-    request: msg.text ?? "",
-    response: result.response ?? "",
-    provider: params.provider,
-    modelId: params.modelId,
-  });
-  if (activeModelSelfStatus.corrected) {
-    result.response = activeModelSelfStatus.response;
-    deps.logger.warn(
-      {
-        step: "response-honesty",
-        provider: params.provider,
-        modelId: params.modelId,
-        errorKind: "validation" as const,
-        hint:
-          "The model omitted or contradicted the captured execution identity; inspect the "
-          + "system-prompt report and current-turn transcript in comis explain.",
-      },
-      "Current model self-status replaced with captured runtime identity",
-    );
-    deps.eventBus.emit("audit:event", {
-      timestamp: deps.clock.now(),
-      agentId: effectiveAgentId,
-      tenantId: deps.tenantId,
-      actionType: "response.active_model_self_status_guard",
-      kind: "audit",
-      outcome: "denied",
-      metadata: {
-        claimKind: "current_model_status",
-        reason: activeModelSelfStatus.reason,
       },
     });
   }

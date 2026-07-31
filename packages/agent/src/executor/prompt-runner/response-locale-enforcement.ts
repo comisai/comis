@@ -24,6 +24,7 @@ import {
   catalogFromLocalePacks,
 } from "../degraded-reply.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
+import type { ExecutionResult } from "../types.js";
 import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
 
 type LocaleEnforcementSession = Pick<AgentSession, "agent" | "prompt">;
@@ -259,6 +260,33 @@ function emitLocaleRecovery(params: RunPromptParams, succeeded: boolean): void {
       timestamp: params.deps.clock.now(),
     },
   );
+}
+
+/**
+ * Clear a locale-only terminal error when a later deterministic response guard
+ * produced a final response that satisfies the same captured policy.
+ */
+export function recoverFinalResponseLocaleFailure(
+  result: ExecutionResult,
+  policy: ResponseLocalePolicy,
+): boolean {
+  if (
+    result.finishReason !== "error"
+    || result.terminalErrorKind !== "validation"
+    || result.errorContext?.errorType !== "ResponseLocaleMismatch"
+    || evaluateResponseLocale(policy, result.response) !== undefined
+  ) {
+    return false;
+  }
+  const mutableResult = result as unknown as {
+    finishReason: string;
+    terminalErrorKind?: unknown;
+    errorContext?: unknown;
+  };
+  mutableResult.finishReason = "stop";
+  delete mutableResult.terminalErrorKind;
+  delete mutableResult.errorContext;
+  return true;
 }
 
 /** Apply locale enforcement at the success-path egress boundary. */
