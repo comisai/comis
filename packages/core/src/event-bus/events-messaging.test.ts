@@ -21,6 +21,7 @@ describe("MessagingEvents payload structure", () => {
     const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
 
     expect(source).toContain('| "agent_update_noop_grounding"');
+    expect(source).toContain('| "missing_ongoing_work_evidence"');
   });
 
   it("execution recovery can identify a sender-authority grounding correction", () => {

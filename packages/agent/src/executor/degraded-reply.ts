@@ -35,6 +35,7 @@ import {
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
+  selectOngoingWorkEvidenceMissingReply,
   selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
   selectResponseLocaleUnavailableReply,
@@ -240,6 +241,14 @@ export function buildAgentUpdateNoOpReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectAgentUpdateNoOpReply(language, provider, modelId, localeCatalog);
+}
+
+/** Honest replacement when no runtime receipt supports continued-work prose. */
+export function buildOngoingWorkEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOngoingWorkEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when the model assigns admin authority to a below-admin sender. */

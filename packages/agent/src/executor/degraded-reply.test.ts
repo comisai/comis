@@ -23,6 +23,7 @@ import {
   buildLoopDetectedReply,
   buildDegradedReply,
   buildProviderRequiresModelReply,
+  buildOngoingWorkEvidenceMissingReply,
   buildSenderAuthorityOverclaimReply,
   catalogFromLocalePacks,
   LOCALE_MESSAGE_IDS,
@@ -426,6 +427,16 @@ describe("buildSenderAuthorityOverclaimReply", () => {
 
     expect(buildSenderAuthorityOverclaimReply("en-x-agent", catalog))
       .toBe("localized authority boundary");
+  });
+});
+
+describe("buildOngoingWorkEvidenceMissingReply", () => {
+  it("states that no background result remains pending", () => {
+    const reply = buildOngoingWorkEvidenceMissingReply();
+
+    expect(reply).toMatch(/did not start ongoing work/iu);
+    expect(reply).toMatch(/no background task running/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("ongoing_work_evidence_missing");
   });
 });
 

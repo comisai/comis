@@ -109,6 +109,50 @@ export function enforceAgentUpdateNoOpGrounding(params: {
   };
 }
 
+export interface OngoingWorkEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_ongoing_work_evidence";
+}
+
+const ONGOING_WORK_CLAIM_PATTERNS = [
+  /\b(?:i'm|i am|we're|we are) (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,
+  /\b(?:i'm|i am|we're|we are) currently (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,
+  /\bplease\s+(?:hold|wait)\b/iu,
+  /\b(?:i(?:'ll| will)|we(?:'ll| will))\s+(?:let you know|update you|send (?:you )?(?:the )?result)\b/iu,
+];
+
+/**
+ * Replace a terminal reply that promises continued work after a tool failure
+ * when the runtime has no background receipt for this execution.
+ */
+export function enforceOngoingWorkEvidence(params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  ongoingWorkEvidence?: boolean;
+  honestResponse: string;
+}): OngoingWorkEvidenceGuardResult {
+  const results = params.toolExecResults ?? [];
+  const ongoingReceipt = params.ongoingWorkEvidence === true
+    || results.some((result) => result.success && result.backgrounded === true);
+  const failedStep = results.some((result) => !result.success);
+  const claimsOngoingWork = ONGOING_WORK_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (ongoingReceipt || !failedStep || !claimsOngoingWork) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_ongoing_work_evidence",
+  };
+}
+
 export interface SenderAuthorityGroundingGuardResult {
   response: string;
   corrected: boolean;

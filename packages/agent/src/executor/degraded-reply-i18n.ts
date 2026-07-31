@@ -29,6 +29,7 @@ export type LocaleMessageId =
   | "destructive_action_not_verified"
   | "provider_requires_model"
   | "agent_update_noop"
+  | "ongoing_work_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
   | "response_locale_unavailable";
@@ -83,6 +84,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + "the provider and an exact model identifier.",
   agent_update_noop:
     "No configuration change was needed. This agent already uses",
+  ongoing_work_evidence_missing:
+    "I did not start ongoing work in this turn. A required step failed, so there "
+      + "is no background task running or result still pending. Please retry the request.",
   sender_authority_overclaim:
     "Your current trust does not authorize admin-only changes. I can use tools available at "
       + "your current trust level, but your approval cannot grant admin access. Installing "
@@ -331,6 +335,14 @@ export function selectAgentUpdateNoOpReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return `${catalog.resolve(locale, "agent_update_noop")} ${provider} / ${modelId}.`;
+}
+
+/** Honest replacement when a terminal reply promises unrecorded ongoing work. */
+export function selectOngoingWorkEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "ongoing_work_evidence_missing");
 }
 
 /** Honest replacement when a below-admin sender is described as the authority grantor. */

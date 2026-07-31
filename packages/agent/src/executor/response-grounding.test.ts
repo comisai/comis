@@ -59,4 +59,28 @@ describe("response grounding module", () => {
       reason: "missing_ongoing_work_evidence",
     });
   });
+
+  it("preserves a wait promise backed by a background receipt", () => {
+    const response = "I am working on that now. Please wait for the result.";
+
+    expect(enforceOngoingWorkEvidence({
+      response,
+      toolExecResults: [
+        { toolName: "exec", success: true, backgrounded: true },
+      ],
+      ongoingWorkEvidence: false,
+      honestResponse: "No work is running.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("preserves an honest terminal failure without a wait promise", () => {
+    const response = "The connection failed, so I did not complete the request.";
+
+    expect(enforceOngoingWorkEvidence({
+      response,
+      toolExecResults: [{ toolName: "mcp_manage", success: false }],
+      ongoingWorkEvidence: false,
+      honestResponse: "No work is running.",
+    })).toEqual({ response, corrected: false });
+  });
 });

@@ -255,12 +255,14 @@ export function enforceDestructiveEffectEvidence(params: {
 export {
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceOngoingWorkEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
 } from "./response-grounding.js";
 export type {
   ProviderModelFailureGroundingGuardResult,
   AgentUpdateNoOpGroundingGuardResult,
+  OngoingWorkEvidenceGuardResult,
   SenderAuthorityGroundingGuardResult,
   ActiveModelSelfStatusGuardResult,
 } from "./response-grounding.js";

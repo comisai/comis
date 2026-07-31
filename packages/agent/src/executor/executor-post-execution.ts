@@ -131,13 +131,14 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceOngoingWorkEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
@@ -1580,6 +1581,49 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       timestamp: deps.clock.now(),
     });
   }
+  const ongoingWorkGrounding = enforceOngoingWorkEvidence({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    ongoingWorkEvidence: pendingBackground.finishReason !== undefined,
+    honestResponse: buildOngoingWorkEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (ongoingWorkGrounding.corrected) {
+    result.response = ongoingWorkGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "The final reply promised continued work after a failed step, but this "
+          + "execution had no background receipt; inspect tool failures and background "
+          + "task ownership in comis explain.",
+      },
+      "Unsupported ongoing-work promise replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.ongoing_work_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "ongoing_work",
+        reason: ongoingWorkGrounding.reason,
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_ongoing_work_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
   const senderAuthorityGrounding = enforceSenderAuthorityGrounding({
     request: msg.text ?? "",
     response: result.response ?? "",
@@ -1855,6 +1899,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   if (
     !unavailableVision &&
     !providerModelFailureGrounding.corrected &&
+    !ongoingWorkGrounding.corrected &&
     userVisibleFailed.length > 0 &&
     isStopTurn &&
     !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&

@@ -1015,6 +1015,20 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — unsupported ongoing-work promises are grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceOngoingWorkEvidence\(/);
+    expect(stripped).toMatch(/pendingBackground\.finishReason\s*!==\s*undefined/);
+    expect(stripped).toMatch(/buildOngoingWorkEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.ongoing_work_evidence_guard/);
+    expect(stripped).toMatch(
+      /ongoingWorkGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_ongoing_work_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceOngoingWorkEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
     const stripped = readPostExecStripped();
     const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");

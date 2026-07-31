@@ -729,7 +729,8 @@ export interface MessagingEvents {
    *  `sender_authority_grounding` (a below-admin sender was incorrectly told
    *  they could authorize admin-only changes), or
    *  `agent_update_noop_grounding` (an unchanged successful agent update was
-   *  contradicted by the final prose).
+   *  contradicted by the final prose), or `missing_ongoing_work_evidence`
+   *  (terminal prose promised continued work without a background receipt).
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -744,7 +745,8 @@ export interface MessagingEvents {
       | "interactive_silent_sentinel"
       | "locale_fidelity"
       | "sender_authority_grounding"
-      | "agent_update_noop_grounding";
+      | "agent_update_noop_grounding"
+      | "missing_ongoing_work_evidence";
     succeeded: boolean;
     timestamp: number;
   };
