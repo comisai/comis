@@ -185,4 +185,81 @@ describe("projected conversation LCD reconciliation", () => {
     expect(result.value.deletedMessages).toBe(0);
     expect(store.getMessages(SCOPE)).toHaveLength(3);
   });
+
+  it("replaces a rendered epoch hidden behind the same compaction prefix only once", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+    const compactedPrefix = {
+      role: "compactionSummary",
+      content: "bounded summary",
+      timestamp: NOW - 10,
+    } as unknown as AgentMessage;
+    const rawUser = {
+      role: "user",
+      content:
+        "[System context]\ntransient\n[End system context]\n\n"
+        + "[telegram] sender-a (5:00 PM):\ncurrent request",
+      timestamp: NOW,
+    } as unknown as AgentMessage;
+    const generatedRepair = {
+      role: "user",
+      content: "<response-locale-repair locale=\"und-Latn\">rewrite</response-locale-repair>",
+      timestamp: NOW + 2,
+    } as unknown as AgentMessage;
+    const sourceMessages = [
+      compactedPrefix,
+      rawUser,
+      assistant("draft", NOW + 1),
+      generatedRepair,
+      assistant("repair", NOW + 3),
+    ];
+    const projectedMessages = [
+      compactedPrefix,
+      {
+        ...rawUser,
+        content:
+          "[telegram] sender-a (2026-09-10T00:26:40.100Z):\ncurrent request",
+      } as AgentMessage,
+      assistant("draft", NOW + 1),
+    ];
+    lcdIngest.ingestTurnGuarded(
+      store,
+      SCOPE,
+      sourceMessages,
+      NOW,
+      logger,
+    );
+
+    const first = await ingestProjectedConversationHistory({
+      store,
+      scope: SCOPE,
+      sourceMessages,
+      projectedMessages,
+      now: NOW + 4,
+      logger,
+    });
+    const second = await ingestProjectedConversationHistory({
+      store,
+      scope: SCOPE,
+      sourceMessages,
+      projectedMessages,
+      now: NOW + 5,
+      logger,
+    });
+
+    expect(first).toEqual({
+      ok: true,
+      value: { mode: "replaced_dirty_epoch", deletedMessages: 5 },
+    });
+    expect(second).toEqual({
+      ok: true,
+      value: { mode: "steady", deletedMessages: 0 },
+    });
+    expect(store.getMessages(SCOPE)).toHaveLength(3);
+    expect(store.getIngestCursor(SCOPE)?.epochAnchor).toMatch(
+      /^projected-conversation-v1:/,
+    );
+  });
 });
