@@ -246,6 +246,15 @@ describe("runRequestToolNudge", () => {
     expect(outcome.outcome).toBe("tool_already_succeeded");
   });
 
+  it("does not duplicate a mutation after its background handoff was accepted", async () => {
+    const deps = makeDeps();
+    Object.assign(deps, { currentDeferredWorkCount: () => 1 });
+
+    await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).not.toHaveBeenCalled();
+  });
+
   it("reports a persistent stall when the continuation performs no successful mutation", async () => {
     const deps = makeDeps({
       session: { prompt: vi.fn(async () => undefined) },
