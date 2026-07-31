@@ -647,19 +647,19 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     const logger = createMockLogger();
     const tools = [
       {
-        ...makeTool("mcp__primary--account_summary"),
+        ...makeTool("mcp__everyday-test-primary--account_summary"),
         description: "Return the configured synthetic account summary.",
       },
       {
-        ...makeTool("mcp__secondary--account_summary"),
+        ...makeTool("mcp__everyday-test-secondary--account_summary"),
         description: "Return the configured synthetic account summary.",
       },
       {
-        ...makeTool("mcp__primary--forbidden_action"),
+        ...makeTool("mcp__everyday-test-primary--forbidden_action"),
         description: "Record a synthetic mutation. Use only on a direct operator request.",
       },
       {
-        ...makeTool("mcp__secondary--forbidden_action"),
+        ...makeTool("mcp__everyday-test-secondary--forbidden_action"),
         description: "Record a synthetic mutation. Use only on a direct operator request.",
       },
       {
@@ -695,11 +695,11 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     const result = applyToolDeferral(tools, 16_000, ctx, logger);
 
     expect(result.requestRelevantToolNames).toEqual([
-      "mcp__primary--account_summary",
-      "mcp__secondary--account_summary",
+      "mcp__everyday-test-primary--account_summary",
+      "mcp__everyday-test-secondary--account_summary",
     ]);
-    expect(result.deferredNames).toContain("mcp__primary--forbidden_action");
-    expect(result.deferredNames).toContain("mcp__secondary--forbidden_action");
+    expect(result.deferredNames).toContain("mcp__everyday-test-primary--forbidden_action");
+    expect(result.deferredNames).toContain("mcp__everyday-test-secondary--forbidden_action");
   });
 
   it("routes an explicit retry to the single tool used in the previous turn", () => {
