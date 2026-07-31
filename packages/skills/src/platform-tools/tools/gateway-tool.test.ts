@@ -599,6 +599,63 @@ describe("gateway tool", () => {
   });
 
   describe("env_set action", () => {
+    it("refuses to replace an existing secret without an explicit overwrite request", async () => {
+      const rpcCall = createMockRpcCall();
+      const approvalGate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      await expect(
+        runWithContext(makeContext(), () =>
+          tool.execute("call-existing-secret", {
+            action: "env_set" as "read",
+            env_key: "OPENAI_API_KEY",
+            env_value: "replacement-test-value",
+          } as any),
+        ),
+      ).rejects.toThrow(/already exists/i);
+
+      expect(rpcCall).toHaveBeenCalledWith("env.list", expect.objectContaining({
+        filter: "OPENAI_API_KEY",
+        _trustLevel: "admin",
+      }));
+      expect(approvalGate.requestApproval).not.toHaveBeenCalled();
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+
+    it("requires central approval for an explicit existing-secret overwrite", async () => {
+      const rpcCall = createMockRpcCall();
+      const approvalGate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      await runWithContext(makeContext(), () =>
+        tool.execute("call-approved-overwrite", {
+          action: "env_set" as "read",
+          env_key: "OPENAI_API_KEY",
+          env_value: "replacement-test-value",
+          overwrite: true,
+        } as any),
+      );
+
+      expect(approvalGate.requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+        action: "env.set",
+        params: {
+          action: "env_set",
+          env_key: "OPENAI_API_KEY",
+          overwrite: true,
+        },
+        fingerprintParams: expect.objectContaining({
+          action: "env_set",
+          env_key: "OPENAI_API_KEY",
+          env_value: "replacement-test-value",
+          overwrite: true,
+        }),
+      }));
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
+        key: "OPENAI_API_KEY",
+        value: "replacement-test-value",
+      }));
+    });
+
     it("repairs a secret-shaped config patch without bypassing central approval", async () => {
       const rpcCall = createMockRpcCall();
       const approvalGate = createApprovedApprovalGate();
