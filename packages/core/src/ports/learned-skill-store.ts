@@ -187,8 +187,10 @@ export interface MentalModelStorePort {
    * without activating (the premature-trust mitigation): a candidate
    * at `promoteAtProofCount=3` stays `candidate` after the 1st and 2nd promote and
    * becomes `active` on the 3rd. An already-`active` skill keeps bumping
-   * `proof_count` but never changes state. `trust_level` is never touched. Scoped
-   * to `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
+   * `proof_count` but never changes state. Terminal `stale`/`archived` rows are
+   * not reinforced; delayed success attribution after demotion or eviction is a
+   * no-op. `trust_level` is never touched. Scoped to `(tenant, agent)`;
+   * unresolved scope fails-closed with `err(...)`.
    */
   promote(id: string, scope: LearningScope, promoteAtProofCount: number): Promise<Result<void, Error>>;
 
@@ -204,10 +206,10 @@ export interface MentalModelStorePort {
    * apply {@link promote}'s proof-bar transition, returning whether a row actually
    * changed. The reuse-attribution carrier holds skill NAMES, not ids;
    * keeping the id derivation in the adapter (one place) avoids leaking the hash
-   * formula to callers. `changed === false` means NO row matched the
-   * `(tenant, agent, name)` (an unknown/evicted name) — the caller must NOT count
-   * it as a promotion or emit a telemetry event (a 0-row write must never be
-   * reported as a success). Scoped
+   * formula to callers. `changed === false` means NO eligible row matched the
+   * `(tenant, agent, name)` (an unknown, stale, or evicted name) — the caller
+   * must NOT count it as a promotion or emit a telemetry event (a 0-row write
+   * must never be reported as a success). Scoped
    * to `(tenant, agent)`; unresolved scope fails-closed with `err(...)`.
    */
   promoteByName(

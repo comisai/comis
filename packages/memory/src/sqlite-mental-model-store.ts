@@ -312,10 +312,13 @@ export function createSqliteMentalModelStore(
   // doc). The threshold is the FIRST bound `?` (promote runs its own bind
   // path, not the shared runTransition); an already-active doc keeps bumping
   // proof_count but the `state = 'candidate'` guard means its state never moves.
+  // Stale/archived rows are terminal and match no row: delayed outcome resolution
+  // cannot reinforce a procedure after demotion or eviction.
   const promoteStmt = db.prepare(
     "UPDATE mental_models SET proof_count = proof_count + 1, " +
       "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
-      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ?",
+      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND id = ? " +
+      "AND state IN ('candidate', 'active') AND evicted_at IS NULL",
   );
   // promoteByName keys on the NAME (not the re-derived id) — a reflected
   // doc is admitted WITH a non-empty topicKey, so re-deriving the id with an assumed
@@ -323,11 +326,13 @@ export function createSqliteMentalModelStore(
   // (the FULL topicKey, not a 16-char truncation), so the name EMBEDS the
   // unique topic_key and is therefore unique per (tenant, agent, kind) — a name-keyed
   // UPDATE resolves the SAME single row get() does, with no truncation-collision risk.
-  // Identical proof-bar CASE to promoteStmt; only the WHERE key differs (name vs id).
+  // Identical proof-bar CASE and terminal-state guard to promoteStmt; only the
+  // WHERE key differs (name vs id).
   const promoteByNameStmt = db.prepare(
     "UPDATE mental_models SET proof_count = proof_count + 1, " +
       "state = CASE WHEN state = 'candidate' AND proof_count + 1 >= ? THEN 'active' ELSE state END, " +
-      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND name = ?",
+      "updated_at = ? WHERE tenant_id = ? AND agent_id = ? AND name = ? " +
+      "AND state IN ('candidate', 'active') AND evicted_at IS NULL",
   );
   // demote: step state back toward stale on a verified failure (soft, monotone).
   // The WHERE pins `state IN ('active','candidate')` — the ONLY states a demote

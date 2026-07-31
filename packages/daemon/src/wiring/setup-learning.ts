@@ -845,7 +845,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // re-emit / double-count). An explicitly trusted owner under single-owner policy is
   // authoritative and invalidates the attributed procedure immediately. Other
   // corrections retain the anti-flap belt: corroboration plus a weakening trend.
-  // Demotion flips active/candidate→stale (KEPT, not deleted — revivable).
+  // Demotion flips active/candidate→stale (kept for provenance, not deleted).
   // Gated default-OFF / no-store ⇒ byte-identical no-op. ----
   deps.eventBus.on("learning:correction_observed", (p) => {
     if (

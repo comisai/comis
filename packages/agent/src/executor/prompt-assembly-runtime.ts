@@ -535,7 +535,17 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // instantiates. When the next user turn supplies the data needed to finish that
         // request, retain the direct match for exactly that one immediate continuation.
         // A carried match is never stored as direct, so it cannot leak into a third turn.
-        const skills = docs.value.filter((d) => d.kind === "skill");
+        // Topic attribution uses the same eligibility contract as the
+        // model-facing learned-skill surface: only read-only candidate/active
+        // procedures can have influenced this turn. Reading the raw store without
+        // this lifecycle filter let a demoted stale skill keep earning proof even
+        // though it was no longer visible to the model.
+        const skills = docs.value.filter(
+          (d) =>
+            d.kind === "skill" &&
+            (d.state === "candidate" || d.state === "active") &&
+            !d.mutating,
+        );
         const surfaced = skills.map((s) => ({
           name: s.name,
           topicTokens: s.structuredBody?.topicTokens,
