@@ -304,6 +304,50 @@ export function enforceProviderModelFailureGrounding(params: {
   };
 }
 
+export interface AgentUpdateNoOpGroundingGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "agent_update_noop_grounding";
+}
+
+/**
+ * Ground the final reply in the terminal agent-update receipt.
+ *
+ * A successful `changed:false` result means the requested binding already
+ * matched captured runtime configuration. Only the latest update receipt is
+ * authoritative: a subsequent applied update or failure owns the final state
+ * and is handled by its matching response path.
+ */
+export function enforceAgentUpdateNoOpGrounding(params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    changed?: boolean;
+  }>;
+  honestResponse: string;
+}): AgentUpdateNoOpGroundingGuardResult {
+  const latestUpdate = (params.toolExecResults ?? [])
+    .findLast(
+      (result) =>
+        result.toolName === "agents_manage"
+        && result.action === "update",
+    );
+  if (
+    latestUpdate?.success !== true
+    || latestUpdate.changed !== false
+    || params.response === params.honestResponse
+  ) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "agent_update_noop_grounding",
+  };
+}
+
 export interface SenderAuthorityGroundingGuardResult {
   response: string;
   corrected: boolean;

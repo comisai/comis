@@ -716,8 +716,9 @@ export interface MessagingEvents {
   };
 
   /** A runtime recovery path fired. Most reasons mean the runner re-entered
-   *  the model after an empty/thinking-only turn; `sender_authority_grounding`
-   *  means the deterministic delivery guard replaced an authority overclaim.
+   *  the model after an empty/thinking-only turn; the grounding reasons mean a
+   *  deterministic delivery guard replaced prose that contradicted runtime
+   *  authority or configuration evidence.
    *  `reason` is the closed recovery class:
    *  `silent_retry` (strip empty turn + re-enter), `lkw_fallback` (retry on the last-known-working model
    *  after a silent auth failure), `continuation_nudge` (a single followUp on a
@@ -726,7 +727,9 @@ export interface MessagingEvents {
    *  request returned a silent-control token without exact-route delivery), or
    *  `locale_fidelity` (one tools-disabled response-locale repair turn), or
    *  `sender_authority_grounding` (a below-admin sender was incorrectly told
-   *  they could authorize admin-only changes).
+   *  they could authorize admin-only changes), or
+   *  `agent_update_noop_grounding` (an unchanged successful agent update was
+   *  contradicted by the final prose).
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -740,7 +743,8 @@ export interface MessagingEvents {
       | "request_tool_nudge"
       | "interactive_silent_sentinel"
       | "locale_fidelity"
-      | "sender_authority_grounding";
+      | "sender_authority_grounding"
+      | "agent_update_noop_grounding";
     succeeded: boolean;
     timestamp: number;
   };

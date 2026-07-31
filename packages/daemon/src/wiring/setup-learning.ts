@@ -391,7 +391,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // A deterministic response guard can replace a model draft after a learned
   // skill has already been attributed. Retain that turn marker until terminal
   // resolution so the corrected draft cannot be judged as successful reuse.
-  const senderAuthorityGroundedTrajectories = new Set<string>();
+  const responseGroundedTrajectories = new Set<string>();
   // Last opt-in tool self-grade per trajectory. Generic tool calls may follow the
   // grader, so the completion seam persists this explicit terminal state after them.
   const terminalToolGrades = new Map<string, "success" | "failure">();
@@ -423,7 +423,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     // both-events DAG turn cannot slip a second chain through.
     if (!markTrajectoryResolved(scope.trajectoryId, resolvedTrajectories)) return;
     const authoritativeResponseCorrection =
-      senderAuthorityGroundedTrajectories.delete(scope.trajectoryId);
+      responseGroundedTrajectories.delete(scope.trajectoryId);
     const unavailableSkills = unavailableSkillsByTrajectory.get(scope.trajectoryId);
     unavailableSkillsByTrajectory.delete(scope.trajectoryId);
     const judgeScope: JudgeScope = unavailableSkills === undefined
@@ -791,14 +791,17 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     );
   });
 
-  // A sender-authority guard is terminal task evidence, not a presentation-only
-  // rewrite. Mark the exact trajectory synchronously; the completion handler
-  // below persists a deterministic corrected outcome before the judge can turn
-  // the guarded final prose into a false success. The marker helper bounds this
-  // independent Set if a turn never reaches its completion event.
+  // A response-grounding guard is terminal task evidence, not a
+  // presentation-only rewrite. Mark the exact trajectory synchronously; the
+  // completion handler below persists a deterministic corrected outcome before
+  // the judge can turn guarded final prose into a false success. The marker
+  // helper bounds this independent Set if a turn never reaches completion.
   deps.eventBus.on("execution:recovery_attempted", (p) => {
     if (!deps.learningOutcomeEnabled(p.agentId)) return;
-    if (p.reason !== "sender_authority_grounding" || !p.succeeded) return;
+    const authoritativeGrounding =
+      p.reason === "sender_authority_grounding"
+      || p.reason === "agent_update_noop_grounding";
+    if (!authoritativeGrounding || !p.succeeded) return;
     const scope = resolveScope({
       agentId: p.agentId,
       traceId: p.traceId,
@@ -807,7 +810,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     if (scope === undefined) return;
     markTrajectoryResolved(
       scope.trajectoryId,
-      senderAuthorityGroundedTrajectories,
+      responseGroundedTrajectories,
     );
   });
 
@@ -842,22 +845,22 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const gradeKey = terminalGradeKey(scope);
     const terminalGrade = terminalToolGrades.get(gradeKey);
     terminalToolGrades.delete(gradeKey);
-    const senderAuthorityGrounded =
-      senderAuthorityGroundedTrajectories.has(scope.trajectoryId);
+    const responseGrounded =
+      responseGroundedTrajectories.has(scope.trajectoryId);
     const executionFailed =
       p.failureStage === "execution"
       && (p.status === "error" || p.status === "timeout");
-    const terminalOutcome = senderAuthorityGrounded
+    const terminalOutcome = responseGrounded
       ? "corrected"
       : executionFailed
         ? "failure"
         : terminalGrade ?? "unknown";
     const terminalSource =
-      senderAuthorityGrounded || executionFailed || terminalGrade !== undefined
+      responseGrounded || executionFailed || terminalGrade !== undefined
         ? "pipeline"
         : "explicit";
     const terminalConfidence =
-      senderAuthorityGrounded || executionFailed || terminalGrade !== undefined
+      responseGrounded || executionFailed || terminalGrade !== undefined
         ? DETERMINISTIC_CONFIDENCE
         : ATTRIBUTION_CONFIDENCE;
     void observeNonFatal(

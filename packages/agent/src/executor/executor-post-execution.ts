@@ -131,12 +131,13 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
+  enforceAgentUpdateNoOpGrounding,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
@@ -1533,6 +1534,52 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "unknown locale pack message id ignored",
     );
   });
+  const agentUpdateNoOpGrounding = enforceAgentUpdateNoOpGrounding({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildAgentUpdateNoOpReply(
+      replyLanguage,
+      params.provider,
+      params.modelId,
+      localeCatalog,
+    ),
+  });
+  if (agentUpdateNoOpGrounding.corrected) {
+    result.response = agentUpdateNoOpGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        provider: params.provider,
+        modelId: params.modelId,
+        errorKind: "validation" as const,
+        hint:
+          "The model contradicted a successful unchanged agents_manage update; inspect "
+          + "the latest update receipt, recalled skills, and final response in comis explain.",
+      },
+      "Agent update no-op response replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.agent_update_noop_grounding_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "configuration_noop",
+        reason: agentUpdateNoOpGrounding.reason,
+        requiredTool: "agents_manage",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "agent_update_noop_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
   const senderAuthorityGrounding = enforceSenderAuthorityGrounding({
     request: msg.text ?? "",
     response: result.response ?? "",

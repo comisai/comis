@@ -34,6 +34,7 @@ import {
   selectPersistentActionEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
+  selectAgentUpdateNoOpReply,
   selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
   selectResponseLocaleUnavailableReply,
@@ -229,6 +230,16 @@ export function buildProviderRequiresModelReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectProviderRequiresModelReply(language, localeCatalog);
+}
+
+/** Honest replacement when the requested agent binding already matches runtime state. */
+export function buildAgentUpdateNoOpReply(
+  language: string | undefined,
+  provider: string,
+  modelId: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectAgentUpdateNoOpReply(language, provider, modelId, localeCatalog);
 }
 
 /** Honest replacement when the model assigns admin authority to a below-admin sender. */

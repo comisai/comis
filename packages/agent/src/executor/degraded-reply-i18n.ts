@@ -28,6 +28,7 @@ export type LocaleMessageId =
   | "persistent_action_evidence_missing"
   | "destructive_action_not_verified"
   | "provider_requires_model"
+  | "agent_update_noop"
   | "sender_authority_overclaim"
   | "vision_unavailable"
   | "response_locale_unavailable";
@@ -80,6 +81,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not change the agent. The requested value names a provider, not an exact model. "
       + "Test that provider's credentials, list its available models, then retry with both "
       + "the provider and an exact model identifier.",
+  agent_update_noop:
+    "No configuration change was needed. This agent already uses",
   sender_authority_overclaim:
     "Your current trust does not authorize admin-only changes. I can use tools available at "
       + "your current trust level, but your approval cannot grant admin access. Installing "
@@ -318,6 +321,16 @@ export function selectProviderRequiresModelReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "provider_requires_model");
+}
+
+/** Honest replacement when the requested agent binding already matches runtime state. */
+export function selectAgentUpdateNoOpReply(
+  locale: string | undefined,
+  provider: string,
+  modelId: string,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return `${catalog.resolve(locale, "agent_update_noop")} ${provider} / ${modelId}.`;
 }
 
 /** Honest replacement when a below-admin sender is described as the authority grantor. */
