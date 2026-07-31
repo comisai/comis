@@ -81,7 +81,46 @@ function assertKnownAgentModel(
   deps: AgentHandlerDeps,
   agentId: string,
   config: PerAgentConfig,
+  patch: Partial<PerAgentConfig>,
 ): void {
+  const providerSuppliedAsModel =
+    patch.provider === undefined &&
+    patch.model !== undefined &&
+    (deps.modelCatalog?.getByProvider(patch.model).length ?? 0) > 0;
+  if (providerSuppliedAsModel) {
+    const hint =
+      `Set config.provider="${patch.model}" and choose an exact modelId from ` +
+      `models_manage action=list with provider="${patch.model}"; leave the agent unchanged ` +
+      `if credentials for that provider are unavailable`;
+    deps.persistDeps?.logger.warn(
+      {
+        method: "agents.update",
+        step: "agent-model-validation",
+        agentId,
+        provider: config.provider,
+        model: patch.model,
+        hint,
+        errorKind: "validation" as const,
+      },
+      "Rejected provider identifier supplied as an agent model",
+    );
+    deps.persistDeps?.container.eventBus.emit("audit:event", {
+      timestamp: systemNowMs(),
+      agentId,
+      tenantId: deps.persistDeps.container.config.tenantId,
+      actionType: "agents.update",
+      classification: "destructive" as const,
+      outcome: "failure" as const,
+      metadata: {
+        entityId: agentId,
+        error: `provider "${patch.model}" was supplied in the model field`,
+      },
+    });
+    throw new PreconditionError(
+      `"${patch.model}" is a provider, not a model identifier. ${hint}.`,
+    );
+  }
+
   if (config.model === "default" || config.provider === "default") return;
 
   const catalogModels = deps.modelCatalog?.getByProvider(config.provider) ?? [];
@@ -518,7 +557,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       // replacement, or durable write. Providers with no catalog or declared
       // models remain open for dynamically discovered local/custom runtimes.
       if (config.model !== undefined || config.provider !== undefined) {
-        assertKnownAgentModel(deps, agentId, parsedConfig);
+        assertKnownAgentModel(deps, agentId, parsedConfig, config);
       }
 
       // Validate oauthProfiles patch — each profileId must exist in the
