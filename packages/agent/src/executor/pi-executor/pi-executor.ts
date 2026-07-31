@@ -2751,7 +2751,9 @@ async function runSessionLocked(
       const promptRunResult = await runPrompt({
         msg: dispatchMessage, session, config, sessionKey, formattedKey, agentId, result,
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
-        bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
+        bridge, dynamicPreamble, responseLocalePolicy,
+        requestRelevantToolNames: deferralResult.requestRelevantToolNames,
+        deferredContext, capabilityIndexResult, inlineMemory,
         unavailablePromptSkills,
         systemPrompt: effectiveSystemPrompt,
         mergedCustomTools,

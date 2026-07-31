@@ -65,6 +65,7 @@ function makeDeferralResult(
     discoverTool: null,
     deferredCount: 0,
     deferredNames: [],
+    requestRelevantToolNames: [],
     ...overrides,
   };
 }

@@ -79,6 +79,8 @@ export interface RunPromptParams {
   bridge: PromptRunnerBridge;
   // Prompt assembly data
   dynamicPreamble: string | undefined;
+  /** Active tools selected specifically because they match the current request. */
+  requestRelevantToolNames?: readonly string[];
   responseLocalePolicy?: ResponseLocalePolicy;
   deferredContext: string | undefined;
   /**

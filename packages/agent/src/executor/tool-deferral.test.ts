@@ -3414,6 +3414,7 @@ describe("applyToolBudgetFit — in-place refinement + discover_tools rebuild", 
       discoverTool: null,
       deferredCount: 0,
       deferredNames: [],
+      requestRelevantToolNames: [],
     };
   }
 
@@ -3540,6 +3541,7 @@ describe("computeWindowFitBudget — shared window-fit budget", () => {
       discoverTool: null,
       deferredCount: 0,
       deferredNames: [],
+      requestRelevantToolNames: [],
     };
     const budget = computeWindowFitBudget({
       profile: {

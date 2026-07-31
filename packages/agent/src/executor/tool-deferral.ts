@@ -125,6 +125,8 @@ export interface ExcludeDeferralResult {
   deferredCount: number;
   /** Names of all tools in the deferral set (before discovery re-inclusion). */
   deferredNames: string[];
+  /** Active tools selected specifically because they match the current request. */
+  requestRelevantToolNames: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +415,7 @@ export function applyToolDeferral(
   scoreConfig?: ToolDiscoveryScoreConfig,
 ): ExcludeDeferralResult {
   const deferredSet = new Set<string>();
+  const requestRelevantToolNames: string[] = [];
   const originalToolMap = new Map<string, ToolDefinition>();
   for (const t of tools) {
     originalToolMap.set(t.name, t);
@@ -486,6 +489,7 @@ export function applyToolDeferral(
         }
       }
       for (const name of activatedNames) deferredSet.delete(name);
+      requestRelevantToolNames.push(...activatedNames);
       logger.debug(
         {
           step: "request-relevant-tool-activation",
@@ -553,7 +557,15 @@ export function applyToolDeferral(
 
   // If nothing deferred, return original tools unchanged
   if (deferredSet.size === 0) {
-    return { activeTools: tools, deferredEntries: [], discoveredTools: [], discoverTool: null, deferredCount: 0, deferredNames: [] };
+    return {
+      activeTools: tools,
+      deferredEntries: [],
+      discoveredTools: [],
+      discoverTool: null,
+      deferredCount: 0,
+      deferredNames: [],
+      requestRelevantToolNames,
+    };
   }
 
   // Partition tools into active and deferred entries (exclude model)
@@ -607,6 +619,7 @@ export function applyToolDeferral(
     discoverTool,
     deferredCount: deferredSet.size,
     deferredNames,
+    requestRelevantToolNames,
   };
 }
 
@@ -986,6 +999,9 @@ export function applyToolBudgetFit(
   deferralResult.deferredNames = [
     ...new Set([...deferralResult.deferredNames, ...fit.newlyDeferred]),
   ];
+  deferralResult.requestRelevantToolNames = deferralResult.requestRelevantToolNames.filter(
+    (name) => survivingNames.has(name),
+  );
   // Observability: enforceToolBudgetFit already emitted the structured WARN
   // (window/budget/droppedCount + actionable hint). The downstream
   // context:budget_computed event (lcd-preflight) then reflects the corrected,

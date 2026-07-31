@@ -37,14 +37,14 @@ const sourcePath = resolve(here, "envelope-wrapper.ts");
 const source = readFileSync(sourcePath, "utf-8");
 
 describe("envelope-wrapper.ts — capability-index threading", () => {
-  it("dynamic preamble uses array-concat [dynamicPreamble, keptCapabilityIndex, keptDeferred].filter(Boolean)", () => {
+  it("dynamic preamble keeps request tool guidance ahead of capability context", () => {
     // Source-grep: structural lock on the array-concat shape. Behavioral
     // verification of the rendered output lives in the renderer unit test
     // (capability-index-context.test.ts) and integration tests.
     // capability-index/deferred flow through the tight-window drop first
     // (kept* aliases); dynamicPreamble stays the first element (never dropped).
     expect(source).toMatch(
-      /\[\s*dynamicPreamble\s*,\s*keptCapabilityIndex\s*,\s*keptDeferred\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
+      /\[\s*dynamicPreamble\s*,\s*requestRelevantToolsContext\s*,\s*keptCapabilityIndex\s*,\s*keptDeferred\s*,?\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
     );
   });
 

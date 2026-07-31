@@ -252,6 +252,7 @@ beforeEach(() => {
     discoveredTools: [],
     deferredEntries: [],
     deferredNames: [],
+    requestRelevantToolNames: [],
     discoverTool: undefined,
   }));
   // Default: the window-aware fit pass is a no-op (active tools already fit) —
