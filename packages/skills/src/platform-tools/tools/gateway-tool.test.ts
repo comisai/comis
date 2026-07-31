@@ -24,7 +24,8 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { createGatewayTool, confirmationRequiredHint } from "./gateway-tool.js";
-import type { ComisLogger } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
+import type { ApprovalGate, ComisLogger, RequestContext } from "@comis/core";
 
 /**
  * Build a Pino-shaped mock logger compatible with `ComisLogger`. The gateway
@@ -111,6 +112,39 @@ function createMockRpcCall() {
     }
     return { stub: true, method, params };
   });
+}
+
+function makeContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: "test-agent",
+        partition: { kind: "agent" },
+      },
+      principal: { principalId: "test-user" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+    },
+    traceId: crypto.randomUUID(),
+    startedAt: 0,
+    trustLevel: "admin",
+    channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
+  };
 }
 
 describe("gateway tool", () => {
@@ -554,6 +588,68 @@ describe("gateway tool", () => {
   });
 
   describe("env_set action", () => {
+    it("pauses the original secret write until central approval resolves", async () => {
+      const rpcCall = createMockRpcCall();
+      let resolveApproval:
+        | ((resolution: {
+            requestId: string;
+            approved: boolean;
+            approvedBy: string;
+            resolvedAt: number;
+          }) => void)
+        | undefined;
+      const requestApproval = vi.fn(() => new Promise((resolve) => {
+        resolveApproval = resolve;
+      }));
+      const approvalGate = { requestApproval } as unknown as ApprovalGate;
+      const factoryWithApproval = createGatewayTool as unknown as (
+        rpc: Parameters<typeof createGatewayTool>[0],
+        logger: ComisLogger,
+        gate: ApprovalGate,
+      ) => ReturnType<typeof createGatewayTool>;
+      const tool = factoryWithApproval(rpcCall, mockLogger, approvalGate);
+
+      const execution = runWithContext(makeContext(), () =>
+        tool.execute("call-central-approval", {
+          action: "env_set" as "read",
+          env_key: "MY_KEY",
+          env_value: "private-test-value",
+        } as any),
+      );
+
+      await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce());
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+      const approval = requestApproval.mock.calls[0]![0] as {
+        params: Record<string, unknown>;
+        fingerprintParams: Record<string, unknown>;
+      };
+      expect(approval.params).toEqual({ action: "env_set", env_key: "MY_KEY" });
+      expect(JSON.stringify(approval.params)).not.toContain("private-test-value");
+      expect(approval.fingerprintParams).toMatchObject({
+        action: "env_set",
+        env_key: "MY_KEY",
+        env_value: "private-test-value",
+      });
+
+      resolveApproval?.({
+        requestId: crypto.randomUUID(),
+        approved: true,
+        approvedBy: "operator",
+        resolvedAt: 1,
+      });
+      const result = await execution;
+
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
+        key: "MY_KEY",
+        value: "private-test-value",
+        _trustLevel: "admin",
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        set: true,
+        key: "MY_KEY",
+      }));
+    });
+
     it("requires confirmation when not confirmed", async () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
