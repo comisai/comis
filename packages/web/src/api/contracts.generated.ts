@@ -6564,6 +6564,73 @@ export const CONTRACTS = {
                     "type": "null"
                   }
                 ]
+              },
+              "lastDeliveryStatus": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "not_requested",
+                      "suppressed",
+                      "pre_send_failed",
+                      "accepted",
+                      "partial",
+                      "rejected",
+                      "unknown"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastDeliveryReason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "heartbeat_token",
+                      "ack_under_threshold",
+                      "empty_reply",
+                      "response_filter",
+                      "no_target",
+                      "dm_policy",
+                      "channel_not_ready",
+                      "quiet_hours",
+                      "visibility_filter",
+                      "duplicate",
+                      "output_guard",
+                      "target_precondition",
+                      "cancelled"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastDeliveryErrorKind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "config",
+                      "network",
+                      "auth",
+                      "validation",
+                      "precondition",
+                      "timeout",
+                      "resource",
+                      "dependency",
+                      "internal",
+                      "platform",
+                      "sandbox_unavailable"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -6575,7 +6642,10 @@ export const CONTRACTS = {
               "lastRunAtMs",
               "lastStatus",
               "lastReason",
-              "lastLlmCalls"
+              "lastLlmCalls",
+              "lastDeliveryStatus",
+              "lastDeliveryReason",
+              "lastDeliveryErrorKind"
             ],
             "additionalProperties": false
           }

@@ -85,6 +85,13 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
           | "task_daily_cap" | "deadline_termination_unestablished" | "task_state_unsettled"
           | "deadline" | "shutdown" | "target_removed" | "feature_disabled" | "maintenance" | null;
         lastLlmCalls: number | null;
+        lastDeliveryStatus: "not_requested" | "suppressed" | "pre_send_failed"
+          | "accepted" | "partial" | "rejected" | "unknown" | null;
+        lastDeliveryReason: "heartbeat_token" | "ack_under_threshold" | "empty_reply" | "response_filter"
+          | "no_target" | "dm_policy" | "channel_not_ready" | "quiet_hours" | "visibility_filter"
+          | "duplicate" | "output_guard" | "target_precondition" | "cancelled" | null;
+        lastDeliveryErrorKind: "config" | "network" | "auth" | "validation" | "precondition"
+          | "timeout" | "resource" | "dependency" | "internal" | "platform" | "sandbox_unavailable" | null;
       }> = [];
 
       for (const [agentId, config] of Object.entries(deps.agents)) {
@@ -106,6 +113,9 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
           lastStatus: terminal?.lastStatus ?? null,
           lastReason: terminal?.lastReason ?? null,
           lastLlmCalls: terminal?.lastLlmCalls ?? null,
+          lastDeliveryStatus: terminal?.lastDeliveryStatus ?? null,
+          lastDeliveryReason: terminal?.lastDeliveryReason ?? null,
+          lastDeliveryErrorKind: terminal?.lastDeliveryErrorKind ?? null,
         });
       }
 

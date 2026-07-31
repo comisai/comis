@@ -12,6 +12,7 @@
  */
 import { z } from "zod";
 import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
+import { ERROR_KINDS } from "../../logging/log-fields.js";
 import { defineContract } from "../types.js";
 
 // ===========================================================================
@@ -53,6 +54,16 @@ export const HeartbeatStatesContract = defineContract({
         "deadline", "shutdown", "target_removed", "feature_disabled", "maintenance",
       ]).nullable(),
       lastLlmCalls: z.number().int().nonnegative().safe().nullable(),
+      lastDeliveryStatus: z.enum([
+        "not_requested", "suppressed", "pre_send_failed",
+        "accepted", "partial", "rejected", "unknown",
+      ]).nullable(),
+      lastDeliveryReason: z.enum([
+        "heartbeat_token", "ack_under_threshold", "empty_reply", "response_filter",
+        "no_target", "dm_policy", "channel_not_ready", "quiet_hours", "visibility_filter",
+        "duplicate", "output_guard", "target_precondition", "cancelled",
+      ]).nullable(),
+      lastDeliveryErrorKind: z.enum(ERROR_KINDS).nullable(),
     }).strict()),
   }),
   scopes: ["admin"] as const,

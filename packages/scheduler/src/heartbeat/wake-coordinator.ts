@@ -183,12 +183,13 @@ type HeartbeatCancellationReason = "shutdown" | "target_removed" | "feature_disa
 type HeartbeatTerminalReason = Extract<HeartbeatTickOutcome, { readonly reason: string }>["reason"]
   | Extract<MonitoringHeartbeatOutcome, { readonly reason: string }>["reason"]
   | HeartbeatCancellationReason;
+type HeartbeatDeliveryReason = Extract<HeartbeatDeliveryOutcome, { readonly reason: string }>["reason"];
 interface HeartbeatAgentTerminalState { terminalCount: number; lastRunAtMs: number;
   lastStatus: HeartbeatTerminalStatus; lastReason: HeartbeatTerminalReason | null;
-  lastLlmCalls: number | null; }
+  lastLlmCalls: number | null; lastDeliveryStatus: HeartbeatDeliveryOutcome["status"] | null;
+  lastDeliveryReason: HeartbeatDeliveryReason | null; lastDeliveryErrorKind: ErrorKind | null; }
 interface HeartbeatTerminalDetails { errorKind?: ErrorKind; cancellationReason?: HeartbeatCancellationReason;
-  outcomeReason?: HeartbeatTerminalReason; llmCalls?: number | null; }
-
+  outcomeReason?: HeartbeatTerminalReason; llmCalls?: number | null; delivery?: HeartbeatDeliveryOutcome; }
 export interface HeartbeatCoordinatorAgentRunInput {
   readonly correlationId: string;
   readonly target: Extract<HeartbeatWakeTarget, { kind: "agent" }>;
@@ -204,11 +205,9 @@ export interface HeartbeatCoordinatorMonitoringRunInput {
   readonly reason: Exclude<HeartbeatWakeReason, "task">;
   readonly signal: AbortSignal;
 }
-
 interface RootRegistrationError {
   readonly errorKind: ErrorKind;
 }
-
 export interface HeartbeatWakeCoordinatorDeps {
   clock: ClockPort;
   timers: TimerPort;
@@ -453,12 +452,10 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
       timestamp: deps.clock.now(),
     });
   }
-
   function terminalStatus(outcome: HeartbeatTickOutcome | MonitoringHeartbeatOutcome):
   "settled" | "skipped" | "aborted" | "unsettled" {
     return outcome.status;
   }
-
   function emitTerminal(
     occurrence: Occurrence,
     status: HeartbeatTerminalStatus,
@@ -474,6 +471,9 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
         lastStatus: status,
         lastReason: details.outcomeReason ?? details.cancellationReason ?? null,
         lastLlmCalls: details.llmCalls ?? null,
+        lastDeliveryStatus: details.delivery?.status ?? null,
+        lastDeliveryReason: details.delivery !== undefined && "reason" in details.delivery ? details.delivery.reason : null,
+        lastDeliveryErrorKind: details.delivery !== undefined && "errorKind" in details.delivery ? details.delivery.errorKind : null,
       };
     }
     deps.eventBus.emit("scheduler:heartbeat_wake_terminal", {
@@ -489,7 +489,6 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
       timestamp: deps.clock.now(),
     });
   }
-
   function selectEligible(state: TargetState, nowMs: number): Occurrence | undefined {
     const task = state.pending.task;
     if (task !== undefined && task.notBeforeMs <= nowMs) return task;
@@ -723,6 +722,7 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
           llmCalls: "metrics" in outcome
             ? outcome.metrics.llmCalls
             : ("checksRun" in outcome || outcome.status === "skipped" ? 0 : null),
+          delivery: "delivery" in outcome ? outcome.delivery : undefined,
         },
       );
     }
