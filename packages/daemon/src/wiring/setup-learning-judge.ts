@@ -94,9 +94,6 @@ export function buildCustomJudgeModelSpec(
 
 /** Per-call output bound for the cheap outcome-judge verdict (a tiny JSON shape). */
 const OUTCOME_JUDGE_MAX_OUTPUT_TOKENS = 1024;
-/** Max user/assistant text messages retained from one judged turn. */
-const JUDGE_TRANSCRIPT_MAX_MESSAGES = 12;
-
 /** The mapped judge seam the resolve consume-seam calls (the verdict's narrow union + the CODE-capped reward). */
 export type OutcomeJudge = (
   input: {
@@ -322,9 +319,13 @@ function resolveOutcomeJudge(
  *    OAuth credential path exists.
  *  - `readTurnTranscript` is built ONLY when SOME agent has it on AND an LCD store is present.
  *
- * The transcript reader maps the LCD rows for the resolved sessionId to the most-recent
- * user/assistant TEXT (mirrors review-session-source.ts: the verbatim text rides
- * `part.metadata.raw.text`), capped at {@link JUDGE_TRANSCRIPT_MAX_MESSAGES} to bound prompt size.
+ * The transcript reader maps the LCD rows for the resolved sessionId to the visible
+ * endpoints of the latest ingest cohort (mirrors review-session-source.ts: the
+ * verbatim text rides `part.metadata.raw.text`). Every message appended by one
+ * after-turn ingest shares its caller-supplied `createdAt`, so the cohort boundary
+ * remains structural even when the SDK inserted internal repair or continuation
+ * exchanges. The first user message and final assistant message are the evidence
+ * the user actually initiated and received.
  */
 export function buildOutcomeJudgeWiring(
   container: OutcomeJudgeWiringContainer,
@@ -394,17 +395,20 @@ export function buildOutcomeJudgeWiring(
               })
               .filter((t) => t.length > 0)
               .join(" ");
-            return text.length > 0 ? `${m.role}: ${text}` : "";
+            return text.length > 0
+              ? { role: m.role, text, createdAt: m.createdAt }
+              : undefined;
           })
-          .filter((l) => l.length > 0);
+          .filter((line): line is NonNullable<typeof line> => line !== undefined);
         if (lines.length === 0) return undefined;
-        const latestUserIndex = lines.findLastIndex((line) => line.startsWith("user: "));
-        if (latestUserIndex < 0) return undefined;
-        const currentTurn = lines.slice(latestUserIndex);
-        const recent = currentTurn.length <= JUDGE_TRANSCRIPT_MAX_MESSAGES
-          ? currentTurn
-          : [currentTurn[0]!, ...currentTurn.slice(-(JUDGE_TRANSCRIPT_MAX_MESSAGES - 1))];
-        return recent.join("\n");
+        const latestCreatedAt = lines[lines.length - 1]!.createdAt;
+        const currentTurn = typeof latestCreatedAt === "number"
+          ? lines.filter((line) => line.createdAt === latestCreatedAt)
+          : lines;
+        const firstUser = currentTurn.find((line) => line.role === "user");
+        const finalAssistant = currentTurn.findLast((line) => line.role === "assistant");
+        if (firstUser === undefined || finalAssistant === undefined) return undefined;
+        return `user: ${firstUser.text}\nassistant: ${finalAssistant.text}`;
       }
     : undefined;
 
