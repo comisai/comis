@@ -17,6 +17,12 @@ const ARABIC_POLICY: ResponseLocalePolicy = {
   enforceLocale: true,
 };
 
+const LATIN_POLICY: ResponseLocalePolicy = {
+  locale: "und-Latn",
+  source: "request",
+  enforceLocale: true,
+};
+
 const RECOVERY_IDENTITY_SALT = "identity-salt-a";
 
 function messageToolResult(input: {
@@ -139,6 +145,7 @@ describe("enforceResponseLocale", () => {
     const outcome = await enforceResponseLocale({
       policy: ARABIC_POLICY,
       response: originalResponse,
+      requestText: "can u save item-7",
       session,
       getVisibleResponse: () => visibleResponse,
       guardProviderDispatch: allowProviderDispatch,
@@ -158,6 +165,16 @@ describe("enforceResponseLocale", () => {
       attribution: "assistant_visible_draft",
       instructionAuthority: "none",
       text: originalResponse,
+    });
+    const serializedRequest = repairPrompt
+      .split("\n")
+      .find((line) => line.startsWith('{"attribution":"current_user_request"'));
+    expect(serializedRequest).toBeDefined();
+    if (serializedRequest === undefined) return;
+    expect(JSON.parse(serializedRequest)).toEqual({
+      attribution: "current_user_request",
+      instructionAuthority: "language_sample_only",
+      text: "can u save item-7",
     });
   });
 
@@ -260,6 +277,74 @@ describe("enforceResponseLocale", () => {
 });
 
 describe("applyResponseLocaleEnforcement", () => {
+  it("fails visibly when the bounded repair still violates the enforced current-request script", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const hebrew = "המודל הפעיל הוא openai gpt-4.1-nano";
+    const session = {
+      agent: { state: { tools: [] } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: hebrew }] }],
+      prompt: vi.fn(async () => {
+        session.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: hebrew }],
+        });
+      }),
+    };
+    const result: Record<string, unknown> = {
+      response: hebrew,
+      finishReason: "stop",
+    };
+    const params = {
+      responseLocalePolicy: LATIN_POLICY,
+      result,
+      msg: { text: "what model are u actually using now" },
+      session,
+      config: { localePacks: {} },
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result).toMatchObject({
+      response:
+        "I couldn't produce a response in the language and writing system requested for this message. Please retry or select a model that supports it.",
+      finishReason: "error",
+      terminalErrorKind: "validation",
+      errorContext: {
+        errorType: "ResponseLocaleMismatch",
+        retryable: true,
+      },
+    });
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(session.prompt).toHaveBeenCalledWith(
+      expect.stringContaining("what model are u actually using now"),
+      { expandPromptTemplates: false, source: "extension" },
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        expectedScript: "Latn",
+        actualScript: "Hebr",
+      }),
+      "Response locale remained mismatched after repair",
+    );
+  });
+
   it("preserves the original response when locale repair records an empty provider error", async () => {
     let now = 10;
     const eventBus = new TypedEventBus();
