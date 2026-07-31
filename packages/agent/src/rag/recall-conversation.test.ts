@@ -39,7 +39,6 @@ describe("selectRecentUserTurns", () => {
       "here is the credential",
       "connect to it",
       "now actually use it",
-      "now actually use it",
     ]);
   });
 

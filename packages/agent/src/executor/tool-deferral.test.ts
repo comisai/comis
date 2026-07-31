@@ -657,6 +657,11 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
         ...makeTool("mcp__primary--forbidden_action"),
         description: "Record a synthetic mutation. Use only on a direct operator request.",
       },
+      {
+        ...makeTool("mcp_login"),
+        description:
+          "Start the OAuth login flow for an MCP server. Use after connecting an OAuth server.",
+      },
     ] as unknown as ToolDefinition[];
     for (const tool of tools) {
       registerToolMetadata(tool.name, { searchHint: tool.description ?? "" });

@@ -499,23 +499,22 @@ export function applyToolDeferral(
       documents,
     );
     const lexicalTopScore = lexicalMatches[0]?.score ?? 0;
-    const strongest = directMutationTool === undefined
-      ? lexicalMatches.find(
-          (match) =>
-            lexicalTopScore > 0
-            && match.score / lexicalTopScore
-              >= DEFAULT_TOOL_DISCOVERY_SCORES.minBm25Score,
+    const strongestMatches = directMutationTool === undefined
+      ? lexicalMatches.filter(
+          (match) => lexicalTopScore > 0 && match.score === lexicalTopScore,
         )
-      : { name: directMutationTool.name };
-    if (strongest !== undefined) {
-      const selectedNames = new Set([strongest.name]);
-      const relatedNames = getToolMetadata(strongest.name)?.coDiscoverWith ?? [];
-      for (const relatedName of relatedNames) {
-        if (
-          tools.some((tool) => tool.name === relatedName)
-          && !policyDeferredSet.has(relatedName)
-        ) {
-          selectedNames.add(relatedName);
+      : [{ name: directMutationTool.name }];
+    if (strongestMatches.length > 0) {
+      const selectedNames = new Set(strongestMatches.map((match) => match.name));
+      for (const match of strongestMatches) {
+        const relatedNames = getToolMetadata(match.name)?.coDiscoverWith ?? [];
+        for (const relatedName of relatedNames) {
+          if (
+            tools.some((tool) => tool.name === relatedName)
+            && !policyDeferredSet.has(relatedName)
+          ) {
+            selectedNames.add(relatedName);
+          }
         }
       }
       let promotedCount = 0;
@@ -1103,6 +1102,7 @@ const TOOL_SEARCH_STOP_WORDS = new Set([
   "this",
   "to",
   "u",
+  "use",
   "want",
   "with",
   "you",

@@ -7,6 +7,17 @@ import {
 
 const RECENT_USER_TURN_COUNT = 8;
 
+function selectBoundedDistinctTurns(turns: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const distinct: string[] = [];
+  for (const turn of turns) {
+    if (seen.has(turn)) continue;
+    seen.add(turn);
+    distinct.push(turn);
+  }
+  return distinct.slice(-RECENT_USER_TURN_COUNT);
+}
+
 interface SessionEntryLike {
   readonly type?: unknown;
   readonly customType?: unknown;
@@ -85,7 +96,7 @@ export function selectRecentUserTurns(
     });
   }
   if (sawValidProvenance) {
-    return [...batches.values()]
+    const turns = [...batches.values()]
       .filter((batch) => batch.chunks.size === batch.chunkCount)
       .sort((left, right) =>
         left.recordedAt - right.recordedAt
@@ -99,8 +110,8 @@ export function selectRecentUserTurns(
           .join("\n")
           .trim(),
       )
-      .filter((text) => text.length > 0)
-      .slice(-RECENT_USER_TURN_COUNT);
+      .filter((text) => text.length > 0);
+    return selectBoundedDistinctTurns(turns);
   }
 
   const userTurns: string[] = [];
@@ -109,5 +120,5 @@ export function selectRecentUserTurns(
     const text = extractText(message.content).trim();
     if (text.length > 0) userTurns.push(text);
   }
-  return userTurns.slice(-RECENT_USER_TURN_COUNT);
+  return selectBoundedDistinctTurns(userTurns);
 }
