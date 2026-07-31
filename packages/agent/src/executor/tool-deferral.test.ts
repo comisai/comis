@@ -590,6 +590,10 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     const logger = createMockLogger();
     const tools = [
       {
+        ...makeTool("mcp_manage"),
+        description: "Connect and inspect external MCP account integrations.",
+      },
+      {
         ...makeTool("mcp__synthetic--account_summary"),
         description: "Return the configured synthetic account summary.",
       },
@@ -607,6 +611,10 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     });
     registerToolMetadata("mcp__synthetic--forbidden_action", {
       searchHint: "Record a synthetic mutation. Use only on a direct operator request.",
+    });
+    registerToolMetadata("mcp_manage", {
+      isReadOnly: false,
+      searchHint: "mcp server connect inspect check external integration account access credential",
     });
     const ctx = makeContext({
       trustLevel: "admin",
@@ -630,6 +638,7 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).toContain(
       "mcp__synthetic--forbidden_action",
     );
+    expect(result.deferredNames).toContain("mcp_manage");
     expect(result.deferredNames).toContain("tokens_manage");
   });
 
