@@ -921,6 +921,40 @@ describe("createPiEventBridge", () => {
       expect(JSON.stringify(endEmit![1])).not.toContain(secret);
     });
 
+    it("redacts arbitrary credential values nested in a failed MCP env map", () => {
+      const { listener } = createPiEventBridge(deps);
+      const secret = "synthetic-credential-value";
+      listener({
+        type: "tool_execution_start",
+        toolName: "mcp_manage",
+        toolCallId: "tc-mcp-env-secret",
+        args: {
+          action: "connect",
+          env: {
+            SERVICE_CREDENTIAL: secret,
+          },
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "mcp_manage",
+        "tc-mcp-env-secret",
+        true,
+        {
+          message: "[invalid_value] missing for action='connect': server_name",
+        },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-mcp-env-secret",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].argsPreview.env).toBe("<redacted>");
+      expect(endEmit![1].params.env).toBe("<redacted>");
+      expect(JSON.stringify(endEmit![1])).not.toContain(secret);
+    });
+
     it("redacts the value in a failed secret-shaped config patch", () => {
       const { listener } = createPiEventBridge(deps);
       const secret = "private-test-value";
