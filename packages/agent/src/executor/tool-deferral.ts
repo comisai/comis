@@ -479,10 +479,20 @@ export function applyToolDeferral(
       !policyDeferredSet.has(tool.name)
       && matchesToolMutationRequest(tool.name, requestText)
     );
-    const documents = eligibleTools.map((tool) => {
+    const currentRequestTerms = new Set(tokenize(requestText));
+    const documents = eligibleTools.flatMap((tool) => {
       const metadata = getToolMetadata(tool.name);
       const searchText = metadata?.searchHint ?? resolveToolDescription(tool);
-      return { name: tool.name, text: searchText };
+      if (
+        directMutationTool === undefined
+        && metadata?.isReadOnly === false
+        && !tokenize(`${searchText} ${tool.name}`).some((term) =>
+          currentRequestTerms.has(term)
+        )
+      ) {
+        return [];
+      }
+      return [{ name: tool.name, text: searchText }];
     });
     const lexicalMatches = bm25Score(
       requestRelevanceText.slice(0, MAX_EMBED_QUERY_CHARS),
