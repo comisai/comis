@@ -146,6 +146,9 @@ describe("createHeartbeatHandlers", () => {
             lastStatus: "skipped",
             lastReason: "empty_file",
             lastLlmCalls: 0,
+            lastDeliveryStatus: "suppressed",
+            lastDeliveryReason: "quiet_hours",
+            lastDeliveryErrorKind: null,
           }
         : undefined);
       const deps = makeDeps({
@@ -170,6 +173,9 @@ describe("createHeartbeatHandlers", () => {
         lastStatus: "skipped",
         lastReason: "empty_file",
         lastLlmCalls: 0,
+        lastDeliveryStatus: "suppressed",
+        lastDeliveryReason: "quiet_hours",
+        lastDeliveryErrorKind: null,
       });
       expect(result.agents[1]).toEqual({
         agentId: "agent-disabled",
@@ -181,6 +187,9 @@ describe("createHeartbeatHandlers", () => {
         lastStatus: null,
         lastReason: null,
         lastLlmCalls: null,
+        lastDeliveryStatus: null,
+        lastDeliveryReason: null,
+        lastDeliveryErrorKind: null,
       });
       expect(phase).toHaveBeenCalledOnce();
       expect(phase).toHaveBeenCalledWith("agent-enabled");

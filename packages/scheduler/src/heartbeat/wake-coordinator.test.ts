@@ -372,6 +372,33 @@ describe("heartbeat wake coordinator", () => {
       lastStatus: "skipped",
       lastReason: "empty_file",
       lastLlmCalls: 0,
+      lastDeliveryStatus: null,
+      lastDeliveryReason: null,
+      lastDeliveryErrorKind: null,
+    });
+  });
+
+  it("retains the settled delivery verdict for one-call heartbeat diagnosis", async () => {
+    const runAgent = vi.fn(async (input: HeartbeatCoordinatorAgentRunInput) => ok({
+      ...settled(input),
+      delivery: { status: "suppressed" as const, reason: "quiet_hours" as const },
+    }));
+    const { coordinator, timers } = makeCoordinator({ runAgent });
+
+    coordinator.submitWake({
+      target: target(),
+      reason: "manual",
+      timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    timers.advance(0);
+    await flushDispatch();
+
+    expect(coordinator.getAgentTerminalState("agent_a")).toMatchObject({
+      lastStatus: "settled",
+      lastLlmCalls: 1,
+      lastDeliveryStatus: "suppressed",
+      lastDeliveryReason: "quiet_hours",
+      lastDeliveryErrorKind: null,
     });
   });
 
