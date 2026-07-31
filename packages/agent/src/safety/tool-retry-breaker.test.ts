@@ -28,6 +28,39 @@ describe("tool retry breaker", () => {
     return createToolRetryBreaker(defaultConfig);
   }
 
+  describe("approval outcomes", () => {
+    it("does not treat repeated human approval denials as tool unavailability", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 2,
+        maxToolFailures: 2,
+        maxConsecutiveErrorPatterns: 2,
+        suggestAlternatives: false,
+      });
+      const denial =
+        "[permission_denied] Action denied: mcp.connect was not approved "
+        + "Hint: Approval request timed out.";
+
+      expect(breaker.recordResult(
+        "mcp_manage",
+        { server_name: "primary" },
+        false,
+        denial,
+      )).toBeUndefined();
+      expect(breaker.recordResult(
+        "mcp_manage",
+        { server_name: "secondary" },
+        false,
+        denial,
+      )).toBeUndefined();
+
+      expect(breaker.beforeToolCall(
+        "mcp_manage",
+        { server_name: "primary" },
+      ).block).toBe(false);
+      expect(breaker.getBlockedTools()).toEqual([]);
+    });
+  });
+
   describe("beforeToolCall", () => {
     it("allows first call to any tool", () => {
       const breaker = createBreaker();
