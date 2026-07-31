@@ -897,6 +897,26 @@ describe("obs-explain-heuristics", () => {
     expect(JSON.stringify(r)).not.toContain("../");
   });
 
+  it("explains a background mutation that ran but did not persist", () => {
+    const r = rootCause(makeSignals({
+      failures: [{
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "background_task",
+        transportOk: false,
+        errorKind: "config",
+        failureCode: "mutation_not_persisted",
+        resultDigest: "",
+        resultBytes: 0,
+        errorPreview: "",
+      }],
+    }));
+
+    expect(r?.code).toBe("mutation_not_persisted");
+    expect(r?.detail).toMatch(/runtime.*not persisted/iu);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/config/iu);
+  });
+
   it("background pending outranks an incidental recall miss", () => {
     const r = rootCause(makeSignals({
       endReason: "background_pending",

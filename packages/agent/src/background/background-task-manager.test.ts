@@ -503,6 +503,29 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("projects a runtime-only mutation as a content-free degraded completion", () => {
+      const result = manager.promote("mcp_manage", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
+      if (!result.ok) return;
+      manager.complete(result.value, {
+        content: [{ type: "text", text: "sensitive result body" }],
+        details: {
+          persistence: "runtime_only",
+          warning: "sensitive persistence warning",
+        },
+      });
+
+      const call = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        ([event]) => event === "background_task:completed",
+      );
+      expect(call?.[1]).toMatchObject({
+        resultOutcome: "degraded",
+        persistence: "runtime_only",
+        errorKind: "config",
+        failureCode: "mutation_not_persisted",
+      });
+      expect(JSON.stringify(call?.[1])).not.toMatch(/sensitive/iu);
+    });
+
     it("atomically acknowledges an explicitly read terminal result", () => {
       const result = manager.promote(
         "tool",

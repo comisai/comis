@@ -268,6 +268,33 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     expect(data.origin).toBeUndefined();
   });
 
+  it("completed: retains a content-free degraded persistence verdict and strips result bodies", () => {
+    const data = translatePayload("background_task:completed", {
+      agentId: "a1",
+      taskId: "t-2",
+      toolName: "mcp_manage",
+      durationMs: 4200,
+      resultOutcome: "degraded",
+      persistence: "runtime_only",
+      errorKind: "config",
+      failureCode: "mutation_not_persisted",
+      result: "sensitive result body",
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 200,
+    });
+
+    expect(data).toEqual({
+      taskId: "t-2",
+      toolName: "mcp_manage",
+      durationMs: 4200,
+      resultOutcome: "degraded",
+      persistence: "runtime_only",
+      errorKind: "config",
+      failureCode: "mutation_not_persisted",
+    });
+    expect(JSON.stringify(data)).not.toContain("sensitive result body");
+  });
+
   it("failed: omits the error body (H1) — only ids + duration cross the bus", () => {
     const data = translatePayload("background_task:failed", {
       agentId: "a1",

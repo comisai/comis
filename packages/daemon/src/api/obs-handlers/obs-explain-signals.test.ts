@@ -1692,6 +1692,51 @@ describe("toolStats fidelity", () => {
       }),
     ]);
   });
+
+  it("replaces a promoted success with a degraded runtime-only background completion", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.promoted",
+        seq: 1,
+        data: { taskId: "task-mutation", toolName: "mcp_manage" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        data: { toolName: "mcp_manage", toolCallId: "call-1", success: true },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.completed",
+        seq: 3,
+        data: {
+          taskId: "task-mutation",
+          toolName: "mcp_manage",
+          resultOutcome: "degraded",
+          persistence: "runtime_only",
+          errorKind: "config",
+          failureCode: "mutation_not_persisted",
+        },
+      },
+    ]);
+
+    expect(s.toolStats.mcp_manage).toEqual({
+      ok: 0,
+      failed: 1,
+      topErrorKind: "config",
+    });
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "background_task",
+        errorKind: "config",
+        failureCode: "mutation_not_persisted",
+      }),
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
