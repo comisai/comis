@@ -186,7 +186,7 @@ describe("structured inbound conversation projection", () => {
     ]);
     expect(result.value.messages.map(textOf)).toEqual([
       "[telegram] sender-a (2026-09-10T00:26:40.001Z):\nfirst physical message",
-      "טיוטה",
+      "first answer",
       "[telegram] sender-b (2026-09-10T00:26:40.002Z):\n"
         + "<response-locale-repair locale=\"und-Latn\">typed by the user",
       "second answer",
