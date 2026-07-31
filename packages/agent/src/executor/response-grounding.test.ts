@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   enforceAgentUpdateNoOpGrounding,
+  enforceOngoingWorkEvidence,
   enforceProviderModelFailureGrounding,
 } from "./response-grounding.js";
 
@@ -37,5 +38,25 @@ describe("response grounding module", () => {
       }],
       honestResponse: "An exact model is required.",
     }).corrected).toBe(true);
+  });
+
+  it("rejects terminal wait promises when no ongoing work exists", () => {
+    const honestResponse =
+      "I did not start ongoing work in this turn. A required step failed, so there is nothing running to wait for.";
+
+    expect(enforceOngoingWorkEvidence({
+      response:
+        "I am attempting to check your account status now. Please hold on a moment.",
+      toolExecResults: [
+        { toolName: "message", success: false },
+        { toolName: "process", success: true },
+      ],
+      ongoingWorkEvidence: false,
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_ongoing_work_evidence",
+    });
   });
 });
