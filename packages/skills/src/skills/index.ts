@@ -33,7 +33,6 @@
 // Registry
 export { createSkillRegistry } from "./registry/skill-registry/index.js";
 export type {
-  PromptSkillInventoryEntry,
   SkillRegistry,
   SkillWatcherHandle,
 } from "./registry/skill-registry/index.js";
