@@ -60,6 +60,25 @@ function readMutationConfig(args: unknown): Record<string, unknown> | undefined 
   return parsed.value as Record<string, unknown>;
 }
 
+function exactBindingRetryInstruction(
+  requestedProvider: string | undefined,
+  requestedModel: string | undefined,
+): string {
+  if (requestedProvider !== undefined && requestedModel !== undefined) {
+    return (
+      ` Retry exactly with config.provider=${JSON.stringify(requestedProvider)} and ` +
+      `config.model=${JSON.stringify(requestedModel)}.`
+    );
+  }
+  if (requestedProvider !== undefined) {
+    return ` Retry exactly with config.provider=${JSON.stringify(requestedProvider)}.`;
+  }
+  if (requestedModel !== undefined) {
+    return ` Retry exactly with config.model=${JSON.stringify(requestedModel)}.`;
+  }
+  return "";
+}
+
 function explicitModelMutationVerdict(
   sourceText: string | undefined,
   context: unknown,
@@ -111,7 +130,9 @@ function explicitModelMutationVerdict(
         block: true,
         reason:
           `The user explicitly requested model identifier "${requestedModel}", but this call proposes ` +
-          `"${proposedModel}". Never substitute a different model identifier. Retry with the exact ` +
+          `"${proposedModel}". Never substitute a different model identifier.` +
+          exactBindingRetryInstruction(requestedProvider, requestedModel) +
+          " Retry with the exact " +
           "identifier; if it is unavailable, report that without changing configuration.",
       };
     }
@@ -122,7 +143,9 @@ function explicitModelMutationVerdict(
       block: true,
       reason:
         `The user explicitly requested provider identifier "${requestedProvider}", but this call proposes ` +
-        `"${proposedProvider ?? "<omitted>"}". Never omit or substitute an explicit provider identifier. ` +
+        `"${proposedProvider ?? "<omitted>"}". Never omit or substitute an explicit provider identifier.` +
+        exactBindingRetryInstruction(requestedProvider, requestedModel) +
+        " " +
         "Retry with the exact provider and model binding; if it is unavailable, report that without changing configuration.",
     };
   }
