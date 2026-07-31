@@ -74,8 +74,9 @@ export type {
   MessageLifecycleDiagnosticEvidence,
 } from "./message-lifecycle-diagnostics.js";
 
-/** Per-read line cap (mirrors observability's MAX_TRAJECTORY_RUNTIME_EVENTS
- * intent at a report-appropriate scale — a post-mortem never needs more). */
+/** Per-read record cap (mirrors observability's MAX_TRAJECTORY_RUNTIME_EVENTS
+ * intent at a report-appropriate scale). The newest records are retained so a
+ * long-lived session remains diagnosable after it crosses this bound. */
 const MAX_RECORDS = 5_000;
 
 /**
@@ -576,7 +577,8 @@ function resolveMetadataFile(sessionFile: string): string {
 /**
  * Bounded soft-fail JSONL read: every parsed line is returned (NO envelope
  * filtering), malformed lines are skipped, a missing/unreadable file yields
- * `[]`, and at most MAX_RECORDS lines are accepted.
+ * `[]`, and at most the newest MAX_RECORDS parsed records are returned in
+ * chronological order.
  */
 function readJsonlBounded(file: string): Array<Record<string, unknown>> {
   let raw: string;
@@ -586,8 +588,10 @@ function readJsonlBounded(file: string): Array<Record<string, unknown>> {
     return []; // Missing/unreadable — soft-fail.
   }
   const out: Array<Record<string, unknown>> = [];
-  for (const line of raw.split("\n")) {
-    if (out.length >= MAX_RECORDS) break;
+  const lines = raw.split("\n");
+  for (let index = lines.length - 1; index >= 0 && out.length < MAX_RECORDS; index--) {
+    const line = lines[index];
+    if (line === undefined) continue;
     if (line.trim().length === 0) continue;
     try {
       out.push(JSON.parse(line) as Record<string, unknown>);
@@ -595,7 +599,7 @@ function readJsonlBounded(file: string): Array<Record<string, unknown>> {
       // Skip malformed JSONL lines per standard convention.
     }
   }
-  return out;
+  return out.reverse();
 }
 
 function boundedTaskIdentifier(value: unknown): string | undefined {
