@@ -759,7 +759,7 @@ describe("executeAndDeliver", () => {
       expect(finalize).toHaveBeenCalledWith({ kind: "aborted", reason: "user_cancel" });
     });
 
-    it("cleans activity after a delivered background handoff while diagnostics stay pending", async () => {
+    it("removes activity without a success paint after a delivered background handoff", async () => {
       const eventBus = makeEventBus();
       const finalize = vi.fn(async () => undefined);
       const deps = makeDeps({
@@ -790,9 +790,8 @@ describe("executeAndDeliver", () => {
       ));
 
       expect(finalize).toHaveBeenCalledWith({
-        kind: "success",
-        trivial: false,
-        delivery: expect.objectContaining({ ok: true, deliveredChunks: 1 }),
+        kind: "silent",
+        reason: "BACKGROUND_PENDING",
       });
       expect(eventBus.emit).toHaveBeenCalledWith(
         "diagnostic:message_processed",
