@@ -275,6 +275,7 @@ export async function connectServer(
       qualifiedName: qualifyToolName(config.name, tool.name),
       description: tool.description,
       inputSchema: tool.inputSchema as Record<string, unknown>,
+      ...(tool.annotations !== undefined && { annotations: tool.annotations }),
     }));
 
     const connection: McpConnection = {

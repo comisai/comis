@@ -31,7 +31,10 @@ function selectBoundedDistinctTurns(turns: readonly string[]): string[] {
     seen.add(turn);
     distinct.push(turn);
   }
-  return distinct.slice(-RECENT_USER_TURN_COUNT);
+  if (distinct.length <= RECENT_USER_TURN_COUNT) return distinct;
+  const intentAnchor = distinct[0];
+  if (intentAnchor === undefined) return [];
+  return [intentAnchor, ...distinct.slice(-(RECENT_USER_TURN_COUNT - 1))];
 }
 
 interface SessionEntryLike {

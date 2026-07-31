@@ -333,8 +333,16 @@ export function mcpToolsToAgentTools(
     const serverName = extractServerName(tool.qualifiedName);
     const sanitizedName = sanitizeMcpToolName(tool.qualifiedName);
 
-    // Register full description as searchHint for BM25 scoring in discover_tools
-    registerToolMetadata(sanitizedName, { searchHint: tool.description ?? "" });
+    // Server-authored annotations are untrusted hints. Explicit mutation or
+    // destruction claims may conservatively suppress incidental routing, but
+    // a read-only claim never grants trust or relaxes approval/security policy.
+    const externalMutationHint =
+      tool.annotations?.readOnlyHint === false
+      || tool.annotations?.destructiveHint === true;
+    registerToolMetadata(sanitizedName, {
+      searchHint: tool.description ?? "",
+      ...(externalMutationHint && { externalMutationHint: true }),
+    });
 
     return {
       name: sanitizedName,

@@ -15,6 +15,7 @@ import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
 
@@ -284,6 +285,9 @@ export interface McpToolDefinition {
   readonly description?: string;
   /** JSON Schema describing input parameters. */
   readonly inputSchema: Record<string, unknown>;
+  /** Server-authored MCP hints. These may tighten routing but never grant
+   * read-only trust, authority, or an approval bypass. */
+  readonly annotations?: ToolAnnotations;
 }
 
 /** Result of calling an MCP tool. */

@@ -73,7 +73,7 @@ export interface ToolFailureFallback {
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
-// @optional-field-count: 20 optional fields — this is a side-channel metadata
+// @optional-field-count: 21 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
 // schema, MCP-export policy, capability routing, activity hints, failure
@@ -87,6 +87,10 @@ export interface ComisToolMetadata {
   maxResultSizeChars?: number;
   /** Tool does not mutate state -- safe for optimistic execution. */
   isReadOnly?: boolean;
+  /** An external capability explicitly warned that the tool may mutate state.
+   * This is restrictive routing evidence only: its absence or false value
+   * never grants read-only trust or bypasses approval/security policy. */
+  externalMutationHint?: boolean;
   /** Read-only actions on a tool that otherwise supports mutation. Values must
    * also appear in `validActions`; known valid actions outside this set mutate. */
   readOnlyActions?: readonly string[];

@@ -518,7 +518,7 @@ export function applyToolDeferral(
       const searchText = metadata?.searchHint ?? resolveToolDescription(tool);
       if (
         directMutationTool === undefined
-        && metadata?.isReadOnly === false
+        && (metadata?.isReadOnly === false || metadata?.externalMutationHint === true)
         && !tokenize(`${searchText} ${tool.name}`).some((term) =>
           currentRequestTerms.has(term)
         )

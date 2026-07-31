@@ -679,6 +679,7 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
       capabilityClass: "nano",
       requestText: "use both and tell me whats different",
       requestRelevanceText: [
+        "i want u to be able to check my test account yourself",
         "connect a second one",
         "use both and tell me whats different",
         "connect to it",
