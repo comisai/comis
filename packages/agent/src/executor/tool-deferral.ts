@@ -72,6 +72,8 @@ export interface DeferralContext {
   trustLevel: string;
   channelType?: string;
   capabilityClass: CapabilityClass;
+  /** Current user-authored request used for content-free capability routing. */
+  requestText?: string;
   recentlyUsedToolNames: Set<string>;
   toolNames: string[];
   /** Tool names demoted by lifecycle management. When provided, these tools
@@ -426,6 +428,7 @@ export function applyToolDeferral(
       }
     }
   }
+  const policyDeferredSet = new Set(deferredSet);
 
   // MCP tools are ACTIVE BY DEFAULT. Empirically, the model rarely invokes
   // the server-side discovery tool (`tool_search_tool_regex`) and falls back
@@ -447,6 +450,50 @@ export function applyToolDeferral(
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
         deferredSet.add(t.name);
       }
+    }
+  }
+
+  // Nano models often fail to invoke discover_tools even when the current
+  // request names a connected capability plainly. Keep the strongest lexical
+  // match active for this turn, along with its declared workflow peers. Trust
+  // and channel gates remain authoritative: a tool deferred by a rule above is
+  // never promoted here. Later lifecycle and operator overrides also retain
+  // precedence.
+  if (
+    deferralContext.capabilityClass === "nano"
+    && deferralContext.requestText?.trim()
+  ) {
+    const eligibleTools = tools.filter((tool) =>
+      deferredSet.has(tool.name) && !policyDeferredSet.has(tool.name)
+    );
+    const documents = eligibleTools.map((tool) => {
+      const metadata = getToolMetadata(tool.name);
+      const searchText = metadata?.searchHint === undefined
+        ? resolveToolDescription(tool)
+        : `${resolveToolDescription(tool)} ${metadata.searchHint}`;
+      return { name: tool.name, text: searchText };
+    });
+    const strongest = bm25Score(
+      deferralContext.requestText.slice(0, MAX_EMBED_QUERY_CHARS),
+      documents,
+    ).find((match) => match.score >= DEFAULT_TOOL_DISCOVERY_SCORES.minBm25Score);
+    if (strongest !== undefined) {
+      const activatedNames = new Set([strongest.name]);
+      const relatedNames = getToolMetadata(strongest.name)?.coDiscoverWith ?? [];
+      for (const relatedName of relatedNames) {
+        if (eligibleTools.some((tool) => tool.name === relatedName)) {
+          activatedNames.add(relatedName);
+        }
+      }
+      for (const name of activatedNames) deferredSet.delete(name);
+      logger.debug(
+        {
+          step: "request-relevant-tool-activation",
+          activatedCount: activatedNames.size,
+          activatedNames: [...activatedNames],
+        },
+        "Request-relevant tools kept active",
+      );
     }
   }
 

@@ -585,6 +585,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       ?? "external",
     channelType: msg.channelType,
     capabilityClass,
+    requestText: msg.text,
     recentlyUsedToolNames: recentlyUsedTools,
     toolNames: mergedCustomTools.map(t => t.name),
     lifecycleDemotedNames,
