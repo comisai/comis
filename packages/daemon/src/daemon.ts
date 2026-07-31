@@ -658,7 +658,7 @@ function createHotAdd(deps: {
 /**
  * Factory: hot-remove agent closure. Mirror of createHotAdd.
  */
-function createHotRemove(deps: {
+export function createHotRemove(deps: {
   channels: PostChannelsBootContext;
 }): (agentId: string) => Promise<void> {
   const {
