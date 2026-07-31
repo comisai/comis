@@ -103,7 +103,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   models_manage: "List models and test availability",
   providers_manage: "Manage LLM provider endpoints (admin)",
   skills_manage: "Manage skill registry entries (admin)",
-  mcp_manage: "Manage MCP server connections (admin)",
+  mcp_manage: "Connect an external account, then check account or service access through MCP (admin)",
   heartbeat_manage: "Manage agent heartbeat schedules (admin)",
   // Discovery
   discover_tools: "Find MCP/deferred tools by keyword",
@@ -221,7 +221,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   mcp_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage MCP server connections: list, connect, disconnect, status.";
+    const base =
+      "Connect an external account, then check account or service access through MCP: "
+        + "list, connect, disconnect, status.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   heartbeat_manage: (ctx: ToolDescriptionContext): string => {

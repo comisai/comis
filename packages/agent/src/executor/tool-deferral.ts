@@ -1060,8 +1060,42 @@ interface BM25Document {
   text: string;
 }
 
+const TOOL_SEARCH_STOP_WORDS = new Set([
+  "a",
+  "able",
+  "an",
+  "and",
+  "be",
+  "can",
+  "could",
+  "do",
+  "for",
+  "i",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "please",
+  "the",
+  "this",
+  "to",
+  "u",
+  "want",
+  "with",
+  "you",
+  "your",
+  "yourself",
+]);
+
 function tokenize(text: string): string[] {
-  return text.toLowerCase().replace(/[^a-z0-9_]/g, " ").split(/\s+/).filter(Boolean);
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 0 && !TOOL_SEARCH_STOP_WORDS.has(token));
 }
 
 function bm25Score(
