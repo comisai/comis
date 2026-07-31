@@ -605,8 +605,8 @@ export function assembleIncidentReport(
     ...(signals.subagentDeliverySkipped !== undefined
       ? { subagentDeliverySkipped: signals.subagentDeliverySkipped }
       : {}),
-    // The silent-failure recovery re-drives (model re-entry) — previously
-    // log-only, so explain could not show a session re-entered the model.
+    // Runtime recovery events — model re-entry or a deterministic response
+    // correction — were previously log-only and invisible in explain.
     ...(signals.recoveries !== undefined ? { recoveries: signals.recoveries } : {}),
     ...(signals.backgroundRecovery !== undefined
       ? { backgroundRecovery: signals.backgroundRecovery }

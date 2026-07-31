@@ -1566,6 +1566,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         requiredTrust: "admin",
       },
     });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "sender_authority_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
   }
   const delegationEvidence = enforceCurrentTurnDelegationEvidence({
     request: msg.text ?? "",

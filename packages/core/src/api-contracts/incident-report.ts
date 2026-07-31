@@ -627,10 +627,10 @@ export const IncidentReportSchema = z.object({
       backgroundPendingCleanupCount: z.number().optional(),
     })
     .optional(),
-  /** Silent-failure recovery attempts folded from the session's
-   *  `execution.recovery_attempted` records — the model re-entries
-   *  (silent_retry / lkw_fallback / continuation_nudge) that were previously
-   *  log-only. `total` attempts, `succeeded` count, and per-reason counts.
+  /** Runtime recovery attempts folded from the session's
+   *  `execution.recovery_attempted` records — model re-entries and deterministic
+   *  response-grounding corrections that would otherwise be log-only.
+   *  `total` attempts, `succeeded` count, and per-reason counts.
    *  Absent ⇒ no recovery attempts this session. */
   recoveries: z
     .object({

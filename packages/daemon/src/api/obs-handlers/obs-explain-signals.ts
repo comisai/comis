@@ -538,8 +538,8 @@ function handleEventRecord(
       return;
     }
     case "execution.recovery_attempted": {
-      // Fold model re-entry recoveries, including request-tool nudges, into
-      // counts by reason plus a succeeded tally.
+      // Fold model re-entry and deterministic response-grounding recoveries
+      // into counts by reason plus a succeeded tally.
       const reason = asString(data.reason) ?? "unknown";
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
