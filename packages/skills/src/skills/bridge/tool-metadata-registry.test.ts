@@ -1816,4 +1816,14 @@ describe("tool-metadata-registry -- mcp_manage env parity", () => {
     );
     expect(error).toBeUndefined();
   });
+
+  it("rejects connect before approval when neither command nor url is supplied", async () => {
+    const meta = getToolMetadata("mcp_manage");
+    const error = await meta?.validateInput?.({
+      action: "connect",
+      server_name: "example-service",
+    });
+
+    expect(error).toContain("command or url");
+  });
 });
