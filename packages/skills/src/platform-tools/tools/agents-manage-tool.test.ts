@@ -894,7 +894,7 @@ describe("agents_manage tool", () => {
           } as never),
         ),
       ).rejects.toThrow(
-        /\[invalid_value\].*config\.provider and config\.model.*together/,
+        /\[invalid_value\].*config\.provider and config\.model.*together.*Previous active model.*active binding/,
       );
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
