@@ -5,6 +5,10 @@
  * @module
  */
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, it, expect, vi } from "vitest";
 import { parsePhase, isVisibleTextBlock, getVisibleAssistantText } from "./phase-filter.js";
 import * as phaseFilter from "./phase-filter.js";
@@ -501,6 +505,7 @@ describe("synchronize final assistant response", () => {
   function synchronize(
     session: unknown,
     response: string,
+    sessionManager?: SessionManager,
   ): "unchanged" | "updated" | "missing" {
     const candidate = (phaseFilter as Record<string, unknown>)
       .synchronizeFinalAssistantResponse;
@@ -508,7 +513,12 @@ describe("synchronize final assistant response", () => {
     return (candidate as (
       session: unknown,
       response: string,
-    ) => "unchanged" | "updated" | "missing")(session, response);
+      sessionManager?: SessionManager,
+    ) => "unchanged" | "updated" | "missing")(
+      session,
+      response,
+      sessionManager,
+    );
   }
 
   it("replaces rejected visible prose while preserving protocol blocks and metadata", () => {
@@ -548,6 +558,64 @@ describe("synchronize final assistant response", () => {
     };
 
     expect(synchronize(session, "Current reply")).toBe("unchanged");
+  });
+
+  it("makes the corrected assistant response canonical after reopening the on-disk session", () => {
+    const scratch = mkdtempSync(resolve(tmpdir(), "final-assistant-sync-"));
+    try {
+      const manager = SessionManager.create(scratch, scratch);
+      const user = {
+        role: "user",
+        content: "what model are u actually using now",
+        timestamp: 1,
+      };
+      const rejected = {
+        role: "assistant",
+        content: [{ type: "text", text: "The exact model is unspecified." }],
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-4.1-nano",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 2,
+      };
+      manager.appendMessage(user as never);
+      manager.appendMessage(rejected as never);
+      const sessionFile = manager.getSessionFile();
+      expect(sessionFile).toBeDefined();
+
+      const liveSession = { messages: [user, rejected] };
+      expect(
+        synchronize(
+          liveSession,
+          "openai / gpt-4.1-nano",
+          manager,
+        ),
+      ).toBe("updated");
+
+      const reopened = SessionManager.open(sessionFile!, scratch, scratch);
+      const canonical = reopened.buildSessionContext().messages;
+      expect(canonical).toHaveLength(2);
+      expect(canonical[0]).toMatchObject({ role: "user" });
+      expect(canonical[1]).toMatchObject({
+        role: "assistant",
+        content: [{ type: "text", text: "openai / gpt-4.1-nano" }],
+      });
+      expect(
+        reopened.getEntries().filter(
+          (entry) => entry.type === "message" && entry.message.role === "assistant",
+        ),
+      ).toHaveLength(2);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   it("does not fabricate an assistant message when the current turn has none", () => {
