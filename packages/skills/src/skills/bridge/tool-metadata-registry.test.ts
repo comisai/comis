@@ -1706,6 +1706,13 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
     expect(meta!.readOnlyActions).toEqual(["list", "get"]);
     expect(meta!.mutationRequestPrefixes).toContain("switch");
   });
+
+  it("mcp_manage co-discovers the encrypted secret workflow", () => {
+    const meta = getToolMetadata("mcp_manage");
+
+    expect(meta).toBeDefined();
+    expect(meta!.coDiscoverWith).toContain("gateway");
+  });
 });
 
 // ===========================================================================
