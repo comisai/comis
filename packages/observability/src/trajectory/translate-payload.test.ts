@@ -49,6 +49,13 @@ describe("translatePayload — response locale decision", () => {
       responseLocaleSource: "request",
       responseLocaleEnforced: true,
       inboundKind: "edit",
+      unavailableSkills: [
+        {
+          name: "voice-helper",
+          reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+          description: "must never cross the content-free trajectory boundary",
+        },
+      ],
       requestText: "must never cross the content-free trajectory boundary",
       timestamp: 1717171717,
     } as Record<string, unknown>);
@@ -64,7 +71,14 @@ describe("translatePayload — response locale decision", () => {
       responseLocaleSource: "request",
       responseLocaleEnforced: true,
       inboundKind: "edit",
+      unavailableSkills: [
+        {
+          name: "voice-helper",
+          reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+        },
+      ],
     });
+    expect(JSON.stringify(data)).not.toContain("description");
     expect("requestText" in data).toBe(false);
     expect("agentId" in data).toBe(false);
     expect("sessionKey" in data).toBe(false);

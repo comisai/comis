@@ -70,6 +70,34 @@ describe("createOutcomeJudgeSeam", () => {
     expect(request.messages[0]?.content).toContain("<<<UNTRUSTED_judge-delimiter>>>");
   });
 
+  it("treats proven honest unavailability as completion and includes bounded runtime evidence", async () => {
+    vi.mocked(completeSimple).mockResolvedValue({
+      content: [{ type: "text", text: '{"outcome":"success","confidence":0.7}' }],
+    } as never);
+
+    await runWithContext({ contentDelimiter: "judge-delimiter" }, () =>
+      makeJudge()({
+        trajectoryContent: "user: use the voice helper\nassistant: it is unavailable",
+        unavailableSkills: [
+          {
+            name: "voice-helper",
+            reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+          },
+        ],
+      } as never));
+
+    const request = vi.mocked(completeSimple).mock.calls[0]?.[1] as {
+      systemPrompt: string;
+      messages: Array<{ content: string }>;
+    };
+    expect(request.systemPrompt).toContain(
+      "Treat proven honest unavailability as successful completion",
+    );
+    expect(request.messages[0]?.content).toContain('"status":"installed_unavailable"');
+    expect(request.messages[0]?.content).toContain("VOICE_APP_ID");
+    expect(request.messages[0]?.content).not.toContain("<description>");
+  });
+
   it("returns content-free audit metadata for model policy rubric and evidence", async () => {
     vi.mocked(completeSimple).mockResolvedValue({
       content: [{ type: "text", text: '{"outcome":"failure","confidence":1}' }],

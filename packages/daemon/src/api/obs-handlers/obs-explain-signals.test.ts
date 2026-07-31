@@ -265,6 +265,35 @@ describe("toIncidentSignals — response locale decision", () => {
   });
 });
 
+describe("toIncidentSignals — installed skill availability", () => {
+  it("retains the latest prompt's unavailable installed skill names and reasons", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        unavailableSkills: [
+          { name: "old-helper", reason: "missing binary: old-bin" },
+        ],
+      }),
+      event("prompt.submitted", 2, {
+        unavailableSkills: [
+          {
+            name: "voice-helper",
+            reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+          },
+        ],
+      }),
+    ]);
+
+    expect(signals.skillAvailability).toEqual({
+      unavailable: [
+        {
+          name: "voice-helper",
+          reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+        },
+      ],
+    });
+  });
+});
+
 describe("toIncidentSignals — group history receipt", () => {
   it("retains the latest positive content-free prompt receipt", () => {
     const signals = toIncidentSignals([
