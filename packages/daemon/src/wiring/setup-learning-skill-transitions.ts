@@ -28,11 +28,6 @@ import type {
 import { failureCorroborated } from "./setup-learning-corroboration.js";
 import type { SkillTrendTracker } from "./setup-learning-skill-trend.js";
 
-// Discrete proof requires stronger evidence than the reward-capped model judge.
-// Deterministic tool and pipeline outcomes clear this bar; conversational judgments
-// still update the trend but cannot independently promote a learned procedure.
-const MIN_SKILL_PROMOTION_CONFIDENCE = 0.8;
-
 /** The resolved scope the loop keys on (mirrors the setup-learning OutcomeScope). */
 export interface SkillTransitionScope {
   tenantId: string;
@@ -104,16 +99,12 @@ export async function applySkillOutcomeTransitions(
   // Count of successful reuses whose promotion credit was VALUE-GATED (the skill
   // was in a sustained-failure standing → it must earn back trust before accruing proof).
   let promotionGated = 0;
-  // Count of apparent successes below the evidence bar for discrete promotion proof.
-  let promotionConfidenceGated = 0;
   // Collect the demoted skill NAMES (not just the count) so the emit can name WHICH
   // skills demoted (id-class, never a body).
   const demotedNames: string[] = [];
   // The skill NAMES whose promotion was value-gated this resolve (id-class, never a body)
   // — so "why didn't my skill promote despite a successful reuse?" is answerable from obs.
   const gatedNames: string[] = [];
-  // Skill names whose apparent success was too weak to accrue discrete proof.
-  const confidenceGatedNames: string[] = [];
 
   for (const skillName of verdict.usedSkillIds) {
     // Never key the in-process gauges on the bare name (cross-tenant alias).
@@ -128,10 +119,7 @@ export async function applySkillOutcomeTransitions(
       const standingBefore = skillTrend.peekSkillTrend(gaugeKey, deps.clock.now());
       // The success ALWAYS feeds the trend (so a recovering procedure re-strengthens) — peek was BEFORE.
       skillTrend.updateSkillTrend(gaugeKey, "success", deps.clock.now());
-      if (verdict.confidence < MIN_SKILL_PROMOTION_CONFIDENCE) {
-        promotionConfidenceGated += 1;
-        confidenceGatedNames.push(skillName);
-      } else if (standingBefore === "weakening") {
+      if (standingBefore === "weakening") {
         promotionGated += 1;
         gatedNames.push(skillName);
       } else {
@@ -177,16 +165,14 @@ export async function applySkillOutcomeTransitions(
   // One INFO completion line per resolve that moved a skill or gated a promotion,
   // with durationMs (counts/ids only — never a procedure body). Adds promotionGated +
   // the gated skill names so a stalled-but-succeeding skill is diagnosable.
-  if (promoted > 0 || demoted > 0 || promotionGated > 0 || promotionConfidenceGated > 0) {
+  if (promoted > 0 || demoted > 0 || promotionGated > 0) {
     deps.logger.info(
       {
         agentId: scope.agentId,
         promoted,
         demoted,
         promotionGated,
-        promotionConfidenceGated,
         ...(promotionGated > 0 ? { gatedSkillNames: gatedNames } : {}),
-        ...(promotionConfidenceGated > 0 ? { confidenceGatedSkillNames: confidenceGatedNames } : {}),
         durationMs: deps.clock.now() - skillStart,
       },
       "Learned-skill promote/demote complete",
