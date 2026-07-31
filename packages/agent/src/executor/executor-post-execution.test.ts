@@ -588,10 +588,18 @@ describe("promoteToolInvocationStall — repeated action answers stop reading as
     expect(promoteToolInvocationStall("stop", undefined)).toBe("stop");
   });
 
+  it("promotes an unrecovered mutation failure so stale success prose is replaced", () => {
+    expect(
+      promoteToolInvocationStall(
+        "completed_with_tool_errors",
+        { fired: true, recovered: false },
+      ),
+    ).toBe("tool_invocation_stall");
+  });
+
   it("preserves an already non-clean upstream terminal cause", () => {
     for (const reason of [
       "context_exhausted",
-      "completed_with_tool_errors",
       "error",
       "output_starved",
     ]) {
