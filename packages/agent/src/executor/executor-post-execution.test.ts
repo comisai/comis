@@ -938,6 +938,17 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/response\.active_model_self_status_guard/);
   });
 
+  it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
+    const stripped = readPostExecStripped();
+    const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");
+    const reconcileIndex = stripped.indexOf("recoverFinalResponseLocaleFailure(");
+    const terminalIndex = stripped.indexOf("const finishReasonStr");
+
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(reconcileIndex).toBeGreaterThan(guardIndex);
+    expect(terminalIndex).toBeGreaterThan(reconcileIndex);
+  });
+
   it("source-grep — the failure notice is built through the locale seam, not a literal", () => {
     const stripped = readPostExecStripped();
     // It used to be a bare English `[tool failure] <tool> reported an error`

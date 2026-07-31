@@ -6,6 +6,7 @@ import {
   enforceResponseLocale,
   unrepairedMismatchHint,
 } from "./response-locale-enforcement.js";
+import * as responseLocaleEnforcement from "./response-locale-enforcement.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { allowProviderDispatch } from "../provider-dispatch.js";
 import { err } from "@comis/shared";
@@ -277,6 +278,35 @@ describe("enforceResponseLocale", () => {
 });
 
 describe("applyResponseLocaleEnforcement", () => {
+  it("recovers the locale terminal error when a later deterministic guard satisfies the policy", () => {
+    const candidate = (
+      responseLocaleEnforcement as Record<string, unknown>
+    ).recoverFinalResponseLocaleFailure;
+    expect(candidate).toBeTypeOf("function");
+    const result: Record<string, unknown> = {
+      response: "openai / gpt-4.1-nano",
+      finishReason: "error",
+      terminalErrorKind: "validation",
+      errorContext: {
+        errorType: "ResponseLocaleMismatch",
+        retryable: true,
+      },
+    };
+
+    const recovered = (candidate as (
+      result: Record<string, unknown>,
+      policy: ResponseLocalePolicy,
+    ) => boolean)(result, LATIN_POLICY);
+
+    expect(recovered).toBe(true);
+    expect(result).toMatchObject({
+      response: "openai / gpt-4.1-nano",
+      finishReason: "stop",
+    });
+    expect(result).not.toHaveProperty("terminalErrorKind");
+    expect(result).not.toHaveProperty("errorContext");
+  });
+
   it("fails visibly when the bounded repair still violates the enforced current-request script", async () => {
     const eventBus = new TypedEventBus();
     const logger = {
