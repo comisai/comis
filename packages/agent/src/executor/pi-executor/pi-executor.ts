@@ -623,13 +623,13 @@ export function createPiExecutor(
       // resolveModelProfile override agree on the same class. Unset on both →
       // undefined → the provider-family heuristic (byte-identical).
       const explicitClass = config.capabilityClass ?? deps.providerCapabilities?.capabilityClass;
-      const capabilityCap = explicitClass != null
-        ? resolveEffectiveCap(
-          explicitClass,
-          config.contextEngine?.budget?.effectiveContextCapSmall,
-          config.contextEngine?.budget?.effectiveContextCapNano,
-        ).cap
-        : Infinity;
+      const capabilityCapResolution = resolveEffectiveCap(
+        explicitClass ?? "frontier",
+        config.contextEngine?.budget?.effectiveContextCapSmall,
+        config.contextEngine?.budget?.effectiveContextCapNano,
+      );
+      const capabilityCap =
+        explicitClass != null ? capabilityCapResolution.cap : Infinity;
       // The probed served window binds ONLY
       // executions on the provider it was probed from. deps.servedContextWindow
       // is bound once at construction to the agent's PRIMARY provider, but
@@ -648,6 +648,10 @@ export function createPiExecutor(
         served: servedWindow,
         capabilityCap,
       });
+      const reconcileSource: WindowProvenance["reconcileSource"] =
+        effectiveContextWindowResult.source === "capability"
+          ? capabilityCapResolution.source
+          : effectiveContextWindowResult.source;
       // The window provenance is BORN here — the TRUE
       // configured window before resolveModelProfile below overwrites
       // profile.contextWindow with the reconciled value. Threaded along the
@@ -657,11 +661,11 @@ export function createPiExecutor(
       const windowProvenance: WindowProvenance = {
         configuredWindow: resolvedModel?.contextWindow ?? 8_192,
         ...(servedWindow !== undefined && { served: servedWindow }),
-        reconcileSource: effectiveContextWindowResult.source,
+        reconcileSource,
       };
       if (effectiveContextWindowResult.source !== "configured") {
         deps.logger.debug({
-          source: effectiveContextWindowResult.source,
+          source: reconcileSource,
           effectiveWindow: effectiveContextWindowResult.effectiveWindow,
           configured: resolvedModel?.contextWindow,
           served: servedWindow,
@@ -678,7 +682,7 @@ export function createPiExecutor(
         if (!getWindowReconcileLogged(reconcileLatchKey)) {
           setWindowReconcileLogged(reconcileLatchKey);
           deps.logger.info({
-            source: effectiveContextWindowResult.source,
+            source: reconcileSource,
             effectiveWindow: effectiveContextWindowResult.effectiveWindow,
             configured: resolvedModel?.contextWindow ?? 8_192,
             served: servedWindow,

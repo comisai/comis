@@ -8120,7 +8120,7 @@ describe("regression: pi-executor capabilityCap is Infinity when providerCapabil
     expect(capLogCall).toBeDefined();
     // Verify the capabilityCap in the log is 32_000 (not Infinity, not 16_000).
     const logPayload = capLogCall![0] as Record<string, unknown>;
-    expect(logPayload["source"]).toBe("capability");
+    expect(logPayload["source"]).toBe("effectiveContextCapSmall");
     expect(logPayload["effectiveWindow"]).toBe(32_000);
   });
 
