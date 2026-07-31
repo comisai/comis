@@ -834,14 +834,21 @@ export const CONTRACTS = {
           "additionalProperties": {}
         },
         "updated": {
-          "type": "boolean",
-          "const": true
+          "type": "boolean"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "dryRun": {
+          "type": "boolean"
         }
       },
       "required": [
         "agentId",
         "config",
-        "updated"
+        "updated",
+        "changed",
+        "dryRun"
       ],
       "additionalProperties": false
     },
@@ -11540,6 +11547,9 @@ export const CONTRACTS = {
                 "type": "number"
               },
               "failed": {
+                "type": "number"
+              },
+              "noOp": {
                 "type": "number"
               },
               "topErrorKind": {

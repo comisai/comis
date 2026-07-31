@@ -1,8 +1,8 @@
 {
-  "totalMinified": 195019,
-  "totalGzipped": 20266,
+  "totalMinified": 195099,
+  "totalGzipped": 20287,
   "budget": {
-    "minified": 195072,
+    "minified": 195200,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -19,7 +19,7 @@
     "agents.list": 311,
     "agents.resume": 390,
     "agents.suspend": 394,
-    "agents.update": 601,
+    "agents.update": 664,
     "audio.transcribe": 336,
     "auth.list": 578,
     "auth.logout": 399,
@@ -157,7 +157,7 @@
     "obs.delivery.recent": 2223,
     "obs.delivery.stats": 629,
     "obs.diagnostics": 596,
-    "obs.explain": 21438,
+    "obs.explain": 21463,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
     "obs.reset.table": 483,

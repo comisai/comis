@@ -122,7 +122,7 @@ export interface IncidentSignals {
   };
   toolStats: Record<
     string,
-    { ok: number; failed: number; topErrorKind?: string }
+    { ok: number; failed: number; noOp?: number; topErrorKind?: string }
   >;
   /** Set when a terminal/coding-CLI drive was promoted to a backgrounded
    *  drive-owner during the session — folded from `terminal.drive_promoted` trajectory

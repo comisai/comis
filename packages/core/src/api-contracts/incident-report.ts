@@ -146,6 +146,8 @@ export const IncidentReportSchema = z.object({
     z.object({
       ok: z.number(),
       failed: z.number(),
+      /** Successful calls that found the requested state already active. */
+      noOp: z.number().optional(),
       topErrorKind: z.string().optional(),
     }),
   ),

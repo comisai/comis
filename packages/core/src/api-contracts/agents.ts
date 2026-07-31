@@ -194,11 +194,13 @@ export const AgentsGetContract = defineContract({
  * checks) but skips BOTH the in-memory hot-apply (`deps.agents[id] = …`) and
  * the `persistToConfig` write — the web editor's "Validate" button sends it
  * so validating prod config does not silently mutate config.yaml /
- * config.last-good.yaml. The response shape is identical (`updated: true`);
- * a dry-run that parses clean returns ok, a dry-run that fails parsing throws
- * the same Zod error a real save would.
+ * config.last-good.yaml. A dry-run that parses clean returns `updated: false`,
+ * `changed` reports whether the candidate differs from the active config, and
+ * a dry-run that fails parsing throws the same Zod error a real save would.
  *
- * Response: `{ agentId, config, updated: true }`. `config` is the FULL parsed
+ * Response: `{ agentId, config, updated, changed, dryRun }`. `updated` is true
+ * only when the handler applied the candidate. `changed` reports whether the
+ * parsed candidate differs from the active config. `config` is the FULL parsed
  * PerAgentConfig (loose-record).
  */
 export const AgentsUpdateContract = defineContract({
@@ -211,7 +213,9 @@ export const AgentsUpdateContract = defineContract({
   response: z.object({
     agentId: z.string(),
     config: z.record(z.string(), z.unknown()),
-    updated: z.literal(true),
+    updated: z.boolean(),
+    changed: z.boolean(),
+    dryRun: z.boolean(),
   }),
   scopes: ["admin"] as const,
 });

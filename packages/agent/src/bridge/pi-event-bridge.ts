@@ -1444,11 +1444,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             typeof rawAction === "string" && rawAction.length > 0 && rawAction.length <= 64
               ? rawAction
               : undefined;
+          const resultDetails =
+            endEvent.result !== null
+            && typeof endEvent.result === "object"
+            && (endEvent.result as Record<string, unknown>).details !== null
+            && typeof (endEvent.result as Record<string, unknown>).details === "object"
+              ? (endEvent.result as Record<string, unknown>).details as Record<string, unknown>
+              : undefined;
+          const toolChanged =
+            typeof resultDetails?.changed === "boolean"
+              ? resultDetails.changed
+              : undefined;
           // Track all tool execution results
           m.toolExecResults.push({
             toolName: endEvent.toolName,
             ...(toolAction === undefined ? {} : { action: toolAction }),
             success: toolSuccess,
+            ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
             durationMs,
             ...(invocationSequence === undefined ? {} : { invocationSequence }),
@@ -1579,6 +1591,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             toolCallId: endEvent.toolCallId,
             durationMs,
             success: toolSuccess,
+            ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
             timestamp: systemNowMs(),
             agentId: deps.agentId,

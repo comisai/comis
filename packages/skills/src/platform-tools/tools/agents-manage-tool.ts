@@ -353,17 +353,51 @@ function validateAgentUpdateParams(
 function buildUpdateContract(
   agentId: string | undefined,
   config: Record<string, unknown> | undefined,
+  result: unknown,
 ): string {
   const target = agentId ?? "requested agent";
-  if (typeof config?.provider === "string" && typeof config.model === "string") {
+  const resultRecord =
+    result !== null && typeof result === "object"
+      ? result as Record<string, unknown>
+      : undefined;
+  const effectiveConfig =
+    resultRecord?.config !== null && typeof resultRecord?.config === "object"
+      ? resultRecord.config as Record<string, unknown>
+      : config;
+  const provider =
+    typeof effectiveConfig?.provider === "string"
+      ? effectiveConfig.provider
+      : undefined;
+  const model =
+    typeof effectiveConfig?.model === "string"
+      ? effectiveConfig.model
+      : undefined;
+  const binding =
+    provider !== undefined && model !== undefined
+      ? (
+          ` Configured model binding: config.provider=${JSON.stringify(provider)}, ` +
+          `config.model=${JSON.stringify(model)}.`
+        )
+      : "";
+
+  if (resultRecord?.dryRun === true) {
     return (
-      `✓ Agent ${target} update complete. Configured model binding: ` +
-      `config.provider=${JSON.stringify(config.provider)}, ` +
-      `config.model=${JSON.stringify(config.model)}. ` +
-      "Do not repeat agents_manage for this request."
+      `✓ Agent ${target} configuration validated; no update was applied.` +
+      binding
     );
   }
-  return `✓ Agent ${target} update complete. Do not repeat agents_manage for this request.`;
+  if (resultRecord?.changed === false) {
+    return (
+      `✓ No configuration change for agent ${target}; it already uses the requested settings.` +
+      binding +
+      " Do not repeat agents_manage for this request."
+    );
+  }
+  return (
+    `✓ Agent ${target} update complete.` +
+    binding +
+    " Do not repeat agents_manage for this request."
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -555,7 +589,7 @@ export function createAgentsManageTool(
               { agentId, config, _trustLevel: ctx.trustLevel },
             );
             return {
-              content: [{ type: "text", text: buildUpdateContract(agentId, config) }],
+              content: [{ type: "text", text: buildUpdateContract(agentId, config, result) }],
               details: result,
             } satisfies AgentToolResult<typeof result>;
           } finally {

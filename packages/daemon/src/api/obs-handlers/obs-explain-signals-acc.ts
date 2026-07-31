@@ -78,6 +78,7 @@ export function summarizeToolStats(
     toolStats[tool] = {
       ok: entry.ok,
       failed: entry.failed,
+      ...(entry.noOp > 0 ? { noOp: entry.noOp } : {}),
       ...(topErrorKind !== undefined ? { topErrorKind } : {}),
     };
     if (entry.failed > 0) repeatedFailureCount[tool] = entry.failed;
@@ -100,7 +101,7 @@ export function summarizeToolStats(
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
 export interface Acc {
-  toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
+  toolStats: Map<string, { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> }>;
   failures: IncidentFailure[];
   breakerEvents: IncidentSignals["breakerEvents"];
   queueTimeline: NonNullable<IncidentSignals["queueTimeline"]>;

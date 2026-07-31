@@ -412,6 +412,7 @@ export function assembleIncidentReport(
       toolStats[tool] = {
         ok: asNumber(entry.ok) ?? 0,
         failed: asNumber(entry.failed) ?? 0,
+        ...(asNumber(entry.noOp) !== undefined ? { noOp: asNumber(entry.noOp) } : {}),
       };
     }
   }
@@ -420,6 +421,7 @@ export function assembleIncidentReport(
     toolStats[tool] = {
       ok: stat.ok,
       failed: stat.failed,
+      ...(stat.noOp !== undefined ? { noOp: stat.noOp } : {}),
       ...(stat.topErrorKind !== undefined ? { topErrorKind: stat.topErrorKind } : {}),
     };
   }

@@ -16,6 +16,7 @@
  */
 
 import { AuthorizationError, PreconditionError } from "./errors.js";
+import { isDeepStrictEqual } from "node:util";
 import {
   PerAgentConfigSchema,
   AgentsCreateContract,
@@ -476,6 +477,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     },
 
     [AgentsUpdateContract.method]: async (rawParams) => {
+      const startedAt = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new AuthorizationError("Admin access required for agent modification");
@@ -641,6 +643,9 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
+      const activeConfig = PerAgentConfigSchema.parse(existing);
+      const changed = !isDeepStrictEqual(activeConfig, parsedConfig);
+
       // dryRun stops here: validation above has passed (it would have thrown
       // otherwise), so report success WITHOUT hot-applying or persisting. The
       // in-memory agent map is left as the pre-call reference and config.yaml
@@ -650,7 +655,34 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
           { method: "agents.update", agentId, step: "dry-run-validate" },
           "agents.update dry-run validated config without persisting or hot-applying",
         );
-        const result = { agentId, config: parsedConfig, updated: true as const };
+        const result = {
+          agentId,
+          config: parsedConfig,
+          updated: false,
+          changed,
+          dryRun: true,
+        };
+        if (IS_DEV) AgentsUpdateContract.response.parse(result);
+        return result;
+      }
+
+      if (!changed) {
+        deps.persistDeps?.logger.info(
+          {
+            method: "agents.update",
+            agentId,
+            step: "update-noop",
+            durationMs: systemNowMs() - startedAt,
+          },
+          "Agent configuration already matched the requested update",
+        );
+        const result = {
+          agentId,
+          config: parsedConfig,
+          updated: false,
+          changed: false,
+          dryRun: false,
+        };
         if (IS_DEV) AgentsUpdateContract.response.parse(result);
         return result;
       }
@@ -675,7 +707,13 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
-      const result = { agentId, config: parsedConfig, updated: true as const };
+      const result = {
+        agentId,
+        config: parsedConfig,
+        updated: true,
+        changed: true,
+        dryRun: false,
+      };
       if (IS_DEV) AgentsUpdateContract.response.parse(result);
       return result;
     },

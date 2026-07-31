@@ -48,10 +48,13 @@ const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
 const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
 
-function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; errorKinds: Map<string, number> } {
+function ensureTool(
+  acc: Acc,
+  tool: string,
+): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);
   if (entry === undefined) {
-    entry = { ok: 0, failed: 0, errorKinds: new Map() };
+    entry = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map() };
     acc.toolStats.set(tool, entry);
   }
   return entry;
@@ -307,6 +310,7 @@ function handleEventRecord(
       const entry = ensureTool(acc, tool);
       if (success) {
         entry.ok += 1;
+        if (data.changed === false) entry.noOp += 1;
         return;
       }
       entry.failed += 1;

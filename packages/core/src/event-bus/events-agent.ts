@@ -91,6 +91,8 @@ export interface AgentEvents {
     toolName: string;
     durationMs: number;
     success: boolean;
+    /** Whether a successful side-effecting tool changed its target state. */
+    changed?: boolean;
     timestamp: number;
     /** Correlates start↔end for a stable activityId. */
     toolCallId: string;

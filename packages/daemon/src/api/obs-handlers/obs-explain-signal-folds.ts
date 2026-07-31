@@ -125,10 +125,10 @@ export function readSkillAvailability(value: unknown): IncidentSignals["skillAva
 function ensureBackgroundTool(
   acc: Acc,
   toolName: string,
-): { ok: number; failed: number; errorKinds: Map<string, number> } {
+): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
   const current = acc.toolStats.get(toolName);
   if (current !== undefined) return current;
-  const created = { ok: 0, failed: 0, errorKinds: new Map<string, number>() };
+  const created = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map<string, number>() };
   acc.toolStats.set(toolName, created);
   return created;
 }

@@ -60,6 +60,7 @@ export function translatePayload(
         toolCallId: payload.toolCallId,
         durationMs: payload.durationMs,
         success: payload.success,
+        ...(payload.changed !== undefined ? { changed: payload.changed } : {}),
         ...(payload.backgrounded === true ? { backgrounded: true } : {}),
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
