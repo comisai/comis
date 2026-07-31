@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { ensureRpcEnv, importCli, requireCodeRoot, rig } from "./_rig.mjs";
+import { resolveChatApprovalAuthority } from "./session-artifact-ref.mjs";
 
 const choice = process.argv[2] ?? "approve";
 if (choice !== "approve" && choice !== "deny") {
@@ -15,23 +16,15 @@ const sha256 = (value) => createHash("sha256").update(value, "utf8").digest("hex
 const approvalAuthority = () => {
   const Database = requireCodeRoot("better-sqlite3");
   const db = new Database(`${rig.dataDir}/memory.db`, { readonly: true, fileMustExist: true });
-  const row = db.prepare(
-    "SELECT tenant_id, agent_id, conversation_ref FROM delivery_mirror "
-    + "WHERE channel_type = ? AND channel_id = ? ORDER BY created_at DESC LIMIT 1",
-  ).get("telegram", String(rig.chatId));
-  db.close();
-  if (
-    typeof row?.tenant_id !== "string"
-    || typeof row?.agent_id !== "string"
-    || typeof row?.conversation_ref !== "string"
-  ) {
-    throw new Error("current Telegram approval authority is unavailable");
+  try {
+    return resolveChatApprovalAuthority(
+      rig.dataDir,
+      String(rig.chatId),
+      db,
+    );
+  } finally {
+    db.close();
   }
-  return {
-    tenant_id: row.tenant_id,
-    agent_id: row.agent_id,
-    conversation_ref: row.conversation_ref,
-  };
 };
 const buttonsFor = (item) => {
   const raw = item.replyMarkup;
