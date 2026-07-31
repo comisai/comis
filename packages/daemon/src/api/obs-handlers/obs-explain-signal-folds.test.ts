@@ -87,6 +87,27 @@ describe("obs-explain-signal-folds — EXTENDED learning fold", () => {
     expect(sig!.skillsSurfacedButUncredited).toEqual([{ name: "skill-nearmiss", coverage: 0.45 }]);
   });
 
+  it("skill_surfaced identifies credit retained from the immediately preceding turn", () => {
+    const state = emptyLearningFold();
+    accumulateSkillUsedRecord(state, { usedSkillIds: ["skill-carried"], usedCount: 1 });
+    accumulateSkillSurfacedRecord(state, {
+      surfacedCount: 1,
+      creditedCount: 1,
+      scores: [
+        {
+          name: "skill-carried",
+          coverage: 0.8,
+          sharedCount: 8,
+          credited: true,
+          hasTopicTokens: true,
+          creditSource: "prior_turn",
+        },
+      ],
+    });
+
+    expect(buildLearningSignal(state)!.skillsCreditedFromPriorTurn).toEqual(["skill-carried"]);
+  });
+
   it("skill_surfaced does NOT build a learning block on its own (no count bump → no verdict perturbation)", () => {
     const state = emptyLearningFold();
     accumulateSkillSurfacedRecord(state, {
