@@ -100,9 +100,11 @@ if rig_is_local; then
       echo "supervisor: tmux ($tmux_session, $ENTRY)"
       # Keep COMIS_CONFIG_PATHS on the child command line. The tmux server owns
       # the child after this shell exits, including under PTY/agent runners that
-      # reap ordinary nohup descendants.
+      # reap ordinary nohup descendants. Exit 42 is the daemon's requested
+      # config-reload contract, so the local supervisor must relaunch it just as
+      # the production systemd unit does. Any other exit remains terminal.
       tmux new-session -d -s "$tmux_session" \
-        "exec env COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY' >>'$DATA/daemon.console.log' 2>&1"
+        "while true; do env COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY' >>'$DATA/daemon.console.log' 2>&1; status=\$?; if [ \"\$status\" -eq 42 ]; then continue; fi; exit \"\$status\"; done"
     else
       echo "supervisor: direct ($ENTRY)"
       # Both roots must be on the child command line. COMIS_DATA_DIR owns
