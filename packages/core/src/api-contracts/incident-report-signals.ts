@@ -97,6 +97,8 @@ export interface IncidentSignals {
   skillAvailability?: {
     unavailable: Array<{ name: string; reason: string }>;
   };
+  /** The LAST prompt's bounded request-relevant tool names. */
+  requestRelevantToolNames?: string[];
   /** The latest selected turn whose locale repair was safety-skipped. */
   responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
   /** The terminal provider rejected a persisted structured protocol identity

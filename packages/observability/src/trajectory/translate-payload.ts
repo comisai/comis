@@ -31,7 +31,7 @@ import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
 import { translateSessionSummaryPayload } from "./translate-session-summary.js";
-import { boundedUnavailableSkills } from "./translate-skill-availability.js";
+import { translatePromptPayload } from "./translate-prompt-payload.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -219,37 +219,7 @@ export function translatePayload(
       };
 
     case "prompt:submitted":
-      return {
-        promptChars: payload.promptChars,
-        provider: payload.provider,
-        modelId: payload.modelId,
-        messageCount: payload.messageCount,
-        systemDigest: payload.systemDigest,
-        messagesDigest: payload.messagesDigest,
-        ...(payload.inboundKind === "message" || payload.inboundKind === "edit"
-          ? { inboundKind: payload.inboundKind }
-          : {}),
-        ...(Array.isArray(payload.unavailableSkills)
-          ? { unavailableSkills: boundedUnavailableSkills(payload.unavailableSkills) }
-          : {}),
-        ...(typeof payload.groupHistoryMessageCount === "number"
-          ? { groupHistoryMessageCount: payload.groupHistoryMessageCount }
-          : {}),
-        ...(typeof payload.groupHistoryCharCount === "number"
-          ? { groupHistoryCharCount: payload.groupHistoryCharCount }
-          : {}),
-        ...(typeof payload.responseLocale === "string"
-          ? { responseLocale: payload.responseLocale }
-          : {}),
-        ...(payload.responseLocaleSource === "request"
-          || payload.responseLocaleSource === "explicit"
-          || payload.responseLocaleSource === "unset"
-          ? { responseLocaleSource: payload.responseLocaleSource }
-          : {}),
-        ...(typeof payload.responseLocaleEnforced === "boolean"
-          ? { responseLocaleEnforced: payload.responseLocaleEnforced }
-          : {}),
-      };
+      return translatePromptPayload(payload);
 
     case "session:started":
       return {

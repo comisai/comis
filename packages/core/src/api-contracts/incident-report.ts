@@ -113,6 +113,10 @@ export const IncidentReportSchema = z.object({
     messageCount: z.number().int().positive(),
     charCount: z.number().int().nonnegative(),
   }).optional(),
+  /** Bounded tool names selected as relevant to the selected turn. */
+  requestRelevantToolNames: z.array(
+    z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+  ).max(16).optional(),
   /** Content-free response-locale decision for the selected turn (exact trace)
    * or latest turn (whole session). */
   responseLocale: z

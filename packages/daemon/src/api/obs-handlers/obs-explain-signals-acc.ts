@@ -128,6 +128,10 @@ export interface Acc {
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
   /** The LAST prompt's installed-but-unavailable skill facts. */
   skillAvailability?: NonNullable<IncidentSignals["skillAvailability"]>;
+  /** The LAST prompt's bounded request-relevant tool names. */
+  requestRelevantToolNames?: NonNullable<
+    IncidentSignals["requestRelevantToolNames"]
+  >;
   /** The LAST valid locale-repair skip from a session summary. */
   responseLocaleRepairSkipped?: NonNullable<
     IncidentSignals["responseLocaleRepairSkipped"]

@@ -149,6 +149,15 @@ function handleEventRecord(
   switch (type) {
     case "prompt.submitted": {
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
+      delete acc.requestRelevantToolNames;
+      if (Array.isArray(data.requestRelevantToolNames)) {
+        const names = [...new Set(data.requestRelevantToolNames.filter(
+          (name): name is string =>
+            typeof name === "string"
+            && /^[A-Za-z0-9_.:-]{1,128}$/u.test(name),
+        ))].slice(0, 16);
+        if (names.length > 0) acc.requestRelevantToolNames = names;
+      }
       const inboundKind = asString(data.inboundKind);
       if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
       const groupHistoryMessageCount = nonnegativeInteger(data.groupHistoryMessageCount);
@@ -780,6 +789,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
+    ...(acc.requestRelevantToolNames !== undefined
+      ? { requestRelevantToolNames: acc.requestRelevantToolNames }
+      : {}),
     ...(acc.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }
       : {}),

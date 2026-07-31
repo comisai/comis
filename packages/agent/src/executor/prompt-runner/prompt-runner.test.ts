@@ -128,6 +128,13 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     expect(helperBlock).not.toMatch(/<unavailable_skills>|match\(|parse/);
   });
 
+  it("emits bounded request-relevant tool names for no-call diagnosis", () => {
+    const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
+    expect(helperBlock).toMatch(/params\.requestRelevantToolNames/);
+    expect(helperBlock).toMatch(/requestRelevantToolNames\.length\s*>\s*0/);
+    expect(helperBlock).toMatch(/\.slice\(0,\s*16\)/);
+  });
+
   it("swallows emit errors so dispatch is never aborted by an observability failure", () => {
     // Structural lock: the emit helper body must be wrapped in
     // try/catch with the debug-log on failure.

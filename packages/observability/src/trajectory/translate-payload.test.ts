@@ -56,6 +56,7 @@ describe("translatePayload — response locale decision", () => {
           description: "must never cross the content-free trajectory boundary",
         },
       ],
+      requestRelevantToolNames: ["mcp_manage", "gateway"],
       requestText: "must never cross the content-free trajectory boundary",
       timestamp: 1717171717,
     } as Record<string, unknown>);
@@ -77,6 +78,7 @@ describe("translatePayload — response locale decision", () => {
           reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
         },
       ],
+      requestRelevantToolNames: ["mcp_manage", "gateway"],
     });
     expect(JSON.stringify(data)).not.toContain("description");
     expect("requestText" in data).toBe(false);

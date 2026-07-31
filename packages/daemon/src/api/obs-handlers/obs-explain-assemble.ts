@@ -517,6 +517,9 @@ export function assembleIncidentReport(
     ...(signals.skillAvailability !== undefined
       ? { skillAvailability: signals.skillAvailability }
       : {}),
+    ...(signals.requestRelevantToolNames !== undefined
+      ? { requestRelevantToolNames: signals.requestRelevantToolNames }
+      : {}),
     ...(signals.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: signals.responseLocaleRepairSkipped }
       : {}),

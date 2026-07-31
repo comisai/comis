@@ -47,6 +47,8 @@ export interface TrajectoryEvents {
       readonly name: string;
       readonly reason: string;
     }>;
+    /** Bounded tool names selected as relevant to this exact request. */
+    requestRelevantToolNames?: readonly string[];
     /** Earlier group-message count attached to this exact model request. */
     groupHistoryMessageCount?: number;
     /** Character count of the attributed earlier-group context. */
