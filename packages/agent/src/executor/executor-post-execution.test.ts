@@ -999,6 +999,22 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — a successful unchanged agent update is grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceAgentUpdateNoOpGrounding\(/);
+    expect(stripped).toMatch(/buildAgentUpdateNoOpReply\(/);
+    expect(stripped).toMatch(/response\.agent_update_noop_grounding_guard/);
+    expect(stripped).toMatch(
+      /agentUpdateNoOpGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"agent_update_noop_grounding"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped).toMatch(
+      /reason:\s*"agent_update_noop_grounding"[\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/,
+    );
+    expect(stripped.indexOf("enforceAgentUpdateNoOpGrounding("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
     const stripped = readPostExecStripped();
     const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");

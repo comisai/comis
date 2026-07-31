@@ -1427,6 +1427,109 @@ describe("provider-model failure grounding guard", () => {
   });
 });
 
+type AgentUpdateNoOpGroundingGuard = (params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    changed?: boolean;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "agent_update_noop_grounding";
+};
+
+function agentUpdateNoOpGroundingGuard(): AgentUpdateNoOpGroundingGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceAgentUpdateNoOpGrounding;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as AgentUpdateNoOpGroundingGuard;
+}
+
+describe("agent-update no-op grounding guard", () => {
+  const honestResponse =
+    "No configuration change was needed. This agent already uses provider_a / model_a.";
+
+  it("replaces model prose that contradicts the latest successful no-op update", () => {
+    const guarded = agentUpdateNoOpGroundingGuard()({
+      response:
+        "I can change my active model, switch providers, and adjust certain settings.",
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: true,
+        changed: false,
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "agent_update_noop_grounding",
+    });
+  });
+
+  it("preserves the exact runtime-owned no-op disclosure", () => {
+    expect(agentUpdateNoOpGroundingGuard()({
+      response: honestResponse,
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: true,
+        changed: false,
+      }],
+      honestResponse,
+    })).toEqual({ response: honestResponse, corrected: false });
+  });
+
+  it("does not let an earlier no-op override a later applied update", () => {
+    const response = "The agent now uses provider_b / model_b.";
+    expect(agentUpdateNoOpGroundingGuard()({
+      response,
+      toolExecResults: [
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+          changed: false,
+        },
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+          changed: true,
+        },
+      ],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("leaves a later failed update for the failure-grounding path", () => {
+    const response = "The requested model was rejected.";
+    expect(agentUpdateNoOpGroundingGuard()({
+      response,
+      toolExecResults: [
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+          changed: false,
+        },
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: false,
+        },
+      ],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+});
+
 type SenderAuthorityGroundingGuard = (params: {
   request: string;
   response: string;

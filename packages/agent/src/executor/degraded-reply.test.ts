@@ -379,6 +379,33 @@ describe("buildProviderRequiresModelReply", () => {
   });
 });
 
+describe("buildAgentUpdateNoOpReply", () => {
+  it("names the unchanged runtime binding and supports operator locale packs", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildAgentUpdateNoOpReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language: string | undefined,
+      provider: string,
+      modelId: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        agent_update_noop: "לא נדרש שינוי. הסוכן כבר משתמש ב",
+      },
+    });
+
+    expect(build(undefined, "provider_a", "model_a")).toBe(
+      "No configuration change was needed. This agent already uses provider_a / model_a.",
+    );
+    expect(build("he", "provider_a", "model_a", catalog)).toBe(
+      "לא נדרש שינוי. הסוכן כבר משתמש ב provider_a / model_a.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("agent_update_noop");
+  });
+});
+
 describe("buildSenderAuthorityOverclaimReply", () => {
   it("states that below-admin sender approval cannot grant admin authority", () => {
     const reply = buildSenderAuthorityOverclaimReply();

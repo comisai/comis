@@ -17,6 +17,12 @@ const testMessage = {
 };
 
 describe("MessagingEvents payload structure", () => {
+  it("keeps agent-update no-op grounding in the closed recovery reason union", () => {
+    const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('| "agent_update_noop_grounding"');
+  });
+
   it("execution recovery can identify a sender-authority grounding correction", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
