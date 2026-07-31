@@ -85,6 +85,7 @@ import {
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
+import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
@@ -771,6 +772,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     terminal outcome to promoted work, so incidental recall evidence must
   //     not replace the pending completion lifecycle as the primary diagnosis.
   backgroundPendingVerdict,
+
+  // A request-relevant capability was selected, but neither the model nor its
+  // deterministic recovery completed an invocation. This acute terminal state
+  // is more specific than an incidental zero-hit recall from the same turn.
+  toolInvocationStallVerdict,
 
   // 9d) recall_miss. A DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
