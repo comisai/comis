@@ -8373,6 +8373,17 @@ describe("per-turn locale inheritance wiring", () => {
   });
 });
 
+describe("recent recall context provenance wiring", () => {
+  it("derives recent raw user turns from structured session entries", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toContain(
+      "selectRecentUserTurns(sessionContext.messages, sm.getEntries(), msg.id)",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Source-text wiring guard: normalizeModelCompat call-site threading
 // ---------------------------------------------------------------------------
