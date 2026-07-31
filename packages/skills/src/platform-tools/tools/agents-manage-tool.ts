@@ -14,7 +14,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate, ComisLogger } from "@comis/core";
 import { registerActivityLabelSpec } from "@comis/core";
-import { readStringParam } from "../tool-helpers.js";
+import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -326,6 +326,28 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
   return raw as Record<string, unknown> | undefined;
 }
 
+function validateAgentUpdateParams(
+  action: string,
+  params: Record<string, unknown>,
+): void {
+  if (action !== "update") return;
+  const config = coerceConfig(params);
+  if (config === undefined) return;
+
+  const hasProvider = typeof config.provider === "string";
+  const hasModel = typeof config.model === "string";
+  if (hasProvider === hasModel) return;
+  throwToolError(
+    "invalid_value",
+    "Model binding updates require config.provider and config.model together",
+    {
+      param: "config",
+      hint:
+        "Retry agents_manage update with both values copied exactly from the intended binding",
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -372,12 +394,13 @@ export function createAgentsManageTool(
       label: "Agent Management",
       description:
         "Manage agent system: create, get, update, delete, suspend, resume, list. " +
-        "Use update to switch an agent's LLM provider or model (e.g. switch to Gemini, change model). " +
+        "Use update with provider and model together to switch an agent's LLM binding. " +
         "Explicit provider and model identifiers are exact targets: never silently substitute another value. " +
         "If an exact target is unavailable, leave configuration unchanged and report the failure. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,
+      validateParams: validateAgentUpdateParams,
       rpcPrefix: "agents",
       gatedActions: ["create", "delete"],
       actionOverrides: {
