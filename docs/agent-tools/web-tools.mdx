@@ -78,8 +78,17 @@ Comis supports 8 search providers. Each has different strengths, and some requir
     **Best for:** A zero-configuration fallback. Works immediately without any setup. Results may be less structured than API-based providers.
 
     <Note>
-    DuckDuckGo uses HTML scraping rather than an official API, so result formatting may vary. It is a reliable fallback when API-based providers are unavailable.
+    DuckDuckGo uses HTML scraping rather than an official API, so result formatting may vary.
     </Note>
+
+    <Warning>
+    The HTML endpoint rate-limits per source IP. Several searches in quick
+    succession from one host trip an anomaly challenge page, after which the
+    endpoint serves that page instead of results for roughly a minute. The
+    challenge is not solved or retried — the search fails with a message saying
+    so, and the fallback chain moves on to the next eligible provider. Configure
+    a keyed provider for workloads that search continuously.
+    </Warning>
   </Accordion>
 
   <Accordion title="SearXNG" icon="magnifying-glass">

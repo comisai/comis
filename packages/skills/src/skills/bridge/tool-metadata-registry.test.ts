@@ -1212,6 +1212,38 @@ describe("tool-metadata-registry -- failure detectors", () => {
   // `message`/`failures` — the human-readable reason (rate limit / blocked) lives in
   // message+failures, NOT in the stable `error` code. Detectors classify off those structured
   // fields, never the per-result snippets.
+  it("web_search flags DuckDuckGo's anomaly challenge as a rate-limit resource failure", () => {
+    const detect = webSearchDetector()!;
+    // The keyless provider's challenge page is a per-source-IP request-rate limit.
+    // It has to land in the rate-limit class rather than the unrecognized-reason
+    // catch-all, so that the verdict names the throttle and the config key.
+    const reason =
+      "duckduckgo: DuckDuckGo served its anomaly challenge (HTTP 202) instead of results. "
+      + "The endpoint applies a rate limit per source IP and clears after about a minute. "
+      + "Space searches further apart, or configure a keyed web_search provider "
+      + "(tools.web.search.provider: brave, tavily, or exa) for sustained use.";
+
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message: `All web_search providers failed: ${reason}`,
+          failures: [reason],
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "resource",
+      classifiedField: "message",
+      matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
+    });
+  });
+
   it("web_search flags a rate-limit failure (structured error/message/failures) as a resource failure with provenance", () => {
     const detect = webSearchDetector()!;
     // Enriched verdict (P2/D2a): the rate-limit branch attributes the verdict to the

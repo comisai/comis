@@ -845,8 +845,12 @@ describe("web-search-tool: duckduckgo provider", () => {
       statusText: "OK",
       text: async () => `
         <html><body>
-          <div class="result result--no-result">
-            <div class="no-results">No results.</div>
+          <div class="result results_links web-result result--no-result">
+            <div class="no-results__container result__title">
+              <span class='no-results'>
+                <div class="no-results__message"><h1>No results found for <strong>unknown</strong></h1></div>
+              </span>
+            </div>
           </div>
         </body></html>`,
     });
@@ -858,15 +862,19 @@ describe("web-search-tool: duckduckgo provider", () => {
     expect(parsed.count).toBe(0);
   });
 
-  it("sends POST request to html.duckduckgo.com via impit", async () => {
+  it("sends GET request to html.duckduckgo.com via impit", async () => {
     mockImpitFetch.mockResolvedValue({
       ok: true,
       status: 200,
       statusText: "OK",
       text: async () => `
         <html><body>
-          <div class="result result--no-result">
-            <div class="no-results">No results.</div>
+          <div class="result results_links web-result result--no-result">
+            <div class="no-results__container result__title">
+              <span class='no-results'>
+                <div class="no-results__message"><h1>No results found for <strong>zig</strong></h1></div>
+              </span>
+            </div>
           </div>
         </body></html>`,
     });
@@ -877,9 +885,9 @@ describe("web-search-tool: duckduckgo provider", () => {
     expect(mockImpitFetch).toHaveBeenCalledTimes(1);
     const [fetchUrl, fetchOpts] = mockImpitFetch.mock.calls[0] as [string, Record<string, unknown>];
     expect(fetchUrl).toContain("html.duckduckgo.com/html/");
-    expect(fetchOpts.method).toBe("POST");
-    const headers = fetchOpts.headers as Record<string, string>;
-    expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(fetchOpts.method).toBe("GET");
+    expect(fetchOpts.body).toBeUndefined();
+    expect(new URL(fetchUrl).searchParams.get("q")).toBe("zig");
   });
 
   it("limits results to requested count", async () => {
