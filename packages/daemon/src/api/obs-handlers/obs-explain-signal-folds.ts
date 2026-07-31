@@ -193,7 +193,11 @@ export function accumulateBackgroundTaskRecord(
     entry.failed += 1;
     const errorKind = asString(data.errorKind) ?? "internal";
     const failureCode = narrow(
-      ["skill_import_incomplete", "mcp_connection_details_missing"] as const,
+      [
+        "skill_import_incomplete",
+        "mcp_connection_details_missing",
+        "mcp_secret_reference_missing",
+      ] as const,
       data.failureCode,
     );
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);

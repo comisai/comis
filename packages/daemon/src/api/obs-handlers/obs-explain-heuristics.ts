@@ -414,6 +414,29 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // MCP configuration resolves ${NAME} references only from the encrypted
+  // secret store. Preserve the closed failure class across background
+  // promotion so explain can name this pre-handshake rejection without
+  // retaining an arbitrary provider error body.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.toolName === "mcp_manage"
+        && candidate.failureCode === "mcp_secret_reference_missing",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "mcp_secret_reference_missing",
+      detail:
+        "mcp_manage supplied a secret reference whose name is absent from the encrypted secrets store; "
+        + "the background connection failed before the server handshake",
+      suggestedNextSteps: [
+        "compare the candidate's Stored secret name with gateway env_list (names only)",
+        "retry mcp_manage with each env value using the exact ${STORED_SECRET_NAME} reference from trusted operator policy",
+      ],
+    };
+  },
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;

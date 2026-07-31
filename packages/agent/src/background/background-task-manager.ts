@@ -132,6 +132,7 @@ export interface BackgroundTaskManager {
 const MAX_RESULT_CHARS = 102_400; // 100KB
 const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
 const MCP_CONNECT_MISSING_PARAM_PREFIX = '[missing_param] mcp_manage(action="connect")';
+const MCP_SECRET_REFERENCE_MISSING_PREFIX = '[invalid_value] enabled MCP server "';
 
 function classifyBackgroundTaskFailure(
   toolName: string,
@@ -147,6 +148,14 @@ function classifyBackgroundTaskFailure(
     && message.includes("command or url")
   ) {
     return "mcp_connection_details_missing";
+  }
+  if (
+    toolName === "mcp_manage"
+    && message.startsWith(MCP_SECRET_REFERENCE_MISSING_PREFIX)
+    && message.includes(" references ")
+    && message.includes(" which is not in the secrets store")
+  ) {
+    return "mcp_secret_reference_missing";
   }
   return undefined;
 }

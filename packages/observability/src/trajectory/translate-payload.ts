@@ -378,6 +378,7 @@ export function translatePayload(
         ...(
           payload.failureCode === "skill_import_incomplete"
           || payload.failureCode === "mcp_connection_details_missing"
+          || payload.failureCode === "mcp_secret_reference_missing"
             ? { failureCode: payload.failureCode }
             : {}
         ),

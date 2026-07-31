@@ -10,6 +10,7 @@ export type WebhookFailureReason = "handler_error" | "task_not_delivered";
 export type BackgroundTaskFailureCode =
   | "skill_import_incomplete"
   | "mcp_connection_details_missing"
+  | "mcp_secret_reference_missing"
   | "mutation_not_persisted";
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
