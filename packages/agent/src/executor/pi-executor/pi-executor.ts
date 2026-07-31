@@ -2709,6 +2709,7 @@ async function runSessionLocked(
       executionPlanRef, isOnboarding,
       geminiCacheHit, geminiCachedTokens, capabilityClass, budgetWindowTokens,
       provider: resolvedModel?.provider ?? config.provider,
+      modelId: resolvedModel?.id ?? config.model,
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,
       deps: {

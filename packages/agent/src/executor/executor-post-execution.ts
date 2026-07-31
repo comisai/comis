@@ -134,6 +134,7 @@ import {
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
+  enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
   isTrustedBackgroundCompletionEnvelope,
 } from "./executor-response-filter.js";
@@ -324,6 +325,8 @@ export interface PostExecutionParams {
    * is the more useful signal for operator-side cache-hit-rate segmentation.
    */
   provider: string;
+  /** Exact model identifier used for this execution. */
+  modelId: string;
   /**
    * Provider family derived from `resolveProviderCapabilities(provider).providerFamily`.
    * One of "anthropic" | "openai" | "google" | "default". Pre-computed at the
@@ -1557,6 +1560,39 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "configuration_failure",
         reason: providerModelFailureGrounding.reason,
         requiredTool: "agents_manage",
+      },
+    });
+  }
+  const activeModelSelfStatus = enforceActiveModelSelfStatus({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    provider: params.provider,
+    modelId: params.modelId,
+  });
+  if (activeModelSelfStatus.corrected) {
+    result.response = activeModelSelfStatus.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        provider: params.provider,
+        modelId: params.modelId,
+        errorKind: "validation" as const,
+        hint:
+          "The model omitted or contradicted the captured execution identity; inspect the "
+          + "system-prompt report and current-turn transcript in comis explain.",
+      },
+      "Current model self-status replaced with captured runtime identity",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.active_model_self_status_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "current_model_status",
+        reason: activeModelSelfStatus.reason,
       },
     });
   }

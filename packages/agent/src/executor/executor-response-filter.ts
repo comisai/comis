@@ -304,6 +304,56 @@ export function enforceProviderModelFailureGrounding(params: {
   };
 }
 
+export interface ActiveModelSelfStatusGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "active_model_status_mismatch";
+}
+
+function containsAnyToken(tokens: ReadonlySet<string>, candidates: readonly string[]): boolean {
+  return candidates.some((candidate) => tokens.has(candidate));
+}
+
+/**
+ * Ground an unambiguous current-model self-status query in captured runtime
+ * identity. The narrow lexical gate avoids turning recommendations or model
+ * catalog questions into status replies; the replacement itself is
+ * language-neutral and cannot reverse tool evidence.
+ */
+export function enforceActiveModelSelfStatus(params: {
+  request: string;
+  response: string;
+  provider: string;
+  modelId: string;
+}): ActiveModelSelfStatusGuardResult {
+  const tokens = new Set(params.request.toLocaleLowerCase().match(/[a-z0-9]+/gu) ?? []);
+  const asksModel = tokens.has("model")
+    && containsAnyToken(tokens, ["what", "which"]);
+  const explicitCurrent = containsAnyToken(tokens, ["active", "current", "currently", "now"]);
+  const selfUse = containsAnyToken(tokens, ["u", "ur", "you", "your"])
+    && containsAnyToken(tokens, ["running", "use", "using"]);
+  const actuallySelfUse = containsAnyToken(tokens, ["actual", "actually"]) && selfUse;
+  const requestsChoice = containsAnyToken(tokens, [
+    "better", "change", "cheaper", "choose", "pick", "recommend", "recommended", "should", "switch",
+  ]);
+  if (!asksModel || (!explicitCurrent && !actuallySelfUse) || requestsChoice) {
+    return { response: params.response, corrected: false };
+  }
+
+  const response = params.response.toLocaleLowerCase();
+  if (
+    response.includes(params.provider.toLocaleLowerCase())
+    && response.includes(params.modelId.toLocaleLowerCase())
+  ) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: `${params.provider} / ${params.modelId}`,
+    corrected: true,
+    reason: "active_model_status_mismatch",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Unified OutputGuard scanning (replaces 3 near-identical blocks)
 // ---------------------------------------------------------------------------
