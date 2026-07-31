@@ -589,6 +589,49 @@ describe("createSqliteMemoryLifecycleStore", () => {
       expect(evictedAtOf(db, "B-correct-old"), "old-but-correct must survive").toBeNull();
     });
 
+    it("per-call forget overrides control both dormancy and the high-proof exemption", async () => {
+      insertMemory(db, {
+        id: "old-within-override",
+        content: "old but within the configured dormancy window",
+        memoryType: "semantic",
+        occurredAt: T0 - 120 * DAY_MS,
+        proofCount: 1,
+      });
+      insertMemory(db, {
+        id: "custom-high-proof",
+        content: "corroborated under the configured proof floor",
+        memoryType: "semantic",
+        occurredAt: T0 - 1 * DAY_MS,
+        proofCount: 3,
+      });
+      seedFailureCount(db, { memoryId: "custom-high-proof", failureCount: 8 });
+      insertMemory(db, {
+        id: "custom-low-proof",
+        content: "wrong and below the configured proof floor",
+        memoryType: "semantic",
+        occurredAt: T0 - 1 * DAY_MS,
+        proofCount: 1,
+      });
+      seedFailureCount(db, { memoryId: "custom-low-proof", failureCount: 8 });
+
+      const res = await store.runLifecycleSweep({
+        tenantId: "tenant_a",
+        agentId: "agent_x",
+        now: T0,
+        policy: {
+          evictionEnabled: true,
+          maxDormantDays: 365,
+          failureEvictionFloor: 3,
+          highProofFloor: 3,
+        },
+      });
+
+      expect(res.ok && res.value.evicted).toBe(1);
+      expect(evictedAtOf(db, "old-within-override")).toBeNull();
+      expect(evictedAtOf(db, "custom-high-proof")).toBeNull();
+      expect(evictedAtOf(db, "custom-low-proof")).not.toBeNull();
+    });
+
     it("recall-exclusion contract: an evicted row is SOFT-closed (evicted_at set, NOT deleted)", async () => {
       // The store side of the recall-exclusion contract: eviction is a marker, the
       // raw row remains in the table (resolvable via a direct/asOf read). The
