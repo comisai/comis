@@ -599,6 +599,39 @@ describe("gateway tool", () => {
   });
 
   describe("env_set action", () => {
+    it("repairs a secret-shaped config patch without bypassing central approval", async () => {
+      const rpcCall = createMockRpcCall();
+      const approvalGate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      const result = await runWithContext(makeContext(), () =>
+        tool.execute("call-secret-patch", {
+          action: "patch",
+          section: "secrets",
+          key: "MY_KEY",
+          value: "private-test-value",
+          _confirmed: true,
+        }),
+      );
+
+      expect(approvalGate.requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "gateway",
+        action: "env.set",
+        params: { action: "env_set", env_key: "MY_KEY" },
+        fingerprintParams: expect.objectContaining({
+          action: "env_set",
+          env_key: "MY_KEY",
+          env_value: "private-test-value",
+        }),
+      }));
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
+        key: "MY_KEY",
+        value: "private-test-value",
+      }));
+      expect(rpcCall).not.toHaveBeenCalledWith("config.patch", expect.anything());
+      expect(result.details).toEqual(expect.objectContaining({ set: true, key: "MY_KEY" }));
+    });
+
     it("pauses the original secret write until central approval resolves", async () => {
       const rpcCall = createMockRpcCall();
       let resolveApproval:
