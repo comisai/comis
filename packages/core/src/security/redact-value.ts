@@ -158,6 +158,11 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
   "cookie",
   "webhooksecret",
   "env_value",
+  // Tool credential containers may use arbitrary operator-defined child keys,
+  // so their entire value is sensitive even when no leaf matches a known
+  // provider credential name or shape.
+  "env",
+  "headers",
 ]);
 
 /**
