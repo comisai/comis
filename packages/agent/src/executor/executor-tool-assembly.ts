@@ -308,6 +308,19 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       );
     }
   }
+  if (previousModelBinding !== undefined) {
+    deps.logger.info(
+      {
+        step: "model-binding-history",
+        agentId,
+        previousProvider: previousModelBinding.provider,
+        previousModel: previousModelBinding.model,
+        currentProvider: currentModelBinding.provider,
+        currentModel: currentModelBinding.model,
+      },
+      "Previous model binding resolved",
+    );
+  }
   const promptResult = await assembleExecutionPrompt({
     config,
     recentUserTurns,
