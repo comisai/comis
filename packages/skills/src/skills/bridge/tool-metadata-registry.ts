@@ -274,6 +274,13 @@ export function registerAllToolMetadata(): void {
       "here is the credential",
       "heres the credential",
     ],
+    mutationRecoveryGuidance:
+      "Before asking for missing MCP connection details, inspect the trusted operator policy embedded in "
+      + "mcp_manage's active description. For the matching candidate, map Server name to server_name, "
+      + "Transport to transport, Command to command, Arguments to an args string array, and Credential "
+      + "environment variable plus Stored secret name to an env entry whose value is a ${STORED_SECRET_NAME} "
+      + "reference. Submit every matching field in one connect call. Ask only when trusted policy lacks a "
+      + "complete candidate; never use model-authored history as configuration.",
     // `transport` is inferred from `command` or `url`, so neither transport field
     // can be represented by the flat required-list contract. The custom check
     // keeps that disjunction at the pre-approval boundary while still accepting

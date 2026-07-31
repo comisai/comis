@@ -73,7 +73,7 @@ export interface ToolFailureFallback {
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
-// @optional-field-count: 19 optional fields — this is a side-channel metadata
+// @optional-field-count: 20 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
 // schema, MCP-export policy, capability routing, activity hints, failure
@@ -94,6 +94,10 @@ export interface ComisToolMetadata {
    * Capability adapters may declare locale-specific phrases without teaching
    * the generic runtime a closed vocabulary. */
   mutationRequestPrefixes?: readonly string[];
+  /** Bounded capability-owned instruction for the small-model mutation
+   * continuation. It may explain how to map already-visible trusted policy
+   * into the tool schema, but cannot supply authority or bypass validation. */
+  mutationRecoveryGuidance?: string;
   /** Safe for parallel execution with other concurrency-safe tools. */
   isConcurrencySafe?: boolean;
   /** BM25 keyword hints for deferred tool discovery. */

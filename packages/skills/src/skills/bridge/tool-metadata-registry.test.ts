@@ -1081,6 +1081,16 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     });
   });
 
+  it("mcp_manage declares complete trusted-policy field mapping for mutation recovery", () => {
+    const guidance = getToolMetadata("mcp_manage")?.mutationRecoveryGuidance;
+
+    expect(guidance).toMatch(/Server name.*server_name/isu);
+    expect(guidance).toMatch(/Command.*command/isu);
+    expect(guidance).toMatch(/Arguments.*args string array/isu);
+    expect(guidance).toMatch(/Credential environment variable.*Stored secret name.*env/isu);
+    expect(guidance).toMatch(/never use model-authored history/iu);
+  });
+
   it("pre-flight gate accepts a stdio connect with command but no explicit transport (comis-daniel 2026-07-09)", () => {
     const meta = getToolMetadata("mcp_manage");
     // Daniel's exact first attempt — valid, transport inferable as stdio.

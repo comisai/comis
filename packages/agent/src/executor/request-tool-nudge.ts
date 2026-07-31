@@ -48,6 +48,7 @@ export interface RunRequestToolNudgeDeps {
 }
 
 const SUBMODULE = "executor.request-tool-nudge";
+const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function visibleTextOf(content: unknown): string {
@@ -103,6 +104,12 @@ function buildDirective(
     : trigger === "declared_mutation_request"
       ? "Capability metadata identifies the current wording as a direct mutation request."
       : "Your last answer claimed an external action attempt without a current-turn tool receipt.";
+  const capabilityGuidance = toolNames.flatMap((toolName) => {
+    const guidance = getToolMetadata(toolName)?.mutationRecoveryGuidance?.trim();
+    return guidance
+      ? [`Capability-owned recovery for ${toolName}: ${guidance.slice(0, MAX_RECOVERY_GUIDANCE_CHARS)}`]
+      : [];
+  });
   return [
     "[comis: continuation — the current request still needs tool-backed action]",
     triggerFact,
@@ -111,6 +118,7 @@ function buildDirective(
     "If the request is applicable, invoke a mutating action on the matching tool now.",
     "Use exact identifiers from trusted operator policy and the current request; never guess or substitute a nearby target.",
     "Never infer a secret or credential name from its contents or the active channel.",
+    ...capabilityGuidance,
     "Read-only list, get, search, status, or inspect actions do not complete a change request.",
     "Otherwise, state the exact current blocker.",
     "Do not repeat the prior answer and do not claim success without a successful current-turn tool result.",
