@@ -484,6 +484,45 @@ describe("assembleTools — SettingsManager initialization with in-memory fallba
   });
 });
 
+describe("assembleTools — previous model binding diagnostics", () => {
+  it("records the proven previous and current provider-model pairs at the request boundary", async () => {
+    const logger = createMockLogger();
+    const sm = {
+      ...makeSm(),
+      getBranch: () => [
+        {
+          type: "model_change",
+          provider: "openai",
+          modelId: "gpt-4.1-nano",
+        },
+        {
+          type: "model_change",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-5-20250929",
+        },
+      ],
+    };
+
+    await assembleTools(makeParams({
+      agentId: "default",
+      sm: sm as ToolAssemblyParams["sm"],
+      deps: makeDeps({ logger }),
+    }));
+
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        step: "model-binding-history",
+        agentId: "default",
+        previousProvider: "openai",
+        previousModel: "gpt-4.1-nano",
+        currentProvider: "anthropic",
+        currentModel: "claude-sonnet-4-5-20250929",
+      },
+      "Previous model binding resolved",
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Settings overrides
 // ---------------------------------------------------------------------------
