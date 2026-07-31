@@ -336,6 +336,29 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(state.connections.get("svc")?.error).toContain("variant_unresolved");
   });
 
+  it("redacts configured secret values from preserved server protocol errors", async () => {
+    const state = makeState();
+    connectImpl = () => {
+      state.lastStderr.set("svc", "fixture ready\n");
+      return Promise.reject(
+        new Error("MCP error -32003: rejected value hunter2plzredact"),
+      );
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+    const config: McpServerConfig = {
+      ...STDIO_CONFIG,
+      env: { SERVICE_PASSWORD: "hunter2plzredact" },
+    };
+
+    const result = await connectServer(state, deps, config);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).not.toContain("hunter2plzredact");
+    expect(result.error.message).toContain("[REDACTED]");
+  });
+
   it("sanitizes a credential leaked in the child stderr before folding it into the error + error-state entry", async () => {
     const state = makeState();
     // A credentialed server that dies while echoing its own connection string to

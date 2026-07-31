@@ -38,6 +38,7 @@ interface ClassifiedConnectFailure {
 }
 
 const STDERR_TAIL_MAX = 1500;
+const SERVER_ERROR_MAX = 1500;
 
 /**
  * Floor for redacting a KNOWN configured secret VALUE out of the stderr tail. The
@@ -112,6 +113,12 @@ export function classifyConnectFailure(
   // format-less secrets like a plain KEY=password echo), THEN the pattern scrubber
   // for anything credential-SHAPED the child emitted that we don't hold verbatim.
   const tail = sanitizeLogString(scrubKnownSecretValues(rawTail, config));
+  const boundedRawMessage = rawMessage.length > SERVER_ERROR_MAX
+    ? `${rawMessage.slice(0, SERVER_ERROR_MAX)}…`
+    : rawMessage;
+  const serverError = sanitizeLogString(
+    scrubKnownSecretValues(boundedRawMessage, config),
+  );
   const lower = rawMessage.toLowerCase();
 
   // A spawn ENOENT — the command (npx/uvx/binary) is missing or not on PATH.
@@ -138,11 +145,19 @@ export function classifyConnectFailure(
 
   // A stdio child that exited before the handshake — the "Connection closed" class.
   if (config.transport === "stdio") {
+    const meaningfulServerError = /^mcp error -32000:\s*connection closed$/iu
+      .test(serverError.trim())
+      ? undefined
+      : serverError;
     if (tail) {
       return {
         reason: "server_exited",
-        hint: "server process exited before the MCP handshake — see its stderr (a missing or invalid required env var is the most common cause; pass credentials via the connect env field as ${VAR} refs)",
-        message: `MCP server "${config.name}" exited before the handshake. Server stderr:\n${tail}`,
+        hint: meaningfulServerError
+          ? "server rejected the MCP handshake — review the returned server error, command arguments, and required environment references"
+          : "server process exited before the MCP handshake — see its stderr (a missing or invalid required env var is the most common cause; pass credentials via the connect env field as ${VAR} refs)",
+        message: meaningfulServerError
+          ? `MCP server "${config.name}" exited before the handshake. Server error:\n${meaningfulServerError}\nServer stderr:\n${tail}`
+          : `MCP server "${config.name}" exited before the handshake. Server stderr:\n${tail}`,
         stderrTail: tail,
       };
     }
