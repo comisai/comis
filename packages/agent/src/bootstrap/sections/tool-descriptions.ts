@@ -103,7 +103,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   models_manage: "List models and test availability",
   providers_manage: "Manage LLM provider endpoints (admin)",
   skills_manage: "Manage skill registry entries (admin)",
-  mcp_manage: "Connect an external account, then check account or service access through MCP (admin)",
+  mcp_manage: "Connect and inspect external accounts via MCP (admin)",
   heartbeat_manage: "Manage agent heartbeat schedules (admin)",
   // Discovery
   discover_tools: "Find MCP/deferred tools by keyword",
