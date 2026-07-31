@@ -16,6 +16,82 @@ import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
 import type { ToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
 import type { MessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { TurnLoopDetector } from "../turn-loop-detector.js";
+import { tryCatch } from "@comis/shared";
+
+const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
+
+function explicitModelIdentifiers(sourceText: string): string[] {
+  const candidates = sourceText.match(TECHNICAL_TOKEN_PATTERN) ?? [];
+  return [...new Set(candidates.filter((candidate) => {
+    const hasDigit = /\d/.test(candidate);
+    const hasSeparator = /[._:/-]/.test(candidate);
+    const compactModelId = /^[A-Za-z]{1,8}\d[A-Za-z0-9]*$/.test(candidate);
+    return (hasDigit && hasSeparator) || compactModelId;
+  }))];
+}
+
+function readMutationConfig(args: unknown): Record<string, unknown> | undefined {
+  if (args === null || typeof args !== "object") return undefined;
+  const params = args as { action?: unknown; config?: unknown };
+  if (params.action !== "update") return undefined;
+  if (params.config !== null && typeof params.config === "object") {
+    return params.config as Record<string, unknown>;
+  }
+  if (typeof params.config !== "string") return undefined;
+  const parsed = tryCatch(
+    () => JSON.parse(params.config as string) as unknown,
+  );
+  if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") {
+    return undefined;
+  }
+  return parsed.value as Record<string, unknown>;
+}
+
+function explicitModelMutationVerdict(
+  sourceText: string | undefined,
+  context: unknown,
+): { block: true; reason: string } | undefined {
+  if (!sourceText || context === null || typeof context !== "object") return undefined;
+  const call = context as { toolCall?: { name?: string }; args?: unknown };
+  if (call.toolCall?.name !== "agents_manage") return undefined;
+  const config = readMutationConfig(call.args);
+  const proposedModel = config?.model;
+  if (typeof proposedModel !== "string") return undefined;
+
+  const identifiers = explicitModelIdentifiers(sourceText);
+  if (identifiers.length === 0) return undefined;
+  if (identifiers.length > 1) {
+    return {
+      block: true,
+      reason:
+        `The request contains multiple explicit model identifiers (${identifiers.join(", ")}). ` +
+        "Do not infer which one to persist; ask the user to name one exact model identifier.",
+    };
+  }
+
+  const requestedModel = identifiers[0]!;
+  const proposedProvider = typeof config?.provider === "string"
+    ? config.provider
+    : undefined;
+  const exactTargets = new Set([
+    proposedModel,
+    ...(proposedProvider === undefined
+      ? []
+      : [
+          `${proposedProvider}/${proposedModel}`,
+          `${proposedProvider}:${proposedModel}`,
+        ]),
+  ]);
+  if (exactTargets.has(requestedModel)) return undefined;
+
+  return {
+    block: true,
+    reason:
+      `The user explicitly requested model identifier "${requestedModel}", but this call proposes ` +
+      `"${proposedModel}". Never substitute a different model identifier. Retry with the exact ` +
+      "identifier; if it is unavailable, report that without changing configuration.",
+  };
+}
 
 /**
  * Create a beforeToolCall guard that proactively blocks tool execution when
@@ -40,6 +116,7 @@ export function createBeforeToolCallGuard(
   messageSendLimiter?: MessageSendLimiter,
   turnLoopDetector?: TurnLoopDetector,
   failedToolRedirects?: ReadonlyMap<string, string>,
+  explicitMutationSource?: string,
 ) {
   return async (context: unknown, _signal?: AbortSignal) => {
     // Proactive step limit check
@@ -55,6 +132,12 @@ export function createBeforeToolCallGuard(
     if (circuitBreaker.isOpen()) {
       return { block: true, reason: "Provider circuit breaker open" };
     }
+
+    const exactModelVerdict = explicitModelMutationVerdict(
+      explicitMutationSource,
+      context,
+    );
+    if (exactModelVerdict) return exactModelVerdict;
 
     // Short-circuit a repeat idempotent read (the loop-breaker seam).
     // The SDK's BeforeToolCallResult has only {block, reason} -- no content

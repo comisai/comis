@@ -51,7 +51,7 @@
                   "type": "integer"
                 },
                 "model": {
-                  "description": "LLM model identifier",
+                  "description": "Exact LLM model identifier. When the user names an identifier, copy it verbatim; never replace it with a similar or preferred model. List the provider catalog first when availability is unknown.",
                   "type": "string"
                 },
                 "name": {
@@ -69,7 +69,7 @@
                   "type": "object"
                 },
                 "provider": {
-                  "description": "LLM provider name",
+                  "description": "Exact LLM provider name. When the user names a provider, copy it verbatim; never substitute a different provider.",
                   "type": "string"
                 },
                 "skills": {

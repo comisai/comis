@@ -65,8 +65,17 @@ export const AgentsManageToolParams = Type.Object({
       Type.Object(
         {
           name: Type.Optional(Type.String({ description: "Human-readable agent name" })),
-          model: Type.Optional(Type.String({ description: "LLM model identifier" })),
-          provider: Type.Optional(Type.String({ description: "LLM provider name" })),
+          model: Type.Optional(Type.String({
+            description:
+              "Exact LLM model identifier. When the user names an identifier, copy it verbatim; " +
+              "never replace it with a similar or preferred model. List the provider catalog first " +
+              "when availability is unknown.",
+          })),
+          provider: Type.Optional(Type.String({
+            description:
+              "Exact LLM provider name. When the user names a provider, copy it verbatim; never " +
+              "substitute a different provider.",
+          })),
           maxSteps: Type.Optional(Type.Integer({ description: "Maximum execution steps per turn" })),
           workspace_profile: Type.Optional(
             Type.Union([Type.Literal("full"), Type.Literal("specialist")], {
@@ -364,6 +373,8 @@ export function createAgentsManageTool(
       description:
         "Manage agent system: create, get, update, delete, suspend, resume, list. " +
         "Use update to switch an agent's LLM provider or model (e.g. switch to Gemini, change model). " +
+        "Explicit provider and model identifiers are exact targets: never silently substitute another value. " +
+        "If an exact target is unavailable, leave configuration unchanged and report the failure. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,

@@ -1783,6 +1783,7 @@ async function runSessionLocked(
       messageSendLimiter,
       turnLoopDetector,
       failedToolRedirects,
+      msg.text,
     );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
