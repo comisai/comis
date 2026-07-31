@@ -486,9 +486,10 @@ describe("local rig mode", () => {
     const restart = readFileSync(RESTART_DAEMON, "utf8");
 
     expect(restart).toMatch(/while true; do[^]*node[^]*daemon\.console\.log/u);
-    expect(restart).toContain("status=\\$?");
-    expect(restart).toContain('if [ \\"\\$status\\" -eq 42 ]; then continue');
-    expect(restart).toContain('exit \\"\\$status\\"');
+    expect(restart).toContain("daemon_exit_code=\\$?");
+    expect(restart).toContain('if [ \\"\\$daemon_exit_code\\" -eq 42 ]; then continue');
+    expect(restart).toContain('exit \\"\\$daemon_exit_code\\"');
+    expect(restart).not.toContain("status=\\$?");
   });
 
   it("binds local daemon boot and runtime storage to the isolated rig data directory", () => {
