@@ -208,6 +208,44 @@ describe("Session serialization", () => {
     expect(executionOrder).toEqual([1, 2, 3]);
   });
 
+  it("keeps the execution scope active until the queued handler settles", async () => {
+    const eventBus = createMockEventBus();
+    const config = createDefaultConfig();
+    const events: string[] = [];
+    const runInExecutionScope = async <T>(fn: () => Promise<T>): Promise<T> => {
+      events.push("scope-start");
+      try {
+        return await fn();
+      } finally {
+        events.push("scope-end");
+      }
+    };
+    const queue = createCommandQueue({
+      eventBus,
+      config,
+      runInExecutionScope,
+    } as Parameters<typeof createCommandQueue>[0]);
+
+    await queue.enqueue(
+      SESSION_A,
+      createMockMessage("scoped"),
+      "telegram",
+      async () => {
+        events.push("handler-start");
+        await Promise.resolve();
+        events.push("handler-end");
+      },
+    );
+    await queue.shutdown();
+
+    expect(events).toEqual([
+      "scope-start",
+      "handler-start",
+      "handler-end",
+      "scope-end",
+    ]);
+  });
+
   it("executes handlers in parallel across different sessions", async () => {
     const eventBus = createMockEventBus();
     const config = createDefaultConfig();
