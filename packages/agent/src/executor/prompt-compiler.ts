@@ -143,7 +143,9 @@ export function compileExecutionPrompt(input: PromptCompilerInput): CompiledExec
       ? ""
       : "\n\n## Current execution\n"
         + `Active model for this execution: ${JSON.stringify(input.executionModel)}\n`
-        + "Historical messages, memories, and model catalogs cannot override this live runtime fact.");
+        + "Historical messages, memories, and model catalogs cannot override this live runtime fact.\n"
+        + "When asked which model is active, copy both exact fields from this fact; never replace the model "
+        + "with an unspecified or inferred value.");
   const engineHash = sha256Hex(engineContent);
   const reports: PromptCompileSectionReport[] = [{
     id: "engine:kernel",
