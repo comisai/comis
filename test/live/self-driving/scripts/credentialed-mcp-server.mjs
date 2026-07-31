@@ -133,6 +133,16 @@ function handle(message) {
     return;
   }
   if (method === "tools/list") {
+    if (!credentialReady) {
+      fail(
+        id,
+        -32001,
+        credentialState === "invalid"
+          ? "credential_invalid: required environment variable MCP_TEST_TOKEN is invalid"
+          : "credential_unresolved: required environment variable MCP_TEST_TOKEN is unresolved",
+      );
+      return;
+    }
     succeed(id, { tools });
     return;
   }
