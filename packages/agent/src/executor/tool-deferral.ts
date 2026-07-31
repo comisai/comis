@@ -17,7 +17,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 import type { EmbeddingPort } from "@comis/core";
-import { getToolMetadata } from "@comis/core";
+import { getToolMetadata, matchesToolMutationRequest } from "@comis/core";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
@@ -457,17 +457,22 @@ export function applyToolDeferral(
   }
 
   // Nano models often fail to invoke discover_tools even when the current
-  // request names a connected capability plainly. Keep the strongest lexical
-  // match active for this turn, along with its declared workflow peers. Trust
-  // and channel gates remain authoritative: a tool deferred by a rule above is
-  // never promoted here. Later lifecycle and operator overrides also retain
-  // precedence.
+  // request names a connected capability plainly. Prefer a capability-declared
+  // direct mutation match, otherwise keep the strongest lexical match active
+  // for this turn, along with its declared workflow peers. Trust and channel
+  // gates remain authoritative: a tool deferred by a rule above is never
+  // promoted here. Later lifecycle and operator overrides also retain precedence.
   if (
     deferralContext.capabilityClass === "nano"
     && deferralContext.requestText?.trim()
   ) {
+    const requestText = deferralContext.requestText;
     const eligibleTools = tools.filter((tool) =>
       deferredSet.has(tool.name) && !policyDeferredSet.has(tool.name)
+    );
+    const directMutationTool = tools.find((tool) =>
+      !policyDeferredSet.has(tool.name)
+      && matchesToolMutationRequest(tool.name, requestText)
     );
     const documents = eligibleTools.map((tool) => {
       const metadata = getToolMetadata(tool.name);
@@ -476,27 +481,38 @@ export function applyToolDeferral(
         : `${resolveToolDescription(tool)} ${metadata.searchHint}`;
       return { name: tool.name, text: searchText };
     });
-    const strongest = bm25Score(
-      deferralContext.requestText.slice(0, MAX_EMBED_QUERY_CHARS),
-      documents,
-    ).find((match) => match.score >= DEFAULT_TOOL_DISCOVERY_SCORES.minBm25Score);
+    const strongest = directMutationTool === undefined
+      ? bm25Score(
+          requestText.slice(0, MAX_EMBED_QUERY_CHARS),
+          documents,
+        ).find((match) => match.score >= DEFAULT_TOOL_DISCOVERY_SCORES.minBm25Score)
+      : { name: directMutationTool.name };
     if (strongest !== undefined) {
-      const activatedNames = new Set([strongest.name]);
+      const selectedNames = new Set([strongest.name]);
       const relatedNames = getToolMetadata(strongest.name)?.coDiscoverWith ?? [];
       for (const relatedName of relatedNames) {
-        if (eligibleTools.some((tool) => tool.name === relatedName)) {
-          activatedNames.add(relatedName);
+        if (
+          tools.some((tool) => tool.name === relatedName)
+          && !policyDeferredSet.has(relatedName)
+        ) {
+          selectedNames.add(relatedName);
         }
       }
-      for (const name of activatedNames) deferredSet.delete(name);
-      requestRelevantToolNames.push(...activatedNames);
-      logger.debug(
+      let promotedCount = 0;
+      for (const name of selectedNames) {
+        if (deferredSet.delete(name)) promotedCount++;
+      }
+      requestRelevantToolNames.push(...selectedNames);
+      logger.info(
         {
-          step: "request-relevant-tool-activation",
-          activatedCount: activatedNames.size,
-          activatedNames: [...activatedNames],
+          step: "request-relevant-tool-selection",
+          selectedCount: selectedNames.size,
+          selectedNames: [...selectedNames],
+          promotedCount,
+          selectionSource:
+            directMutationTool === undefined ? "lexical" : "declared_mutation",
         },
-        "Request-relevant tools kept active",
+        "Request-relevant tools selected",
       );
     }
   }
