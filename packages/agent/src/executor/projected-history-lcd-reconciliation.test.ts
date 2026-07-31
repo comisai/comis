@@ -16,6 +16,7 @@ import {
   planInboundMessageProvenance,
   projectInboundConversation,
 } from "../session/inbound-message-provenance.js";
+import * as contextHistoryReplacement from "../session/context-history-replacement.js";
 import * as lcdIngest from "./lcd-ingest.js";
 
 const NOW = 1_789_000_000_100;
@@ -35,7 +36,7 @@ type ReconcileResult = {
 };
 
 const ingestProjectedConversationHistory = (
-  lcdIngest as unknown as {
+  contextHistoryReplacement as unknown as {
     ingestProjectedConversationHistory(args: {
       store: ReturnType<typeof createLcdStore>;
       scope: ContextStoreScope;
