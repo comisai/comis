@@ -600,6 +600,21 @@ describe("promoteToolInvocationStall — repeated action answers stop reading as
   });
 });
 
+describe("execution completion tool inventory", () => {
+  it("reports only provider-visible tools as active instead of counting deferred discovery stubs", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+
+    expect(stripped).toMatch(
+      /activeToolCount:\s*Math\.max\(\s*0,\s*mergedCustomTools\.length\s*-\s*deferralResult\.deferredCount\s*\)/u,
+    );
+  });
+});
+
 describe("promoteOutputStarved — conservative terminal-truncation promotion", () => {
   // The SDK-normalized AssistantMessage.stopReason union is
   // "stop" | "length" | "toolUse" | "error" | "aborted" (pi-ai types.d.ts), so
