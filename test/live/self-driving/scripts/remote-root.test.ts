@@ -482,6 +482,14 @@ describe("local rig mode", () => {
     expect(restart).toMatch(/COMIS_CONFIG_PATHS[^]*daemon\.console\.log/u);
   });
 
+  it("restarts the tmux-backed local daemon after the configured reload exit", () => {
+    const restart = readFileSync(RESTART_DAEMON, "utf8");
+
+    expect(restart).toMatch(/while true; do[^]*node[^]*daemon\.console\.log/u);
+    expect(restart).toMatch(/status=\$\?[^]*"\$status" -eq 42[^]*continue/u);
+    expect(restart).toMatch(/"\$status" -ne 42[^]*exit "\$status"/u);
+  });
+
   it("binds local daemon boot and runtime storage to the isolated rig data directory", () => {
     const restart = readFileSync(RESTART_DAEMON, "utf8");
 
