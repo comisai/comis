@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { getAllToolMetadata, getToolMetadata, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
+import { getAllToolMetadata, getToolMetadata, matchesToolMutationRequest, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
 import { Type } from "typebox";
 import { registerAllToolMetadata } from "./tool-metadata-registry.js";
@@ -1712,6 +1712,15 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
 
     expect(meta).toBeDefined();
     expect(meta!.coDiscoverWith).toContain("gateway");
+  });
+
+  it("mcp_manage treats a supplied credential as a connection continuation", () => {
+    expect(
+      matchesToolMutationRequest(
+        "mcp_manage",
+        "heres the token [REDACTED]",
+      ),
+    ).toBe(true);
   });
 });
 
