@@ -1132,6 +1132,98 @@ describe("setupAndRoute command-queue routing", () => {
     }
   });
 
+  it("delivers one localized reason-coded failure when accepted queued execution rejects", async () => {
+    const eventBus = new TypedEventBus();
+    const terminalEvents: Array<{ outcome: string; reason: string }> = [];
+    eventBus.on("message:terminal", (event) => terminalEvents.push(event));
+    const deliveryService = makeFakeDeliveryService();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      fatal: vi.fn(),
+      trace: vi.fn(),
+      audit: vi.fn(),
+      child: vi.fn().mockReturnThis(),
+    };
+    const commandQueue = createCommandQueue({
+      eventBus,
+      logger: logger as never,
+      config: QueueConfigSchema.parse({
+        defaultMode: "followup",
+        maxConcurrentSessions: 1,
+      }),
+    });
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockRejectedValue(
+      Object.assign(new Error("configured provider credential is unavailable"), {
+        errorKind: "auth" as const,
+      }),
+    );
+    const deps = makeMinimalDeps({
+      eventBus,
+      commandQueue,
+      deliveryService,
+      logger: logger as never,
+      getPlatformReplyLocale: () => ({
+        language: "he",
+        localePacks: {
+          he: {
+            execution_failed: "לא הצלחתי להשלים את הבקשה כי שירות נדרש אינו זמין.",
+          },
+        },
+      }),
+    });
+    const message = makeMsg({
+      id: "00000000-0000-0000-0000-000000000414",
+    });
+
+    await setupAndRoute(
+      deps,
+      makeAdapter(),
+      message,
+      message,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      executor,
+      new Set(),
+      new Map() as never,
+      undefined,
+      EMPTY_INBOUND_PROVENANCE,
+    );
+    await commandQueue.drainAll();
+
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledOnce();
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ channelType: "telegram" }),
+      "chat-1",
+      expect.stringMatching(/^לא הצלחתי.*reason: auth/),
+      expect.objectContaining({
+        completionMode: "deferred_retry",
+        authority: expect.objectContaining({
+          tenantId: "default",
+          agentId: "agent-1",
+          conversationRef: TURN_CONVERSATION_REF,
+        }),
+        destinationEndpoint: TURN_ENDPOINT,
+      }),
+    );
+    expect(terminalEvents).toEqual([
+      expect.objectContaining({
+        outcome: "error",
+        reason: "execution_completed",
+      }),
+    ]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "auth", step: "queue-execute" }),
+      "Command queue background execution failed",
+    );
+    await commandQueue.shutdown();
+  });
+
   it("aborts the authoritative active SDK run when the queue cancels execution", async () => {
     let resolveExecutorStarted!: () => void;
     const executorStarted = new Promise<void>((resolve) => {

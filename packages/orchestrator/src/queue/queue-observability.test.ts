@@ -52,15 +52,18 @@ describe("queue observability containment", () => {
   it("contains a rejected background execution with an actionable error", async () => {
     const logger = makeLogger();
     const observability = createQueueObservability(new TypedEventBus(), logger);
+    const authError = Object.assign(new Error("execution failed"), {
+      errorKind: "auth" as const,
+    });
 
     await observability.containBackgroundExecution(
-      Promise.reject(new Error("execution failed")),
+      Promise.reject(authError),
       "collect",
       "telegram",
     );
 
     expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "collect", errorKind: "internal" }),
+      expect.objectContaining({ mode: "collect", errorKind: "auth" }),
       "Command queue background execution failed",
     );
   });
