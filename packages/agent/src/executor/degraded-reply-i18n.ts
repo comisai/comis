@@ -28,7 +28,8 @@ export type LocaleMessageId =
   | "persistent_action_evidence_missing"
   | "destructive_action_not_verified"
   | "provider_requires_model"
-  | "vision_unavailable";
+  | "vision_unavailable"
+  | "response_locale_unavailable";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -82,6 +83,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I couldn't analyze this image because no vision provider is available. "
       + "Re-uploading the same image will not help until the vision configuration changes. "
       + "Settings:",
+  response_locale_unavailable:
+    "I couldn't produce a response in the language and writing system requested for this message. "
+      + "Please retry or select a model that supports it.",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -314,6 +318,14 @@ export function selectVisionUnavailableReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "vision_unavailable");
+}
+
+/** Honest replacement after the bounded locale repair still violates policy. */
+export function selectResponseLocaleUnavailableReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "response_locale_unavailable");
 }
 
 export function selectPipelineTimeoutReply(

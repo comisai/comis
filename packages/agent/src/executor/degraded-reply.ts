@@ -35,6 +35,7 @@ import {
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
   selectVisionUnavailableReply,
+  selectResponseLocaleUnavailableReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -227,6 +228,14 @@ export function buildProviderRequiresModelReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectProviderRequiresModelReply(language, localeCatalog);
+}
+
+/** Honest replacement after the bounded locale repair still violates policy. */
+export function buildResponseLocaleUnavailableReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectResponseLocaleUnavailableReply(language, localeCatalog);
 }
 
 interface VisionFailureRecord {
