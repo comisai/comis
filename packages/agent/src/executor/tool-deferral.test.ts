@@ -466,6 +466,39 @@ describe("applyToolDeferral -- MCP active by default", () => {
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral - nano-class aggressive deferral", () => {
+  it("keeps the strongest request-matching workflow tools active for nano models", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("models_manage", {
+      searchHint: "llm provider model switch configure cost tier pricing",
+      coDiscoverWith: ["agents_manage"],
+    });
+    registerToolMetadata("agents_manage", {
+      searchHint: "system list create delete suspend resume agent configure roster inventory",
+      coDiscoverWith: ["models_manage"],
+    });
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("models_manage"),
+      makeTool("agents_manage"),
+      makeTool("gateway"),
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "switch back to the model u had before",
+      toolNames: tools.map(t => t.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.activeTools.map(t => t.name)).toEqual(
+      expect.arrayContaining(["models_manage", "agents_manage"]),
+    );
+    expect(result.deferredNames).not.toContain("models_manage");
+    expect(result.deferredNames).not.toContain("agents_manage");
+    expect(result.deferredNames).toContain("gateway");
+  });
+
   it("defers all non-CORE_TOOLS when capabilityClass is 'nano'", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
