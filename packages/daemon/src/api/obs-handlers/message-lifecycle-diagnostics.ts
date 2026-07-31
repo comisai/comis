@@ -222,7 +222,14 @@ export function mergePreSessionMessageFailures(
       current.topErrorKinds[failure.errorKind] =
         (current.topErrorKinds[failure.errorKind] ?? 0) + 1;
     }
-    if (failure.timestamp >= current.lastTs) current.endReason = endReason;
+    const currentCauseIsHard =
+      current.endReason !== "success"
+      && current.endReason !== "unknown"
+      && current.endReason !== "background_pending"
+      && current.endReason !== "completed_with_tool_errors";
+    if (!currentCauseIsHard || failure.timestamp >= current.lastTs) {
+      current.endReason = endReason;
+    }
     current.lastTs = Math.max(current.lastTs, failure.timestamp);
   }
   return { rows: [...bySession.values()], failures };
