@@ -1167,10 +1167,30 @@ async function runSessionLocked(
   // Skills registered during tool calls (e.g., skill-creator creating stock-scanner)
   // do not mutate the system prompt until the next execution.
   const capabilitiesDisabled = executionOverrides?.capabilityAccess === "none";
-  const frozenPromptSkillsXml = capabilitiesDisabled ? "" : deps.getPromptSkillsXml?.();
+  const frozenPromptSkillSurface = capabilitiesDisabled
+    ? {
+        xml: "",
+        locations: new Map<string, string>(),
+        unavailableSkills: [] as const,
+      }
+    : deps.getPromptSkillSurface?.();
+  const frozenPromptSkillsXml = frozenPromptSkillSurface?.xml
+    ?? (capabilitiesDisabled ? "" : deps.getPromptSkillsXml?.());
   const frozenPromptSkillLocations = capabilitiesDisabled
     ? new Map<string, string>()
-    : deps.getPromptSkillLocations?.();
+    : frozenPromptSkillSurface?.locations ?? deps.getPromptSkillLocations?.();
+  const unavailablePromptSkills = frozenPromptSkillSurface?.unavailableSkills ?? [];
+  if (unavailablePromptSkills.length > 0) {
+    deps.logger.info(
+      {
+        agentId: agentId ?? config.name,
+        step: "prompt-skill-availability",
+        unavailableSkillCount: unavailablePromptSkills.length,
+        unavailableSkills: unavailablePromptSkills,
+      },
+      "Prompt skill availability captured",
+    );
+  }
   const frozenMcpInstructions = capabilitiesDisabled
     ? []
     : deps.getMcpServerInstructions?.() ?? [];
@@ -2586,6 +2606,7 @@ async function runSessionLocked(
         msg: dispatchMessage, session, config, sessionKey, formattedKey, agentId, result,
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
+        unavailablePromptSkills,
         systemPrompt: effectiveSystemPrompt,
         mergedCustomTools,
         cmdResult, sepEnabled, executionPlanRef,

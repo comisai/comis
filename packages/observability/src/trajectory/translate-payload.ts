@@ -31,6 +31,7 @@ import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
 import { translateSessionSummaryPayload } from "./translate-session-summary.js";
+import { boundedUnavailableSkills } from "./translate-skill-availability.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -226,6 +227,9 @@ export function translatePayload(
         messagesDigest: payload.messagesDigest,
         ...(payload.inboundKind === "message" || payload.inboundKind === "edit"
           ? { inboundKind: payload.inboundKind }
+          : {}),
+        ...(Array.isArray(payload.unavailableSkills)
+          ? { unavailableSkills: boundedUnavailableSkills(payload.unavailableSkills) }
           : {}),
         ...(typeof payload.groupHistoryMessageCount === "number"
           ? { groupHistoryMessageCount: payload.groupHistoryMessageCount }

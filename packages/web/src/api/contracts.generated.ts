@@ -11284,6 +11284,37 @@ export const CONTRACTS = {
             }
           ]
         },
+        "skillAvailability": {
+          "type": "object",
+          "properties": {
+            "unavailable": {
+              "maxItems": 25,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 512
+                  }
+                },
+                "required": [
+                  "name",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "unavailable"
+          ],
+          "additionalProperties": false
+        },
         "responseLocaleRepairSkipped": {
           "type": "object",
           "properties": {

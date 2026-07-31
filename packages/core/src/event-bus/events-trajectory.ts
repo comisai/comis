@@ -42,6 +42,11 @@ export interface TrajectoryEvents {
     messagesDigest: string;
     /** Normalized platform update kind; content-free and provider-neutral. */
     inboundKind: "message" | "edit";
+    /** Installed prompt skills unavailable to this exact turn; names and knob reasons only. */
+    unavailableSkills?: ReadonlyArray<{
+      readonly name: string;
+      readonly reason: string;
+    }>;
     /** Earlier group-message count attached to this exact model request. */
     groupHistoryMessageCount?: number;
     /** Character count of the attributed earlier-group context. */

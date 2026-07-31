@@ -40,6 +40,12 @@ import type { ComisLogger } from "@comis/infra";
 
 /** The sibling dot-dir (NOT a skill discoveryPath; the registry skips dot-dirs). */
 const LEARNED_SKILLS_DIRNAME = ".learned-skills";
+const MAX_UNAVAILABLE_PROMPT_SKILLS = 25;
+
+interface UnavailablePromptSkill {
+  readonly name: string;
+  readonly reason: string;
+}
 
 /**
  * Surface filter: a read-only (`!mutating`) procedure in `candidate` OR `active`
@@ -191,28 +197,75 @@ export function renderLearnedSkillsXml(args: {
   learnedSkills: readonly MentalModel[];
   workspaceDir: string;
 }): string {
-  const { skillRegistry, learnedSkills, workspaceDir } = args;
-  const snapshot = skillRegistry.getSnapshot();
-  const unavailableXml = formatUnavailableSkillsXml(
-    skillRegistry
-      .getPromptSkillInventory()
-      .filter((skill) => !skill.eligible && skill.disableModelInvocation !== true)
-      .map((skill) => ({
-        name: skill.name,
-        reason: skill.reason ?? "unavailable in the current runtime",
-      })),
-  );
-  const availableXml = !learnedSkills.some(isSurfaceable)
-    ? snapshot.prompt
-    : mergeLearnedSkillsXml(snapshot.skills, learnedSkills, workspaceDir);
-  if (!unavailableXml) {
-    // Byte-identical default path — no merge, the cached platform prompt verbatim.
-    return availableXml;
-  }
+  return buildPromptSkillSurface(args).xml;
+}
+
+function selectUnavailablePromptSkills(skillRegistry: SkillRegistry): UnavailablePromptSkill[] {
+  return skillRegistry
+    .getPromptSkillInventory()
+    .filter((skill) => !skill.eligible && skill.disableModelInvocation !== true)
+    .slice(0, MAX_UNAVAILABLE_PROMPT_SKILLS)
+    .map((skill) => ({
+      name: skill.name,
+      reason: skill.reason ?? "unavailable in the current runtime",
+    }));
+}
+
+function renderPromptSkillSurfaceXml(args: {
+  snapshot: ReturnType<SkillRegistry["getSnapshot"]>;
+  learnedSkills: readonly MentalModel[];
+  workspaceDir: string;
+  unavailableSkills: readonly UnavailablePromptSkill[];
+}): string {
+  const unavailableXml = formatUnavailableSkillsXml(args.unavailableSkills);
+  const availableXml = !args.learnedSkills.some(isSurfaceable)
+    ? args.snapshot.prompt
+    : mergeLearnedSkillsXml(args.snapshot.skills, args.learnedSkills, args.workspaceDir);
+  if (!unavailableXml) return availableXml;
   if (!availableXml) return unavailableXml;
-  // Availability facts precede descriptions so the bounded runtime section
-  // retains the honesty-critical state when a long skill list is truncated.
   return `${unavailableXml}\n${availableXml}`;
+}
+
+function buildPromptSkillLocationIndexFromDescriptions(
+  platformSkills: readonly PromptSkillDescription[],
+  learnedSkills: readonly MentalModel[],
+  workspaceDir: string,
+): ReadonlyMap<string, string> {
+  const entries: Array<readonly [string, string]> = platformSkills
+    .filter((skill) => skill.disableModelInvocation !== true)
+    .map((skill) => [skill.location, skill.name] as const);
+  for (const skill of learnedSkills.filter(isSurfaceable)) {
+    entries.push([materializedLocation(workspaceDir, skill.name), skill.name]);
+  }
+  return new Map(entries);
+}
+
+/** Capture the immutable model-facing skill surface and its typed diagnostics once. */
+export function buildPromptSkillSurface(args: {
+  skillRegistry: SkillRegistry;
+  learnedSkills: readonly MentalModel[];
+  workspaceDir: string;
+}): {
+  readonly xml: string;
+  readonly locations: ReadonlyMap<string, string>;
+  readonly unavailableSkills: readonly UnavailablePromptSkill[];
+} {
+  const snapshot = args.skillRegistry.getSnapshot();
+  const unavailableSkills = selectUnavailablePromptSkills(args.skillRegistry);
+  return {
+    xml: renderPromptSkillSurfaceXml({
+      snapshot,
+      learnedSkills: args.learnedSkills,
+      workspaceDir: args.workspaceDir,
+      unavailableSkills,
+    }),
+    locations: buildPromptSkillLocationIndexFromDescriptions(
+      snapshot.skills,
+      args.learnedSkills,
+      args.workspaceDir,
+    ),
+    unavailableSkills,
+  };
 }
 
 /** Build typed read-path attribution beside the display-only XML listing. */
@@ -221,13 +274,11 @@ export function buildPromptSkillLocationIndex(args: {
   learnedSkills: readonly MentalModel[];
   workspaceDir: string;
 }): ReadonlyMap<string, string> {
-  const entries: Array<readonly [string, string]> = args.skillRegistry.getSnapshot().skills
-    .filter((skill) => skill.disableModelInvocation !== true)
-    .map((skill) => [skill.location, skill.name] as const);
-  for (const skill of args.learnedSkills.filter(isSurfaceable)) {
-    entries.push([materializedLocation(args.workspaceDir, skill.name), skill.name]);
-  }
-  return new Map(entries);
+  return buildPromptSkillLocationIndexFromDescriptions(
+    args.skillRegistry.getSnapshot().skills,
+    args.learnedSkills,
+    args.workspaceDir,
+  );
 }
 
 /**

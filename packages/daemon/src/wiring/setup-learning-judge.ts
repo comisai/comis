@@ -99,7 +99,12 @@ const JUDGE_TRANSCRIPT_MAX_MESSAGES = 12;
 
 /** The mapped judge seam the resolve consume-seam calls (the verdict's narrow union + the CODE-capped reward). */
 export type OutcomeJudge = (
-  input: { agentId: string; trajectoryContent: string; workspacePolicyHash?: string },
+  input: {
+    agentId: string;
+    trajectoryContent: string;
+    workspacePolicyHash?: string;
+    unavailableSkills?: ReadonlyArray<{ name: string; reason: string }>;
+  },
 ) => Promise<OutcomeVerdict | undefined>;
 
 /** The resolved scope an upgrade/transcript-read keys on (mirrors the setup-learning OutcomeScope). */
@@ -110,6 +115,7 @@ export interface JudgeScope {
   trajectoryId: string;
   conversationRef?: ConversationRef;
   workspacePolicyHash?: string;
+  unavailableSkills?: ReadonlyArray<{ name: string; reason: string }>;
 }
 
 // ===========================================================================
@@ -456,6 +462,9 @@ export async function maybeUpgradeWithJudge(
     const jv = await deps.outcomeJudge({
       agentId: scope.agentId,
       trajectoryContent: text,
+      ...(scope.unavailableSkills === undefined
+        ? {}
+        : { unavailableSkills: scope.unavailableSkills }),
       ...(scope.workspacePolicyHash === undefined
         ? {}
         : { workspacePolicyHash: scope.workspacePolicyHash }),

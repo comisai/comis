@@ -54,7 +54,7 @@ import { resolveLeanDescriptionsForAgent, buildSharedConvertTools } from "./setu
 import { runBootWindowHonestyChecks } from "./setup-agents-boot-window.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
-import { buildPromptSkillLocationIndex, renderLearnedSkillsXml } from "./learned-skill-surface.js";
+import { buildPromptSkillSurface } from "./learned-skill-surface.js";
 import { wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
 import { resolveEffectiveTrajectoryConfig } from "../trajectory-runtime-config.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -464,8 +464,11 @@ export async function setupSingleAgent(
     outboundMediaEnabled: deps.outboundMediaEnabled,
     mediaPersistenceEnabled: container.config.integrations.media.persistence.enabled,
     autonomousMediaEnabled: deps.autonomousMediaEnabled,
-    getPromptSkillsXml: () => renderLearnedSkillsXml({ skillRegistry, learnedSkills: learnedSurface.current, workspaceDir: dir }),
-    getPromptSkillLocations: () => buildPromptSkillLocationIndex({ skillRegistry, learnedSkills: learnedSurface.current, workspaceDir: dir }),
+    getPromptSkillSurface: () => buildPromptSkillSurface({
+      skillRegistry,
+      learnedSkills: learnedSurface.current,
+      workspaceDir: dir,
+    }),
     getMcpServerInstructions: () => deps.mcpClientManager.getAllConnections().flatMap((connection) => {
       const instructions = connection.instructions?.trim();
       return connection.status === "connected" && instructions && connection.instructionHash

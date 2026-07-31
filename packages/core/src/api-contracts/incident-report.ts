@@ -127,6 +127,17 @@ export const IncidentReportSchema = z.object({
       }),
     ])
     .optional(),
+  /** Bounded installed-skill availability facts captured for the selected turn. */
+  skillAvailability: z
+    .object({
+      unavailable: z.array(
+        z.object({
+          name: z.string().max(128),
+          reason: z.string().max(512),
+        }),
+      ).max(25),
+    })
+    .optional(),
   /** Content-free reason an enforced script mismatch retained its original response. */
   responseLocaleRepairSkipped: ResponseLocaleRepairSkippedSchema.optional(),
   toolStats: z.record(

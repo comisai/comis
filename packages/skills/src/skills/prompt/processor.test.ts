@@ -20,7 +20,7 @@ describe("escapeXml", () => {
     expect(escapeXml("hello")).toBe("hello");
   });
 
-  it("escapes ampersand", () => {
+  it("escapes ampersands in XML text", () => {
     expect(escapeXml("a & b")).toBe("a &amp; b");
   });
 

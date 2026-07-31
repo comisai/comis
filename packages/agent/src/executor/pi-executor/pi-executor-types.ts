@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-/** PiExecutor factory types, isolated to avoid cyclic imports from its helpers. */
-/** @module */
-import type {
-  ModelRegistry,
-  ModelRuntime,
-  ToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+/** PiExecutor factory types, isolated to avoid cyclic imports from its helpers. @module */
+import type { ModelRegistry, ModelRuntime, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   TypedEventBus,
@@ -35,9 +30,8 @@ import type {
   ContextStorePort,
   WorkspacePolicyPort,
   WorkspacePolicySnapshot,
+  ComisLogger,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/core";
-
 import type { BudgetGuard } from "../../budget/budget-guard.js";
 import type { CostTracker } from "../../budget/cost-tracker.js";
 import type { StepCounter } from "../step-counter.js";
@@ -183,6 +177,12 @@ export interface PiExecutorDeps {
   outboundMediaEnabled?: boolean;
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
+  /** One immutable prompt-skill snapshot captured at turn start. */
+  getPromptSkillSurface?: () => {
+    readonly xml: string;
+    readonly locations: ReadonlyMap<string, string>;
+    readonly unavailableSkills: readonly { readonly name: string; readonly reason: string }[];
+  };
   getPromptSkillsXml?: () => string;
   /** Typed path-to-skill attribution captured beside the rendered skill listing. */
   getPromptSkillLocations?: () => ReadonlyMap<string, string>;

@@ -120,6 +120,7 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       systemDigest,
       messagesDigest,
       inboundKind: params.msg.metadata?.isEdited === true ? "edit" : "message",
+      unavailableSkills: params.unavailablePromptSkills,
       ...(groupHistoryContext !== undefined && groupHistoryContext.length > 0
         ? {
             groupHistoryMessageCount: groupHistoryContext.length,

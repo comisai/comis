@@ -75,9 +75,9 @@ describe("setup-agents-runtime wiring", () => {
 // ---------------------------------------------------------------------------
 // Learned-skill surface seam wiring
 //
-// The getPromptSkillsXml seam must delegate to renderLearnedSkillsXml (the
-// merge-INTO-the-seam keystone so the per-session freeze captures the merged
-// listing) reading the per-agent surface cache, NOT the bare
+// The typed prompt-skill surface must be captured as one snapshot so the
+// per-session freeze sees the same XML, attribution paths, and availability
+// diagnostics. It reads the per-agent surface cache, NOT the bare
 // skillRegistry.getSnapshot().prompt. The cache is built via
 // wireAgentLearnedSkillSurface gated on learningSkills.enabled × the master cost
 // switch, so a default-off agent does ZERO surface work (no list()/rmSync). It
@@ -88,14 +88,14 @@ describe("setup-agents-runtime wiring", () => {
 describe("setupSingleAgent learned-skill surface wiring", () => {
   const source = readRuntimeSource();
 
-  it("delegates the getPromptSkillsXml seam to renderLearnedSkillsXml (not the bare snapshot prompt)", () => {
+  it("delegates the typed surface seam to buildPromptSkillSurface", () => {
     // The old seam returned skillRegistry.getSnapshot().prompt directly — that
     // bare form must be GONE from the deps block (it bypassed the merge).
     const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
     const depsEnd = source.indexOf("});", depsStart);
     const depsBlock = source.slice(depsStart, depsEnd);
 
-    expect(depsBlock).toMatch(/getPromptSkillsXml:\s*\(\)\s*=>\s*renderLearnedSkillsXml\(/);
+    expect(depsBlock).toMatch(/getPromptSkillSurface:\s*\(\)\s*=>\s*buildPromptSkillSurface\(/);
     expect(depsBlock).not.toContain("getPromptSkillsXml: () => skillRegistry.getSnapshot().prompt");
     // The seam reads the per-agent cache's `.current` snapshot (not a fresh async list()).
     expect(depsBlock).toContain("learnedSkills: learnedSurface.current");
@@ -120,8 +120,8 @@ describe("setupSingleAgent learned-skill surface wiring", () => {
     expect(callWindow).toContain("registry: deps.learnedSkillSurfaceRegistry");
   });
 
-  it("imports renderLearnedSkillsXml + wireAgentLearnedSkillSurface from the surface modules", () => {
-    expect(source).toMatch(/import\s*\{[^}]*renderLearnedSkillsXml[^}]*\}\s*from\s*"\.\/learned-skill-surface\.js"/s);
+  it("imports buildPromptSkillSurface + wireAgentLearnedSkillSurface from the surface modules", () => {
+    expect(source).toMatch(/import\s*\{[^}]*buildPromptSkillSurface[^}]*\}\s*from\s*"\.\/learned-skill-surface\.js"/s);
     expect(source).toMatch(
       /import\s*\{[^}]*wireAgentLearnedSkillSurface[^}]*\}\s*from\s*"\.\/learned-skill-surface-registry\.js"/s,
     );

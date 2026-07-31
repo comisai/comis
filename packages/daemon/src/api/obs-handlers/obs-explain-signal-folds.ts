@@ -42,6 +42,20 @@ function narrow<T extends string>(vocab: readonly T[], v: unknown): T | undefine
   return typeof v === "string" && (vocab as readonly string[]).includes(v) ? (v as T) : undefined;
 }
 
+export function readSkillAvailability(value: unknown): IncidentSignals["skillAvailability"] {
+  if (!Array.isArray(value)) return undefined;
+  const unavailable = value.slice(0, 25).flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const candidate = item as Record<string, unknown>;
+    const name = asString(candidate.name);
+    const reason = asString(candidate.reason);
+    return name === undefined || reason === undefined
+      ? []
+      : [{ name: name.slice(0, 128), reason: reason.slice(0, 512) }];
+  });
+  return unavailable.length > 0 ? { unavailable } : undefined;
+}
+
 function ensureBackgroundTool(
   acc: Acc,
   toolName: string,
