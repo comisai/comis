@@ -15,7 +15,7 @@
  */
 
 import { conversationScopeToSessionKey, formatSessionKey, type ConversationScope } from "@comis/core";
-import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearCacheSafeParams } from "./prompt-assembly.js";
+import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearSessionPromptTopicMatchState, clearCacheSafeParams } from "./prompt-assembly.js";
 import { clearSessionDeliveredGuides, clearSessionToolSchemaSnapshot, clearSessionToolSchemaSnapshotHash, clearSessionBreakpointIndex, clearSessionCacheWarm, clearSessionLatches, clearSessionEvictionCooldown, clearSessionCacheSavings, clearSessionReactiveSchemaStrip, clearWindowReconcileLogged } from "./executor-session-state.js";
 import { clearSessionTracker } from "./tool-lifecycle.js";
 import { clearDiscoveryTracker } from "./discovery-tracker.js";
@@ -34,6 +34,7 @@ export function clearSessionState(formattedKey: string): void {
   clearSessionToolNameSnapshot(formattedKey);
   clearSessionBootstrapFileSnapshot(formattedKey);
   clearSessionPromptSkillsXmlSnapshot(formattedKey);
+  clearSessionPromptTopicMatchState(formattedKey);
   clearCacheSafeParams(formattedKey);
   clearSessionDeliveredGuides(formattedKey);
   clearSessionToolSchemaSnapshot(formattedKey);
