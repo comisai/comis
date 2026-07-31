@@ -610,7 +610,7 @@ describe("execution completion tool inventory", () => {
       .join("\n");
 
     expect(stripped).toMatch(
-      /activeToolCount:\s*Math\.max\(\s*0,\s*mergedCustomTools\.length\s*-\s*deferralResult\.deferredCount\s*\)/u,
+      /activeToolCount:\s*Math\.max\(\s*0,\s*mergedCustomTools\.length\s*-\s*deferralResult\.deferredCount,\s*\)/u,
     );
   });
 });

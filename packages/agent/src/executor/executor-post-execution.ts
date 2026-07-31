@@ -1426,7 +1426,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       provider,
       providerFamily,
       deferredCount: deferralResult.deferredCount,
-      activeToolCount: mergedCustomTools.length,
+      // Auto-discovery stubs remain in the local SDK registry but are removed
+      // before the provider request. Report only the tools that cross that
+      // boundary so active + deferred reconcile to the runtime inventory.
+      activeToolCount: Math.max(
+        0,
+        mergedCustomTools.length - deferralResult.deferredCount,
+      ),
       guidesDelivered: deliveredGuides.size,
       schemaPruned: capabilityClass === "nano",
       failedToolCalls: bridgeResult.failedToolCalls ?? 0,
