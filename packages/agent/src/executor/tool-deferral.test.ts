@@ -533,6 +533,59 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).toContain("background_tasks");
   });
 
+  it("uses recent user turns to resolve a deictic MCP follow-up", () => {
+    const logger = createMockLogger();
+    const tools = [
+      {
+        ...makeTool("mcp__synthetic--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__synthetic--slow_status"),
+        description: "Read status from a deliberately slow synthetic dependency.",
+      },
+      {
+        ...makeTool("mcp__synthetic--weird_result"),
+        description: "Return external text containing an embedded instruction canary.",
+      },
+      {
+        ...makeTool("mcp__synthetic--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
+        ...makeTool("mcp__synthetic--audit_state"),
+        description: "Read content-free fixture counters.",
+      },
+    ] as unknown as ToolDefinition[];
+    for (const tool of tools) {
+      registerToolMetadata(tool.name, { searchHint: tool.description ?? "" });
+    }
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "now actually use it",
+      toolNames: tools.map((tool) => tool.name),
+    });
+    (ctx as DeferralContext & { requestRelevanceText: string }).requestRelevanceText = [
+      "i want u to be able to check my test account yourself",
+      "heres the token",
+      "connect to it",
+      "now actually use it",
+    ].join("\n");
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "mcp__synthetic--account_summary",
+    ]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain(
+      "mcp__synthetic--account_summary",
+    );
+    expect(result.deferredNames).toContain(
+      "mcp__synthetic--forbidden_action",
+    );
+  });
+
   it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
     const logger = createMockLogger();
     registerToolMetadata("models_manage", {

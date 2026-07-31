@@ -9,7 +9,7 @@ function message(role: string, content: unknown): AgentMessage {
 }
 
 describe("selectRecentUserTurns", () => {
-  it("returns the two newest non-empty user turns and excludes generated output", () => {
+  it("returns three recent user turns so a fourth-turn follow-up keeps its referent", () => {
     const turns = selectRecentUserTurns([
       message("user", "old user context"),
       message("assistant", [{ type: "text", text: "generated guess" }]),
@@ -18,7 +18,11 @@ describe("selectRecentUserTurns", () => {
       message("user", [{ type: "text", text: "latest correction" }]),
     ]);
 
-    expect(turns).toEqual(["current workspace alpha", "latest correction"]);
+    expect(turns).toEqual([
+      "old user context",
+      "current workspace alpha",
+      "latest correction",
+    ]);
   });
 
   it("ignores empty user content while joining multiple text blocks", () => {

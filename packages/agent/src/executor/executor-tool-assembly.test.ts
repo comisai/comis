@@ -1179,6 +1179,34 @@ describe("assembleTools — per-message trust resolution", () => {
   });
 });
 
+describe("assembleTools — request-relevant routing context", () => {
+  it("keeps current intent separate while forwarding recent user turns for relevance", async () => {
+    await assembleTools(makeParams({
+      msg: {
+        ...makeMsg(),
+        text: "now actually use it",
+      } as never,
+      recentUserTurns: [
+        "i want u to be able to check my test account yourself",
+        "heres the token",
+        "connect to it",
+      ],
+    }));
+
+    const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as {
+      requestText: string;
+      requestRelevanceText?: string;
+    };
+    expect(passedCtx.requestText).toBe("now actually use it");
+    expect(passedCtx.requestRelevanceText).toBe([
+      "i want u to be able to check my test account yourself",
+      "heres the token",
+      "connect to it",
+      "now actually use it",
+    ].join("\n"));
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Preamble WARN + deferred-tools truncation
 // ---------------------------------------------------------------------------
