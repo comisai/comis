@@ -479,6 +479,61 @@ describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiri
     expect(typeof summarizerDeps.summarize).toBe("function");
   });
 
+  it("resolves session compaction flushModel as the strict memory-flush override", () => {
+    const flushModel = { id: "economy-model", provider: "provider_b" };
+    const find = vi.fn((provider: string, modelId: string) =>
+      provider === "provider_b" && modelId === "economy-model"
+        ? flushModel
+        : undefined,
+    );
+    const result = setupContextEngine(
+      makeParams({
+        config: {
+          name: "test-agent",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          contextEngine: { enabled: true },
+          session: {
+            compaction: {
+              flushModel: "provider_b:economy-model",
+            },
+          },
+        } as never,
+        deps: makeDeps({ modelRegistry: { find } as never }),
+      }),
+    );
+
+    const flushDeps = result.getFlushSummarizerDeps();
+
+    expect(find).toHaveBeenCalledWith("provider_b", "economy-model");
+    expect(flushDeps?.overrideModel?.model).toBe(flushModel);
+  });
+
+  it("fails closed when session compaction flushModel is not registered", () => {
+    const logger = createMockLogger();
+    const result = setupContextEngine(
+      makeParams({
+        config: {
+          name: "test-agent",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          contextEngine: { enabled: true },
+          session: { compaction: { flushModel: "missing:model" } },
+        } as never,
+        deps: makeDeps({ logger }),
+      }),
+    );
+
+    expect(result.getFlushSummarizerDeps()).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        field: "agents.<name>.session.compaction.flushModel",
+        errorKind: "config",
+      }),
+      "Session compaction flush model is unavailable",
+    );
+  });
+
   it("emits a content-free context:dag_degraded (reason spend_cap) + re-throws when the gate degrades over-cap", async () => {
     const eventBus = new TypedEventBus();
     const events: Array<Record<string, unknown>> = [];

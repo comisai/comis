@@ -179,6 +179,38 @@ export function clearWindowReconcileLogged(sessionKey: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Session-scoped soft/hard compaction band
+// ---------------------------------------------------------------------------
+
+export type SessionCompactionBand = "below" | "soft" | "hard";
+
+/**
+ * Last successfully handled session-compaction band. This makes the soft and
+ * hard thresholds edge-triggered rather than writing a duplicate summary on
+ * every turn while utilization remains high.
+ */
+const sessionCompactionBands =
+  createBoundedSessionMap<SessionCompactionBand>();
+
+export function getSessionCompactionBand(
+  sessionKey: string,
+): SessionCompactionBand | undefined {
+  return sessionCompactionBands.get(sessionKey);
+}
+
+export function setSessionCompactionBand(
+  sessionKey: string,
+  band: SessionCompactionBand,
+): void {
+  sessionCompactionBands.set(sessionKey, band);
+}
+
+/** Clear the threshold latch on session expiry/reset. */
+export function clearSessionCompactionBand(sessionKey: string): void {
+  sessionCompactionBands.delete(sessionKey);
+}
+
+// ---------------------------------------------------------------------------
 // Session-scoped tool schema snapshot
 // ---------------------------------------------------------------------------
 

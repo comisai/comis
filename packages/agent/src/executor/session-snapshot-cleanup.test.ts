@@ -27,6 +27,7 @@ const mockClearSessionEvictionCooldown = vi.hoisted(() => vi.fn());
 const mockClearSessionCacheSavings = vi.hoisted(() => vi.fn());
 const mockClearSessionReactiveSchemaStrip = vi.hoisted(() => vi.fn());
 const mockClearWindowReconcileLogged = vi.hoisted(() => vi.fn());
+const mockClearSessionCompactionBand = vi.hoisted(() => vi.fn());
 
 vi.mock("./prompt-assembly.js", () => ({
   clearSessionToolNameSnapshot: mockClearSessionToolNameSnapshot,
@@ -47,6 +48,7 @@ vi.mock("./executor-session-state.js", () => ({
   clearSessionCacheSavings: mockClearSessionCacheSavings,
   clearSessionReactiveSchemaStrip: mockClearSessionReactiveSchemaStrip,
   clearWindowReconcileLogged: mockClearWindowReconcileLogged,
+  clearSessionCompactionBand: mockClearSessionCompactionBand,
 }));
 
 vi.mock("./tool-lifecycle.js", () => ({
@@ -149,6 +151,7 @@ describe("session-snapshot-cleanup", () => {
       // The window-reconcile INFO latch is once-per-session —
       // delete/reset must grant the next session a fresh INFO.
       expect(mockClearWindowReconcileLogged).toHaveBeenCalledWith(key);
+      expect(mockClearSessionCompactionBand).toHaveBeenCalledWith(key);
     });
 
     it("calls each function exactly once", () => {
@@ -178,6 +181,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionCadenceTracker).toHaveBeenCalledTimes(1);
       expect(mockClearSessionReactiveSchemaStrip).toHaveBeenCalledTimes(1);
       expect(mockClearWindowReconcileLogged).toHaveBeenCalledTimes(1);
+      expect(mockClearSessionCompactionBand).toHaveBeenCalledTimes(1);
     });
   });
 

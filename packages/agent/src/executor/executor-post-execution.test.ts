@@ -1476,6 +1476,7 @@ describe("context-store afterTurn leaf-pass wiring", () => {
     const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
     const block = stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
     expect(block).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
+    expect(block).toMatch(/runSessionCompactionAfterTurn/);
     // The ingest call is still there too (the leaf call comes AFTER it).
     expect(block).toMatch(/ingestTurnGuarded/);
   });

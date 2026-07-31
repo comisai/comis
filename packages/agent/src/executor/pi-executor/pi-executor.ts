@@ -2706,6 +2706,7 @@ async function runSessionLocked(
         // afterTurn leaf pass fires live over threshold (gated additionally on
         // deps.contextStore inside postExecution); absent ⇒ the pass is gated off.
         getSummarizerDeps: ceSetup?.getSummarizerDeps,
+        getFlushSummarizerDeps: ceSetup?.getFlushSummarizerDeps,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
         // The post-execution / context-engine workspace root is the run's

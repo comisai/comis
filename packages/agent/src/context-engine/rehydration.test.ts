@@ -12,6 +12,8 @@ import { createRehydrationLayer } from "./rehydration.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { RehydrationLayerDeps, TokenBudget } from "./types.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { summaryRefToMessage } from "./lcd-summary-render.js";
+import type { LcdSummary } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Test Helpers
@@ -24,16 +26,21 @@ function makeCompactionSummary(text = "Compacted conversation"): AgentMessage {
 }
 
 function makeLcdSummary(text = "Lossless context summary"): AgentMessage {
-  return {
-    role: "user",
-    content: [{
-      type: "text",
-      text:
-        "[LCD summary — depth=0, descendant_count=24, 2026-07-01, trust=untrusted]\n"
-        + `${text}\n`
-        + "Expand for details about: the 24 compressed message(s) at depth 0 spanning 2026-07-01.",
-    }],
-  } as unknown as AgentMessage;
+  return summaryRefToMessage({
+    summaryId: "summary_a",
+    conversationRef: `cv_${"c".repeat(43)}` as LcdSummary["conversationRef"],
+    kind: "leaf",
+    depth: 0,
+    earliestAt: 1_751_328_000_000,
+    latestAt: 1_751_328_000_000,
+    descendantCount: 24,
+    tokenCount: 100,
+    content: text,
+    fileIds: [],
+    taint: false,
+    fallback: false,
+    createdAt: 1_751_328_000_000,
+  });
 }
 
 function makeUserMsg(text: string): AgentMessage {
@@ -198,7 +205,7 @@ describe("createRehydrationLayer", () => {
     expect(getMessageText(result[1]!)).toContain("Never do these things.");
     expect(getMessageText(result[3]!)).toContain("[Resume instruction]");
     expect(onRehydrated).toHaveBeenCalledWith(expect.objectContaining({
-      sectionsInjected: 2,
+      sectionsInjected: 1,
     }));
   });
 

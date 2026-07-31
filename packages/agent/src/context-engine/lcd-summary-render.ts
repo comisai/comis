@@ -78,6 +78,7 @@ export function summaryRefToMessage(summary: LcdSummary): AgentMessage {
   const text = `${header}\n${safeBody}\n${footer}`;
   return {
     role: "user",
+    compactionSummary: true,
     content: [{ type: "text", text }],
   } as unknown as AgentMessage;
 }

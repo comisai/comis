@@ -40,6 +40,7 @@ import {
   type AgentExecutionFinishReason,
   type ExecutionSideEffectSummary,
   createConversationRef,
+  SessionCompactionConfigSchema,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -59,6 +60,8 @@ import {
   setBreakpointIndex,
   deleteBreakpointIndex,
   getBreakpointIndexMapSize,
+  getSessionCompactionBand,
+  setSessionCompactionBand,
 } from "./executor-session-state.js";
 // The surfaced-skill census is STORED during assembly and emitted HERE (post-execution,
 // after the trajectory bridge subscribes) — see the prompt-assembly note on SkillSurfacedCensus.
@@ -103,6 +106,7 @@ import { enqueueContextMaintenance } from "./lcd-maintenance-queue.js";
 // (mirrors the condense pass's own non-fatal wrapping). The agent↛memory cut:
 // the runner imports only core TYPE-only ports — no @comis/memory import.
 import { runDistillationPassAfterTurn } from "./lcd-distillation-runner.js";
+import { runSessionCompactionAfterTurn } from "./session-compaction-trigger.js";
 import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
@@ -348,6 +352,9 @@ export interface PostExecutionParams {
      *  identity captured BEFORE `session.dispose()` so a detached pass never
      *  re-reads a torn-down `session.agent.state`. */
     getSummarizerDeps?: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
+    getFlushSummarizerDeps?: (
+      modelSnapshot?: CompactionModelSnapshot,
+    ) => LeafSummarizerDeps | undefined;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
@@ -959,16 +966,21 @@ export function emitSessionSummary(
  * @param getSummarizerDeps - the live, session-coupled deps getter (or undefined).
  * @returns a model-snapshot-bound getter safe to call post-dispose (or undefined).
  */
-export function snapshotSummarizerDepsForDefer(
-  getSummarizerDeps: ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined,
-): ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined {
+export function snapshotSummarizerDepsForDefer<T extends LeafSummarizerDeps | undefined>(
+  getSummarizerDeps: ((modelSnapshot?: CompactionModelSnapshot) => T) | undefined,
+  snapshotSource?: (
+    modelSnapshot?: CompactionModelSnapshot
+  ) => LeafSummarizerDeps | undefined,
+): ((modelSnapshot?: CompactionModelSnapshot) => T) | undefined {
   if (getSummarizerDeps === undefined) return undefined;
   // Capture the LIVE model identity now (session still alive). If the live read
   // throws at capture time, leave the getter unchanged — the deferred pass then
   // degrades non-fatally through the trigger's try/catch.
   let modelSnapshot: CompactionModelSnapshot | undefined;
   try {
-    modelSnapshot = getSummarizerDeps().getModel();
+    const resolved = (snapshotSource ?? getSummarizerDeps)();
+    if (resolved === undefined) return getSummarizerDeps;
+    modelSnapshot = resolved.getModel();
   } catch {
     return getSummarizerDeps;
   }
@@ -2088,7 +2100,35 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // reads the live session.
     const runDeferredPasses = async (
       summarizerGetter: typeof deps.getSummarizerDeps,
+      flushSummarizerGetter: typeof deps.getFlushSummarizerDeps,
     ): Promise<void> => {
+      await runSessionCompactionAfterTurn({
+        store,
+        scope,
+        sessionKey,
+        formattedKey,
+        sessionCompaction: SessionCompactionConfigSchema.parse(
+          config.session?.compaction ?? {},
+        ),
+        contextEngine: config.contextEngine,
+        budgetWindowTokens: params.budgetWindowTokens,
+        getSummarizerDeps: summarizerGetter,
+        getFlushSummarizerDeps: flushSummarizerGetter,
+        memoryPort: deps.memoryPort,
+        memoryScope: {
+          turnScope,
+          visibility: { kind: "conversation" },
+        },
+        state: {
+          get: getSessionCompactionBand,
+          set: setSessionCompactionBand,
+        },
+        now: deps.clock.now(),
+        nowFn: () => deps.clock.now(),
+        logger: deps.logger,
+        eventBus: deps.eventBus,
+        embeddingEnqueue: deps.embeddingEnqueue,
+      });
       await runLeafPassAfterTurn({
         store,
         scope,
@@ -2175,16 +2215,27 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // outlive the session. (Lifetime contract, documented on
       // snapshotSummarizerDepsForDefer.)
       const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
+      const deferredFlushSummarizerGetter =
+        snapshotSummarizerDepsForDefer(
+          deps.getFlushSummarizerDeps,
+          deps.getSummarizerDeps,
+        );
       const deferred = enqueueContextMaintenance(
         conversationRef,
-        () => runDeferredPasses(deferredSummarizerGetter),
+        () => runDeferredPasses(
+          deferredSummarizerGetter,
+          deferredFlushSummarizerGetter,
+        ),
       );
       suppressError(deferred, "postExecution deferred LCD compaction");
     } else {
       // INLINE: await the passes (the deterministic path retained for
       // tests). Non-fatal — never surfaces an error to the live turn. Reads the
       // LIVE session model (no snapshot needed — the session is alive inline).
-      await runDeferredPasses(deps.getSummarizerDeps);
+      await runDeferredPasses(
+        deps.getSummarizerDeps,
+        deps.getFlushSummarizerDeps,
+      );
     }
   }
 

@@ -13,7 +13,7 @@ import {
   type SessionKey,
   type TypedEventBus,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import Database from "better-sqlite3";
 import { createLcdStore, initSchema } from "@comis/memory";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,7 +35,7 @@ interface TriggerResult {
 
 type RunSessionCompactionAfterTurn = (
   params: Record<string, unknown>,
-) => Promise<TriggerResult>;
+) => Promise<Result<TriggerResult, Error>>;
 
 const scope: ContextStoreScope = {
   conversationRef: `cv_${"c".repeat(43)}`,
@@ -46,10 +46,16 @@ const scope: ContextStoreScope = {
 
 const sessionKey = {
   tenantId: "tenant_a",
+  agentId: "agent_a",
   userId: "user_a",
-  channelType: "telegram",
   channelId: "chat_a",
-} as SessionKey;
+} satisfies SessionKey;
+
+function unwrap(result: Result<TriggerResult, Error>): TriggerResult {
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 function makeState(): TriggerState {
   const bands = new Map<string, CompactionBand>();
@@ -146,7 +152,7 @@ describe("session compaction thresholds", () => {
     const summarize = vi.fn(async () => "The user supplied durable facts for later recall.");
     const run = await loadTrigger();
 
-    const first = await run({
+    const first = unwrap(await run({
       store,
       scope,
       sessionKey,
@@ -178,6 +184,16 @@ describe("session compaction thresholds", () => {
         }),
         getApiKey: async () => "test-key",
       }),
+      getFlushSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize,
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
       memoryPort: { store: memoryStore },
       memoryScope: {},
       state,
@@ -185,7 +201,7 @@ describe("session compaction thresholds", () => {
       nowFn: () => 9_000,
       logger: createMockLogger(),
       eventBus: bus,
-    });
+    }));
 
     expect(first).toMatchObject({
       trigger: "soft",
@@ -205,7 +221,7 @@ describe("session compaction thresholds", () => {
       }),
     });
 
-    const second = await run({
+    const second = unwrap(await run({
       store,
       scope,
       sessionKey,
@@ -232,13 +248,23 @@ describe("session compaction thresholds", () => {
         }),
         getApiKey: async () => "test-key",
       }),
+      getFlushSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize,
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
       memoryPort: { store: memoryStore },
       memoryScope: {},
       state,
       now: 9_001,
       logger: createMockLogger(),
       eventBus: bus,
-    });
+    }));
 
     expect(second.trigger).toBeUndefined();
     expect(memoryStore).toHaveBeenCalledTimes(1);
@@ -259,7 +285,7 @@ describe("session compaction thresholds", () => {
     );
     const run = await loadTrigger();
 
-    const result = await run({
+    const result = unwrap(await run({
       store,
       scope,
       sessionKey,
@@ -291,6 +317,16 @@ describe("session compaction thresholds", () => {
         }),
         getApiKey: async () => "test-key",
       }),
+      getFlushSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize: async () => "A short, durable conversation summary.",
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
       memoryPort: { store: memoryStore },
       memoryScope: {},
       state,
@@ -298,7 +334,7 @@ describe("session compaction thresholds", () => {
       nowFn: () => 10_050,
       logger: createMockLogger(),
       eventBus: bus,
-    });
+    }));
 
     expect(result.trigger).toBe("hard");
     expect(result.memoriesWritten).toBe(1);
@@ -321,5 +357,152 @@ describe("session compaction thresholds", () => {
         success: true,
       }),
     });
+  });
+
+  it("hard crossing leaves the LCD view intact when the protective flush fails", async () => {
+    appendHistory(store, 40, 25);
+    const beforeItems = store.getContextItems(scope);
+    const state = makeState();
+    const { bus } = makeEventBus();
+    const run = await loadTrigger();
+
+    const result = unwrap(await run({
+      store,
+      scope,
+      sessionKey,
+      formattedKey: scope.sessionKey,
+      sessionCompaction: {
+        softThresholdRatio: 0.75,
+        hardThresholdRatio: 0.9,
+        chunkMaxChars: 50_000,
+        chunkOverlapMessages: 2,
+        chunkMergeSummaries: true,
+        reserveTokens: 1_200,
+        keepRecentTokens: 32_768,
+        postCompactionSections: ["Session Startup", "Red Lines"],
+      },
+      contextEngine: {
+        contextThreshold: 0.99,
+        leafChunkTokens: 20_000,
+        leafTargetTokens: 1_200,
+        freshTailTurns: 2,
+      },
+      budgetWindowTokens: 1_000,
+      getSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize: async () => "A short summary.",
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
+      getFlushSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize: async () => "A durable memory summary.",
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
+      memoryPort: {
+        store: async () => err(new Error("storage unavailable")),
+      },
+      memoryScope: {},
+      state,
+      now: 11_000,
+      logger: createMockLogger(),
+      eventBus: bus,
+    }));
+
+    expect(result).toMatchObject({
+      trigger: "hard",
+      memoriesWritten: 0,
+      summariesCreated: 0,
+      success: false,
+    });
+    expect(store.getSummaries(scope)).toHaveLength(0);
+    expect(store.getContextItems(scope)).toEqual(beforeItems);
+  });
+
+  it("hard crossing rejects a deterministic flush fallback before writing or trimming", async () => {
+    appendHistory(store, 40, 25);
+    const beforeItems = store.getContextItems(scope);
+    const state = makeState();
+    const { bus } = makeEventBus();
+    const memoryStore = vi.fn(async (entry: Record<string, unknown>) =>
+      ok({
+        ...entry,
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        visibility: { kind: "conversation" },
+      }),
+    );
+    const run = await loadTrigger();
+
+    const result = unwrap(await run({
+      store,
+      scope,
+      sessionKey,
+      formattedKey: scope.sessionKey,
+      sessionCompaction: {
+        softThresholdRatio: 0.75,
+        hardThresholdRatio: 0.9,
+        chunkMaxChars: 50_000,
+        chunkOverlapMessages: 2,
+        chunkMergeSummaries: true,
+        reserveTokens: 1_200,
+        keepRecentTokens: 32_768,
+        postCompactionSections: ["Session Startup", "Red Lines"],
+      },
+      contextEngine: {
+        contextThreshold: 0.99,
+        leafChunkTokens: 20_000,
+        leafTargetTokens: 1_200,
+        freshTailTurns: 2,
+      },
+      budgetWindowTokens: 1_000,
+      getSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize: async () => "A short summary.",
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
+      getFlushSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize: async () => {
+          throw new Error("summarizer unavailable");
+        },
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
+      memoryPort: { store: memoryStore },
+      memoryScope: {},
+      state,
+      now: 12_000,
+      logger: createMockLogger(),
+      eventBus: bus,
+    }));
+
+    expect(result).toMatchObject({
+      trigger: "hard",
+      memoriesWritten: 0,
+      summariesCreated: 0,
+      success: false,
+    });
+    expect(memoryStore).not.toHaveBeenCalled();
+    expect(store.getSummaries(scope)).toHaveLength(0);
+    expect(store.getContextItems(scope)).toEqual(beforeItems);
   });
 });
