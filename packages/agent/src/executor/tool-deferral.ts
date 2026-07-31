@@ -1114,7 +1114,10 @@ function bm25Score(
   k1 = 1.2,
   b = 0.75,
 ): Array<{ name: string; score: number }> {
-  const queryTerms = tokenize(query);
+  // A retried follow-up can repeat the same deictic wording several times.
+  // Score each distinct signal once so retries cannot outweigh an earlier
+  // concrete referent merely by repetition.
+  const queryTerms = [...new Set(tokenize(query))];
   if (queryTerms.length === 0 || documents.length === 0) return [];
 
   const N = documents.length;
