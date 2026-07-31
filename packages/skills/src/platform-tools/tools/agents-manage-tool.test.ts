@@ -879,6 +879,40 @@ describe("agents_manage tool", () => {
       );
     });
 
+    it("returns a bounded completion contract after a model binding update", async () => {
+      const rpcReturn = {
+        agentId: "bot-1",
+        config: {
+          provider: "provider_b",
+          model: "model_two",
+          unrelatedSettings: "large-setting-value".repeat(1_000),
+        },
+        toolReference: "unrelated-management-reference".repeat(1_000),
+        updated: true,
+      };
+      mockRpcCall.mockResolvedValue(rpcReturn);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-bounded", {
+          action: "update",
+          agent_id: "bot-1",
+          config: { provider: "provider_b", model: "model_two" },
+        } as never),
+      );
+      const text = result.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+
+      expect(text.length).toBeLessThan(500);
+      expect(text).toContain("provider_b");
+      expect(text).toContain("model_two");
+      expect(text).toMatch(/complete/i);
+      expect(text).not.toContain("unrelated-management-reference");
+      expect(result.details).toEqual(rpcReturn);
+    });
+
     it.each([
       ["model-only", { model: "model_two" }],
       ["provider-only", { provider: "provider_b" }],
