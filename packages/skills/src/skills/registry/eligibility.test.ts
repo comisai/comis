@@ -426,7 +426,7 @@ describe("registry integration", () => {
       getPromptSkillInventory(): Array<{
         name: string;
         eligible: boolean;
-        ineligibilityReason?: string;
+        reason?: string;
       }>;
     };
     expect(typeof inventoryRegistry.getPromptSkillInventory).toBe("function");
@@ -437,7 +437,7 @@ describe("registry integration", () => {
       expect.objectContaining({
         name: "podcast-skill",
         eligible: false,
-        ineligibilityReason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+        reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
       }),
     ]));
     expect(registry.getPromptSkillDescriptions().map((skill) => skill.name)).not.toContain("podcast-skill");

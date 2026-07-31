@@ -32,7 +32,11 @@
 
 // Registry
 export { createSkillRegistry } from "./registry/skill-registry/index.js";
-export type { SkillRegistry, SkillWatcherHandle } from "./registry/skill-registry/index.js";
+export type {
+  PromptSkillInventoryEntry,
+  SkillRegistry,
+  SkillWatcherHandle,
+} from "./registry/skill-registry/index.js";
 
 // Manifest schema + parser
 // SkillManifestSchema lives at `./manifest/schema.ts:137-164` and parseSkillManifest at

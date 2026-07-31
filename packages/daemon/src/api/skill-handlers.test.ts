@@ -201,7 +201,7 @@ describe("skills.list handler", () => {
         location: "/skills/podcast-skill/SKILL.md",
         source: "workspace",
         eligible: false,
-        ineligibilityReason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+        reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
       },
     ]);
     const handlers = createSkillHandlers(
@@ -215,7 +215,7 @@ describe("skills.list handler", () => {
       expect.objectContaining({
         name: "podcast-skill",
         eligible: false,
-        ineligibilityReason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
+        reason: "missing env var: VOICE_APP_ID, VOICE_ACCESS_TOKEN",
       }),
     ]);
     expect(registry.getPromptSkillInventory).toHaveBeenCalledOnce();

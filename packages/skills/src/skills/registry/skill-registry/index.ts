@@ -18,6 +18,7 @@
 // Types layer
 export type {
   PromptSkillContent,
+  PromptSkillInventoryEntry,
   SkillSnapshot,
   SdkSkill,
   SkillRegistry,

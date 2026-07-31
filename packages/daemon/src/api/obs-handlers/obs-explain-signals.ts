@@ -18,8 +18,7 @@
  *
  * @module
  */
-import { fingerprint } from "@comis/core";
-import type { IncidentSignals } from "@comis/core";
+import { fingerprint, type IncidentSignals } from "@comis/core";
 import {
   asString,
   asNumber,
@@ -42,14 +41,11 @@ import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 // ---------------------------------------------------------------------------
-
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
-
 /** Minimum same-tool failures for a breaker/repeated-failure signal. Used by
  * the heuristic registry; surfaced here for one source of truth. */
 export const BREAKER_N = 5;
-
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
@@ -63,12 +59,10 @@ function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; error
   }
   return entry;
 }
-
 function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
   return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
-
 // ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
