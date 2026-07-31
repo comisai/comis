@@ -76,6 +76,10 @@ export function scrubRedactedToolCalls(
   const poisoned = new Map<string, string>();
   // Assistant entry indices marked for full content replacement.
   const fullyPoisonedAssistants = new Map<number, string>(); // idx -> summary
+  // Historical persistence could replace distinct provider call IDs with the
+  // same placeholder. Match those results by their adjacent turn position
+  // instead of globally conflating unrelated calls.
+  const adjacentRedactedResultCounts = new Map<number, number>();
 
   // Pass 0: index the APPROVAL-GATED results by toolCallId.
   //
@@ -110,6 +114,7 @@ export function scrubRedactedToolCalls(
     let toolBlockCount = 0;
     let poisonedInThisMessage = 0;
     const candidateIds: string[] = [];
+    let adjacentRedactedResultCount = 0;
     let firstSummary: string | null = null;
 
     for (const block of content) {
@@ -120,21 +125,35 @@ export function scrubRedactedToolCalls(
       const args = (block.arguments ?? block.input) as
         | Record<string, unknown>
         | undefined;
-      if (!args || typeof args !== "object") continue;
-      if (!argsContainPlaceholder(args)) continue;
+      const identityUnavailable =
+        block.name === REDACTION_PLACEHOLDER
+        || block.id === REDACTION_PLACEHOLDER;
+      if (
+        !identityUnavailable
+        && (!args || typeof args !== "object" || !argsContainPlaceholder(args))
+      ) {
+        continue;
+      }
 
       const toolCallId =
         typeof block.id === "string" ? block.id : undefined;
       const toolName = typeof block.name === "string" ? block.name : "tool";
-      const summary = buildSummaryText(
-        toolName,
-        args,
-        toolCallId === undefined
-          ? undefined
-          : pendingActionIdByToolCallId.get(toolCallId),
-      );
+      const safeArgs = args && typeof args === "object" ? args : {};
+      const summary = identityUnavailable
+        ? unavailableProtocolIdentitySummary()
+        : buildSummaryText(
+          toolName,
+          safeArgs,
+          toolCallId === undefined
+            ? undefined
+            : pendingActionIdByToolCallId.get(toolCallId),
+        );
 
-      if (toolCallId) candidateIds.push(toolCallId);
+      if (toolCallId === REDACTION_PLACEHOLDER) {
+        adjacentRedactedResultCount += 1;
+      } else if (toolCallId) {
+        candidateIds.push(toolCallId);
+      }
       poisonedInThisMessage++;
       if (!firstSummary) firstSummary = summary;
     }
@@ -151,6 +170,9 @@ export function scrubRedactedToolCalls(
       );
       for (const id of candidateIds) {
         poisoned.set(id, firstSummary ?? "(prior tool call elided)");
+      }
+      if (adjacentRedactedResultCount > 0) {
+        adjacentRedactedResultCounts.set(idx, adjacentRedactedResultCount);
       }
     }
   }
@@ -182,19 +204,38 @@ export function scrubRedactedToolCalls(
     if (!toolCallId || !poisoned.has(toolCallId)) continue;
     if (msg.role !== "toolResult" && msg.role !== "tool") continue;
 
-    const pendingId = pendingActionIdByToolCallId.get(toolCallId);
-    msg.role = "user";
-    msg.content = [
-      {
-        type: "text",
-        text: pendingId === undefined
-          ? REDACTED_TOOL_RESULT_USER_MESSAGE
-          : pendingApprovalReplayText(pendingId),
-      },
-    ];
-    delete msg.toolCallId;
-    delete msg.toolName;
-    resultsRewritten += 1;
+    rewriteToolResultMessage(
+      msg,
+      pendingActionIdByToolCallId.get(toolCallId),
+      false,
+    );
+    resultsRewritten++;
+  }
+
+  // Placeholder IDs are not unique. Pair them only with immediately following
+  // tool results, stopping at the next conversational turn.
+  for (const [assistantIdx, expectedResults] of adjacentRedactedResultCounts) {
+    let remaining = expectedResults;
+    for (let idx = assistantIdx + 1; idx < fileEntries.length; idx++) {
+      const entry = fileEntries[idx];
+      if (!entry || entry.type !== "message") continue;
+      const msg = entry.message;
+      if (!msg) continue;
+      if (msg.role === "assistant" || msg.role === "user") break;
+      if (
+        (msg.role === "toolResult" || msg.role === "tool")
+        && msg.toolCallId === REDACTION_PLACEHOLDER
+      ) {
+        rewriteToolResultMessage(
+          msg,
+          extractPendingActionId(msg.content),
+          true,
+        );
+        resultsRewritten++;
+        remaining--;
+        if (remaining === 0) break;
+      }
+    }
   }
 
   return {
@@ -222,6 +263,41 @@ function argsContainPlaceholder(args: Record<string, unknown>): boolean {
     if (val.includes(REDACTION_PLACEHOLDER)) return true;
   }
   return false;
+}
+
+/** Neutral replay summary for historical records with unusable tool identity. */
+function unavailableProtocolIdentitySummary(): string {
+  return (
+    "(Prior tool call elided from replay because its persisted protocol " +
+    "identity was unavailable. The call cannot be replayed safely; do not " +
+    "retry solely because this repair occurred.)"
+  );
+}
+
+/**
+ * Convert a now-unpaired tool result to ordinary conversation context.
+ *
+ * Identity-only corruption leaves already-sanitized result content safe and
+ * useful, while argument redaction keeps the established opaque replacement.
+ */
+function rewriteToolResultMessage(
+  msg: Record<string, unknown>,
+  pendingActionId: string | undefined,
+  preserveContent: boolean,
+): void {
+  msg.role = "user";
+  if (!preserveContent) {
+    msg.content = [
+      {
+        type: "text",
+        text: pendingActionId === undefined
+          ? REDACTED_TOOL_RESULT_USER_MESSAGE
+          : pendingApprovalReplayText(pendingActionId),
+      },
+    ];
+  }
+  delete msg.toolCallId;
+  delete msg.toolName;
 }
 
 /**

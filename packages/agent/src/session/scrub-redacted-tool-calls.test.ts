@@ -237,6 +237,16 @@ describe("scrubRedactedToolCalls", () => {
           content: [{ type: "text", text: "synthetic result" }],
         },
       },
+      msg("user", [{ type: "text", text: "unrelated later turn" }]),
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "[REDACTED]",
+          toolName: "[REDACTED]",
+          content: [{ type: "text", text: "unpaired historical result" }],
+        },
+      },
     ];
 
     const result = scrubRedactedToolCalls({ fileEntries } as any);
@@ -249,13 +259,14 @@ describe("scrubRedactedToolCalls", () => {
     expect((fileEntries[0] as any).message.content).toEqual([
       expect.objectContaining({ type: "text" }),
     ]);
-    expect((fileEntries[1] as any).message).toEqual(
-      expect.objectContaining({
-        role: "user",
-        toolCallId: undefined,
-        toolName: undefined,
-      }),
-    );
+    const repairedResult = (fileEntries[1] as any).message;
+    expect(repairedResult.role).toBe("user");
+    expect(repairedResult.toolCallId).toBeUndefined();
+    expect(repairedResult.toolName).toBeUndefined();
+    expect(repairedResult.content).toEqual([
+      { type: "text", text: "synthetic result" },
+    ]);
+    expect((fileEntries[3] as any).message.role).toBe("toolResult");
   });
 
   it("is idempotent: running twice yields the same fileEntries", () => {

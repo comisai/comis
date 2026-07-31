@@ -171,6 +171,22 @@ function isStructuralIdentifier(fieldName: string | undefined, value: string): b
   return fieldName === "conversationRef" && CONVERSATION_REF_SHAPE.test(value);
 }
 
+function isToolProtocolIdentity(
+  container: Record<string, unknown>,
+  fieldName: string,
+  value: unknown,
+): value is string {
+  if (typeof value !== "string") return false;
+  if (
+    (fieldName === "name" || fieldName === "id")
+    && (container.type === "toolCall" || container.type === "tool_use")
+  ) {
+    return true;
+  }
+  return (fieldName === "toolName" || fieldName === "toolCallId")
+    && (container.role === "toolResult" || container.role === "tool");
+}
+
 function projectPersistenceValue(
   value: unknown,
   fieldName: string | undefined,
@@ -226,7 +242,13 @@ function projectPersistenceValue(
   let changed = false;
   const projected: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    const next = projectPersistenceValue(item, key, seen);
+    // Tool names and call IDs are protocol identities, not unstructured content.
+    // Redacting an entropy-shaped identity corrupts durable replay and can make
+    // the provider reject the next request before it consumes the tool result.
+    // Tool arguments and result content still traverse the secret scrubber.
+    const next = isToolProtocolIdentity(value as Record<string, unknown>, key, item)
+      ? { value: item, redactions: 0 }
+      : projectPersistenceValue(item, key, seen);
     projected[key] = next.value;
     redactions += next.redactions;
     if (next.value !== item) changed = true;
