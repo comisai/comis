@@ -123,7 +123,6 @@ async function summarizeHistory(
   history: LeafChunkItem[],
   config: SessionCompactionConfig,
   deps: LeafSummarizerDeps,
-  now: number,
 ): Promise<Result<string, Error>> {
   if (history.length === 0) {
     return err(new Error("Session compaction flush found no resolvable history"));
@@ -157,24 +156,53 @@ async function summarizeHistory(
     role: "user",
     content: summaries.join("\n\n"),
   } as unknown as AgentMessage;
-  const mergedItem: LeafChunkItem = {
-    id: "session-compaction-merge",
-    msg: mergedMessage,
-    tokens: estimateMessageTokens(mergedMessage as unknown as Message),
-    createdAt: now,
-  };
-  const merged = await fromPromise(
-    summarizeLeafChunk([mergedItem], deps, {
-      reserveTokens: config.reserveTokens,
-    }),
+  const originalHistoryTokens = history.reduce(
+    (total, item) => total + item.tokens,
+    0,
   );
-  if (!merged.ok) return err(merged.error);
-  if (merged.value.fallback) {
+  const maxMemoryTokens = Math.min(
+    config.reserveTokens,
+    originalHistoryTokens - 1,
+  );
+  if (maxMemoryTokens < 1) {
     return err(new Error(
-      "Session compaction memory merge reached the deterministic fallback",
+      "Session compaction memory merge found no token budget below the original history",
     ));
   }
-  return ok(merged.value.content);
+  const merged = await fromPromise(deps.summarize(
+    [mergedMessage],
+    { reserveTokens: maxMemoryTokens },
+  ));
+  if (!merged.ok) return err(merged.error);
+  if (merged.value.trim().length === 0) {
+    return err(new Error(
+      "Session compaction memory merge returned empty content",
+    ));
+  }
+  const outputMessage = {
+    role: "user",
+    content: merged.value,
+  } as unknown as AgentMessage;
+  const outputTokens = estimateMessageTokens(outputMessage as unknown as Message);
+  if (outputTokens > maxMemoryTokens) {
+    return err(new Error(
+      "Session compaction memory merge exceeded "
+      + `agents.<name>.session.compaction.reserveTokens=${config.reserveTokens}: `
+      + `outputTokens=${outputTokens}, originalHistoryTokens=${originalHistoryTokens}, `
+      + `acceptedMaxTokens=${maxMemoryTokens}`,
+    ));
+  }
+  deps.logger.debug(
+    {
+      step: "session-compaction-memory-merge",
+      chunkSummaryCount: summaries.length,
+      outputTokens,
+      originalHistoryTokens,
+      maxMemoryTokens,
+    },
+    "Session compaction memory summaries merged",
+  );
+  return ok(merged.value);
 }
 
 async function flushToMemory(
@@ -222,7 +250,6 @@ async function flushToMemory(
     history,
     params.sessionCompaction,
     summarizerDeps,
-    params.now,
   );
   if (!summarized.ok) {
     params.logger.warn(
