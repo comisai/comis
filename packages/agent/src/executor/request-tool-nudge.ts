@@ -80,13 +80,29 @@ function repeatsEarlierAssistantAnswer(messages: unknown[]): boolean {
   );
 }
 
+const EXTERNAL_ACTION_ATTEMPT_PATTERN =
+  /\b(?:i|we)\s+(?:attempted|tried)\s+to\s+(?:access|apply|change|check|connect|create|delete|download|edit|fetch|install|invoke|modify|open|post|read|remove|restart|run|save|search|send|set|store|update|upload|verify|write)\b/iu;
+
+function claimsExternalActionAttempt(messages: unknown[]): boolean {
+  const entries = messages as Array<{ role?: unknown; content?: unknown }>;
+  const last = entries.at(-1);
+  return last?.role === "assistant"
+    && !hasToolCallBlock(last.content)
+    && EXTERNAL_ACTION_ATTEMPT_PATTERN.test(visibleTextOf(last.content));
+}
+
 function buildDirective(
   toolNames: readonly string[],
-  trigger: "repeated_answer" | "declared_mutation_request",
+  trigger:
+    | "repeated_answer"
+    | "declared_mutation_request"
+    | "claimed_action_attempt",
 ): string {
   const triggerFact = trigger === "repeated_answer"
     ? "Your last answer exactly repeated an earlier assistant answer."
-    : "Capability metadata identifies the current wording as a direct mutation request.";
+    : trigger === "declared_mutation_request"
+      ? "Capability metadata identifies the current wording as a direct mutation request."
+      : "Your last answer claimed an external action attempt without a current-turn tool receipt.";
   return [
     "[comis: continuation — the current request still needs tool-backed action]",
     triggerFact,
@@ -144,7 +160,8 @@ export async function runRequestToolNudge(
   const declaredMutationRequest = matchedToolNames.some((toolName) =>
     matchesToolMutationRequest(toolName, deps.requestText)
   );
-  if (!repeatedAnswer && !declaredMutationRequest) {
+  const claimedActionAttempt = claimsExternalActionAttempt(deps.messages);
+  if (!repeatedAnswer && !declaredMutationRequest && !claimedActionAttempt) {
     return {
       fired: false,
       recovered: false,
@@ -152,7 +169,11 @@ export async function runRequestToolNudge(
       outcome: "not_action_request",
     };
   }
-  const trigger = repeatedAnswer ? "repeated_answer" : "declared_mutation_request";
+  const trigger = repeatedAnswer
+    ? "repeated_answer"
+    : declaredMutationRequest
+      ? "declared_mutation_request"
+      : "claimed_action_attempt";
 
   logger.info(
     {
