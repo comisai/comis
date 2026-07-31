@@ -503,6 +503,51 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     ]);
   });
 
+  it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("models_manage", {
+      searchHint: "llm provider model switch configure cost tier pricing",
+      coDiscoverWith: ["agents_manage"],
+    });
+    registerToolMetadata("agents_manage", {
+      searchHint: "system list create delete suspend resume agent configure roster inventory",
+      coDiscoverWith: ["models_manage"],
+      mutationRequestPrefixes: ["switch"],
+    });
+    const distractor = {
+      ...makeTool("mcp__worker--read_report"),
+      description: "Read an OpenAI Codex GPT report for completed work",
+    } as unknown as ToolDefinition;
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("models_manage"),
+      makeTool("agents_manage"),
+      distractor,
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "switch to openai-codex gpt-5.4-mini",
+      recentlyUsedToolNames: new Set(["models_manage", "agents_manage"]),
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "agents_manage",
+      "models_manage",
+    ]);
+    expect(result.deferredNames).toContain("mcp__worker--read_report");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "request-relevant-tool-selection",
+        selectedNames: ["agents_manage", "models_manage"],
+      }),
+      "Request-relevant tools selected",
+    );
+  });
+
   it("defers all non-CORE_TOOLS when capabilityClass is 'nano'", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
