@@ -476,6 +476,28 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A skill bundle whose declared local references do not resolve inside the
+  // approved immutable directory is a concrete import rejection. The closed
+  // failure code retains that diagnosis without retaining any source path.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.toolName === "skills_manage"
+        && candidate.failureCode === "skill_import_incomplete",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "skill_import_incomplete",
+      detail:
+        "skills_manage rejected the imported skill because a declared local reference "
+        + "was outside or missing from the approved directory",
+      suggestedNextSteps: [
+        "select a self-contained immutable skill directory containing every referenced file",
+        "retry skills_manage import after confirming the selected directory contains its complete bundle",
+      ],
+    };
+  },
+
   // 6) provider_timeout (insurance — any timeout-kind failure).
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");

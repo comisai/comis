@@ -65,6 +65,7 @@ export function toPersistedState(task: BackgroundTask | PersistedTaskState): Per
     ...(task.sessionKey !== undefined && { sessionKey: task.sessionKey }),
     ...(task.traceId !== undefined && { traceId: task.traceId }),
     ...(task.errorKind !== undefined && { errorKind: task.errorKind }),
+    ...(task.failureCode !== undefined && { failureCode: task.failureCode }),
   };
 }
 
