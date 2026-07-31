@@ -420,6 +420,19 @@ function isSecretKey(key: string): boolean {
   return SECRET_KEYS.has(key.toLowerCase());
 }
 
+/**
+ * Detect the gateway's secret-write intent even when a caller used the
+ * config-patch shape. `value` is normally too generic to redact globally, but
+ * it is credential material when paired with this exact action and section.
+ */
+function isContextualSecretKey(parent: Record<string, unknown>, key: string): boolean {
+  return key === "value"
+    && parent.action === "patch"
+    && parent.section === "secrets"
+    && typeof parent.key === "string"
+    && parent.key.length > 0;
+}
+
 /** Mutable accumulator threaded through the recursive walk. */
 interface WalkState {
   readonly homeDir: string | undefined;
@@ -507,7 +520,8 @@ function walk(value: unknown, depth: number, keyForValue: string, state: WalkSta
   }
 
   // Plain object — rebuild within the key cap; never mutate the input.
-  const entries = Object.entries(obj as Record<string, unknown>);
+  const record = obj as Record<string, unknown>;
+  const entries = Object.entries(record);
   const keyLimit = state.limits.maxKeysPerLevel;
   if (entries.length > keyLimit) flagTruncation(state, keyForValue, "keys_exceeded");
   const kept = entries.length > keyLimit ? entries.slice(0, keyLimit) : entries;
@@ -519,7 +533,7 @@ function walk(value: unknown, depth: number, keyForValue: string, state: WalkSta
       break;
     }
     state.bytes += k.length;
-    if (isSecretKey(k)) {
+    if (isSecretKey(k) || isContextualSecretKey(record, k)) {
       // Key-based redaction: the whole value collapses regardless of content.
       out[k] = REDACTED;
       state.sink.push({ key: k, reason: "secret_key" });
