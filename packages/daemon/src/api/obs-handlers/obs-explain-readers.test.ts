@@ -490,6 +490,7 @@ describe("makeRealReader.readMessageLifecycleDiagnostic", () => {
     const evidence = await reader.readMessageLifecycleDiagnostic!("trace-auth");
 
     expect(evidence).toEqual({
+      timestamp: 1_000,
       sessionKey: SESSION_KEY,
       traceId: "trace-auth",
       agentId: "default",

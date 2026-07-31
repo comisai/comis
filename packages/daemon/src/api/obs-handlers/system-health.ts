@@ -6,7 +6,7 @@
  * ONE session; this rolls up a WINDOW of sessions into a bounded, deterministic,
  * digest-only system triage.
  *
- * The assembler is a READ FAN-IN over five existing, bounded, soft-fail sources:
+ * The assembler is a READ FAN-IN over six existing, bounded, soft-fail sources:
  *
  *   session rollup — `ObservabilityStore.aggregateSessionsInWindow(sinceMs)` ->
  *             `reduceSystemWindow` (pure cross-session reduce; synthetic excluded).
@@ -19,6 +19,8 @@
  *   diagnostics — `queryDiagnostics({ category })` over the
  *             `health_signal` / `model_health` / `config_posture` rows (counts +
  *             labels only — those rows already dropped raw bodies at write time).
+ *   message lifecycle — exact-trace `diagnostic:message_processed` failures
+ *             without a matching session summary, merged once per trace.
  *   durable runs — `DurableRunPort.countByStatus(sinceMs)` for the optional
  *             autonomy lifecycle slice.
  *
@@ -68,6 +70,7 @@ import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from 
 import { computeAutonomySlice } from "./system-autonomy.js";
 import { computeCronWakeGateSlice } from "./system-cron-wake-gate.js";
 import { reconcileBillingTotal } from "./obs-metrics.js";
+import { mergePreSessionMessageFailures } from "./message-lifecycle-diagnostics.js";
 import type { BillingEstimator } from "../../observability/billing-estimator.js";
 
 /** Default data directory (lazy). Mirrors obs-explain.ts / system-session-index.ts. */
@@ -331,7 +334,7 @@ function boundFindings(findings: readonly Finding[], truncations: TruncationEntr
 // ---------------------------------------------------------------------------
 
 /**
- * Assemble the cross-session {@link SystemHealthReport} from the four bounded
+ * Assemble the cross-session {@link SystemHealthReport} from the bounded
  * sources. NEITHER an admin check NOR a contract parse — it takes an
  * ALREADY-AUTHORIZED window and runs the deterministic read fan-in, so it can be
  * reached under daemon authority by a caller with its own authorization boundary
@@ -387,10 +390,19 @@ export async function assembleSystemHealthReport(
   // type is not re-exported from @comis/memory, and reduceSystemWindow accepts it
   // structurally — no explicit annotation needed).
   const rows = deps.obsStore?.aggregateSessionsInWindow(sinceMs) ?? [];
+  const sessionSummaryDiagnostics =
+    deps.obsStore?.queryDiagnostics({ category: "session_summary", sinceMs }) ?? [];
+  const messageLifecycleDiagnostics =
+    deps.obsStore?.queryDiagnostics({ category: "message", sinceMs }) ?? [];
+  const preSessionFailures = mergePreSessionMessageFailures(
+    rows,
+    messageLifecycleDiagnostics,
+    sessionSummaryDiagnostics,
+  );
   // Synthetic/test sessions are always excluded from this operator-facing system
   // digest: there is deliberately no `includeSynthetic` opt-in — none of the
   // four surfaces could reach one, so it would be a dead admin capability.
-  const system = reduceSystemWindow(rows, { excludeSynthetic: true });
+  const system = reduceSystemWindow(preSessionFailures.rows, { excludeSynthetic: true });
   // The absolute degraded count comes from the SAME synthetic-excluded
   // population the reducer used for `total` (sessionCount) + `degradedRate` —
   // `system.degradedCount`, NOT a re-derivation over the UNFILTERED `rows`.
@@ -453,7 +465,28 @@ export async function assembleSystemHealthReport(
   );
 
   // findings[] — counts + codes + hints ONLY (no raw bodies).
-  const allFindings = buildFindings(healthSignals, modelHealth, configPosture, learningHealth, memoryLifecycle, cronWakeGate);
+  const preSessionFailureFinding: Finding | undefined =
+    preSessionFailures.failures.length === 0
+      ? undefined
+      : {
+          code: "pre_session_execution_failure",
+          detail:
+            `${preSessionFailures.failures.length} message lifecycle failures had no matching session summary`,
+          count: preSessionFailures.failures.length,
+          hint:
+            "run comis explain with the incident traceId from the deterministic failure reply",
+        };
+  const allFindings = [
+    ...buildFindings(
+      healthSignals,
+      modelHealth,
+      configPosture,
+      learningHealth,
+      memoryLifecycle,
+      cronWakeGate,
+    ),
+    ...(preSessionFailureFinding === undefined ? [] : [preSessionFailureFinding]),
+  ].sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
   const configPostureFinding = allFindings.find((finding) => finding.code === "config_posture");
   const truncations: TruncationEntry[] = [];
   const findings = boundFindings(allFindings, truncations);
@@ -507,7 +540,10 @@ export async function assembleSystemHealthReport(
   const topDegradedCause = Object.entries(system.degradedByCause)
     .filter(([cause]) => cause !== "completed_with_tool_errors")
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
-  const worstDegradedSessionKey = pickWorstDegradedSessionKey(rows, topDegradedCause);
+  const worstDegradedSessionKey = pickWorstDegradedSessionKey(
+    preSessionFailures.rows,
+    topDegradedCause,
+  );
   const likelyRootCause = systemRootCause({
     degradedRate: system.degradedRate,
     sessionCount: system.sessionCount,
