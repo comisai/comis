@@ -810,6 +810,47 @@ describe("createAgentHandlers", () => {
       expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
+    it("identifies a catalog provider supplied in the model field without mutating state", async () => {
+      const persistDeps = makePersistDeps();
+      const catalogModels = [
+        { provider: "openai", modelId: "gpt-4.1-nano" },
+        { provider: "groq", modelId: "llama-3.3-70b-versatile" },
+      ];
+      const deps = makeDeps({
+        agents: {
+          default: {
+            name: "Test Agent",
+            provider: "openai",
+            model: "gpt-4.1-nano",
+            maxSteps: 25,
+          } as AgentHandlerDeps["agents"][string],
+        },
+        modelCatalog: {
+          get: (provider: string, modelId: string) =>
+            catalogModels.find((entry) =>
+              entry.provider === provider && entry.modelId === modelId,
+            ),
+          getByProvider: (provider: string) =>
+            catalogModels.filter((entry) => entry.provider === provider),
+          getAll: () => catalogModels,
+          getProviders: () => ["openai", "groq"],
+          loadStatic: () => {},
+          mergeScanned: () => {},
+        } as unknown as AgentHandlerDeps["modelCatalog"],
+        persistDeps,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(handlers["agents.update"]!({
+        agentId: "default",
+        config: { model: "groq" },
+        _trustLevel: "admin",
+      })).rejects.toThrow(/groq.*provider.*not.*model/i);
+
+      expect(deps.agents["default"]!.model).toBe("gpt-4.1-nano");
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
     it("deep-merges skills.builtinTools without resetting existing toggles", async () => {
       const deps = makeDeps();
       const handlers = createAgentHandlers(deps);
