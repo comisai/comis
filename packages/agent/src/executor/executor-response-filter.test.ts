@@ -1427,6 +1427,71 @@ describe("provider-model failure grounding guard", () => {
   });
 });
 
+type ActiveModelSelfStatusGuard = (params: {
+  request: string;
+  response: string;
+  provider: string;
+  modelId: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "active_model_status_mismatch";
+};
+
+function activeModelSelfStatusGuard(): ActiveModelSelfStatusGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceActiveModelSelfStatus;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ActiveModelSelfStatusGuard;
+}
+
+describe("active-model self-status grounding guard", () => {
+  it("replaces an ungrounded live self-status answer with exact runtime identity", () => {
+    const guarded = activeModelSelfStatusGuard()({
+      request: "what model are u actually using now",
+      response: "The provider is provider_a, but the exact model is unspecified.",
+      provider: "provider_a",
+      modelId: "model_a",
+    });
+
+    expect(guarded).toEqual({
+      response: "provider_a / model_a",
+      corrected: true,
+      reason: "active_model_status_mismatch",
+    });
+  });
+
+  it("preserves a self-status answer carrying both exact runtime fields", () => {
+    const response = "I am running provider_a / model_a.";
+    expect(activeModelSelfStatusGuard()({
+      request: "what model are u actually using now",
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not reinterpret a recommendation request as current self-status", () => {
+    const response = "model_b would fit that workload.";
+    expect(activeModelSelfStatusGuard()({
+      request: "what model should i use now",
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not alter unrelated model-catalog discussion", () => {
+    const response = "The catalog has several pricing tiers.";
+    expect(activeModelSelfStatusGuard()({
+      request: "tell me about model pricing",
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+});
+
 describe("empty-turn recovery does not narrate an already-delivered reply", () => {
   // LIVE: an onboarding turn sent its question via message({action:"send"}), so the
   // final assistant text was empty. Recovery then posted a SECOND bubble on top of

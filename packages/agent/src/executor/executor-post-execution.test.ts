@@ -929,6 +929,15 @@ describe("tool-failure endReason and notice", () => {
     );
   });
 
+  it("source-grep — current model self-status is grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceActiveModelSelfStatus\(/);
+    expect(stripped).toMatch(/modelId:\s*params\.modelId/);
+    expect(stripped).toMatch(/provider:\s*params\.provider/);
+    expect(stripped).toMatch(/response\.active_model_self_status_guard/);
+  });
+
   it("source-grep — the failure notice is built through the locale seam, not a literal", () => {
     const stripped = readPostExecStripped();
     // It used to be a bare English `[tool failure] <tool> reported an error`
