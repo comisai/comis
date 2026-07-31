@@ -6,6 +6,14 @@ import type { HeartbeatHandlerDeps } from "./heartbeat-handlers.js";
 import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
 import { ok } from "@comis/shared";
 
+const persistToConfigMock = vi.hoisted(() => vi.fn(async () => ({
+  ok: true as const,
+  value: { configPath: "/tmp/test-config.yaml" },
+})));
+vi.mock("./shared/persist-to-config.js", () => ({
+  persistToConfig: persistToConfigMock,
+}));
+
 // ---------------------------------------------------------------------------
 // Helper: mock factories
 // ---------------------------------------------------------------------------
@@ -274,7 +282,8 @@ describe("createHeartbeatHandlers", () => {
       expect(agents.a.scheduler.heartbeat.enabled).toBe(true);
     });
 
-    it("persists to YAML config when persistDeps available", async () => {
+    it("persists a live-applied update without scheduling a daemon restart", async () => {
+      persistToConfigMock.mockClear();
       const mockPersistDeps = createMockPersistDeps();
       const agents: Record<string, any> = {
         a: { scheduler: { heartbeat: {} } },
@@ -293,6 +302,14 @@ describe("createHeartbeatHandlers", () => {
       });
 
       expect(agents.a.scheduler.heartbeat.enabled).toBe(true);
+      expect(persistToConfigMock).toHaveBeenCalledWith(
+        mockPersistDeps,
+        expect.objectContaining({
+          actionType: "heartbeat.update",
+          entityId: "a",
+          skipRestart: true,
+        }),
+      );
     });
   });
 
