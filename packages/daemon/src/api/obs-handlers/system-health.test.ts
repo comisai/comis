@@ -335,6 +335,79 @@ describe("assembleSystemHealthReport (bounded read fan-in)", () => {
     expect(report.coverage?.sessionSummary).toEqual({ found: true, rows: 1 });
   });
 
+  it("keeps a pre-summary hard failure hard after a later clean continuation", async () => {
+    const now = systemNowMs();
+    const store = makeStore();
+    const sessionKey = "default:agent:default:channel-a:user-a:peer:user-a";
+    store.insertDiagnostic({
+      timestamp: now - 300,
+      category: "session_summary",
+      severity: "warn",
+      sessionKey,
+      traceId: "trace-soft",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: true,
+        turnCount: 1,
+        topErrorKinds: { resource: 1 },
+        endReason: "completed_with_tool_errors",
+      }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 200,
+      category: "message",
+      severity: "info",
+      agentId: "default",
+      sessionKey,
+      traceId: "trace-auth",
+      message: "diagnostic:message_processed",
+      details: JSON.stringify({
+        agentId: "default",
+        sessionKey,
+        traceId: "trace-auth",
+        channelType: "telegram",
+        channelId: "channel-a",
+        status: "error",
+        failureStage: "execution",
+        errorKind: "auth",
+        totalDurationMs: 20,
+        tokensUsed: 0,
+        cost: 0,
+      }),
+    });
+    store.insertDiagnostic({
+      timestamp: now - 100,
+      category: "session_summary",
+      severity: "info",
+      sessionKey,
+      traceId: "trace-recovered",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: false,
+        turnCount: 1,
+        endReason: "success",
+      }),
+    });
+
+    const report = await assembleSystemHealthReport({
+      obsStore: store,
+      dataDir: makeDataDirWithActivity(),
+      clock: createFakeClock(now),
+    }, 24);
+
+    expect(report.sessions).toMatchObject({
+      total: 1,
+      degraded: 1,
+      deliveredWithToolErrors: 0,
+      hardDegraded: 1,
+    });
+    expect(report.degradedByCause).toEqual({ error: 1 });
+    expect(report.topErrorKinds).toEqual([
+      { kind: "auth", count: 1 },
+      { kind: "resource", count: 1 },
+    ]);
+  });
+
   // WIRING GUARD: assembleSystemHealthReport must QUERY each learning
   // diagnostic category AND thread it into buildFindings. The buildFindings unit tests prove the finding
   // is BUILT from rows; these prove system-health actually QUERIES the category + passes it (the wiring
