@@ -818,6 +818,84 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     db.close();
   });
 
+  it("diagnoses a pre-session execution failure from its durable message lifecycle row", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, multiExecutionTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile,
+    });
+    writeRealMetadata(sessionFile);
+
+    const db = new Database(":memory:");
+    initSchema(db, 1_536);
+    const store = createObservabilityStore(db);
+    store.insertDiagnostic({
+      timestamp: 4_000,
+      category: "message",
+      severity: "info",
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      message: "diagnostic:message_processed",
+      details: JSON.stringify({
+        messageId: "message-private",
+        channelId: "678314278",
+        channelType: "telegram",
+        agentId: "default",
+        tenantId: "default",
+        conversationRef: "conversation-private",
+        sessionKey: SESSION_KEY,
+        traceId: "trace-pre-session-auth-failure",
+        toolCalls: null,
+        llmCalls: null,
+        status: "error",
+        failureStage: "execution",
+        errorKind: "auth",
+        receivedAt: 3_970,
+        executionDurationMs: 1,
+        deliveryDurationMs: 0,
+        totalDurationMs: 30,
+        tokensUsed: 0,
+        cost: 0,
+        finishReason: "error",
+        timestamp: 4_000,
+      }),
+      traceId: "trace-pre-session-auth-failure",
+    });
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir, store),
+      dataDir,
+      { traceId: "trace-pre-session-auth-failure", depth: "full" },
+    );
+
+    expect(report.sessionKey).toBe(SESSION_KEY);
+    expect(report.traceId).toBe("trace-pre-session-auth-failure");
+    expect(report.agentId).toBe("default");
+    expect(report.channel).toEqual({ type: "telegram", id: "678314278" });
+    expect(report.outcome).toEqual({
+      endReason: "error",
+      degraded: true,
+      severity: "failed",
+    });
+    expect(report.timing.durationMs).toBe(30);
+    expect(report.likelyRootCause).toMatchObject({
+      code: "pre_session_execution_failure",
+    });
+    expect(report.likelyRootCause?.detail).toMatch(/execution.*auth/i);
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toMatch(/credential/i);
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).not.toMatch(/grep/i);
+    expect(
+      (report.coverage as Record<string, unknown>).executionDiagnostic,
+    ).toEqual({ found: true });
+    expect(JSON.stringify(report)).not.toContain("message-private");
+    expect(JSON.stringify(report)).not.toContain("conversation-private");
+    db.close();
+  });
+
   it("resolves a task-check root to its real origin session and folds durable delivery evidence", async () => {
     const dataDir = tmpDataDir();
     const sessionFile = buildRealSessionFile(dataDir);
