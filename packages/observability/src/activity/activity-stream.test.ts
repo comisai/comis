@@ -198,6 +198,42 @@ describe("createActivityStream (EventBus → ActivityEvent mapping)", () => {
     sub.unsubscribe();
   });
 
+  it("renders safe approval target metadata without its operation fingerprint", () => {
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (event) => received.push(event));
+
+    bus.emit("approval:requested", {
+      requestId: "req-mcp-target",
+      shortId: "Ab1Cd2Ef3Gh4",
+      toolName: "mcp_manage",
+      action: "mcp.connect",
+      params: {
+        action: "connect",
+        server_name: "test-mcp",
+        transport: "stdio",
+        command: "node",
+        credential_keys: ["SERVICE_TOKEN"],
+        operationFingerprint: "f".repeat(64),
+      },
+      tenantId: "tenant-a",
+      agentId: AGENT,
+      conversationRef: SESSION,
+      sessionKey: SESSION,
+      resolvingPrincipalId: "principal-a",
+      trustLevel: "admin",
+      createdAt: 1000,
+      timeoutMs: 60000,
+      traceId: TRACE,
+    });
+
+    expect(received).toHaveLength(1);
+    expect(received[0].defaultLabel).toMatch(/mcp_manage.*connect.*test-mcp.*stdio.*node.*SERVICE_TOKEN/iu);
+    expect(received[0].defaultLabel).not.toContain("f".repeat(64));
+    sub.unsubscribe();
+  });
+
   it("routes a live approval by the formatted session key rather than its opaque authority", () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });

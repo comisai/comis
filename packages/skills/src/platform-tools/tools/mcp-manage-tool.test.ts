@@ -307,7 +307,10 @@ describe("mcp_manage tool", () => {
           transport: "stdio",
           command: "npx",
           headers: { Authorization: "Bearer private-test-value" },
-          env: { SERVICE_PASSWORD: "private-env-value" },
+          env: {
+            SERVICE_PASSWORD: "private-env-value",
+            SERVICE_TOKEN: "${SERVICE_TOKEN}",
+          },
         } as never),
       );
 
@@ -320,11 +323,20 @@ describe("mcp_manage tool", () => {
       expect(approval).toMatchObject({
         toolName: "mcp_manage",
         action: "mcp.connect",
-        params: { action: "connect" },
+        params: {
+          action: "connect",
+          server_name: "test-mcp",
+          transport: "stdio",
+          command: "npx",
+          credential_keys: ["SERVICE_TOKEN"],
+        },
       });
       expect(approval.fingerprintParams).toMatchObject({
         headers: { Authorization: "Bearer private-test-value" },
-        env: { SERVICE_PASSWORD: "private-env-value" },
+        env: {
+          SERVICE_PASSWORD: "private-env-value",
+          SERVICE_TOKEN: "${SERVICE_TOKEN}",
+        },
       });
       expect(JSON.stringify(approval.params)).not.toContain("private-test-value");
       expect(JSON.stringify(approval.params)).not.toContain("private-env-value");
