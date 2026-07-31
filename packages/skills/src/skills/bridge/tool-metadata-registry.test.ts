@@ -1703,6 +1703,7 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
     const meta = getToolMetadata("agents_manage");
     expect(meta).toBeDefined();
     expect(meta!.coDiscoverWith).toContain("models_manage");
+    expect(meta!.readOnlyActions).toEqual(["list", "get"]);
   });
 });
 

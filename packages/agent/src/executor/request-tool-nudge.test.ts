@@ -9,11 +9,11 @@ import {
 function makeDeps(
   overrides: Partial<RunRequestToolNudgeDeps> = {},
 ): RunRequestToolNudgeDeps {
-  let toolCallCount = 0;
+  let successfulMutationCount = 0;
   let visibleAssistantText = "same stale answer";
   const session = {
     prompt: vi.fn(async () => {
-      toolCallCount = 1;
+      successfulMutationCount = 1;
       visibleAssistantText = "Updated.";
     }),
   };
@@ -27,7 +27,7 @@ function makeDeps(
     ],
     capabilityClass: "small",
     requestRelevantToolNames: ["test_mutating_tool"],
-    currentToolCallCount: () => toolCallCount,
+    currentSuccessfulMutationCount: () => successfulMutationCount,
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -110,19 +110,19 @@ describe("runRequestToolNudge", () => {
     expect(outcome.outcome).toBe("not_small_class");
   });
 
-  it("does not run after the current execution already called a tool", async () => {
-    const deps = makeDeps({ currentToolCallCount: () => 1 });
+  it("does not run after the current execution already completed a mutation", async () => {
+    const deps = makeDeps({ currentSuccessfulMutationCount: () => 1 });
 
     const outcome = await runRequestToolNudge(deps);
 
     expect(deps.session.prompt).not.toHaveBeenCalled();
-    expect(outcome.outcome).toBe("tool_already_called");
+    expect(outcome.outcome).toBe("mutation_already_succeeded");
   });
 
-  it("reports a persistent stall when the continuation still calls no tool", async () => {
+  it("reports a persistent stall when the continuation performs no successful mutation", async () => {
     const deps = makeDeps({
       session: { prompt: vi.fn(async () => undefined) },
-      currentToolCallCount: () => 0,
+      currentSuccessfulMutationCount: () => 0,
       getVisibleAssistantText: () => "same stale answer",
     });
 
@@ -132,7 +132,7 @@ describe("runRequestToolNudge", () => {
     expect(outcome).toMatchObject({
       fired: true,
       recovered: false,
-      outcome: "still_no_tool",
+      outcome: "still_no_mutation",
     });
   });
 

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   registerToolMetadata,
   getToolMetadata,
+  classifyToolInvocationMutation,
   getAllToolMetadata,
   truncateContentBlocks,
   _clearRegistryForTest,
@@ -68,6 +69,35 @@ describe("tool metadata registry", () => {
 
     // Clean up (registry already clear, but be explicit)
     _clearRegistryForTest();
+  });
+});
+
+describe("tool invocation mutation classification", () => {
+  it("classifies globally read-only and mutating tools", () => {
+    registerToolMetadata("mutation_read_only", { isReadOnly: true });
+    registerToolMetadata("mutation_always", { isReadOnly: false });
+
+    expect(classifyToolInvocationMutation("mutation_read_only", {})).toBe("read_only");
+    expect(classifyToolInvocationMutation("mutation_always", {})).toBe("mutating");
+  });
+
+  it("classifies action-discriminated reads separately from mutations", () => {
+    registerToolMetadata("mutation_by_action", {
+      isReadOnly: false,
+      validActions: ["list", "get", "update"],
+      readOnlyActions: ["list", "get"],
+    });
+
+    expect(classifyToolInvocationMutation("mutation_by_action", { action: "list" })).toBe(
+      "read_only",
+    );
+    expect(classifyToolInvocationMutation("mutation_by_action", { action: "update" })).toBe(
+      "mutating",
+    );
+    expect(classifyToolInvocationMutation("mutation_by_action", {})).toBe("unclassified");
+    expect(classifyToolInvocationMutation("mutation_by_action", { action: "unknown" })).toBe(
+      "unclassified",
+    );
   });
 });
 

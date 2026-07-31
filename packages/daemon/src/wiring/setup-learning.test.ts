@@ -1640,6 +1640,39 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     expect(observe.mock.invocationCallOrder[1]).toBeLessThan(resolve.mock.invocationCallOrder[0]!);
   });
 
+  it("records a failed lifecycle terminal as pipeline failure before resolving tool successes", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({ success: true }));
+    await flushMicrotasks();
+    bus.emit("diagnostic:message_processed", diagnosticPayload({
+      status: "error",
+      failureStage: "execution",
+      errorKind: "internal",
+      finishReason: "tool_invocation_stall",
+    }));
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({
+      trajectoryId: TRACE,
+      outcome: "failure",
+      source: "pipeline",
+      confidence: 0.9,
+    }));
+  });
+
   it("an explicit terminal tool failure outranks later generic tool success when the turn is resolved", async () => {
     const db = new Database(":memory:");
     initSchema(db, 384);
