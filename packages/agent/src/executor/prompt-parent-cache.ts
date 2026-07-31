@@ -57,7 +57,6 @@ export async function assembleParentCachePrompt(
     // Date/time section
     const dateTimeLines = buildDateTimeSection();
     if (dateTimeLines.length > 0) dynamicPreambleParts.push(dateTimeLines.join("\n"));
-    dynamicPreambleParts.push(renderCurrentExecutionSection(params));
 
     // Inbound metadata
     const chatType = resolveChatType(msg);
@@ -171,6 +170,7 @@ export async function assembleParentCachePrompt(
       );
     }
 
+    dynamicPreambleParts.push(renderCurrentExecutionSection(params));
     const localeSection = renderResponseLocalePolicy(responseLocalePolicy);
     if (localeSection !== undefined) dynamicPreambleParts.push(localeSection);
 

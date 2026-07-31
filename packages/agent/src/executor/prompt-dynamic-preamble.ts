@@ -62,7 +62,8 @@ export function renderCurrentExecutionSection(
   return [
     "## Current Execution",
     `Active model: ${state}`,
-    "This is authoritative runtime state for the current execution. Model catalogs do not identify or change this active model.",
+    "This live runtime fact is authoritative for the current execution and was captured after the historical context above. " +
+      "Model catalogs do not identify or change this active model.",
   ].join("\n");
 }
 
@@ -127,7 +128,6 @@ export async function buildDynamicPreamble(input: DynamicPreambleInput): Promise
   if (dateTimeLines.length > 0) {
     dynamicPreambleParts.push(dateTimeLines.join("\n"));
   }
-  dynamicPreambleParts.push(renderCurrentExecutionSection(params));
   const inboundLines = buildInboundMetadataSection(inboundMeta, promptMode === "minimal");
   if (inboundLines.length > 0) {
     dynamicPreambleParts.push(inboundLines.join("\n"));
@@ -273,6 +273,7 @@ export async function buildDynamicPreamble(input: DynamicPreambleInput): Promise
       ),
     );
   }
+  dynamicPreambleParts.push(renderCurrentExecutionSection(params));
   const localeSection = renderResponseLocalePolicy(responseLocalePolicy);
   if (localeSection !== undefined) dynamicPreambleParts.push(localeSection);
   // BOOT.md content relocated from system prompt to dynamic preamble.
