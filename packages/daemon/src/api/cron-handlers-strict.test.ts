@@ -283,6 +283,29 @@ describe("strict cron RPC mutations", () => {
       .rejects.toThrow(/admin access required/i);
   });
 
+  it("states the resolved agent for every agent-scoped cron response", async () => {
+    const authored = job();
+    const cronScheduler = scheduler([authored]);
+    const bound = handlers(deps(cronScheduler));
+
+    await expect(bound["cron.add"]!({
+      name: "Extra status",
+      schedule: { kind: "every", everyMs: 120_000 },
+      payload: { kind: "heartbeat_event", text: "check", wakeMode: "now" },
+      _agentId: "agent-a",
+    })).resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.list"]!({ _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.list"]!({ agentId: "*", _trustLevel: "admin" }))
+      .resolves.toMatchObject({ resolvedAgentId: "*" });
+    await expect(bound["cron.update"]!({ jobName: authored.name, paused: true, _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.remove"]!({ jobName: authored.name, _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.runs"]!({ jobName: authored.name, _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+  });
+
   it("reports raw failed-authority status without inventing a scheduler", async () => {
     const controller = maintenance();
     const bound = handlers(deps(scheduler([]), {
