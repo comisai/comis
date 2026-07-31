@@ -194,8 +194,26 @@ export function createGatewayTool(
       actionHandler: async (action, p, rpcCall) => {
         const ctx = tryGetContext();
         const _trustLevel = ctx?.trustLevel ?? "guest";
+        const repairsSecretPatch =
+          action === "patch"
+          && p.section === "secrets"
+          && typeof p.key === "string"
+          && p.key.length > 0
+          && typeof p.value === "string"
+          && p.value.length > 0;
+        if (repairsSecretPatch) {
+          logger.info(
+            {
+              step: "gateway-action-repair",
+              fromAction: "patch",
+              toAction: "env_set",
+              section: "secrets",
+            },
+            "Gateway secret write action repaired",
+          );
+        }
 
-        switch (action) {
+        switch (repairsSecretPatch ? "env_set" : action) {
           case "read": {
             const section = readStringParam(p, "section", false);
             return rpcCall("config.read", { section, _trustLevel });
@@ -338,8 +356,15 @@ export function createGatewayTool(
 
           default: {
             // action === "env_set"
-            const envKey = readStringParam(p, "env_key")!;
-            const envValue = readStringParam(p, "env_value", false);
+            const envParams = repairsSecretPatch
+              ? {
+                  action: "env_set",
+                  env_key: p.key,
+                  env_value: p.value,
+                }
+              : p;
+            const envKey = readStringParam(envParams, "env_key")!;
+            const envValue = readStringParam(envParams, "env_value", false);
             if (envValue === undefined || envValue.length === 0) {
               return {
                 error: "missing_env_value",
