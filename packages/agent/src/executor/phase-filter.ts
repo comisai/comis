@@ -9,6 +9,9 @@
  * @module
  */
 
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import { tryCatch } from "@comis/shared";
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /** Parse phase from a textSignature JSON string. */
@@ -107,7 +110,35 @@ export function getVisibleAssistantText(session: any): string {
 export type FinalAssistantResponseSync =
   | "unchanged"
   | "updated"
+  | "updated_memory_only"
   | "missing";
+
+function persistAssistantReplacement(
+  sessionManager: SessionManager,
+  current: any,
+  replacement: any,
+): boolean {
+  const leaf = sessionManager.getLeafEntry();
+  if (
+    leaf?.type !== "message"
+    || leaf.message.role !== "assistant"
+    || leaf.message !== current
+  ) {
+    return false;
+  }
+
+  const persisted = tryCatch(() => {
+    if (leaf.parentId === null) {
+      sessionManager.resetLeaf();
+    } else {
+      sessionManager.branch(leaf.parentId);
+    }
+    sessionManager.appendMessage(
+      replacement as Parameters<SessionManager["appendMessage"]>[0],
+    );
+  });
+  return persisted.ok;
+}
 
 /**
  * Keep the live canonical transcript aligned with the response that
@@ -122,6 +153,7 @@ export type FinalAssistantResponseSync =
 export function synchronizeFinalAssistantResponse(
   session: any,
   response: string,
+  sessionManager?: SessionManager,
 ): FinalAssistantResponseSync {
   const messages: any[] | undefined = session?.messages;
   if (!Array.isArray(messages)) return "missing";
@@ -148,11 +180,15 @@ export function synchronizeFinalAssistantResponse(
     const protocolBlocks = content.filter(
       (block: any) => !isVisibleTextBlock(block),
     );
-    messages[index] = { // eslint-disable-line security/detect-object-injection
+    const replacement = {
       ...message,
       content: [...protocolBlocks, { type: "text", text: response }],
     };
-    return "updated";
+    const durable = sessionManager === undefined
+      ? true
+      : persistAssistantReplacement(sessionManager, message, replacement);
+    messages[index] = replacement; // eslint-disable-line security/detect-object-injection
+    return durable ? "updated" : "updated_memory_only";
   }
 
   return "missing";

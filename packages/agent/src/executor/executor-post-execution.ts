@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   type SessionKey,
@@ -257,7 +257,7 @@ export interface PostExecutionBridge {
 export interface PostExecutionParams {
   result: ExecutionResult;
   session: AgentSession;
-  sm: { buildSessionContext(): unknown };
+  sm: SessionManager;
   config: PerAgentConfig;
   msg: NormalizedMessage;
   /** Exact typed response-locale decision used for this turn. */
@@ -1846,12 +1846,36 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const responseSync = synchronizeFinalAssistantResponse(
     session,
     result.response ?? "",
+    sm,
   );
   if (responseSync === "updated") {
     deps.logger.info(
       { step: "response-persistence" },
       "Synchronized post-processed response with live session transcript",
     );
+  } else if (responseSync === "updated_memory_only") {
+    deps.logger.warn(
+      {
+        step: "response-persistence",
+        errorKind: "resource" as const,
+        hint:
+          "The corrected response reached delivery and live LCD ingest, but its append-only "
+          + "session replacement branch could not be written; inspect the session JSONL leaf and disk health.",
+      },
+      "Corrected response could not be made canonical in durable session history",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.persistence_projection_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "assistant_response",
+        reason: "durable_replacement_unavailable",
+      },
+    });
   } else if (responseSync === "missing" && (result.response?.length ?? 0) > 0) {
     deps.logger.warn(
       {

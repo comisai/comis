@@ -506,7 +506,7 @@ describe("synchronize final assistant response", () => {
     session: unknown,
     response: string,
     sessionManager?: SessionManager,
-  ): "unchanged" | "updated" | "missing" {
+  ): "unchanged" | "updated" | "updated_memory_only" | "missing" {
     const candidate = (phaseFilter as Record<string, unknown>)
       .synchronizeFinalAssistantResponse;
     expect(candidate).toBeTypeOf("function");
@@ -514,7 +514,7 @@ describe("synchronize final assistant response", () => {
       session: unknown,
       response: string,
       sessionManager?: SessionManager,
-    ) => "unchanged" | "updated" | "missing")(
+    ) => "unchanged" | "updated" | "updated_memory_only" | "missing")(
       session,
       response,
       sessionManager,
