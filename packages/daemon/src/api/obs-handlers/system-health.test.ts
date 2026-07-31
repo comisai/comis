@@ -327,7 +327,7 @@ describe("assembleSystemHealthReport (bounded read fan-in)", () => {
       { kind: "network", count: 1 },
     ]);
     expect(report.findings).toContainEqual({
-      code: "pre_session_execution_failure",
+      code: "pre_session_message_failure",
       detail: "2 message lifecycle failures had no matching session summary",
       count: 2,
       hint: "run comis explain with the incident traceId from the deterministic failure reply",
