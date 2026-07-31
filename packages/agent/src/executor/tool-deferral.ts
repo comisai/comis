@@ -476,16 +476,21 @@ export function applyToolDeferral(
     );
     const documents = eligibleTools.map((tool) => {
       const metadata = getToolMetadata(tool.name);
-      const searchText = metadata?.searchHint === undefined
-        ? resolveToolDescription(tool)
-        : `${resolveToolDescription(tool)} ${metadata.searchHint}`;
+      const searchText = metadata?.searchHint ?? resolveToolDescription(tool);
       return { name: tool.name, text: searchText };
     });
+    const lexicalMatches = bm25Score(
+      requestText.slice(0, MAX_EMBED_QUERY_CHARS),
+      documents,
+    );
+    const lexicalTopScore = lexicalMatches[0]?.score ?? 0;
     const strongest = directMutationTool === undefined
-      ? bm25Score(
-          requestText.slice(0, MAX_EMBED_QUERY_CHARS),
-          documents,
-        ).find((match) => match.score >= DEFAULT_TOOL_DISCOVERY_SCORES.minBm25Score)
+      ? lexicalMatches.find(
+          (match) =>
+            lexicalTopScore > 0
+            && match.score / lexicalTopScore
+              >= DEFAULT_TOOL_DISCOVERY_SCORES.minBm25Score,
+        )
       : { name: directMutationTool.name };
     if (strongest !== undefined) {
       const selectedNames = new Set([strongest.name]);

@@ -506,7 +506,8 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
   it("routes a natural external-account request to MCP management", () => {
     const logger = createMockLogger();
     registerToolMetadata("mcp_manage", {
-      searchHint: "mcp server protocol connect disconnect tool external",
+      searchHint:
+        "mcp server connect inspect check external integration account access credential",
     });
     const backgroundTasks = {
       ...makeTool("background_tasks"),

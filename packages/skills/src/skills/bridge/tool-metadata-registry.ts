@@ -608,7 +608,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("tokens_manage",    { searchHint: "api key token rotate revoke generate auth credential" });
   registerToolMetadata("models_manage",    { searchHint: "llm provider model switch configure cost tier pricing" });
   registerToolMetadata("skills_manage",    { searchHint: "skill plugin capability register unregister enable toggle" });
-  registerToolMetadata("mcp_manage",       { searchHint: "mcp server protocol connect disconnect tool external" });
+  registerToolMetadata("mcp_manage",       { searchHint: "mcp server connect inspect check external integration account access credential" });
   registerToolMetadata("heartbeat_manage", { searchHint: "heartbeat keepalive watchdog health probe interval alive" });
 
   // =========================================================================
