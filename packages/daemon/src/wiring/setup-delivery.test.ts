@@ -1384,6 +1384,38 @@ describe("setupDeliveryMirror", () => {
     result.shutdown();
   });
 
+  it("does not mirror runtime failure replies as conversational history", async () => {
+    const registry = createMockPluginRegistry();
+    const result = await setupDeliveryMirror({
+      db: {} as any,
+      config: createMockMirrorConfig(),
+      pluginRegistry: registry as any,
+      logger: createMockLogger(),
+    });
+    const hookHandler = registry.capturedHooks.get("after_delivery");
+    const conversationRef = ConversationRefSchema.parse(`cv_${"c".repeat(43)}`);
+
+    await hookHandler!({
+      text: "The request could not be completed.",
+      channelType: "telegram",
+      channelId: "chat-1",
+      result: { messageId: "123" },
+      durationMs: 50,
+      origin: "agent-runtime-failure",
+    }, {
+      deliveryAuthority: { tenantId: "tenant-a", agentId: "agent-1", conversationRef },
+      destinationEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct" as const,
+      },
+    });
+
+    expect(mockSqliteMirror.record).not.toHaveBeenCalled();
+    result.shutdown();
+  });
+
   it("after_delivery hook skips when sessionKey is undefined", async () => {
     const registry = createMockPluginRegistry();
 

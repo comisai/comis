@@ -234,6 +234,23 @@ describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
 });
 
 describe("deliverExecutionResponse — delivery receipt", () => {
+  it("threads a runtime-failure origin to the delivery boundary", async () => {
+    const deps = makeDeps();
+
+    await deliverExecutionResponse(
+      deps, makeAdapter(), makeMessage(), "request failed", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
+      undefined, "agent-runtime-failure",
+    );
+
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      "chat-1",
+      "request failed",
+      expect.objectContaining({ origin: "agent-runtime-failure" }),
+    );
+  });
+
   it("returns the strict accepted aggregate with durable queue disposition", async () => {
     const result = await deliverExecutionResponse(
       makeDeps(), makeAdapter(), makeMessage(), "hello", makeBlockStreamCfg(),
