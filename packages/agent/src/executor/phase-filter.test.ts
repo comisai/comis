@@ -591,7 +591,12 @@ describe("synchronize final assistant response", () => {
       const sessionFile = manager.getSessionFile();
       expect(sessionFile).toBeDefined();
 
-      const liveSession = { messages: [user, rejected] };
+      const liveSession = {
+        messages: [
+          structuredClone(user),
+          structuredClone(rejected),
+        ],
+      };
       expect(
         synchronize(
           liveSession,
