@@ -6586,7 +6586,7 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("Parallel read-only execution", () => {
-    it("applies mutation serializer to custom tools before session creation", async () => {
+    it("applies mutation serializer once after runtime wrappers are registered", async () => {
       const { createMutationSerializer } = await import("../tool-parallelism.js");
 
       const deps = createMockDeps();

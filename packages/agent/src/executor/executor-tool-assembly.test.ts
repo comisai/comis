@@ -762,20 +762,20 @@ describe("assembleTools — fresh-tail preamble token estimate from the WHOLE dy
 // Tool pipeline chain — every stage is invoked
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize, mutation-serialize)", () => {
-  it("invokes createJitGuideWrapper, applySchemasPruning, applySchemaSnapshot, applyProviderNormalization, applyMutationSerializer exactly once each", async () => {
+describe("assembleTools — registration-time tool pipeline before runtime wrappers", () => {
+  it("runs schema stages without starting mutation serialization before runtime wrappers", async () => {
     await assembleTools(makeParams());
     expect(mocks.createJitGuideWrapperMock).toHaveBeenCalledTimes(1);
     expect(mocks.applySchemasPruningMock).toHaveBeenCalledTimes(1);
     expect(mocks.applySchemaSnapshotMock).toHaveBeenCalledTimes(1);
     expect(mocks.applyProviderNormalizationMock).toHaveBeenCalledTimes(1);
-    expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applyMutationSerializerMock).not.toHaveBeenCalled();
   });
 
   it("skips applyProviderNormalization when resolvedModel is undefined (no provider context)", async () => {
     await assembleTools(makeParams({ resolvedModel: undefined }));
     expect(mocks.applyProviderNormalizationMock).not.toHaveBeenCalled();
-    expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applyMutationSerializerMock).not.toHaveBeenCalled();
   });
 
   it("passes the capabilityClass from ModelProfile to applySchemasPruning (frontier → not pruned)", async () => {

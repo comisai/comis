@@ -161,6 +161,7 @@ import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
+import { applyMutationSerializer } from "../executor-tool-pipeline.js";
 import { OPERATION_TIMEOUT_DEFAULTS } from "../../model/operation-model-defaults.js";
 import type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "../types.js";
 import { randomUUID } from "node:crypto";
@@ -2735,6 +2736,12 @@ async function runSessionLocked(
       tool.execute = (wrapped as unknown as typeof tool).execute;
     }
   }
+
+  // Serialize mutations outside the runtime wrappers. A queued mutation must
+  // acquire the mutex before its auto-background and hard-timeout clocks begin;
+  // otherwise parallel approval-bearing calls consume their execution budget
+  // while merely waiting behind the first mutation.
+  applyMutationSerializer(mergedCustomTools, deps.logger);
 
   // Prompt execution: envelope, preamble, images, budget, retry, escalation, recovery
   // Extracted to prompt-runner/.

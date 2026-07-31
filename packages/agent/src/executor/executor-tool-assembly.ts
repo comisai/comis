@@ -40,7 +40,6 @@ import {
   applySchemaSnapshot,
   applyProviderNormalization,
   applyPersistedReactiveStrip,
-  applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
 import { toolDefOverheadChars } from "./tool-overhead.js";
@@ -777,7 +776,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     : buildCapabilityIndexContext(deferralResult, deps.toolCapabilityPort);
 
   // -------------------------------------------------------------------
-  // 8. JIT guide wrapping, schema pruning, snapshot, normalization, serializer
+  // 8. JIT guide wrapping, schema pruning, snapshot, normalization
   // -------------------------------------------------------------------
 
   // Wrap tool execute() methods to inject operational guides on first use.
@@ -819,9 +818,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     tools: mergedCustomTools,
     sessionKey: schemaSnapshotKey,
   });
-
-  // Mutation serializer
-  mergedCustomTools = applyMutationSerializer(mergedCustomTools, deps.logger);
 
   return {
     mergedCustomTools,
