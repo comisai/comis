@@ -921,6 +921,39 @@ describe("createPiEventBridge", () => {
       expect(JSON.stringify(endEmit![1])).not.toContain(secret);
     });
 
+    it("redacts the value in a failed secret-shaped config patch", () => {
+      const { listener } = createPiEventBridge(deps);
+      const secret = "private-test-value";
+      listener({
+        type: "tool_execution_start",
+        toolName: "gateway",
+        toolCallId: "tc-secret-patch",
+        args: {
+          action: "patch",
+          section: "secrets",
+          key: "EXAMPLE_TOKEN",
+          value: secret,
+          _confirmed: true,
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "gateway",
+        "tc-secret-patch",
+        true,
+        { message: "Config validation failed" },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-secret-patch",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].params.value).toBe("<redacted>");
+      expect(endEmit![1].argsPreview.value).toBe("<redacted>");
+      expect(JSON.stringify(endEmit![1])).not.toContain(secret);
+    });
+
     it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
       const { listener } = createPiEventBridge(deps);
       listener(makeToolExecutionStartEvent("read", "tc-ok") as any);
