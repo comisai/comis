@@ -858,6 +858,35 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/toolCall|toolResult/);
   });
 
+  it("explains an incomplete background skill import without exposing its path", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        failures: [
+          {
+            seq: 3,
+            toolName: "skills_manage",
+            classifiedFailureBy: "background_task",
+            transportOk: false,
+            errorKind: "dependency",
+            failureCode: "skill_import_incomplete",
+            resultDigest: "",
+            resultBytes: 0,
+            errorPreview: "",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("skill_import_incomplete");
+    expect(r?.detail).toMatch(/declared local reference/i);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(
+      /self-contained immutable skill directory/i,
+    );
+    expect(JSON.stringify(r)).not.toContain("../");
+  });
+
   it("background pending outranks an incidental recall miss", () => {
     const r = rootCause(makeSignals({
       endReason: "background_pending",

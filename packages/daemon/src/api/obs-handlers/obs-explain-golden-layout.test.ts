@@ -287,6 +287,61 @@ function providerIdentityErrorTrajectoryLines(): string {
   ].map((line) => JSON.stringify(line)).join("\n") + "\n";
 }
 
+function incompleteSkillImportTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "prompt.submitted",
+      seq: 1,
+      traceId: "trace-skill-import-incomplete",
+      data: { inboundKind: "message" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "background_task.promoted",
+      seq: 2,
+      traceId: "trace-skill-import-incomplete",
+      data: {
+        taskId: "task-skill-import",
+        toolName: "skills_manage",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "background_task.failed",
+      seq: 3,
+      traceId: "trace-skill-import-incomplete",
+      data: {
+        taskId: "task-skill-import",
+        toolName: "skills_manage",
+        durationMs: 90,
+        errorKind: "dependency",
+        failureCode: "skill_import_incomplete",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 4,
+      traceId: "trace-skill-import-incomplete",
+      data: {
+        degraded: true,
+        turnCount: 1,
+        costUsd: 0,
+        toolStats: { skills_manage: { ok: 0, failed: 1 } },
+        breakerTripCount: 0,
+        topErrorKinds: { dependency: 1 },
+        source: "runtime",
+        endReason: "completed_with_tool_errors",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
 function taskTrajectoryLines(): string {
   return [
     {
@@ -535,6 +590,24 @@ function writeProviderIdentityErrorMetadata(sessionFile: string): void {
   );
 }
 
+function writeIncompleteSkillImportMetadata(sessionFile: string): void {
+  const metadataFile = sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+  fs.writeFileSync(
+    metadataFile,
+    JSON.stringify({
+      traceId: "trace-skill-import-incomplete",
+      channel: { type: "telegram", id: "678314278" },
+      sessionEnd: {
+        type: "session_end",
+        endReason: "completed_with_tool_errors",
+        degraded: true,
+        costUsd: 0,
+      },
+    }),
+    "utf-8",
+  );
+}
+
 afterEach(() => {
   while (tmpDirs.length > 0) {
     const dir = tmpDirs.pop()!;
@@ -614,6 +687,44 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(report.likelyRootCause?.detail).toMatch(/persisted tool-call identity/i);
     expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toMatch(/toolCall|toolResult/);
     expect(JSON.stringify(report)).not.toContain("Invalid 'input[");
+  });
+
+  it("diagnoses an incomplete skill import from the real nested session layout", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, incompleteSkillImportTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile,
+    });
+    writeIncompleteSkillImportMetadata(sessionFile);
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir),
+      dataDir,
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+      severity: "degraded",
+    });
+    expect(report.failures).toEqual([
+      expect.objectContaining({
+        toolName: "skills_manage",
+        failureCode: "skill_import_incomplete",
+      }),
+    ]);
+    expect(report.likelyRootCause?.code).toBe("skill_import_incomplete");
+    expect(report.likelyRootCause?.detail).toMatch(/declared local reference/i);
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toMatch(
+      /self-contained immutable skill directory/i,
+    );
+    expect(JSON.stringify(report)).not.toContain("../");
+    expect(JSON.stringify(report)).not.toContain("private-notes.md");
   });
 
   it("assembles named-agent sessions from their configured workspace", async () => {
