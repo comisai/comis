@@ -21,7 +21,6 @@
  */
 
 import {
-  RunKillContract,
   SubagentListContract,
   SubagentKillContract,
   SubagentPauseContract,
@@ -34,7 +33,6 @@ import {
   systemNowMs,
   wrapExternalContent,
 } from "@comis/core";
-import { createAutonomyHandlers } from "./autonomy-handlers.js";
 import {
   assertSubagentTargetAuthorized,
   projectCallerSubagentRun,
@@ -44,6 +42,7 @@ import {
   subagentControllerRateKey,
 } from "./subagent-controller.js";
 import { AuthorizationError } from "./errors.js";
+import { killSpawnTree } from "./shared/spawn-tree-control.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -235,7 +234,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
           );
         }
         const boundedAutonomy = deps.boundedAutonomy;
-        const treeKillHandler = createAutonomyHandlers({
+        const treeResult = await killSpawnTree({
           ...deps,
           leaseManager: deps.leaseManager,
           eventBus: deps.eventBus,
@@ -246,10 +245,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
                   boundedAutonomy.revokeDurableRoot(rootRunId),
               }
             : {}),
-        })[RunKillContract.method]!;
-        const treeResult = await treeKillHandler({
-          rootRunId: controller.rootRunId,
-        }) as { killed: number };
+        }, controller.rootRunId);
         const result = {
           killed: treeResult.killed > 0,
           runId: target,
