@@ -863,6 +863,16 @@ describe("obs-explain-heuristics", () => {
       makeSignals({
         endReason: "completed_with_tool_errors",
         degraded: true,
+        breakerOpenedTool: "skills_manage",
+        hasDoNotRetrySignal: true,
+        repeatedFailureCount: { skills_manage: 1 },
+        toolStats: {
+          skills_manage: {
+            ok: 0,
+            failed: 1,
+            topErrorKind: "dependency",
+          },
+        },
         failures: [
           {
             seq: 3,
