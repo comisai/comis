@@ -131,16 +131,24 @@ export interface BackgroundTaskManager {
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
 const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
+const MCP_CONNECT_MISSING_PARAM_PREFIX = '[missing_param] mcp_manage(action="connect")';
 
 function classifyBackgroundTaskFailure(
   toolName: string,
   error: unknown,
 ): BackgroundTaskFailureCode | undefined {
-  if (toolName !== "skills_manage") return undefined;
   const message = error instanceof Error ? error.message : String(error);
-  return message.startsWith(SKILL_IMPORT_INCOMPLETE_PREFIX)
-    ? "skill_import_incomplete"
-    : undefined;
+  if (toolName === "skills_manage" && message.startsWith(SKILL_IMPORT_INCOMPLETE_PREFIX)) {
+    return "skill_import_incomplete";
+  }
+  if (
+    toolName === "mcp_manage"
+    && message.startsWith(MCP_CONNECT_MISSING_PARAM_PREFIX)
+    && message.includes("command or url")
+  ) {
+    return "mcp_connection_details_missing";
+  }
+  return undefined;
 }
 
 export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): BackgroundTaskManager {

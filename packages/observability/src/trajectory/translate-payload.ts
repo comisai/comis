@@ -359,7 +359,12 @@ export function translatePayload(
         toolName: payload.toolName,
         durationMs: payload.durationMs,
         errorKind: payload.errorKind,
-        ...(payload.failureCode === "skill_import_incomplete" ? { failureCode: payload.failureCode } : {}),
+        ...(
+          payload.failureCode === "skill_import_incomplete"
+          || payload.failureCode === "mcp_connection_details_missing"
+            ? { failureCode: payload.failureCode }
+            : {}
+        ),
       };
     case "background_task:notified":
       // The fallback-notice decision — taskId + tool NAME + the notified bool +

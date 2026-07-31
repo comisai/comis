@@ -7,7 +7,7 @@ import type { ErrorKind } from "../logging/log-fields.js";
 import type { ModelResolutionSource } from "../domain/agent-execution-outcome.js";
 /** Content-free reason for a failed outbound webhook delivery. */
 export type WebhookFailureReason = "handler_error" | "task_not_delivered";
-export type BackgroundTaskFailureCode = "skill_import_incomplete";
+export type BackgroundTaskFailureCode = "skill_import_incomplete" | "mcp_connection_details_missing";
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
  * media, scheduler, system, and metrics events.
