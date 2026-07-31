@@ -117,6 +117,13 @@ export const IncidentReportSchema = z.object({
   requestRelevantToolNames: z.array(
     z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
   ).max(16).optional(),
+  /** Content-free immutable-policy projection evidence for selected tool schemas. */
+  operatorPolicyToolProjections: z.array(z.strictObject({
+    toolName: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+    sectionId: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    projectedChars: z.number().int().nonnegative().max(5_000),
+  })).max(16).optional(),
   /** Content-free response-locale decision for the selected turn (exact trace)
    * or latest turn (whole session). */
   responseLocale: z

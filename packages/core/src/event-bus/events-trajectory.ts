@@ -49,6 +49,13 @@ export interface TrajectoryEvents {
     }>;
     /** Bounded tool names selected as relevant to this exact request. */
     requestRelevantToolNames?: readonly string[];
+    /** Content-free evidence that immutable policy was projected onto tool schemas. */
+    operatorPolicyToolProjections?: readonly {
+      readonly toolName: string;
+      readonly sectionId: string;
+      readonly contentHash: string;
+      readonly projectedChars: number;
+    }[];
     /** Earlier group-message count attached to this exact model request. */
     groupHistoryMessageCount?: number;
     /** Character count of the attributed earlier-group context. */

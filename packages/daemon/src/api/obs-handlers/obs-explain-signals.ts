@@ -158,6 +158,26 @@ function handleEventRecord(
         ))].slice(0, 16);
         if (names.length > 0) acc.requestRelevantToolNames = names;
       }
+      delete acc.operatorPolicyToolProjections;
+      if (Array.isArray(data.operatorPolicyToolProjections)) {
+        const projections = data.operatorPolicyToolProjections.flatMap((candidate) => {
+          if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+          const record = candidate as Record<string, unknown>;
+          const toolName = asString(record.toolName);
+          const sectionId = asString(record.sectionId);
+          const contentHash = asString(record.contentHash);
+          const projectedChars = asNumber(record.projectedChars);
+          if (
+            toolName === undefined || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(toolName)
+            || sectionId === undefined || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(sectionId)
+            || contentHash === undefined || !/^[a-f0-9]{64}$/u.test(contentHash)
+            || projectedChars === undefined || !Number.isSafeInteger(projectedChars)
+            || projectedChars < 0 || projectedChars > 5_000
+          ) return [];
+          return [{ toolName, sectionId, contentHash, projectedChars }];
+        }).slice(0, 16);
+        if (projections.length > 0) acc.operatorPolicyToolProjections = projections;
+      }
       const inboundKind = asString(data.inboundKind);
       if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
       const groupHistoryMessageCount = nonnegativeInteger(data.groupHistoryMessageCount);
@@ -791,6 +811,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
     ...(acc.requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames: acc.requestRelevantToolNames }
+      : {}),
+    ...(acc.operatorPolicyToolProjections !== undefined
+      ? { operatorPolicyToolProjections: acc.operatorPolicyToolProjections }
       : {}),
     ...(acc.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }

@@ -1364,6 +1364,7 @@ async function runSessionLocked(
     deferralResult, deferredContext, capabilityIndexResult,
     capabilityClass, budgetWindowTokens, discoveryTracker, settingsManager,
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
+    operatorPolicyToolProjections,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
   const {
@@ -2760,6 +2761,7 @@ async function runSessionLocked(
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy,
         requestRelevantToolNames: deferralResult.requestRelevantToolNames,
+        operatorPolicyToolProjections,
         deferredContext, capabilityIndexResult, inlineMemory,
         unavailablePromptSkills,
         systemPrompt: effectiveSystemPrompt,

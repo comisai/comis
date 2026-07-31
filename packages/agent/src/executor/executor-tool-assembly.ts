@@ -46,7 +46,10 @@ import { toolDefOverheadChars } from "./tool-overhead.js";
 import { resolvePreviousModelBinding } from "../session/model-binding-history.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
-import { attachMcpOperatorPolicy } from "./mcp-operator-policy.js";
+import {
+  attachMcpOperatorPolicy,
+  describeMcpOperatorPolicyProjection,
+} from "./mcp-operator-policy.js";
 import type {
   ToolAssemblyParams,
   ToolAssemblyResult,
@@ -651,6 +654,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
 
   const mcpOperatorPolicyRelevant =
     deferralResult.requestRelevantToolNames?.includes("mcp_manage") === true;
+  const mcpOperatorPolicyProjection = mcpOperatorPolicyRelevant
+    ? describeMcpOperatorPolicyProjection(deps.workspacePolicySnapshot)
+    : undefined;
   if (mcpOperatorPolicyRelevant) {
     deferralResult.activeTools = attachMcpOperatorPolicy(
       deferralResult.activeTools,
@@ -864,5 +870,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     promptResult,
     cachedSystemTokensEstimate,
     cachedFreshTailPreambleTokens,
+    operatorPolicyToolProjections: mcpOperatorPolicyProjection === undefined
+      ? []
+      : [mcpOperatorPolicyProjection],
   };
 }

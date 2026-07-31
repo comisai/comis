@@ -160,10 +160,7 @@ function projectBackgroundCompletionResult(
   failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
 } {
   if (serializedResult === undefined) return {};
-  const parsed = tryCatch(
-    () => JSON.parse(serializedResult) as unknown,
-    () => new Error("Background result is not structured JSON"),
-  );
+  const parsed = tryCatch(() => JSON.parse(serializedResult) as unknown);
   if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") return {};
   const details = (parsed.value as Record<string, unknown>).details;
   if (details === null || typeof details !== "object" || Array.isArray(details)) return {};

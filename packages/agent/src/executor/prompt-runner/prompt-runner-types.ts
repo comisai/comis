@@ -81,6 +81,13 @@ export interface RunPromptParams {
   dynamicPreamble: string | undefined;
   /** Active tools selected specifically because they match the current request. */
   requestRelevantToolNames?: readonly string[];
+  /** Content-free evidence that immutable operator policy reached tool schemas. */
+  operatorPolicyToolProjections?: readonly {
+    readonly toolName: string;
+    readonly sectionId: string;
+    readonly contentHash: string;
+    readonly projectedChars: number;
+  }[];
   responseLocalePolicy?: ResponseLocalePolicy;
   deferredContext: string | undefined;
   /**

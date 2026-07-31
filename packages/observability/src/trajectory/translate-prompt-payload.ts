@@ -13,11 +13,45 @@ function boundedToolNames(value: unknown): string[] | undefined {
   return names.length > 0 ? names : undefined;
 }
 
+function boundedOperatorPolicyToolProjections(value: unknown): Array<{
+  toolName: string;
+  sectionId: string;
+  contentHash: string;
+  projectedChars: number;
+}> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const projections = value.flatMap((candidate) => {
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const record = candidate as Record<string, unknown>;
+    if (
+      typeof record.toolName !== "string"
+      || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(record.toolName)
+      || typeof record.sectionId !== "string"
+      || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(record.sectionId)
+      || typeof record.contentHash !== "string"
+      || !/^[a-f0-9]{64}$/u.test(record.contentHash)
+      || !Number.isSafeInteger(record.projectedChars)
+      || (record.projectedChars as number) < 0
+      || (record.projectedChars as number) > 5_000
+    ) return [];
+    return [{
+      toolName: record.toolName,
+      sectionId: record.sectionId,
+      contentHash: record.contentHash,
+      projectedChars: record.projectedChars as number,
+    }];
+  }).slice(0, 16);
+  return projections.length > 0 ? projections : undefined;
+}
+
 export function translatePromptPayload(
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
   const requestRelevantToolNames = boundedToolNames(
     payload.requestRelevantToolNames,
+  );
+  const operatorPolicyToolProjections = boundedOperatorPolicyToolProjections(
+    payload.operatorPolicyToolProjections,
   );
   return {
     promptChars: payload.promptChars,
@@ -34,6 +68,9 @@ export function translatePromptPayload(
       : {}),
     ...(requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames }
+      : {}),
+    ...(operatorPolicyToolProjections !== undefined
+      ? { operatorPolicyToolProjections }
       : {}),
     ...(typeof payload.groupHistoryMessageCount === "number"
       ? { groupHistoryMessageCount: payload.groupHistoryMessageCount }

@@ -21,6 +21,13 @@ type DescribedTool = {
   readonly description?: string;
 };
 
+export interface OperatorPolicyToolProjection {
+  readonly toolName: string;
+  readonly sectionId: string;
+  readonly contentHash: string;
+  readonly projectedChars: number;
+}
+
 function boundedOperatorNotes(content: string): string {
   if (content.length <= MAX_OPERATOR_TOOL_NOTES_CHARS) return content;
   return (
@@ -32,6 +39,20 @@ function boundedOperatorNotes(content: string): string {
 function withoutPreviousProjection(description: string): string {
   const projectionStart = description.indexOf(`\n\n${OPERATOR_POLICY_PREAMBLE}\n${OPERATOR_POLICY_START}\n`);
   return projectionStart === -1 ? description : description.slice(0, projectionStart);
+}
+
+export function describeMcpOperatorPolicyProjection(
+  snapshot: WorkspacePolicySnapshot,
+): OperatorPolicyToolProjection | undefined {
+  const section = snapshot.sections.find((candidate) => candidate.id === "workspace:tools");
+  const content = section?.content.trim();
+  if (!section || !content) return undefined;
+  return {
+    toolName: "mcp_manage",
+    sectionId: section.id,
+    contentHash: section.contentHash,
+    projectedChars: boundedOperatorNotes(content).length,
+  };
 }
 
 export function attachMcpOperatorPolicy<T extends DescribedTool>(

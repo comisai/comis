@@ -520,6 +520,9 @@ export function assembleIncidentReport(
     ...(signals.requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames: signals.requestRelevantToolNames }
       : {}),
+    ...(signals.operatorPolicyToolProjections !== undefined
+      ? { operatorPolicyToolProjections: signals.operatorPolicyToolProjections }
+      : {}),
     ...(signals.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: signals.responseLocaleRepairSkipped }
       : {}),

@@ -132,6 +132,10 @@ export interface Acc {
   requestRelevantToolNames?: NonNullable<
     IncidentSignals["requestRelevantToolNames"]
   >;
+  /** The LAST prompt's content-free operator-policy tool projections. */
+  operatorPolicyToolProjections?: NonNullable<
+    IncidentSignals["operatorPolicyToolProjections"]
+  >;
   /** The LAST valid locale-repair skip from a session summary. */
   responseLocaleRepairSkipped?: NonNullable<
     IncidentSignals["responseLocaleRepairSkipped"]
