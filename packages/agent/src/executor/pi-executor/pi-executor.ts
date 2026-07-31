@@ -104,6 +104,7 @@ import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.
 import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
 import {
   appendInboundMessageProvenance,
+  projectInboundConversation,
 } from "../../session/inbound-message-provenance.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
@@ -1019,8 +1020,61 @@ async function runSessionLocked(
     }
   }
 
-  // Detect first message in session for BOOT.md injection
-  const sessionContext = sm.buildSessionContext();
+  // Detect first message in session for BOOT.md injection. The append-only SDK
+  // JSONL intentionally retains the exact model-facing prompt for forensics,
+  // including per-turn runtime preambles. Rebuild canonical conversation
+  // history from the structured physical-message records before any consumer
+  // sees it, so transient prompt context never becomes a durable user turn.
+  const historyProjectionStartedAt = deps.clock.now();
+  const historyProjection = projectInboundConversation(sm);
+  const sessionContext = historyProjection.ok
+    ? { messages: historyProjection.value.messages }
+    : sm.buildSessionContext();
+  if (!historyProjection.ok) {
+    deps.logger.warn(
+      {
+        agentId: deps.agentId,
+        step: "inbound-history-projection",
+        durationMs: Math.max(0, deps.clock.now() - historyProjectionStartedAt),
+        err: toSafeErrorLogString(historyProjection.error),
+        hint:
+          "Inspect the active SDK session branch and structured inbound-provenance "
+          + "entries; raw prompt history was retained because projection could not complete.",
+        errorKind: "resource" as const,
+      },
+      "Structured inbound conversation projection failed",
+    );
+  } else {
+    const diagnostics = historyProjection.value.diagnostics;
+    const degraded = diagnostics.invalidProvenanceEntries > 0
+      || diagnostics.incompleteProvenanceBatches > 0;
+    const fields = {
+      agentId: deps.agentId,
+      step: "inbound-history-projection",
+      durationMs: Math.max(0, deps.clock.now() - historyProjectionStartedAt),
+      ...diagnostics,
+    };
+    if (degraded) {
+      deps.logger.warn(
+        {
+          ...fields,
+          hint:
+            "Inspect malformed or incomplete comis.inbound-message-provenance entries; "
+            + "unpaired user turns remain unchanged and projection continues safely.",
+          errorKind: "validation" as const,
+        },
+        "Structured inbound conversation projection degraded",
+      );
+    } else if (
+      diagnostics.projectedUserMessages > 0
+      || diagnostics.omittedLocaleRepairTurns > 0
+    ) {
+      deps.logger.info(
+        fields,
+        "Structured inbound conversation history projected",
+      );
+    }
+  }
 
   // Diagnostic assertion — classify any consecutive same-role adjacency in the
   // assembled context by whether the RAW tree still carries it after repair: a
@@ -1400,6 +1454,9 @@ async function runSessionLocked(
     return result;
   }
   const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
+  if (historyProjection.ok) {
+    session.agent.state.messages = sessionContext.messages;
+  }
   const executionSignal = executionOverrides?.signal;
   const onExternalAbort = (): void => {
     settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);

@@ -334,6 +334,7 @@ vi.mock("../../rag/rag-retriever.js", () => ({
 
 vi.mock("../../rag/hybrid-memory-injector.js", () => ({
   createHybridMemoryInjector: mockCreateHybridMemoryInjector,
+  stripInlineRecalledMemory: (text: string) => text,
 }));
 
 vi.mock("../../envelope/message-envelope.js", () => ({
@@ -565,6 +566,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
             buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
+            getLeafEntry: vi.fn().mockReturnValue(undefined),
             appendMessage: vi.fn(),
             appendCustomEntry: mockAppendCustomEntry,
             getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
@@ -6245,7 +6247,9 @@ describe("PiExecutor", () => {
         async (_key, callback) => {
           const value = await withTestTurnScope("agent-1", () => callback({
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
+            getLeafEntry: vi.fn().mockReturnValue(undefined),
             appendMessage: vi.fn(),
             getEntries: vi.fn(() => entries),
             appendCustomEntry: vi.fn((customType, data) => {
@@ -6311,7 +6315,9 @@ describe("PiExecutor", () => {
         async (_key, callback) => {
           const value = await withTestTurnScope("agent-1", () => callback({
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
+            getLeafEntry: vi.fn().mockReturnValue(undefined),
             appendMessage: vi.fn(),
             getEntries: vi.fn(() => entries),
             appendCustomEntry: vi.fn((customType, data) => {
