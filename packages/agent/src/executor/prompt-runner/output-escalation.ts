@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Output-size escalation policy and success-path response processing. */
 
-import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
+import {
+  classifyToolInvocationMutation,
+  formatSessionKey,
+  toSafeErrorLogString,
+} from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
@@ -435,7 +439,15 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     messages: sessionMessages,
     capabilityClass: params.modelProfile?.capabilityClass,
     requestRelevantToolNames: params.requestRelevantToolNames ?? [],
-    currentToolCallCount: () => params.bridge.getResult().stepsExecuted ?? 0,
+    currentSuccessfulMutationCount: () =>
+      (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) =>
+          record.success
+          && classifyToolInvocationMutation(
+            record.toolName,
+            record.action === undefined ? {} : { action: record.action },
+          ) === "mutating",
+      ).length,
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,

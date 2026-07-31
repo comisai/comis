@@ -815,12 +815,22 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const gradeKey = terminalGradeKey(scope);
     const terminalGrade = terminalToolGrades.get(gradeKey);
     terminalToolGrades.delete(gradeKey);
+    const executionFailed =
+      p.failureStage === "execution"
+      && (p.status === "error" || p.status === "timeout");
+    const terminalOutcome = executionFailed ? "failure" : terminalGrade ?? "unknown";
+    const terminalSource =
+      executionFailed || terminalGrade !== undefined ? "pipeline" : "explicit";
+    const terminalConfidence =
+      executionFailed || terminalGrade !== undefined
+        ? DETERMINISTIC_CONFIDENCE
+        : ATTRIBUTION_CONFIDENCE;
     void observeNonFatal(
       deps,
       scope,
-      terminalGrade ?? "unknown",
-      terminalGrade === undefined ? "explicit" : "pipeline",
-      terminalGrade === undefined ? ATTRIBUTION_CONFIDENCE : DETERMINISTIC_CONFIDENCE,
+      terminalOutcome,
+      terminalSource,
+      terminalConfidence,
     ).then(() => resolveAndConsume(scope, resolveStart));
   });
 

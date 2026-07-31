@@ -16,10 +16,10 @@ export interface RequestToolNudgeOutcome {
   outcome:
     | "not_small_class"
     | "no_mutating_match"
-    | "tool_already_called"
+    | "mutation_already_succeeded"
     | "not_repeated"
     | "recovered"
-    | "still_no_tool"
+    | "still_no_mutation"
     | "followup_error";
 }
 
@@ -28,7 +28,7 @@ export interface RunRequestToolNudgeDeps {
   messages: unknown[];
   capabilityClass: string | undefined;
   requestRelevantToolNames: readonly string[];
-  currentToolCallCount: () => number;
+  currentSuccessfulMutationCount: () => number;
   logger: ComisLogger;
   agentId?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -74,7 +74,8 @@ function buildDirective(toolNames: readonly string[]): string {
     "[comis: continuation — the current request still needs tool-backed action]",
     "Your last answer exactly repeated an earlier assistant answer and no tool was called.",
     `The active mutating tools matched to the current request are: ${toolNames.join(", ")}.`,
-    "If the request is applicable, invoke the matching tool now.",
+    "If the request is applicable, invoke a mutating action on the matching tool now.",
+    "Read-only list, get, search, status, or inspect actions do not complete a change request.",
     "Otherwise, state the exact current blocker.",
     "Do not repeat the prior answer and do not claim success without a successful current-turn tool result.",
   ].join("\n");
@@ -86,7 +87,7 @@ export async function runRequestToolNudge(
   const {
     capabilityClass,
     requestRelevantToolNames,
-    currentToolCallCount,
+    currentSuccessfulMutationCount,
     logger,
     agentId,
   } = deps;
@@ -110,12 +111,12 @@ export async function runRequestToolNudge(
       outcome: "no_mutating_match",
     };
   }
-  if (currentToolCallCount() > 0) {
+  if (currentSuccessfulMutationCount() > 0) {
     return {
       fired: false,
       recovered: false,
       matchedToolNames,
-      outcome: "tool_already_called",
+      outcome: "mutation_already_succeeded",
     };
   }
   if (!repeatsEarlierAssistantAnswer(deps.messages)) {
@@ -140,7 +141,7 @@ export async function runRequestToolNudge(
     "Request-tool nudge firing",
   );
 
-  const toolCallCountBefore = currentToolCallCount();
+  const successfulMutationCountBefore = currentSuccessfulMutationCount();
   const continuation = await runContinuationTurn(
     deps.session,
     buildDirective(matchedToolNames),
@@ -169,8 +170,9 @@ export async function runRequestToolNudge(
   }
 
   const response = deps.getVisibleAssistantText(deps.session);
+  const successfulMutationCountAfter = currentSuccessfulMutationCount();
   const recovered =
-    currentToolCallCount() > toolCallCountBefore
+    successfulMutationCountAfter > successfulMutationCountBefore
     && response.trim().length > 0;
   logger.info(
     {
@@ -178,9 +180,9 @@ export async function runRequestToolNudge(
       step: "request-tool-nudge",
       agentId,
       matchedToolNames,
-      outcome: recovered ? "recovered" : "still_no_tool",
-      toolCallCountBefore,
-      toolCallCountAfter: currentToolCallCount(),
+      outcome: recovered ? "recovered" : "still_no_mutation",
+      successfulMutationCountBefore,
+      successfulMutationCountAfter,
     },
     "Request-tool nudge completed",
   );
@@ -196,6 +198,6 @@ export async function runRequestToolNudge(
         fired: true,
         recovered: false,
         matchedToolNames,
-        outcome: "still_no_tool",
+        outcome: "still_no_mutation",
       };
 }
