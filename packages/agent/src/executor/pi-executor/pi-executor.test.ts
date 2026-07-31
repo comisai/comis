@@ -258,6 +258,8 @@ vi.mock("@comis/observability", async (importOriginal) => {
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: vi.fn().mockResolvedValue({ session: mockSession, extensionsResult: {} }),
+  sessionEntryToContextMessages: (entry: { type: string; message?: unknown }) =>
+    entry.type === "message" && entry.message !== undefined ? [entry.message] : [],
   SettingsManager: {
     create: mockSettingsManagerCreate,
     inMemory: mockSettingsManagerInMemory,
@@ -561,6 +563,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
         async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => {
           const mockSm = {
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
             appendMessage: vi.fn(),
             appendCustomEntry: mockAppendCustomEntry,
@@ -678,6 +681,7 @@ describe("PiExecutor", () => {
     });
     // Reset streamFunction to original mock (PiExecutor replaces it with wrapper chain)
     mockSession.agent.streamFunction = mockStreamFn;
+    mockSession.agent.state.messages = [];
     // Reset steering mocks
     mockSteer.mockResolvedValue(undefined);
     mockFollowUp.mockResolvedValue(undefined);
@@ -1033,6 +1037,91 @@ describe("PiExecutor", () => {
           customTools: deps.customTools,
         }),
       );
+    });
+
+    it("loads structured physical-message history into the live SDK agent state", async () => {
+      const payload = {
+        schemaVersion: 1,
+        batchId: testMessage.id,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: testMessage.timestamp + 100,
+        messages: [{
+          id: testMessage.id,
+          channelId: testMessage.channelId,
+          channelType: testMessage.channelType,
+          senderId: testMessage.senderId,
+          text: testMessage.text,
+          timestamp: testMessage.timestamp,
+        }],
+      };
+      const entries = [{
+        type: "custom",
+        id: "custom-a",
+        parentId: null,
+        timestamp: "2026-03-12T00:00:00.000Z",
+        customType: INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+        data: payload,
+      }, {
+        type: "message",
+        id: "user-a",
+        parentId: "custom-a",
+        timestamp: "2026-03-12T00:00:00.001Z",
+        message: {
+          role: "user",
+          content:
+            "[System context]\nlarge transient preamble\n[End system context]\n\n"
+            + "envelope-wrapped text",
+          timestamp: testMessage.timestamp,
+        },
+      }, {
+        type: "message",
+        id: "assistant-a",
+        parentId: "user-a",
+        timestamp: "2026-03-12T00:00:00.002Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "prior answer" }],
+          provider: "example",
+          model: "test-model",
+          stopReason: "stop",
+          timestamp: testMessage.timestamp + 1,
+        },
+      }];
+      const sm = {
+        buildSessionContext: vi.fn().mockReturnValue({
+          messages: entries
+            .filter((entry) => entry.type === "message")
+            .map((entry) => entry.message),
+        }),
+        buildContextEntries: vi.fn().mockReturnValue(entries),
+        getBranch: vi.fn().mockReturnValue(entries),
+        appendMessage: vi.fn(),
+        appendCustomEntry: mockAppendCustomEntry,
+        getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+      };
+      const deps = createMockDeps();
+      vi.mocked(deps.sessionAdapter.withSession).mockImplementation(
+        async (_sessionKey, fn) => ok(await fn(sm as never)),
+      );
+      const executor = createPiExecutor(testConfig, deps);
+
+      await withTestTurnScope("agent-1", () =>
+        executor.execute(testMessage, testSessionKey));
+
+      const loaded = mockSession.agent.state.messages as Array<{
+        role: string;
+        content: string;
+      }>;
+      expect(loaded[0]).toMatchObject({
+        role: "user",
+        content: expect.stringContaining(testMessage.text),
+      });
+      expect(loaded[0]?.content).not.toContain("System context");
+      expect(loaded[1]).toMatchObject({
+        role: "assistant",
+        content: [{ type: "text", text: "prior answer" }],
+      });
     });
 
     // A `spawn --worktree` child runs IN an isolated git worktree, so the
