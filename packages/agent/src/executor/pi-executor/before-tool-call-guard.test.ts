@@ -174,6 +174,35 @@ describe("createBeforeToolCallGuard", () => {
     });
   });
 
+  it("blocks substitution of an explicit provider identifier before agent mutation", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "use provider_a instead",
+      new Set(["provider_a"]),
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "model_b" },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("provider_a"),
+    });
+  });
+
   it("allows an exact explicit model identifier and a qualitative model choice", async () => {
     const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
     const exactGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
