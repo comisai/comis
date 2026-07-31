@@ -343,7 +343,9 @@ function validateAgentUpdateParams(
     {
       param: "config",
       hint:
-        "Retry agents_manage update with both values copied exactly from the intended binding",
+        "Retry agents_manage update with both values copied exactly from the intended binding. "
+        + "When the request refers to a prior binding, copy provider and model from the "
+        + "Previous active model execution fact rather than combining either value with the active binding",
     },
   );
 }
