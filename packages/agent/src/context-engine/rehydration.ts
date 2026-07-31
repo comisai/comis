@@ -14,7 +14,7 @@
  *
  * Rehydration uses split injection for KV-cache stability:
  * - Position 1 (after compaction summary): AGENTS.md + files (rarely changes)
- * - End of array: Resume instruction + active state (changes every turn)
+ * - Before the latest user turn: Resume instruction + active state (changes every turn)
  *
  * Double-rehydration prevention ensures the layer only fires once per
  * compaction event.
@@ -224,22 +224,34 @@ function stripSkillsContent(text: string): string {
 /**
  * Assemble result array with split injection.
  *
- * Layout: compaction[0] + [position1] + history[1..N] + [end]
+ * Layout: head + compaction + [position1] + prior history +
+ *         [current-turn context] + latest user turn + current-turn continuation.
  * Position-1 message goes right after the compaction summary (stable KV-cache prefix).
- * End message goes after all history messages (dynamic content).
+ * Dynamic context goes immediately before the latest user turn so runtime
+ * context cannot displace the current request as the model's final instruction.
  */
 function assembleResult(
   messages: AgentMessage[],
   position1Message: AgentMessage | null,
-  endMessage: AgentMessage | null,
+  currentTurnMessage: AgentMessage | null,
   compactionIdx: number = 0,
 ): AgentMessage[] {
-  // head messages (before summary) + summary + position1 + tail
   const result: AgentMessage[] = [];
   result.push(...messages.slice(0, compactionIdx + 1)); // head + compaction summary
   if (position1Message) result.push(position1Message);
-  result.push(...messages.slice(compactionIdx + 1)); // rest of history after summary
-  if (endMessage) result.push(endMessage);
+
+  const tail = messages.slice(compactionIdx + 1);
+  let latestUserIdx = tail.length;
+  for (let i = tail.length - 1; i >= 0; i--) {
+    if (tail[i]?.role === "user") { // eslint-disable-line security/detect-object-injection
+      latestUserIdx = i;
+      break;
+    }
+  }
+
+  result.push(...tail.slice(0, latestUserIdx));
+  if (currentTurnMessage) result.push(currentTurnMessage);
+  result.push(...tail.slice(latestUserIdx));
   return result;
 }
 
@@ -310,11 +322,11 @@ export function createRehydrationLayer(
         position1Text = position1Text.slice(0, MAX_REHYDRATION_TOKEN_BUDGET_CHARS);
       }
 
-      // End of array (dynamic content -- changes every turn):
-      const endParts = [resumeInstruction, activeState].filter(Boolean);
-      const endText = endParts.join("\n\n");
+      // Current-turn context changes every turn and must precede the current request.
+      const currentTurnParts = [resumeInstruction, activeState].filter(Boolean);
+      const currentTurnText = currentTurnParts.join("\n\n");
 
-      if (!position1Text && !endText) {
+      if (!position1Text && !currentTurnText) {
         // Nothing to inject -- mark as rehydrated anyway
         lastRehydratedCompactionId = compactionId;
         return messages;
@@ -325,13 +337,12 @@ export function createRehydrationLayer(
         ? { role: "user", content: [{ type: "text", text: position1Text }] } as unknown as AgentMessage
         : null;
 
-      // Build end message (if content exists)
-      const endMessage: AgentMessage | null = endText
-        ? { role: "user", content: [{ type: "text", text: endText }] } as unknown as AgentMessage
+      // Build current-turn context message (if content exists).
+      const currentTurnMessage: AgentMessage | null = currentTurnText
+        ? { role: "user", content: [{ type: "text", text: currentTurnText }] } as unknown as AgentMessage
         : null;
 
-      // Assemble result: compaction + [position1] + history + [end]
-      let result = assembleResult(messages, position1Message, endMessage, compactionIdx);
+      let result = assembleResult(messages, position1Message, currentTurnMessage, compactionIdx);
 
       // Step 5: Overflow check -- adapted for split injection
       /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -354,7 +365,7 @@ export function createRehydrationLayer(
             position1Message = null;
           }
 
-          result = assembleResult(messages, position1Message, endMessage, compactionIdx);
+          result = assembleResult(messages, position1Message, currentTurnMessage, compactionIdx);
 
           /* eslint-disable @typescript-eslint/no-explicit-any */
           const strippedChars = estimateContextCharsWithDualRatio(result as any);
@@ -388,7 +399,7 @@ export function createRehydrationLayer(
               position1Message = null;
             }
 
-            result = assembleResult(messages, position1Message, endMessage, compactionIdx);
+            result = assembleResult(messages, position1Message, currentTurnMessage, compactionIdx);
 
             /* eslint-disable @typescript-eslint/no-explicit-any */
             const noSkillsChars = estimateContextCharsWithDualRatio(result as any);
@@ -407,10 +418,10 @@ export function createRehydrationLayer(
               deps.onOverflow?.({ contextChars, budgetChars, recoveryAction: "strip_skills" });
               overflowStripped = true;
             } else {
-              // Stage 3: Remove position-1 message entirely (keep end message)
+              // Stage 3: Remove position-1 message entirely (keep current-turn context)
               // eslint-disable-next-line no-useless-assignment
               position1Message = null;
-              result = assembleResult(messages, null, endMessage, compactionIdx);
+              result = assembleResult(messages, null, currentTurnMessage, compactionIdx);
 
               /* eslint-disable @typescript-eslint/no-explicit-any */
               const noPos1Chars = estimateContextCharsWithDualRatio(result as any);
@@ -446,7 +457,7 @@ export function createRehydrationLayer(
             }
           }
         } else {
-          // No position-1 message to strip -- remove end message
+          // No position-1 message to strip -- remove current-turn context.
           deps.logger.error(
             {
               contextChars,
