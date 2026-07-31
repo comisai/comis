@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   createAutoDiscoveryStubsMock: vi.fn(),
   applyToolBudgetFitMock: vi.fn(),
   computeWindowFitBudgetMock: vi.fn(),
+  extractPreviousTurnToolNamesMock: vi.fn(),
   extractRecentlyUsedToolNamesMock: vi.fn(),
   buildCapabilityIndexContextMock: vi.fn(),
   getOrCreateDiscoveryTrackerMock: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock("./tool-deferral.js", () => ({
   createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
   applyToolBudgetFit: mocks.applyToolBudgetFitMock,
   computeWindowFitBudget: mocks.computeWindowFitBudgetMock,
+  extractPreviousTurnToolNames: mocks.extractPreviousTurnToolNamesMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
   // tool-deferral.js has no resolveModelTier export — capabilityClass drives deferral.
   CORE_TOOLS: new Set(["bash", "file_read"]),
@@ -236,6 +238,7 @@ beforeEach(() => {
     dynamicPreamble: "",
     inlineMemory: undefined,
   });
+  mocks.extractPreviousTurnToolNamesMock.mockReturnValue(new Set());
   mocks.extractRecentlyUsedToolNamesMock.mockReturnValue(new Set());
   mocks.getOrCreateTrackerMock.mockReturnValue({
     recordTurn: vi.fn(),

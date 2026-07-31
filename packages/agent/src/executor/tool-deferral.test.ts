@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   applyToolDeferral,
+  extractPreviousTurnToolNames,
   extractRecentlyUsedToolNames,
   buildDeferredToolsContext,
   createDiscoverTool,
@@ -1325,6 +1326,21 @@ describe("extractRecentlyUsedToolNames", () => {
 
     const result = extractRecentlyUsedToolNames(messages);
     expect(result.size).toBe(0);
+  });
+});
+
+describe("extractPreviousTurnToolNames", () => {
+  it("returns only tool calls after the most recent user message", () => {
+    const messages = [
+      { role: "user", content: "older request" },
+      { role: "assistant", content: [{ type: "tool_use", name: "older_tool" }] },
+      { role: "user", content: "retry this one" },
+      { role: "assistant", content: [{ type: "toolCall", name: "mcp_manage" }] },
+      { role: "toolResult", content: [{ type: "text", text: "failed" }] },
+      { role: "assistant", content: [{ type: "text", text: "please retry" }] },
+    ];
+
+    expect(extractPreviousTurnToolNames(messages)).toEqual(new Set(["mcp_manage"]));
   });
 });
 

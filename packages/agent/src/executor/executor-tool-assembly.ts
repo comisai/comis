@@ -23,7 +23,7 @@ import { tryCatch } from "@comis/shared";
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
 import { formatSessionKey, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, applyToolBudgetFit, computeWindowFitBudget, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractPreviousTurnToolNames, extractRecentlyUsedToolNames, applyToolBudgetFit, computeWindowFitBudget, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext } from "./tool-deferral.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
@@ -543,9 +543,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const formattedKeyForLifecycle = formatSessionKey(sessionKey);
   const tracker = getOrCreateTracker(formattedKeyForLifecycle, isFirstMessageInSession);
 
-  const previousTurnTools = extractRecentlyUsedToolNames(
+  const previousTurnTools = extractPreviousTurnToolNames(
     sessionMessages as unknown as Array<Record<string, unknown>>,
-    1,
   );
   tracker.recordTurn(previousTurnTools);
 
@@ -632,6 +631,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     requestText: msg.text,
     requestRelevanceText: [...recentUserTurns, msg.text].join("\n"),
     recentlyUsedToolNames: recentlyUsedTools,
+    previousTurnToolNames: previousTurnTools,
     toolNames: mergedCustomTools.map(t => t.name),
     lifecycleDemotedNames,
     discoveryTracker,

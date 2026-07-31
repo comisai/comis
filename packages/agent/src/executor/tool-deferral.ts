@@ -78,6 +78,8 @@ export interface DeferralContext {
    * The current request above remains authoritative for mutation intent. */
   requestRelevanceText?: string;
   recentlyUsedToolNames: Set<string>;
+  /** Tool names invoked between the most recent user message and its final reply. */
+  previousTurnToolNames?: ReadonlySet<string>;
   toolNames: string[];
   /** Tool names demoted by lifecycle management. When provided, these tools
    *  are treated as an additional deferral source so discover_tools covers them. */
@@ -260,6 +262,27 @@ export function extractRecentlyUsedToolNames(
             names.add(block.name);
           }
         }
+      }
+    }
+  }
+  return names;
+}
+
+/** Extract tool calls from only the immediately preceding user turn. */
+export function extractPreviousTurnToolNames(
+  messages: Array<Record<string, unknown>>,
+): Set<string> {
+  const names = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role === "user") break;
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const block of message.content as Record<string, unknown>[]) {
+      if (
+        (block.type === "tool_use" || block.type === "toolCall")
+        && typeof block.name === "string"
+      ) {
+        names.add(block.name);
       }
     }
   }
@@ -475,7 +498,17 @@ export function applyToolDeferral(
     const eligibleTools = tools.filter((tool) =>
       deferredSet.has(tool.name) && !policyDeferredSet.has(tool.name)
     );
-    const directMutationTool = tools.find((tool) =>
+    const previousTurnRetryCandidates = /^\s*(?:please\s+)?(?:retry|try\s+again|again)\b/iu
+      .test(requestText)
+      ? [...(deferralContext.previousTurnToolNames ?? [])].filter((name) =>
+          tools.some((tool) => tool.name === name)
+          && !policyDeferredSet.has(name)
+        )
+      : [];
+    const previousTurnRetryTool = previousTurnRetryCandidates.length === 1
+      ? tools.find((tool) => tool.name === previousTurnRetryCandidates[0])
+      : undefined;
+    const directMutationTool = previousTurnRetryTool ?? tools.find((tool) =>
       !policyDeferredSet.has(tool.name)
       && matchesToolMutationRequest(tool.name, requestText)
     );
@@ -529,7 +562,11 @@ export function applyToolDeferral(
           selectedNames: [...selectedNames],
           promotedCount,
           selectionSource:
-            directMutationTool === undefined ? "lexical" : "declared_mutation",
+            previousTurnRetryTool !== undefined
+              ? "previous_turn_retry"
+              : directMutationTool === undefined
+                ? "lexical"
+                : "declared_mutation",
         },
         "Request-relevant tools selected",
       );
