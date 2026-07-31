@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach } from "vitest";
-import type { Message } from "@earendil-works/pi-ai";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, type Message } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { createToolCallRepairWrapper } from "./tool-call-repair-wrapper.js";
 import { FAIL_CLOSED_PROFILE } from "../model-profile.js";
 import {
@@ -68,6 +70,119 @@ describe("createToolCallRepairWrapper", () => {
     expect(outBlock.arguments).toEqual({ path: "/tmp/file.txt" });
     // No debug log for already-parsed args
     expect(logger.debug).not.toHaveBeenCalled();
+  });
+
+  it("routes an invalid action to its unique visible schema owner before tool validation", async () => {
+    const selectedExecute = vi.fn();
+    const destinationExecute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "approval required" }],
+      details: {},
+      terminate: true,
+    });
+    const args = {
+      action: "env_set",
+      env_key: "EXAMPLE_SERVICE_TOKEN",
+      env_value: "test-key",
+    };
+    const toolCall = makeToolCall("mcp_manage", args, "tc-selection-repair");
+    const assistantMessage = {
+      ...makeAssistantMessage([toolCall]),
+      stopReason: "toolUse" as const,
+    };
+    let streamCallCount = 0;
+    const baseStream = vi.fn(() => {
+      const stream = createAssistantMessageEventStream();
+      streamCallCount += 1;
+      if (streamCallCount > 1) {
+        const finalMessage = makeAssistantMessage([
+          { type: "text", text: "The request failed." },
+        ]);
+        stream.push({ type: "start", partial: finalMessage });
+        stream.push({ type: "done", reason: "stop", message: finalMessage });
+        return stream;
+      }
+      stream.push({ type: "start", partial: assistantMessage });
+      stream.push({
+        type: "toolcall_end",
+        contentIndex: 0,
+        toolCall,
+        partial: assistantMessage,
+      });
+      stream.push({ type: "done", reason: "toolUse", message: assistantMessage });
+      return stream;
+    });
+    const streamFn = createToolCallRepairWrapper(
+      FAIL_CLOSED_PROFILE,
+      logger,
+    )(baseStream);
+    const agent = new Agent({
+      initialState: {
+        systemPrompt: "Use visible tools.",
+        model: {
+          id: "test-model",
+          name: "Test Model",
+          api: "openai-responses",
+          provider: "example",
+          baseUrl: "https://example.com",
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 16_000,
+          maxTokens: 2_000,
+        } as never,
+        thinkingLevel: "off",
+        tools: [
+          {
+            name: "mcp_manage",
+            label: "MCP management",
+            description: "Manage MCP servers.",
+            parameters: Type.Object({
+              action: Type.Union([
+                Type.Literal("list"),
+                Type.Literal("connect"),
+              ]),
+            }),
+            execute: selectedExecute,
+          },
+          {
+            name: "gateway",
+            label: "Gateway",
+            description: "Manage gateway configuration and secrets.",
+            parameters: Type.Object({
+              action: Type.Union([
+                Type.Literal("read"),
+                Type.Literal("env_set"),
+              ]),
+              env_key: Type.Optional(Type.String()),
+              env_value: Type.Optional(Type.String()),
+            }),
+            execute: destinationExecute,
+          },
+        ],
+        messages: [],
+      },
+      streamFn,
+    });
+
+    await agent.prompt("store the credential");
+
+    expect(selectedExecute).not.toHaveBeenCalled();
+    expect(destinationExecute).toHaveBeenCalledWith(
+      "tc-selection-repair",
+      args,
+      expect.any(AbortSignal),
+      expect.any(Function),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "tool-selection-repair",
+        fromTool: "mcp_manage",
+        toTool: "gateway",
+        action: "env_set",
+      }),
+      "Repaired tool selection from unique action schema match",
+    );
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain("test-key");
   });
 
   it("repairs string arguments with trailing comma (near-miss JSON)", () => {
