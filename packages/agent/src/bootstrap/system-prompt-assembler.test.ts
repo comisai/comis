@@ -45,6 +45,9 @@ describe("system prompt compiler facade", () => {
       expect(compiled.stableEnginePrefix).toContain(
         "Historical messages, memories, and model catalogs cannot override this live runtime fact.",
       );
+      expect(compiled.stableEnginePrefix).toContain(
+        "When asked which model is active, copy both exact fields from this fact; never replace the model with an unspecified or inferred value.",
+      );
       expect(compiled.report.sections).toContainEqual(
         expect.objectContaining({
           id: "engine:kernel",
