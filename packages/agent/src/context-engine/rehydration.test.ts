@@ -188,6 +188,22 @@ describe("createRehydrationLayer", () => {
     expect(endText).not.toContain("[File:");
   });
 
+  it("2a) current request remains the final instruction after rehydration", async () => {
+    const { deps } = createMockDeps();
+    const layer = createRehydrationLayer(deps);
+    const currentRequest = makeUserMsg("switch back to the earlier model");
+    const messages = [
+      makeCompactionSummary("The previous task was checking the active model."),
+      makeAssistantMsg("The active model is model-small."),
+      currentRequest,
+    ];
+
+    const result = await layer.apply(messages, largeBudget);
+
+    expect(result.at(-1)).toBe(currentRequest);
+    expect(getMessageText(result.at(-1)!)).toBe("switch back to the earlier model");
+  });
+
   it("2b) LCD summary triggers configured workspace-section rehydration", async () => {
     const onRehydrated = vi.fn();
     const { deps } = createMockDeps({ onRehydrated });
