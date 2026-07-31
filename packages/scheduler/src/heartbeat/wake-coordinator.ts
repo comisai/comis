@@ -177,6 +177,18 @@ export type MonitoringHeartbeatOutcome =
       readonly checksCompleted?: number;
     };
 
+type HeartbeatTerminalStatus = "settled" | "skipped" | "aborted" | "unsettled"
+  | "failed_before_side_effect" | "cancelled_before_start";
+type HeartbeatCancellationReason = "shutdown" | "target_removed" | "feature_disabled" | "maintenance";
+type HeartbeatTerminalReason = Extract<HeartbeatTickOutcome, { readonly reason: string }>["reason"]
+  | Extract<MonitoringHeartbeatOutcome, { readonly reason: string }>["reason"]
+  | HeartbeatCancellationReason;
+interface HeartbeatAgentTerminalState { terminalCount: number; lastRunAtMs: number;
+  lastStatus: HeartbeatTerminalStatus; lastReason: HeartbeatTerminalReason | null;
+  lastLlmCalls: number | null; }
+interface HeartbeatTerminalDetails { errorKind?: ErrorKind; cancellationReason?: HeartbeatCancellationReason;
+  outcomeReason?: HeartbeatTerminalReason; llmCalls?: number | null; }
+
 export interface HeartbeatCoordinatorAgentRunInput {
   readonly correlationId: string;
   readonly target: Extract<HeartbeatWakeTarget, { kind: "agent" }>;
@@ -239,6 +251,7 @@ interface TargetState {
   timer?: TimerHandle;
   lastStartedAtMs?: number;
   starts: number[];
+  terminal?: HeartbeatAgentTerminalState;
 }
 
 const REASON_PRIORITY: Readonly<Record<HeartbeatWakeReason, number>> = {
@@ -448,22 +461,31 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
 
   function emitTerminal(
     occurrence: Occurrence,
-    status: "settled" | "skipped" | "aborted" | "unsettled" | "failed_before_side_effect" | "cancelled_before_start",
+    status: HeartbeatTerminalStatus,
     entryCount: number,
     durationMs: number,
-    errorKind?: ErrorKind,
-    cancellationReason?: "shutdown" | "target_removed" | "feature_disabled" | "maintenance",
+    details: HeartbeatTerminalDetails = {},
   ): void {
+    const targetState = targets.get(targetKey(occurrence.target));
+    if (occurrence.target.kind === "agent" && targetState !== undefined) {
+      targetState.terminal = {
+        terminalCount: (targetState.terminal?.terminalCount ?? 0) + 1,
+        lastRunAtMs: deps.clock.now(),
+        lastStatus: status,
+        lastReason: details.outcomeReason ?? details.cancellationReason ?? null,
+        lastLlmCalls: details.llmCalls ?? null,
+      };
+    }
     deps.eventBus.emit("scheduler:heartbeat_wake_terminal", {
       correlationId: occurrence.correlationId,
       target: occurrence.target,
       lane: occurrence.lane,
       retainedReason: occurrence.reason,
       status,
-      ...(cancellationReason === undefined ? {} : { cancellationReason }),
+      ...(details.cancellationReason === undefined ? {} : { cancellationReason: details.cancellationReason }),
       eventEntryCount: entryCount,
       durationMs,
-      ...(errorKind === undefined ? {} : { errorKind }),
+      ...(details.errorKind === undefined ? {} : { errorKind: details.errorKind }),
       timestamp: deps.clock.now(),
     });
   }
@@ -534,7 +556,10 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
       && !deps.isTaskEnabled(occurrence.target.agentId)
     ) {
       const consumed = eventQueue.consume(key, occurrence.correlationId);
-      emitTerminal(occurrence, "skipped", consumed, 0);
+      emitTerminal(occurrence, "skipped", consumed, 0, {
+        outcomeReason: "task_disabled",
+        llmCalls: 0,
+      });
       state.selected = undefined;
       armTarget(state);
       return;
@@ -558,7 +583,7 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
           "failed_before_side_effect",
           consumed,
           Math.max(0, deps.clock.now() - gateStartedAtMs),
-          errorKind,
+          { errorKind, llmCalls: 0 },
         );
         state.selected = undefined;
         armTarget(state);
@@ -571,6 +596,7 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
           "skipped",
           consumed,
           Math.max(0, deps.clock.now() - gateStartedAtMs),
+          { outcomeReason: "empty_file", llmCalls: 0 },
         );
         state.selected = undefined;
         armTarget(state);
@@ -648,7 +674,9 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
     ) {
       const released = await releaseRegisteredRoot(rootRunId, occurrence.correlationId);
       if (!released) {
-        emitTerminal(occurrence, "unsettled", 0, durationMs, resolved.value.error.errorKind);
+        emitTerminal(occurrence, "unsettled", 0, durationMs, {
+          errorKind: resolved.value.error.errorKind,
+        });
         return;
       }
       rootRunId = undefined;
@@ -670,7 +698,7 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
     if (!resolved.ok) {
       retainRegisteredRoot = true;
       const consumed = eventQueue.consume(key, occurrence.correlationId);
-      emitTerminal(occurrence, "unsettled", consumed, durationMs, "internal");
+      emitTerminal(occurrence, "unsettled", consumed, durationMs, { errorKind: "internal" });
     } else if (!resolved.value.ok) {
       const releasedCount = rearmReleasedEvents(state, key, occurrence);
       emitTerminal(
@@ -678,17 +706,24 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
         "failed_before_side_effect",
         releasedCount,
         durationMs,
-        resolved.value.error.errorKind,
+        { errorKind: resolved.value.error.errorKind, llmCalls: 0 },
       );
     } else {
       const consumed = eventQueue.consume(key, occurrence.correlationId);
       retainRegisteredRoot = resolved.value.value.status === "unsettled";
+      const outcome = resolved.value.value;
       emitTerminal(
         occurrence,
-        terminalStatus(resolved.value.value),
+        terminalStatus(outcome),
         consumed,
-        resolved.value.value.durationMs,
-        "errorKind" in resolved.value.value ? resolved.value.value.errorKind : undefined,
+        outcome.durationMs,
+        {
+          errorKind: "errorKind" in outcome ? outcome.errorKind : undefined,
+          outcomeReason: "reason" in outcome ? outcome.reason : undefined,
+          llmCalls: "metrics" in outcome
+            ? outcome.metrics.llmCalls
+            : ("checksRun" in outcome || outcome.status === "skipped" ? 0 : null),
+        },
       );
     }
     if (retainRegisteredRoot) return;
@@ -804,7 +839,8 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
     const pending = state.pending.task;
     if (pending !== undefined) {
       const removed = eventQueue.cancelPending(key, pending.correlationId);
-      emitTerminal(pending, "cancelled_before_start", removed, 0, "precondition", reason);
+      emitTerminal(pending, "cancelled_before_start", removed, 0, {
+        errorKind: "precondition", cancellationReason: reason, llmCalls: 0 });
       state.pending.task = undefined;
       cancelledCount += 1;
     }
@@ -815,7 +851,8 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
         activeCount = 1;
       } else {
         const removed = eventQueue.consume(key, selected.correlationId);
-        emitTerminal(selected, "cancelled_before_start", removed, 0, "precondition", reason);
+        emitTerminal(selected, "cancelled_before_start", removed, 0, {
+          errorKind: "precondition", cancellationReason: reason, llmCalls: 0 });
         state.selected = undefined;
         cancelledCount += 1;
       }
@@ -839,13 +876,17 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
         const occurrence = state.pending[lane];
         if (occurrence === undefined) continue;
         const removed = eventQueue.cancelPending(key, occurrence.correlationId);
-        emitTerminal(occurrence, "cancelled_before_start", removed, 0, "precondition", "shutdown");
+        emitTerminal(occurrence, "cancelled_before_start", removed, 0, {
+          errorKind: "precondition", cancellationReason: "shutdown", llmCalls: 0,
+        });
         state.pending[lane] = undefined;
         cancelledCount += 1;
       }
       if (state.selected !== undefined && !state.selected.started) {
         const removed = eventQueue.consume(key, state.selected.correlationId);
-        emitTerminal(state.selected, "cancelled_before_start", removed, 0, "precondition", "shutdown");
+        emitTerminal(state.selected, "cancelled_before_start", removed, 0, {
+          errorKind: "precondition", cancellationReason: "shutdown", llmCalls: 0,
+        });
         state.selected = undefined;
         cancelledCount += 1;
       } else if (state.selected?.started === true) {
@@ -889,12 +930,16 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
       const occurrence = state.pending[lane];
       if (occurrence === undefined) continue;
       const removed = eventQueue.cancelPending(key, occurrence.correlationId);
-      emitTerminal(occurrence, "cancelled_before_start", removed, 0, "precondition", "target_removed");
+      emitTerminal(occurrence, "cancelled_before_start", removed, 0, {
+        errorKind: "precondition", cancellationReason: "target_removed", llmCalls: 0,
+      });
       state.pending[lane] = undefined;
     }
     if (state.selected !== undefined && !state.selected.started) {
       const removed = eventQueue.consume(key, state.selected.correlationId);
-      emitTerminal(state.selected, "cancelled_before_start", removed, 0, "precondition", "target_removed");
+      emitTerminal(state.selected, "cancelled_before_start", removed, 0, {
+        errorKind: "precondition", cancellationReason: "target_removed", llmCalls: 0,
+      });
       state.selected = undefined;
     } else {
       state.selected?.controller?.abort();
@@ -933,12 +978,17 @@ export function createHeartbeatWakeCoordinator(deps: HeartbeatWakeCoordinatorDep
     return periodicSchedule.getNextDueAtMs(agentId);
   }
 
+  function getAgentTerminalState(agentId: string): HeartbeatAgentTerminalState | undefined {
+    const terminal = targets.get(targetKey({ kind: "agent", agentId }))?.terminal;
+    return terminal === undefined ? undefined : { ...terminal };
+  }
   return {
     activate,
     submitWake,
     admitSystemEventWake,
     configurePeriodicHeartbeat,
     getNextPeriodicPhaseMs,
+    getAgentTerminalState,
     closeTaskLane,
     closeAdmission,
     waitForIdle,

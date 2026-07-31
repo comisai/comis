@@ -6317,13 +6317,89 @@
                     "type": "null"
                   }
                 ]
+              },
+              "terminalCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "lastRunAtMs": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastStatus": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "settled",
+                      "skipped",
+                      "aborted",
+                      "unsettled",
+                      "failed_before_side_effect",
+                      "cancelled_before_start"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastReason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "empty_file",
+                      "task_disabled",
+                      "task_no_due",
+                      "task_quiet_hours",
+                      "task_daily_cap",
+                      "deadline_termination_unestablished",
+                      "task_state_unsettled",
+                      "deadline",
+                      "shutdown",
+                      "target_removed",
+                      "feature_disabled",
+                      "maintenance"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastLlmCalls": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
               "agentId",
               "enabled",
               "intervalMs",
-              "nextDueAtMs"
+              "nextDueAtMs",
+              "terminalCount",
+              "lastRunAtMs",
+              "lastStatus",
+              "lastReason",
+              "lastLlmCalls"
             ],
             "additionalProperties": false
           }

@@ -28,10 +28,9 @@ import { defineContract } from "../types.js";
  * heartbeat-handlers.ts:42-77.
  *
  * Request: `{}` (no params consumed).
- * Response: `{ agents: AgentHeartbeatState[] }`. Each entry: `{ agentId,
- *   enabled, intervalMs, lastRunMs, nextDueMs, consecutiveErrors,
- *   backoffUntilMs, tickStartedAtMs, lastAlertMs, lastErrorKind }`.
- *   `lastErrorKind` is `"transient" | "permanent" | null`.
+ * Response: `{ agents: AgentHeartbeatState[] }`. Each entry includes effective
+ * scheduling state plus the latest content-free terminal outcome retained
+ * since this daemon boot.
  */
 export const HeartbeatStatesContract = defineContract({
   method: "heartbeat.states",
@@ -42,6 +41,18 @@ export const HeartbeatStatesContract = defineContract({
       enabled: z.boolean(),
       intervalMs: z.number(),
       nextDueAtMs: z.number().int().nonnegative().safe().nullable(),
+      terminalCount: z.number().int().nonnegative().safe(),
+      lastRunAtMs: z.number().int().nonnegative().safe().nullable(),
+      lastStatus: z.enum([
+        "settled", "skipped", "aborted", "unsettled",
+        "failed_before_side_effect", "cancelled_before_start",
+      ]).nullable(),
+      lastReason: z.enum([
+        "empty_file", "task_disabled", "task_no_due", "task_quiet_hours", "task_daily_cap",
+        "deadline_termination_unestablished", "task_state_unsettled",
+        "deadline", "shutdown", "target_removed", "feature_disabled", "maintenance",
+      ]).nullable(),
+      lastLlmCalls: z.number().int().nonnegative().safe().nullable(),
     }).strict()),
   }),
   scopes: ["admin"] as const,

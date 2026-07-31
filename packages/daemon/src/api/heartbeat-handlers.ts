@@ -77,6 +77,14 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
         enabled: boolean;
         intervalMs: number;
         nextDueAtMs: number | null;
+        terminalCount: number;
+        lastRunAtMs: number | null;
+        lastStatus: "settled" | "skipped" | "aborted" | "unsettled"
+          | "failed_before_side_effect" | "cancelled_before_start" | null;
+        lastReason: "empty_file" | "task_disabled" | "task_no_due" | "task_quiet_hours"
+          | "task_daily_cap" | "deadline_termination_unestablished" | "task_state_unsettled"
+          | "deadline" | "shutdown" | "target_removed" | "feature_disabled" | "maintenance" | null;
+        lastLlmCalls: number | null;
       }> = [];
 
       for (const [agentId, config] of Object.entries(deps.agents)) {
@@ -87,11 +95,17 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
         const next = effective.enabled
           ? deps.heartbeatCoordinator?.getNextPeriodicPhaseMs(agentId)
           : undefined;
+        const terminal = deps.heartbeatCoordinator?.getAgentTerminalState(agentId);
         agents.push({
           agentId,
           enabled: effective.enabled,
           intervalMs: effective.intervalMs,
           nextDueAtMs: next?.ok ? next.value : null,
+          terminalCount: terminal?.terminalCount ?? 0,
+          lastRunAtMs: terminal?.lastRunAtMs ?? null,
+          lastStatus: terminal?.lastStatus ?? null,
+          lastReason: terminal?.lastReason ?? null,
+          lastLlmCalls: terminal?.lastLlmCalls ?? null,
         });
       }
 

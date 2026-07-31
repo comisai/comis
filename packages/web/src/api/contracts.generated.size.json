@@ -1,8 +1,8 @@
 {
-  "totalMinified": 192889,
-  "totalGzipped": 19855,
+  "totalMinified": 193673,
+  "totalGzipped": 20055,
   "budget": {
-    "minified": 193536,
+    "minified": 194560,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -86,7 +86,7 @@
     "graph.save": 729,
     "graph.status": 343,
     "heartbeat.get": 505,
-    "heartbeat.states": 619,
+    "heartbeat.states": 1455,
     "heartbeat.trigger": 1192,
     "heartbeat.update": 1364,
     "image.analyze": 501,
