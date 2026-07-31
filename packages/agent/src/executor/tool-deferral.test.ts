@@ -497,6 +497,10 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).not.toContain("models_manage");
     expect(result.deferredNames).not.toContain("agents_manage");
     expect(result.deferredNames).toContain("gateway");
+    expect(result.requestRelevantToolNames).toEqual([
+      "models_manage",
+      "agents_manage",
+    ]);
   });
 
   it("defers all non-CORE_TOOLS when capabilityClass is 'nano'", () => {

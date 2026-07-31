@@ -101,6 +101,7 @@ function makeParams(overrides: {
   msgText?: string;
   /** Inject a dynamic preamble so emitPreambleDebug estimates over it. */
   dynamicPreamble?: string;
+  requestRelevantToolNames?: readonly string[];
 }): RunPromptParams {
   const {
     scaffoldLevel = "max",
@@ -162,6 +163,7 @@ function makeParams(overrides: {
     executionId: "exec-1",
     bridge: { getResult: () => ({}) } as RunPromptParams["bridge"],
     dynamicPreamble: overrides.dynamicPreamble,
+    requestRelevantToolNames: overrides.requestRelevantToolNames,
     deferredContext: undefined,
     capabilityIndexResult: { text: "", capabilityIndexTokens: 0, clusterCount: 0, activeToolCount: 0, deferredToolCount: 0, promptSkillCount: 0 },
     inlineMemory: undefined,
@@ -188,6 +190,19 @@ function makeParams(overrides: {
 }
 
 describe("GoalAnchor tail injection via wrapEnvelope", () => {
+  it("surfaces request-matched active tools beside the current request", () => {
+    const result = wrapEnvelope(makeParams({
+      msgText: "switch back to the model u had before",
+      requestRelevantToolNames: ["models_manage", "agents_manage"],
+    }));
+
+    expect(result.messageText).toContain("<request-relevant-tools>");
+    expect(result.messageText).toContain("models_manage, agents_manage");
+    expect(result.messageText.indexOf("<request-relevant-tools>")).toBeLessThan(
+      result.messageText.indexOf("switch back to the model u had before"),
+    );
+  });
+
   it("scaffoldLevel=max with active plan → goalAnchor appears at END of message", () => {
     const params = makeParams({
       scaffoldLevel: "max",
