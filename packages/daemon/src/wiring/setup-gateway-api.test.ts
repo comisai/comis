@@ -191,6 +191,23 @@ describe("registerRpcMethods", () => {
     expect(deps.rpcCall).toHaveBeenLastCalledWith("subagent.list", {});
   });
 
+  it("lets an authenticated admin request the all-agent cron inventory", async () => {
+    registerRpcMethods(deps);
+    const call = registerMethod.mock.calls.find(([method]: [string]) => method === "cron.list");
+    expect(call).toBeDefined();
+    expect(call![1]).toEqual(["rpc", "admin"]);
+    const handler = call![2];
+
+    await handler({ agentId: "*" }, { clientId: "operator", scopes: ["*"] });
+    expect(deps.rpcCall).toHaveBeenLastCalledWith("cron.list", {
+      agentId: "*",
+      _trustLevel: "admin",
+    });
+
+    await handler({}, { clientId: "agent-route", scopes: ["rpc"] });
+    expect(deps.rpcCall).toHaveBeenLastCalledWith("cron.list", {});
+  });
+
   // -----------------------------------------------------------------------
   // cron.add passthrough
   //
