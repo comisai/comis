@@ -11,6 +11,7 @@ export type {
   // is NOT re-exported here — like OrchestrationEvents /
   // TrajectoryEvents, it stays internal and reaches consumers via EventMap.
   ChannelEvents,
+  BackgroundTaskFailureCode,
   InfraEvents,
   WebhookFailureReason,
   // SpendScopeKind — the closed wire enum (agent|tenant|global) for the spend

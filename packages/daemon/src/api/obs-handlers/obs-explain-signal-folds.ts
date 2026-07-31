@@ -89,6 +89,7 @@ export function accumulateBackgroundTaskRecord(
     }
     entry.failed += 1;
     const errorKind = asString(data.errorKind) ?? "internal";
+    const failureCode = narrow(["skill_import_incomplete"] as const, data.failureCode);
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
     acc.failures.push({
       seq,
@@ -96,6 +97,7 @@ export function accumulateBackgroundTaskRecord(
       classifiedFailureBy: "background_task",
       transportOk: false,
       errorKind,
+      ...(failureCode !== undefined ? { failureCode } : {}),
       resultDigest: fingerprint(`${taskId}:${toolName}:${errorKind}`),
       resultBytes: 0,
       errorPreview: "",

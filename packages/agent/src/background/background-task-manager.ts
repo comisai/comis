@@ -12,6 +12,7 @@ import {
   type TimerHandle,
   type TimerPort,
   type ErrorKind,
+  type BackgroundTaskFailureCode,
 } from "@comis/core";
 import {
   persistTaskAtomically,
@@ -129,6 +130,18 @@ export interface BackgroundTaskManager {
 }
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
+const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
+
+function classifyBackgroundTaskFailure(
+  toolName: string,
+  error: unknown,
+): BackgroundTaskFailureCode | undefined {
+  if (toolName !== "skills_manage") return undefined;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith(SKILL_IMPORT_INCOMPLETE_PREFIX)
+    ? "skill_import_incomplete"
+    : undefined;
+}
 
 export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): BackgroundTaskManager {
   const {
@@ -256,6 +269,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       ...(terminal.result === undefined ? {} : { result: terminal.result }),
       ...(terminal.error === undefined ? {} : { error: terminal.error }),
       ...(terminal.errorKind === undefined ? {} : { errorKind: terminal.errorKind }),
+      ...(terminal.failureCode === undefined ? {} : { failureCode: terminal.failureCode }),
     };
     const persisted = persistTaskAtomically(dataDir, candidate, persistenceOps);
     if (!persisted.ok) {
@@ -277,6 +291,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     if (terminal.result !== undefined) task.result = terminal.result;
     if (terminal.error !== undefined) task.error = terminal.error;
     if (terminal.errorKind !== undefined) task.errorKind = terminal.errorKind;
+    if (terminal.failureCode !== undefined) task.failureCode = terminal.failureCode;
     task._pendingTerminal = undefined;
     terminalRetryTimers.get(task.id)?.cancel();
     terminalRetryTimers.delete(task.id);
@@ -447,6 +462,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             completedAt: clock.now(),
             error: error instanceof Error ? error.message : String(error),
             errorKind,
+            failureCode: classifyBackgroundTaskFailure(task.toolName, error),
           };
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
@@ -457,6 +473,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         toolName: task.toolName,
         error: terminal.error ?? "Background task failed",
         errorKind: terminal.errorKind ?? errorKind,
+        ...(terminal.failureCode !== undefined ? { failureCode: terminal.failureCode } : {}),
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
@@ -635,6 +652,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
             ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
             ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
+            ...(task.failureCode !== undefined ? { failureCode: task.failureCode } : {}),
           });
         }
       }
@@ -831,6 +849,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...common,
             error: current.error ?? "Background task failed",
             errorKind: current.errorKind ?? "dependency",
+            ...(current.failureCode !== undefined ? { failureCode: current.failureCode } : {}),
           });
         }
       }, delayMs);

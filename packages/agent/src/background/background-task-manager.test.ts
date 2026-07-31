@@ -396,6 +396,39 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("fail() emits and persists a content-free code for an incomplete skill import", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote(
+        "skills_manage",
+        new Promise(() => {}),
+        new AbortController(),
+        origin,
+        undefined,
+        CORR,
+      );
+      if (!r.ok) throw new Error("promote failed");
+
+      manager.fail(
+        r.value,
+        new Error(
+          'Skill import is incomplete: SKILL.md references "../private-notes.md", which is outside the approved GitHub directory.',
+        ),
+        "dependency",
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({
+          ...CORR,
+          errorKind: "dependency",
+          failureCode: "skill_import_incomplete",
+        }),
+      );
+      expect(loadTask(dataDir, "agent-1", r.value)?.failureCode).toBe(
+        "skill_import_incomplete",
+      );
+    });
+
     it("a promote WITHOUT correlation emits terminals without the fields (pre-upgrade shape)", () => {
       const origin = buildOrigin({ agentId: "agent-1" });
       const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin);

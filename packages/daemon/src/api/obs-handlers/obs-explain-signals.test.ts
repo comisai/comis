@@ -1528,6 +1528,7 @@ describe("toolStats fidelity", () => {
           taskId: "task-1",
           toolName: "mcp__reports--slow_lookup",
           errorKind: "dependency",
+          failureCode: "skill_import_incomplete",
         },
       },
       // Recovery can replay the terminal event; one task still represents one
@@ -1540,6 +1541,7 @@ describe("toolStats fidelity", () => {
           taskId: "task-1",
           toolName: "mcp__reports--slow_lookup",
           errorKind: "dependency",
+          failureCode: "skill_import_incomplete",
         },
       },
     ]);
@@ -1554,6 +1556,7 @@ describe("toolStats fidelity", () => {
         seq: 3,
         toolName: "mcp__reports--slow_lookup",
         errorKind: "dependency",
+        failureCode: "skill_import_incomplete",
       }),
     ]);
   });

@@ -8,6 +8,7 @@
 import {
   BackgroundTaskOriginSchema,
   type BackgroundTaskOrigin,
+  type BackgroundTaskFailureCode,
   type ErrorKind,
   type SessionKey,
   type TimerHandle,
@@ -17,6 +18,9 @@ export type { BackgroundTaskOrigin };
 
 export const BackgroundTaskStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
+export const BackgroundTaskFailureCodeSchema = z.literal(
+  "skill_import_incomplete",
+) satisfies z.ZodType<BackgroundTaskFailureCode>;
 
 /**
  * Notification policy for a background task. Typed enum (NOT a boolean):
@@ -141,6 +145,7 @@ export const PersistedTaskStateSchema = z.strictObject({
     "config", "network", "auth", "validation", "precondition", "timeout",
     "resource", "dependency", "internal", "platform", "sandbox_unavailable",
   ]).optional(),
+  failureCode: BackgroundTaskFailureCodeSchema.optional(),
 });
 
 // @optional-field-count: Lifecycle fields are conditional by task state; underscored fields exist only while execution or terminal persistence is in flight.
@@ -167,6 +172,7 @@ export interface BackgroundTask {
   sessionKey?: string;
   traceId?: string;
   errorKind?: ErrorKind;
+  failureCode?: BackgroundTaskFailureCode;
   /** Durable completion lifecycle. */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;
@@ -185,6 +191,7 @@ export interface BackgroundTask {
     result?: string;
     error?: string;
     errorKind?: ErrorKind;
+    failureCode?: BackgroundTaskFailureCode;
   };
   _ownsCounterSlot?: boolean;
 }
@@ -218,6 +225,7 @@ export interface PersistedTaskState {
   sessionKey?: string;
   traceId?: string;
   errorKind?: ErrorKind;
+  failureCode?: BackgroundTaskFailureCode;
 }
 
 export function isClosedBackgroundTask(task: Pick<BackgroundTask, "status" | "dispatchState">): boolean {

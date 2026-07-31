@@ -372,6 +372,29 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A skill bundle whose declared local references do not resolve inside the
+  // approved immutable directory is a concrete import rejection. The closed
+  // failure code retains that diagnosis without retaining any source path.
+  // This upstream rejection must outrank its downstream retry-breaker event.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.toolName === "skills_manage"
+        && candidate.failureCode === "skill_import_incomplete",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "skill_import_incomplete",
+      detail:
+        "skills_manage rejected the imported skill because a declared local reference "
+        + "was outside or missing from the approved directory",
+      suggestedNextSteps: [
+        "select a self-contained immutable skill directory containing every referenced file",
+        "retry skills_manage import after confirming the selected directory contains its complete bundle",
+      ],
+    };
+  },
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;

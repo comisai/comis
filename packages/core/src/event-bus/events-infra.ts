@@ -5,10 +5,9 @@ import type { InjectionRule } from "../security/provider-catalog/index.js";
 import type { DeliveryFailureStage, DeliveryStatus } from "../domain/delivery-status.js";
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ModelResolutionSource } from "../domain/agent-execution-outcome.js";
-
 /** Content-free reason for a failed outbound webhook delivery. */
 export type WebhookFailureReason = "handler_error" | "task_not_delivered";
-
+export type BackgroundTaskFailureCode = "skill_import_incomplete";
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
  * media, scheduler, system, and metrics events.
@@ -684,6 +683,8 @@ export interface InfraEvents {
     toolName: string;
     error: string;
     errorKind: ErrorKind;
+    /** Closed, content-free cause retained after the error body is scrubbed. */
+    failureCode?: BackgroundTaskFailureCode;
     /**
      * The TASK's whole lifespan — promote-time to terminal commit. NOT the
      * duration of the underlying tool call.
