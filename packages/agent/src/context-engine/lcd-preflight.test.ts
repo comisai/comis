@@ -741,6 +741,45 @@ describe("harder-eviction runs WITHOUT securityPinMarkers (no exhaustion on evic
   });
 });
 
+describe("textless canonical tool-call history remains evictable", () => {
+  it("does not exhaust a small window by pinning every historical tool step", () => {
+    const deps = makeDeps({
+      getThinkingLevel: () => "medium",
+      getSystemTokensEstimate: () => 6_889,
+      onEffectiveWindow: vi.fn(),
+      onAssembledInputTokens: vi.fn(),
+      securityPinMarkers: {
+        canaryToken: "CANARY_live_history",
+        contentDelimiter: "",
+      },
+    });
+    const evictable: BudgetItem[] = Array.from({ length: 24 }, (_, index) => ({
+      msg: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: `call_${index}`,
+          name: "read",
+          arguments: { path: `fixture_${index}.txt` },
+        }],
+      } as never,
+      tokens: 600,
+    }));
+    const freshTail = [{ role: "user", content: "switch back" }];
+
+    expect(() =>
+      runPreflightFitCheck(
+        deps,
+        16_000,
+        evictable,
+        evictable.length,
+        freshTail as never,
+        "none",
+      ),
+    ).not.toThrow();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The fit check returns the ORIGINAL assembled
 // count so the assembler's INFO line can log the full budget equation.

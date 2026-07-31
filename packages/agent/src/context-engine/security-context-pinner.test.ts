@@ -14,12 +14,34 @@ function msg(text: string) {
 }
 
 describe("isSecurityRelevantMessage — security context pinning", () => {
-  describe("fail-closed: uncertain/empty → pin", () => {
-    it("empty string content → true (pin)", () => {
-      expect(isSecurityRelevantMessage(msg(""), MARKERS)).toBe(true);
+  describe("distinguishes known-empty content from uncertain content", () => {
+    it("known-empty string content carries no marker and is not pinned", () => {
+      expect(isSecurityRelevantMessage(msg(""), MARKERS)).toBe(false);
     });
     it("undefined content → true (fail-closed)", () => {
       expect(isSecurityRelevantMessage({ role: "user" }, MARKERS)).toBe(true);
+    });
+    it("canonical textless tool calls without markers are not pinned", () => {
+      expect(isSecurityRelevantMessage({
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "call_a",
+          name: "read",
+          arguments: { path: "notes.txt" },
+        }],
+      }, MARKERS)).toBe(false);
+    });
+    it("canonical textless tool-call arguments containing a marker stay pinned", () => {
+      expect(isSecurityRelevantMessage({
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "call_b",
+          name: "write",
+          arguments: { value: MARKERS.canaryToken },
+        }],
+      }, MARKERS)).toBe(true);
     });
   });
 
