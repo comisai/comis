@@ -145,7 +145,7 @@ describe("structured inbound conversation projection", () => {
     });
   });
 
-  it("omits prior runtime locale-repair pairs without dropping a matching user message", () => {
+  it("replaces a rejected locale draft without dropping a matching user message", () => {
     const sessionManager = SessionManager.inMemory("/workspace");
     appendProvenance(sessionManager, FIRST);
     sessionManager.appendMessage({

@@ -352,10 +352,10 @@ function collectProjectedUserText(
  * Rebuild the active conversation from structured inbound provenance.
  *
  * Dynamic prompt sections remain in the append-only SDK JSONL for forensics,
- * but never become canonical model or LCD history. A prior locale-repair turn
- * is omitted only when it has no inbound provenance; a user who types the same
- * protocol-shaped text keeps their message because their structured record is
- * paired first.
+ * but never become canonical model or LCD history. A generated locale-repair
+ * instruction replaces its rejected assistant draft with the finalized
+ * assistant response. A user who types the same protocol-shaped text keeps
+ * their message because their structured record is paired first.
  */
 export function projectInboundConversation(
   sessionManager: SessionManager,
@@ -379,28 +379,30 @@ export function projectInboundConversation(
     diagnostics,
   );
   const messages: AgentMessage[] = [];
-  let omitLocaleRepairAssistant = false;
+  let replaceLocaleRepairDraft = false;
 
   for (const entry of read.value.contextEntries) {
     if (entry.type === "message" && entry.message.role === "user") {
       const projectedText = projectedByEntryId.get(entry.id);
       if (projectedText !== undefined) {
-        omitLocaleRepairAssistant = false;
+        replaceLocaleRepairDraft = false;
         messages.push(replaceUserText(entry.message, projectedText));
         continue;
       }
       if (messageText(entry.message).trimStart().startsWith(GENERATED_LOCALE_REPAIR_PREFIX)) {
-        omitLocaleRepairAssistant = true;
+        if (messages.at(-1)?.role === "assistant") messages.pop();
+        replaceLocaleRepairDraft = true;
         diagnostics.omittedLocaleRepairTurns++;
         continue;
       }
-      omitLocaleRepairAssistant = false;
+      replaceLocaleRepairDraft = false;
     } else if (
-      omitLocaleRepairAssistant
+      replaceLocaleRepairDraft
       && entry.type === "message"
       && entry.message.role === "assistant"
     ) {
-      omitLocaleRepairAssistant = false;
+      replaceLocaleRepairDraft = false;
+      messages.push(...sessionEntryToContextMessages(entry));
       continue;
     }
     messages.push(...sessionEntryToContextMessages(entry));
