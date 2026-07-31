@@ -17,8 +17,13 @@
 // @comis/agent is architecturally FORBIDDEN from depending on @comis/infra
 // (enforced by packages/agent/src/__tests__/architecture.test.ts). agent
 // already depends on @comis/core, so this adds no package edge.
-import { fingerprint, redactValue, unwrapExternalContent } from "@comis/core";
+import {
+  fingerprint,
+  redactValue,
+  unwrapExternalContent,
+} from "@comis/core";
 import { tryCatch } from "@comis/shared";
+import { formatValidationError } from "../safety/validation-error-formatter.js";
 
 // ---------------------------------------------------------------------------
 // MCP attribution helpers
@@ -211,6 +216,8 @@ export function extractErrorText(result: unknown): string {
 
 /** Coerce a tool result to its raw (UNBOUNDED) error text. */
 function coerceErrorText(result: unknown): string {
+  const nestedValidation = extractFormattedValidation(result);
+  if (nestedValidation !== null) return nestedValidation;
   if (typeof result === "string") return result;
   if (result instanceof Error) return result.message;
   if (result != null && typeof result === "object") {
@@ -223,6 +230,34 @@ function coerceErrorText(result: unknown): string {
   } catch {
     return "[unserializable]";
   }
+}
+
+/**
+ * Find and format an SDK validation error before its full rejected-argument
+ * dump is serialized into logs or trajectories. Tool results wrap the text in
+ * `content[]`, while direct boundary errors can arrive as strings or
+ * `message`/`error` fields.
+ */
+function extractFormattedValidation(result: unknown): string | null {
+  if (typeof result === "string") return formatValidationError(result);
+  if (result instanceof Error) return formatValidationError(result.message);
+  if (result === null || typeof result !== "object") return null;
+
+  const obj = result as Record<string, unknown>;
+  for (const field of [obj.message, obj.error]) {
+    if (typeof field !== "string") continue;
+    const formatted = formatValidationError(field);
+    if (formatted !== null) return formatted;
+  }
+  if (!Array.isArray(obj.content)) return null;
+  for (const part of obj.content) {
+    if (part === null || typeof part !== "object") continue;
+    const text = (part as Record<string, unknown>).text;
+    if (typeof text !== "string") continue;
+    const formatted = formatValidationError(text);
+    if (formatted !== null) return formatted;
+  }
+  return null;
 }
 
 /** Cap raw error text at the char limit, appending a non-reversible digest. */

@@ -9,7 +9,7 @@
  * call it and `core` cannot import `observability`.
  *
  * Guarantees (the redaction keystone):
- *   - No secrets: values under the 9 Pino redact keys become
+ *   - No secrets: values under credential-bearing keys become
  *     `<redacted>`; values matching a secret SHAPE (sk_*, ghp_*, AKIA*, JWT
  *     triples, provider tokens) become `<redacted>` even under a benign key.
  *   - No absolute paths: `$HOME`/home roots compact to `~`; other
@@ -142,9 +142,10 @@ export interface RedactOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * The 9 secret KEYS (case-insensitive) — mirrors the CLAUDE.md "Pino
- * auto-redacts" taxonomy. A value under any of these is fully replaced
- * regardless of its content (key-based).
+ * Secret keys (case-insensitive). A value under any of these is fully
+ * replaced regardless of its content. `env_value` is included independently
+ * of tool identity because a model can send an env-set payload to the wrong
+ * tool, whose validation diagnostics are still an observability boundary.
  */
 const SECRET_KEYS: ReadonlySet<string> = new Set([
   "apikey",
@@ -156,6 +157,7 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
   "privatekey",
   "cookie",
   "webhooksecret",
+  "env_value",
 ]);
 
 /**
@@ -413,7 +415,7 @@ function redactString(
 // Recursive walker (same walk discipline as observability/value-shapes.ts)
 // ---------------------------------------------------------------------------
 
-/** Case-insensitive exact match of a key against the 9 secret keys. */
+/** Case-insensitive exact match of a key against the secret-key set. */
 function isSecretKey(key: string): boolean {
   return SECRET_KEYS.has(key.toLowerCase());
 }
