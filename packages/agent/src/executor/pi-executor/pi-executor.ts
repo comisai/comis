@@ -2831,6 +2831,7 @@ async function runSessionLocked(
       // back into postExecution, which emits the memory:skill_used write-back.
       usedSkillIds: [...bridge.getUsedSkillIds()],
       responseLocalePolicy,
+      senderTrust: tryGetContext()?.trustLevel ?? "guest",
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,

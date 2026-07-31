@@ -392,12 +392,12 @@ describe("buildSenderAuthorityOverclaimReply", () => {
 
   it("uses an operator-provided open-locale message", () => {
     const catalog = catalogFromLocalePacks({
-      "x-agent": {
+      "en-x-agent": {
         sender_authority_overclaim: "localized authority boundary",
       },
     });
 
-    expect(buildSenderAuthorityOverclaimReply("x-agent", catalog))
+    expect(buildSenderAuthorityOverclaimReply("en-x-agent", catalog))
       .toBe("localized authority boundary");
   });
 });

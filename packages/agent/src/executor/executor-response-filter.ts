@@ -304,6 +304,142 @@ export function enforceProviderModelFailureGrounding(params: {
   };
 }
 
+export interface SenderAuthorityGroundingGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "sender_authority_overclaim";
+}
+
+const SELF_AUTHORITY_REQUEST_TERMS = [
+  "access",
+  "admin",
+  "approval",
+  "approvals",
+  "authorize",
+  "authorization",
+  "capabilities",
+  "capability",
+  "change",
+  "configuration",
+  "need",
+  "permission",
+  "permissions",
+  "sandbox",
+  "settings",
+  "skill",
+  "skills",
+  "tools",
+  "trust",
+];
+
+const ADMINISTRATIVE_SELF_CHANGE_PHRASES = [
+  "agent configuration",
+  "connect to external services",
+  "connecting external services",
+  "connecting to external services",
+  "core permissions",
+  "current authorized scope",
+  "install skills",
+  "installed skills",
+  "installing skills",
+  "my access",
+  "my capabilities",
+  "my current permissions",
+  "my own access",
+  "my own permissions",
+  "my permissions",
+  "system settings",
+  "system-level",
+  "system level",
+  "trust level",
+];
+
+const SENDER_AUTHORIZATION_CLAIM_PHRASES = [
+  "your approval",
+  "your authorization",
+  "your direct approval",
+  "your direct authorization",
+  "your permission",
+];
+
+const SENDER_GRANT_VERBS = [
+  " approve ",
+  " authorize ",
+  " give ",
+  " grant ",
+  " provide ",
+];
+
+const AUTHORITY_OBJECT_PHRASES = [
+  " access ",
+  " approval ",
+  " approvals ",
+  " authorization ",
+  " permission ",
+  " permissions ",
+];
+
+/**
+ * Replace a below-admin self-management answer that tells the current sender
+ * they can grant admin-only authority.
+ *
+ * The gate is deliberately narrower than a general permissions classifier:
+ * both the request and response must concern the agent's own administrative
+ * access, and the response must attribute the grant to the current sender.
+ * Ordinary user approvals such as sending a message therefore remain model
+ * authored.
+ */
+export function enforceSenderAuthorityGrounding(params: {
+  request: string;
+  response: string;
+  senderTrust: string;
+  honestResponse: string;
+}): SenderAuthorityGroundingGuardResult {
+  if (params.senderTrust === "admin") {
+    return { response: params.response, corrected: false };
+  }
+
+  const requestTokens = new Set(
+    params.request.toLocaleLowerCase().match(/[a-z0-9]+/gu) ?? [],
+  );
+  const referencesAgent = containsAnyToken(
+    requestTokens,
+    ["u", "ur", "you", "your", "yourself"],
+  );
+  const concernsAuthority = containsAnyToken(
+    requestTokens,
+    SELF_AUTHORITY_REQUEST_TERMS,
+  );
+  if (!referencesAgent || !concernsAuthority) {
+    return { response: params.response, corrected: false };
+  }
+
+  const response = normalizedEvidenceText(params.response);
+  const describesAdministrativeSelfChange = ADMINISTRATIVE_SELF_CHANGE_PHRASES.some(
+    (phrase) => response.includes(phrase),
+  );
+  if (!describesAdministrativeSelfChange) {
+    return { response: params.response, corrected: false };
+  }
+
+  const directlyAttributesAuthorization = SENDER_AUTHORIZATION_CLAIM_PHRASES.some(
+    (phrase) => response.includes(phrase),
+  );
+  const saysSenderCanGrant =
+    containsEvidencePhrase(response, [" you ", " you'd ", " you would "])
+    && containsEvidencePhrase(response, SENDER_GRANT_VERBS)
+    && containsEvidencePhrase(response, AUTHORITY_OBJECT_PHRASES);
+  if (!directlyAttributesAuthorization && !saysSenderCanGrant) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "sender_authority_overclaim",
+  };
+}
+
 export interface ActiveModelSelfStatusGuardResult {
   response: string;
   corrected: boolean;

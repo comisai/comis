@@ -990,7 +990,7 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/buildSenderAuthorityOverclaimReply\(/);
     expect(stripped).toMatch(/response\.sender_authority_grounding_guard/);
     expect(stripped.indexOf("enforceSenderAuthorityGrounding("))
-      .toBeLessThan(stripped.indexOf("const finishReasonStr"));
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {

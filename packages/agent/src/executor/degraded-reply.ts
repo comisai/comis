@@ -34,6 +34,7 @@ import {
   selectPersistentActionEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
+  selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
   selectResponseLocaleUnavailableReply,
   type LocaleCatalog,
@@ -228,6 +229,14 @@ export function buildProviderRequiresModelReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectProviderRequiresModelReply(language, localeCatalog);
+}
+
+/** Honest replacement when the model assigns admin authority to a below-admin sender. */
+export function buildSenderAuthorityOverclaimReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectSenderAuthorityOverclaimReply(language, localeCatalog);
 }
 
 /** Honest replacement after the bounded locale repair still violates policy. */

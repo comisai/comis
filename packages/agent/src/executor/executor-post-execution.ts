@@ -37,6 +37,7 @@ import {
   // finds a redaction.
   validateMemoryWrite,
   type ResponseLocalePolicy,
+  type UserTrustLevel,
   type AgentExecutionFinishReason,
   type ExecutionSideEffectSummary,
   createConversationRef,
@@ -130,12 +131,13 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
+  enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
   isTrustedBackgroundCompletionEnvelope,
@@ -265,6 +267,8 @@ export interface PostExecutionParams {
   msg: NormalizedMessage;
   /** Exact typed response-locale decision used for this turn. */
   responseLocalePolicy: ResponseLocalePolicy;
+  /** Current request sender trust captured at the execution boundary. */
+  senderTrust: UserTrustLevel;
   sessionKey: SessionKey;
   formattedKey: string;
   /** Conversation authority used for active-run deregistration. */
@@ -1529,6 +1533,40 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "unknown locale pack message id ignored",
     );
   });
+  const senderAuthorityGrounding = enforceSenderAuthorityGrounding({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    senderTrust: params.senderTrust,
+    honestResponse: buildSenderAuthorityOverclaimReply(replyLanguage, localeCatalog),
+  });
+  if (senderAuthorityGrounding.corrected) {
+    result.response = senderAuthorityGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        senderTrust: params.senderTrust,
+        errorKind: "validation" as const,
+        hint:
+          "The model assigned admin-only authority to the current below-admin sender; "
+          + "inspect sender trust resolution, recalled skills, and the deferred tool surface in comis explain.",
+      },
+      "Sender self-authority overclaim replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.sender_authority_grounding_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "sender_authority",
+        reason: senderAuthorityGrounding.reason,
+        senderTrust: params.senderTrust,
+        requiredTrust: "admin",
+      },
+    });
+  }
   const delegationEvidence = enforceCurrentTurnDelegationEvidence({
     request: msg.text ?? "",
     response: result.response ?? "",
