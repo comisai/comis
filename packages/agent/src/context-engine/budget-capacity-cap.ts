@@ -146,7 +146,7 @@ export function computeTokenBudgetForProfile(
  * safety net is attributed to the small knob — it mirrors that knob's default
  * and only non-schema callers can reach it.
  */
-function resolveEffectiveCap(
+export function resolveEffectiveCap(
   capabilityClass: string,
   effectiveContextCapSmall: number | undefined,
   effectiveContextCapNano: number | undefined,

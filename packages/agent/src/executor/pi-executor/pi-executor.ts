@@ -143,7 +143,7 @@ import { diagnoseUnresolvedModel } from "../model-resolution-hint.js";
 import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
-import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
+import { resolveEffectiveCap } from "../../context-engine/budget-capacity-cap.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { scriptTokenFactor } from "@comis/core";
 import { resolveProviderCapabilities } from "../../provider/capabilities.js";
@@ -607,9 +607,10 @@ export function createPiExecutor(
       // large quantized ollama model as "mid" for context budget + security purposes).
 
       // Reconcile effective context window before resolveModelProfile.
-      // capabilityCap is derived from deps.providerCapabilities?.capabilityClass (pre-resolver,
-      // config-side value) — NOT from modelProfile.capabilityClass, which does not exist yet
-      // (resolveModelProfile is what creates it). Using modelProfile here would be circular.
+      // capabilityCap is derived from the explicit config-side capabilityClass
+      // before resolveModelProfile creates the model profile. The numeric cap
+      // comes from the same contextEngine.budget resolver used downstream so
+      // operator overrides and 0=uncapped cannot diverge across the two stages.
       // When no explicit capabilityClass is present (e.g. plain anthropic/openai
       // provider with no providers.entries block), treat the cap as Infinity (no constraint).
       // Only apply a class-derived cap when the operator explicitly set capabilityClass.
@@ -623,7 +624,11 @@ export function createPiExecutor(
       // undefined → the provider-family heuristic (byte-identical).
       const explicitClass = config.capabilityClass ?? deps.providerCapabilities?.capabilityClass;
       const capabilityCap = explicitClass != null
-        ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
+        ? resolveEffectiveCap(
+          explicitClass,
+          config.contextEngine?.budget?.effectiveContextCapSmall,
+          config.contextEngine?.budget?.effectiveContextCapNano,
+        ).cap
         : Infinity;
       // The probed served window binds ONLY
       // executions on the provider it was probed from. deps.servedContextWindow
