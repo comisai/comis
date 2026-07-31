@@ -146,6 +146,75 @@ describe("createBeforeToolCallGuard", () => {
     circuitBreaker: { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} },
   });
 
+  it("blocks substitution of an explicit model identifier before agent mutation", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "use gpt-turbo-9",
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-4-turbo" },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("gpt-turbo-9"),
+    });
+  });
+
+  it("allows an exact explicit model identifier and a qualitative model choice", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const exactGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "use gpt-turbo-9",
+    ]);
+    const qualitativeGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "pick something cheaper and switch to it",
+    ]);
+
+    await expect(exactGuard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-turbo-9" },
+      },
+    })).resolves.toBeUndefined();
+    await expect(qualitativeGuard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-4.1-nano" },
+      },
+    })).resolves.toBeUndefined();
+  });
+
   it("short-circuits a repeat idempotent read with the steer surfaced as the block reason", async () => {
     const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
     const detector = createTurnLoopDetector();

@@ -769,6 +769,47 @@ describe("createAgentHandlers", () => {
       expect(result.config.name).toBe("Test Agent");
     });
 
+    it("rejects a model-only update outside the provider catalog without mutating state", async () => {
+      const persistDeps = makePersistDeps();
+      const catalogModels = [{
+        provider: "openai",
+        modelId: "gpt-4.1-nano",
+      }];
+      const deps = makeDeps({
+        agents: {
+          default: {
+            name: "Test Agent",
+            provider: "openai",
+            model: "gpt-4.1-nano",
+            maxSteps: 25,
+          } as AgentHandlerDeps["agents"][string],
+        },
+        modelCatalog: {
+          get: (provider: string, modelId: string) =>
+            catalogModels.find((entry) =>
+              entry.provider === provider && entry.modelId === modelId,
+            ),
+          getByProvider: (provider: string) =>
+            catalogModels.filter((entry) => entry.provider === provider),
+          getAll: () => catalogModels,
+          getProviders: () => ["openai"],
+          loadStatic: () => {},
+          mergeScanned: () => {},
+        } as unknown as AgentHandlerDeps["modelCatalog"],
+        persistDeps,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(handlers["agents.update"]!({
+        agentId: "default",
+        config: { model: "gpt-turbo-9" },
+        _trustLevel: "admin",
+      })).rejects.toThrow(/gpt-turbo-9/);
+
+      expect(deps.agents["default"]!.model).toBe("gpt-4.1-nano");
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
     it("deep-merges skills.builtinTools without resetting existing toggles", async () => {
       const deps = makeDeps();
       const handlers = createAgentHandlers(deps);
