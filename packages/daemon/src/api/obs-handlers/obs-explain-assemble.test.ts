@@ -113,6 +113,33 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+describe("assembleIncidentReport — request-relevant tool selection", () => {
+  it("surfaces selected tools when a turn completed without invoking one", () => {
+    const selected = ["mcp_manage", "gateway"];
+    const signals = makeSignals({
+      requestRelevantToolNames: selected,
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { requestRelevantToolNames?: string[] })
+        .requestRelevantToolNames,
+    ).toEqual(selected);
+    expect(
+      (IncidentReportSchema.parse(report) as unknown as {
+        requestRelevantToolNames?: string[];
+      }).requestRelevantToolNames,
+    ).toEqual(selected);
+  });
+});
+
 describe("assembleIncidentReport — queue disposition timeline", () => {
   it("surfaces queue and steering decisions on the one-call explain report", () => {
     const queueTimeline = [

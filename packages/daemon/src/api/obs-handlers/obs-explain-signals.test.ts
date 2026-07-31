@@ -114,6 +114,28 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
+describe("toIncidentSignals — request-relevant tool selection", () => {
+  it("retains the latest prompt tool selection needed to diagnose a no-call turn", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        requestRelevantToolNames: ["old_tool"],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+      event("prompt.submitted", 2, {
+        requestRelevantToolNames: ["mcp_manage", "gateway"],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as { requestRelevantToolNames?: string[] })
+        .requestRelevantToolNames,
+    ).toEqual(["mcp_manage", "gateway"]);
+  });
+});
+
 describe("toIncidentSignals — queue disposition timeline", () => {
   it("retains bounded queue and steering decisions needed to diagnose interruption handling", () => {
     const signals = toIncidentSignals([
