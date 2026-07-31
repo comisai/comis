@@ -120,6 +120,11 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     sessionKey: "tenant-a:user_a:chan-a",
     conversationRef: conversationRef.value,
     agentId: deps.agentId,
+    workspacePolicySnapshot: {
+      agentId: deps.agentId,
+      sections: [],
+      combinedHash: computeWorkspacePolicyCombinedHash([]),
+    },
     msg: { channelType: "test", channelId: "chan-a" },
     sm: { fileEntries: [] },
     session: {

@@ -68,6 +68,8 @@ const VALID_LEVELS: readonly TLevel[] = ["off", "minimal", "low", "medium", "hig
  *                            budget.windowCapSource). When the effective window was
  *                            clamped by a capability-class cap, the exhaustion throw
  *                            and WARN name the raw window and the exact config knob.
+ * @param protectedAdditions - Non-evictable context injected after assembly, such as
+ *                            one-shot post-compaction rehydration messages.
  *
  * Throws ContextExhaustionError if infeasible even at the thinking-level floor.
  * Emits onEffectiveWindow, onThinkingDownshifted, onAssembledInputTokens callbacks as side effects.
@@ -88,6 +90,7 @@ export function runPreflightFitCheck(
     originatingRequestRetained?: boolean;
     freshTailTrimmedCount?: number;
   },
+  protectedAdditions: AgentMessage[] = [],
 ): number {
   // Emit effectiveWindow callback so the caller can clamp max_tokens dynamically.
   deps.onEffectiveWindow?.(effectiveWindow);
@@ -122,6 +125,9 @@ export function runPreflightFitCheck(
   // (no estimator gap → no fudge factor needed in the bound).
   const freshTailMsgTokens = freshTail.map((m) => factoredMessageTokens(m));
   const freshTailTokens = freshTailMsgTokens.reduce((s, t) => s + t, 0);
+  const protectedAdditionMsgTokens = protectedAdditions.map((m) => factoredMessageTokens(m));
+  const protectedContextTokens =
+    freshTailTokens + protectedAdditionMsgTokens.reduce((s, t) => s + t, 0);
   // Count the FULL SDK prompt, not just history+freshTail. The
   // dominant term is the system prompt + tool schemas (S = getSystemTokensEstimate)
   // — the SAME value the eviction budget subtracts (lcd-assembler `S`). Omitting
@@ -134,7 +140,8 @@ export function runPreflightFitCheck(
   // Save the ORIGINAL assembled count (what is actually dispatched to the LLM)
   // BEFORE any simulation in step (a). onAssembledInputTokens must always report this
   // value — NOT the simulated undercount from the security-pin harder-eviction pass.
-  const originalAssembledInputTokens = systemTokens + budgetedTokens + freshTailTokens;
+  const originalAssembledInputTokens =
+    systemTokens + budgetedTokens + protectedContextTokens;
   let assembledInputTokens = originalAssembledInputTokens;
 
   // Emit the budget equation once per fit check —
@@ -154,7 +161,7 @@ export function runPreflightFitCheck(
       rawContextWindowTokens: capInfo?.rawContextWindowTokens ?? effectiveWindow,
       windowCapSource: capInfo?.windowCapSource ?? "none",
       systemTokens,
-      freshTailTokens,
+      freshTailTokens: protectedContextTokens,
       budgetedHistoryTokens: budgetedTokens,
       keptCount,
       assembledInputTokens: assembled,
@@ -206,14 +213,18 @@ export function runPreflightFitCheck(
     const pinnedTokens = pinnedItems.reduce((s, b) => s + b.tokens, 0);
     // S (system+tools) is non-evictable — reserve it in the harder-eviction
     // budget so history is evicted against the room that ACTUALLY remains.
-    const tighterBudget = Math.max(0, headroomBound - systemTokens - pinnedTokens - freshTailTokens);
+    const tighterBudget = Math.max(
+      0,
+      headroomBound - systemTokens - pinnedTokens - protectedContextTokens,
+    );
     const hardEvictedMsgs = evictHistoryUnderBudget(nonPinnedItems, tighterBudget);
     // Recompute kept tokens: the hardEvictedMsgs count tells us how many nonPinned items
     // were kept (newest keptNonPinned items from nonPinnedItems).
     const keptNonPinned = hardEvictedMsgs.length;
     const keptNonPinnedStart = Math.max(0, nonPinnedItems.length - keptNonPinned);
     const keptNonPinnedTokens = nonPinnedItems.slice(keptNonPinnedStart).reduce((s, b) => s + b.tokens, 0);
-    assembledInputTokens = systemTokens + keptNonPinnedTokens + pinnedTokens + freshTailTokens;
+    assembledInputTokens =
+      systemTokens + keptNonPinnedTokens + pinnedTokens + protectedContextTokens;
 
     // (c) Down-shift thinking level if reasoningStyle === "native" and still over headroomBound.
     if (assembledInputTokens > headroomBound && reasoningStyle === "native") {
@@ -292,6 +303,7 @@ export function runPreflightFitCheck(
           : lastUserIdx >= 0 && lastUserTokens > singleItemBound
             ? "oversized_input"
             : freshTailMsgTokens.some((t) => t > singleItemBound) ||
+                protectedAdditionMsgTokens.some((t) => t > singleItemBound) ||
                 evictable.some((b) => b.tokens > singleItemBound)
               ? "oversized_history_message"
               : freshTailDominatedByInput
@@ -308,9 +320,10 @@ export function runPreflightFitCheck(
           sessionKey: deps.sessionKey,
           assembledInputTokens,
           systemTokens,
-          freshTailTokens,
+          freshTailTokens: protectedContextTokens,
           budgetedHistoryTokens: budgetedTokens,
-          finalHistoryTokens: assembledInputTokens - systemTokens - freshTailTokens,
+          finalHistoryTokens:
+            assembledInputTokens - systemTokens - protectedContextTokens,
           evictableCount: evictable.length,
           effectiveWindow,
           exhaustionCause: cause,

@@ -96,6 +96,7 @@ import { FAIL_CLOSED_PROFILE } from "../executor/model-profile.js";
 import { runPreflightFitCheck } from "./lcd-preflight.js";
 import { computeOutputHeadroom } from "./output-headroom.js";
 import { summaryRefToMessage } from "./lcd-summary-render.js";
+import { createRehydrationLayer } from "./rehydration.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import { evictUnderArbiter, emitEvictedEvent } from "./lcd-arbiter-seam.js";
 import {
@@ -122,6 +123,9 @@ export function createLcdContextEngine(
   const store: ContextStorePort = deps.contextStore;
   const conversationRef = deps.conversationRef;
   const now = (): number => deps.clock.now();
+  const rehydrationLayer = deps.getRehydrationDeps === undefined
+    ? undefined
+    : createRehydrationLayer(deps.getRehydrationDeps());
 
   // Build the per-(conversation, agent, tenant) read scope ONCE.
   // FAIL CLOSED (mirrors the store's empty-column guard): if agentId or tenantId
@@ -603,10 +607,23 @@ export function createLcdContextEngine(
         });
       }
 
-      // 5. NORMALIZE assistant string content to array blocks.
-      const normalized = assembled.map(normalizeAssistantContent);
+      // 5. REHYDRATE once per structural compaction identity. The layer receives
+      // the actual pre-flight residual, so recovery context is removed honestly
+      // if it cannot fit alongside the assembled conversation.
+      const rehydrated = rehydrationLayer === undefined
+        ? assembled
+        : await rehydrationLayer.apply(assembled, {
+            ...budget,
+            availableHistoryTokens: preflightHistoryResidual,
+          });
+      const rehydrationMessages = rehydrated.filter(
+        (message) => !assembled.includes(message),
+      );
 
-      // 6. TRANSCRIPT REPAIR — the FINAL step. Provider-valid pairing on
+      // 6. NORMALIZE assistant string content to array blocks.
+      const normalized = rehydrated.map(normalizeAssistantContent);
+
+      // 7. TRANSCRIPT REPAIR — the FINAL step. Provider-valid pairing on
       //    ANY input: out-of-order results re-placed, unpaired calls get a marked
       //    synthesized result, orphan/duplicate results dropped.
       const repaired = sanitizeToolUseResultPairing(normalized, now());
@@ -641,6 +658,7 @@ export function createLcdContextEngine(
           originatingRequestRetained,
           freshTailTrimmedCount,
         },
+        rehydrationMessages,
       );
 
       deps.logger.info(

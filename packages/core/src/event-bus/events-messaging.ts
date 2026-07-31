@@ -470,13 +470,14 @@ export interface MessagingEvents {
     windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "capabilityClass" | "none";
     /** S: system prompt + tool schemas estimate. */
     systemTokens: number;
-    /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
+    /** Estimated non-evictable turn-local tokens: fresh tail plus any one-shot
+     * post-compaction rehydration messages. */
     freshTailTokens: number;
     /** Token sum of the history items kept by budget eviction. */
     budgetedHistoryTokens: number;
     /** Count of history items kept by budget eviction (0 = model sees no history). */
     keptCount: number;
-    /** S + kept history + fresh tail — what is actually dispatched to the LLM. */
+    /** S + kept history + non-evictable turn-local context — what is dispatched. */
     assembledInputTokens: number;
     /** Output headroom reserved at the final effective thinking level. */
     outputHeadroom: number;

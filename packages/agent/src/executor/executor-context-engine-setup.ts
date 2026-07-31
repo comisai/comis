@@ -19,8 +19,8 @@
 
 import {
   ContextEngineConfigSchema,
-  safePath,
   type PerAgentConfig,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { createContextEngine, type ContextEngine } from "../context-engine/index.js";
@@ -54,7 +54,7 @@ import {
 } from "./executor-session-state.js";
 import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
 import type { ErrorKind } from "@comis/core";
-import { readFileSync } from "node:fs";
+import { workspacePolicyContent } from "./prompt-assembly-shared.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,6 +119,9 @@ export interface ContextEngineSetupParams {
   tenantId: string;
   /** Agent authority bound to the selected executor instance. */
   agentId: string;
+  /** Immutable operator policy captured at turn preparation. Rehydration reads
+   * this exact snapshot instead of rereading mutable workspace files. */
+  workspacePolicySnapshot: WorkspacePolicySnapshot;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
   session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
@@ -664,16 +667,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // Rehydration deps
     getRehydrationDeps: () => ({
       logger: deps.logger,
-      getAgentsMdContent: () => {
-        // Read AGENTS.md from workspace dir synchronously.
-        // Only called after compaction (rare event), so disk read is acceptable.
-        try {
-          const agentsPath = safePath(deps.workspaceDir, "AGENTS.md");
-          return readFileSync(agentsPath, "utf-8"); // eslint-disable-line security/detect-non-literal-fs-filename
-        } catch {
-          return "";
-        }
-      },
+      getAgentsMdContent: () =>
+        workspacePolicyContent(params.workspacePolicySnapshot, "AGENTS.md") ?? "",
       postCompactionSections: config.session?.compaction?.postCompactionSections ?? ["Session Startup", "Red Lines"],
       getRecentFiles: () => {
         // Extract recently-accessed files from session file entries.

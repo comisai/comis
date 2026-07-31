@@ -1937,6 +1937,7 @@ async function runSessionLocked(
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
     // The selected executor owns the agent authority used by both LCD reads and writes.
     agentId: deps.agentId,
+    workspacePolicySnapshot,
     msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
