@@ -426,6 +426,86 @@ describe("session compaction thresholds", () => {
     );
   });
 
+  it("multi-chunk soft flush accepts a reserve-bounded expansion of a short tail chunk", async () => {
+    appendHistory(store, 20, 40);
+    const state = makeState();
+    const { bus } = makeEventBus();
+    const memoryStore = vi.fn(async (entry: Record<string, unknown>) =>
+      ok({
+        ...entry,
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        visibility: { kind: "conversation" },
+      }),
+    );
+    const mergedMemory = "One bounded memory preserves all chunk facts.";
+    const summarize = vi.fn(async (messages: unknown[]) => {
+      const rendered = JSON.stringify(messages);
+      if (rendered.includes("Tail chunk facts")) return mergedMemory;
+      if (rendered.includes("assistant answer 19")) {
+        return "Tail chunk facts remain durable. ".repeat(40);
+      }
+      return "Chunk summary.";
+    });
+    const run = await loadTrigger();
+
+    const result = unwrap(await run({
+      store,
+      scope,
+      sessionKey,
+      formattedKey: scope.sessionKey,
+      sessionCompaction: {
+        softThresholdRatio: 0.75,
+        hardThresholdRatio: 0.9,
+        chunkMaxChars: 150,
+        chunkOverlapMessages: 0,
+        chunkMergeSummaries: true,
+        reserveTokens: 1_200,
+        keepRecentTokens: 32_768,
+        postCompactionSections: ["Session Startup", "Red Lines"],
+      },
+      contextEngine: { contextThreshold: 0.95 },
+      budgetWindowTokens: 1_000,
+      getSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize,
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
+      getFlushSummarizerDeps: () => ({
+        logger: createMockLogger(),
+        summarize,
+        getModel: () => ({
+          provider: "anthropic",
+          contextWindow: 200_000,
+          reasoning: true,
+        }),
+        getApiKey: async () => "test-key",
+      }),
+      memoryPort: { store: memoryStore },
+      memoryScope: {},
+      state,
+      now: 9_300,
+      logger: createMockLogger(),
+      eventBus: bus,
+    }));
+
+    expect(result).toMatchObject({
+      trigger: "soft",
+      memoriesWritten: 1,
+      summariesCreated: 0,
+      success: true,
+    });
+    expect(memoryStore).toHaveBeenCalledWith(
+      expect.objectContaining({ content: mergedMemory }),
+      {},
+    );
+  });
+
   it("hard crossing flushes memory and trims through the LCD leaf authority", async () => {
     appendHistory(store, 40, 25); // 1000 / 1000 = 1.0
     const beforeCount = store.getContextItems(scope).length;
