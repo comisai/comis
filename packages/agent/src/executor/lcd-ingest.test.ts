@@ -582,10 +582,11 @@ function makeStoreWithPersistedCount(
     append(input: AppendMessageInput): void {
       appended.push(input);
     },
-    // The assembler/ingest both read `getMessages(id).length` as the high-water
-    // mark; return that many placeholder rows so .length is the mark.
+    // Return contiguous placeholder sequences so the durable maximum is the
+    // expected next-sequence high-water mark.
     getMessages() {
-      return new Array(persistedCount).fill(null) as unknown as ReturnType<ContextStorePort["getMessages"]>;
+      return Array.from({ length: persistedCount }, (_, seq) => ({ seq })) as unknown as
+        ReturnType<ContextStorePort["getMessages"]>;
     },
     getIngestCursor(_scope: ContextStoreScope) {
       return cursor;
