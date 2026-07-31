@@ -23,6 +23,19 @@ function makeCompactionSummary(text = "Compacted conversation"): AgentMessage {
   } as unknown as AgentMessage;
 }
 
+function makeLcdSummary(text = "Lossless context summary"): AgentMessage {
+  return {
+    role: "user",
+    content: [{
+      type: "text",
+      text:
+        "[LCD summary — depth=0, descendant_count=24, 2026-07-01, trust=untrusted]\n"
+        + `${text}\n`
+        + "Expand for details about: the 24 compressed message(s) at depth 0 spanning 2026-07-01.",
+    }],
+  } as unknown as AgentMessage;
+}
+
 function makeUserMsg(text: string): AgentMessage {
   return {
     role: "user",
@@ -166,6 +179,27 @@ describe("createRehydrationLayer", () => {
     // End should NOT contain AGENTS.md or files
     expect(endText).not.toContain("[Critical instructions from AGENTS.md]");
     expect(endText).not.toContain("[File:");
+  });
+
+  it("2b) LCD summary triggers configured workspace-section rehydration", async () => {
+    const onRehydrated = vi.fn();
+    const { deps } = createMockDeps({ onRehydrated });
+    const layer = createRehydrationLayer(deps);
+    const messages = [
+      makeLcdSummary(),
+      makeUserMsg("continue"),
+    ];
+
+    const result = await layer.apply(messages, largeBudget);
+
+    expect(result).toHaveLength(4);
+    expect(result[0]).toBe(messages[0]);
+    expect(getMessageText(result[1]!)).toContain("Critical startup rules here.");
+    expect(getMessageText(result[1]!)).toContain("Never do these things.");
+    expect(getMessageText(result[3]!)).toContain("[Resume instruction]");
+    expect(onRehydrated).toHaveBeenCalledWith(expect.objectContaining({
+      sectionsInjected: 2,
+    }));
   });
 
   it("3) AGENTS.md sections extracted and truncated to 3K", async () => {
