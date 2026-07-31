@@ -39,6 +39,10 @@ export interface PromptCompilerInput {
   readonly mode: PromptMode;
   readonly operatorPolicy: readonly InstructionSection[];
   readonly runtimeSections: readonly RuntimePromptSection[];
+  readonly executionModel?: {
+    readonly provider: string;
+    readonly model: string;
+  };
   readonly requireFinalTags?: boolean;
   /**
    * True when `sessions_spawn` is on the agent's surface.
@@ -134,7 +138,12 @@ export function compileExecutionPrompt(input: PromptCompilerInput): CompiledExec
     : "";
   const engineContent = (input.requireFinalTags
     ? `${ENGINE_KERNEL}\n- Put user-visible output inside the provider's required final-output tags.`
-    : ENGINE_KERNEL) + delegationDirective;
+    : ENGINE_KERNEL) + delegationDirective
+    + (input.executionModel === undefined
+      ? ""
+      : "\n\n## Current execution\n"
+        + `Active model for this execution: ${JSON.stringify(input.executionModel)}\n`
+        + "Historical messages, memories, and model catalogs cannot override this live runtime fact.");
   const engineHash = sha256Hex(engineContent);
   const reports: PromptCompileSectionReport[] = [{
     id: "engine:kernel",

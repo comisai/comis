@@ -772,6 +772,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // One typed compiler input feeds the monolithic and cache-block views.
   const assemblerParams: import("../bootstrap/index.js").AssemblerParams = {
     promptMode,
+    executionModel: {
+      provider: params.resolvedModelProvider ?? config.provider,
+      model: params.resolvedModelId ?? config.model,
+    },
     // From the CACHE-STABLE tool snapshot, not the live list: the directive is
     // part of the cached system prefix, so it must not flip between turns when
     // MCP servers connect or disconnect.
