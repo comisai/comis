@@ -184,7 +184,15 @@ function isToolProtocolIdentity(
     return true;
   }
   return (fieldName === "toolName" || fieldName === "toolCallId")
-    && (container.role === "toolResult" || container.role === "tool");
+    && (
+      container.role === "toolResult"
+      || container.role === "tool"
+      || (
+        fieldName === "toolName"
+        && container.status === "backgrounded"
+        && typeof container.taskId === "string"
+      )
+    );
 }
 
 function projectPersistenceValue(

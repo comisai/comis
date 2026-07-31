@@ -36,7 +36,8 @@ describe("reconcilePendingBackgroundTurn", () => {
     });
 
     expect(result.finishReason).toBe("background_pending");
-    expect(result.response).toContain("mcp__large_report");
+    expect(result.response).toContain("large report");
+    expect(result.response).not.toContain("mcp__large_report");
     expect(result.response).toContain("task-a");
     expect(result.response).not.toContain("Tel Aviv");
   });

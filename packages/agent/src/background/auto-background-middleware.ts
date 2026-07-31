@@ -16,6 +16,7 @@ import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
+import { backgroundToolLabel } from "./background-tool-label.js";
 
 /**
  * Tool definition interface matching pi-agent-core ToolDefinition.
@@ -215,8 +216,9 @@ export function wrapToolForAutoBackground(
       // produces a non-empty toolResult message. Returning a string here
       // collapses to `content: undefined` and triggers the silent-LLM-failure
       // cascade (see AGENTS.md / auto-background-middleware.test.ts invariant).
+      const toolLabel = backgroundToolLabel(tool.name);
       const placeholderText =
-        `Tool "${tool.name}" is taking longer than expected and has been moved to the background. ` +
+        `Tool "${toolLabel}" is taking longer than expected and has been moved to the background. ` +
         `Task ID: ${taskId}. Automatic completion re-entry will resume this conversation with the result. ` +
         `Do not call background_tasks or sleep to poll it; end this turn now without finalizing an answer or ` +
         `substituting unrelated earlier data.`;

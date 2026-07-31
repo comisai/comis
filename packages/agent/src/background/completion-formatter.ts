@@ -20,6 +20,7 @@
 
 import type { BackgroundTask } from "./background-task-types.js";
 import { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
+import { backgroundToolLabel } from "./background-tool-label.js";
 
 /** Re-export so consumers (tests, completion runner) can assert byte-identity. */
 export { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
@@ -57,7 +58,7 @@ const RESTART_RECOVERY_ERROR = "Daemon restarted while task was running";
 export function formatCompletionAnnouncement(task: BackgroundTask): string {
   const isFailure = task.status === "failed" || task.status === "cancelled";
   const headerPrefix = isFailure ? "Background Task Failed" : "Background Task";
-  const header = `[${headerPrefix}: ${task.toolName}]`;
+  const header = `[${headerPrefix}: ${backgroundToolLabel(task.toolName)}]`;
 
   let body: string;
   if (isFailure) {
