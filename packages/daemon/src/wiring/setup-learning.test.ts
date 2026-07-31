@@ -2481,7 +2481,10 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
       learningSkillsEnabled: over?.learningSkillsEnabled ?? (() => true),
       learningSkillsPromoteAt: () => 3,
     });
-    const corr = (sessionId: string) =>
+    const corr = (
+      sessionId: string,
+      overrides: Record<string, unknown> = {},
+    ) =>
       bus.emit("learning:correction_observed", {
         agentId: AGENT,
         tenantId: "tenant-x",
@@ -2489,8 +2492,16 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
         trajectoryId: TRACE,
         confidence: 0.6,
         timestamp: NOW,
-      });
-    return { bus, resolve, demoteByName: skills.demoteByName, corr, logger };
+        ...overrides,
+      } as never);
+    return {
+      bus,
+      resolve,
+      promoteByName: skills.promoteByName,
+      demoteByName: skills.demoteByName,
+      corr,
+      logger,
+    };
   }
 
   it("resolves the PRIOR trajectory to recover its credited skills (the listener runs)", async () => {
@@ -2514,6 +2525,31 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
     await flushMicrotasks();
     expect(demoteByName).toHaveBeenCalled();
     expect(demoteByName.mock.calls[0]![0]).toBe("skill-ttp");
+  });
+
+  it("one authoritative owner correction immediately demotes the invalidated skill", async () => {
+    const { corr, demoteByName } = wireCorrection();
+
+    corr("sess-owner", { authoritative: true });
+    await flushMicrotasks();
+
+    expect(demoteByName).toHaveBeenCalledTimes(1);
+    expect(demoteByName.mock.calls[0]![0]).toBe("skill-ttp");
+  });
+
+  it("does not promote an invalidated skill from the correction turn's continuation credit", async () => {
+    const { bus, corr, promoteByName } = wireCorrection();
+    corr("sess-owner", {
+      trajectoryId: "trace-prior-turn",
+      correctionTrajectoryId: TRACE,
+      authoritative: true,
+    });
+    await flushMicrotasks();
+
+    withCtx(() => bus.emit("graph:completed", graphPayload({ status: "completed" })));
+    await flushMicrotasks();
+
+    expect(promoteByName).not.toHaveBeenCalled();
   });
 
   it("byte-identity: learningSkillsEnabled=false → never resolves / never demotes", async () => {
