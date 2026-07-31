@@ -296,6 +296,57 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
     expect(result.mergedCustomTools.length).toBeGreaterThan(0);
   });
 
+  it("places immutable operator tool notes on the MCP management schema", async () => {
+    const operatorToolNotes = [
+      "# Connection candidates",
+      "- name: example-secondary",
+      "- command: node",
+      "- args: example-server.mjs, second",
+    ].join("\n");
+    const customTools = [
+      makeTool("mcp_manage", "Manage MCP servers"),
+      makeTool("read", "Read files"),
+    ] as unknown[];
+    mocks.applyToolDeferralMock.mockImplementationOnce((activeTools: unknown[]) => ({
+      activeTools,
+      discoveredTools: [],
+      deferredEntries: [],
+      deferredNames: [],
+      requestRelevantToolNames: ["mcp_manage"],
+      discoverTool: undefined,
+    }));
+
+    const result = await assembleTools(makeParams({
+      deps: makeDeps({
+        customTools: customTools as never,
+        workspacePolicySnapshot: {
+          agentId: "agent-1",
+          sections: [{
+            id: "workspace:tools",
+            sourceKind: "operator",
+            trust: "trusted",
+            stability: "stable",
+            content: operatorToolNotes,
+            contentHash: "a".repeat(64),
+            maxChars: 20_000,
+          }],
+          combinedHash: "b".repeat(64),
+        },
+      }),
+    }));
+
+    const passedTools = result.mergedCustomTools as Array<{
+      name: string;
+      description: string;
+    }>;
+    expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
+      .toContain(operatorToolNotes);
+    expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
+      .toMatch(/trusted operator policy/iu);
+    expect(passedTools.find((tool) => tool.name === "read")?.description)
+      .toBe("Read files");
+  });
+
   it("reserves system-token budget for the POST-deferral active tools, not the full pre-deferral set", async () => {
     // Live finding: cachedSystemTokensEstimate was computed at
     // ÷3.5 over mergedCustomTools BEFORE applyToolDeferral ran, so a small-class
