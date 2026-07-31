@@ -1125,13 +1125,12 @@ export function createDiscoverTool(
    * Appends searchHint from metadata registry for richer keyword matching.
    * Falls back to display text only when no hint is registered.
    */
-  function resolveBM25Text(tool: ToolDefinition): string {
-    const base = resolveToolDescription(tool);
-    const meta = getToolMetadata(tool.name);
+  function resolveBM25Text(entry: DeferredToolEntry): string {
+    const meta = getToolMetadata(entry.name);
     if (meta?.searchHint) {
-      return base + " " + meta.searchHint;
+      return entry.description + " " + meta.searchHint;
     }
-    return base;
+    return entry.description;
   }
 
   return {
@@ -1175,9 +1174,9 @@ export function createDiscoverTool(
       }
 
       // ---------- Path 2: BM25 (+ optional hybrid) fallback ----------
-      const documents: BM25Document[] = deferredTools.map(t => ({
-        name: t.name,
-        text: resolveBM25Text(t),
+      const documents: BM25Document[] = deferredEntries.map(entry => ({
+        name: entry.name,
+        text: resolveBM25Text(entry),
       }));
 
       const rankedRaw = bm25Score(query, documents);
