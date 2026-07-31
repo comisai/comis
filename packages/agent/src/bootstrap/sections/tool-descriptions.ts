@@ -186,7 +186,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agents: list, create, get, update, delete, suspend, resume. Use when the user asks for a separate, dedicated assistant or agent. For heartbeat or monitoring schedules, use heartbeat_manage.";
+    const base = "Manage agents: list, create, get, update, delete, suspend, resume. A separate or dedicated assistant request is a complete create intent: create immediately with reasonable defaults. Do not require a heartbeat unless asked.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
