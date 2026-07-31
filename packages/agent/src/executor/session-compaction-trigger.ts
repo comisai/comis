@@ -26,7 +26,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import {
-  summarizeLeafChunk,
   type LeafChunkItem,
   type LeafSummarizerDeps,
 } from "../context-engine/lcd-leaf-summarizer.js";
@@ -119,6 +118,86 @@ function chunkHistory(
   return chunks;
 }
 
+function summaryTokens(content: string): number {
+  const message = { role: "user", content } as unknown as AgentMessage;
+  return estimateMessageTokens(message as unknown as Message);
+}
+
+async function summarizeMemoryChunk(
+  chunk: LeafChunkItem[],
+  chunkIndex: number,
+  config: SessionCompactionConfig,
+  deps: LeafSummarizerDeps,
+): Promise<Result<string, Error>> {
+  const inputTokens = chunk.reduce((total, item) => total + item.tokens, 0);
+  const summarized = await fromPromise(deps.summarize(
+    chunk.map((item) => item.msg),
+    {
+      reserveTokens: Math.min(
+        config.reserveTokens,
+        Math.max(1, inputTokens - 1),
+      ),
+    },
+  ));
+  if (!summarized.ok) return err(summarized.error);
+  if (summarized.value.trim().length === 0) {
+    return err(new Error(
+      `Session compaction memory chunk ${chunkIndex} returned empty content`,
+    ));
+  }
+  const outputTokens = summaryTokens(summarized.value);
+  if (outputTokens > config.reserveTokens) {
+    return err(new Error(
+      `Session compaction memory chunk ${chunkIndex} exceeded `
+      + `agents.<name>.session.compaction.reserveTokens=${config.reserveTokens}: `
+      + `inputTokens=${inputTokens}, outputTokens=${outputTokens}`,
+    ));
+  }
+  deps.logger.debug(
+    {
+      step: "session-compaction-memory-chunk",
+      chunkIndex,
+      inputTokens,
+      outputTokens,
+      maxSummaryTokens: config.reserveTokens,
+    },
+    "Session compaction memory chunk summarized",
+  );
+  return ok(summarized.value);
+}
+
+function acceptFinalMemory(
+  content: string,
+  chunkSummaryCount: number,
+  originalHistoryTokens: number,
+  maxMemoryTokens: number,
+  deps: LeafSummarizerDeps,
+): Result<string, Error> {
+  if (content.trim().length === 0) {
+    return err(new Error("Session compaction memory merge returned empty content"));
+  }
+  const outputTokens = summaryTokens(content);
+  if (outputTokens > maxMemoryTokens) {
+    return err(new Error(
+      "Session compaction final memory exceeded "
+      + "agents.<name>.session.compaction.reserveTokens or the original-history bound: "
+      + `outputTokens=${outputTokens}, originalHistoryTokens=${originalHistoryTokens}, `
+      + `acceptedMaxTokens=${maxMemoryTokens}`,
+    ));
+  }
+  deps.logger.debug(
+    {
+      step: "session-compaction-memory-merge",
+      chunkSummaryCount,
+      outputTokens,
+      originalHistoryTokens,
+      maxMemoryTokens,
+    },
+    "Session compaction memory summaries merged",
+  );
+  return ok(content);
+}
+
 async function summarizeHistory(
   history: LeafChunkItem[],
   config: SessionCompactionConfig,
@@ -133,29 +212,6 @@ async function summarizeHistory(
     config.chunkMaxChars,
     config.chunkOverlapMessages,
   );
-  const summaries: string[] = [];
-  for (const chunk of chunks) {
-    const summarized = await fromPromise(
-      summarizeLeafChunk(chunk, deps, {
-        reserveTokens: config.reserveTokens,
-      }),
-    );
-    if (!summarized.ok) return err(summarized.error);
-    if (summarized.value.fallback) {
-      return err(new Error(
-        "Session compaction memory extraction reached the deterministic fallback",
-      ));
-    }
-    summaries.push(summarized.value.content);
-  }
-
-  if (summaries.length === 1) return ok(summaries[0]!);
-  if (!config.chunkMergeSummaries) return ok(summaries.join("\n\n"));
-
-  const mergedMessage = {
-    role: "user",
-    content: summaries.join("\n\n"),
-  } as unknown as AgentMessage;
   const originalHistoryTokens = history.reduce(
     (total, item) => total + item.tokens,
     0,
@@ -169,40 +225,44 @@ async function summarizeHistory(
       "Session compaction memory merge found no token budget below the original history",
     ));
   }
+  const summaries: string[] = [];
+  for (const [chunkIndex, chunk] of chunks.entries()) {
+    const summarized = await summarizeMemoryChunk(
+      chunk,
+      chunkIndex,
+      config,
+      deps,
+    );
+    if (!summarized.ok) return err(summarized.error);
+    summaries.push(summarized.value);
+  }
+
+  if (summaries.length === 1 || !config.chunkMergeSummaries) {
+    return acceptFinalMemory(
+      summaries.join("\n\n"),
+      summaries.length,
+      originalHistoryTokens,
+      maxMemoryTokens,
+      deps,
+    );
+  }
+
+  const mergedMessage = {
+    role: "user",
+    content: summaries.join("\n\n"),
+  } as unknown as AgentMessage;
   const merged = await fromPromise(deps.summarize(
     [mergedMessage],
     { reserveTokens: maxMemoryTokens },
   ));
   if (!merged.ok) return err(merged.error);
-  if (merged.value.trim().length === 0) {
-    return err(new Error(
-      "Session compaction memory merge returned empty content",
-    ));
-  }
-  const outputMessage = {
-    role: "user",
-    content: merged.value,
-  } as unknown as AgentMessage;
-  const outputTokens = estimateMessageTokens(outputMessage as unknown as Message);
-  if (outputTokens > maxMemoryTokens) {
-    return err(new Error(
-      "Session compaction memory merge exceeded "
-      + `agents.<name>.session.compaction.reserveTokens=${config.reserveTokens}: `
-      + `outputTokens=${outputTokens}, originalHistoryTokens=${originalHistoryTokens}, `
-      + `acceptedMaxTokens=${maxMemoryTokens}`,
-    ));
-  }
-  deps.logger.debug(
-    {
-      step: "session-compaction-memory-merge",
-      chunkSummaryCount: summaries.length,
-      outputTokens,
-      originalHistoryTokens,
-      maxMemoryTokens,
-    },
-    "Session compaction memory summaries merged",
+  return acceptFinalMemory(
+    merged.value,
+    summaries.length,
+    originalHistoryTokens,
+    maxMemoryTokens,
+    deps,
   );
-  return ok(merged.value);
 }
 
 async function flushToMemory(

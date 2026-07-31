@@ -664,7 +664,7 @@ describe("session compaction thresholds", () => {
     expect(store.getContextItems(scope)).toEqual(beforeItems);
   });
 
-  it("hard crossing rejects a deterministic flush fallback before writing or trimming", async () => {
+  it("hard crossing rejects a failed flush summarizer before writing or trimming", async () => {
     appendHistory(store, 40, 25);
     const beforeItems = store.getContextItems(scope);
     const state = makeState();
