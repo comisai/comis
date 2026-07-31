@@ -55,6 +55,7 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
   "circuit_open",
   "budget_exceeded",
   "budget_exhausted",
+  "tool_invocation_stall",
   // The dollars kill-switch abort is a hard failure (never
   // "ok") — so `comis explain` marks severity:"failed" and `comis system-health`
   // degradedByCause buckets the spend-killed session on the named "spend_exceeded"
@@ -340,7 +341,7 @@ export function assembleIncidentReport(
   const subagentCompletionDegraded = (signals.subagentCompletions?.failed ?? 0) > 0;
   const activityRenderDegraded = signals.turnFinalized?.renderErrorKind !== undefined;
   const degraded =
-    deliveryFailed
+    isHardFailure
     || deliveryPartial
     || channelDegraded
     || subagentDeliveryDegraded
