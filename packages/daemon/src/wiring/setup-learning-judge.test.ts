@@ -396,6 +396,40 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     expect(transcript).toBe("user: please summarize\nassistant: here is the summary");
   });
 
+  it("readTurnTranscript excludes messages before the latest user turn", () => {
+    const message = (role: "user" | "assistant", text: string) => ({
+      role,
+      parts: [{ kind: "text", metadata: { raw: { text } } }],
+    });
+    const lcd = {
+      getMessages: vi.fn(() => [
+        message("user", "older request"),
+        message("assistant", "older failed answer"),
+        message("user", "current request"),
+        message("assistant", "current answer"),
+      ]),
+    } as never;
+    const built = buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: { a1: { provider: "anthropic", learningOutcome: { enabled: true, judge: { enabled: true } } } },
+        secrets: { ANTHROPIC_API_KEY: "test-key" },
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      lcd,
+    );
+
+    const transcript = built.readTurnTranscript!({
+      tenantId: TENANT,
+      agentId: "a1",
+      sessionId: "sess-1",
+      trajectoryId: TRACE,
+      conversationRef: JUDGE_CONVERSATION.value.conversationRef,
+    });
+
+    expect(transcript).toBe("user: current request\nassistant: current answer");
+  });
+
   it("passes the exact previously loaded policy snapshot instead of rereading workspace files", async () => {
     const policySnapshot = {
       agentId: "default",
