@@ -1315,6 +1315,32 @@ describe("assembleIncidentReport — contextBudget threading", () => {
   });
 });
 
+describe("assembleIncidentReport — rehydration threading", () => {
+  it("carries signals.rehydration into the report verbatim", () => {
+    const rehydration = {
+      seq: 11,
+      currentTurn: true,
+      sectionsInjected: 1,
+      filesInjected: 0,
+      skillsInjected: 1,
+      overflowStripped: false,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({
+        rehydration,
+      } as unknown as Partial<IncidentSignals>),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { rehydration?: typeof rehydration }).rehydration,
+    ).toEqual(rehydration);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The report falls back to signals-derived
 // agentId/channel when the metadata rollup lacks them (the live rollup carries

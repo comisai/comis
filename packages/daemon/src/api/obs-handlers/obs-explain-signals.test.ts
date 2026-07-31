@@ -1425,6 +1425,61 @@ describe("context.budget extraction", () => {
   });
 });
 
+describe("context.rehydrated extraction", () => {
+  it("reports current-turn rehydration statistics", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 10, {}),
+      event("context.rehydrated", 11, {
+        sectionsInjected: 1,
+        filesInjected: 0,
+        skillsInjected: 1,
+        overflowStripped: false,
+      }),
+    ]);
+    const rehydration = (
+      signals as unknown as {
+        rehydration?: {
+          seq: number;
+          currentTurn: boolean;
+          sectionsInjected: number;
+          filesInjected: number;
+          skillsInjected: number;
+          overflowStripped: boolean;
+        };
+      }
+    ).rehydration;
+
+    expect(rehydration).toEqual({
+      seq: 11,
+      currentTurn: true,
+      sectionsInjected: 1,
+      filesInjected: 0,
+      skillsInjected: 1,
+      overflowStripped: false,
+    });
+  });
+
+  it("marks rehydration before the latest prompt as stale", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 10, {}),
+      event("context.rehydrated", 11, {
+        sectionsInjected: 1,
+        filesInjected: 0,
+        skillsInjected: 1,
+        overflowStripped: false,
+      }),
+      event("prompt.submitted", 20, {}),
+    ]);
+    const rehydration = (
+      signals as unknown as {
+        rehydration?: { currentTurn: boolean };
+      }
+    ).rehydration;
+
+    expect(rehydration?.currentTurn).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // scheduler.wake_gate extraction — a fire the gate WOKE runs the model in its
 // main session, so its content-free wake-gate record must reach IncidentSignals
