@@ -1155,6 +1155,15 @@ function tokenize(text: string): string[] {
     .filter((token) => token.length > 0 && !TOOL_SEARCH_STOP_WORDS.has(token));
 }
 
+/** Remove the MCP server namespace from lexical capability scoring. Server
+ * labels identify instances, not different capabilities; including them lets
+ * recent setup prose select one peer even when the request asks about both. */
+function capabilityNameForScoring(toolName: string): string {
+  const serverName = extractMcpServerName(toolName);
+  if (serverName === undefined) return toolName;
+  return toolName.slice("mcp__".length + serverName.length + "--".length);
+}
+
 function bm25Score(
   query: string,
   documents: BM25Document[],
@@ -1168,7 +1177,9 @@ function bm25Score(
   if (queryTerms.length === 0 || documents.length === 0) return [];
 
   const N = documents.length;
-  const docTokens = documents.map(d => tokenize(d.text + " " + d.name));
+  const docTokens = documents.map(d =>
+    tokenize(d.text + " " + capabilityNameForScoring(d.name))
+  );
   const avgDl = docTokens.reduce((s, t) => s + t.length, 0) / N;
 
   // IDF for each query term
