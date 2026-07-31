@@ -8123,6 +8123,49 @@ describe("regression: pi-executor capabilityCap is Infinity when providerCapabil
     expect(logPayload["source"]).toBe("capability");
     expect(logPayload["effectiveWindow"]).toBe(32_000);
   });
+
+  it("agent small-class pin honors the configured effective context cap during executor reconcile", async () => {
+    const deps = createMockDeps({
+      modelRegistry: {
+        find: vi.fn().mockReturnValue({
+          provider: "anthropic",
+          id: "claude-sonnet-4-5-20250929",
+          contextWindow: 256_000,
+        }),
+        getAll: vi.fn().mockReturnValue([]),
+        getAvailable: vi.fn().mockReturnValue([]),
+      } as any,
+      providerCapabilities: undefined,
+      servedContextWindow: undefined,
+    });
+    const configuredCap = 225_000;
+    const executor = createPiExecutor({
+      ...testConfig,
+      capabilityClass: "small",
+      contextEngine: {
+        ...testConfig.contextEngine,
+        budget: {
+          ...testConfig.contextEngine?.budget,
+          effectiveContextCapSmall: configuredCap,
+        },
+      },
+    } as PerAgentConfig, deps);
+
+    await executor.execute(testMessage, testSessionKey);
+
+    const capLogCall = vi.mocked(deps.logger.debug).mock.calls.find(
+      (args) =>
+        typeof args[1] === "string"
+        && args[1].includes("Context window reconciled"),
+    );
+    expect(capLogCall).toBeDefined();
+    expect(capLogCall![0]).toMatchObject({
+      source: "capability",
+      effectiveWindow: configuredCap,
+      configured: 256_000,
+      capabilityCap: configuredCap,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
