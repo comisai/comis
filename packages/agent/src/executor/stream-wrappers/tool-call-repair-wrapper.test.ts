@@ -36,6 +36,36 @@ describe("createToolCallRepairWrapper", () => {
     };
   }
 
+  async function repairFinalToolCall(
+    toolCall: ReturnType<typeof makeToolCall>,
+    tools: Array<Record<string, unknown>>,
+  ) {
+    const message = {
+      ...makeAssistantMessage([toolCall]),
+      stopReason: "toolUse" as const,
+    };
+    const baseStream = vi.fn(() => {
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: "done", reason: "toolUse", message });
+      return stream;
+    });
+    const wrapped = createToolCallRepairWrapper(
+      FAIL_CLOSED_PROFILE,
+      logger,
+    )(baseStream);
+    const stream = await wrapped(
+      {} as never,
+      {
+        systemPrompt: "test",
+        messages: [],
+        tools: tools as never,
+      },
+      {},
+    );
+    const repaired = await stream.result();
+    return repaired.content[0] as ReturnType<typeof makeToolCall>;
+  }
+
   it("passes non-assistant messages through unchanged", () => {
     const wrapper = createToolCallRepairWrapper(FAIL_CLOSED_PROFILE, logger);
     const wrappedFn = wrapper(base);
@@ -183,6 +213,75 @@ describe("createToolCallRepairWrapper", () => {
       "Repaired tool selection from unique action schema match",
     );
     expect(JSON.stringify(logger.info.mock.calls)).not.toContain("test-key");
+  });
+
+  it("keeps the selected tool when two visible schemas own the same action", async () => {
+    const toolCall = makeToolCall("mcp_manage", {
+      action: "env_set",
+      env_key: "EXAMPLE_SERVICE_TOKEN",
+      env_value: "test-key",
+    });
+    const selected = {
+      name: "mcp_manage",
+      parameters: Type.Object({ action: Type.Literal("connect") }),
+    };
+    const ownerSchema = Type.Object({
+      action: Type.Literal("env_set"),
+      env_key: Type.String(),
+      env_value: Type.String(),
+    });
+
+    const repaired = await repairFinalToolCall(toolCall, [
+      selected,
+      { name: "gateway", parameters: ownerSchema },
+      { name: "secret_manager", parameters: ownerSchema },
+    ]);
+
+    expect(repaired.name).toBe("mcp_manage");
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("keeps the selected tool when the action owner rejects the remaining arguments", async () => {
+    const toolCall = makeToolCall("mcp_manage", { action: "env_set" });
+
+    const repaired = await repairFinalToolCall(toolCall, [
+      {
+        name: "mcp_manage",
+        parameters: Type.Object({ action: Type.Literal("connect") }),
+      },
+      {
+        name: "gateway",
+        parameters: Type.Object({
+          action: Type.Literal("env_set"),
+          env_key: Type.String(),
+          env_value: Type.String(),
+        }),
+      },
+    ]);
+
+    expect(repaired.name).toBe("mcp_manage");
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("keeps a valid selected action even when another visible schema also declares it", async () => {
+    const toolCall = makeToolCall("gateway", {
+      action: "env_set",
+      env_key: "EXAMPLE_SERVICE_TOKEN",
+      env_value: "test-key",
+    });
+    const ownerSchema = Type.Object({
+      action: Type.Literal("env_set"),
+      env_key: Type.String(),
+      env_value: Type.String(),
+    });
+
+    const repaired = await repairFinalToolCall(toolCall, [
+      { name: "gateway", parameters: ownerSchema },
+      { name: "secret_manager", parameters: ownerSchema },
+    ]);
+
+    expect(repaired.name).toBe("gateway");
+    expect(logger.info).not.toHaveBeenCalled();
   });
 
   it("repairs string arguments with trailing comma (near-miss JSON)", () => {
