@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { getAllToolMetadata, getToolMetadata, matchesToolMutationRequest, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
+import { classifyToolInvocationMutation, getAllToolMetadata, getToolMetadata, matchesToolMutationRequest, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
 import { Type } from "typebox";
 import { registerAllToolMetadata } from "./tool-metadata-registry.js";
@@ -1772,6 +1772,13 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
         "install it",
       ),
     ).toBe(true);
+  });
+
+  it("skills_manage does not count list as a completed mutation", () => {
+    expect(classifyToolInvocationMutation("skills_manage", { action: "list" }))
+      .toBe("read_only");
+    expect(classifyToolInvocationMutation("skills_manage", { action: "import" }))
+      .toBe("mutating");
   });
 
   it("sessions_spawn recognizes a natural helper delegation request", () => {
