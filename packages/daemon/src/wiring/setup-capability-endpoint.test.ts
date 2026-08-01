@@ -104,9 +104,11 @@ function leaseIdentity(agentId: string, origin: DeliveryOrigin): {
   return { turnScope, sessionKey: formatSessionKey(projected.value) };
 }
 
-/** The set of admin-scoped RPC methods, derived EXACTLY as rpc-dispatch.ts:159-161 does. */
+/** The set of admin-only RPC methods, derived exactly as rpc-dispatch.ts does. */
 const ADMIN_METHODS: ReadonlySet<string> = new Set(
-  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+  API_CONTRACTS_ORDERED
+    .filter((c) => c.scopes.includes("admin") && !c.scopes.includes("rpc"))
+    .map((c) => c.method),
 );
 
 /**

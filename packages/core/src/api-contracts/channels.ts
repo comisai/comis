@@ -389,7 +389,7 @@ export const MessageSendContract = defineContract({
   }),
   // Orchestration surface (the genuinely-outward send subset),
   // NOT control plane. Scoped rpc rather than admin so the deny-by-origin
-  // chokepoint (keyed on scopes.includes("admin")) does not deny an agent its
+  // chokepoint (keyed on admin-only routes) does not deny an agent its
   // own granted orch:message before the requireCapability gate runs. The handler
   // still gates on orch:message; admin gateway tokens carry rpc so are unaffected.
   scopes: ["rpc"] as const,

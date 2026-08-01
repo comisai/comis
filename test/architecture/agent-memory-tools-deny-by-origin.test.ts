@@ -11,7 +11,7 @@
  * — the agent could not store a memory at all — because `MemoryStoreContract`
  * was `scopes:["admin"]` while its siblings `memory.ask` / `memory.search_files`
  * / `memory.get_file` were `["rpc"]`. `["admin"]` puts the method in
- * `ADMIN_METHODS` (`rpc-dispatch.ts`, derived via `scopes.includes("admin")`),
+ * `ADMIN_METHODS` (derived from admin routes that do not also expose RPC),
  * and the deny-by-origin chokepoint throws for any `_agentId`-bearing call — yet
  * `memory.store`'s own handler has a first-class agent path (defaults to
  * `learned` trust). Same regression class as the earlier
@@ -49,7 +49,9 @@ const AGENT_MEMORY_TOOL_FILES = [
 
 /** The admin deny set, derived the SAME way the rpc-dispatch chokepoint derives it. */
 const ADMIN_METHODS: ReadonlySet<string> = new Set(
-  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+  API_CONTRACTS_ORDERED
+    .filter((c) => c.scopes.includes("admin") && !c.scopes.includes("rpc"))
+    .map((c) => c.method),
 );
 
 describe("agent memory tools have agent-reachable backing RPCs (not deny-by-origin)", () => {

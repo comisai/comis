@@ -17,9 +17,9 @@
  * denylisted subcommand a `pnpm test:architecture` BUILD failure.
  *
  * Both sets are DERIVED (no stale hand-copied literal that drifts):
- *   - `ADMIN_METHODS` is derived from `API_CONTRACTS_ORDERED` filtered on
- *     `scopes.includes("admin")` — the EXACT derivation the deny-by-origin
- *     chokepoint uses (mirrors `admin-handlers-deny-by-origin.test.ts`).
+ *   - `ADMIN_METHODS` is derived from `API_CONTRACTS_ORDERED` contracts that
+ *     include an admin route and exclude an RPC route — the exact derivation
+ *     the deny-by-origin chokepoint uses.
  *   - `DENYLISTED_RPC_METHODS` is the compiled `@comis/daemon` export — the SAME
  *     closed-door set the cap socket's pre-check uses.
  *
@@ -35,12 +35,13 @@ import { API_CONTRACTS_ORDERED, CLI_SUBCOMMAND_MAP, type CliCallTarget } from "@
 import { DENYLISTED_RPC_METHODS } from "@comis/daemon";
 
 /**
- * The full admin-scoped method set, DERIVED the SAME way the deny-by-origin
- * chokepoint must (admin-handlers-deny-by-origin.test.ts:50-52). A new admin
- * method is covered automatically — no hardcoded handful.
+ * The full admin-only method set, derived the same way as the deny-by-origin
+ * chokepoint. A new control-plane method is covered automatically.
  */
 const ADMIN_METHODS: ReadonlySet<string> = new Set(
-  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+  API_CONTRACTS_ORDERED
+    .filter((c) => c.scopes.includes("admin") && !c.scopes.includes("rpc"))
+    .map((c) => c.method),
 );
 
 /** The DERIVED denylisted-method set (the @comis/daemon export, not a literal). */

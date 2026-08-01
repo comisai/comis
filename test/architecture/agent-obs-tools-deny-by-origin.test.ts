@@ -10,7 +10,7 @@
  *   "Control-plane method obs.explain is not reachable from an agent origin"
  * (`capability_denied`). The `obs_query` tool's explain/session_report path calls
  * `obs.explain`/`obs.diagnostics`, but both were `scopes:["admin"]` → in
- * `ADMIN_METHODS` (rpc-dispatch.ts, derived via `scopes.includes("admin")`) → the
+ * `ADMIN_METHODS` (derived from admin routes that do not also expose RPC) → the
  * deny-by-origin chokepoint threw for the `_agentId`-bearing call. Yet CLAUDE.md
  * documents "the obs_query agent explain/session_report actions" as an agent
  * capability. The reports are READ-ONLY + scrubbed/digest-only (a residency
@@ -40,7 +40,9 @@ const SELF_OBS_METHODS = ["obs.explain", "obs.diagnostics"] as const;
 
 /** The admin deny set, derived the SAME way the rpc-dispatch chokepoint derives it. */
 const ADMIN_METHODS: ReadonlySet<string> = new Set(
-  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+  API_CONTRACTS_ORDERED
+    .filter((c) => c.scopes.includes("admin") && !c.scopes.includes("rpc"))
+    .map((c) => c.method),
 );
 
 describe("agent self-observability methods are agent-reachable (not deny-by-origin)", () => {

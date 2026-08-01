@@ -4,12 +4,12 @@
  *
  * Chokepoint (one chokepoint, full admin set, no scatter):
  *   1. The deny-by-origin chokepoint EXISTS in `rpc-dispatch.ts` — it derives
- *      its admin-method set from `API_CONTRACTS_ORDERED` filtered on
- *      `scopes.includes("admin")` AND calls `assertNotAgentOrigin`. The check
- *      is keyed on the admin-scope Set, NOT a hardcoded handful of methods.
+ *      its admin-only method set from `API_CONTRACTS_ORDERED` filtered on an
+ *      admin route without an RPC route AND calls `assertNotAgentOrigin`. The
+ *      check is keyed on the admin-only Set, NOT a hardcoded handful of methods.
  *   2. Completeness — the chokepoint's derivation matches the FULL
- *      registry-derived admin set (so every admin method is covered by the one
- *      check, not a subset).
+ *      registry-derived admin-only set (so every control-plane method is
+ *      covered by the one check, not a subset).
  *   3. No scatter — NO `packages/daemon/src/api/*-handlers.ts` file contains
  *      `assertNotAgentOrigin`; the check belongs only at the chokepoint.
  *
@@ -19,8 +19,8 @@
  *
  * Soundness chain (documented for the next reader): the gateway boundary strips
  * external `_agentId`, so at the dispatch seam `_agentId`
- * PRESENCE == agent-origin; this chokepoint then denies it for EVERY admin
- * method → no agent-origin call reaches an admin handler. Residual: a NEW
+ * PRESENCE == agent-origin; this chokepoint then denies it for EVERY admin-only
+ * method → no agent-origin call reaches a control-plane handler. Residual: a NEW
  * control-plane method that forgets to declare `scopes:["admin"]` would not be
  * caught — that is a contract-authoring concern guarded by the existing
  * scope-declaration review, NOT this test.
@@ -43,9 +43,11 @@ const HANDLER_DIR = resolve(REPO_ROOT, "packages/daemon/src/api");
 const RPC_DISPATCH = resolve(HANDLER_DIR, "rpc-dispatch.ts");
 const WIRING_DIR = resolve(REPO_ROOT, "packages/daemon/src/wiring");
 
-/** The full admin-scoped method set, derived the SAME way the chokepoint must. */
+/** The full admin-only method set, derived the SAME way the chokepoint must. */
 const EXPECTED_ADMIN: ReadonlySet<string> = new Set(
-  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+  API_CONTRACTS_ORDERED
+    .filter((c) => c.scopes.includes("admin") && !c.scopes.includes("rpc"))
+    .map((c) => c.method),
 );
 
 /**
@@ -114,17 +116,19 @@ function lineOf(sf: ts.SourceFile, node: ts.Node): number {
 }
 
 describe("single deny-by-origin chokepoint in createRpcDispatch", () => {
-  it("rpc-dispatch.ts derives the admin set from API_CONTRACTS_ORDERED (scopes.includes('admin')) AND calls assertNotAgentOrigin", () => {
+  it("rpc-dispatch.ts derives the admin-only set from API_CONTRACTS_ORDERED and calls assertNotAgentOrigin", () => {
     const src = readFileSync(RPC_DISPATCH, "utf8");
     const violations: ViolationCitation[] = [];
 
     const derivesAdminSet =
-      /API_CONTRACTS_ORDERED/.test(src) && /scopes\.includes\(\s*["']admin["']\s*\)/.test(src);
+      /API_CONTRACTS_ORDERED/.test(src) &&
+      /scopes\.includes\(\s*["']admin["']\s*\)/.test(src) &&
+      /!contract\.scopes\.includes\(\s*["']rpc["']\s*\)/.test(src);
     if (!derivesAdminSet) {
       violations.push({
         file: "packages/daemon/src/api/rpc-dispatch.ts",
         line: 0,
-        snippet: "missing: ADMIN_METHODS derived from API_CONTRACTS_ORDERED.filter(c => c.scopes.includes('admin'))",
+        snippet: "missing: ADMIN_METHODS derived from contracts with an admin route and no RPC route",
       });
     }
     // The chokepoint must actually CALL the guard (not merely import it).
@@ -141,10 +145,10 @@ describe("single deny-by-origin chokepoint in createRpcDispatch", () => {
       violations,
       formatViolations({
         description:
-          "The deny-by-origin chokepoint must exist in the createRpcDispatch dispatch closure, keyed on the registry-derived admin-scope Set.",
+          "The deny-by-origin chokepoint must exist in the createRpcDispatch dispatch closure, keyed on the registry-derived admin-only Set.",
         violations,
         suggestedFix:
-          "In rpc-dispatch.ts build `const ADMIN_METHODS = new Set(API_CONTRACTS_ORDERED.filter(c => c.scopes.includes('admin')).map(c => c.method))` and, in the dispatch closure, `if (ADMIN_METHODS.has(method)) assertNotAgentOrigin(params, deps, method)`.",
+          "In rpc-dispatch.ts derive `ADMIN_METHODS` from contracts that include `admin` and exclude `rpc`, then guard `assertNotAgentOrigin(params, deps, method)` with membership in that set.",
         designRef: "deny-by-origin chokepoint in packages/daemon/src/api/rpc-dispatch.ts",
       }),
     ).toEqual([]);
@@ -219,7 +223,7 @@ describe("single deny-by-origin chokepoint in createRpcDispatch", () => {
 });
 
 describe("the deny-by-origin set is the TRUE control plane (orch/agent-reachable methods are NOT denied)", () => {
-  /** The runtime admin-method set the chokepoint derives (scopes.includes("admin")). */
+  /** The runtime admin-only method set the chokepoint derives. */
   const ADMIN: ReadonlySet<string> = EXPECTED_ADMIN;
   const CAP_SET: ReadonlySet<string> = new Set<string>(AGENT_CAPABILITIES);
 
@@ -236,7 +240,7 @@ describe("the deny-by-origin set is the TRUE control plane (orch/agent-reachable
       .map(([method, cls]) => ({
         file: "packages/core/src/api-contracts/ (contract scope) + handler-capability-map.ts",
         line: 0,
-        snippet: `"${method}" is classified "${cls}" (agent-reachable) but is scopes:["admin"] → in the deny-by-origin set → an agent origin is denied BEFORE the gate/read. Re-scope its contract to ["rpc"].`,
+        snippet: `"${method}" is classified "${cls}" (agent-reachable) but has an admin route without an RPC route → in the deny-by-origin set → an agent origin is denied BEFORE the gate/read. Declare an RPC route.`,
       }));
     expect(
       violations,
@@ -245,7 +249,7 @@ describe("the deny-by-origin set is the TRUE control plane (orch/agent-reachable
           "A capability-gated or agent-read orchestration method is in the deny-by-origin (admin) set, so an agent origin is denied before its own cap gate / self-read can run (this regression class).",
         violations,
         suggestedFix:
-          "Re-scope the method's contract scopes admin→rpc. The deny-by-origin set must be the TRUE control plane (secrets/tokens/config/agents/mcp/auth + the admin message subset + arbitrary-session lifecycle), never the orchestration surface the capability model governs.",
+          "Declare an RPC route for agent-reachable methods, retaining an admin route when operators also need direct access. The deny-by-origin set must remain the true control plane, never the orchestration surface the capability model governs.",
         designRef: "deny-by-origin (admin) set vs agent-reachable capability classification",
       }),
     ).toEqual([]);

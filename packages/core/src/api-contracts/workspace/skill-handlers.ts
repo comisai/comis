@@ -107,7 +107,7 @@ export const SkillsUploadContract = defineContract({
   }),
   // skills.* mutating methods are the orchestration/skill surface the
   // capability model owns (orch:skill), NOT control plane. Scoped rpc (not
-  // admin) so the deny-by-origin chokepoint (keyed on scopes.includes("admin"))
+  // admin) so the deny-by-origin chokepoint (keyed on admin-only routes)
   // does not deny an agent its own granted orch:skill before the
   // requireCapability gate runs. Admin gateway tokens carry rpc, so the web-UI
   // skills manager is unaffected; the handler still gates on orch:skill.

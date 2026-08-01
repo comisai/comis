@@ -195,7 +195,7 @@ describe("registerRpcMethods", () => {
     registerRpcMethods(deps);
     const call = registerMethod.mock.calls.find(([method]: [string]) => method === "cron.list");
     expect(call).toBeDefined();
-    expect(call![1]).toBe("rpc");
+    expect(call![1]).toEqual(["rpc", "admin"]);
     const handler = call![2];
 
     await handler({ agentId: "*" }, { clientId: "operator", scopes: ["*"] });

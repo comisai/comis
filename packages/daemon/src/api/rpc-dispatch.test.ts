@@ -752,7 +752,7 @@ describe("createRpcDispatch", () => {
   // NOT the gateway/method-router leg (which the in-process loop bypasses). A
   // method-router-only chokepoint would MISS this path; the chokepoint MUST
   // live here in createRpcDispatch. The admin set is derived once from
-  // API_CONTRACTS_ORDERED (scopes.includes("admin")) so ALL ~146 admin methods
+  // API_CONTRACTS_ORDERED (admin routes without an RPC route) so all admin-only methods
   // are covered by the one check, not a hand-picked subset.
   // -----------------------------------------------------------------------
 
