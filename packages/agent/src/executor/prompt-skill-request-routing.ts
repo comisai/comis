@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { scrubSecretsFromText, type PromptSkillCapability } from "@comis/core";
+import {
+  getToolMetadata,
+  scrubSecretsFromText,
+  type PromptSkillCapability,
+} from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 
@@ -106,13 +110,15 @@ export function applyPromptSkillRequestRouting(
       priorUserRequest,
     ).text.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
   }
-  if (!deferral.requestRelevantToolNames.includes("read")) {
-    deferral.requestRelevantToolNames.unshift("read");
-  }
-  for (const toolName of workflowToolNames) {
-    if (!deferral.requestRelevantToolNames.includes(toolName)) {
-      deferral.requestRelevantToolNames.push(toolName);
-    }
-  }
+  const mutationToolNames = workflowToolNames.length > 0
+    ? deferral.requestRelevantToolNames.filter(
+        (toolName) => getToolMetadata(toolName)?.isReadOnly === false,
+      )
+    : deferral.requestRelevantToolNames;
+  deferral.requestRelevantToolNames = [...new Set([
+    ...mutationToolNames,
+    "read",
+    ...workflowToolNames,
+  ])];
   return selected;
 }
