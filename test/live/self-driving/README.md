@@ -4,7 +4,7 @@
 > emulator/journeys suite under `test/live/` (it drives `test/live/bin/vps-emu.ts`).
 >
 > **What this is.** Point an agent at this folder **with a target** and it drives a comprehensive,
-> deep-and-broad live test of Comis on the VPS through the Telegram emulator — end to end — fixing every
+> deep-and-broad live test of Comis through an emulator-backed real adapter — end to end — fixing every
 > issue test-first under the fix-verify discipline, until everything **works** or **fails honestly**.
 >
 > **The three target shapes** (any one):
@@ -17,13 +17,13 @@
 
 This kit **compiles** the full live-test protocol — the comprehensive Tracks A–L, the 30-UC catalog, the
 emulator-harness design, the FINDINGS lessons, the config-map, and the milestone-coverage and verify audits,
-plus the VPS runbook + scripts — into one followable kit. It is the **canonical** entry point.
+plus the local and VPS runbooks + scripts — into one followable kit. It is the **canonical** entry point.
 
 ## The kit (read in order; the mission tells you which when)
 
 | File | Role |
 |---|---|
-| **`DRIVE-PROMPT.md`** | The copy-paste **kickoff prompt**. The ready-to-paste **real-user Telegram** drive — Comis exercised the way a person actually uses a chat assistant (messy, bursty, multi-day, groups, voice, photos, interruptions) *and* the whole runtime surface behind it. **§1** = long form, all 36 arcs inline; **§2** = short form for a chat window, arcs delegated to `targets/real-user-everyday-assistant.md` (authoritative either way). The Appendix keeps the generic fill-in-your-target template, the prompt-authoring meta-prompt, and the filled examples. |
+| **`DRIVE-PROMPT.md`** | The single copy-paste, **local-only real-user Telegram** kickoff. It drives one messy multi-day relationship through the loopback emulator and real adapter, while `targets/real-user-everyday-assistant.md` remains the sole authoritative A/B/C arc, oracle, polarity and trap specification. |
 | **`00-MISSION.md`** | THE driver — the generic orchestration loop an agent follows from a target to a closed audit. Start here. |
 | **`01-SETUP.md`** | Stand up the rig: VPS **or this machine** (`RIG_MODE=local` → `scripts/local-up.sh`) + emulator + the build under test + baseline smoke. Uses `scripts/`. §Local mode states what a local run cannot prove. |
 | **`02-DISCIPLINE.md`** | Prime directives + the per-issue fix-verify loop + 3-way scoring + the stop condition. The non-negotiables. |
