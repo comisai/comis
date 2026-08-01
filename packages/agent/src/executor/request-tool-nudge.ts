@@ -113,6 +113,7 @@ function buildDirective(
   promptSkillNames: readonly string[],
   promptSkillLocations: readonly string[],
   promptSkillWorkflowToolNames: readonly string[],
+  promptSkillWorkflowContext: string | undefined,
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
@@ -140,6 +141,15 @@ function buildDirective(
           : "Use read with the exact <location> for the best match from Available Skills; never guess a generic path.",
         ...(promptSkillWorkflowToolNames.length > 0
           ? [`After loading it, complete the procedure with these required workflow tools: ${promptSkillWorkflowToolNames.join(", ")}.`]
+          : []),
+        ...(promptSkillWorkflowContext
+          ? [
+              "Derive context-dependent workflow arguments from this immediately preceding user request; do not pass the current elliptical wording literally:",
+              wrapExternalContent(promptSkillWorkflowContext, {
+                source: "channel_history",
+                includeWarning: true,
+              }),
+            ]
           : []),
       ]
     : [];
@@ -322,6 +332,7 @@ export async function runRequestToolNudge(
       deps.requestRelevantPromptSkillNames ?? [],
       deps.requestRelevantPromptSkillLocations ?? [],
       deps.requestRelevantPromptSkillWorkflowToolNames ?? [],
+      deps.requestRelevantPromptSkillWorkflowContext,
       trigger,
     ),
     deps.guardProviderDispatch,
