@@ -182,7 +182,7 @@ export interface Acc {
   /** Cache breaks folded per-reason from `cache.break` records
    *  — `{count, estCostUsd}` summed per closed reason. Counts + a number
    *  ONLY (never the changed tool names — the trajectory carries only the digest). */
-  cacheBreaksByReason: Map<string, { count: number; estCostUsd: number }>;
+  cacheBreaksByReason: Map<string, { count: number; estCostUsd: number; tokenDrop: number }>;
   /** The LAST `spend.exceeded` trajectory record's breach
    *  (the terminal kill explains the end state — a warn earlier in the session is
    *  superseded by the breach that actually killed it). `totalUsd` is the record's

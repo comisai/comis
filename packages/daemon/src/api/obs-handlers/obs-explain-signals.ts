@@ -483,10 +483,15 @@ function handleEventRecord(
       // crosses the trajectory boundary). A blank/missing reason folds to "unknown".
       const reason = asString(data.reason) ?? "unknown";
       const estCostUsd = asNumber(data.estCostUsd) ?? 0;
-      const prev = acc.cacheBreaksByReason.get(reason) ?? { count: 0, estCostUsd: 0 };
+      // `tokenDrop` rides the report beside the cost: estCostUsd is only the forgone cache-READ
+      // saving, while a break's real cost is re-WRITING the dropped prefix at the write rate. Live,
+      // that gap made a $30.64 incident read as $0.46 while the drop count told the true story.
+      const tokenDrop = asNumber(data.tokenDrop) ?? 0;
+      const prev = acc.cacheBreaksByReason.get(reason) ?? { count: 0, estCostUsd: 0, tokenDrop: 0 };
       acc.cacheBreaksByReason.set(reason, {
         count: prev.count + 1,
         estCostUsd: prev.estCostUsd + estCostUsd,
+        tokenDrop: prev.tokenDrop + tokenDrop,
       });
       return;
     }
@@ -884,6 +889,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               reason,
               count: v.count,
               estCostUsd: Math.round(v.estCostUsd * 1e6) / 1e6,
+              tokenDrop: v.tokenDrop,
             }))
             .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
         }
