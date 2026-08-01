@@ -42,6 +42,7 @@ import {
   classifyAgentFinishErrorKind,
   SUB_AGENT_TOOL_DENYLIST,
   toolReachableGroups,
+  SUB_AGENT_TOOL_PROFILES,
   RequiredToolsUnreachableError,
   toSafeErrorLogString,
   type UnreachableToolEntry,
@@ -883,10 +884,22 @@ function classifyRequiredTool(
   // When no profile contains the tool, suggest only 'full' — 'supervisor' does not
   // contain generic tools like web_fetch/browser/sessions_spawn, so it would fail again.
   const suggestion = broader.length > 0 ? broader.join("' | '") : "full";
+  // Name the CLOSED set of valid groups. Without it a caller invents a plausible-sounding one —
+  // observed live twice: `tool_groups:['coding','mcp']`, where 'mcp' is not a group, contributed
+  // nothing silently, and the spawn then failed on the MCP tool it was meant to authorise.
+  const validGroups = [...Object.keys(SUB_AGENT_TOOL_PROFILES), "full"].join("' | '");
+  // MCP tool names are DYNAMIC (`mcp__<server>--<tool>`, resolved from connected servers), so no
+  // static profile can list them and only 'full' reaches them. Say so, rather than letting the
+  // caller conclude some narrower group exists.
+  const isMcpTool = toolName.startsWith("mcp__");
   return {
     toolName,
     reason: "outside_profile",
-    hint: `Tool '${toolName}' is outside this sub-agent's profile. Re-spawn with tool_groups:['${suggestion}'].`,
+    hint: `Tool '${toolName}' is outside this sub-agent's profile. Re-spawn with tool_groups:['${suggestion}']. `
+      + `Valid groups are '${validGroups}' — any other value is ignored.`
+      + (isMcpTool
+        ? ` This is an MCP tool; MCP tool names are resolved from connected servers at runtime, so no narrow profile lists them and 'full' is the only group that reaches them.`
+        : ""),
   };
 }
 
