@@ -165,6 +165,9 @@ function buildPromptSkillWorkflowDirective(
   actionToolNames: readonly string[],
   workflowContext?: string,
 ): string {
+  const requestedActionToolNames = promptSkillLocations.length > 0
+    ? actionToolNames.filter((toolName) => toolName !== "read")
+    : actionToolNames;
   const priorRequest = workflowContext
     ? wrapExternalContent(workflowContext, {
         source: "channel_history",
@@ -178,11 +181,15 @@ function buildPromptSkillWorkflowDirective(
       ? [`If it is not loaded yet, use read with: ${promptSkillLocations.join(", ")}.`]
       : []),
     `Complete its supporting workflow with: ${workflowToolNames.join(", ")}.`,
-    `Complete the requested action with: ${actionToolNames.join(", ")}.`,
+    "Use supporting workflow tools only for commands prescribed by the loaded procedure; do not use exec to reread the skill manifest.",
+    ...(requestedActionToolNames.length > 0
+      ? [`Complete the requested action with: ${requestedActionToolNames.join(", ")}.`]
+      : []),
     priorRequest
       ? `The immediately preceding user request was:\n${priorRequest}`
       : "Resolve context-dependent arguments from the recent user requests already in context.",
     "Derive concrete workflow arguments from that prior request; do not pass the current elliptical wording literally.",
+    "After a successful workflow result, follow the loaded procedure's response contract and preserve its canonical identifiers.",
     "Do not repeat the skill read or a previously attempted tool path, and do not claim completion without a successful workflow-tool receipt.",
   ].join("\n");
 }
