@@ -60,6 +60,12 @@ const isLive = !!process.env["COMIS_LIVE"];
 // Daemon startup budget + restart overhead for beforeAll timeout.
 const DAEMON_STARTUP_MS = 15_000;
 
+// The append-only scenario can perform two provider attempts and two complete
+// daemon restarts. Its budget must cover those sequential boundary operations;
+// otherwise Vitest retries while the timed-out restart is still unwinding and
+// the retry collides with the first daemon's data-directory lock.
+const MULTI_RESTART_TEST_TIMEOUT_MS = 120_000;
+
 // ---------------------------------------------------------------------------
 // Stage-A — restart mechanics (deterministic, no COMIS_LIVE needed)
 //
@@ -233,7 +239,7 @@ describe("LOOP-03 Stage-A — restart survival (deterministic, no COMIS_LIVE)", 
       const events: SessionIndexEvent[] = await driver.getSessionIndexEvents();
       expect(Array.isArray(events)).toBe(true);
     }
-  });
+  }, MULTI_RESTART_TEST_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------
