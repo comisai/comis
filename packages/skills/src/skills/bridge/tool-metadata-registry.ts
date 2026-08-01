@@ -382,6 +382,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("skills_manage", {
     validActions: ["list", "import", "delete", "create", "update"],
     validKeys: ["action", "url", "name", "content", "description", "scope"],
+    mutationRequestPrefixes: ["install", "import", "delete", "create", "update"],
     requiredByAction: {
       import: ["url"],
       delete: ["name"],
