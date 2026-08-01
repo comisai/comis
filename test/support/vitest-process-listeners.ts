@@ -30,6 +30,8 @@
  * @module
  */
 
+import { seedModelCache } from "./model-cache.js";
+
 process.setMaxListeners(50);
 
 // ---------------------------------------------------------------------------
@@ -53,8 +55,8 @@ process.setMaxListeners(50);
 // ---------------------------------------------------------------------------
 
 if (process.env["VITEST"] === "true") {
-  // Lazy import — keep this file dependency-free at module-load time so a
-  // sibling `setupFiles` ordering bug doesn't block the listener bump.
+  // Keep sandbox creation synchronous so environment injection completes
+  // before any test module can read the Comis filesystem variables.
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- setup file runs before vitest's ESM loader fully initializes; sync require keeps the env injection ordered before any test module's top-level imports
   const { mkdtempSync, rmSync } = require("node:fs") as typeof import("node:fs");
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -74,9 +76,9 @@ if (process.env["VITEST"] === "true") {
   if (!process.env["COMIS_CONFIG_AUDIT_LOG"]) {
     process.env["COMIS_CONFIG_AUDIT_LOG"] = join(sandboxDir, "config-audit.jsonl");
   }
-  if (!process.env["COMIS_DATA_DIR"]) {
-    process.env["COMIS_DATA_DIR"] = sandboxDir;
-  }
+  const testDataDir = process.env["COMIS_DATA_DIR"] || sandboxDir;
+  process.env["COMIS_DATA_DIR"] = testDataDir;
+  seedModelCache(testDataDir);
 
   process.on("exit", () => {
     try {
