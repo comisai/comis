@@ -3855,7 +3855,8 @@
       "additionalProperties": false
     },
     "scopes": [
-      "rpc"
+      "rpc",
+      "admin"
     ]
   },
   "cron.remove": {
