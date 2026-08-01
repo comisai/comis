@@ -40,6 +40,7 @@ export interface RunRequestToolNudgeDeps {
   capabilityClass: string | undefined;
   requestRelevantToolNames: readonly string[];
   requestRelevantPromptSkillNames?: readonly string[];
+  requestRelevantPromptSkillLocations?: readonly string[];
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -107,6 +108,7 @@ function claimsExternalActionAttempt(messages: unknown[]): boolean {
 function buildDirective(
   toolNames: readonly string[],
   promptSkillNames: readonly string[],
+  promptSkillLocations: readonly string[],
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
@@ -129,7 +131,9 @@ function buildDirective(
   const promptSkillGuidance = promptSkillNames.length > 0
     ? [
         `The request-relevant prompt skills are: ${promptSkillNames.join(", ")}.`,
-        "Use read with the exact <location> for the best match from Available Skills; never guess a generic path.",
+        promptSkillLocations.length > 0
+          ? `Use read with this exact trusted registry location: ${promptSkillLocations.join(", ")}.`
+          : "Use read with the exact <location> for the best match from Available Skills; never guess a generic path.",
       ]
     : [];
   return [
@@ -271,6 +275,7 @@ export async function runRequestToolNudge(
     buildDirective(
       recoveryToolNames,
       deps.requestRelevantPromptSkillNames ?? [],
+      deps.requestRelevantPromptSkillLocations ?? [],
       trigger,
     ),
     deps.guardProviderDispatch,

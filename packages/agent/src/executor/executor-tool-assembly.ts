@@ -656,6 +656,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     capabilityClass,
     requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
     skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
+    locations: deps.getPromptSkillLocations?.(),
   });
 
   const mcpOperatorPolicyRelevant =

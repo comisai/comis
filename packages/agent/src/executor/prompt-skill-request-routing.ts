@@ -3,13 +3,14 @@ import type { PromptSkillCapability } from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 
-const MAX_MATCHED_SKILLS = 2;
+const MAX_MATCHED_SKILLS = 1;
 const MIN_SHARED_TERMS = 2;
 
 interface PromptSkillRequestRoutingInput {
   readonly capabilityClass: string;
   readonly requestRelevanceText: string;
   readonly skills: readonly PromptSkillCapability[];
+  readonly locations?: ReadonlyMap<string, string>;
 }
 
 function terms(text: string): Set<string> {
@@ -36,13 +37,14 @@ function scoreSkill(
 function attachSkillRoute(
   tool: ToolDefinition,
   skillNames: readonly string[],
+  locations: readonly string[],
 ): ToolDefinition {
   return {
     ...tool,
     description:
       `${tool.description ?? "Read a workspace file."} `
       + `Request-relevant prompt skill${skillNames.length === 1 ? "" : "s"}: ${skillNames.join(", ")}. `
-      + "Load the matching <location> from Available Skills with this read tool before answering.",
+      + `Load the trusted registry location with this read tool before answering: ${locations.join(", ")}.`,
   };
 }
 
@@ -63,21 +65,32 @@ export function applyPromptSkillRequestRouting(
     .slice(0, MAX_MATCHED_SKILLS)
     .map((entry) => entry.skill.name);
   if (selected.length === 0) return [];
+  const selectedSet = new Set(selected);
+  const selectedLocations = [...(input.locations ?? [])]
+    .filter(([, name]) => selectedSet.has(name))
+    .map(([location]) => location);
+  if (selectedLocations.length === 0) return [];
 
   const activeIndex = deferral.activeTools.findIndex((tool) => tool.name === "read");
   const discoveredIndex = deferral.discoveredTools.findIndex((tool) => tool.name === "read");
   if (activeIndex >= 0) {
-    deferral.activeTools[activeIndex] = attachSkillRoute(deferral.activeTools[activeIndex]!, selected);
+    deferral.activeTools[activeIndex] = attachSkillRoute(
+      deferral.activeTools[activeIndex]!,
+      selected,
+      selectedLocations,
+    );
   } else if (discoveredIndex >= 0) {
     deferral.discoveredTools[discoveredIndex] = attachSkillRoute(
       deferral.discoveredTools[discoveredIndex]!,
       selected,
+      selectedLocations,
     );
   } else {
     return [];
   }
 
   deferral.requestRelevantPromptSkillNames = selected;
+  deferral.requestRelevantPromptSkillLocations = selectedLocations;
   if (!deferral.requestRelevantToolNames.includes("read")) {
     deferral.requestRelevantToolNames.unshift("read");
   }

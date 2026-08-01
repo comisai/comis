@@ -2771,6 +2771,7 @@ async function runSessionLocked(
         bridge, dynamicPreamble, responseLocalePolicy,
         requestRelevantToolNames: deferralResult.requestRelevantToolNames,
         requestRelevantPromptSkillNames: deferralResult.requestRelevantPromptSkillNames,
+        requestRelevantPromptSkillLocations: deferralResult.requestRelevantPromptSkillLocations,
         requestRelevanceHistory,
         operatorPolicyToolProjections,
         deferredContext, capabilityIndexResult, inlineMemory,

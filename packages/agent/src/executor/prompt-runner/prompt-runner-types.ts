@@ -83,6 +83,8 @@ export interface RunPromptParams {
   requestRelevantToolNames?: readonly string[];
   /** Prompt skills selected as the procedural route for the current request. */
   requestRelevantPromptSkillNames?: readonly string[];
+  /** Trusted registry locations for request-relevant prompt skills. */
+  requestRelevantPromptSkillLocations?: readonly string[];
   /** Content-free evidence about the bounded prior-user-turn relevance window. */
   requestRelevanceHistory?: {
     readonly turnCount: number;
