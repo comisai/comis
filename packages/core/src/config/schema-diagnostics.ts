@@ -174,12 +174,10 @@ const ConfigAuditConfigSchema = z
  * so an empty `diagnostics.recallTrace: {}` block in YAML produces a valid
  * configuration:
  *
- *   - `enabled: false` — the writer is OFF by default. This is the OPT-IN
- *     contrast to `cacheTrace`/`trajectory` (both `enabled:true`): the recall
- *     trace records per-recall ranking previews (fused order, rerank deltas,
- *     score breakdowns) that an operator only wants captured during a focused
- *     debug session. The recorder additionally honors the
- *     `COMIS_DISABLE_RECALL_TRACE` env hard-off.
+ *   - `enabled: true` — record bounded, sanitized ranking evidence from first
+ *     boot so an operator can explain a recall incident after it happens. The
+ *     recorder additionally honors the `COMIS_DISABLE_RECALL_TRACE` env
+ *     hard-off and an explicit `enabled: false` configuration.
  *   - `filePath` — optional full path override. Default resolved at runtime to
  *     `~/.comis/logs/recall-trace.jsonl` (tilde-prefix supported), mirroring
  *     `resolveCacheTraceFilePath`.
@@ -193,7 +191,7 @@ const ConfigAuditConfigSchema = z
  * Adding a raw-content toggle here would be a security regression.
  */
 const RecallTraceConfigSchemaInner = z.object({
-  enabled: z.boolean().default(false),
+  enabled: z.boolean().default(true),
   filePath: z.string().optional(),
   maxFileBytes: z
     .number()
