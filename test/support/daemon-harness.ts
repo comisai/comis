@@ -395,7 +395,11 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     }
 
     // Import daemon dynamically to avoid import-time side effects
-    const { main } = await import("@comis/daemon");
+    const {
+      main,
+      _resetSigusr1Timer,
+      _resetMutationFence,
+    } = await import("@comis/daemon");
 
     // Start the daemon with a per-fork COMIS_DATA_DIR (see getForkDataDir) so
     // parallel test files don't race the D14 .daemon.lock on a shared ~/.comis.
@@ -454,6 +458,10 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
 
     // Build cleanup function
     const cleanup = async (): Promise<void> => {
+      // Management RPCs can leave process-wide config-persistence state armed.
+      // Clear it before shutdown removes the daemon's signal handlers.
+      _resetSigusr1Timer();
+      _resetMutationFence();
       try {
         await daemon.shutdownHandle.trigger("test-cleanup");
         // Brief delay for graceful shutdown to complete
