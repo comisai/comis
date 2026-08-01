@@ -448,6 +448,8 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     requestRelevantToolNames: params.requestRelevantToolNames ?? [],
     requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
     requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
+    requestRelevantPromptSkillWorkflowToolNames:
+      params.requestRelevantPromptSkillWorkflowToolNames ?? [],
     currentSuccessfulMutationCount: () =>
       (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) =>
@@ -458,7 +460,10 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
           ) === "mutating",
       ).length,
     currentSuccessfulToolCount: () => {
-      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0
+        ? params.requestRelevantPromptSkillWorkflowToolNames
+        : params.requestRelevantToolNames;
+      const relevantNames = new Set(completionNames ?? []);
       return (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) => record.success && relevantNames.has(record.toolName),
       ).length;

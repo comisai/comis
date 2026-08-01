@@ -56,14 +56,15 @@ export function applyPromptSkillRequestRouting(
   if (input.capabilityClass !== "nano" || input.skills.length === 0) return [];
   const queryText = input.requestRelevanceText.toLocaleLowerCase();
   const queryTerms = terms(queryText);
-  const selected = input.skills
+  const selectedSkills = input.skills
     .map((skill) => ({ skill, score: scoreSkill(queryTerms, queryText, skill) }))
     .filter((entry) => entry.score >= MIN_SHARED_TERMS)
     .sort((left, right) =>
       right.score - left.score || left.skill.name.localeCompare(right.skill.name)
     )
     .slice(0, MAX_MATCHED_SKILLS)
-    .map((entry) => entry.skill.name);
+    .map((entry) => entry.skill);
+  const selected = selectedSkills.map((skill) => skill.name);
   if (selected.length === 0) return [];
   const selectedSet = new Set(selected);
   const selectedLocations = [...(input.locations ?? [])]
@@ -91,8 +92,19 @@ export function applyPromptSkillRequestRouting(
 
   deferral.requestRelevantPromptSkillNames = selected;
   deferral.requestRelevantPromptSkillLocations = selectedLocations;
+  const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
+  const workflowToolNames = selectedSkills.some((skill) => (skill.requiredBins?.length ?? 0) > 0)
+    && allTools.some((tool) => tool.name === "exec")
+    ? ["exec"]
+    : [];
+  deferral.requestRelevantPromptSkillWorkflowToolNames = workflowToolNames;
   if (!deferral.requestRelevantToolNames.includes("read")) {
     deferral.requestRelevantToolNames.unshift("read");
+  }
+  for (const toolName of workflowToolNames) {
+    if (!deferral.requestRelevantToolNames.includes(toolName)) {
+      deferral.requestRelevantToolNames.push(toolName);
+    }
   }
   return selected;
 }

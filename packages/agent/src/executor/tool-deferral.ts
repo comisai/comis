@@ -136,6 +136,8 @@ export interface ExcludeDeferralResult {
   requestRelevantPromptSkillNames?: string[];
   /** Trusted registry locations for the selected prompt skills. */
   requestRelevantPromptSkillLocations?: string[];
+  /** Tools required to execute the selected prompt skill procedure. */
+  requestRelevantPromptSkillWorkflowToolNames?: string[];
 }
 
 // ---------------------------------------------------------------------------

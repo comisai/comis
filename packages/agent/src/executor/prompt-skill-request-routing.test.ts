@@ -14,7 +14,7 @@ function tool(name: string): ToolDefinition {
 
 function result(): ExcludeDeferralResult {
   return {
-    activeTools: [tool("read"), tool("find")],
+    activeTools: [tool("read"), tool("find"), tool("exec")],
     deferredEntries: [],
     discoveredTools: [],
     discoverTool: null,

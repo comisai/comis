@@ -2772,6 +2772,8 @@ async function runSessionLocked(
         requestRelevantToolNames: deferralResult.requestRelevantToolNames,
         requestRelevantPromptSkillNames: deferralResult.requestRelevantPromptSkillNames,
         requestRelevantPromptSkillLocations: deferralResult.requestRelevantPromptSkillLocations,
+        requestRelevantPromptSkillWorkflowToolNames:
+          deferralResult.requestRelevantPromptSkillWorkflowToolNames,
         requestRelevanceHistory,
         operatorPolicyToolProjections,
         deferredContext, capabilityIndexResult, inlineMemory,

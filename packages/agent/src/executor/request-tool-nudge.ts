@@ -41,6 +41,7 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantToolNames: readonly string[];
   requestRelevantPromptSkillNames?: readonly string[];
   requestRelevantPromptSkillLocations?: readonly string[];
+  requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -109,6 +110,7 @@ function buildDirective(
   toolNames: readonly string[],
   promptSkillNames: readonly string[],
   promptSkillLocations: readonly string[],
+  promptSkillWorkflowToolNames: readonly string[],
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
@@ -134,6 +136,9 @@ function buildDirective(
         promptSkillLocations.length > 0
           ? `Use read with this exact trusted registry location: ${promptSkillLocations.join(", ")}.`
           : "Use read with the exact <location> for the best match from Available Skills; never guess a generic path.",
+        ...(promptSkillWorkflowToolNames.length > 0
+          ? [`After loading it, complete the procedure with these required workflow tools: ${promptSkillWorkflowToolNames.join(", ")}.`]
+          : []),
       ]
     : [];
   return [
@@ -279,6 +284,7 @@ export async function runRequestToolNudge(
       recoveryToolNames,
       deps.requestRelevantPromptSkillNames ?? [],
       deps.requestRelevantPromptSkillLocations ?? [],
+      deps.requestRelevantPromptSkillWorkflowToolNames ?? [],
       trigger,
     ),
     deps.guardProviderDispatch,

@@ -44,6 +44,8 @@ export interface PromptSkillCapability {
   readonly summary?: string;
   /** Package names this skill replaces (for install-detour overlap detection). */
   readonly replacesPackages: readonly string[];
+  /** External binaries the skill procedure requires. */
+  readonly requiredBins?: readonly string[];
   /**
    * Where the skill was discovered from. Mirrors `@comis/skills` `SkillSource`:
    * "learned" is the verified-learning procedural source, set
