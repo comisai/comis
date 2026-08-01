@@ -25,6 +25,16 @@ describe("EmbeddingConfigSchema — multilingual advisory key", () => {
     expect(parsed.local.modelUri).toBe("hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf");
   });
 
+  it("does not claim an explicitly selected model is multilingual without a declaration", () => {
+    const parsed = EmbeddingConfigSchema.parse({
+      local: {
+        modelUri:
+          "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+      },
+    });
+    expect(parsed.multilingual).toBeUndefined();
+  });
+
   it("throws on a typo'd key (multiligual) — z.strictObject rejects unknown keys", () => {
     expect(() => EmbeddingConfigSchema.parse({ multiligual: true })).toThrow();
   });
