@@ -77,8 +77,9 @@ export function applyPromptSkillRequestRouting(
     return [];
   }
 
+  deferral.requestRelevantPromptSkillNames = selected;
   if (!deferral.requestRelevantToolNames.includes("read")) {
-    deferral.requestRelevantToolNames.push("read");
+    deferral.requestRelevantToolNames.unshift("read");
   }
   return selected;
 }

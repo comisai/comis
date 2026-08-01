@@ -132,6 +132,8 @@ export interface ExcludeDeferralResult {
   deferredNames: string[];
   /** Active tools selected specifically because they match the current request. */
   requestRelevantToolNames: string[];
+  /** Prompt skills selected as the procedural route for the current request. */
+  requestRelevantPromptSkillNames?: string[];
 }
 
 // ---------------------------------------------------------------------------

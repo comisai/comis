@@ -446,6 +446,7 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     messages: sessionMessages,
     capabilityClass: params.modelProfile?.capabilityClass,
     requestRelevantToolNames: params.requestRelevantToolNames ?? [],
+    requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
     currentSuccessfulMutationCount: () =>
       (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) =>

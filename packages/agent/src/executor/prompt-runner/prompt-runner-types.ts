@@ -81,6 +81,8 @@ export interface RunPromptParams {
   dynamicPreamble: string | undefined;
   /** Active tools selected specifically because they match the current request. */
   requestRelevantToolNames?: readonly string[];
+  /** Prompt skills selected as the procedural route for the current request. */
+  requestRelevantPromptSkillNames?: readonly string[];
   /** Content-free evidence about the bounded prior-user-turn relevance window. */
   requestRelevanceHistory?: {
     readonly turnCount: number;

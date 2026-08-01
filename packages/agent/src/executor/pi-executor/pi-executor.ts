@@ -2770,6 +2770,7 @@ async function runSessionLocked(
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy,
         requestRelevantToolNames: deferralResult.requestRelevantToolNames,
+        requestRelevantPromptSkillNames: deferralResult.requestRelevantPromptSkillNames,
         requestRelevanceHistory,
         operatorPolicyToolProjections,
         deferredContext, capabilityIndexResult, inlineMemory,

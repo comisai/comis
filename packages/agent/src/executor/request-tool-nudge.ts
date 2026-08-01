@@ -39,6 +39,7 @@ export interface RunRequestToolNudgeDeps {
   messages: unknown[];
   capabilityClass: string | undefined;
   requestRelevantToolNames: readonly string[];
+  requestRelevantPromptSkillNames?: readonly string[];
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -105,6 +106,7 @@ function claimsExternalActionAttempt(messages: unknown[]): boolean {
 
 function buildDirective(
   toolNames: readonly string[],
+  promptSkillNames: readonly string[],
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
@@ -124,6 +126,12 @@ function buildDirective(
       ? [`Capability-owned recovery for ${toolName}: ${guidance.slice(0, MAX_RECOVERY_GUIDANCE_CHARS)}`]
       : [];
   });
+  const promptSkillGuidance = promptSkillNames.length > 0
+    ? [
+        `The request-relevant prompt skills are: ${promptSkillNames.join(", ")}.`,
+        "Use read with the exact <location> for the best match from Available Skills; never guess a generic path.",
+      ]
+    : [];
   return [
     "[comis: continuation — the current request still needs tool-backed action]",
     triggerFact,
@@ -132,6 +140,7 @@ function buildDirective(
     "If the request is applicable, invoke the matching tools now and ground the answer in their current-turn results.",
     "Use exact identifiers from trusted operator policy and the current request; never guess or substitute a nearby target.",
     "Never infer a secret or credential name from its contents or the active channel.",
+    ...promptSkillGuidance,
     ...capabilityGuidance,
     "Read-only list, get, search, status, or inspect actions do not complete a change request.",
     "Otherwise, state the exact current blocker.",
@@ -259,7 +268,11 @@ export async function runRequestToolNudge(
   const successfulToolCountBefore = successfulCount();
   const continuation = await runContinuationTurn(
     deps.session,
-    buildDirective(recoveryToolNames, trigger),
+    buildDirective(
+      recoveryToolNames,
+      deps.requestRelevantPromptSkillNames ?? [],
+      trigger,
+    ),
     deps.guardProviderDispatch,
     { restrictToToolNames: recoveryToolNames },
   );
