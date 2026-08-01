@@ -271,7 +271,7 @@ describe("runRequestToolNudge", () => {
 
     const outcome = await runRequestToolNudge(deps);
 
-    expect(outcome.outcome).toBe("recovered");
+    expect(outcome.outcome).toBe("still_no_tool_call");
     expect(prompt).toHaveBeenCalledTimes(3);
     expect(prompt.mock.calls[1]?.[0]).toContain(
       "u dont really know how to make flash cards properly",

@@ -479,9 +479,15 @@ export async function runRequestToolNudge(
 
   const response = deps.getVisibleAssistantText(deps.session);
   const successfulToolCountAfter = successfulCount();
+  const procedureCompletionProvable = !(
+    useReadRecovery
+    && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
+    && promptSkillWorkflowTools.length > 0
+  );
   const recovered =
     successfulToolCountAfter > successfulToolCountBefore
-    && response.trim().length > 0;
+    && response.trim().length > 0
+    && procedureCompletionProvable;
   logger.info(
     {
       submodule: SUBMODULE,
@@ -491,6 +497,7 @@ export async function runRequestToolNudge(
       outcome: recovered ? "recovered" : "still_no_tool_call",
       successfulToolCountBefore,
       successfulToolCountAfter,
+      procedureCompletionProvable,
     },
     "Request-tool nudge completed",
   );
