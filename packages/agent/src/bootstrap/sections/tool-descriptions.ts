@@ -159,10 +159,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // SYSTEM_PROMPT_GUIDES supplies the detailed procedure after the first
   // successful tool result.
   sessions_spawn:
-    "Spawn background sub-agent; returns run ID. Delegate work needing >30s, media generation,"
-    + " 3+ files, deep research, or 4+ steps; parallelize independent work. Bind named tools with"
-    + " required_tools + tool_groups; prose grants none. Results announce automatically—do not"
-    + " call message for delivery.",
+    "Spawn background sub-agent; returns run ID. Delegate >30s, media, 3+ files, research, or 4+"
+    + " steps. Spawn one; parallelize only distinct independent subtasks—never duplicate tasks."
+    + " Bind named tools via required_tools + tool_groups. Results announce automatically; do not"
+    + " call message.",
   subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
@@ -641,7 +641,8 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 - **Time-intensive operations**: Any task where tool execution alone will take >30 seconds
 
 ### How to Delegate
-1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background
+1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background.
+   Spawn one unless the user requests multiple helpers or the work has distinct independent subtasks
 2. When the task explicitly requires a named tool, you MUST list it in \`required_tools\` and include a matching
    \`tool_groups\` profile (for example, \`required_tools: ['obs_query']\` with \`tool_groups: ['coding', 'supervisor']\`).
    Task prose does not grant a tool. If it cannot be delegated, call it yourself and pass only the bounded result.
@@ -656,8 +657,9 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 9. Continue the conversation -- the result will be announced automatically when done
 
 ### Parallel Sub-Agents
-When a task has independent subtasks, spawn multiple sub-agents in parallel:
+When a task has distinct independent subtasks, spawn multiple sub-agents in parallel:
 - Call \`sessions_spawn\` multiple times in the SAME response (parallel tool calls)
+- Never spawn duplicate or reworded-equivalent tasks; one requested outcome gets one child
 - Each sub-agent gets a focused, self-contained task description
 - All sub-agents run concurrently and announce results independently
 - Use \`subagents\` (action="wait") to collect owned results without polling; use action="list" only for a status snapshot
