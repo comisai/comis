@@ -263,7 +263,7 @@ export async function setupMemory(deps: {
       ? { modelUri: embeddingConfig.local.modelUri, modelsDir: safePath(container.config.dataDir || ".", embeddingConfig.local.modelsDir), contextSize: embeddingConfig.local.contextSize }
       : undefined;
 
-    // A cold boot downloads the local GGUF (~146MB) and loads it into memory —
+    // A cold boot downloads the local GGUF (~635MB) and loads it into memory —
     // tens of seconds on a small instance, and node-llama-cpp's own progress
     // output bypasses the Pino pipeline. Announce at INFO before blocking so
     // the stall is attributable from the default log level, and stamp the
