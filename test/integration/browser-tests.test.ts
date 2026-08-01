@@ -192,7 +192,7 @@ describe.skipIf(!HAS_CHROME)(
         >;
         expect(status.running).toBe(true);
         expect(status.connected).toBe(true);
-        expect(typeof status.cdpPort).toBe("number");
+        expect(status.cdpPort).toBe(18452);
       },
       60_000,
     );

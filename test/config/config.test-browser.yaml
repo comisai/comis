@@ -1,7 +1,7 @@
 # Comis Test Configuration — Browser Integration Tests
 #
 # Designed for browser integration testing with:
-# - Port 8452 to avoid conflicts with other test suites (4766-8451)
+# - Gateway port 8452 and CDP port 18452 to avoid test and developer browser conflicts
 # - browser: true to trigger BrowserService creation
 # - Separate memory DB to avoid cross-test pollution
 # - All other settings identical to config.test-infra.yaml
@@ -38,6 +38,7 @@ agents:
 # The suite serves its fixture pages from a local HTTP server; loopback
 # navigation is SSRF-blocked by default and needs this explicit opt-in.
 browser:
+  cdpPort: 18452
   allowLoopbackNavigation: true
 
 gateway:
