@@ -204,6 +204,16 @@ function buildPromptSkillWorkflowDirective(
   ].join("\n");
 }
 
+function buildPromptSkillResultNarrationDirective(): string {
+  return [
+    "[comis: continuation — narrate the completed prompt skill workflow]",
+    "A required prompt-skill workflow tool succeeded in this turn.",
+    "Give the final user-facing answer now from that successful receipt.",
+    "Follow the loaded procedure's response contract exactly and preserve canonical identifiers from the result.",
+    "Do not invoke another tool, ask for context already supplied, or replace a specific result with a generic capability.",
+  ].join("\n");
+}
+
 export async function runRequestToolNudge(
   deps: RunRequestToolNudgeDeps,
 ): Promise<RequestToolNudgeOutcome> {
@@ -368,6 +378,27 @@ export async function runRequestToolNudge(
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: workflowRecoveryTools },
+    );
+  }
+  if (
+    continuation.ok
+    && promptSkillWorkflowTools.length > 0
+    && successfulCount() > successfulToolCountBefore
+  ) {
+    logger.info(
+      {
+        submodule: SUBMODULE,
+        step: "prompt-skill-result-narration",
+        agentId,
+        workflowToolNames: promptSkillWorkflowTools,
+      },
+      "Successful prompt skill workflow requires one bounded result narration",
+    );
+    continuation = await runContinuationTurn(
+      deps.session,
+      buildPromptSkillResultNarrationDirective(),
+      deps.guardProviderDispatch,
+      { restrictToToolNames: [] },
     );
   }
   if (!continuation.ok) {

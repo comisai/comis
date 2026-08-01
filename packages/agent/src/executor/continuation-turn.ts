@@ -33,7 +33,7 @@ export async function runContinuationTurn(
 ): Promise<Result<unknown, Error>> {
   let previousActiveTools: string[] | undefined;
   if (
-    options.restrictToToolNames?.length
+    options.restrictToToolNames !== undefined
     && session.getActiveToolNames
     && session.setActiveToolsByName
   ) {
