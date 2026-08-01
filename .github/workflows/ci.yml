@@ -220,7 +220,7 @@ jobs:
           git config --global user.name "Comis CI"
 
       # The integration/e2e daemons boot a LOCAL embedding model; global test
-      # setup downloads the ~139 MB GGUF once from Hugging Face and per-fork
+      # setup downloads the ~635 MB GGUF once from Hugging Face and per-fork
       # boots hard-link it. When HF is slow or throttled that download blows
       # the cap and 40+ daemon boots cold-download in parallel straight into
       # the 60s hook timeout. Persist the model across runs so HF is never
@@ -231,7 +231,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
-          key: embedding-models-nomic-embed-text-v1.5-Q8_0
+          key: embedding-models-bge-m3-Q8_0
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -260,7 +260,7 @@ jobs:
         if: always() && steps.model-cache.outputs.cache-hit != 'true'
         run: |
           rm -f ~/.comis/models/*.ipull* 2>/dev/null || true
-          if ls ~/.comis/models/*nomic-embed*.gguf >/dev/null 2>&1; then
+          if ls ~/.comis/models/*bge-m3*.gguf >/dev/null 2>&1; then
             echo "complete=true" >> "$GITHUB_OUTPUT"
           else
             echo "complete=false" >> "$GITHUB_OUTPUT"
@@ -273,7 +273,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
-          key: embedding-models-nomic-embed-text-v1.5-Q8_0
+          key: embedding-models-bge-m3-Q8_0
 
   # ---------------------------------------------------------------------------
   # e2e — orchestrate driver + flow-matrix gate (boots the daemon)
@@ -301,7 +301,7 @@ jobs:
           git config --global user.name "Comis CI"
 
       # The integration/e2e daemons boot a LOCAL embedding model; global test
-      # setup downloads the ~139 MB GGUF once from Hugging Face and per-fork
+      # setup downloads the ~635 MB GGUF once from Hugging Face and per-fork
       # boots hard-link it. When HF is slow or throttled that download blows
       # the cap and 40+ daemon boots cold-download in parallel straight into
       # the 60s hook timeout. Persist the model across runs so HF is never
@@ -312,7 +312,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
-          key: embedding-models-nomic-embed-text-v1.5-Q8_0
+          key: embedding-models-bge-m3-Q8_0
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -336,7 +336,7 @@ jobs:
         if: always() && steps.model-cache.outputs.cache-hit != 'true'
         run: |
           rm -f ~/.comis/models/*.ipull* 2>/dev/null || true
-          if ls ~/.comis/models/*nomic-embed*.gguf >/dev/null 2>&1; then
+          if ls ~/.comis/models/*bge-m3*.gguf >/dev/null 2>&1; then
             echo "complete=true" >> "$GITHUB_OUTPUT"
           else
             echo "complete=false" >> "$GITHUB_OUTPUT"
@@ -349,7 +349,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
-          key: embedding-models-nomic-embed-text-v1.5-Q8_0
+          key: embedding-models-bge-m3-Q8_0
 
   # ---------------------------------------------------------------------------
   # tarball — published-package smoke (pnpm pack + install)
