@@ -182,18 +182,13 @@ export function clearStaleToolResults(
  *
  * Mutates messages in place (same pattern as clearStaleToolResults).
  *
- * Fail-SAFE on an unknown cached extent: `fenceIndex < 0` means no cache breakpoint was
- * observed, so which messages the provider already cached is UNKNOWN. Removing a thinking
- * block changes the assistant message's content-BLOCK COUNT, so unlike the tool-result
- * clear (which swaps content in place behind a byte-stable placeholder and keeps the block
- * count) it rewrites already-sent bytes. Clearing under an unknown fence therefore mutates
- * the cached prefix and forfeits the whole cache write. The sliding keepWindow makes a
- * DIFFERENT message newly clearable each turn, so the mutation repeats every turn forever.
+ * Fail-SAFE on an unknown cached extent (`fenceIndex < 0`): removing a thinking block changes the
+ * message's BLOCK COUNT and the sliding keepWindow newly clears a DIFFERENT one each turn, so the
+ * cached prefix would mutate every turn forever.
  *
  * @param messages - The messages array (mutated in place)
  * @param keepWindow - Number of most recent assistant messages to preserve thinking blocks in
- * @param fenceIndex - Highest already-cached message index; negative means UNKNOWN, which
- *        protects every message rather than none.
+ * @param fenceIndex - Highest already-cached message index; negative means UNKNOWN (protects all).
  * @returns Number of thinking blocks cleared
  */
 export function clearStaleThinkingBlocks(
@@ -201,10 +196,8 @@ export function clearStaleThinkingBlocks(
   keepWindow: number,
   fenceIndex: number = -1,
 ): number {
-  // Cached extent unknown -> treat every already-sent message as possibly cached.
-  // `idx <= fenceIndex` protects NOTHING at -1, which is the fail-OPEN direction.
+  // Cached extent unknown: `idx <= fenceIndex` protects NOTHING at -1 (fail-OPEN).
   if (fenceIndex < 0) return 0;
-
   // Collect assistant message indices
   const assistantIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -299,16 +292,12 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
  * Mutates messages in place. Returns the number of messages whose thinking was stripped.
  */
 export function stripReplayThinking(messages: Array<Record<string, unknown>>): number {
-  // The LATEST assistant message is off-limits: Anthropic rejects any request whose
-  // newest assistant turn has had its thinking content altered --
-  // `messages.<n>.content.<k>: 'thinking' or 'redacted_thinking' blocks in the latest
-  // assistant message cannot be modified`. Stripping it produced that 400 live, and the
-  // executor's retry re-sent the same mutated shape, so the turn ended in consecutive
-  // empty assistant responses and the user got silence.
-  //
-  // Skipping it costs at most ONE prefix mutation when that message later goes historical
-  // and is stripped -- and only if it sits inside the cache fence. With the SDK's marker on
-  // the last user message it sits AFTER the fence, so the later strip is free.
+  // The LATEST assistant message is off-limits: the provider rejects a request whose newest
+  // assistant turn has had its thinking content altered (`... blocks in the latest assistant
+  // message cannot be modified`). Stripping it produced that 400 live and the retry re-sent the
+  // same shape, so the turn ended in consecutive empty responses and the user got silence.
+  // Skipping it costs at most ONE later prefix mutation, and only inside the fence; the SDK's
+  // marker on the last user message puts it AFTER the fence, so that strip is free.
   let latestAssistant = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i]!.role === "assistant") { latestAssistant = i; break; }

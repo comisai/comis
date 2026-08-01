@@ -208,7 +208,7 @@ describe("stripReplayThinking (pure) — replayed-thinking cache stability", () 
       { role: "assistant", content: [
         { type: "thinking", thinking: "live" },
         { type: "redacted_thinking", data: "enc" },
-        { type: "tool_use", id: "t1", name: "mcp__ituran--ituran_fleet_activity_report", input: {} },
+        { type: "tool_use", id: "t1", name: "mcp__vendor--slow_report", input: {} },
       ] },
     ];
     const before = JSON.stringify(messages[3]);
