@@ -27,6 +27,7 @@ import {
   validateMemoryWrite,
   themeForName,
   writeMasterKeyIfAbsent,
+  writeCanarySecretIfAbsent,
   preReadStorageMode,
   systemNowMs,
   systemSleep,
@@ -1007,6 +1008,7 @@ async function bootFoundation(
   const _bootstrap = overrides.bootstrap ?? bootstrap;
   const _preReadStorageMode = overrides.preReadStorageMode ?? preReadStorageMode;
   const _writeMasterKeyIfAbsent = overrides.writeMasterKeyIfAbsent ?? writeMasterKeyIfAbsent;
+  const _writeCanarySecretIfAbsent = overrides.writeCanarySecretIfAbsent ?? writeCanarySecretIfAbsent;
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
   const _createLogLevelManager = overrides.createLogLevelManager ?? createLogLevelManager;
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
@@ -1036,6 +1038,13 @@ async function bootFoundation(
   // file/env modes create NO key material on first boot.
   if (storageMode === "encrypted") {
     _writeMasterKeyIfAbsent(dataDir);
+    // Generate the exfiltration-canary seed on the same gate. Without it the canary token derives
+    // from tenantId+agentId — stable but PREDICTABLE to anyone who knows those, so the canary can be
+    // recognised and stepped around. Idempotent: never rotates an existing value, because rotating
+    // would invalidate every canary already embedded in prior outbound content. Deliberately NOT
+    // written in file/env mode, preserving the boot invariant that those modes create no key
+    // material on first boot.
+    _writeCanarySecretIfAbsent(dataDir);
     // loadEnvFile below picks up the freshly-written key from the .env file,
     // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }

@@ -14,7 +14,7 @@ export { isLoopbackHost } from "./loopback-host.js";
 export { validateBindMount } from "./bind-mount-validator.js";
 
 // Master-key file helpers (daemon-free `secrets init` body)
-export { writeMasterKeyIfAbsent, generateMasterKey } from "./master-key.js";
+export { writeMasterKeyIfAbsent, generateMasterKey, writeCanarySecretIfAbsent } from "./master-key.js";
 export type { MasterKeyWriteResult } from "./master-key.js";
 
 // OAuth profile-ID validation

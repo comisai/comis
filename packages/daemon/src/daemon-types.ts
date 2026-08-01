@@ -59,6 +59,7 @@ import type {
   createModelCatalog,
   preReadStorageMode,
   writeMasterKeyIfAbsent,
+  writeCanarySecretIfAbsent,
   MutableSecretManager,
 } from "@comis/core";
 import type { createActiveRunRegistry } from "@comis/agent";
@@ -224,6 +225,7 @@ export interface DaemonOverrides {
   preReadStorageMode?: typeof preReadStorageMode;
   /** Override writeMasterKeyIfAbsent for test isolation (spy on key-material creation gate). */
   writeMasterKeyIfAbsent?: typeof writeMasterKeyIfAbsent;
+  writeCanarySecretIfAbsent?: typeof writeCanarySecretIfAbsent;
   /** Override createTracingLogger. */
   createTracingLogger?: typeof createTracingLogger;
   /** Override createLogLevelManager. */

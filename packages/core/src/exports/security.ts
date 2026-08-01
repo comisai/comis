@@ -7,7 +7,7 @@ export { isLoopbackHost } from "../security/index.js";
 // Bind-mount validator — consumed by the bwrap sandbox provider.
 export { validateBindMount } from "../security/index.js";
 // Master-key file helpers (daemon-free `secrets init` body)
-export { writeMasterKeyIfAbsent, generateMasterKey } from "../security/index.js";
+export { writeMasterKeyIfAbsent, generateMasterKey, writeCanarySecretIfAbsent } from "../security/index.js";
 export type { MasterKeyWriteResult } from "../security/index.js";
 export { createSecretManager, createSecretManagerWithMutableHandle, envSubset } from "../security/index.js";
 export type { SecretManager, MutableSecretManager } from "../security/index.js";
