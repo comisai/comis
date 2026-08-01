@@ -8,8 +8,8 @@ Comis governs what an in-process agent may do with a small, closed set of
 **capabilities** -- permission tokens like `orch:spawn` and `orch:cron` -- checked
 by a **single gate** on every privileged action. Capabilities are deliberately
 **orthogonal** to the gateway's network scopes, and the control plane is
-unreachable to any agent-originated call by construction. This page describes
-the model; the operator-facing dial that grants capabilities is the
+unreachable to non-admin agent turns by construction. This page describes the
+model; the operator-facing dial that grants capabilities is the
 [Autonomy](/agents/autonomy) profile.
 
 <Note>
@@ -217,17 +217,19 @@ denial is recorded as a content-free security signal in the audit trail.
 
 Capabilities govern what an agent **may** do. A second, stricter rule governs
 the control plane: a **non-admin** agent turn may **never** reach it, regardless
-of capabilities. Administrative handlers (the ones that manage secrets, tokens,
+of capabilities. Admin-only handlers (the ones that manage secrets, tokens,
 config, channels, and the other privileged-surface methods) reject a non-admin
 agent-origin call outright -- before any capability is even consulted. An
 admin-trust agent turn (an explicit operator grant) is the exception: it inherits
 the admin user's control-plane access (detailed in the trust-tier note below).
 
 The deny-by-origin set is exactly the **true control plane** -- the
-`admin`-scoped methods. The orchestration surface an agent legitimately reaches
-(its granted `orch:*` methods, and its own session reads) is **not** in this set:
-those are capability-gated or agent-reachable, not denied by origin. A handful of
-methods stay control-plane-only even within otherwise-agent-facing namespaces:
+contracts that expose an `admin` route without also exposing an `rpc` route.
+A multi-scope contract is excluded because its RPC route is intentionally
+agent-reachable; its handler owns the narrower caller-vs-operator authorization
+rule. The orchestration surface an agent legitimately reaches (its granted
+`orch:*` methods, and its own session reads) is **not** in the deny set. A
+handful of methods stay control-plane-only even within otherwise-agent-facing namespaces:
 the message subset that is not part of `orch:message`
 (`message.edit`/`delete`/`fetch`/`attach`) and the lifecycle ops that delete or
 export an **arbitrary** session (`session.delete`/`export`/`reset_conversation`).
@@ -242,14 +244,16 @@ This is sound because of how agent origin is established:
   </Step>
   <Step title="Inbound internal fields are stripped at the gateway">
     Every field whose name begins with an underscore -- the whole internal-field
-    registry, including `_agentId` and `_capabilities` -- is stripped from
-    external WebSocket and REST callers **before** dispatch. An external caller
-    therefore cannot forge agent origin.
+    registry, including `_agentId`, `_capabilities`, and `_trustLevel` -- is
+    stripped from external WebSocket and REST callers **before** dispatch. An
+    external caller therefore cannot forge agent origin or handler trust. After
+    route admission, the gateway derives admin trust from the authenticated
+    context independently of which accepted route admitted a multi-scope method.
   </Step>
   <Step title="Presence becomes an unforgeable signal">
     With inbound markers stripped, the *presence* of `_agentId` on a call is a
     sound, unforgeable "this came from an agent" signal -- which is what lets the
-    admin handlers deny-by-origin safely.
+    admin-only handlers deny-by-origin safely.
   </Step>
 </Steps>
 
@@ -284,7 +288,7 @@ own grant.
 | **Autonomy profile** | Operator picks a posture; it resolves to a capability set |
 | **Injection** | The resolved capabilities ride the agent's in-process RPC calls |
 | **The gate** | Each privileged handler calls `requireCapability` for the capability it needs |
-| **Deny-by-origin** | Admin handlers reject agent-origin calls before capabilities are consulted |
+| **Deny-by-origin** | Admin-only handlers reject non-admin agent-origin calls before capabilities are consulted |
 
 ## Related
 

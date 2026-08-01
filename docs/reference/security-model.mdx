@@ -492,14 +492,13 @@ Every privileged handler checks the one capability it requires before acting:
 
 ### Deny-by-Origin (control plane)
 
-Administrative handlers — secrets, tokens, config, channel management — reject
-**any** agent-origin call outright, before capabilities are consulted and
-independent of the call's trust level. This is sound because inbound internal
-fields (the whole underscore-prefixed registry, including `_agentId` and
-`_capabilities`) are stripped from external WebSocket and REST callers before
-dispatch, while the legitimate in-process injector runs inside the daemon. The
-*presence* of `_agentId` is therefore an unforgeable agent-origin signal, and
-the control plane stays unreachable to agents by construction.
+Admin-only contracts — those exposing an `admin` route without an `rpc` route —
+form the deny-by-origin control plane. They reject a non-admin agent-origin call
+before capabilities are consulted; an explicitly granted admin-trust turn is
+the exception. Multi-scope contracts are excluded from the blanket deny set and
+their handlers own caller-vs-operator authorization. See
+[Capability Model](/security/capability-model#deny-by-origin-on-the-control-plane)
+for the authoritative trust and signal-soundness rules.
 
 <Info>
 Source: `packages/core/src/security/capability.ts` — the closed `AgentCapability`

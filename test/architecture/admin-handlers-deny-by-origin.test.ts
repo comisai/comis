@@ -2,7 +2,7 @@
 /**
  * Deny-by-origin chokepoint architecture invariants.
  *
- * Chokepoint (one chokepoint, full admin set, no scatter):
+ * Chokepoint (one chokepoint, full admin-only set, no scatter):
  *   1. The deny-by-origin chokepoint EXISTS in `rpc-dispatch.ts` — it derives
  *      its admin-only method set from `API_CONTRACTS_ORDERED` filtered on an
  *      admin route without an RPC route AND calls `assertNotAgentOrigin`. The

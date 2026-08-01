@@ -4,12 +4,12 @@
 // gateway/method-router converts it to a JSON-RPC error response (mirrors the
 // existing `_trustLevel === "admin"` admin-gate throws in *-handlers.ts).
 /**
- * Deny-by-origin guard for admin-scoped control-plane methods.
+ * Deny-by-origin guard for admin-only control-plane methods.
  *
  * The confused-deputy mitigation for the control plane: the in-process agent
  * loop dispatches straight through `createRpcDispatch` (bypassing
  * `method-router`'s `checkScope`). This guard governs whether an agent-origin
- * call may reach an admin-scoped method (`secrets.*`/`tokens.*`/`config.*`/
+ * call may reach an admin-only method (`secrets.*`/`tokens.*`/`config.*`/
  * `agents.*`/`mcp.*`/…).
  *
  * **Trust-tiered:** an agent turn operating on behalf
@@ -63,7 +63,7 @@ export interface AssertNotAgentOriginDeps {
 }
 
 /**
- * Reject an agent-origin call to an admin-scoped control-plane method.
+ * Reject an agent-origin call to an admin-only control-plane method.
  *
  * @param rawParams - the un-stripped dispatch params; `_agentId` is read here
  *   as the trusted agent-origin signal (external forgeries already stripped).

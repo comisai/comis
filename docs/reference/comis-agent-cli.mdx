@@ -76,9 +76,9 @@ If the CLI is invoked outside a jail (no `COMIS_ORCH_SOCKET` / `COMIS_CAP_LEASE`
 
 - The operator `comis` binary is **not on the jail PATH** -- it cannot be invoked from inside the sandbox.
 - The capability **lease holds no admin capability** -- admin actions are not in the `orch:*` capability set a lease can carry.
-- Admin handlers **deny by origin** -- a call arriving over the capability socket is rejected at the admin handlers regardless of what it claims.
+- Admin-only handlers form the derived **deny-by-origin** control-plane set, so the capability socket cannot turn a lease claim into control-plane access.
 
-An admin attempt is therefore **denied identically to the `orchestrate(script)` path** -- the same closed door, the same denial. This is proved by `comis-agent-no-admin.test.ts`, which asserts the CLI table's intersection with both the derived admin-method set and the denylisted-method set is empty.
+An admin attempt is therefore **denied identically to the `orchestrate(script)` path** -- the same closed door, the same denial. This is proved by `comis-agent-no-admin.test.ts`, which asserts the CLI table's intersection with both the derived admin-only method set and the denylisted-method set is empty.
 
 ### `skill` is excluded by design
 
