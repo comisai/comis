@@ -36,6 +36,7 @@ import {
   pipelineAuthoringFromRow,
   pricingGapFromRow,
   mediaCredentialGapFromRow,
+  toolDeadlineCollisionFromRow,
   sandboxDowngradeFromRow,
   scriptZeroHitFromRow,
   servedBelowConfiguredFromRow,
@@ -636,6 +637,15 @@ export function buildFindings(
     // provider's credential is absent will fail at first use — invisible to the
     // main-pipeline chimeric detector, so it took a hand-grep to find (the
     // incident-day image-gen unavailability). Counts + remediation only.
+    const deadlineCollisionCount = toolDeadlineCollisionFromRow(latest);
+    if (deadlineCollisionCount > 0) {
+      findings.push({
+        code: "config_posture:tool_deadline_collision",
+        detail: `${deadlineCollisionCount} agent(s) whose MCP call deadline is not strictly below the sub-agent stall budget that encloses it — a sub-agent whose first act is a slow MCP call is killed at the moment its tool would report failure, so the run aborts with 0 steps and no diagnosis`,
+        count: deadlineCollisionCount,
+        hint: "lower integrations.mcp.callToolTimeoutMs below agents.<id>.operationModels.subagent.timeout (both ship at 120000, so pinning neither inherits the collision), or raise the sub-agent timeout above the call deadline",
+      });
+    }
     const mediaGapCount = mediaCredentialGapFromRow(latest);
     if (mediaGapCount > 0) {
       findings.push({

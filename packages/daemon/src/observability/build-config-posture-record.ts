@@ -99,8 +99,16 @@ export function countPricingGaps(
   ).length;
 }
 
-/** Shipped default stall budget (`agents.<id>.promptTimeout.promptTimeoutMs`). */
-const DEFAULT_PROMPT_TIMEOUT_MS = 180_000;
+/** Shipped default stall budget for a SUB-AGENT operation
+ *  (`agents.<id>.operationModels.subagent.timeout`; OPERATION_TIMEOUT_DEFAULTS.subagent).
+ *  This — not `promptTimeout.promptTimeoutMs` (180000) — is the budget that bound live: the
+ *  production timeout hint named `operationModels.subagent.timeout (currently 120000)`. */
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 120_000;
+
+/** Shipped default MCP call deadline (`integrations.mcp.callToolTimeoutMs`;
+ *  MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT). The collision arises from the DEFAULTS, so an operator who
+ *  pins nothing still inherits it — the count must therefore assume this when unset. */
+const DEFAULT_CALL_TOOL_TIMEOUT_MS = 120_000;
 
 /**
  * Count configured agents whose MCP call deadline is NOT strictly below the stall budget that
@@ -112,13 +120,15 @@ const DEFAULT_PROMPT_TIMEOUT_MS = 180_000;
  * A COUNT, never agent names.
  */
 export function countToolDeadlineCollisions(
-  agents: Readonly<Record<string, { promptTimeout?: { promptTimeoutMs?: number } }>>,
+  agents: Readonly<
+    Record<string, { operationModels?: { subagent?: { timeout?: number } } }>
+  >,
   callToolTimeoutMs: number | undefined,
 ): number {
-  if (typeof callToolTimeoutMs !== "number") return 0;
+  const deadline = callToolTimeoutMs ?? DEFAULT_CALL_TOOL_TIMEOUT_MS;
   return Object.values(agents).filter((a) => {
-    const budget = a.promptTimeout?.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS;
-    return callToolTimeoutMs >= budget;
+    const budget = a.operationModels?.subagent?.timeout ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
+    return deadline >= budget;
   }).length;
 }
 

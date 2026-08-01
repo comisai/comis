@@ -598,7 +598,7 @@ describe("countToolDeadlineCollisions — MCP call deadline >= the enclosing sta
   it("counts an agent whose MCP call deadline equals its prompt timeout", () => {
     expect(
       countToolDeadlineCollisions(
-        { default: { promptTimeout: { promptTimeoutMs: 120_000 } } },
+        { default: { operationModels: { subagent: { timeout: 120_000 } } } },
         120_000,
       ),
     ).toBe(1);
@@ -607,7 +607,7 @@ describe("countToolDeadlineCollisions — MCP call deadline >= the enclosing sta
   it("counts an agent whose MCP call deadline exceeds its prompt timeout", () => {
     expect(
       countToolDeadlineCollisions(
-        { default: { promptTimeout: { promptTimeoutMs: 90_000 } } },
+        { default: { operationModels: { subagent: { timeout: 90_000 } } } },
         120_000,
       ),
     ).toBe(1);
@@ -616,15 +616,18 @@ describe("countToolDeadlineCollisions — MCP call deadline >= the enclosing sta
   it("does not count an agent whose deadline is strictly below the budget", () => {
     expect(
       countToolDeadlineCollisions(
-        { default: { promptTimeout: { promptTimeoutMs: 180_000 } } },
+        { default: { operationModels: { subagent: { timeout: 180_000 } } } },
         120_000,
       ),
     ).toBe(0);
   });
 
-  it("falls back to the shipped stall-budget default when the agent does not pin one", () => {
-    // Default promptTimeoutMs is 180000, so a 120000 deadline is safe; a 200000 one is not.
-    expect(countToolDeadlineCollisions({ default: {} }, 120_000)).toBe(0);
-    expect(countToolDeadlineCollisions({ default: {} }, 200_000)).toBe(1);
+  it("flags the ALL-DEFAULTS case — the exact production configuration", () => {
+    // Neither knob pinned: the shipped MCP deadline (120000) equals the shipped sub-agent budget
+    // (120000), which is precisely what bit production. An earlier version of this counter returned 0
+    // here because it treated an unset callToolTimeoutMs as "no deadline" and compared against
+    // promptTimeoutMs (180000) — it reported a clean posture on the very config that failed twice.
+    expect(countToolDeadlineCollisions({ default: {} }, undefined)).toBe(1);
+    expect(countToolDeadlineCollisions({ default: {} }, 120_000)).toBe(1);
   });
 });
