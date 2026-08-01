@@ -65,6 +65,10 @@ registerToolMetadata("test_read_only_tool", {
   isReadOnly: true,
 });
 
+registerToolMetadata("read", {
+  isReadOnly: true,
+});
+
 registerToolMetadata("test_guided_mutating_tool", {
   isReadOnly: false,
   mutationRequestPrefixes: ["connect"],
@@ -206,22 +210,22 @@ describe("runRequestToolNudge", () => {
   });
 
   it("runs one bounded workflow continuation when skill loading alone is incomplete", async () => {
-    let activeTools = ["read", "exec", "test_read_only_tool"];
+    let activeTools = ["read", "exec"];
     let successfulWorkflowCount = 0;
     const setActiveToolsByName = vi.fn((names: string[]) => {
       activeTools = [...names];
     });
     const prompt = vi.fn(async () => {
       if (prompt.mock.calls.length === 1) {
-        expect(activeTools).toEqual(["read", "exec", "test_read_only_tool"]);
+        expect(activeTools).toEqual(["read", "exec"]);
         return;
       }
-      expect(activeTools).toEqual(["read", "exec", "test_read_only_tool"]);
+      expect(activeTools).toEqual(["read", "exec"]);
       successfulWorkflowCount = 1;
     });
     const deps = makeDeps({
       requestText: "find something that does",
-      requestRelevantToolNames: ["test_read_only_tool"],
+      requestRelevantToolNames: ["read"],
       requestRelevantPromptSkillNames: ["find-skills"],
       requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
       requestRelevantPromptSkillWorkflowToolNames: ["exec"],
@@ -243,15 +247,17 @@ describe("runRequestToolNudge", () => {
     expect(prompt.mock.calls[1]?.[0]).toContain(
       "u dont really know how to make flash cards properly",
     );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/do not use exec to reread/iu);
+    expect(prompt.mock.calls[1]?.[0]).not.toContain(
+      "Complete the requested action with: read.",
+    );
     expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, [
       "read",
       "exec",
-      "test_read_only_tool",
     ]);
     expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, [
       "read",
       "exec",
-      "test_read_only_tool",
     ]);
   });
 
