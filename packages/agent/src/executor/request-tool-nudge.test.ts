@@ -123,11 +123,16 @@ describe("runRequestToolNudge", () => {
     const deps = makeDeps({
       requestText: "find something that does",
       requestRelevantToolNames: ["test_read_only_tool"],
+      requestRelevantPromptSkillNames: ["find-skills"],
     });
 
     const outcome = await runRequestToolNudge(deps);
 
     expect(deps.session.prompt).toHaveBeenCalledTimes(1);
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/find-skills.*exact <location>/isu),
+      expect.anything(),
+    );
     expect(outcome.outcome).toBe("recovered");
   });
 
