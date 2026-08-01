@@ -261,6 +261,7 @@ export async function runRequestToolNudge(
     deps.session,
     buildDirective(recoveryToolNames, trigger),
     deps.guardProviderDispatch,
+    { restrictToToolNames: recoveryToolNames },
   );
   if (!continuation.ok) {
     logger.warn(
