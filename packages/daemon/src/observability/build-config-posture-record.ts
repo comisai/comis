@@ -99,6 +99,29 @@ export function countPricingGaps(
   ).length;
 }
 
+/** Shipped default stall budget (`agents.<id>.promptTimeout.promptTimeoutMs`). */
+const DEFAULT_PROMPT_TIMEOUT_MS = 180_000;
+
+/**
+ * Count configured agents whose MCP call deadline is NOT strictly below the stall budget that
+ * encloses it. When `integrations.mcp.callToolTimeoutMs >= promptTimeoutMs`, the enclosing budget
+ * always fires first, so the tool can never surface its own honest failure — the run aborts with
+ * zero steps and no diagnosis. Observed live twice: both defaults ship at 120000, so an agent that
+ * pins neither inherits the collision.
+ *
+ * A COUNT, never agent names.
+ */
+export function countToolDeadlineCollisions(
+  agents: Readonly<Record<string, { promptTimeout?: { promptTimeoutMs?: number } }>>,
+  callToolTimeoutMs: number | undefined,
+): number {
+  if (typeof callToolTimeoutMs !== "number") return 0;
+  return Object.values(agents).filter((a) => {
+    const budget = a.promptTimeout?.promptTimeoutMs ?? DEFAULT_PROMPT_TIMEOUT_MS;
+    return callToolTimeoutMs >= budget;
+  }).length;
+}
+
 /**
  * Count configured agents whose (provider, model) does NOT resolve in the model
  * catalog — the fail-closed-to-nano class (`modelRegistry.find()` → undefined →
@@ -273,6 +296,12 @@ export interface ConfigPostureInputs {
    * {@link countMediaCredentialGaps} at boot. Optional (defaults to 0).
    */
   mediaCredentialGapCount?: number;
+  /**
+   * Number of configured agents whose MCP call deadline is not strictly below the enclosing stall
+   * budget — the tool can never report its own timeout. A COUNT, never agent names. Computed via
+   * {@link countToolDeadlineCollisions} at boot. Optional (defaults to 0).
+   */
+  toolDeadlineCollisionCount?: number;
 }
 
 /**
@@ -297,6 +326,7 @@ export function buildConfigPostureRecord(
   const browserNoSandbox = inputs.browserNoSandbox ?? false;
   const terminalUnsafeDisableSandbox = inputs.terminalUnsafeDisableSandbox ?? false;
   const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
+  const toolDeadlineCollisionCount = inputs.toolDeadlineCollisionCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
@@ -308,7 +338,8 @@ export function buildConfigPostureRecord(
     sandboxNoDowngradeDisabled ||
     browserNoSandbox ||
     terminalUnsafeDisableSandbox ||
-    mediaCredentialGapCount > 0;
+    mediaCredentialGapCount > 0 ||
+    toolDeadlineCollisionCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -343,6 +374,7 @@ export function buildConfigPostureRecord(
       // Configured media pipelines whose pinned provider's credential is
       // absent (image/transcription/tts/video). A COUNT, never provider names.
       mediaCredentialGapCount,
+      toolDeadlineCollisionCount,
     }),
   });
 }

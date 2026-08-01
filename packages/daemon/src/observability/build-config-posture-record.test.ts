@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, countToolDeadlineCollisions, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./build-config-posture-record.js";
 import { unresolvedModelFromRow } from "../api/obs-handlers/system-findings-extractors.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
@@ -82,7 +82,8 @@ describe("buildConfigPostureRecord", () => {
       sandboxNoDowngradeDisabled: false, // always present (false default)
       browserNoSandbox: false, // always present (false default)
       terminalUnsafeDisableSandbox: false, // always present (false default)
-      mediaCredentialGapCount: 0, // always present (0 default), count-only
+      mediaCredentialGapCount: 0,
+      toolDeadlineCollisionCount: 0, // always present (0 default), count-only
     });
     // SECURITY: the stranded entry is a {label, count} — no value-bearing key.
     const strandedJson = JSON.stringify(details["stranded"]);
@@ -121,6 +122,7 @@ describe("buildConfigPostureRecord", () => {
       browserNoSandbox: false,
       terminalUnsafeDisableSandbox: false,
       mediaCredentialGapCount: 0,
+      toolDeadlineCollisionCount: 0,
     });
   });
 
@@ -576,5 +578,53 @@ describe("anyAgentTerminalUnsafeDisableSandbox — boot signal that a driven CLI
         bare: {},
       }),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// countToolDeadlineCollisions — an MCP call deadline that cannot fail honestly
+// ---------------------------------------------------------------------------
+
+describe("countToolDeadlineCollisions — MCP call deadline >= the enclosing stall budget", () => {
+  // Live incident (comis-moshe, 2026-08-01, reproduced again on the VPS 19:22:44): the shipped
+  // MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT (120000) equals the shipped sub-agent stall budget (120000),
+  // and neither was set in the operator's config. A sub-agent whose first act is a slow MCP call is
+  // therefore killed at exactly the moment its tool would report failure — the abort landed 1.1s and
+  // 87s BEFORE each MCP timeout WARN in production, and simultaneously with it on the re-drive. Both
+  // sub-agents died endReason=timeout with Steps:0 and produced nothing, twice, for one user request.
+  //
+  // A tool deadline must be strictly BELOW the budget that encloses it, or the tool can never
+  // surface its own honest failure.
+  it("counts an agent whose MCP call deadline equals its prompt timeout", () => {
+    expect(
+      countToolDeadlineCollisions(
+        { default: { promptTimeout: { promptTimeoutMs: 120_000 } } },
+        120_000,
+      ),
+    ).toBe(1);
+  });
+
+  it("counts an agent whose MCP call deadline exceeds its prompt timeout", () => {
+    expect(
+      countToolDeadlineCollisions(
+        { default: { promptTimeout: { promptTimeoutMs: 90_000 } } },
+        120_000,
+      ),
+    ).toBe(1);
+  });
+
+  it("does not count an agent whose deadline is strictly below the budget", () => {
+    expect(
+      countToolDeadlineCollisions(
+        { default: { promptTimeout: { promptTimeoutMs: 180_000 } } },
+        120_000,
+      ),
+    ).toBe(0);
+  });
+
+  it("falls back to the shipped stall-budget default when the agent does not pin one", () => {
+    // Default promptTimeoutMs is 180000, so a 120000 deadline is safe; a 200000 one is not.
+    expect(countToolDeadlineCollisions({ default: {} }, 120_000)).toBe(0);
+    expect(countToolDeadlineCollisions({ default: {} }, 200_000)).toBe(1);
   });
 });

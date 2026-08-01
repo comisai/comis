@@ -137,7 +137,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost, countToolDeadlineCollisions} from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -2827,7 +2827,7 @@ async function bootShutdown(
     (key) => container.secretManager.has(key),
     boot.imageGenProvider?.isAvailable() ?? false,
   );
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, terminalUnsafeDisableSandbox, mediaCredentialGapCount }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, terminalUnsafeDisableSandbox, mediaCredentialGapCount, toolDeadlineCollisionCount: countToolDeadlineCollisions(container.config.agents, container.config.integrations?.mcp?.callToolTimeoutMs) }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
