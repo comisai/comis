@@ -1,7 +1,7 @@
 ---
 name: find-skills
-version: 1.0.5
-description: "MANDATORY: For requests asking whether a skill or specialized capability exists, load this skill and run its catalog workflow before answering. Do not answer from general capabilities or generic web search."
+version: 1.0.6
+description: "MANDATORY: For requests asking whether a skill or specialized capability exists, load this skill and run its catalog workflow before answering. This includes elliptical follow-ups such as 'find something that does' when the preceding turn names the task. Do not answer from general capabilities, search workspace filenames, or use generic web search."
 comis:
   requires:
     bins: ["git"]
