@@ -161,6 +161,24 @@ describe("runNarrateNudge", () => {
     expect(outcome.outcome).toBe("no_match");
   });
 
+  it("a successful current-turn delegation is not duplicated while its helper runs", async () => {
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
+    const outcome = await runNarrateNudge({
+      ...makeDeps({
+        session: { prompt: continuationPrompt },
+        messages: [assistantTextMsg("The helper is running. I will update you when it completes.")],
+      }),
+      currentSuccessfulDelegationCount: () => 1,
+    } as RunNarrateNudgeDeps);
+
+    expect(continuationPrompt).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({
+      fired: false,
+      recovered: false,
+      outcome: "delegation_accepted",
+    });
+  });
+
   it("a small-class turn ending on a real answer is not nudged (task satisfied)", async () => {
     const continuationPrompt = vi.fn().mockResolvedValue(undefined);
     const outcome = await runNarrateNudge(
