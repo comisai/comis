@@ -69,6 +69,31 @@ describe("idle continuation turn", () => {
     expect(activeTools).toEqual(["exec", "mcp__service--account_summary"]);
   });
 
+  it("supports a tool-disabled final narration turn", async () => {
+    let activeTools = ["exec", "read"];
+    const setActiveToolsByName = vi.fn((names: string[]) => {
+      activeTools = [...names];
+    });
+    const prompt = vi.fn(async () => {
+      expect(activeTools).toEqual([]);
+    });
+
+    const result = await runContinuationTurn(
+      {
+        prompt,
+        getActiveToolNames: () => [...activeTools],
+        setActiveToolsByName,
+      },
+      "Narrate the verified result.",
+      allowProviderDispatch,
+      { restrictToToolNames: [] },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, []);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, ["exec", "read"]);
+  });
+
   it("keeps post-prompt recovery paths off the queue-only follow-up API", () => {
     for (const source of idleContinuationSources) {
       expect(source).not.toMatch(/session\.followUp\(/);

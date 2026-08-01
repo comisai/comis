@@ -136,7 +136,7 @@ describe("runRequestToolNudge", () => {
 
     const outcome = await runRequestToolNudge(deps);
 
-    expect(deps.session.prompt).toHaveBeenCalledTimes(1);
+    expect(deps.session.prompt).toHaveBeenCalledTimes(2);
     expect(deps.session.prompt).toHaveBeenCalledWith(
       expect.stringContaining("/skills/find-skills/SKILL.md"),
       expect.anything(),
@@ -147,6 +147,10 @@ describe("runRequestToolNudge", () => {
     );
     expect(deps.session.prompt).toHaveBeenCalledWith(
       expect.stringContaining("u dont really know how to make flash cards properly"),
+      expect.anything(),
+    );
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/preserve canonical identifiers/iu),
       expect.anything(),
     );
     expect(outcome.outcome).toBe("recovered");
