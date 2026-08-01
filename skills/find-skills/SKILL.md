@@ -1,6 +1,6 @@
 ---
 name: find-skills
-version: 1.0.6
+version: 1.0.7
 description: "MANDATORY: For requests asking whether a skill or specialized capability exists, load this skill and run its catalog workflow before answering. This includes elliptical follow-ups such as 'find something that does' when the preceding turn names the task. Do not answer from general capabilities, search workspace filenames, or use generic web search."
 comis:
   requires:
@@ -35,6 +35,11 @@ Identify the domain (e.g., React, testing, deployment), the specific task (e.g.,
 
 For an existing-skill discovery request, you must run `npx skills find <query>` first through `exec`
 in the execution workspace. Use the non-interactive form:
+
+Call `exec` directly for this catalog command. Do not call the `find` file tool: it searches
+workspace filenames and cannot search the skills catalog. For an elliptical follow-up, derive
+`<query>` from the concrete task named in the preceding user request; never search for the literal
+follow-up wording.
 
 ```bash
 npx --yes skills find <query>
