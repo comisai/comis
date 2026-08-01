@@ -14,7 +14,7 @@
 > | Daemon | `comis.service` as the dedicated service user | direct `node …/daemon.js` (or pm2 if it already supervises) |
 > | Data dir | `/home/comis/.comis` | `~/.comis` (override `DATA`) |
 > | Deploy step | `install-vps.sh` / `deploy-dist.sh` + verify | **none** — the checkout IS the build |
-> | Bring-up | `install-vps.sh` → `deploy-scripts.sh` → `WIRE=1 deploy-emu.sh` | **`./local-up.sh`** |
+> | Bring-up | `install-vps.sh` → `deploy-scripts.sh` → `WIRE=1 deploy-emu.sh` | **`./init-local-config.sh` → `./local-up.sh`** |
 > | Mandatory `.live-env` | `VPS` | nothing |
 >
 > The remote rig stays **canonical** — it is the layout users actually get, and the only one that can
@@ -188,16 +188,20 @@ Do not start the real test plan until ALL hold:
 ## Local mode (`RIG_MODE=local`) — the fast inner loop on this machine
 
 Select an explicit canonical absolute `DATA`, free `GW_PORT`, and dedicated non-`comis` `SERVICE`, then run
-**`./local-up.sh`** with all three inline. It builds this checkout, launches the emulator on loopback,
+**`./init-local-config.sh` once, followed by `./local-up.sh`**, with all three inline. The initializer pins
+both `config.dataDir` and `gateway.port`, creates the isolated encrypted master-key file, and neither copies
+nor prints provider credentials. Bring-up parses that authoritative config before it builds this checkout,
+launches the emulator on loopback,
 wires `channels.telegram` at it, restarts only the selected daemon, renders the rig env, and gates on
 `rig-doctor.sh`. Every driver/oracle then works unchanged —
 `drive.mjs`, `db.mjs`, `explain.mjs`, `revoke.mjs`, `logscan.mjs` — because the mode resolution lives in
 `_rig.sh` (shell) and `_rig.mjs` (node), not at the call sites.
-Explicit shell values take precedence over `.live-env` and the rendered `.rig-env`. `local-up.sh` compares
-the requested and effective tuple and refuses before build, emulator, config, or process mutation if they
-differ. It also refuses `~/.comis`, `SERVICE=comis`, an unowned listening port, or a pm2 service name bound
-to another data root. Later helpers may reuse the rendered selection, but every scored campaign command
-should keep the explicit tuple visible in its transcript.
+Explicit shell values take precedence over `.live-env` and the rendered `.rig-env`. Both entry points
+compare the requested and effective tuple. `local-up.sh` additionally requires the parsed config root and
+port to match it, and refuses before build, emulator, config, or process mutation if any value differs.
+They also refuse the `~/.comis` tree, `SERVICE=comis`, an unowned listening port, or a pm2 service name
+bound to another data root. Later helpers may reuse the rendered selection, but every scored campaign
+command should keep the explicit tuple visible in its transcript.
 
 **What it is for.** The remote round-trip costs an ssh hop per inject and a deploy+restart per patch.
 Local mode removes both: edit `packages/*/src`, `pnpm build`, `./restart-daemon.sh`, re-drive. Use it to
@@ -221,7 +225,8 @@ develop a fix and to shorten a reproduction; then confirm the result on the remo
 and logs, so use a separate tuple for scratch verification:
 
 ```bash
-DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
+RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./init-local-config.sh
+RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
 ```
 
 **Two local-only traps:**

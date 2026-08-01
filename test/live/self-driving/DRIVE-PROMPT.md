@@ -111,16 +111,20 @@ Before driving:
 4. Initialize each isolated local config through the checked-in setup helpers with that root's complete
    explicit `RIG_MODE`/`DATA`/`GW_PORT`/`SERVICE` tuple; never run a bare init command that can select
    `~/.comis`. Reuse provider credentials only through approved encrypted-secret mechanisms; never copy or
-   expose secret values in commands or artifacts. A genuinely unavailable provider/capability becomes a
-   named NO-ACCESS row rather than a fabricated result.
+   expose secret values in commands or artifacts. For each root run
+   `RIG_MODE=local DATA=<absolute-path> GW_PORT=<free-port> SERVICE=<unique-service> ./init-local-config.sh`
+   once; it pins `config.dataDir` and `gateway.port`, creates the encrypted master-key file, and does not
+   copy or print provider credentials. A genuinely unavailable provider/capability becomes a named
+   NO-ACCESS row rather than a fabricated result.
 5. Before any setup mutation, prove both selected paths are canonical absolute paths distinct from
    `~/.comis`, both ports are free or already owned by their matching root, both service names are distinct
    and neither is `comis`, and no same-named pm2 process belongs to another root. From
    `test/live/self-driving/scripts/`, bring up the primary with the equivalent of:
    `RIG_MODE=local DATA=<primary-absolute-path> COMIS_DATA_DIR=<same-path> COMIS_CONFIG_PATHS=<same-path>/config.yaml GW_PORT=<primary-free-port> SERVICE=<primary-unique-service> ./local-up.sh`.
-   `local-up.sh` must fail before build, emulator, config, or daemon mutation if its effective tuple differs
-   from those explicit values. Then require `rig-doctor.sh` and `verify-build.sh` to pass with the same
-   explicit tuple. There is no local deploy step: this checkout's built `dist/` is the build under test.
+   `local-up.sh` must parse the authoritative config and fail before build, emulator, config, or daemon
+   mutation unless its effective `dataDir` and `gateway.port` match that explicit tuple. Then require
+   `rig-doctor.sh` and `verify-build.sh` to pass with the same explicit tuple. There is no local deploy
+   step: this checkout's built `dist/` is the build under test.
 6. Establish a clean initial state once, then enable `PROTECT_CONTINUITY_AFTER_RESTART=1`. From that point,
    restart the primary daemon normally and use only the separate scratch root for clean-slate or
    destructive reproductions.

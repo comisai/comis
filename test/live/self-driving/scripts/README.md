@@ -9,7 +9,7 @@ those docs refer to. (Driven by `../00-MISSION.md`.)
 | `RIG_MODE=remote` (default) | `RIG_MODE=local` |
 |---|---|
 | The **production installation** — the systemd + npm-global layout `website/public/install.sh` creates, the same thing users get. Canonical: the only rig that exercises the sandbox/jail, systemd, and `*.linux.test.ts` surfaces. | **This machine**, from this checkout, against an explicitly isolated data dir. No ssh, no deploy — the fast inner loop. |
-| Bring up: `install-vps.sh` → `deploy-scripts.sh` → `setup-vps.sh` → `WIRE=1 deploy-emu.sh` | Bring up: **`./local-up.sh`** |
+| Bring up: `install-vps.sh` → `deploy-scripts.sh` → `setup-vps.sh` → `WIRE=1 deploy-emu.sh` | Bring up: **`./init-local-config.sh` → `./local-up.sh`** |
 
 Mode resolution lives in **`_rig.sh`** (shell) and **`_rig.mjs`** (node), so every driver and oracle
 below works in both modes unchanged. Only the genuinely rig-shaped steps branch: the deploy family is
@@ -93,33 +93,38 @@ No install, no push, no ssh: the checkout IS the build and this directory IS the
 ```bash
 cd test/live/self-driving/scripts
 
-# 0. One command: pnpm build → emulator on loopback → wire isolated config → scoped daemon → rig-doctor.
-DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
+# 0. Bootstrap each isolated root once; generated credentials stay in 0600 files and are never printed.
+RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./init-local-config.sh
 
-# 1. Iterate: edit packages/*/src → rebuild → restart (the daemon holds its dist in memory here too)
+# 1. One command: validate config → build → emulator → wire → scoped daemon → rig-doctor.
+RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
+
+# 2. Iterate: edit packages/*/src → rebuild → restart (the daemon holds its dist in memory here too)
 pnpm build && ./restart-daemon.sh
 ./verify-build.sh                                       # is dist newer than src? did the daemon pick it up?
 
-# 2. Re-launch the emulator after editing test/live/ (the port changes → re-wire + restart):
+# 3. Re-launch the emulator after editing test/live/ (the port changes → re-wire + restart):
 ./restart-emu.sh && node ./wire-emu.mjs && ./restart-daemon.sh
 
-# 3. Clean-slate between reproductions — ⚠ REALLY deletes $DATA sessions/memory.db/logs:
+# 4. Clean-slate between reproductions — ⚠ REALLY deletes $DATA sessions/memory.db/logs:
 WIPE_CRONS=1 ./clean-restart.sh
 
 # Initial clean slate for a stateful relationship; use restart-daemon.sh after this.
 WIPE_CRONS=1 PROTECT_CONTINUITY_AFTER_RESTART=1 ./clean-restart.sh
 
-# 4. Drive + oracles (identical helpers, no ssh):
+# 5. Drive + oracles (identical helpers, no ssh):
 node ./drive.mjs 678314278 "reply with PONG42"
 node ./revoke.mjs capabilities.introspect
 node ./db.mjs sql "SELECT COUNT(*) FROM lcd_messages"
 
-# 5. Confirm the everyday DATA root, real Telegram config, and service were never touched.
+# 6. Confirm the everyday DATA root, real Telegram config, and service were never touched.
 ```
 
 | Script | Runs on | As | Purpose |
 |---|---|---|---|
-| `local-up.sh` | local checkout | you | **Fail-closed local rig bring-up**: requires explicit canonical absolute `DATA`, free-or-owned `GW_PORT`, and dedicated non-`comis` `SERVICE`; verifies their effective post-loader values and lifecycle ownership before build or mutation; then runs `pnpm build` (skip with `SKIP_BUILD=1`) → `restart-emu.sh` → `wire-emu.mjs` → scoped `restart-daemon.sh` → `deploy-scripts.sh` → `rig-doctor.sh`. It refuses the everyday root/service, an unowned listening port, and a pm2 name bound to another root. |
+| `init-local-config.sh` | local checkout | you | **Fail-closed local config bootstrap**: requires the same explicit isolated tuple as bring-up, resolves missing paths through their nearest existing ancestor, refuses the everyday data tree and conflicting lifecycle ownership, then creates a 0600 config and encrypted master-key file under `DATA`. It pins the config root, loopback gateway port, emulator identities, and a generated gateway token without copying or printing provider credentials; it never overwrites an existing config. |
+| `local-config.mjs` | local checkout | you | Parser/renderer used by the local initializer and bring-up. `validate` reads the authoritative YAML and requires its literal `dataDir` and `gateway.port` to equal the selected isolated tuple before any build or mutable rig step. |
+| `local-up.sh` | local checkout | you | **Fail-closed local rig bring-up**: requires explicit canonical absolute `DATA`, free-or-owned `GW_PORT`, and dedicated non-`comis` `SERVICE`; verifies their effective post-loader values, lifecycle ownership, and authoritative config root/port before build or mutation; then runs `pnpm build` (skip with `SKIP_BUILD=1`) → `restart-emu.sh` → `wire-emu.mjs` → scoped `restart-daemon.sh` → `deploy-scripts.sh` → `rig-doctor.sh`. It refuses the everyday tree/service, an unowned listening port, and a pm2 name bound to another root. |
 | `_rig.sh` | (sourced) | — | **the shared shell mode + portability layer** — the twin of `_rig.mjs`. `rig_load_env` enforces explicit env → `.live-env` → rendered rig env → defaults; `rig_assert_isolated_local_selection` is the pre-mutation local gate; `rig_mode`/`rig_is_local`/`rig_banner`, `rig_remote_only`, `rig_port_listening`, `rig_epoch`, data-root-scoped `rig_daemon_pid`, `rig_daemon_entry`, and data-root-aware pm2 probes provide the common lifecycle contract. |
 | `init-config.mjs` | VPS | root | **fresh-box config bootstrap** — the last step from bare `install-vps.sh --no-init` to a green Phase 0. Renders `/root/config.example.yaml` into `$DATA/config.yaml` with a freshly GENERATED ≥32-char gateway token, this rig's `CHATID` in `allowFrom`+`senderTrustMap`, `channels.telegram` DISABLED (wire-emu.mjs enables it with the live port), runs `comis secrets init` if there's no master key yet, and updates `/root/comis-rig.env`'s token. Refuses on a non-fresh box unless `--force` (keeps `config.yaml.pre-init`). `PROVIDER`/`MODEL` env override the agent; `SKIP_SECRETS_INIT=1`/`RIG_ENV=` for scratch renders. |
 | `rig-doctor.sh` | local checkout | you | **read-only kit↔rig COHERENCE gate** (the complement to phase0-check: "is MY rig pointed at the box correctly?"). One ssh round-trip: ssh reachable · service active · unit exec under `$PKG` · daemon dist present · kit + rig-env deployed · config present · gateway listening · **local vs box token length agree** · **`capabilities.introspect` actually answers** (catches a rotated/wrong token before it 401s mid-run) · **config apiRoot == the RUNNING emulator's port** (catches the stale-wire drift every kernel-allocated-port relaunch causes). Exit 0 = coherent; each FAIL names its fix. **Both modes** — locally it swaps the ssh probe for the daemon process, `systemctl is-active` for a running pid, and `ss` for `lsof`. |
@@ -174,7 +179,7 @@ node ./db.mjs sql "SELECT COUNT(*) FROM lcd_messages"
 | `run-linux-tests.sh` | local checkout | you | **run this checkout's `.linux` tests (the real-bwrap containment gate) ON the VPS**. `.linux.test.ts` files SKIP on macOS (so the local `pnpm validate` floor never runs them). The production install has no source tree, so this maintains a SELF-CONTAINED scratch checkout at `$LINUX_TEST_DIR` (default `/root/comis-linux-tests`): rsyncs `packages/` src+dist + the root manifests/configs, `pnpm install --frozen-lockfile` on first run / lockfile change (corepack), then `pnpm vitest` there — never touches the installed daemon. `run-linux-tests.sh` (no args = the wake-gate + orchestrate jail gate) · `run-linux-tests.sh <file…>` · `run-linux-tests.sh '**/*.linux.test.ts'`. Run `pnpm build` first (src and dist must be the same HEAD). |
 | `setup-trading-system.sh` | local checkout | you | **one-command stand-up of the autonomous multi-signal trading system** on the emulator rig — sends the §Setup-prompt (real `yfinance` MCP install + `portfolio.json` ledger + strategy-in-memory + `trading-cycle` cron) then VERIFIES the 4 setup oracles in ground truth (mcp.list / ledger file / strategy memory / cron.list) and prints GREEN/RED. `--bootstrap` also runs CYCLE 1. Recipe + prompts + prerequisites + per-cycle oracles: `../targets/EXAMPLE-autonomous-trading-system.md`. For a real (non-emulator) Comis, paste the doc's §Setup-prompt as an admin sender instead. |
 | `rig-token.mjs` | VPS | root/comis | print the gateway token LITERAL from `$DATA/config.yaml` (empty for an unresolved `${REF}`). The config-literal half of `deploy-scripts.sh`'s GWTOKEN auto-fetch (the secrets-store half is `comis secrets get`). |
-| `config.example.yaml` | — | — | reference config (gateway token, nested budget, emulator apiRoot); `init-config.mjs` renders it for a fresh box |
+| `config.example.yaml` | — | — | reference config (gateway token, nested budget, emulator apiRoot); the local and VPS initializers pin it to their selected rig before writing |
 
 ## Gotchas (don't re-discover)
 - **`db.mjs count vec_memories` / `vec_learned_skills` fails `no such module: vec0`** — `db.mjs`'s plain better-sqlite3 handle doesn't load the sqlite-vec extension, so the `vec0` virtual tables are unreadable. To check the **vector+FTS reconcile** on a forget/delete (REC-3), count the plain **shadow** table `vec_memories_rowids` (and `memory_fts`) instead — they drop in lockstep with `memories`. (A kit improvement would be to load the vec extension in `db.mjs`, or add a `veccount <t>` that reads the `_rowids` shadow.)
