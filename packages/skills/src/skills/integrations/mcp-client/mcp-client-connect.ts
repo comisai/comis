@@ -277,7 +277,6 @@ export async function connectServer(
       inputSchema: tool.inputSchema as Record<string, unknown>,
       ...(tool.annotations !== undefined && { annotations: tool.annotations }),
     }));
-
     const connection: McpConnection = {
       name: config.name,
       client,

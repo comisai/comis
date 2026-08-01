@@ -122,6 +122,52 @@ export function readSkillAvailability(value: unknown): IncidentSignals["skillAva
   return unavailable.length > 0 ? { unavailable } : undefined;
 }
 
+/** Fold bounded capability-selection evidence from the latest prompt. */
+export function accumulatePromptRequestRecord(
+  acc: Acc,
+  data: Record<string, unknown>,
+): void {
+  delete acc.requestRelevantToolNames;
+  if (Array.isArray(data.requestRelevantToolNames)) {
+    const names = [...new Set(data.requestRelevantToolNames.filter(
+      (name): name is string =>
+        typeof name === "string" && /^[A-Za-z0-9_.:-]{1,128}$/u.test(name),
+    ))].slice(0, 16);
+    if (names.length > 0) acc.requestRelevantToolNames = names;
+  }
+
+  delete acc.requestRelevanceHistory;
+  const rawHistory = data.requestRelevanceHistory;
+  if (rawHistory !== null && typeof rawHistory === "object" && !Array.isArray(rawHistory)) {
+    const history = rawHistory as Record<string, unknown>;
+    const turnCount = nonnegativeInteger(history.turnCount) ?? 0;
+    const charCount = nonnegativeInteger(history.charCount) ?? 0;
+    if (turnCount <= 8 && charCount <= 1_000_000 && typeof history.saturated === "boolean") {
+      acc.requestRelevanceHistory = { turnCount, charCount, saturated: history.saturated };
+    }
+  }
+
+  delete acc.operatorPolicyToolProjections;
+  if (!Array.isArray(data.operatorPolicyToolProjections)) return;
+  const projections = data.operatorPolicyToolProjections.flatMap((candidate) => {
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const record = candidate as Record<string, unknown>;
+    const toolName = asString(record.toolName);
+    const sectionId = asString(record.sectionId);
+    const contentHash = asString(record.contentHash);
+    const projectedChars = asNumber(record.projectedChars);
+    if (
+      toolName === undefined || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(toolName)
+      || sectionId === undefined || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(sectionId)
+      || contentHash === undefined || !/^[a-f0-9]{64}$/u.test(contentHash)
+      || projectedChars === undefined || !Number.isSafeInteger(projectedChars)
+      || projectedChars < 0 || projectedChars > 5_000
+    ) return [];
+    return [{ toolName, sectionId, contentHash, projectedChars }];
+  }).slice(0, 16);
+  if (projections.length > 0) acc.operatorPolicyToolProjections = projections;
+}
+
 function ensureBackgroundTool(
   acc: Acc,
   toolName: string,

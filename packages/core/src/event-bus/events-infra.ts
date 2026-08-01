@@ -7,11 +7,7 @@ import type { ErrorKind } from "../logging/log-fields.js";
 import type { ModelResolutionSource } from "../domain/agent-execution-outcome.js";
 /** Content-free reason for a failed outbound webhook delivery. */
 export type WebhookFailureReason = "handler_error" | "task_not_delivered";
-export type BackgroundTaskFailureCode =
-  | "skill_import_incomplete"
-  | "mcp_connection_details_missing"
-  | "mcp_secret_reference_missing"
-  | "mutation_not_persisted";
+export type BackgroundTaskFailureCode = "skill_import_incomplete" | "mcp_connection_details_missing" | "mcp_secret_reference_missing" | "mutation_not_persisted";
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
  * media, scheduler, system, and metrics events.
@@ -23,7 +19,6 @@ export interface InfraEvents {
   // -------------------------------------------------------------------------
   // Approval gate events
   // -------------------------------------------------------------------------
-
   /** A privileged action requires operator approval before proceeding */
   "approval:requested": {
     requestId: string;
@@ -648,7 +643,6 @@ export interface InfraEvents {
   // -------------------------------------------------------------------------
   // Background task lifecycle events
   // -------------------------------------------------------------------------
-
   /** Tool execution promoted to background task after timeout */
   "background_task:promoted": {
     agentId: string;
@@ -656,7 +650,6 @@ export interface InfraEvents {
     toolName: string;
     timestamp: number;
   };
-
   /** Background task completed successfully. `origin` carries originating
    *  session attribution so subscribers (the completion runner) can
    *  re-enter the right session without a synchronous round-trip through
@@ -676,16 +669,11 @@ export interface InfraEvents {
     sessionKey?: string;
     /** Trace id captured at promote time — see the failed variant. */
     traceId?: string;
-    /** Content-free verdict projected from a structured management-tool result. */
-    resultOutcome?: "success" | "degraded";
-    /** Durable-write disposition when the tool result exposes one. */
-    persistence?: "persisted" | "runtime_only" | "skipped";
-    /** Present only for a degraded structured completion. */
-    errorKind?: ErrorKind;
-    /** Closed cause for a completed tool whose requested mutation was not durable. */
-    failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
+    /** Structured completion verdict and durable-write disposition. */
+    resultOutcome?: "success" | "degraded"; persistence?: "persisted" | "runtime_only" | "skipped";
+    /** Degraded completion classification and closed cause. */
+    errorKind?: ErrorKind; failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
   };
-
   /** Background task failed (timeout, error, or daemon restart).
    *  `origin` is populated for in-process failures and for restart-recovery
    *  failures (recoverOnStartup re-emits with origin from the persisted JSON). */
