@@ -115,6 +115,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
   let active = false;
   let timer: TimerHandle | undefined;
   let timerDegradedAtMs: number | undefined;
+  let missedJobRun: Promise<Result<readonly string[], CronSchedulerLifecycleError>> | undefined;
   const running = new Map<string, Promise<Result<string, CronSchedulerLifecycleError>>>();
   const activeControllers = new Map<string, AbortController>();
   const configError = validateConfig(deps);
@@ -236,6 +237,17 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
   async function runMissedJobs(): Promise<Result<readonly string[], CronSchedulerLifecycleError>> {
     const ready = requireActive();
     if (!ready.ok) return ready;
+    if (missedJobRun !== undefined) return missedJobRun;
+    const run = runMissedJobsOnce();
+    missedJobRun = run;
+    try {
+      return await run;
+    } finally {
+      if (missedJobRun === run) missedJobRun = undefined;
+    }
+  }
+
+  async function runMissedJobsOnce(): Promise<Result<readonly string[], CronSchedulerLifecycleError>> {
     const snapshot = deps.store.getSnapshot();
     if (!snapshot.ok) return operationFailure("read due cron jobs", snapshot.error);
     const nowMs = deps.clock.now();
