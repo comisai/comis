@@ -485,9 +485,11 @@ export function applyToolDeferral(
   // Nano models often fail to invoke discover_tools even when the current
   // request names a connected capability plainly. Prefer a capability-declared
   // direct mutation match, otherwise keep the strongest lexical match active
-  // for this turn, along with its declared workflow peers. Trust and channel
-  // gates remain authoritative: a tool deferred by a rule above is never
-  // promoted here. Later lifecycle and operator overrides also retain precedence.
+  // for this turn, along with its declared workflow peers. An exact mutation
+  // request may expose its privileged management tool so the tool's runtime
+  // trust guard can return the authoritative denial; this never grants the
+  // operation or bypasses approval. Other policy and channel deferrals remain
+  // authoritative. Later lifecycle and operator overrides also retain precedence.
   if (
     deferralContext.capabilityClass === "nano"
     && deferralContext.requestText?.trim()
@@ -509,8 +511,11 @@ export function applyToolDeferral(
       ? tools.find((tool) => tool.name === previousTurnRetryCandidates[0])
       : undefined;
     const directMutationTool = previousTurnRetryTool ?? tools.find((tool) =>
-      !policyDeferredSet.has(tool.name)
-      && matchesToolMutationRequest(tool.name, requestText)
+      matchesToolMutationRequest(tool.name, requestText)
+      && (
+        !policyDeferredSet.has(tool.name)
+        || PRIVILEGED_TOOL_NAMES.includes(tool.name)
+      )
     );
     const currentRequestTerms = new Set(tokenize(requestText));
     const documents = eligibleTools.flatMap((tool) => {
