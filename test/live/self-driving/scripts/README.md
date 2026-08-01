@@ -8,7 +8,7 @@ those docs refer to. (Driven by `../00-MISSION.md`.)
 
 | `RIG_MODE=remote` (default) | `RIG_MODE=local` |
 |---|---|
-| The **production installation** — the systemd + npm-global layout `website/public/install.sh` creates, the same thing users get. Canonical: the only rig that exercises the sandbox/jail, systemd, and `*.linux.test.ts` surfaces. | **This machine**, from this checkout, against a local data dir (default `~/.comis`). No ssh, no deploy — the fast inner loop. |
+| The **production installation** — the systemd + npm-global layout `website/public/install.sh` creates, the same thing users get. Canonical: the only rig that exercises the sandbox/jail, systemd, and `*.linux.test.ts` surfaces. | **This machine**, from this checkout, against an explicitly isolated data dir. No ssh, no deploy — the fast inner loop. |
 | Bring up: `install-vps.sh` → `deploy-scripts.sh` → `setup-vps.sh` → `WIRE=1 deploy-emu.sh` | Bring up: **`./local-up.sh`** |
 
 Mode resolution lives in **`_rig.sh`** (shell) and **`_rig.mjs`** (node), so every driver and oracle
@@ -17,13 +17,14 @@ remote-only (it says so and exits 0 locally), and the lifecycle scripts swap sys
 stop/relaunch. **`../01-SETUP.md §Local mode` states what a local run cannot prove — read it before
 recording a local pass.**
 
-## Config — ALL per-rig values live in `.live-env` (gitignored)
+## Config and precedence
 
-`cp .live-env.example .live-env` and edit. The LOCAL scripts auto-source it; `deploy-scripts.sh`
+`cp .live-env.example .live-env` and edit for reusable values. The shell helpers resolve explicit env →
+`.live-env` → rendered rig env → defaults; `deploy-scripts.sh`
 renders it to the rig env file (**`/root/comis-rig.env`** remotely, **`./.rig-env`** locally), where the
-rig-side `.sh` scripts source it and the `.mjs` helpers read it via **`_rig.mjs`** (explicit env always
-wins). In remote mode only `VPS` is mandatory — the rest ARE the standard install.sh layout; in local
-mode nothing is mandatory:
+rig-side `.sh` scripts source it and the `.mjs` helpers read it via **`_rig.mjs`**. In remote mode only
+`VPS` is mandatory. `local-up.sh` requires explicit absolute `DATA`, free `GW_PORT`, and dedicated
+non-`comis` `SERVICE` values so it cannot fall back to an everyday installation:
 
 | Var | Default | Meaning |
 |---|---|---|
@@ -35,7 +36,7 @@ mode nothing is mandatory:
 | `COMIS_USER` / `COMIS_HOME` | `comis` / `/home/comis` | the dedicated service user install.sh creates + its home |
 | `DATA` | `/home/comis/.comis` | the daemon data dir (config, secrets, sessions) |
 | `PKG` | `/home/comis/.npm-global/lib/node_modules/comisai` | the installed package root — daemon/CLI dist under `$PKG/node_modules/@comis/` |
-| `SERVICE` | `comis` | the systemd unit name |
+| `SERVICE` | `comis` | the remote systemd unit name; local-up requires a dedicated non-default name |
 | `GW_PORT` | `4766` | gateway port |
 | `GWTOKEN` | _(per box; fetch: `ssh $VPS "su - comis -c 'comis secrets get COMIS_GATEWAY_TOKEN'"`)_ | the RESOLVED gateway bearer token for the raw RPC helpers |
 | `CHATID` | `678314278` | the emulator chat/sender id to drive |
@@ -92,11 +93,8 @@ No install, no push, no ssh: the checkout IS the build and this directory IS the
 ```bash
 cd test/live/self-driving/scripts
 
-# 0. One command: pnpm build → emulator on loopback → wire config → restart daemon → rig-doctor.
-#    ⚠ DATA defaults to ~/.comis (your everyday install) — it repoints channels.telegram at the
-#    emulator, keeping the original at $DATA/config.pre-emu.yaml. Isolate it if you'd rather not:
-./local-up.sh
-DATA="$HOME/.comis-live" GW_PORT=4767 ./local-up.sh     # a dedicated rig instead
+# 0. One command: pnpm build → emulator on loopback → wire isolated config → scoped daemon → rig-doctor.
+DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
 
 # 1. Iterate: edit packages/*/src → rebuild → restart (the daemon holds its dist in memory here too)
 pnpm build && ./restart-daemon.sh
@@ -116,14 +114,13 @@ node ./drive.mjs 678314278 "reply with PONG42"
 node ./revoke.mjs capabilities.introspect
 node ./db.mjs sql "SELECT COUNT(*) FROM lcd_messages"
 
-# 5. Put your everyday install back on real Telegram:
-cp "$HOME/.comis/config.pre-emu.yaml" "$HOME/.comis/config.yaml" && ./restart-daemon.sh
+# 5. Confirm the everyday DATA root, real Telegram config, and service were never touched.
 ```
 
 | Script | Runs on | As | Purpose |
 |---|---|---|---|
-| `local-up.sh` | local checkout | you | **LOCAL rig bring-up in one command** (the local twin of `install-vps.sh` + `WIRE=1 deploy-emu.sh` + the readiness gate): `pnpm build` (skip with `SKIP_BUILD=1`) → `restart-emu.sh` → `wire-emu.mjs` → `restart-daemon.sh` → `deploy-scripts.sh` (rig env + token) → `rig-doctor.sh`. Forces `RIG_MODE=local` so a stray remote setting in `.live-env` can't make it a no-op, and reuses the rendered `.rig-env` root after discarding obsolete remote-layout defaults. Prints the restore command for your real Telegram config. |
-| `_rig.sh` | (sourced) | — | **the shared shell mode + portability layer** — the twin of `_rig.mjs`. `rig_mode`/`rig_is_local`/`rig_banner`, `rig_defaults` (per-mode values; explicit env wins, and a pre-`RIG_MODE` `.live-env`'s leaked remote layout is dropped with a named warning), `rig_remote_only`, plus the portable probes the box-side payloads used to hardcode: `rig_port_listening` (`ss`→`lsof`→`netstat`), `rig_epoch` (via node — `date -d` is GNU-only and BSD `date -j` mis-zones the UTC log stamps), `rig_daemon_pid`/`rig_emu_pid` (anchored `^node …` — never self-matches the calling shell), `rig_daemon_entry`, `rig_pm2_manages`. |
+| `local-up.sh` | local checkout | you | **Fail-closed local rig bring-up**: requires explicit canonical absolute `DATA`, free-or-owned `GW_PORT`, and dedicated non-`comis` `SERVICE`; verifies their effective post-loader values and lifecycle ownership before build or mutation; then runs `pnpm build` (skip with `SKIP_BUILD=1`) → `restart-emu.sh` → `wire-emu.mjs` → scoped `restart-daemon.sh` → `deploy-scripts.sh` → `rig-doctor.sh`. It refuses the everyday root/service, an unowned listening port, and a pm2 name bound to another root. |
+| `_rig.sh` | (sourced) | — | **the shared shell mode + portability layer** — the twin of `_rig.mjs`. `rig_load_env` enforces explicit env → `.live-env` → rendered rig env → defaults; `rig_assert_isolated_local_selection` is the pre-mutation local gate; `rig_mode`/`rig_is_local`/`rig_banner`, `rig_remote_only`, `rig_port_listening`, `rig_epoch`, data-root-scoped `rig_daemon_pid`, `rig_daemon_entry`, and data-root-aware pm2 probes provide the common lifecycle contract. |
 | `init-config.mjs` | VPS | root | **fresh-box config bootstrap** — the last step from bare `install-vps.sh --no-init` to a green Phase 0. Renders `/root/config.example.yaml` into `$DATA/config.yaml` with a freshly GENERATED ≥32-char gateway token, this rig's `CHATID` in `allowFrom`+`senderTrustMap`, `channels.telegram` DISABLED (wire-emu.mjs enables it with the live port), runs `comis secrets init` if there's no master key yet, and updates `/root/comis-rig.env`'s token. Refuses on a non-fresh box unless `--force` (keeps `config.yaml.pre-init`). `PROVIDER`/`MODEL` env override the agent; `SKIP_SECRETS_INIT=1`/`RIG_ENV=` for scratch renders. |
 | `rig-doctor.sh` | local checkout | you | **read-only kit↔rig COHERENCE gate** (the complement to phase0-check: "is MY rig pointed at the box correctly?"). One ssh round-trip: ssh reachable · service active · unit exec under `$PKG` · daemon dist present · kit + rig-env deployed · config present · gateway listening · **local vs box token length agree** · **`capabilities.introspect` actually answers** (catches a rotated/wrong token before it 401s mid-run) · **config apiRoot == the RUNNING emulator's port** (catches the stale-wire drift every kernel-allocated-port relaunch causes). Exit 0 = coherent; each FAIL names its fix. **Both modes** — locally it swaps the ssh probe for the daemon process, `systemctl is-active` for a running pid, and `ss` for `lsof`. |
 | `verify-build.sh` | local checkout | you | **prove the box serves THIS checkout** (01-SETUP §2 as one command). provenance (`/root/comis-deployed-build` SHA == local HEAD) · process (daemon started AFTER that deploy — catches a deploy-without-restart) · optional `verify-build.sh <symbol> [pkg]` HEAD-only symbol grep in the deployed dist (definitive + timezone-immune; the only reliable check when the tree is dirty). **In local mode** there is no deploy record, so provenance becomes the question that bites locally: is every `packages/*/dist` newer than `packages/*/src`? (An edit without a rebuild is the local twin of a deploy without a restart.) |
@@ -132,7 +129,7 @@ cp "$HOME/.comis/config.pre-emu.yaml" "$HOME/.comis/config.yaml" && ./restart-da
 | `deploy-scripts.sh` | local checkout | you | **push the WHOLE scripts/ kit to `/root/` AND render `/root/comis-rig.env` (0600) from `.live-env`** — the box-side scripts source it; the `.mjs` helpers read it via `_rig.mjs`. Re-run per session (the box drifts from the kit) and after every `.live-env` change. **In local mode** there is nothing to push, so it only resolves the gateway token and renders `./.rig-env`. |
 | `deploy-emu.sh` | local checkout | you | **deploy + (re)launch the Telegram emulator** (rsync `test/live/` → `$EMU_DIR`, excl. `self-driving/`; ESM marker; `restart-emu.sh`). With **`WIRE=1`** also wires the daemon config to the new port (`wire-emu.mjs`) + `restart-daemon.sh` — the whole emulator chain in one command. **In local mode** the rsync/ESM steps are skipped — the emulator runs straight out of the checkout. |
 | `setup-vps.sh` | VPS | **root** | ONCE per box, AFTER `install-vps.sh`: install `tsx` (the emulator runtime), chown `$DATA` leftovers back to `$COMIS_USER`, print the layout sanity (service/dist/CLI/rpc-client/jail deps). |
-| `restart-daemon.sh` | rig | root / you | **restart the daemon under test + boot-verify** — waits for a POST-restart `Comis daemon started` in the structured log (`$DATA/logs/daemon*.log`) + probes the gateway port; prints the journal tail on failure. Replaces the old launcher/supervisor pair — the unit itself handles the SIGUSR2 exit-42 hot-restart (`SuccessExitStatus=42` + `RestartForceExitStatus=42`). Also the **per-root budget-meter reset** (run between heavy workloads). **In local mode** there is no systemd: it stops the running daemon and relaunches it from this checkout's dist with both `COMIS_DATA_DIR=$DATA` (boot-time secrets/lock) and `COMIS_CONFIG_PATHS=$DATA/config.yaml` (runtime config) on the command line, so the isolated rig cannot split state with the everyday daemon. `auto` uses an existing pm2 service, then tmux when installed (survives shells/agent runners that reap background children), then direct `nohup`; explicit `pm2|tmux|direct` modes fail honestly when unavailable. |
+| `restart-daemon.sh` | rig | root / you | **restart the daemon under test + boot-verify** — waits for a POST-restart `Comis daemon started` in the structured log (`$DATA/logs/daemon*.log`) + probes the gateway port. Remote mode uses systemd. Local mode scopes pm2 by service name plus matching `COMIS_DATA_DIR`, tmux by the service-derived session, and direct supervision by `$DATA/.local-daemon.pid`; it refuses an unowned listening port instead of killing a process-name match. Every local launch binds both `COMIS_DATA_DIR=$DATA` and `COMIS_CONFIG_PATHS=$DATA/config.yaml`, and tmux/direct relaunch exit 42 for config reloads. |
 | `clean-restart.sh` | rig | root / you | clean-slate: `systemctl stop` → reap orphan terminal-drive tmux/bwrap children → wipe sessions/LCD/`memory.db`/follow-up-task authority/logs/graph-runs/durable-drive+wake stores and the graceful-shutdown restart-continuation handoff (`WIPE_CRONS=1` adds the cron store + `execution.jsonl`) → `restart-daemon.sh`. Preserves `config.yaml`, `secrets.db`, the master key. `PROTECT_CONTINUITY_AFTER_RESTART=1` writes a durable marker after the initial wipe; later clean restarts refuse before stopping or deleting anything unless `ALLOW_CONTINUITY_WIPE=1` deliberately ends the relationship. **In local mode** the wipe runs as you (no `sudo -u`) — and it is a REAL delete of `$DATA`, which defaults to your everyday `~/.comis`. |
 | `restart-emu.sh` | rig | root / you | **robustly (re)launch the Telegram emulator** (both modes; locally it runs from the checkout, and `EMU_GROUPS` is passed through so group chats exist from boot) — survives ssh close (tmux) + anchored `pkill -9 -f "^node .*vps-emu"` (avoids the self-match that kills your ssh shell). Prints the new kernel-allocated port → re-wire: `node /root/wire-emu.mjs && bash /root/restart-daemon.sh`. |
 | `wire-emu.mjs` | VPS | root | **point the daemon at the RUNNING emulator** — reads `/tmp/comis-emu.json`, rewrites `channels.telegram` (`enabled`, `apiRoot`, the emulator's fake `botToken` literal, `allowFrom += $CHATID`), preserves the ORIGINAL channel block once at `$DATA/config.pre-emu.yaml` (restore it to re-attach real Telegram), restores ownership (remote only — locally the files are already yours). File-edit on purpose (works with the daemon down, needs no token); restart after. |

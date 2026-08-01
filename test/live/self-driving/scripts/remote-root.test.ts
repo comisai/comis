@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -306,20 +306,31 @@ describe("local rig mode", () => {
     expect(isolated).not.toContain("comis-does-not-exist-here");
   });
 
-  it("reuses the rendered isolated rig after dropping stale remote live-env defaults", () => {
-    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-rig-env-"));
+  it("keeps explicit local selections ahead of live and rendered rig files", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-precedence-"));
     temporaryDirectories.push(directory);
     const isolatedData = resolve(directory, "isolated-data");
+    const everydayData = resolve(directory, "everyday-data");
+    const liveEnv = resolve(directory, "live.env");
     const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(
+      liveEnv,
+      [
+        `DATA=${everydayData}`,
+        "GW_PORT=4766",
+        "SERVICE=comis",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
     writeFileSync(
       rigEnv,
       [
         'export RIG_MODE="${RIG_MODE:-local}"',
         `export COMIS_USER="\${COMIS_USER:-test-user}"`,
         `export COMIS_HOME="\${COMIS_HOME:-${directory}}"`,
-        `export DATA="\${DATA:-${isolatedData}}"`,
+        `export DATA="\${DATA:-${resolve(directory, "rendered-data")}}"`,
         `export PKG="\${PKG:-${resolve(HERE, "../../../..")}}"`,
-        'export SERVICE="${SERVICE:-comis}"',
+        'export SERVICE="${SERVICE:-comis-rendered}"',
         'export GW_PORT="${GW_PORT:-4767}"',
         'export CHATID="${CHATID:-678314278}"',
         `export EMU_DIR="\${EMU_DIR:-${resolve(HERE, "../../../..")}}"`,
@@ -327,31 +338,19 @@ describe("local rig mode", () => {
       { mode: 0o600 },
     );
 
-    let output = "";
-    try {
-      execFileSync("bash", [LOCAL_UP], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: directory,
-          RIG_ENV: rigEnv,
-          COMIS_USER: "comis",
-          COMIS_HOME: "/home/comis-does-not-exist-here",
-          DATA: "/home/comis-does-not-exist-here/.comis",
-          PKG: "/home/comis-does-not-exist-here/.npm-global/lib/node_modules/comisai",
-          EMU_DIR: "/root/comis-emu",
-          SKIP_BUILD: "1",
-        },
-        stdio: "pipe",
-      });
-    } catch (error) {
-      const failure = error as { stdout?: Buffer | string; stderr?: Buffer | string };
-      output = `${String(failure.stdout ?? "")}${String(failure.stderr ?? "")}`;
-    }
+    const output = runRigHelper(
+      `rig_load_env ${shellQuote(liveEnv)} ${shellQuote(rigEnv)}; printf '%s|%s|%s\n' "$DATA" "$GW_PORT" "$SERVICE"`,
+      {
+        HOME: directory,
+        RIG_MODE: "local",
+        RIG_ENV: rigEnv,
+        DATA: isolatedData,
+        GW_PORT: "4877",
+        SERVICE: "comis-local-drive",
+      },
+    );
 
-    expect(output).toContain(`data=${isolatedData}`);
-    expect(output).toContain(`no ${isolatedData}/config.yaml`);
-    expect(output).not.toContain(`data=${directory}/.comis`);
+    expect(output.trim()).toBe(`${isolatedData}|4877|comis-local-drive`);
   });
 
   it("restores the rendered local gateway port with the isolated data root", () => {
@@ -392,10 +391,80 @@ describe("local rig mode", () => {
     expect(resolved.trim()).toBe(`${isolatedData}|4767`);
   });
 
+  it("refuses the everyday local service before changing its config", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-isolation-"));
+    temporaryDirectories.push(directory);
+    const data = resolve(directory, "isolated-data");
+    mkdirSync(data, { recursive: true });
+    const config = resolve(data, "config.yaml");
+    writeFileSync(config, "sentinel: unchanged\n", { mode: 0o600 });
+
+    const result = spawnSync("bash", [LOCAL_UP], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        DATA: data,
+        GW_PORT: "4878",
+        SERVICE: "comis",
+        SKIP_BUILD: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("SERVICE must name a dedicated local rig");
+    expect(readFileSync(config, "utf8")).toBe("sentinel: unchanged\n");
+  });
+
+  it("refuses the everyday local data root before changing its config", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-everyday-root-"));
+    temporaryDirectories.push(directory);
+    const data = resolve(directory, ".comis");
+    mkdirSync(data, { recursive: true });
+    const config = resolve(data, "config.yaml");
+    writeFileSync(config, "sentinel: unchanged\n", { mode: 0o600 });
+
+    const result = spawnSync("bash", [LOCAL_UP], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        DATA: data,
+        GW_PORT: "4879",
+        SERVICE: "comis-local-drive",
+        SKIP_BUILD: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("DATA must not be the operator's everyday");
+    expect(readFileSync(config, "utf8")).toBe("sentinel: unchanged\n");
+  });
+
   it("loads the rendered rig selection in every standalone local gate", () => {
     for (const script of [DEPLOY_EMULATOR, RIG_DOCTOR, VERIFY_BUILD]) {
       const source = readFileSync(script, "utf8");
-      expect(source, script).toContain("rig_load_persisted_env");
+      expect(source, script).toContain("rig_load_env");
+    }
+  });
+
+  it("keeps the local rig shell entry points syntactically valid", () => {
+    for (const script of [
+      RIG_HELPER,
+      LOCAL_UP,
+      RESTART_DAEMON,
+      CLEAN_RESTART,
+      DEPLOY_SCRIPTS,
+      DEPLOY_EMULATOR,
+      RIG_DOCTOR,
+      VERIFY_BUILD,
+      resolve(HERE, "restart-emu.sh"),
+      resolve(HERE, "phase0-check.sh"),
+      resolve(HERE, "durability-resume-probe.sh"),
+    ]) {
+      expect(() => execFileSync("bash", ["-n", script]), script).not.toThrow();
     }
   });
 
@@ -461,7 +530,41 @@ describe("local rig mode", () => {
 
     const source = readFileSync(RIG_HELPER, "utf8");
     expect(source).toContain("command -v lsof");
-    expect(source).toMatch(/rig_daemon_pid\(\)[\s\S]*\^node \.\*daemon/u);
+    expect(source).toMatch(/rig_daemon_pid\(\)[\s\S]*LOCAL_DAEMON_PID_FILE/u);
+  });
+
+  it("finds only the daemon owned by the selected local data root", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-daemon-owner-"));
+    temporaryDirectories.push(directory);
+    const entry = resolve(directory, "packages/daemon/dist/daemon.js");
+    mkdirSync(dirname(entry), { recursive: true });
+    writeFileSync(entry, "setInterval(() => {}, 1000);\n");
+    const processHandle = spawn(process.execPath, [entry], { stdio: "ignore" });
+
+    try {
+      const unowned = runRigHelper('rig_defaults; printf "%s" "$(rig_daemon_pid)"', {
+        RIG_MODE: "local",
+        DATA: resolve(directory, "unowned-data"),
+        PKG: directory,
+        SERVICE: "comis-local-drive",
+        LOCAL_SUPERVISOR: "direct",
+      });
+      expect(unowned).toBe("");
+
+      const ownedData = resolve(directory, "owned-data");
+      mkdirSync(ownedData, { recursive: true });
+      writeFileSync(resolve(ownedData, ".local-daemon.pid"), `${processHandle.pid}\n`, { mode: 0o600 });
+      const owned = runRigHelper('rig_defaults; printf "%s" "$(rig_daemon_pid)"', {
+        RIG_MODE: "local",
+        DATA: ownedData,
+        PKG: directory,
+        SERVICE: "comis-local-drive",
+        LOCAL_SUPERVISOR: "direct",
+      });
+      expect(owned).toBe(String(processHandle.pid));
+    } finally {
+      processHandle.kill("SIGKILL");
+    }
   });
 
   it("keeps the local lifecycle free of sudo and systemd", () => {

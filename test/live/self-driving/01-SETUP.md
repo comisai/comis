@@ -2,8 +2,9 @@
 
 > Goal of this step: a **green baseline** — the build under test running on the rig, driven through the
 > loopback Telegram emulator, with every observability lens readable. All commands have a ready-to-run
-> script in `scripts/` (see `scripts/README.md`). Every per-rig value comes from **`scripts/.live-env`**
-> (copy `.live-env.example`).
+> script in `scripts/` (see `scripts/README.md`). Reusable per-rig values may live in
+> **`scripts/.live-env`** (copy `.live-env.example`); explicit command env has higher precedence, and
+> local campaign bring-up requires an explicit isolated data/port/service tuple.
 >
 > **Two rigs, one kit.** `RIG_MODE` in `.live-env` picks which:
 >
@@ -186,14 +187,17 @@ Do not start the real test plan until ALL hold:
 
 ## Local mode (`RIG_MODE=local`) — the fast inner loop on this machine
 
-Set `RIG_MODE=local` in `scripts/.live-env` (or inline per command) and run **`./local-up.sh`**. It
-builds this checkout, launches the emulator on loopback, wires `channels.telegram` at it, restarts the
-daemon, renders the rig env, and gates on `rig-doctor.sh`. Every driver/oracle then works unchanged —
+Select an explicit canonical absolute `DATA`, free `GW_PORT`, and dedicated non-`comis` `SERVICE`, then run
+**`./local-up.sh`** with all three inline. It builds this checkout, launches the emulator on loopback,
+wires `channels.telegram` at it, restarts only the selected daemon, renders the rig env, and gates on
+`rig-doctor.sh`. Every driver/oracle then works unchanged —
 `drive.mjs`, `db.mjs`, `explain.mjs`, `revoke.mjs`, `logscan.mjs` — because the mode resolution lives in
 `_rig.sh` (shell) and `_rig.mjs` (node), not at the call sites.
-After the first render, a bare `./local-up.sh` reuses the selected local root from `.rig-env`. A stale
-pre-`RIG_MODE` remote block in `.live-env` is discarded before that rendered fallback is loaded, so it
-cannot silently redirect the next local run to the everyday `~/.comis`.
+Explicit shell values take precedence over `.live-env` and the rendered `.rig-env`. `local-up.sh` compares
+the requested and effective tuple and refuses before build, emulator, config, or process mutation if they
+differ. It also refuses `~/.comis`, `SERVICE=comis`, an unowned listening port, or a pm2 service name bound
+to another data root. Later helpers may reuse the rendered selection, but every scored campaign command
+should keep the explicit tuple visible in its transcript.
 
 **What it is for.** The remote round-trip costs an ssh hop per inject and a deploy+restart per patch.
 Local mode removes both: edit `packages/*/src`, `pnpm build`, `./restart-daemon.sh`, re-drive. Use it to
@@ -212,22 +216,18 @@ develop a fix and to shorten a reproduction; then confirm the result on the remo
   question that actually bites locally: is `dist/` newer than `src/`? (An edit without a rebuild is the
   local twin of a deploy without a restart — same false result, same script catches it.)
 
-**⚠ `DATA` defaults to `~/.comis` — your everyday install.** `local-up.sh` repoints its
-`channels.telegram` at the emulator (original preserved once at `$DATA/config.pre-emu.yaml`, restore
-with `cp $DATA/config.pre-emu.yaml $DATA/config.yaml && ./restart-daemon.sh`), and `clean-restart.sh`
-**really deletes** its sessions, `memory.db` and logs. For a from-scratch workload, give the rig its own
-directory and port:
+`local-up.sh` has no everyday-install fallback: it requires a dedicated tuple and rewrites only that root's
+`channels.telegram`. `clean-restart.sh` still performs a real delete of its selected sessions, `memory.db`
+and logs, so use a separate tuple for scratch verification:
 
 ```bash
-DATA="$HOME/.comis-live" GW_PORT=4767 ./local-up.sh
+DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
 ```
 
 **Two local-only traps:**
-- **A `.live-env` written before `RIG_MODE` existed assigns the REMOTE layout unconditionally**
-  (`DATA=/home/comis/.comis`, `PKG=…`), and a `RIG_MODE=local` run would inherit it — every probe then
-  fails for the wrong reason. `_rig.sh` detects the leak (its anchor `COMIS_HOME` does not exist here),
-  drops that whole group with a named warning, and falls back to the local defaults. The real fix is in
-  `.live-env.example`: the remote block is wrapped in `if [ "${RIG_MODE:-remote}" = remote ]; then … fi`.
+- **A `.live-env` or rendered `.rig-env` can describe a different rig.** `_rig.sh` applies explicit env
+  first, then `.live-env`, then the rendered file, then defaults. `local-up.sh` additionally compares the
+  effective values with the caller's explicit selection before doing anything mutable.
 - **The daemon holds its `dist/` in memory here exactly as it does on the box.** `pnpm build` alone
   changes nothing about the running process — `./restart-daemon.sh` (or `verify-build.sh`, which names
   it) is still mandatory.
@@ -236,7 +236,10 @@ DATA="$HOME/.comis-live" GW_PORT=4767 ./local-up.sh
 `restart-emu.sh` passes it through in both modes — see the commented example in `.live-env.example`.
 
 ## Traps that cost cycles (the short list — full set in `scripts/README.md` + `03-OBSERVABILITY.md`)
-- **`pkill -f "daemon.js"` self-matches your ssh shell** (its argv contains the pattern) → kills the shell → ssh exit 255. Always anchor: `pkill -9 -f "^node .*daemon\.js"`. **Same trap for the emulator:** `pkill -f "vps-emu"` self-kills the ssh shell running it (argv has "vps-emu.ts") — anchor `pkill -9 -f "^node .*vps-emu"`. And a backgrounded `nohup/setsid … &` emulator dies on ssh close → launch it in **tmux**. Both are baked into **`scripts/restart-emu.sh`** (use it; the port is kernel-allocated, so re-wire after: `node /root/wire-emu.mjs && bash /root/restart-daemon.sh`).
+- **Never stop a local daemon with a process-name-wide `pkill`.** `restart-daemon.sh` scopes pm2 by the
+  selected service and data root, tmux by the service-derived session, and direct launches by a validated
+  PID file under `DATA`; an unowned gateway port aborts. The emulator still uses its anchored launcher and
+  changes port on every relaunch, so re-wire afterward with `wire-emu.mjs` plus the scoped daemon restart.
 - **Severing the LCD needs the recorded FORMATTED session key, not a hand-built chat-id key or the trajectory-filename form.** Privacy-principal routing intentionally replaces physical channel identifiers with opaque partitions, so the current key may look like `default:agent:default:platform_<digest>:telegram:peer:platform_<digest>`. Read `sessionKey` from `comis messages --channel <channel> --chat <id> --format json` (or from `db.mjs sql "SELECT DISTINCT session_key FROM lcd_messages"`), then pass it to `session.reset_conversation {session_key}`. On a key-format mismatch it returns `lcdRowsDeleted:0` **silently** (no error) → the LCD is NOT cleared and a "cross-session" recall test is invalid. Verify `lcdRowsDeleted>0` after a sever.
 - **Media OUTPUT delivery (image-gen/TTS/video-gen) is observable on the channel oracle** — the emulator records `sendPhoto`/`sendAudio`/`sendVideo` (with `mediaKind`), not just `sendVoice`/`sendDocument`. A media-only turn delivers no text, so `drive.mjs` prints `[NO SUBSTANTIVE ANSWER]` — read the outbound (`…/outbound` shows the `sendAudio`/`sendPhoto`) not the drive's text verdict.
 - **A symbol grep run as ROOT returns a FALSE NEGATIVE — `/home/comis` is `0700`.** The

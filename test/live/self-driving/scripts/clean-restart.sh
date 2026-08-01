@@ -20,13 +20,12 @@
 # Env: SERVICE, DATA, COMIS_USER, GW_PORT — the rig env file supplies per-rig values; explicit env wins.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # shellcheck source=./_rig.sh
 . "$HERE/_rig.sh" 2>/dev/null || {
   echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
   exit 2
 }
-rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
 SERVICE="${SERVICE:-comis}"
 DATA="${DATA:-/home/comis/.comis}"
 COMIS_USER="${COMIS_USER:-comis}"
@@ -35,6 +34,7 @@ GW_PORT="${GW_PORT:-4766}"
 # This must remain before every process stop and destructive operation. A protected relationship cannot
 # tolerate a "guard" that fires only after the daemon is down or its durable state has already changed.
 rig_refuse_continuity_wipe "$DATA"
+rig_assert_local_lifecycle_owner || exit $?
 
 # Run a wipe step as the data dir's owner. Remote: root drops to the service user. Local: the files
 # are already the caller's, and a sudo here would leave root-owned leftovers in their own data dir —

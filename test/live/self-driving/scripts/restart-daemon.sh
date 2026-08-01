@@ -20,7 +20,6 @@
 # Env: SERVICE, DATA, GW_PORT — the rig env file supplies per-rig values; explicit env still wins.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # The kit ships as a unit, so a missing _rig.sh is a stale deploy — fail LOUD naming the fix rather
 # than silently falling back to one mode's behaviour on the other mode's rig.
 # shellcheck source=./_rig.sh
@@ -28,7 +27,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
   exit 2
 }
-rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
 SERVICE="${SERVICE:-comis}"
 DATA="${DATA:-/home/comis/.comis}"
 GW_PORT="${GW_PORT:-4766}"
@@ -38,6 +37,7 @@ MARK="$(date +%s)"
 if rig_is_local; then
   # ---- LOCAL: explicit stop → detached relaunch --------------------------------------------------
   local_supervisor="${LOCAL_SUPERVISOR:-auto}"
+  rig_assert_local_lifecycle_owner || exit $?
   use_pm2=0
   use_tmux=0
   case "$local_supervisor" in
@@ -85,18 +85,17 @@ if rig_is_local; then
       echo "no daemon dist found (PKG=$PKG, REPO=${REPO:-unset}) — run 'pnpm build' in the checkout first"
       exit 1
     fi
-    pid="$(rig_daemon_pid)"
-    if [ -n "$pid" ]; then
-      kill "$pid" 2>/dev/null
-      for _ in $(seq 1 15); do
-        kill -0 "$pid" 2>/dev/null || break
-        sleep 1
-      done
-      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-    fi
     if [ "$use_tmux" = 1 ]; then
       tmux_session="${LOCAL_TMUX_SESSION:-comis-${SERVICE}}"
       tmux kill-session -t "$tmux_session" 2>/dev/null || true
+      for _ in $(seq 1 15); do
+        rig_port_listening "$GW_PORT" || break
+        sleep 1
+      done
+      if rig_port_listening "$GW_PORT"; then
+        echo "gateway port $GW_PORT is still owned after stopping tmux session '$tmux_session'; refusing to kill another process"
+        exit 1
+      fi
       echo "supervisor: tmux ($tmux_session, $ENTRY)"
       # Keep COMIS_CONFIG_PATHS on the child command line. The tmux server owns
       # the child after this shell exits, including under PTY/agent runners that
@@ -108,14 +107,41 @@ if rig_is_local; then
       # Redirect the whole supervisor loop so shell-level failures are visible.
       tmux new-session -d -s "$tmux_session" \
         "while true; do env COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY'; daemon_exit_code=\$?; if [ \"\$daemon_exit_code\" -eq 42 ]; then continue; fi; exit \"\$daemon_exit_code\"; done >>'$DATA/daemon.console.log' 2>&1"
+      tmux set-environment -t "$tmux_session" COMIS_LOCAL_DATA_OWNER "$DATA"
     else
+      pid="$(LOCAL_SUPERVISOR=direct rig_daemon_pid)"
+      if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null
+        for _ in $(seq 1 15); do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 1
+        done
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+      fi
+      for _ in $(seq 1 15); do
+        rig_port_listening "$GW_PORT" || break
+        sleep 1
+      done
+      if rig_port_listening "$GW_PORT"; then
+        echo "gateway port $GW_PORT is owned by an unscoped process; refusing to stop it"
+        exit 1
+      fi
       echo "supervisor: direct ($ENTRY)"
-      # Both roots must be on the child command line. COMIS_DATA_DIR owns
-      # boot-time secrets and the singleton lock; COMIS_CONFIG_PATHS owns the
-      # runtime configuration. Splitting them defeats local-rig isolation.
-      COMIS_DATA_DIR="$DATA" COMIS_CONFIG_PATHS="$DATA/config.yaml" \
-        nohup node ${NODE_ARGS:-} "$ENTRY" \
-        >>"$DATA/daemon.console.log" 2>&1 &
+      pid_file="${LOCAL_DAEMON_PID_FILE:-$DATA/.local-daemon.pid}"
+      COMIS_LOCAL_DATA="$DATA" COMIS_LOCAL_ENTRY="$ENTRY" COMIS_LOCAL_PID_FILE="$pid_file" \
+        nohup bash -c '
+          trap '\''[ -n "${daemon_pid:-}" ] && kill "$daemon_pid" 2>/dev/null || true; rm -f "$COMIS_LOCAL_PID_FILE"; exit 143'\'' TERM INT
+          trap '\''rm -f "$COMIS_LOCAL_PID_FILE"'\'' EXIT
+          while true; do
+            env COMIS_DATA_DIR="$COMIS_LOCAL_DATA" COMIS_CONFIG_PATHS="$COMIS_LOCAL_DATA/config.yaml" node ${NODE_ARGS:-} "$COMIS_LOCAL_ENTRY" &
+            daemon_pid=$!
+            umask 077
+            printf "%s\n" "$daemon_pid" >"$COMIS_LOCAL_PID_FILE"
+            wait "$daemon_pid"
+            daemon_exit_code=$?
+            [ "$daemon_exit_code" -eq 42 ] || exit "$daemon_exit_code"
+          done
+        ' >>"$DATA/daemon.console.log" 2>&1 &
       disown 2>/dev/null || true
     fi
   fi

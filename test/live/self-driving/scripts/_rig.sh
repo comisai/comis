@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared MODE + PORTABILITY layer for the live-rig shell scripts. Source it after `.live-env`.
+# Shared MODE + PORTABILITY layer for the live-rig shell scripts.
 #
 # RIG_MODE=remote (default) — the production VPS rig: systemd `comis.service`, the daemon as a
 #   dedicated service user, code at the npm-global `comisai` package, helpers shipped to /root.
@@ -78,8 +78,7 @@ rig_drop_leaked_remote_layout() {
   fi
 }
 
-# Load the first rendered rig env after determining its persisted mode. Callers source .live-env
-# first, so the precedence remains explicit env → valid .live-env → rendered rig env → defaults.
+# Load the first rendered rig env after determining its persisted mode.
 # A pre-RIG_MODE .live-env is the exceptional case: its nonexistent remote home is removed before
 # the rendered local file is sourced, allowing the last selected isolated rig to be reused safely.
 rig_load_persisted_env() {
@@ -106,6 +105,53 @@ rig_load_persisted_env() {
     # shellcheck disable=SC1090 # the rig env path is selected at run time
     . "$_rig_env_file"
   fi
+  [ "${RIG_LOAD_DEFER_DEFAULTS:-0}" = "1" ] || rig_defaults
+}
+
+rig_load_env() {
+  local _live_env="${1:-}"
+  shift || true
+  local _key=""
+  local _index=0
+  local -a _explicit_keys=()
+  local -a _explicit_values=()
+  local -a _selected_keys=()
+  local -a _selected_values=()
+  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS EMU_LOG"
+  local _explicit_keys_source="$_rig_keys COMIS_CONFIG_PATHS COMIS_CONFIG GW_HOST WH_BASE WH_PATH SKIP_BUILD PROTECT_CONTINUITY_AFTER_RESTART ALLOW_CONTINUITY_WIPE CONTINUITY_SENTINEL WIPE_CRONS"
+
+  for _key in $_explicit_keys_source; do
+    if declare -p "$_key" >/dev/null 2>&1; then
+      _explicit_keys[_index]="$_key"
+      _explicit_values[_index]="${!_key}"
+      _index=$((_index + 1))
+    fi
+  done
+
+  if [ -n "$_live_env" ] && [ -f "$_live_env" ]; then
+    # shellcheck disable=SC1090 # the live env path is selected at run time
+    . "$_live_env"
+  fi
+  for ((_index = 0; _index < ${#_explicit_keys[@]}; _index++)); do
+    export "${_explicit_keys[_index]}=${_explicit_values[_index]}"
+  done
+
+  _index=0
+  for _key in $_rig_keys; do
+    if declare -p "$_key" >/dev/null 2>&1; then
+      _selected_keys[_index]="$_key"
+      _selected_values[_index]="${!_key}"
+      _index=$((_index + 1))
+    fi
+  done
+
+  RIG_LOAD_DEFER_DEFAULTS=1 rig_load_persisted_env "${RIG_ENV:-}" "$@"
+  for ((_index = 0; _index < ${#_selected_keys[@]}; _index++)); do
+    export "${_selected_keys[_index]}=${_selected_values[_index]}"
+  done
+  for ((_index = 0; _index < ${#_explicit_keys[@]}; _index++)); do
+    export "${_explicit_keys[_index]}=${_explicit_values[_index]}"
+  done
   rig_defaults
 }
 
@@ -159,6 +205,93 @@ rig_defaults() {
   return 0
 }
 
+rig_canonical_path() {
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const target = path.resolve(process.argv[1]);
+    try { process.stdout.write(fs.realpathSync.native(target)); }
+    catch { process.stdout.write(target); }
+  ' "$1"
+}
+
+rig_assert_isolated_local_selection() {
+  local _selected_data="${1:-}"
+  local _selected_port="${2:-}"
+  local _selected_service="${3:-}"
+  local _canonical_data=""
+  local _everyday_data=""
+
+  if ! rig_is_local; then
+    echo "local-up requires RIG_MODE=local" >&2
+    return 2
+  fi
+  if [ -z "$_selected_data" ] || [ -z "$_selected_port" ] || [ -z "$_selected_service" ]; then
+    echo "local-up requires explicit DATA, GW_PORT, and SERVICE values" >&2
+    return 2
+  fi
+  if [ "$DATA" != "$_selected_data" ] || [ "$GW_PORT" != "$_selected_port" ] || [ "$SERVICE" != "$_selected_service" ]; then
+    echo "resolved local rig selection does not match the requested DATA, GW_PORT, and SERVICE" >&2
+    return 2
+  fi
+  if [ "${COMIS_DATA_DIR:-}" != "$DATA" ] || [ "${COMIS_CONFIG_PATHS:-}" != "$DATA/config.yaml" ]; then
+    echo "COMIS_DATA_DIR and COMIS_CONFIG_PATHS must resolve to the selected DATA root" >&2
+    return 2
+  fi
+  case "$DATA" in
+  /*) ;;
+  *)
+    echo "DATA must be an absolute path (got '$DATA')" >&2
+    return 2
+    ;;
+  esac
+  case "$DATA" in
+  *"'"*)
+    echo "DATA must not contain a single quote" >&2
+    return 2
+    ;;
+  esac
+  _canonical_data="$(rig_canonical_path "$DATA")"
+  _everyday_data="$(rig_canonical_path "$HOME/.comis")"
+  if [ "$DATA" != "$_canonical_data" ]; then
+    echo "DATA must be canonical and symlink-free (use '$_canonical_data')" >&2
+    return 2
+  fi
+  if [ "$_canonical_data" = "$_everyday_data" ]; then
+    echo "DATA must not be the operator's everyday $HOME/.comis root" >&2
+    return 2
+  fi
+  case "$GW_PORT" in
+  '' | *[!0-9]*)
+    echo "GW_PORT must be an integer between 1024 and 65535" >&2
+    return 2
+    ;;
+  esac
+  if [ "$GW_PORT" -lt 1024 ] || [ "$GW_PORT" -gt 65535 ]; then
+    echo "GW_PORT must be an integer between 1024 and 65535" >&2
+    return 2
+  fi
+  case "$SERVICE" in
+  comis | '' | *[!A-Za-z0-9_.-]*)
+    echo "SERVICE must name a dedicated local rig and must not be 'comis'" >&2
+    return 2
+    ;;
+  esac
+  if rig_pm2_has_service && ! rig_pm2_manages; then
+    echo "pm2 service '$SERVICE' belongs to a different DATA root; refusing to repoint it" >&2
+    return 2
+  fi
+  if rig_tmux_has_session && ! rig_tmux_manages; then
+    echo "tmux session '${LOCAL_TMUX_SESSION:-comis-$SERVICE}' belongs to a different DATA root" >&2
+    return 2
+  fi
+  if rig_port_listening "$GW_PORT" && [ -z "$(rig_daemon_pid)" ]; then
+    echo "GW_PORT $GW_PORT is already owned by another process" >&2
+    return 2
+  fi
+  return 0
+}
+
 # Refuse a destructive clean restart when a stateful campaign has marked its data root as carrying
 # load-bearing continuity. The marker is intentionally durable across daemon restarts and code deploys.
 # A caller may override it only when deliberately ending that relationship.
@@ -206,9 +339,38 @@ rig_epoch() {
   node -e 'const t=Date.parse(process.argv[1]||"");process.stdout.write(String(Number.isFinite(t)?Math.floor(t/1000):0))' "$1" 2>/dev/null || printf '0'
 }
 
-# The daemon pid, or empty. Anchored at `^node ` so the pattern can never match this script's own
-# shell / an ssh or sudo wrapper (the self-match trap that kills the calling shell with `pkill -f`).
+# The daemon pid, or empty.
 rig_daemon_pid() {
+  if rig_is_local; then
+    local _pid=""
+    local _entry=""
+    local _supervisor="${LOCAL_SUPERVISOR:-auto}"
+    local _pid_file="${LOCAL_DAEMON_PID_FILE:-${DATA:-}/.local-daemon.pid}"
+    local _tmux_session="${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}"
+    if [ "$_supervisor" = "pm2" ]; then
+      rig_pm2_manages && pm2 pid "${SERVICE:-comis}" 2>/dev/null | head -1
+      return 0
+    fi
+    if [ "$_supervisor" = "auto" ] && rig_pm2_manages; then
+      pm2 pid "${SERVICE:-comis}" 2>/dev/null | head -1
+      return 0
+    fi
+    if [ "$_supervisor" = "tmux" ] || { [ "$_supervisor" = "auto" ] && rig_tmux_manages; }; then
+      rig_tmux_manages || return 0
+      _pid="$(tmux list-panes -t "$_tmux_session" -F '#{pane_pid}' 2>/dev/null | head -1)"
+      _pid="$(pgrep -P "${_pid:-0}" 2>/dev/null | head -1)"
+    elif { [ "$_supervisor" = "direct" ] || [ "$_supervisor" = "auto" ]; } && [ -f "$_pid_file" ]; then
+      _pid="$(tr -d '[:space:]' <"$_pid_file" 2>/dev/null)"
+    fi
+    case "$_pid" in
+    '' | *[!0-9]*) return 0 ;;
+    esac
+    _entry="$(rig_daemon_entry)"
+    if [ -n "$_entry" ] && kill -0 "$_pid" 2>/dev/null && ps -o command= -p "$_pid" 2>/dev/null | grep -F -- "$_entry" >/dev/null; then
+      printf '%s' "$_pid"
+    fi
+    return 0
+  fi
   pgrep -f "^node .*daemon\.js" 2>/dev/null | head -1
 }
 
@@ -232,12 +394,51 @@ rig_daemon_entry() {
 }
 
 # Is pm2 supervising this service right now? Local mode only; decides restart transport.
-rig_pm2_manages() {
+rig_pm2_has_service() {
   command -v pm2 >/dev/null 2>&1 || return 1
   pm2 jlist 2>/dev/null | node -e '
     let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
       try { process.exit(JSON.parse(s).some(p=>p.name===process.argv[1]) ? 0 : 1); } catch { process.exit(1); }
     });' "${SERVICE:-comis}"
+}
+
+rig_pm2_manages() {
+  command -v pm2 >/dev/null 2>&1 || return 1
+  pm2 jlist 2>/dev/null | node -e '
+    const path = require("node:path");
+    let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      try {
+        const proc=JSON.parse(s).find(p=>p.name===process.argv[1]);
+        const env=proc?.pm2_env?.env ?? proc?.pm2_env ?? {};
+        const data=env.COMIS_DATA_DIR;
+        process.exit(data && path.resolve(data)===path.resolve(process.argv[2]) ? 0 : 1);
+      } catch { process.exit(1); }
+    });' "${SERVICE:-comis}" "${DATA:-}"
+}
+
+rig_tmux_has_session() {
+  command -v tmux >/dev/null 2>&1 || return 1
+  tmux has-session -t "${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}" 2>/dev/null
+}
+
+rig_tmux_manages() {
+  local _owner=""
+  rig_tmux_has_session || return 1
+  _owner="$(tmux show-environment -t "${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}" COMIS_LOCAL_DATA_OWNER 2>/dev/null)"
+  [ "${_owner#COMIS_LOCAL_DATA_OWNER=}" = "$DATA" ]
+}
+
+rig_assert_local_lifecycle_owner() {
+  rig_is_local || return 0
+  if rig_pm2_has_service && ! rig_pm2_manages; then
+    echo "pm2 service '$SERVICE' belongs to a different DATA root; refusing to repoint it" >&2
+    return 2
+  fi
+  if rig_tmux_has_session && ! rig_tmux_manages; then
+    echo "tmux session '${LOCAL_TMUX_SESSION:-comis-$SERVICE}' belongs to a different DATA root" >&2
+    return 2
+  fi
+  return 0
 }
 
 # Refuse to run a remote-only script in local mode with a message that names the local equivalent,

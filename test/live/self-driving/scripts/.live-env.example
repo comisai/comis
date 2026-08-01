@@ -11,11 +11,11 @@
 #     the ONLY rig that can exercise the Linux-only surfaces (bubblewrap sandbox/jail, systemd
 #     lifecycle, the *.linux.test.ts tier). Only VPS is mandatory.
 #
-#   RIG_MODE=local — THIS machine. The daemon runs from this checkout against a local data dir
-#     (default ~/.comis), the emulator binds loopback here, and every rig command runs in a local
+#   RIG_MODE=local — THIS machine. The daemon runs from this checkout against an isolated local data dir,
+#     the emulator binds loopback here, and every rig command runs in a local
 #     shell. No VPS, no ssh key, no deploy step. Fast inner loop; honest degradation documented in
 #     `01-SETUP.md §Local mode` (a macOS local run CANNOT validate the sandbox/jail oracles).
-#     Bring it up with: ./local-up.sh
+#     Bring it up with explicit DATA, GW_PORT, and dedicated non-`comis` SERVICE values.
 #
 # The LOCAL scripts (install-vps.sh, deploy-dist.sh, deploy-scripts.sh, deploy-emu.sh, local-up.sh,
 # rig-doctor.sh, verify-build.sh, run-linux-tests.sh) AUTO-SOURCE ./.live-env; deploy-scripts.sh
@@ -27,7 +27,7 @@
 # so a single run can target a DIFFERENT rig without editing the file:
 #
 #     VPS=comis-test1 ./install-vps.sh
-#     RIG_MODE=local ./local-up.sh
+#     RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
 #
 # A bare `export` here silently CLOBBERS an inline override — which is exactly how a live-test
 # run once ended up pointed at a PRODUCTION box.
@@ -51,19 +51,19 @@ fi
 
 # ---- LOCAL rig --------------------------------------------------------------------------------
 # Uncomment the block below (and set RIG_MODE=local above) to drive this machine instead. Every
-# value already defaults correctly for a local run — the block exists so the two knobs that matter
-# are visible:
+# values are examples for standalone helpers; `local-up.sh` still requires all three isolation selectors
+# explicitly so a stale file cannot select an everyday installation:
 #
-#   DATA — ⚠ defaults to ~/.comis, i.e. YOUR everyday install. `local-up.sh` repoints its
-#          channels.telegram at the emulator (original preserved at $DATA/config.pre-emu.yaml) and
-#          `clean-restart.sh` DELETES its sessions/memory.db/logs for real. Point DATA at a
-#          dedicated directory for from-scratch workloads, and give that rig its own GW_PORT so it
-#          cannot collide with a daemon already listening on 4766.
+#   DATA — dedicated canonical absolute data root. `clean-restart.sh` deletes its selected
+#          sessions/memory.db/logs for real.
+#   GW_PORT — free port or one already owned by that exact data root.
+#   SERVICE — dedicated lifecycle name; `local-up.sh` refuses `comis`.
 #   LOCAL_SUPERVISOR — auto (pm2 when it manages $SERVICE, else tmux when installed, else direct) |
 #          pm2 | tmux | direct.
 #
 # : "${DATA:=$HOME/.comis-live}"; export DATA
 # : "${GW_PORT:=4767}"; export GW_PORT
+# : "${SERVICE:=comis-local-drive}"; export SERVICE
 # : "${LOCAL_SUPERVISOR:=auto}"; export LOCAL_SUPERVISOR
 
 # ---- Both rigs --------------------------------------------------------------------------------

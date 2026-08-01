@@ -5,34 +5,34 @@
 # checkout, launch the emulator on loopback, point the daemon's Telegram adapter at it, restart the
 # daemon, and prove the rig is coherent. No VPS, no ssh, no deploy — the checkout IS the build.
 #
-#   ./local-up.sh              # build + emulator + wire + restart + rig-doctor
-#   SKIP_BUILD=1 ./local-up.sh # skip `pnpm build` (you just built)
-#   DATA=~/.comis-live ./local-up.sh
+#   DATA=/absolute/rig GW_PORT=4877 SERVICE=comis-local-drive ./local-up.sh
+#   SKIP_BUILD=1 DATA=/absolute/rig GW_PORT=4877 SERVICE=comis-local-drive ./local-up.sh
 #
-# ⚠ WHAT THIS MUTATES. It rewrites `channels.telegram` in $DATA/config.yaml to point at the local
-# emulator, preserving the original ONCE at $DATA/config.pre-emu.yaml. With the default
-# DATA=~/.comis that is YOUR everyday install: its real bot stops receiving until you restore.
-#   restore:  cp $DATA/config.pre-emu.yaml $DATA/config.yaml && ./restart-daemon.sh
-# To leave your everyday install untouched, point DATA at a dedicated dir and give it its own
-# gateway port (GW_PORT) — see `01-SETUP.md §Local mode`.
+# It rewrites `channels.telegram` only in the explicitly selected isolated DATA root. The selected
+# gateway port must be free or already owned by that root, and SERVICE must not be the everyday `comis`.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
-# Local mode is the whole point of this script — assert it rather than inheriting a stray remote
-# setting from .live-env and silently doing nothing local.
-RIG_MODE=local
-export RIG_MODE
+SELECTED_DATA="${DATA:-}"
+SELECTED_GW_PORT="${GW_PORT:-}"
+SELECTED_SERVICE="${SERVICE:-}"
+SELECTED_RIG_ENV="${RIG_ENV:-}"
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
-rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+RIG_MODE=local
+RIG_ENV="${SELECTED_RIG_ENV:-$HERE/.rig-env}"
+COMIS_DATA_DIR="$SELECTED_DATA"
+COMIS_CONFIG_PATHS="$SELECTED_DATA/config.yaml"
+export RIG_MODE RIG_ENV COMIS_DATA_DIR COMIS_CONFIG_PATHS
+rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
+rig_assert_isolated_local_selection "$SELECTED_DATA" "$SELECTED_GW_PORT" "$SELECTED_SERVICE"
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 
 echo "=== local-up — $(rig_banner) ==="
 
 if [ ! -f "$DATA/config.yaml" ]; then
   echo "no $DATA/config.yaml — bootstrap a config first:"
-  echo "  node $REPO/packages/cli/dist/cli.js init          # the wizard, or"
-  echo "  DATA='$DATA' node $HERE/init-config.mjs           # the rig template (generated token + CHATID allowlisted)"
+  echo "  COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node $REPO/packages/cli/dist/cli.js init"
+  echo "  RIG_MODE=local DATA='$DATA' COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' GW_PORT='$GW_PORT' SERVICE='$SERVICE' node $HERE/init-config.mjs"
   exit 1
 fi
 
@@ -63,6 +63,5 @@ local rig up. Drive it:
 Ground truth:
   node $HERE/db.mjs sql "SELECT COUNT(*) FROM lcd_messages"
   node $REPO/packages/cli/dist/cli.js explain "<sessionKey|traceId>"
-Restore your real Telegram config when done:
-  cp $DATA/config.pre-emu.yaml $DATA/config.yaml && $HERE/restart-daemon.sh
+The isolated rig remains selected by DATA=$DATA, GW_PORT=$GW_PORT, SERVICE=$SERVICE.
 EOF

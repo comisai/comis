@@ -21,11 +21,10 @@
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # shellcheck source=./_rig.sh
 if [ -f "$HERE/_rig.sh" ]; then
   . "$HERE/_rig.sh"
-  rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+  rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
 fi
 DATA="${DATA:-/home/comis/.comis}"
 GW_HOST="${GW_HOST:-127.0.0.1}"
