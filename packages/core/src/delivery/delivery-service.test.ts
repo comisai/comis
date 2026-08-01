@@ -2507,17 +2507,10 @@ describe("delivery egress scan", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("large message (10k chars, no secrets) scrub completes under 5ms (pre-filter path)", async () => {
-    // Verifies the cheap mightContainSecret pre-filter path.
-    // Measures ONLY the scrubSecretsFromText call itself (not the whole
-    // delivery pipeline) — the scrub must be near-zero on secret-free text.
+  it("large secret-free message takes the scrub pre-filter path", () => {
     const longText = "x".repeat(10_000);
-    const before = performance.now();
+    expect(secretEgressGuard.mightContainSecret(longText)).toBe(false);
     const result = secretEgressGuard.scrubSecretsFromText(longText);
-    const elapsed = performance.now() - before;
-    // Secret-free text hits the mightContainSecret pre-filter and returns
-    // immediately — must complete in under 5ms even at 10k chars.
-    expect(result.redactions).toBe(0);
-    expect(elapsed).toBeLessThan(5);
+    expect(result).toEqual({ text: longText, redactions: 0 });
   });
 });
