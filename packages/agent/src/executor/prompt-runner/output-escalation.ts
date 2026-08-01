@@ -464,6 +464,15 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
         (record) => record.backgrounded === true && relevantNames.has(record.toolName),
       ).length;
     },
+    currentTerminalDenialCount: () => {
+      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) =>
+          !record.success
+          && record.failureCode === "permission_denied"
+          && relevantNames.has(record.toolName),
+      ).length;
+    },
     logger: deps.logger,
     eventBus: deps.eventBus,
     sessionKey: formatSessionKey(params.sessionKey),

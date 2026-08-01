@@ -26,6 +26,7 @@ export interface RequestToolNudgeOutcome {
     | "no_tool_match"
     | "tool_already_succeeded"
     | "tool_work_deferred"
+    | "tool_denied_terminally"
     | "not_action_request"
     | "recovered"
     | "still_no_tool_call"
@@ -42,6 +43,8 @@ export interface RunRequestToolNudgeDeps {
   currentSuccessfulToolCount: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
   currentDeferredWorkCount: () => number;
+  /** Matching tool receipts carrying a terminal policy denial. */
+  currentTerminalDenialCount: () => number;
   logger: ComisLogger;
   eventBus: TypedEventBus;
   sessionKey: string;
@@ -145,6 +148,7 @@ export async function runRequestToolNudge(
     currentSuccessfulMutationCount,
     currentSuccessfulToolCount,
     currentDeferredWorkCount,
+    currentTerminalDenialCount,
     logger,
     eventBus,
     sessionKey,
@@ -220,6 +224,14 @@ export async function runRequestToolNudge(
       recovered: false,
       matchedToolNames: recoveryToolNames,
       outcome: "tool_already_succeeded",
+    };
+  }
+  if (currentTerminalDenialCount() > 0) {
+    return {
+      fired: false,
+      recovered: false,
+      matchedToolNames: recoveryToolNames,
+      outcome: "tool_denied_terminally",
     };
   }
   if (currentDeferredWorkCount() > 0) {
