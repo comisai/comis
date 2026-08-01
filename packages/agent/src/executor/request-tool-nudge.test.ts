@@ -203,6 +203,47 @@ describe("runRequestToolNudge", () => {
     expect(setActiveToolsByName).not.toHaveBeenCalled();
   });
 
+  it("runs one bounded workflow continuation when skill loading alone is incomplete", async () => {
+    let activeTools = ["read", "exec", "test_read_only_tool"];
+    let successfulWorkflowCount = 0;
+    const setActiveToolsByName = vi.fn((names: string[]) => {
+      activeTools = [...names];
+    });
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        expect(activeTools).toEqual(["read", "exec", "test_read_only_tool"]);
+        return;
+      }
+      expect(activeTools).toEqual(["exec"]);
+      successfulWorkflowCount = 1;
+    });
+    const deps = makeDeps({
+      requestText: "find something that does",
+      requestRelevantToolNames: ["test_read_only_tool"],
+      requestRelevantPromptSkillNames: ["find-skills"],
+      requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["exec"],
+      session: {
+        prompt,
+        getActiveToolNames: () => [...activeTools],
+        setActiveToolsByName,
+      },
+      currentSuccessfulToolCount: () => successfulWorkflowCount,
+      getVisibleAssistantText: () => "Catalog result.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(outcome.outcome).toBe("recovered");
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, ["exec"]);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, [
+      "read",
+      "exec",
+      "test_read_only_tool",
+    ]);
+  });
+
   it("does not run for an informational mention of a read-only tool", async () => {
     const deps = makeDeps({
       requestText: "describe the account summary capability",
