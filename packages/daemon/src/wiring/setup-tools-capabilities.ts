@@ -241,6 +241,9 @@ export function makeCreateAgentRpcCall(
         ...(trustedContext?.trustLevel !== undefined && { _trustLevel: trustedContext.trustLevel }),
         ...(trustedContext?.sessionKey && { _callerSessionKey: trustedContext.sessionKey }),
         ...(deliveryTarget && { _deliveryTarget: deliveryTarget }),
+        ...(metadata?.discoveredDeferredTools?.length && {
+          _discoveredDeferredTools: [...metadata.discoveredDeferredTools],
+        }),
         ...(origin && { _callerChannelType: origin.channelType }),
         ...(origin && { _callerChannelId: origin.channelId }),
         ...(rootRunId !== undefined && { _rootRunId: rootRunId }),

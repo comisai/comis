@@ -190,6 +190,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const callerAgentIdInternal = typeof rawParams._agentId === "string"
         ? rawParams._agentId
         : undefined;
+      const discoveredDeferredTools = rawParams._discoveredDeferredTools as string[] | undefined;
       const ambientCallerContext = tryGetContext();
 
       const rejectCallerContextMismatch = (
@@ -422,6 +423,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         domainKnowledge,
         toolGroups,
         requiredTools,
+        ...(discoveredDeferredTools?.length ? { discoveredDeferredTools } : {}),
         includeParentHistory,
         reachableToolNames,
         // Ride the parent's resolved reply language into child session

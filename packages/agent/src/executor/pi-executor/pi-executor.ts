@@ -2670,9 +2670,14 @@ async function runSessionLocked(
     ) {
       // Inject parent discovery state into sessions_spawn params
       // so sub-agent-runner can persist it in session metadata.
-      if (tool.name === "sessions_spawn" && discoveryTracker.getDiscoveredNames().size > 0) {
+      if (tool.name === "sessions_spawn") {
         const paramsObj = typeof params === "object" && params !== null ? params as Record<string, unknown> : {};
-        paramsObj.discoveredDeferredTools = discoveryTracker.serialize();
+        // The model schema does not expose this key. Always remove any supplied
+        // value before projecting the executor-owned tracker into RPC metadata.
+        delete paramsObj._discoveredDeferredTools;
+        if (discoveryTracker.getDiscoveredNames().size > 0) {
+          paramsObj._discoveredDeferredTools = discoveryTracker.serialize();
+        }
         params = paramsObj;
       }
 

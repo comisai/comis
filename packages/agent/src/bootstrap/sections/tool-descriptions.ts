@@ -159,10 +159,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // SYSTEM_PROMPT_GUIDES supplies the detailed procedure after the first
   // successful tool result.
   sessions_spawn:
-    "Spawn a background sub-agent and return its run ID. Delegate tasks needing >30s, media"
-    + " generation, 3+ files, deep research, or 4+ steps; use parallel calls for independent work."
-    + " If the task names a required tool, pass it in required_tools with matching tool_groups;"
-    + " prose cannot grant tools.",
+    "Spawn background sub-agent; returns run ID. Delegate work needing >30s, media generation,"
+    + " 3+ files, deep research, or 4+ steps; parallelize independent work. Bind named tools with"
+    + " required_tools + tool_groups; prose grants none. Results announce automatically—do not"
+    + " call message for delivery.",
   subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
@@ -645,9 +645,9 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 2. When the task explicitly requires a named tool, you MUST list it in \`required_tools\` and include a matching
    \`tool_groups\` profile (for example, \`required_tools: ['obs_query']\` with \`tool_groups: ['coding', 'supervisor']\`).
    Task prose does not grant a tool. If it cannot be delegated, call it yourself and pass only the bounded result.
-3. A sub-agent gets a RESTRICTED default profile: MCP tools and \`message\` are OUTSIDE it. When the child
-   must call an MCP tool or deliver the result itself, include that tool in \`required_tools\` and pass
-   \`tool_groups: ['full']\` on the spawn -- otherwise the reachability gate rejects the spawn before work starts
+3. Child tools are restricted by config. MCP inheritance follows
+   \`security.agentToAgent.subAgentMcpTools\`; \`message\` may be absent and is not needed for result delivery.
+   Bind named required tools with compatible \`tool_groups\` so the reachability gate can validate the spawn
 4. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
 5. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
 6. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions

@@ -29,6 +29,7 @@ const internalFieldNames = new Set([
   "_chatType",
   "_context",
   "_deliveryTarget",
+  "_discoveredDeferredTools",
   "_originChannelId",
   "_outwardStepIndex",
   "_outwardOperationId",

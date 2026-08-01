@@ -45,6 +45,10 @@ export const INTERNAL_FIELD_NAMES = [
   "_checkpointId",
   "_context",
   "_deliveryTarget",
+  // Parent tool-discovery state crosses the in-process sessions_spawn boundary
+  // as trusted RPC metadata, then is re-injected for the spawn handler. It is
+  // never part of the model-facing or authenticated control-plane contract.
+  "_discoveredDeferredTools",
   "_leaseId",
   "_originChannelId",
   // Caller-created logical identity preserved across response-loss retries.

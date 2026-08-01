@@ -131,6 +131,20 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
           domain_knowledge: Array.isArray(p.domain_knowledge) ? p.domain_knowledge : undefined,
         };
       },
+      transformMetadata(p) {
+        const discoveredDeferredTools = p._discoveredDeferredTools;
+        if (
+          !Array.isArray(discoveredDeferredTools)
+          || discoveredDeferredTools.length === 0
+          || discoveredDeferredTools.length > 256
+          || !discoveredDeferredTools.every(
+            (name) => typeof name === "string" && name.length > 0 && name.length <= 256,
+          )
+        ) {
+          return undefined;
+        }
+        return { discoveredDeferredTools };
+      },
     },
     rpcCall,
   );

@@ -29,7 +29,6 @@ import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache
 import { lookbackWindowExceededHint } from "../cache-detection/index.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import { planInboundMessageProvenance } from "../../session/inbound-message-provenance.js";
-import { getOrCreateDiscoveryTracker } from "../discovery-tracker.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -738,6 +737,18 @@ describe("PiExecutor", () => {
   });
 
   it("injects discovered parent tools into sessions_spawn as internal state", async () => {
+    const discoveryExecute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "discovered" }],
+      isError: false,
+      sideEffects: { discoveredTools: ["mcp__service--lookup"] },
+    });
+    const discoveryTool = {
+      name: "discover_tools",
+      label: "Discover Tools",
+      description: "Discover a tool",
+      parameters: { type: "object", properties: {} },
+      execute: discoveryExecute,
+    };
     const originalExecute = vi.fn().mockResolvedValue({
       content: [{ type: "text", text: "spawned" }],
       isError: false,
@@ -751,19 +762,33 @@ describe("PiExecutor", () => {
     };
     const sessionKey: SessionKey = {
       tenantId: "t1",
+      agentId: "agent-1",
       channelId: "discovery-spawn",
       userId: "u1",
     };
     const executor = createPiExecutor(
       testConfig,
-      createMockDeps({ customTools: [spawnTool] as any }),
+      createMockDeps({ customTools: [discoveryTool, spawnTool] as any }),
     );
 
     await executor.execute(testMessage, sessionKey);
-    getOrCreateDiscoveryTracker(formatSessionKey(sessionKey), false)
-      .markDiscovered(["mcp__service--lookup"]);
+    const sessionOptions = (createAgentSession as Mock).mock.calls.at(-1)![0];
+    const discoveryToolInSession = sessionOptions.customTools.find(
+      (tool: { name: string }) => tool.name === "discover_tools",
+    );
+    const spawnToolInSession = sessionOptions.customTools.find(
+      (tool: { name: string }) => tool.name === "sessions_spawn",
+    );
 
-    await (spawnTool.execute as any)(
+    await discoveryToolInSession.execute(
+      "discovery-call",
+      { query: "service lookup" },
+      undefined,
+      vi.fn(),
+      undefined,
+    );
+
+    await spawnToolInSession.execute(
       "spawn-call",
       { task: "inspect the service" },
       undefined,
