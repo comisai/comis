@@ -131,9 +131,13 @@ describe("sessions_spawn tool", () => {
       _discoveredDeferredTools: ["mcp__service--lookup"],
     } as never);
 
-    expect(mockRpcCall).toHaveBeenCalledWith("session.spawn", expect.objectContaining({
-      _discoveredDeferredTools: ["mcp__service--lookup"],
-    }));
+    expect(mockRpcCall).toHaveBeenCalledWith(
+      "session.spawn",
+      expect.not.objectContaining({
+        _discoveredDeferredTools: expect.anything(),
+      }),
+      { discoveredDeferredTools: ["mcp__service--lookup"] },
+    );
   });
 
   it("throws when the RPC request fails", async () => {
