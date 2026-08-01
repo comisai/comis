@@ -119,6 +119,23 @@ describe("sessions_spawn tool", () => {
     }));
   });
 
+  it("forwards executor-injected discovery state without exposing it in the model schema", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ runId: "run_a", async: true }));
+    const tool = createSessionsSpawnTool(mockRpcCall);
+    const params = tool.parameters as { properties: Record<string, unknown> };
+
+    expect(params.properties).not.toHaveProperty("_discoveredDeferredTools");
+
+    await tool.execute("call-discovery", {
+      task: "inspect the discovered service",
+      _discoveredDeferredTools: ["mcp__service--lookup"],
+    } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith("session.spawn", expect.objectContaining({
+      _discoveredDeferredTools: ["mcp__service--lookup"],
+    }));
+  });
+
   it("throws when the RPC request fails", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => {
       throw new Error("spawn failed");

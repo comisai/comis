@@ -29,6 +29,7 @@ import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache
 import { lookbackWindowExceededHint } from "../cache-detection/index.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import { planInboundMessageProvenance } from "../../session/inbound-message-provenance.js";
+import { getOrCreateDiscoveryTracker } from "../discovery-tracker.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -733,6 +734,51 @@ describe("PiExecutor", () => {
       expect.objectContaining({
         confinedBaseDir: "/tmp/comis-isolated-data",
       }),
+    );
+  });
+
+  it("injects discovered parent tools into sessions_spawn as internal state", async () => {
+    const originalExecute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "spawned" }],
+      isError: false,
+    });
+    const spawnTool = {
+      name: "sessions_spawn",
+      label: "Sessions Spawn",
+      description: "Spawn a helper",
+      parameters: { type: "object", properties: {} },
+      execute: originalExecute,
+    };
+    const sessionKey: SessionKey = {
+      tenantId: "t1",
+      channelId: "discovery-spawn",
+      userId: "u1",
+    };
+    const executor = createPiExecutor(
+      testConfig,
+      createMockDeps({ customTools: [spawnTool] as any }),
+    );
+
+    await executor.execute(testMessage, sessionKey);
+    getOrCreateDiscoveryTracker(formatSessionKey(sessionKey), false)
+      .markDiscovered(["mcp__service--lookup"]);
+
+    await (spawnTool.execute as any)(
+      "spawn-call",
+      { task: "inspect the service" },
+      undefined,
+      vi.fn(),
+      undefined,
+    );
+
+    expect(originalExecute).toHaveBeenCalledWith(
+      "spawn-call",
+      expect.objectContaining({
+        _discoveredDeferredTools: ["mcp__service--lookup"],
+      }),
+      undefined,
+      expect.any(Function),
+      undefined,
     );
   });
 

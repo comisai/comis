@@ -722,6 +722,12 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
     expect(lean as string).toContain("required_tools");
     expect(lean as string).toContain("tool_groups");
   });
+
+  it("makes automatic result delivery clear before the first spawn", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toMatch(/result.*automatic/i);
+    expect(lean as string).toMatch(/do not.*message/i);
+  });
 });
 
 /**
@@ -743,6 +749,7 @@ describe("Task Delegation policy covers the child tool profile", () => {
   it("names the two surfaces that are outside the default child profile", () => {
     expect(guide).toMatch(/MCP/);
     expect(guide).toMatch(/message/);
+    expect(guide).not.toContain("MCP tools and `message` are OUTSIDE it");
   });
 });
 
