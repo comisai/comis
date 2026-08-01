@@ -33,6 +33,7 @@ function makeDeps(
     currentSuccessfulMutationCount: () => successfulMutationCount,
     currentSuccessfulToolCount: () => successfulToolCount,
     currentDeferredWorkCount: () => 0,
+    currentTerminalDenialCount: () => 0,
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -148,6 +149,21 @@ describe("runRequestToolNudge", () => {
 
     expect(deps.session.prompt).toHaveBeenCalledTimes(1);
     expect(outcome.outcome).toBe("recovered");
+  });
+
+  it("does not retry a request after its matching tool denies permission", async () => {
+    const deps = makeDeps({
+      currentTerminalDenialCount: () => 1,
+      messages: [
+        { role: "user", content: "switch back to the model u had before" },
+        { role: "assistant", content: "This change requires admin trust." },
+      ],
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(outcome.outcome).toBe("tool_denied_terminally");
   });
 
   it("runs when a follow-up reply claims an external action attempt without a receipt", async () => {
