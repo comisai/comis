@@ -216,7 +216,7 @@ describe("runRequestToolNudge", () => {
         expect(activeTools).toEqual(["read", "exec", "test_read_only_tool"]);
         return;
       }
-      expect(activeTools).toEqual(["exec"]);
+      expect(activeTools).toEqual(["read", "exec", "test_read_only_tool"]);
       successfulWorkflowCount = 1;
     });
     const deps = makeDeps({
@@ -243,11 +243,53 @@ describe("runRequestToolNudge", () => {
     expect(prompt.mock.calls[1]?.[0]).toContain(
       "u dont really know how to make flash cards properly",
     );
-    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, ["exec"]);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, [
+      "read",
+      "exec",
+      "test_read_only_tool",
+    ]);
     expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, [
       "read",
       "exec",
       "test_read_only_tool",
+    ]);
+  });
+
+  it("keeps the requested mutation tool in prompt skill workflow recovery", async () => {
+    let activeTools = ["read", "exec", "test_mutating_tool"];
+    let successfulMutationCount = 0;
+    const setActiveToolsByName = vi.fn((names: string[]) => {
+      activeTools = [...names];
+    });
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) return;
+      expect(activeTools).toEqual(["read", "exec", "test_mutating_tool"]);
+      successfulMutationCount = 1;
+    });
+    const deps = makeDeps({
+      requestText: "switch it",
+      requestRelevantToolNames: ["test_mutating_tool", "exec"],
+      requestRelevantPromptSkillNames: ["setup-helper"],
+      requestRelevantPromptSkillLocations: ["/skills/setup-helper/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["exec"],
+      session: {
+        prompt,
+        getActiveToolNames: () => [...activeTools],
+        setActiveToolsByName,
+      },
+      currentSuccessfulMutationCount: () => successfulMutationCount,
+      getVisibleAssistantText: () => "Configured.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(outcome.outcome).toBe("recovered");
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[1]?.[0]).toContain("/skills/setup-helper/SKILL.md");
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, [
+      "read",
+      "exec",
+      "test_mutating_tool",
     ]);
   });
 
