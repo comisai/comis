@@ -27,6 +27,8 @@ vi.mock("../client/rpc-client.js", async (importOriginal) => {
             agentId: p.agentId ?? "unknown",
             config: p.config ?? {},
             updated: true,
+            changed: true,
+            dryRun: false,
           };
         },
       });
@@ -209,7 +211,7 @@ describe("agent set-oauth-profile", () => {
   beforeEach(() => {
     mockWithClient.mockReset();
     // Default mock: AgentsUpdateContract.response success shape
-    // (`{ agentId, config, updated: true }`). Per-test overrides for
+    // (`{ agentId, config, updated, changed, dryRun }`). Per-test overrides for
     // error scenarios via mockImplementationOnce.
     mockWithClient.mockImplementation(async (fn) =>
       fn({
@@ -219,6 +221,8 @@ describe("agent set-oauth-profile", () => {
             agentId: p.agentId ?? "unknown",
             config: p.config ?? {},
             updated: true,
+            changed: true,
+            dryRun: false,
           };
         },
       } as never),
@@ -267,11 +271,13 @@ describe("agent set-oauth-profile", () => {
   });
 
   it("sends agents.update RPC with the oauthProfiles patch on valid input", async () => {
-    // AgentsUpdateContract.response = { agentId, config, updated: true }
+    // AgentsUpdateContract.response = { agentId, config, updated, changed, dryRun }
     const callSpy = vi.fn(async (_method: string, params: { agentId: string; config?: Record<string, unknown> }) => ({
       agentId: params.agentId,
       config: params.config ?? {},
       updated: true,
+      changed: true,
+      dryRun: false,
     }));
     mockWithClient.mockImplementationOnce(async (fn) =>
       fn({ call: callSpy } as never),

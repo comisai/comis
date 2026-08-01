@@ -216,7 +216,7 @@ export const CronListContract = defineContract({
     resolvedAgentId: z.union([IdentifierSchema, z.literal("*")]),
     jobs: z.array(CronJobProjectionSchema),
   }),
-  scopes: ["rpc", "admin"] as const,
+  scopes: ["rpc"] as const,
 });
 
 export const CronUpdateContract = defineContract({

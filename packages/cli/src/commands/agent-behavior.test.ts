@@ -301,11 +301,13 @@ describe("agent configure sends only specified fields", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    // AgentsUpdateContract.response = { agentId, config, updated: true }
+    // AgentsUpdateContract.response = { agentId, config, updated, changed, dryRun }
     callSpy = vi.fn().mockImplementation(async (_method: string, params: { agentId: string; config?: Record<string, unknown> }) => ({
       agentId: params.agentId,
       config: params.config ?? {},
       updated: true,
+      changed: true,
+      dryRun: false,
     }));
     vi.mocked(withClient).mockImplementation(async (fn) => {
       return fn({ call: callSpy, close: vi.fn() });
