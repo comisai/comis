@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { PromptSkillCapability } from "@comis/core";
+import { scrubSecretsFromText, type PromptSkillCapability } from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 
 const MAX_MATCHED_SKILLS = 1;
 const MIN_SHARED_TERMS = 2;
+const MAX_WORKFLOW_CONTEXT_CHARS = 600;
 
 interface PromptSkillRequestRoutingInput {
   readonly capabilityClass: string;
   readonly requestRelevanceText: string;
+  readonly priorUserRequest?: string;
   readonly skills: readonly PromptSkillCapability[];
   readonly locations?: ReadonlyMap<string, string>;
 }
@@ -98,6 +100,12 @@ export function applyPromptSkillRequestRouting(
     ? ["exec"]
     : [];
   deferral.requestRelevantPromptSkillWorkflowToolNames = workflowToolNames;
+  const priorUserRequest = input.priorUserRequest?.trim();
+  if (workflowToolNames.length > 0 && priorUserRequest) {
+    deferral.requestRelevantPromptSkillWorkflowContext = scrubSecretsFromText(
+      priorUserRequest,
+    ).text.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  }
   if (!deferral.requestRelevantToolNames.includes("read")) {
     deferral.requestRelevantToolNames.unshift("read");
   }

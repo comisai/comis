@@ -5,6 +5,7 @@ import {
   emitObservationalEventSafely,
   getToolMetadata,
   matchesToolMutationRequest,
+  wrapExternalContent,
   type ClockPort,
   type ComisLogger,
   type TypedEventBus,
@@ -42,6 +43,7 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantPromptSkillNames?: readonly string[];
   requestRelevantPromptSkillLocations?: readonly string[];
   requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
+  requestRelevantPromptSkillWorkflowContext?: string;
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -157,12 +159,24 @@ function buildDirective(
   ].join("\n");
 }
 
-function buildPromptSkillWorkflowDirective(toolNames: readonly string[]): string {
+function buildPromptSkillWorkflowDirective(
+  toolNames: readonly string[],
+  workflowContext?: string,
+): string {
+  const priorRequest = workflowContext
+    ? wrapExternalContent(workflowContext, {
+        source: "channel_history",
+        includeWarning: true,
+      })
+    : undefined;
   return [
     "[comis: continuation — the loaded prompt skill workflow is still pending]",
     "The request-relevant prompt skill was loaded, but none of its required workflow tools succeeded.",
     `Complete the loaded procedure now with: ${toolNames.join(", ")}.`,
-    "Resolve context-dependent arguments from the recent user requests already in context.",
+    priorRequest
+      ? `The immediately preceding user request was:\n${priorRequest}`
+      : "Resolve context-dependent arguments from the recent user requests already in context.",
+    "Derive concrete workflow arguments from that prior request; do not pass the current elliptical wording literally.",
     "Do not repeat the skill read or a previously attempted tool path, and do not claim completion without a successful workflow-tool receipt.",
   ].join("\n");
 }
@@ -317,7 +331,10 @@ export async function runRequestToolNudge(
     );
     continuation = await runContinuationTurn(
       deps.session,
-      buildPromptSkillWorkflowDirective(promptSkillWorkflowTools),
+      buildPromptSkillWorkflowDirective(
+        promptSkillWorkflowTools,
+        deps.requestRelevantPromptSkillWorkflowContext,
+      ),
       deps.guardProviderDispatch,
       { restrictToToolNames: promptSkillWorkflowTools },
     );

@@ -450,6 +450,8 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
     requestRelevantPromptSkillWorkflowToolNames:
       params.requestRelevantPromptSkillWorkflowToolNames ?? [],
+    requestRelevantPromptSkillWorkflowContext:
+      params.requestRelevantPromptSkillWorkflowContext,
     currentSuccessfulMutationCount: () =>
       (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) =>

@@ -225,6 +225,8 @@ describe("runRequestToolNudge", () => {
       requestRelevantPromptSkillNames: ["find-skills"],
       requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
       requestRelevantPromptSkillWorkflowToolNames: ["exec"],
+      requestRelevantPromptSkillWorkflowContext:
+        "u dont really know how to make flash cards properly",
       session: {
         prompt,
         getActiveToolNames: () => [...activeTools],
