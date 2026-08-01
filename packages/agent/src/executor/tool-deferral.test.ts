@@ -534,6 +534,37 @@ describe("applyToolDeferral - nano-class aggressive deferral", () => {
     expect(result.deferredNames).toContain("background_tasks");
   });
 
+  it("routes a user-tier MCP mutation to the guarded management tool", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("mcp_manage", {
+      isReadOnly: false,
+      searchHint:
+        "mcp server connect inspect check external integration account access credential",
+      mutationRequestPrefixes: ["connect"],
+    });
+    const tools = [
+      makeTool("read"),
+      makeTool("mcp_manage"),
+      {
+        ...makeTool("mcp__synthetic--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+    ] as unknown as ToolDefinition[];
+    const ctx = makeContext({
+      trustLevel: "user",
+      capabilityClass: "nano",
+      requestText: "connect this to my test account",
+      toolNames: tools.map((tool) => tool.name),
+      providerFamily: "openai",
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual(["mcp_manage"]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain("mcp_manage");
+    expect(result.deferredNames).toContain("mcp__synthetic--account_summary");
+  });
+
   it("uses recent user turns to resolve a deictic MCP follow-up", () => {
     const logger = createMockLogger();
     const tools = [
