@@ -36,5 +36,4 @@ export type {
   ToolCapabilityMetadata,
   ToolFailureDisclosure,
   TrackedInvocationSideEffect,
-  ToolInvocationMutation,
 } from "../tool-metadata.js";

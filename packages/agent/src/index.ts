@@ -568,7 +568,6 @@ export type { OperationModelResolution } from "./model/operation-model-resolver.
 export {
   resolveModelProfile,
   capabilityClassFromModel,
-  capabilityClassFromProvider,
   resolveEffectiveCapabilityClass,
   autoRepairForClass,
 } from "./executor/model-profile.js";

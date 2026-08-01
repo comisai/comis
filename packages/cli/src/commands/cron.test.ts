@@ -110,17 +110,18 @@ describe("comis cron strict operator commands", () => {
   });
 
   it("lists one selected agent through cron.list and emits the typed JSON response", async () => {
-    const { client, calls } = makeClient(() => ({ jobs: [scheduledJob] }));
+    const response = { resolvedAgentId: "agent-a", jobs: [scheduledJob] };
+    const { client, calls } = makeClient(() => response);
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
 
     await run(["list", "--agent", "agent-a", "--format", "json"]);
 
     expect(calls).toEqual([{ method: CronListContract.method, params: { agentId: "agent-a" } }]);
-    expect(JSON.parse(getSpyOutput(consoleSpy.log))).toEqual({ jobs: [scheduledJob] });
+    expect(JSON.parse(getSpyOutput(consoleSpy.log))).toEqual(response);
   });
 
   it("uses the admin all-agent selector and keeps payload text out of the table", async () => {
-    const { client, calls } = makeClient(() => ({ jobs: [scheduledJob] }));
+    const { client, calls } = makeClient(() => ({ resolvedAgentId: "*", jobs: [scheduledJob] }));
     vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
 
     await run(["list", "--all"]);
@@ -155,6 +156,7 @@ describe("comis cron strict operator commands", () => {
 
   it("renders bounded immutable run history from cron.runs", async () => {
     const response = {
+      resolvedAgentId: "agent-a",
       runs: [{
         executionId: "execution-a",
         jobId: "job-a",

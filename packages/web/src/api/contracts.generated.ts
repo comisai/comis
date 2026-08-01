@@ -11435,6 +11435,63 @@ export const CONTRACTS = {
             "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
           }
         },
+        "requestRelevanceHistory": {
+          "type": "object",
+          "properties": {
+            "turnCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8
+            },
+            "charCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "saturated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "turnCount",
+            "charCount",
+            "saturated"
+          ],
+          "additionalProperties": false
+        },
+        "operatorPolicyToolProjections": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "toolName": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+              },
+              "sectionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+              },
+              "contentHash": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "projectedChars": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 5000
+              }
+            },
+            "required": [
+              "toolName",
+              "sectionId",
+              "contentHash",
+              "projectedChars"
+            ],
+            "additionalProperties": false
+          }
+        },
         "responseLocale": {
           "anyOf": [
             {
