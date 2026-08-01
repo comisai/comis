@@ -157,6 +157,16 @@ function buildDirective(
   ].join("\n");
 }
 
+function buildPromptSkillWorkflowDirective(toolNames: readonly string[]): string {
+  return [
+    "[comis: continuation — the loaded prompt skill workflow is still pending]",
+    "The request-relevant prompt skill was loaded, but none of its required workflow tools succeeded.",
+    `Complete the loaded procedure now with: ${toolNames.join(", ")}.`,
+    "Resolve context-dependent arguments from the recent user requests already in context.",
+    "Do not repeat the skill read or a previously attempted tool path, and do not claim completion without a successful workflow-tool receipt.",
+  ].join("\n");
+}
+
 export async function runRequestToolNudge(
   deps: RunRequestToolNudgeDeps,
 ): Promise<RequestToolNudgeOutcome> {
@@ -278,7 +288,7 @@ export async function runRequestToolNudge(
   const continuationOptions = (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
     ? undefined
     : { restrictToToolNames: recoveryToolNames };
-  const continuation = await runContinuationTurn(
+  let continuation = await runContinuationTurn(
     deps.session,
     buildDirective(
       recoveryToolNames,
@@ -290,6 +300,28 @@ export async function runRequestToolNudge(
     deps.guardProviderDispatch,
     continuationOptions,
   );
+  const promptSkillWorkflowTools = deps.requestRelevantPromptSkillWorkflowToolNames ?? [];
+  if (
+    continuation.ok
+    && promptSkillWorkflowTools.length > 0
+    && successfulCount() === successfulToolCountBefore
+  ) {
+    logger.info(
+      {
+        submodule: SUBMODULE,
+        step: "prompt-skill-workflow-nudge",
+        agentId,
+        workflowToolNames: promptSkillWorkflowTools,
+      },
+      "Loaded prompt skill requires one bounded workflow continuation",
+    );
+    continuation = await runContinuationTurn(
+      deps.session,
+      buildPromptSkillWorkflowDirective(promptSkillWorkflowTools),
+      deps.guardProviderDispatch,
+      { restrictToToolNames: promptSkillWorkflowTools },
+    );
+  }
   if (!continuation.ok) {
     logger.warn(
       {
