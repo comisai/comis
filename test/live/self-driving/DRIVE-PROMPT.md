@@ -64,13 +64,15 @@ Run on THIS MACHINE only:
 - Use separate dedicated absolute `DATA` directories for the primary campaign and destructive scratch
   verification. Give each root its own free `GW_PORT` and non-default `SERVICE`; never use the service
   named `comis`, clean or repoint the operator's everyday `~/.comis`, or share a lifecycle owner.
-- Preserve any existing `scripts/.live-env`; do not overwrite user configuration. Prefer explicit
-  per-command overrides. The effective values after `.live-env` and rendered rig-env loading must exactly
-  match the selected tuple before any helper mutates config or processes.
+- Preserve any existing `test/live/self-driving/scripts/.live-env`; do not overwrite user configuration.
+  Prefer explicit per-command overrides. The effective values after `.live-env` and rendered rig-env
+  loading must exactly match the selected tuple before any helper mutates config or processes.
 - Never print, log, paste into prompts, or commit provider keys, gateway tokens, master keys, real user
   content, or environment values. Use the encrypted secret store and existing safe CLI flows.
-- Do not push, open a PR, merge, or contact external people. Local commits required by `AGENTS.md` are
-  allowed and required for completed changes. Never add a `Co-Authored-By:` trailer.
+- Do not push, open a PR, or merge from this campaign. Those actions belong to a separate outer shipping
+  workflow and require explicit authorization. Never contact external people or real users. Local commits
+  required by `AGENTS.md` are allowed and required for completed changes. Never add a `Co-Authored-By:`
+  trailer.
 
 Choose and record a durable campaign root such as:
 
@@ -111,7 +113,7 @@ Before driving:
 4. Initialize each isolated local config through the checked-in setup helpers with that root's complete
    explicit `RIG_MODE`/`DATA`/`GW_PORT`/`SERVICE` tuple; never run a bare init command that can select
    `~/.comis`. Reuse provider credentials only through approved encrypted-secret mechanisms; never copy or
-   expose secret values in commands or artifacts. For each root run
+   expose secret values in commands or artifacts. From `test/live/self-driving/scripts/`, for each root run
    `RIG_MODE=local DATA=<absolute-path> GW_PORT=<free-port> SERVICE=<unique-service> ./init-local-config.sh`
    once; it pins `config.dataDir` and `gateway.port`, creates the encrypted master-key file, and does not
    copy or print provider credentials. A genuinely unavailable provider/capability becomes a named
@@ -190,9 +192,10 @@ Bad: one polished prompt per capability from a clean session.
 Good: one durable relationship where turn 40 depends on turn 3.
 
 Keep driver metadata out of user text. Use the emulator controls for sender, chat, thread, reply, edit,
-reaction, media, service messages, timing, and injected platform faults. Drive all ordinary turns with
-`scripts/drive.mjs`; use the checked-in media and control helpers for non-text shapes. Never call internal
-business methods as a substitute for the channel path when the arc claims end-to-end Telegram behavior.
+reaction, media, service messages, timing, and injected platform faults. Drive all ordinary turns with the
+checked-in `test/live/self-driving/scripts/drive.mjs` helper; use the media and control helpers for non-text
+shapes. Never call internal business methods as a substitute for the channel path when the arc claims
+end-to-end Telegram behavior.
 
 ## Drive and prove
 

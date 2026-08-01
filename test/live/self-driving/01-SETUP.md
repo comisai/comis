@@ -12,7 +12,7 @@
 > |---|---|---|
 > | Where | the VPS **production installation** (systemd + npm-global layout `website/public/install.sh` gives real users) | **this machine**, from this checkout |
 > | Daemon | `comis.service` as the dedicated service user | direct `node …/daemon.js` (or pm2 if it already supervises) |
-> | Data dir | `/home/comis/.comis` | `~/.comis` (override `DATA`) |
+> | Data dir | `/home/comis/.comis` | explicit isolated absolute `DATA` (the everyday `~/.comis` tree is refused) |
 > | Deploy step | `install-vps.sh` / `deploy-dist.sh` + verify | **none** — the checkout IS the build |
 > | Bring-up | `install-vps.sh` → `deploy-scripts.sh` → `WIRE=1 deploy-emu.sh` | **`./init-local-config.sh` → `./local-up.sh`** |
 > | Mandatory `.live-env` | `VPS` | nothing |
