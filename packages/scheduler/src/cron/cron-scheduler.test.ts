@@ -277,6 +277,33 @@ describe("durable cron scheduler lifecycle", () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
+  it("coalesces overlapping due-job scans while a recurring occurrence is active", async () => {
+    let resolveExecution!: (value: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    const execute = vi.fn((input: CronRuntimeExecutionInput) => new Promise<Result<CronRuntimeOutcome, CronRuntimeError>>((resolve) => {
+      resolveExecution = (value) => resolve(value);
+      expect(input.job.id).toBe("recurring");
+    }));
+    const built = await fixture({
+      seedJob: job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS }),
+      execute,
+    });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+
+    const firstScan = built.scheduler.runMissedJobs();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    const overlappingScan = built.scheduler.runMissedJobs();
+    await Promise.resolve();
+    expect(execute).toHaveBeenCalledOnce();
+
+    resolveExecution(ok(completed(execute.mock.calls[0]![0])));
+    await expect(Promise.all([firstScan, overlappingScan])).resolves.toEqual([
+      ok(["execution_1"]),
+      ok(["execution_1"]),
+    ]);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("leaves a durable claim and performs no dispatch when start append fails", async () => {
     const execute = vi.fn(async (input: CronRuntimeExecutionInput) => ok(completed(input)));
     const built = await fixture({ seedJob: job(), execute });
