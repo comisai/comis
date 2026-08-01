@@ -270,6 +270,9 @@ export async function runRequestToolNudge(
   );
 
   const successfulToolCountBefore = successfulCount();
+  const continuationOptions = (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
+    ? undefined
+    : { restrictToToolNames: recoveryToolNames };
   const continuation = await runContinuationTurn(
     deps.session,
     buildDirective(
@@ -279,7 +282,7 @@ export async function runRequestToolNudge(
       trigger,
     ),
     deps.guardProviderDispatch,
-    { restrictToToolNames: recoveryToolNames },
+    continuationOptions,
   );
   if (!continuation.ok) {
     logger.warn(
