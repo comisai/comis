@@ -688,7 +688,7 @@ describe("writeConfigStep", () => {
     });
   });
 
-  it("writes NO embedding block for the English default (multilingual:false) — the daemon keeps nomic", async () => {
+  it("writes an explicit nomic override for an English-only recall choice", async () => {
     const state: WizardState = {
       ...populatedState(),
       recallProvider: { multilingual: false, provider: "local" },
@@ -699,7 +699,13 @@ describe("writeConfigStep", () => {
       ([path]) => typeof path === "string" && path.includes(".tmp"),
     );
     const config = JSON.parse(configWriteCall![1] as string);
-    expect(config.embedding).toBeUndefined();
+    expect(config.embedding).toEqual({
+      provider: "local",
+      multilingual: false,
+      local: {
+        modelUri: "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+      },
+    });
   });
 
   it("writes the FAL_KEY image credential to .env when imageProvider is fal", async () => {

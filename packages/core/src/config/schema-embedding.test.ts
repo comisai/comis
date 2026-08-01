@@ -3,12 +3,9 @@ import { describe, expect, it } from "vitest";
 import { EmbeddingConfigSchema } from "./schema-embedding.js";
 
 // ---------------------------------------------------------------------------
-// The optional `embedding.multilingual` advisory config key.
-//
-// An optional boolean (NO default) on the top-level z.strictObject. Undeclared
-// -> the name heuristic infers the multilingual flag for the `comis system-health`
-// model-health line (advisory only; no behavior is gated on it). z.strictObject
-// rejects an unknown/typo'd key — the desired strictness.
+// The `embedding.multilingual` advisory config key. Fresh configurations use a
+// multilingual local model and report that posture without relying on a model-id
+// heuristic. Explicit overrides remain available for other embedders.
 // ---------------------------------------------------------------------------
 
 describe("EmbeddingConfigSchema — multilingual advisory key", () => {
@@ -22,9 +19,10 @@ describe("EmbeddingConfigSchema — multilingual advisory key", () => {
     expect(parsed.multilingual).toBe(false);
   });
 
-  it("leaves multilingual undefined when omitted (optional, NO default -> heuristic path)", () => {
+  it("defaults to a multilingual posture when omitted", () => {
     const parsed = EmbeddingConfigSchema.parse({});
-    expect(parsed.multilingual).toBeUndefined();
+    expect(parsed.multilingual).toBe(true);
+    expect(parsed.local.modelUri).toBe("hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf");
   });
 
   it("throws on a typo'd key (multiligual) — z.strictObject rejects unknown keys", () => {
