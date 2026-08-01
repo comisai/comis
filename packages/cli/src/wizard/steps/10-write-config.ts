@@ -486,7 +486,7 @@ export const writeConfigStep: WizardStep = {
     prompter.note(heading("Writing Configuration"));
 
     // 2. Determine paths using safePath (never path.join)
-    const configDir = safePath(homedir(), ".comis");
+    const configDir = state.configDir ?? safePath(homedir(), ".comis");
     const configPath = safePath(configDir, "config.yaml");
     const envPath = safePath(configDir, ".env");
     const dataDir = state.dataDir ?? safePath(homedir(), ".comis", "data");
@@ -660,11 +660,11 @@ export const writeConfigStep: WizardStep = {
       spinner.stop("Configuration written successfully");
 
       // 13. Show summary
-      prompter.log.success(themeSuccess("~/.comis/config.yaml"));
+      prompter.log.success(themeSuccess(configPath));
       if (!useSecretsStore) {
-        prompter.log.success(themeSuccess("~/.comis/.env (0600)"));
+        prompter.log.success(themeSuccess(`${envPath} (0600)`));
       } else {
-        prompter.log.success(themeSuccess("~/.comis/.env (secrets store)"));
+        prompter.log.success(themeSuccess(`${envPath} (secrets store)`));
       }
       if (dataDirCreated) {
         prompter.log.success(themeSuccess(`${dataDir}/ created`));

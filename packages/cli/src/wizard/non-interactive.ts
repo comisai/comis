@@ -690,6 +690,7 @@ export function buildNonInteractiveState(
     ...(ttsProvider !== undefined && { ttsProvider }),
     ...(recallProvider !== undefined && { recallProvider }),
     gateway,
+    configDir,
     dataDir,
     skipHealth: opts.skipHealth ?? false,
     completedSteps,

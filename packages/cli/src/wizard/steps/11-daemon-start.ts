@@ -25,7 +25,7 @@ import {
 } from "node:fs";
 import * as os from "node:os";
 import { promisify } from "node:util";
-import { isDocker, safePath, systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
+import { isDocker, safePath, systemClearTimeout, systemEnvSnapshot, systemNowMs, systemSetTimeout } from "@comis/core";
 
 const exec = promisify(execFile);
 import type { WizardState, WizardStep } from "../types.js";
@@ -204,7 +204,7 @@ async function runHealthCheck(
         name: "Gateway",
         status: "failed",
         detail: `returned status ${res.status}`,
-        fix: "Check gateway config in ~/.comis/config.yaml",
+        fix: `Check gateway config in ${safePath(state.configDir ?? safePath(os.homedir(), ".comis"), "config.yaml")}`,
       });
     }
   } catch {
@@ -212,7 +212,7 @@ async function runHealthCheck(
       name: "Gateway",
       status: "failed",
       detail: "not responding",
-      fix: "Check gateway config in ~/.comis/config.yaml",
+      fix: `Check gateway config in ${safePath(state.configDir ?? safePath(os.homedir(), ".comis"), "config.yaml")}`,
     });
   }
 
@@ -590,7 +590,7 @@ export const daemonStartStep: WizardStep = {
       stopSpinner.start("Stopping daemon...");
 
       try {
-        const pidFile = safePath(os.homedir(), ".comis", "daemon.pid");
+        const pidFile = safePath(state.configDir ?? safePath(os.homedir(), ".comis"), "daemon.pid");
         if (existsSync(pidFile)) {
           const { readFileSync } = await import("node:fs");
           const pid = Number(readFileSync(pidFile, "utf-8").trim());
@@ -617,18 +617,18 @@ export const daemonStartStep: WizardStep = {
         return updateState(state, {});
       }
 
-      const comisDir = safePath(os.homedir(), ".comis");
+      const comisDir = state.configDir ?? safePath(os.homedir(), ".comis");
       const pidFile = safePath(comisDir, "daemon.pid");
       // Raw process stdout/stderr capture (boot output + pre-logger FATALs).
-      // Named distinctly from the daemon's structured Pino log at
-      // ~/.comis/logs/daemon.log so the two are never confused.
+      // Named distinctly from the structured daemon log so the two are never
+      // confused.
       const logFile = safePath(comisDir, "daemon.console.log");
 
       mkdirSync(comisDir, { recursive: true, mode: 0o700 });
 
       // Keep only the current process capture. Canonical structured history is
-      // independently rotated under ~/.comis/logs, while appending this duplicate
-      // stream indefinitely can consume the host disk.
+      // independently rotated under the installation's logs directory, while
+      // appending this duplicate stream indefinitely can consume the host disk.
       const logFd = openSync(logFile, "w", 0o600);
 
       let childPid: number | undefined;
@@ -636,6 +636,15 @@ export const daemonStartStep: WizardStep = {
         const child = spawn("node", [daemonPath], {
           detached: true,
           stdio: ["ignore", logFd, logFd],
+          env: {
+            ...systemEnvSnapshot(),
+            ...(state.configDir !== undefined
+              ? { COMIS_CONFIG_PATHS: safePath(state.configDir, "config.yaml") }
+              : {}),
+            ...(state.dataDir !== undefined
+              ? { COMIS_DATA_DIR: state.dataDir }
+              : {}),
+          },
         });
         child.unref();
         childPid = child.pid ?? undefined;

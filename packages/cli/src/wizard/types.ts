@@ -263,6 +263,8 @@ export type WizardState = {
   readonly recallProvider?: RecallProviderConfig;
   /** Text-to-speech provider selection from the `tts` step. */
   readonly ttsProvider?: TtsProviderConfig;
+  /** Directory containing config.yaml, .env, encrypted secrets, and daemon launcher files. */
+  readonly configDir?: string;
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;

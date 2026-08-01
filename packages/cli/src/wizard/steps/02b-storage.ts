@@ -36,18 +36,19 @@ export const storageStep: WizardStep = {
   label: "Credential Storage",
 
   async execute(state: WizardState, prompter: WizardPrompter): Promise<WizardState> {
-    // Resolve the data dir the same way loadWizardStorageMode does so the key
-    // detection + provisioning target the canonical ~/.comis/.env location.
-    const dataDir = systemGetEnv("COMIS_DATA_DIR") ?? safePath(homedir(), ".comis");
+    // The explicit init target takes precedence over environment and home
+    // defaults so isolated setup never reads or modifies another installation.
+    const configDir = state.configDir
+      ?? systemGetEnv("COMIS_DATA_DIR")
+      ?? safePath(homedir(), ".comis");
 
-    // Load ~/.comis/.env into the process env snapshot (consistent with
-    // 04-oauth-helpers.ts) so systemGetEnv("SECRETS_MASTER_KEY") reflects a
-    // key written by an earlier run. loadEnvFile never overwrites existing
-    // entries.
-    loadEnvFile(safePath(dataDir, ".env"));
+    // Load the target installation's .env into the process env snapshot so
+    // systemGetEnv("SECRETS_MASTER_KEY") reflects a key written by an earlier
+    // run. loadEnvFile never overwrites existing entries.
+    loadEnvFile(safePath(configDir, ".env"));
 
     const keyPresent = !!systemGetEnv("SECRETS_MASTER_KEY");
-    const dbPresent = existsSync(safePath(dataDir, "secrets.db"));
+    const dbPresent = existsSync(safePath(configDir, "secrets.db"));
 
     // Default the picker to the recommended "encrypted" mode on a fresh data
     // dir (no key, no store). When a key/store already exists, honor the
@@ -57,7 +58,7 @@ export const storageStep: WizardStep = {
     // anything other than "file" as "encrypted".
     let initialValue: CredentialStorageMode = "encrypted";
     if (keyPresent || dbPresent) {
-      const resolved = await loadWizardStorageMode();
+      const resolved = await loadWizardStorageMode(state.configDir);
       initialValue = resolved === "file" ? "file" : "encrypted";
     }
 
@@ -77,11 +78,14 @@ export const storageStep: WizardStep = {
     // key or store. writeMasterKeyIfAbsent is itself idempotent, but the guard
     // avoids even touching .env when a store already exists.
     if (chosen === "encrypted" && !keyPresent && !dbPresent) {
-      const res = writeMasterKeyIfAbsent(dataDir);
+      const res = writeMasterKeyIfAbsent(configDir);
       if (res.written) {
+        const envPath = state.configDir
+          ? safePath(configDir, ".env")
+          : "~/.comis/.env";
         // Path only — NEVER log res.keyHex.
         prompter.log.warn(
-          "Generated an encryption key at ~/.comis/.env — back this up; without it your stored credentials cannot be decrypted.",
+          `Generated an encryption key at ${envPath} — back this up; without it your stored credentials cannot be decrypted.`,
         );
       }
     }

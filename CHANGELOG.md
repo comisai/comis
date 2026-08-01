@@ -4,6 +4,10 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [Unreleased]
 
+### Fixed
+
+- `comis init --config-dir` now isolates configuration detection, credential storage, generated files, and daemon startup instead of writing setup artifacts to the default home directory.
+
 ### Changed
 
 - Fresh configurations use the private multilingual `bge-m3` embedder so semantic memory recall works across scripts without an external embedding service. The smaller English-centric nomic model remains an explicit setup choice.

@@ -36,10 +36,11 @@ import { homedir } from "node:os";
 /**
  * Default Comis config directory.
  *
- * Uses the user's home directory with the `.comis` subdirectory.
+ * Uses the explicit wizard target when provided, otherwise the user's
+ * home directory with the `.comis` subdirectory.
  */
-function getConfigDir(): string {
-  return homedir() + "/.comis";
+function getConfigDir(state: WizardState): string {
+  return state.configDir ?? safePath(homedir(), ".comis");
 }
 
 /**
@@ -250,7 +251,8 @@ export const detectExistingStep: WizardStep = {
     prompter: WizardPrompter,
   ): Promise<WizardState> {
     // 1. Check for existing config
-    const configPath = safePath(getConfigDir(), "config.yaml");
+    const configDir = getConfigDir(state);
+    const configPath = safePath(configDir, "config.yaml");
 
     if (!existsSync(configPath)) {
       // No config found -- pass through silently
@@ -258,7 +260,7 @@ export const detectExistingStep: WizardStep = {
     }
 
     // 2. Load .env secrets so ${VAR} references resolve before validation
-    const envPath = safePath(getConfigDir(), ".env");
+    const envPath = safePath(configDir, ".env");
     const envRecord: Record<string, string | undefined> = {};
     if (existsSync(envPath)) {
       loadEnvFile(envPath, envRecord);

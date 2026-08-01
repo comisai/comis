@@ -373,12 +373,15 @@ export function registerInitCommand(program: Command): void {
       const steps = buildStepRegistry();
 
       // Build initial state from any applicable flags
+      const configDir = options.configDir as string | undefined;
       let initialState: WizardState | undefined;
-      if (options.quick) {
-        // --quick flag pre-sets flow without prompting
+      if (options.quick || configDir !== undefined) {
+        // --quick pre-sets flow without prompting. --config-dir must enter the
+        // shared wizard state before any step reads or writes configuration.
         initialState = {
           completedSteps: [] as readonly WizardStepId[],
-          flow: "quickstart" as const,
+          ...(options.quick ? { flow: "quickstart" as const } : {}),
+          ...(configDir !== undefined ? { configDir } : {}),
         };
       }
 
