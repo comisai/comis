@@ -919,6 +919,29 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/errorPreview/iu);
   });
 
+  it("names an authorization denial before the generic tool-error verdict", () => {
+    const r = rootCause(makeSignals({
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+      failures: [{
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "sdk_iserror",
+        transportOk: false,
+        errorKind: "auth",
+        failureCode: "permission_denied",
+        resultDigest: "digest",
+        resultBytes: 196,
+        errorPreview: "",
+      }],
+    }));
+
+    expect(r?.code).toBe("tool_authorization_denied");
+    expect(r?.detail).toMatch(/mcp_manage.*authorization.*no mutation/iu);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/trust|approval/iu);
+    expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/retry.*same/iu);
+  });
+
   it("explains a background mutation that ran but did not persist", () => {
     const r = rootCause(makeSignals({
       failures: [{
