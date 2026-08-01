@@ -1,5 +1,5 @@
-# Reference config for VPS emulator live-testing. Copy to /home/comis/.comis/config.yaml AS the comis user
-# (preserve 0600 ownership) and adjust the marked lines. See ../01-SETUP.md §3.
+# Reference config for emulator live-testing. The local and VPS initializers pin their own data roots,
+# gateway ports, identities, and generated tokens before writing a private config. See ../01-SETUP.md §3.
 logLevel: debug
 dataDir: /home/comis/.comis
 agents:

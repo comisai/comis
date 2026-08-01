@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +24,8 @@ const RESTART_DAEMON = resolve(HERE, "restart-daemon.sh");
 const CLEAN_RESTART = resolve(HERE, "clean-restart.sh");
 const PHASE_ZERO_CHECK = resolve(HERE, "phase0-check.sh");
 const LOCAL_UP = resolve(HERE, "local-up.sh");
+const INIT_LOCAL_CONFIG = resolve(HERE, "init-local-config.sh");
+const LOCAL_CONFIG = resolve(HERE, "local-config.mjs");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
@@ -65,6 +77,12 @@ function runRigHelper(snippet: string, env: Record<string, string> = {}): string
     encoding: "utf8",
     env: { ...process.env, ...env },
   });
+}
+
+function makeCanonicalTempDirectory(prefix: string): string {
+  const directory = realpathSync(mkdtempSync(resolve(tmpdir(), prefix)));
+  temporaryDirectories.push(directory);
+  return directory;
 }
 
 afterEach(() => {
@@ -392,8 +410,7 @@ describe("local rig mode", () => {
   });
 
   it("refuses the everyday local service before changing its config", () => {
-    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-isolation-"));
-    temporaryDirectories.push(directory);
+    const directory = makeCanonicalTempDirectory("comis-local-up-isolation-");
     const data = resolve(directory, "isolated-data");
     mkdirSync(data, { recursive: true });
     const config = resolve(data, "config.yaml");
@@ -418,8 +435,7 @@ describe("local rig mode", () => {
   });
 
   it("refuses the everyday local data root before changing its config", () => {
-    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-up-everyday-root-"));
-    temporaryDirectories.push(directory);
+    const directory = makeCanonicalTempDirectory("comis-local-up-everyday-root-");
     const data = resolve(directory, ".comis");
     mkdirSync(data, { recursive: true });
     const config = resolve(data, "config.yaml");
@@ -443,6 +459,136 @@ describe("local rig mode", () => {
     expect(readFileSync(config, "utf8")).toBe("sentinel: unchanged\n");
   });
 
+  it("resolves missing data roots through their nearest existing symlink ancestor", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-up-symlink-root-");
+    const home = resolve(directory, "home");
+    const everyday = resolve(home, ".comis");
+    const alias = resolve(directory, "operator-data");
+    mkdirSync(everyday, { recursive: true });
+    symlinkSync(everyday, alias, "dir");
+    const selected = resolve(alias, "fresh-rig");
+
+    const result = spawnSync("bash", [LOCAL_UP], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        RIG_MODE: "local",
+        DATA: selected,
+        GW_PORT: "4880",
+        SERVICE: "comis-local-drive",
+        SKIP_BUILD: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("canonical and symlink-free");
+    expect(statSync(everyday).isDirectory()).toBe(true);
+    expect(() => statSync(resolve(everyday, "fresh-rig"))).toThrow();
+  });
+
+  it("refuses a fresh rig nested inside the everyday data tree", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-up-everyday-child-");
+    const everyday = resolve(directory, ".comis");
+    const selected = resolve(everyday, "fresh-rig");
+    mkdirSync(everyday, { recursive: true });
+
+    const result = spawnSync("bash", [LOCAL_UP], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        DATA: selected,
+        GW_PORT: "4880",
+        SERVICE: "comis-local-drive",
+        SKIP_BUILD: "1",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("operator's everyday");
+    expect(() => statSync(selected)).toThrow();
+  });
+
+  it("initializes a pinned local config without exposing generated credentials", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-config-init-");
+    const data = resolve(directory, "isolated-data");
+    const configPath = resolve(data, "config.yaml");
+    const result = spawnSync("bash", [INIT_LOCAL_CONFIG], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        DATA: data,
+        GW_PORT: "4881",
+        SERVICE: "comis-local-drive",
+      },
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    const config = readFileSync(configPath, "utf8");
+    const envFile = readFileSync(resolve(data, ".env"), "utf8");
+    const token = config.match(/secret:\s+([a-f0-9]{48})/u)?.[1];
+    const masterKey = envFile.match(/^SECRETS_MASTER_KEY=([a-f0-9]{64})$/mu)?.[1];
+    expect(token).toBeDefined();
+    expect(masterKey).toBeDefined();
+    if (token === undefined || masterKey === undefined) {
+      throw new Error("initializer omitted generated credentials");
+    }
+    expect(result.stdout).not.toContain(token);
+    expect(result.stdout).not.toContain(masterKey);
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(statSync(resolve(data, ".env")).mode & 0o777).toBe(0o600);
+
+    const validated = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, data, "4881"], {
+      encoding: "utf8",
+      env: { ...process.env },
+    });
+    expect(validated.status, `${validated.stdout}${validated.stderr}`).toBe(0);
+  });
+
+  it("validates the authoritative config before any local rig mutation", () => {
+    const source = readFileSync(LOCAL_UP, "utf8");
+    const configGuard = source.indexOf('node "$HERE/local-config.mjs" validate');
+    const build = source.indexOf("pnpm build");
+    const emulator = source.indexOf('bash "$HERE/restart-emu.sh"');
+    const wiring = source.indexOf('node "$HERE/wire-emu.mjs"');
+
+    expect(configGuard).toBeGreaterThan(0);
+    expect(configGuard).toBeLessThan(build);
+    expect(configGuard).toBeLessThan(emulator);
+    expect(configGuard).toBeLessThan(wiring);
+    expect(source).toContain("init-local-config.sh");
+    expect(source).not.toContain("node $REPO/packages/cli/dist/cli.js init");
+    expect(source).not.toContain("node $HERE/init-config.mjs");
+    expect(readFileSync(INIT_LOCAL_CONFIG, "utf8")).not.toContain("/root");
+
+    const directory = makeCanonicalTempDirectory("comis-local-config-guard-");
+    const configPath = resolve(directory, "config.yaml");
+    writeFileSync(
+      configPath,
+      `dataDir: ${resolve(directory, "wrong-root")}\ngateway:\n  port: 4882\n`,
+    );
+    const wrongRoot = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, directory, "4882"], {
+      encoding: "utf8",
+      env: { ...process.env },
+    });
+    expect(wrongRoot.status).not.toBe(0);
+    expect(`${wrongRoot.stdout}${wrongRoot.stderr}`).toContain("config dataDir must be exactly");
+
+    writeFileSync(configPath, `dataDir: ${directory}\ngateway:\n  port: 4766\n`);
+    const wrongPort = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, directory, "4882"], {
+      encoding: "utf8",
+      env: { ...process.env },
+    });
+    expect(wrongPort.status).not.toBe(0);
+    expect(`${wrongPort.stdout}${wrongPort.stderr}`).toContain(
+      "config gateway.port must be exactly 4882",
+    );
+  });
+
   it("loads the rendered rig selection in every standalone local gate", () => {
     for (const script of [DEPLOY_EMULATOR, RIG_DOCTOR, VERIFY_BUILD]) {
       const source = readFileSync(script, "utf8");
@@ -454,6 +600,7 @@ describe("local rig mode", () => {
     for (const script of [
       RIG_HELPER,
       LOCAL_UP,
+      INIT_LOCAL_CONFIG,
       RESTART_DAEMON,
       CLEAN_RESTART,
       DEPLOY_SCRIPTS,

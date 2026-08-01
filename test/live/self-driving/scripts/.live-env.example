@@ -17,8 +17,9 @@
 #     `01-SETUP.md §Local mode` (a macOS local run CANNOT validate the sandbox/jail oracles).
 #     Bring it up with explicit DATA, GW_PORT, and dedicated non-`comis` SERVICE values.
 #
-# The LOCAL scripts (install-vps.sh, deploy-dist.sh, deploy-scripts.sh, deploy-emu.sh, local-up.sh,
-# rig-doctor.sh, verify-build.sh, run-linux-tests.sh) AUTO-SOURCE ./.live-env; deploy-scripts.sh
+# The LOCAL scripts (init-local-config.sh, install-vps.sh, deploy-dist.sh, deploy-scripts.sh,
+# deploy-emu.sh, local-up.sh, rig-doctor.sh, verify-build.sh, run-linux-tests.sh) AUTO-SOURCE
+# ./.live-env; deploy-scripts.sh
 # renders these values to the rig env file (/root/comis-rig.env remotely, ./.rig-env locally), where
 # the rig-side scripts source them and the .mjs helpers read them via _rig.mjs. For ad-hoc
 # one-liners, `source .live-env` first.
@@ -27,6 +28,7 @@
 # so a single run can target a DIFFERENT rig without editing the file:
 #
 #     VPS=comis-test1 ./install-vps.sh
+#     RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./init-local-config.sh
 #     RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive ./local-up.sh
 #
 # A bare `export` here silently CLOBBERS an inline override — which is exactly how a live-test

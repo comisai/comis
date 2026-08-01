@@ -23,18 +23,18 @@ RIG_ENV="${SELECTED_RIG_ENV:-$HERE/.rig-env}"
 COMIS_DATA_DIR="$SELECTED_DATA"
 COMIS_CONFIG_PATHS="$SELECTED_DATA/config.yaml"
 export RIG_MODE RIG_ENV COMIS_DATA_DIR COMIS_CONFIG_PATHS
-rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "$HERE/.rig-env"
 rig_assert_isolated_local_selection "$SELECTED_DATA" "$SELECTED_GW_PORT" "$SELECTED_SERVICE"
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 
-echo "=== local-up — $(rig_banner) ==="
-
 if [ ! -f "$DATA/config.yaml" ]; then
   echo "no $DATA/config.yaml — bootstrap a config first:"
-  echo "  COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node $REPO/packages/cli/dist/cli.js init"
-  echo "  RIG_MODE=local DATA='$DATA' COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' GW_PORT='$GW_PORT' SERVICE='$SERVICE' node $HERE/init-config.mjs"
+  echo "  RIG_MODE=local DATA='$DATA' GW_PORT='$GW_PORT' SERVICE='$SERVICE' $HERE/init-local-config.sh"
   exit 1
 fi
+node "$HERE/local-config.mjs" validate "$DATA/config.yaml" "$DATA" "$GW_PORT"
+
+echo "=== local-up — $(rig_banner) ==="
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   echo "1) pnpm build (the daemon under test is this checkout's dist)…"

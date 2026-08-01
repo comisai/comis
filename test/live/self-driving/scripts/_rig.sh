@@ -210,8 +210,15 @@ rig_canonical_path() {
     const fs = require("node:fs");
     const path = require("node:path");
     const target = path.resolve(process.argv[1]);
-    try { process.stdout.write(fs.realpathSync.native(target)); }
-    catch { process.stdout.write(target); }
+    const missing = [];
+    let existing = target;
+    while (!fs.existsSync(existing)) {
+      const parent = path.dirname(existing);
+      if (parent === existing) break;
+      missing.unshift(path.basename(existing));
+      existing = parent;
+    }
+    process.stdout.write(path.resolve(fs.realpathSync.native(existing), ...missing));
   ' "$1"
 }
 
@@ -257,10 +264,12 @@ rig_assert_isolated_local_selection() {
     echo "DATA must be canonical and symlink-free (use '$_canonical_data')" >&2
     return 2
   fi
-  if [ "$_canonical_data" = "$_everyday_data" ]; then
-    echo "DATA must not be the operator's everyday $HOME/.comis root" >&2
+  case "$_canonical_data" in
+  "$_everyday_data" | "$_everyday_data"/*)
+    echo "DATA must not be the operator's everyday $HOME/.comis tree" >&2
     return 2
-  fi
+    ;;
+  esac
   case "$GW_PORT" in
   '' | *[!0-9]*)
     echo "GW_PORT must be an integer between 1024 and 65535" >&2
