@@ -56,7 +56,7 @@ export interface NarrateNudgeOutcome {
    *  - `recovered`       — the re-prompt produced a real answer (or tool work)
    *  - `still_narration` — the re-prompt still ended on narration / empty
    *  - `followup_error`  — continuation prompt rejected (logged, never thrown) */
-  outcome: "not_small_class" | "no_match" | "recovered" | "still_narration" | "followup_error";
+  outcome: "not_small_class" | "no_match" | "delegation_accepted" | "recovered" | "still_narration" | "followup_error";
 }
 
 /** Dependencies passed in by the executor wire-in site. */
@@ -73,6 +73,8 @@ export interface RunNarrateNudgeDeps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getVisibleAssistantText: (session: any) => string;
   guardProviderDispatch: ProviderDispatchGuard;
+  /** Current-turn spawn receipts that prove a helper was already accepted. */
+  currentSuccessfulDelegationCount?: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +176,9 @@ export async function runNarrateNudge(deps: RunNarrateNudgeDeps): Promise<Narrat
   // Gate 3: the delivered text is an intent prelude (mid-task narration).
   if (!isIntentPrelude(lastText)) {
     return { fired: false, recovered: false, outcome: "no_match" };
+  }
+  if ((deps.currentSuccessfulDelegationCount?.() ?? 0) > 0) {
+    return { fired: false, recovered: false, outcome: "delegation_accepted" };
   }
 
   logger.info(

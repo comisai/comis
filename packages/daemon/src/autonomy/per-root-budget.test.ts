@@ -421,4 +421,27 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     clock.advance(wallClockMs - 1_000);
     expect(budget.reserveBudget("root-NEVER", FREE_PROVIDER, FREE_MODEL, 0, 1).kind).not.toBe("exceeded");
   });
+
+  it("spendSnapshot reports the exact priced cost after root activity is evicted", () => {
+    const { budget } = makeBudget({ aggregateUsd: 10 });
+    budget.registerRoot("root-cost");
+    expect(
+      budget.reserveBudget(
+        "root-cost",
+        PRICED_PROVIDER,
+        PRICED_MODEL,
+        1.25,
+        100,
+      ).kind,
+    ).toBe("ok");
+
+    budget.evictRoot("root-cost");
+
+    expect(budget.spendSnapshot("root-cost")).toEqual({
+      totalCost: 1.25,
+      capUsd: 10,
+      headroomUsd: 8.75,
+      pricingScope: "priced_only",
+    });
+  });
 });

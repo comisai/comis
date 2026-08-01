@@ -84,6 +84,45 @@ describe("redactValue — key-based redaction (one assertion per Pino key)", () 
     expect(reasons(out)).toContain("secret_key");
   });
 
+  it("redacts env_value even when a model sends it to the wrong tool", () => {
+    const out = redactValue({
+      action: "env_set",
+      env_key: "EXAMPLE_TOKEN",
+      env_value: "test-key",
+    });
+    const value = out.value as Record<string, unknown>;
+
+    expect(value.env_value).toBe(REDACTED);
+    expect(out.redactionsApplied).toContainEqual({
+      key: "env_value",
+      reason: "secret_key",
+    });
+  });
+
+  it("redacts a secret value carried by the confusable config-patch shape", () => {
+    const out = redactValue({
+      action: "patch",
+      section: "secrets",
+      key: "EXAMPLE_TOKEN",
+      value: "private-test-value",
+      _confirmed: true,
+    });
+    const value = out.value as Record<string, unknown>;
+
+    expect(value).toMatchObject({
+      action: "patch",
+      section: "secrets",
+      key: "EXAMPLE_TOKEN",
+      value: REDACTED,
+      _confirmed: true,
+    });
+    expect(out.redactionsApplied).toContainEqual({
+      key: "value",
+      reason: "secret_key",
+    });
+    expect(JSON.stringify(out.value)).not.toContain("private-test-value");
+  });
+
   it("leaves a benign key with benign content untouched", () => {
     const out = redactValue({ name: "my-mcp-server" });
     const value = out.value as Record<string, unknown>;

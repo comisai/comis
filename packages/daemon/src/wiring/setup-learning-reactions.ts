@@ -276,6 +276,14 @@ export interface LearningReactionsWiringDeps {
    * `defaultTrustLevel` so reaction-learning is never silently killed.
    */
   resolveSenderTrust: (agentId: string, reactorId: string, participantId?: string) => string;
+  /**
+   * Resolve correction provenance from operator configuration. Authority requires
+   * both an explicitly named, non-external sender and single-owner corroboration.
+   */
+  resolveCorrectionAuthority: (
+    agentId: string,
+    senderId: string,
+  ) => { senderTrust: string; senderTrustExplicit: boolean; authoritative: boolean };
   /** The cost-gated correction detector — `undefined` when disabled (no-op branch). */
   correctionDetector?: (followUpUserTurn: string) => Promise<CorrectionVerdict | undefined>;
   /** Per-agent effective correction enable (the byte-identity gate for the correction path). */
@@ -359,6 +367,8 @@ function observeCorrectionNonFatal(
   deps: LearningReactionsWiringDeps,
   scope: { tenantId: string; agentId: string; sessionId: string; trajectoryId: string },
   confidence: number,
+  provenance: { senderTrust: string; senderTrustExplicit: boolean; authoritative: boolean },
+  correctionTrajectoryId: string | undefined,
 ): Promise<void> {
   const start = deps.clock.now();
   return deps.outcomeStore
@@ -370,6 +380,8 @@ function observeCorrectionNonFatal(
       outcome: "corrected",
       source: "correction",
       confidence,
+      senderTrust: provenance.senderTrust,
+      senderTrustExplicit: provenance.senderTrustExplicit,
       observedAt: start,
     })
     .then((r) => {
@@ -390,8 +402,9 @@ function observeCorrectionNonFatal(
         "Correction outcome observed for prior trajectory",
       );
       // Signal wireLearningOutcome to RE-RUN the gated skill-transition for THIS prior trajectory's
-      // credited skills with a `corrected` verdict — so a corroborated correction demotes the wrong
-      // skill (active/candidate→stale). The resolve seam dedups the prior trajectory
+      // credited skills with a `corrected` verdict. An authoritative owner correction
+      // demotes directly; other sources retain the corroboration and trend gates.
+      // The resolve seam dedups the prior trajectory
       // (markTrajectoryResolved), so the demote can only happen via this dedicated signal, not the
       // normal resolve path. Content-free (ids + confidence only).
       deps.eventBus.emit("learning:correction_observed", {
@@ -399,6 +412,8 @@ function observeCorrectionNonFatal(
         tenantId: scope.tenantId,
         sessionId: scope.sessionId,
         trajectoryId: scope.trajectoryId,
+        ...(correctionTrajectoryId === undefined ? {} : { correctionTrajectoryId }),
+        authoritative: provenance.authoritative,
         confidence,
         timestamp: deps.clock.now(),
       });
@@ -532,10 +547,18 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
       try {
         const verdict = await detector(p.message.text);
         if (verdict === undefined || !verdict.isCorrection) return; // undefined non-fatal; not-a-correction → skip
+        const provenance = deps.resolveCorrectionAuthority(prior.agentId, p.message.senderId);
+        const metadataTraceId = p.message.metadata.traceId;
+        const correctionTrajectoryId =
+          typeof metadataTraceId === "string" && metadataTraceId.length > 0
+            ? metadataTraceId
+            : undefined;
         await observeCorrectionNonFatal(
           deps,
           { tenantId: prior.tenantId, agentId: prior.agentId, sessionId: sessionKeyStr, trajectoryId: prior.traceId },
           verdict.cappedConfidence,
+          provenance,
+          correctionTrajectoryId,
         );
       } catch (e: unknown) {
         deps.logger.warn(
@@ -587,6 +610,11 @@ interface AgentReactionConfig {
     enabled?: boolean;
     correction?: { enabled?: boolean };
     reactionMap?: { success?: string[]; failure?: string[] };
+  };
+  learning?: {
+    reflect?: {
+      corroboration?: { mode?: "distinct_sessions" | "single_owner"; minObservations?: number };
+    };
   };
   elevatedReply?: { senderTrustMap?: Record<string, string>; defaultTrustLevel?: string };
 }
@@ -750,6 +778,20 @@ export function buildReactionWiringDeps(
     // (2) participant-aware: only the conversation participant inherits the default.
     return reactorId === participantId ? defaultTrust : "external";
   };
+  const resolveCorrectionAuthority = (
+    agentId: string,
+    senderId: string,
+  ): { senderTrust: string; senderTrustExplicit: boolean; authoritative: boolean } => {
+    const agent = agents[agentId];
+    const senderTrustMap = agent?.elevatedReply?.senderTrustMap ?? {};
+    const senderTrust = resolveSenderTrust(agentId, senderId, senderId);
+    const senderTrustExplicit = Object.prototype.hasOwnProperty.call(senderTrustMap, senderId);
+    const authoritative =
+      senderTrustExplicit &&
+      senderTrust !== "external" &&
+      agent?.learning?.reflect?.corroboration?.mode === "single_owner";
+    return { senderTrust, senderTrustExplicit, authoritative };
+  };
 
   // The correction detector — built ONLY when some agent has correction on. Resolve
   // the cheap fast-tier model/key for the FIRST correction-enabled agent (the
@@ -792,6 +834,7 @@ export function buildReactionWiringDeps(
     reactionRateLimiter,
     reactionMap,
     resolveSenderTrust,
+    resolveCorrectionAuthority,
     correctionDetector,
     correctionEnabled,
     recordSessionTrajectory: (sessionKey, scope) => sessionTrajectoryMap.record(sessionKey, scope),

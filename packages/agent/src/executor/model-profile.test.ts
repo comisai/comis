@@ -19,6 +19,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveModelProfile,
+  capabilityClassFromModel,
   capabilityClassFromProvider,
   resolveEffectiveCapabilityClass,
   autoRepairForClass,
@@ -623,6 +624,33 @@ describe("resolveModelProfile — capability/capacity boundary invariants", () =
     });
   });
 
+  describe("capabilityClassFromModel — conservative weak-tier downshift", () => {
+    it("downshifts an OpenAI model with an exact nano tier token", () => {
+      expect(capabilityClassFromModel("openai", "gpt-4.1-nano")).toBe("nano");
+      expect(resolveModelProfile({
+        id: "gpt-4.1-nano",
+        provider: "openai",
+        contextWindow: 1_047_576,
+        reasoning: false,
+        input: ["text", "image"],
+      }).capabilityClass).toBe("nano");
+    });
+
+    it("does not guess that a mini-labelled model is small", () => {
+      expect(capabilityClassFromModel("openai-codex", "gpt-5.4-mini")).toBe("frontier");
+    });
+
+    it("keeps an explicit operator class above the model marker", () => {
+      expect(resolveModelProfile({
+        id: "gpt-4.1-nano",
+        provider: "openai",
+        contextWindow: 1_047_576,
+        reasoning: false,
+        input: ["text"],
+      }, "frontier").capabilityClass).toBe("frontier");
+    });
+  });
+
   // The effective-class resolver used by the daemon-side auto-repair gate. It MUST
   // honor the operator `capabilityClass` pin with the same precedence resolveModelProfile
   // does — else a pinned-`small` frontier-provider agent gets small tool-deferral/context
@@ -642,6 +670,14 @@ describe("resolveModelProfile — capability/capacity boundary invariants", () =
     it("no pin, no provider-level → provider-family heuristic", () => {
       expect(resolveEffectiveCapabilityClass(undefined, undefined, "openai")).toBe("frontier");
       expect(resolveEffectiveCapabilityClass(undefined, undefined, "ollama")).toBe("small");
+    });
+    it("no pin downshifts an exact nano model marker before the provider-family fallback", () => {
+      expect(resolveEffectiveCapabilityClass(
+        undefined,
+        undefined,
+        "openai",
+        "gpt-4.1-nano",
+      )).toBe("nano");
     });
     it("nothing resolvable → the small fail-safe (repair-ON for an unknown/keyless target)", () => {
       expect(resolveEffectiveCapabilityClass(undefined, undefined, undefined)).toBe("small");

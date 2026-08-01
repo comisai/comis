@@ -6,6 +6,14 @@ import type { HeartbeatHandlerDeps } from "./heartbeat-handlers.js";
 import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
 import { ok } from "@comis/shared";
 
+const persistToConfigMock = vi.hoisted(() => vi.fn(async () => ({
+  ok: true as const,
+  value: { configPath: "/tmp/test-config.yaml" },
+})));
+vi.mock("./shared/persist-to-config.js", () => ({
+  persistToConfig: persistToConfigMock,
+}));
+
 // ---------------------------------------------------------------------------
 // Helper: mock factories
 // ---------------------------------------------------------------------------
@@ -40,6 +48,7 @@ function createMockHeartbeatCoordinator() {
       nextDueAtMs: 700_000,
     })),
     getNextPeriodicPhaseMs: vi.fn(() => ok(700_000)),
+    getAgentTerminalState: vi.fn(() => undefined),
     activate: vi.fn(() => ok(undefined)),
     admitSystemEventWake: vi.fn(),
     removeTarget: vi.fn(),
@@ -126,9 +135,22 @@ describe("createHeartbeatHandlers", () => {
     it("projects configured agents and their periodic coordinator phase", async () => {
       const coordinator = createMockHeartbeatCoordinator();
       const phase = coordinator.getNextPeriodicPhaseMs as ReturnType<typeof vi.fn>;
+      const terminalState = coordinator.getAgentTerminalState as ReturnType<typeof vi.fn>;
       phase.mockImplementation((agentId: string) => agentId === "agent-enabled"
         ? ok(700_000)
         : ok(900_000));
+      terminalState.mockImplementation((agentId: string) => agentId === "agent-enabled"
+        ? {
+            terminalCount: 2,
+            lastRunAtMs: 600_000,
+            lastStatus: "skipped",
+            lastReason: "empty_file",
+            lastLlmCalls: 0,
+            lastDeliveryStatus: "suppressed",
+            lastDeliveryReason: "quiet_hours",
+            lastDeliveryErrorKind: null,
+          }
+        : undefined);
       const deps = makeDeps({
         heartbeatCoordinator: coordinator,
         agents: {
@@ -146,15 +168,32 @@ describe("createHeartbeatHandlers", () => {
         enabled: true,
         intervalMs: 60_000,
         nextDueAtMs: 700_000,
+        terminalCount: 2,
+        lastRunAtMs: 600_000,
+        lastStatus: "skipped",
+        lastReason: "empty_file",
+        lastLlmCalls: 0,
+        lastDeliveryStatus: "suppressed",
+        lastDeliveryReason: "quiet_hours",
+        lastDeliveryErrorKind: null,
       });
       expect(result.agents[1]).toEqual({
         agentId: "agent-disabled",
         enabled: false,
         intervalMs: 120_000,
         nextDueAtMs: null,
+        terminalCount: 0,
+        lastRunAtMs: null,
+        lastStatus: null,
+        lastReason: null,
+        lastLlmCalls: null,
+        lastDeliveryStatus: null,
+        lastDeliveryReason: null,
+        lastDeliveryErrorKind: null,
       });
       expect(phase).toHaveBeenCalledOnce();
       expect(phase).toHaveBeenCalledWith("agent-enabled");
+      expect(terminalState).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -252,7 +291,8 @@ describe("createHeartbeatHandlers", () => {
       expect(agents.a.scheduler.heartbeat.enabled).toBe(true);
     });
 
-    it("persists to YAML config when persistDeps available", async () => {
+    it("persists a live-applied update without scheduling a daemon restart", async () => {
+      persistToConfigMock.mockClear();
       const mockPersistDeps = createMockPersistDeps();
       const agents: Record<string, any> = {
         a: { scheduler: { heartbeat: {} } },
@@ -271,6 +311,14 @@ describe("createHeartbeatHandlers", () => {
       });
 
       expect(agents.a.scheduler.heartbeat.enabled).toBe(true);
+      expect(persistToConfigMock).toHaveBeenCalledWith(
+        mockPersistDeps,
+        expect.objectContaining({
+          actionType: "heartbeat.update",
+          entityId: "a",
+          skipRestart: true,
+        }),
+      );
     });
   });
 

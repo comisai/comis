@@ -3,7 +3,11 @@
 // and untrusted-result checks. Stdout is reserved for newline-delimited JSON-RPC.
 
 const PROTOCOL_VERSION = "2024-11-05";
-const variant = process.argv[2] === "second" ? "second" : "first";
+const variantArg = process.argv[2];
+const variant = variantArg === "first" || variantArg === "second"
+  ? variantArg
+  : "unresolved";
+const variantReady = variant !== "unresolved";
 const credential = process.env.MCP_TEST_TOKEN;
 const credentialState =
   typeof credential !== "string"
@@ -37,6 +41,7 @@ const tools = [
   {
     name: "account_summary",
     description: "Return the configured synthetic account summary.",
+    annotations: { readOnlyHint: true, destructiveHint: false },
     inputSchema: {
       type: "object",
       properties: {
@@ -54,6 +59,7 @@ const tools = [
   {
     name: "slow_status",
     description: "Read status from a deliberately slow synthetic dependency.",
+    annotations: { readOnlyHint: true, destructiveHint: false },
     inputSchema: {
       type: "object",
       properties: {},
@@ -63,6 +69,7 @@ const tools = [
   {
     name: "weird_result",
     description: "Return external text that contains an embedded instruction canary.",
+    annotations: { readOnlyHint: true, destructiveHint: false },
     inputSchema: {
       type: "object",
       properties: {},
@@ -72,6 +79,7 @@ const tools = [
   {
     name: "forbidden_action",
     description: "Record a synthetic mutation. Use only on a direct operator request.",
+    annotations: { readOnlyHint: false, destructiveHint: true },
     inputSchema: {
       type: "object",
       properties: {
@@ -84,6 +92,7 @@ const tools = [
   {
     name: "audit_state",
     description: "Read content-free fixture counters.",
+    annotations: { readOnlyHint: true, destructiveHint: false },
     inputSchema: {
       type: "object",
       properties: {},
@@ -133,6 +142,24 @@ function handle(message) {
     return;
   }
   if (method === "tools/list") {
+    if (!variantReady) {
+      fail(
+        id,
+        -32002,
+        "variant_unresolved: command arguments must select first or second",
+      );
+      return;
+    }
+    if (!credentialReady) {
+      fail(
+        id,
+        -32001,
+        credentialState === "invalid"
+          ? "credential_invalid: required environment variable MCP_TEST_TOKEN is invalid"
+          : "credential_unresolved: required environment variable MCP_TEST_TOKEN is unresolved",
+      );
+      return;
+    }
     succeed(id, { tools });
     return;
   }

@@ -85,6 +85,11 @@ function makeDeps(over: Partial<LearningReactionsWiringDeps> = {}): {
     reactionRateLimiter: over.reactionRateLimiter ?? makeFakeRateLimiter(),
     reactionMap: over.reactionMap ?? { success: ["👍", "✅"], failure: ["👎", "❌"] },
     resolveSenderTrust: over.resolveSenderTrust ?? ((): string => "admin"),
+    resolveCorrectionAuthority: over.resolveCorrectionAuthority ?? (() => ({
+      senderTrust: "admin",
+      senderTrustExplicit: true,
+      authoritative: false,
+    })),
     correctionDetector: over.correctionDetector,
     correctionEnabled: over.correctionEnabled ?? ((): boolean => true),
     recordSessionTrajectory: over.recordSessionTrajectory,
@@ -416,6 +421,8 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
     const bus = new TypedEventBus();
     const sk = sessionKey();
     const sessionMap = makeSessionMap();
+    const correctionEvents: unknown[] = [];
+    bus.on("learning:correction_observed", (payload) => correctionEvents.push(payload));
     const detector = vi.fn(
       async (_turn: string): Promise<CorrectionVerdict> => ({
         isCorrection: true,
@@ -430,6 +437,13 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
       correctionDetector: detector,
       ...sessionMap,
     });
+    Object.assign(deps, {
+      resolveCorrectionAuthority: () => ({
+        senderTrust: "admin",
+        senderTrustExplicit: true,
+        authoritative: true,
+      }),
+    });
     wireLearningCorrection(deps);
 
     // WRITER: a SINGLE-AGENT turn completes. diagnostic:message_processed fires
@@ -442,7 +456,15 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
 
     // READER: a follow-up correction turn for the SAME session.
     bus.emit("message:received", {
-      message: { id: "m2", channelId: "chat-1", channelType: "telegram", senderId: "user-9", text: "no, do X instead", timestamp: NOW, metadata: {} } as never,
+      message: {
+        id: "m2",
+        channelId: "chat-1",
+        channelType: "telegram",
+        senderId: "user-9",
+        text: "no, do X instead",
+        timestamp: NOW,
+        metadata: { traceId: "trace-correction-turn" },
+      } as never,
       sessionKey: sk,
     });
     await flush();
@@ -456,6 +478,15 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
     expect(obs.tenantId).toBe("tenant-configured");
     expect(obs.agentId).toBe(AGENT); // the trajectory's OWN agent (from the diagnostic payload)
     expect(obs.confidence).toBe(0.6); // the capped reward
+    expect(obs.senderTrust).toBe("admin");
+    expect(obs.senderTrustExplicit).toBe(true);
+    expect(correctionEvents).toEqual([
+      expect.objectContaining({
+        trajectoryId: TRACE,
+        correctionTrajectoryId: "trace-correction-turn",
+        authoritative: true,
+      }),
+    ]);
   });
 
   it("detector returns isCorrection:false → NO observe", async () => {
@@ -677,6 +708,59 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     );
     expect(built.deps.resolveSenderTrust("a1", "boss")).toBe("admin"); // mapped
     expect(built.deps.resolveSenderTrust("a1", "stranger")).toBe("external"); // default
+  });
+
+  it("only an explicitly trusted sender in single-owner mode is an authoritative correction source", () => {
+    const singleOwner = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            learning: { reflect: { corroboration: { mode: "single_owner", minObservations: 2 } } },
+            elevatedReply: { senderTrustMap: { owner: "admin" }, defaultTrustLevel: "external" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    const distinctSessions = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            learningOutcome: { enabled: true },
+            learning: { reflect: { corroboration: { mode: "distinct_sessions", minObservations: 2 } } },
+            elevatedReply: { senderTrustMap: { owner: "admin" }, defaultTrustLevel: "external" },
+          },
+        },
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+    );
+    type AuthorityResolver = {
+      resolveCorrectionAuthority?: (
+        agentId: string,
+        senderId: string,
+      ) => { senderTrust: string; senderTrustExplicit: boolean; authoritative: boolean };
+    };
+    const singleOwnerResolver = (singleOwner.deps as unknown as AuthorityResolver).resolveCorrectionAuthority;
+    const distinctSessionsResolver = (distinctSessions.deps as unknown as AuthorityResolver).resolveCorrectionAuthority;
+
+    expect(singleOwnerResolver?.("a1", "owner")).toEqual({
+      senderTrust: "admin",
+      senderTrustExplicit: true,
+      authoritative: true,
+    });
+    expect(singleOwnerResolver?.("a1", "stranger")).toEqual({
+      senderTrust: "external",
+      senderTrustExplicit: false,
+      authoritative: false,
+    });
+    expect(distinctSessionsResolver?.("a1", "owner")).toEqual({
+      senderTrust: "admin",
+      senderTrustExplicit: true,
+      authoritative: false,
+    });
   });
 
   // -------------------------------------------------------------------------

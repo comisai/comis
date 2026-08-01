@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
@@ -491,7 +491,7 @@ describe("buildSessionEndMetadata", () => {
       "stop", "end_turn", "error", "max_steps",
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
       "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
-      "completed_with_tool_errors", "prompt_timeout", "spend_exceeded",
+      "completed_with_tool_errors", "prompt_timeout", "spend_exceeded", "tool_invocation_stall",
     ];
     for (const reason of ALL_FINISH_REASONS) {
       const mappedEndReason = END_REASON_MAP[reason] ?? "error";
@@ -568,6 +568,58 @@ describe("promoteNarrationStall — narrate-without-emit turns stop reading as c
     for (const reason of ["context_exhausted", "completed_with_tool_errors", "error", "output_starved"]) {
       expect(promoteNarrationStall(reason, { fired: true, recovered: false })).toBe(reason);
     }
+  });
+});
+
+describe("promoteToolInvocationStall — repeated action answers stop reading as clean success", () => {
+  it("promotes a clean terminal when the request-tool nudge fired without a tool call", () => {
+    expect(promoteToolInvocationStall("stop", { fired: true, recovered: false })).toBe(
+      "tool_invocation_stall",
+    );
+    expect(promoteToolInvocationStall("end_turn", { fired: true, recovered: false })).toBe(
+      "tool_invocation_stall",
+    );
+    expect(END_REASON_MAP.tool_invocation_stall).toBe("tool_invocation_stall");
+  });
+
+  it("does not promote recovered or never-fired request-tool nudges", () => {
+    expect(promoteToolInvocationStall("stop", { fired: true, recovered: true })).toBe("stop");
+    expect(promoteToolInvocationStall("stop", { fired: false, recovered: false })).toBe("stop");
+    expect(promoteToolInvocationStall("stop", undefined)).toBe("stop");
+  });
+
+  it("promotes an unrecovered mutation failure so stale success prose is replaced", () => {
+    expect(
+      promoteToolInvocationStall(
+        "completed_with_tool_errors",
+        { fired: true, recovered: false },
+      ),
+    ).toBe("tool_invocation_stall");
+  });
+
+  it("preserves an already non-clean upstream terminal cause", () => {
+    for (const reason of [
+      "context_exhausted",
+      "error",
+      "output_starved",
+    ]) {
+      expect(promoteToolInvocationStall(reason, { fired: true, recovered: false })).toBe(reason);
+    }
+  });
+});
+
+describe("execution completion tool inventory", () => {
+  it("reports only provider-visible tools as active instead of counting deferred discovery stubs", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+
+    expect(stripped).toMatch(
+      /activeToolCount:\s*Math\.max\(\s*0,\s*mergedCustomTools\.length\s*-\s*deferralResult\.deferredCount,\s*\)/u,
+    );
   });
 });
 
@@ -917,6 +969,85 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/function\s+modelAcknowledgedFailure\s*\(/);
   });
 
+  it("source-grep — provider-as-model failures replace model prose before the generic notice", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceProviderModelFailureGrounding\(/);
+    expect(stripped).toMatch(/buildProviderRequiresModelReply\(/);
+    expect(stripped.indexOf("enforceProviderModelFailureGrounding("))
+      .toBeLessThan(stripped.indexOf("buildToolFailureNotice("));
+    expect(stripped).toMatch(
+      /!providerModelFailureGrounding\.corrected[\s\S]*?buildToolFailureNotice/,
+    );
+  });
+
+  it("source-grep — current model self-status is grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceActiveModelSelfStatus\(/);
+    expect(stripped).toMatch(/modelId:\s*params\.modelId/);
+    expect(stripped).toMatch(/provider:\s*params\.provider/);
+    expect(stripped).toMatch(/response\.active_model_self_status_guard/);
+  });
+
+  it("source-grep — sender authority overclaims are grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceSenderAuthorityGrounding\(/);
+    expect(stripped).toMatch(/senderTrust:\s*params\.senderTrust/);
+    expect(stripped).toMatch(/buildSenderAuthorityOverclaimReply\(/);
+    expect(stripped).toMatch(/response\.sender_authority_grounding_guard/);
+    expect(stripped).toMatch(
+      /senderAuthorityGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"sender_authority_grounding"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped).toMatch(
+      /reason:\s*"sender_authority_grounding"[\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/,
+    );
+    expect(stripped.indexOf("enforceSenderAuthorityGrounding("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
+  it("source-grep — a successful unchanged agent update is grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceAgentUpdateNoOpGrounding\(/);
+    expect(stripped).toMatch(/buildAgentUpdateNoOpReply\(/);
+    expect(stripped).toMatch(/response\.agent_update_noop_grounding_guard/);
+    expect(stripped).toMatch(
+      /agentUpdateNoOpGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"agent_update_noop_grounding"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped).toMatch(
+      /reason:\s*"agent_update_noop_grounding"[\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/,
+    );
+    expect(stripped.indexOf("enforceAgentUpdateNoOpGrounding("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
+  it("source-grep — unsupported ongoing-work promises are grounded before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceOngoingWorkEvidence\(/);
+    expect(stripped).toMatch(/pendingBackground\.finishReason\s*!==\s*undefined/);
+    expect(stripped).toMatch(/buildOngoingWorkEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.ongoing_work_evidence_guard/);
+    expect(stripped).toMatch(
+      /ongoingWorkGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_ongoing_work_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceOngoingWorkEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
+  it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
+    const stripped = readPostExecStripped();
+    const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");
+    const reconcileIndex = stripped.indexOf("recoverFinalResponseLocaleFailure(");
+    const terminalIndex = stripped.indexOf("const finishReasonStr");
+
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(reconcileIndex).toBeGreaterThan(guardIndex);
+    expect(terminalIndex).toBeGreaterThan(reconcileIndex);
+  });
+
   it("source-grep — the failure notice is built through the locale seam, not a literal", () => {
     const stripped = readPostExecStripped();
     // It used to be a bare English `[tool failure] <tool> reported an error`
@@ -965,8 +1096,9 @@ describe("tool-failure endReason and notice", () => {
   // -------------------------------------------------------------------------
   // The user-facing '[tool failure]' notice must surface only failures without a
   // proven later matching invocation. Delivery recovery additionally requires
-  // the same action and exact content-free route/target identity. Observability
-  // still records recovered failures; only the user-facing reply is gated.
+  // the same action and exact content-free route/target identity. Raw tool
+  // statistics still record recovered failures while the terminal outcome and
+  // user-facing notice consume only the unrecovered subset.
   it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
     const stripped = readPostExecStripped();
     // The notice call site must consult the recovery-aware helper, not raw failedTools.
@@ -976,6 +1108,19 @@ describe("tool-failure endReason and notice", () => {
       /(?:unrecovered[A-Za-z]*|userVisibleFailed)\s*\.length\s*>\s*0[\s\S]{0,600}?buildToolFailureNotice/,
     );
     expect(noticeBlock).not.toBeNull();
+  });
+
+  it("source-grep — recovered tool failures do not degrade successful turns", () => {
+    const stripped = readPostExecStripped();
+    const recoveryAwareReconciliation = stripped.match(
+      /const unrecoveredToolFailures\s*=\s*unrecoveredFailedToolNames\([\s\S]{0,800}?const toolReconciledFinishReason\s*=[\s\S]{0,400}?;/,
+    );
+
+    expect(recoveryAwareReconciliation).not.toBeNull();
+    expect(recoveryAwareReconciliation?.[0]).toMatch(
+      /unrecoveredToolFailures\.length\s*>\s*0/,
+    );
+    expect(recoveryAwareReconciliation?.[0]).not.toMatch(/\bhasToolFailures\b/);
   });
 
   it("source-grep — unavailable vision replaces contradictory model recovery advice", () => {
@@ -1105,9 +1250,8 @@ describe("unrecoveredFailedToolNames", () => {
   });
 });
 
-// recoveredFailedToolNames — the complement: surfaces self-healed failures on the
-// bookend so a recovered turn is distinguishable from a terminal one.
-// Does NOT change the degraded classification (by design).
+// recoveredFailedToolNames — the complement: surfaces self-healed failures on
+// the bookend while terminal classification consumes the unrecovered subset.
 describe("recoveredFailedToolNames", () => {
   it("returns failed tools that later succeeded in the same turn", () => {
     expect(
@@ -1476,6 +1620,7 @@ describe("context-store afterTurn leaf-pass wiring", () => {
     const afterBlock = stripped.indexOf("attributeRecallUsage", blockStart);
     const block = stripped.slice(blockStart, afterBlock > -1 ? afterBlock : undefined);
     expect(block).toMatch(/maybeRunLeafPass|runLeafPassAfterTurn/);
+    expect(block).toMatch(/runSessionCompactionAfterTurn/);
     // The ingest call is still there too (the leaf call comes AFTER it).
     expect(block).toMatch(/ingestTurnGuarded/);
   });

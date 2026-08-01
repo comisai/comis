@@ -16,13 +16,14 @@ import {
   SettingsManager,
   DefaultResourceLoader,
 } from "@earendil-works/pi-coding-agent";
+import { tryCatch } from "@comis/shared";
 
 /** Partial<Settings> extracted from SettingsManager.applyOverrides() parameter type.
  *  Settings is not re-exported from the SDK's index -- extract from the class method. */
 type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0];
 import { formatSessionKey, scriptTokenFactor } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, applyToolBudgetFit, computeWindowFitBudget, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractPreviousTurnToolNames, extractRecentlyUsedToolNames, applyToolBudgetFit, computeWindowFitBudget, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext } from "./tool-deferral.js";
 import type { CapabilityClass } from "./model-profile.js";
 import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
@@ -39,12 +40,17 @@ import {
   applySchemaSnapshot,
   applyProviderNormalization,
   applyPersistedReactiveStrip,
-  applyMutationSerializer,
 } from "./executor-tool-pipeline.js";
 import { assembleExecutionPrompt } from "./prompt-assembly.js";
 import { toolDefOverheadChars } from "./tool-overhead.js";
+import { resolvePreviousModelBinding } from "../session/model-binding-history.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { computeTokenBudgetForProfile } from "../context-engine/budget-capacity-cap.js";
+import {
+  attachMcpOperatorPolicy,
+  describeMcpOperatorPolicyProjection,
+} from "./mcp-operator-policy.js";
+import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
 import type {
   ToolAssemblyParams,
   ToolAssemblyResult,
@@ -281,6 +287,44 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   // 4. Prompt assembly (extracted to prompt-assembly.ts)
   // -------------------------------------------------------------------
+  const currentModelBinding = {
+    provider: resolvedModel?.provider ?? config.provider,
+    model: resolvedModel?.id ?? config.model,
+  };
+  let previousModelBinding;
+  if (agentId !== undefined && sm.getBranch !== undefined) {
+    const branch = tryCatch(() => sm.getBranch!());
+    if (branch.ok) {
+      const previous = resolvePreviousModelBinding(
+        branch.value,
+        agentId,
+        currentModelBinding,
+      );
+      if (previous.ok) previousModelBinding = previous.value;
+    } else {
+      deps.logger.warn(
+        {
+          step: "model-binding-history",
+          hint: "Inspect the active session branch before retrying model-state restoration",
+          errorKind: "internal" as const,
+        },
+        "Previous model binding could not be resolved",
+      );
+    }
+  }
+  if (previousModelBinding !== undefined) {
+    deps.logger.info(
+      {
+        step: "model-binding-history",
+        agentId,
+        previousProvider: previousModelBinding.provider,
+        previousModel: previousModelBinding.model,
+        currentProvider: currentModelBinding.provider,
+        currentModel: currentModelBinding.model,
+      },
+      "Previous model binding resolved",
+    );
+  }
   const promptResult = await assembleExecutionPrompt({
     config,
     recentUserTurns,
@@ -361,6 +405,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModelId: resolvedModel?.id,
     resolvedModelProvider: resolvedModel?.provider,
     resolvedModelReasoning: resolvedModel?.reasoning,
+    previousModelBinding,
     // "interactive" default guards the optional overrides; mirrors pi-executor.ts:1077.
     operationType: executionOverrides?.operationType ?? "interactive",
     // Forward ModelProfile to prompt-assembly.ts for compact-secure mode selection.
@@ -499,9 +544,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   const formattedKeyForLifecycle = formatSessionKey(sessionKey);
   const tracker = getOrCreateTracker(formattedKeyForLifecycle, isFirstMessageInSession);
 
-  const previousTurnTools = extractRecentlyUsedToolNames(
+  const previousTurnTools = extractPreviousTurnToolNames(
     sessionMessages as unknown as Array<Record<string, unknown>>,
-    1,
   );
   tracker.recordTurn(previousTurnTools);
 
@@ -585,7 +629,10 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       ?? "external",
     channelType: msg.channelType,
     capabilityClass,
+    requestText: msg.text,
+    requestRelevanceText: [...recentUserTurns, msg.text].join("\n"),
     recentlyUsedToolNames: recentlyUsedTools,
+    previousTurnToolNames: previousTurnTools,
     toolNames: mergedCustomTools.map(t => t.name),
     lifecycleDemotedNames,
     discoveryTracker,
@@ -605,6 +652,29 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps.embeddingPort,
     config.skills?.toolDiscovery,
   );
+  applyPromptSkillRequestRouting(deferralResult, {
+    capabilityClass,
+    requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
+    priorUserRequest: recentUserTurns.at(-1),
+    skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
+    locations: deps.getPromptSkillLocations?.(),
+  });
+
+  const mcpOperatorPolicyRelevant =
+    deferralResult.requestRelevantToolNames?.includes("mcp_manage") === true;
+  const mcpOperatorPolicyProjection = mcpOperatorPolicyRelevant
+    ? describeMcpOperatorPolicyProjection(deps.workspacePolicySnapshot)
+    : undefined;
+  if (mcpOperatorPolicyRelevant) {
+    deferralResult.activeTools = attachMcpOperatorPolicy(
+      deferralResult.activeTools,
+      deps.workspacePolicySnapshot,
+    );
+    deferralResult.discoveredTools = attachMcpOperatorPolicy(
+      deferralResult.discoveredTools,
+      deps.workspacePolicySnapshot,
+    );
+  }
 
   // Rebuild discover_tools with the now-known active set so it can answer
   // "already active" queries correctly. Post-deferral set (active +
@@ -735,7 +805,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     : buildCapabilityIndexContext(deferralResult, deps.toolCapabilityPort);
 
   // -------------------------------------------------------------------
-  // 8. JIT guide wrapping, schema pruning, snapshot, normalization, serializer
+  // 8. JIT guide wrapping, schema pruning, snapshot, normalization
   // -------------------------------------------------------------------
 
   // Wrap tool execute() methods to inject operational guides on first use.
@@ -751,6 +821,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     sessionKey: schemaSnapshotKey,
     deferredNames: deferralResult.deferredNames,
   });
+
+  // Session snapshots stabilize provider schemas, including descriptions.
+  // Re-project the exact turn-captured operator notes after snapshot recovery
+  // so a previous turn cannot replace current policy with stale text.
+  if (mcpOperatorPolicyRelevant) {
+    mergedCustomTools = attachMcpOperatorPolicy(
+      mergedCustomTools,
+      deps.workspacePolicySnapshot,
+    );
+  }
 
   // Provider normalization + xAI decoding
   if (resolvedModel) {
@@ -778,9 +858,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     sessionKey: schemaSnapshotKey,
   });
 
-  // Mutation serializer
-  mergedCustomTools = applyMutationSerializer(mergedCustomTools, deps.logger);
-
   return {
     mergedCustomTools,
     deferralResult,
@@ -801,5 +878,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     promptResult,
     cachedSystemTokensEstimate,
     cachedFreshTailPreambleTokens,
+    operatorPolicyToolProjections: mcpOperatorPolicyProjection === undefined
+      ? []
+      : [mcpOperatorPolicyProjection],
   };
 }

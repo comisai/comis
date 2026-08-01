@@ -54,6 +54,7 @@ import type {
 
 let connectImpl: () => Promise<void>;
 let serverInstructions: unknown;
+let listedTools: unknown[];
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   class FakeClient {
@@ -61,7 +62,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
       return connectImpl();
     }
     async listTools(): Promise<{ tools: unknown[] }> {
-      return { tools: [] };
+      return { tools: listedTools };
     }
     getInstructions(): unknown {
       return serverInstructions;
@@ -83,6 +84,7 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
 
 beforeEach(() => {
   serverInstructions = undefined;
+  listedTools = [];
 });
 
 // The redirect-policy fetch is irrelevant here (we never reach the network); the
@@ -314,6 +316,51 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(state.connections.get("svc")?.error).toContain("SERVICE_USERNAME is a required");
   });
 
+  it("preserves a meaningful server protocol error when stderr is also present", async () => {
+    const state = makeState();
+    connectImpl = () => {
+      state.lastStderr.set("svc", "credentialed MCP fixture ready\n");
+      return Promise.reject(
+        new Error(
+          "MCP error -32002: variant_unresolved: command arguments must select first or second",
+        ),
+      );
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).toContain("variant_unresolved");
+    expect(result.error.message).toContain("credentialed MCP fixture ready");
+    expect(state.connections.get("svc")?.error).toContain("variant_unresolved");
+  });
+
+  it("redacts configured secret values from preserved server protocol errors", async () => {
+    const state = makeState();
+    connectImpl = () => {
+      state.lastStderr.set("svc", "fixture ready\n");
+      return Promise.reject(
+        new Error("MCP error -32003: rejected value hunter2plzredact"),
+      );
+    };
+    const { bus } = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+    const config: McpServerConfig = {
+      ...STDIO_CONFIG,
+      env: { SERVICE_PASSWORD: "hunter2plzredact" },
+    };
+
+    const result = await connectServer(state, deps, config);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    expect(result.error.message).not.toContain("hunter2plzredact");
+    expect(result.error.message).toContain("[REDACTED]");
+  });
+
   it("sanitizes a credential leaked in the child stderr before folding it into the error + error-state entry", async () => {
     const state = makeState();
     // A credentialed server that dies while echoing its own connection string to
@@ -442,6 +489,25 @@ describe("connectServer — stdio failure diagnosability", () => {
     const ev = emitted.find((e) => e.event === "mcp:server:connected");
     expect(ev).toBeDefined();
     expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
+  });
+
+  it("preserves tool annotations discovered during the MCP handshake", async () => {
+    connectImpl = () => Promise.resolve();
+    listedTools = [{
+      name: "mutate",
+      description: "Perform an external mutation.",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    }];
+    const state = makeState();
+    const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect((result.value.tools[0] as unknown as { annotations?: unknown }).annotations)
+      .toEqual({ readOnlyHint: false, destructiveHint: true });
   });
 
   it("rejects malformed server instructions with an actionable warning and health event", async () => {

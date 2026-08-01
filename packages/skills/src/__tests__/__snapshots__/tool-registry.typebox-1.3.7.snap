@@ -51,7 +51,7 @@
                   "type": "integer"
                 },
                 "model": {
-                  "description": "LLM model identifier",
+                  "description": "Exact LLM model identifier. When the user names an identifier, copy it verbatim; never replace it with a similar or preferred model. List the provider catalog first when availability is unknown.",
                   "type": "string"
                 },
                 "name": {
@@ -69,7 +69,7 @@
                   "type": "object"
                 },
                 "provider": {
-                  "description": "LLM provider name",
+                  "description": "Exact LLM provider name. When the user names a provider, copy it verbatim; never substitute a different provider.",
                   "type": "string"
                 },
                 "skills": {
@@ -652,6 +652,19 @@
           "minItems": 1,
           "type": "array"
         },
+        "scope": {
+          "anyOf": [
+            {
+              "const": "run",
+              "type": "string"
+            },
+            {
+              "const": "tree",
+              "type": "string"
+            }
+          ],
+          "description": "Kill scope (default: run). Use tree for requests such as stop everything or cancel all work; it hard-stops every descendant in the trusted current spawn tree and reports the exact count."
+        },
         "target": {
           "description": "Run ID of the target subagent (for kill/steer)",
           "type": "string"
@@ -1026,7 +1039,7 @@
     "schema": {
       "properties": {
         "_confirmed": {
-          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true. env_set is different: its original call pauses at the central approval gate and resumes automatically after the operator decides.",
           "type": "boolean"
         },
         "action": {
@@ -1098,9 +1111,9 @@
           "description": "Maximum results. For history: default 10. For env_list: default 100, max 500 (clamped).",
           "type": "number"
         },
-        "pending_action_id": {
-          "description": "The pending_action_id returned by a gated env_set. Pass it back with _confirmed: true INSTEAD of re-sending env_value — the daemon replays the stashed value, so the secret never has to survive in conversation context across the approval round-trip.",
-          "type": "string"
+        "overwrite": {
+          "description": "Set true only when the operator explicitly asked to replace the existing secret named by env_key. Without it, env_set refuses to change an existing secret.",
+          "type": "boolean"
         },
         "section": {
           "description": "Config section name. Required for patch/apply/schema, optional for read. Valid sections: agents, channels, memory, security, routing, daemon, scheduler, gateway, integrations, monitoring, browser, models, providers, messages, approvals. Note: MCP server settings are under 'integrations', not 'mcp'.",
@@ -1165,7 +1178,7 @@
               "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by current autonomy root/provider/agent/session/daemon total), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1233,7 +1246,7 @@
           "type": "integer"
         },
         "sub_action": {
-          "description": "Sub-action within the category. billing: byProvider | byAgent | bySession | total. delivery: recent | stats. channels: all | stale | get.",
+          "description": "Sub-action within the category. billing: currentRoot | byProvider | byAgent | bySession | total. currentRoot is the default and includes spawned descendants. delivery: recent | stats. channels: all | stale | get.",
           "type": "string"
         },
         "tenant": {
@@ -1438,11 +1451,11 @@
           "description": "Auth scheme for remote transports. \"oauth\" triggers PKCE flow via mcp_login. Default: \"headers\" (credential injection via the headers field). Only relevant for sse/http transports."
         },
         "command": {
-          "description": "Command to execute for stdio transport (e.g. npx). Required for stdio connect.",
+          "description": "Executable for stdio transport (e.g. node or npx), not its script/package; put the script/package in args. Preserve separate operator-provided Command and Arguments fields exactly. Required for stdio connect.",
           "type": "string"
         },
         "env": {
-          "description": "Environment variables for a STDIO server (e.g. SERVICE_USERNAME). REQUIRED for stdio servers that need credentials/config in the environment. Values may reference stored secrets as ${VAR_NAME} (e.g. {\"SERVICE_PASSWORD\":\"${SERVICE_PASSWORD}\"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config. Keys are env-var names, values are the value or a ${VAR} reference.",
+          "description": "Environment variables for a STDIO server (e.g. SERVICE_USERNAME). Preserve operator-provided env fields exactly. REQUIRED for stdio servers that need credentials/config in the environment. Store credentials with gateway env_set first, then reference them as ${VAR_NAME} (e.g. {\"SERVICE_PASSWORD\":\"${SERVICE_PASSWORD}\"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config.",
           "patternProperties": {
             "^.*$": {
               "type": "string"
@@ -1899,6 +1912,10 @@
               "type": "string"
             },
             {
+              "const": "roundtrip",
+              "type": "string"
+            },
+            {
               "const": "pin",
               "type": "string"
             },
@@ -1907,7 +1924,7 @@
               "type": "string"
             }
           ],
-          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (full JSON export), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
+          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), forget (find and remove all scoped entries matching a natural-language query), flush (clear all entries for scope), export (versioned scrubbed JSON export), roundtrip (export and immediately import the same scope without placing entries in model context), pin (mark entry as always-injected in recall), unpin (remove always-inject mark)"
         },
         "agent_id": {
           "description": "Agent ID scope for filtering",

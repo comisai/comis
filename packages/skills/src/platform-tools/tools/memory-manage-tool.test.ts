@@ -464,28 +464,122 @@ describe("memory_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("export action", () => {
-    it("calls rpcCall('memory.export') with pagination (no approval)", async () => {
-      mockRpcCall.mockResolvedValue({ entries: [], total: 0, offset: 0, limit: 1000 });
+    it("uses the versioned memory portability export contract without approval", async () => {
+      mockRpcCall.mockResolvedValue({
+        schemaVersion: "comis-memory-export-v1",
+        exportedAt: 123,
+        scope: { tenantId: "my-tenant", agentId: "my-agent" },
+        entryCount: 0,
+        entries: [],
+      });
 
       const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-ex1", {
           action: "export",
-          offset: 10,
+          tenant_id: "my-tenant",
+          agent_id: "my-agent",
           limit: 50,
         } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("memory.export", expect.objectContaining({
-        offset: 10,
+      expect(mockRpcCall).toHaveBeenCalledWith("memory.portability.export", {
+        tenant_id: "my-tenant",
+        agent_id: "my-agent",
         limit: 50,
         _trustLevel: "admin",
-      }));
+      });
       expect(mockApprovalGate.requestApproval).not.toHaveBeenCalled();
       expect(result.details).toEqual(
-        expect.objectContaining({ total: 0 }),
+        expect.objectContaining({
+          schemaVersion: "comis-memory-export-v1",
+          entryCount: 0,
+        }),
       );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // roundtrip action
+  // -----------------------------------------------------------------------
+
+  describe("roundtrip action", () => {
+    it("exports and imports the same scope while returning compact dedupe counts", async () => {
+      const entries = [
+        { id: "memory_a", content: "alpha", trust_level: "learned" },
+        { id: "memory_b", content: "beta", trust_level: "external" },
+      ];
+      mockRpcCall
+        .mockResolvedValueOnce({
+          schemaVersion: "comis-memory-export-v1",
+          exportedAt: 123,
+          scope: { tenantId: "my-tenant", agentId: "my-agent" },
+          entryCount: 2,
+          entries,
+        })
+        .mockResolvedValueOnce({
+          imported: 0,
+          blocked: 0,
+          downgraded: 0,
+          deduped: 2,
+          total: 2,
+          dryRun: false,
+        });
+
+      const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-rt1", {
+          action: "roundtrip",
+          tenant_id: "my-tenant",
+          agent_id: "my-agent",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenNthCalledWith(1, "memory.portability.export", {
+        tenant_id: "my-tenant",
+        agent_id: "my-agent",
+        limit: undefined,
+        _trustLevel: "admin",
+      });
+      expect(mockRpcCall).toHaveBeenNthCalledWith(2, "memory.portability.import", {
+        entries,
+        tenant_id: "my-tenant",
+        agent_id: "my-agent",
+        dry_run: false,
+        _trustLevel: "admin",
+      });
+      expect(mockApprovalGate.requestApproval).not.toHaveBeenCalled();
+      expect(result.details).toEqual({
+        roundtrip: true,
+        schemaVersion: "comis-memory-export-v1",
+        entryCount: 2,
+        imported: 0,
+        blocked: 0,
+        downgraded: 0,
+        deduped: 2,
+        total: 2,
+        dryRun: false,
+      });
+      expect(JSON.stringify(result.details)).not.toContain("alpha");
+      expect(JSON.stringify(result.details)).not.toContain("beta");
+    });
+
+    it("rejects malformed portability exports before attempting an import", async () => {
+      mockRpcCall.mockResolvedValue({
+        schemaVersion: "wrong-schema",
+        entryCount: 1,
+        entries: [{ content: "alpha" }],
+      });
+
+      const tool = createMemoryManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-rt2", { action: "roundtrip" } as never),
+        ),
+      ).rejects.toThrow(/invalid memory portability export/i);
+      expect(mockRpcCall).toHaveBeenCalledTimes(1);
     });
   });
 

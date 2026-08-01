@@ -27,6 +27,7 @@ import {
   type PromptAssemblyParams,
 } from "./prompt-assembly-shared.js";
 import { renderGroupHistoryContext } from "./prompt-group-history.js";
+import { renderCurrentExecutionSection } from "./prompt-dynamic-preamble.js";
 
 export async function assembleParentCachePrompt(
   params: PromptAssemblyParams,
@@ -169,6 +170,7 @@ export async function assembleParentCachePrompt(
       );
     }
 
+    dynamicPreambleParts.push(renderCurrentExecutionSection(params));
     const localeSection = renderResponseLocalePolicy(responseLocalePolicy);
     if (localeSection !== undefined) dynamicPreambleParts.push(localeSection);
 

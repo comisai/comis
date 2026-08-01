@@ -63,6 +63,8 @@ describe("obs_query tool", () => {
       /system_health for failure or degraded counts/i,
     );
     expect(tool.description).toMatch(/say unknown/i);
+    expect(tool.description).toMatch(/currentRoot.*spawned descendants/i);
+    expect(tool.description).toMatch(/runtime cost.*external purchases/i);
   });
 
   it("publishes the exact diagnostic category values accepted by the RPC", () => {
@@ -229,6 +231,28 @@ describe("obs_query tool", () => {
   // -----------------------------------------------------------------------
 
   describe("billing action", () => {
+    it("billing/currentRoot calls the tree-scoped live spend RPC", async () => {
+      mockRpcCall.mockResolvedValue({
+        scope: "currentRoot",
+        rootRunId: "root-1",
+        totalCost: 0.75,
+      });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-root-cost", {
+          action: "billing",
+          sub_action: "currentRoot",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.spend.snapshot", {
+        scope: "currentRoot",
+        _trustLevel: "admin",
+      });
+    });
+
     it("billing/byProvider calls rpcCall('obs.billing.byProvider')", async () => {
       mockRpcCall.mockResolvedValue({ providers: [] });
 
@@ -286,6 +310,25 @@ describe("obs_query tool", () => {
       });
     });
 
+    it("billing/bySession defaults to the trusted current session", async () => {
+      mockRpcCall.mockResolvedValue({ totalCost: 0.2 });
+
+      const tool = createObsQueryTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-current-session-cost", {
+          action: "billing",
+          sub_action: "bySession",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.billing.bySession", {
+        sessionKey: "test-session",
+        sinceMs: undefined,
+        _trustLevel: "admin",
+      });
+    });
+
     it("billing/total calls rpcCall('obs.billing.total')", async () => {
       mockRpcCall.mockResolvedValue({ total: 100 });
 
@@ -302,8 +345,12 @@ describe("obs_query tool", () => {
       expect(mockRpcCall).toHaveBeenCalledWith("obs.billing.total", { sinceMs: 1000, _trustLevel: "admin" });
     });
 
-    it("billing defaults to total when sub_action not specified", async () => {
-      mockRpcCall.mockResolvedValue({ total: 50 });
+    it("billing defaults to current-root scope when sub_action is not specified", async () => {
+      mockRpcCall.mockResolvedValue({
+        scope: "currentRoot",
+        rootRunId: "root-1",
+        totalCost: 0.5,
+      });
 
       const tool = createObsQueryTool(mockRpcCall);
 
@@ -311,7 +358,10 @@ describe("obs_query tool", () => {
         tool.execute("call-b5", { action: "billing" } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("obs.billing.total", { sinceMs: undefined, _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.spend.snapshot", {
+        scope: "currentRoot",
+        _trustLevel: "admin",
+      });
     });
 
     it("billing/byAgent throws when agent_id missing", async () => {

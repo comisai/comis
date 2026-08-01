@@ -93,6 +93,21 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/before asking/i);
   });
 
+  it("gateway lean description forbids inferred secret names and unrelated overwrites", () => {
+    const description = resolveDescription(
+      { name: "gateway" },
+      LEAN_TOOL_DESCRIPTIONS,
+      {
+        modelTier: "small",
+        trustLevel: "admin",
+      },
+    );
+
+    expect(description).toMatch(/exact operator.*(?:name|key)/iu);
+    expect(description).toMatch(/never infer/iu);
+    expect(description).toMatch(/overwrite/iu);
+  });
+
   it("gateway guide preserves existing security language", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Gateway Security/);
     expect(TOOL_GUIDES.gateway).toMatch(/CRITICAL/);
@@ -139,6 +154,21 @@ describe("TOOL_GUIDES", () => {
 
   it("mcp_manage JIT guide states Validation failed means fix args not abandon tool", () => {
     expect(TOOL_GUIDES.mcp_manage).toMatch(/[Vv]alidation.*fix the arguments|fix the arguments.*validation/i);
+  });
+
+  it("mcp_manage active description preserves operator stdio and credential fields", () => {
+    const description = resolveDescription(
+      { name: "mcp_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/command.*executable/i);
+    expect(description).toMatch(/script.*args/i);
+    expect(description).toMatch(/operator.*command.*args.*env/i);
+    expect(description).toMatch(/gateway env_set/i);
+    expect(description).toMatch(/\$\{NAME\}/);
   });
 
   // OAuth steering drift guard: assert the OAuth handoff block is present in the
@@ -470,6 +500,25 @@ describe("resolveDescription", () => {
     expect(result).toContain("Admin required");
   });
 
+  it("distinguishes a dedicated assistant from heartbeat monitoring", () => {
+    const agentsDescription = resolveDescription(
+      { name: "agents_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+    const heartbeatDescription = resolveDescription(
+      { name: "heartbeat_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { trustLevel: "admin", modelTier: "large" },
+    );
+
+    expect(agentsDescription).toMatch(/separate.*dedicated.*assistant/isu);
+    expect(agentsDescription).toMatch(/create immediately.*reasonable.*defaults/isu);
+    expect(agentsDescription).toMatch(/do not require.*heartbeat/isu);
+    expect(heartbeatDescription).toMatch(/explicitly.*heartbeat.*monitor/isu);
+    expect(heartbeatDescription).toMatch(/not.*separate.*assistant/isu);
+  });
+
   it("obs_query requires evidence before reporting runtime cause or cost", () => {
     const result = resolveDescription(
       { name: "obs_query" },
@@ -668,10 +717,23 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
     expect(lean as string).toMatch(/parallel|multiple/i);
   });
 
+  it("limits first-response fan-out to distinct independent work", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toMatch(/spawn one/i);
+    expect(lean as string).toMatch(/distinct independent/i);
+    expect(lean as string).toMatch(/never duplicate/i);
+  });
+
   it("binds explicitly required child tools in the first-spawn description", () => {
     const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
     expect(lean as string).toContain("required_tools");
     expect(lean as string).toContain("tool_groups");
+  });
+
+  it("makes automatic result delivery clear before the first spawn", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toMatch(/result.*automatic/i);
+    expect(lean as string).toMatch(/do not.*message/i);
   });
 });
 
@@ -694,6 +756,12 @@ describe("Task Delegation policy covers the child tool profile", () => {
   it("names the two surfaces that are outside the default child profile", () => {
     expect(guide).toMatch(/MCP/);
     expect(guide).toMatch(/message/);
+    expect(guide).not.toContain("MCP tools and `message` are OUTSIDE it");
+  });
+
+  it("forbids reworded duplicate spawns while preserving independent fan-out", () => {
+    expect(guide).toMatch(/distinct.*independent/i);
+    expect(guide).toMatch(/never.*duplicate/i);
   });
 });
 

@@ -107,7 +107,11 @@ import {
 export type RpcCall = (
   method: string,
   params: Record<string, unknown>,
-  metadata?: { outwardOperationId?: string; signal?: AbortSignal },
+  metadata?: {
+    discoveredDeferredTools?: readonly string[];
+    outwardOperationId?: string;
+    signal?: AbortSignal;
+  },
 ) => Promise<unknown>;
 
 /**
@@ -299,7 +303,8 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
     {
       name: "gateway",
       category: "gateway",
-      build: (ctx) => createGatewayTool(ctx.rpcCall as never, ctx.skillsLogger),
+      build: (ctx) =>
+        createGatewayTool(ctx.rpcCall as never, ctx.skillsLogger, ctx.approvalGate as never),
     },
     {
       name: "obs_query",

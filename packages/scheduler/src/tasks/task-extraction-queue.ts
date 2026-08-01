@@ -35,6 +35,7 @@ export interface TaskExtractionBatchError {
 
 export interface TaskExtractionQueue extends TaskExtractionPort {
   activate(): Result<void, { readonly code: "closed"; readonly errorKind: "precondition" }>;
+  retireAgent(agentId: string): { readonly droppedCount: number };
   close(): { readonly droppedCount: number };
   getStatus(): {
     readonly accepting: boolean;
@@ -138,6 +139,20 @@ export function createTaskExtractionQueue(deps: {
       queuedBytes += built.value.encodedBytes;
       schedule(agentIdOf(built.value.item));
       return ok(dropped ? "oldest_dropped" : "enqueued");
+    },
+    retireAgent(agentId) {
+      timers.get(agentId)?.cancel();
+      timers.delete(agentId);
+      let retiredCount = 0;
+      for (let index = queued.length - 1; index >= 0; index--) {
+        const entry = queued[index]!;
+        if (agentIdOf(entry.item) !== agentId) continue;
+        queuedBytes -= entry.encodedBytes;
+        queued.splice(index, 1);
+        retiredCount += 1;
+      }
+      droppedCount += retiredCount;
+      return { droppedCount: retiredCount };
     },
     close() {
       state = "closed";

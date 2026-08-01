@@ -31,6 +31,8 @@ import {
  * Maps a namespaced method (e.g., "cron.add") to an in-process service call.
  */
 export interface RpcCallMetadata {
+  /** Parent tools already discovered by the executor for child inheritance. */
+  discoveredDeferredTools?: readonly string[];
   /** Stable identity of one logical outward operation, usually the tool-call id. */
   outwardOperationId?: string;
   /** In-process tool cancellation propagated to long-running read-only RPCs. */

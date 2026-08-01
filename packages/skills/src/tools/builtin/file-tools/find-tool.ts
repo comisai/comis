@@ -307,9 +307,10 @@ export function createComisFindTool(
     name: "find",
     label: "Find Files",
     description:
-      "Find files by glob pattern. Results sorted by modification time (most recent first). " +
+      "Find workspace files by glob pattern. Results sorted by modification time (most recent first). " +
       "Respects .gitignore. Default limit: 1000 results. Use path to narrow search scope. " +
-      "For searching file contents, use grep instead.",
+      "For searching file contents, use grep instead. This is not for discovering skills or capabilities; " +
+      "load the find-skills prompt skill for that.",
     parameters: FindParams,
 
     async execute(

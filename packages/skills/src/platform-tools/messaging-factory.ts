@@ -14,7 +14,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TSchema } from "typebox";
 import { jsonResult, readEnumParam } from "./tool-helpers.js";
-import type { RpcCall } from "./tools/cron-tool.js";
+import type { RpcCall, RpcCallMetadata } from "./tools/cron-tool.js";
 
 // ---------------------------------------------------------------------------
 // Single RPC dispatch tool
@@ -36,6 +36,8 @@ export interface RpcDispatchToolConfig<T extends TSchema> {
   rpcMethod: string;
   /** Transform params before RPC call (optional) */
   transformParams?: (params: Record<string, unknown>) => Record<string, unknown>;
+  /** Project trusted executor state into the non-model RPC metadata channel. */
+  transformMetadata?: (params: Record<string, unknown>) => RpcCallMetadata | undefined;
   /** Pre-execute hook for action gates or validation (optional).
    *  Return an AgentToolResult to short-circuit, or undefined to continue. */
   preExecute?: (params: Record<string, unknown>) => AgentToolResult<unknown> | undefined;
@@ -104,9 +106,13 @@ export function createRpcDispatchTool<T extends TSchema>(
 
         // Transform params if needed, otherwise pass through
         const rpcParams = config.transformParams ? config.transformParams(p) : p;
-        const result = config.useToolCallIdAsOperationId
-          ? await rpcCall(config.rpcMethod, rpcParams, { outwardOperationId: toolCallId })
-          : await rpcCall(config.rpcMethod, rpcParams);
+        const transformedMetadata = config.transformMetadata?.(p);
+        const rpcMetadata = config.useToolCallIdAsOperationId
+          ? { ...transformedMetadata, outwardOperationId: toolCallId }
+          : transformedMetadata;
+        const result = rpcMetadata === undefined
+          ? await rpcCall(config.rpcMethod, rpcParams)
+          : await rpcCall(config.rpcMethod, rpcParams, rpcMetadata);
         const failureMessage = explicitRpcFailureMessage(result);
         if (failureMessage !== undefined) throw new Error(failureMessage);
         return jsonResult(result);

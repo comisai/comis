@@ -39,6 +39,7 @@ vi.mock("@comis/skills", async (importOriginal) => {
 // below assert directly on the mocked call args.
 vi.mock("./shared/persist-to-config.js", () => ({
   persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
+  readOnDiskConfig: vi.fn().mockReturnValue({}),
 }));
 vi.mock("../config/audit-hook.js", () => ({
   buildConfigAuditBase: vi.fn().mockReturnValue({ /* opaque audit base stub */ }),

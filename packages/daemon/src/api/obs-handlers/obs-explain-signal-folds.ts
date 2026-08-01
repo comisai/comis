@@ -42,6 +42,72 @@ function narrow<T extends string>(vocab: readonly T[], v: unknown): T | undefine
   return typeof v === "string" && (vocab as readonly string[]).includes(v) ? (v as T) : undefined;
 }
 
+function nonnegativeInteger(value: unknown): number | undefined {
+  const parsed = asNumber(value);
+  return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0
+    ? parsed
+    : undefined;
+}
+
+/**
+ * Fold context-budget and post-compaction rehydration receipts. Returning true
+ * means the record type was recognized, including malformed records that were
+ * intentionally ignored.
+ */
+export function accumulateContextRecord(
+  acc: Acc,
+  type: string,
+  data: Record<string, unknown>,
+  recordSeq: number | undefined,
+  currentTurn: boolean,
+): boolean {
+  if (type === "context.budget") {
+    const budget = parseContextBudgetRecord(data);
+    if (budget === undefined) return true;
+    acc.contextBudget = budget;
+    const entry = {
+      windowTokens: budget.windowTokens,
+      assembledInputTokens: budget.assembledInputTokens,
+      keptCount: budget.keptCount,
+      verdict: budget.verdict,
+    };
+    const previous = acc.contextBudgetHistory[acc.contextBudgetHistory.length - 1];
+    if (
+      previous === undefined ||
+      previous.assembledInputTokens !== entry.assembledInputTokens ||
+      previous.keptCount !== entry.keptCount ||
+      previous.verdict !== entry.verdict ||
+      previous.windowTokens !== entry.windowTokens
+    ) {
+      acc.contextBudgetHistory.push(entry);
+      if (acc.contextBudgetHistory.length > 40) acc.contextBudgetHistory.shift();
+    }
+    return true;
+  }
+
+  if (type !== "context.rehydrated") return false;
+  const sectionsInjected = nonnegativeInteger(data.sectionsInjected);
+  const filesInjected = nonnegativeInteger(data.filesInjected);
+  const skillsInjected = nonnegativeInteger(data.skillsInjected);
+  if (
+    sectionsInjected === undefined ||
+    filesInjected === undefined ||
+    skillsInjected === undefined ||
+    typeof data.overflowStripped !== "boolean"
+  ) {
+    return true;
+  }
+  acc.rehydration = {
+    seq: recordSeq ?? acc.seq++,
+    currentTurn,
+    sectionsInjected,
+    filesInjected,
+    skillsInjected,
+    overflowStripped: data.overflowStripped,
+  };
+  return true;
+}
+
 export function readSkillAvailability(value: unknown): IncidentSignals["skillAvailability"] {
   if (!Array.isArray(value)) return undefined;
   const unavailable = value.slice(0, 25).flatMap((item) => {
@@ -56,13 +122,59 @@ export function readSkillAvailability(value: unknown): IncidentSignals["skillAva
   return unavailable.length > 0 ? { unavailable } : undefined;
 }
 
+/** Fold bounded capability-selection evidence from the latest prompt. */
+export function accumulatePromptRequestRecord(
+  acc: Acc,
+  data: Record<string, unknown>,
+): void {
+  delete acc.requestRelevantToolNames;
+  if (Array.isArray(data.requestRelevantToolNames)) {
+    const names = [...new Set(data.requestRelevantToolNames.filter(
+      (name): name is string =>
+        typeof name === "string" && /^[A-Za-z0-9_.:-]{1,128}$/u.test(name),
+    ))].slice(0, 16);
+    if (names.length > 0) acc.requestRelevantToolNames = names;
+  }
+
+  delete acc.requestRelevanceHistory;
+  const rawHistory = data.requestRelevanceHistory;
+  if (rawHistory !== null && typeof rawHistory === "object" && !Array.isArray(rawHistory)) {
+    const history = rawHistory as Record<string, unknown>;
+    const turnCount = nonnegativeInteger(history.turnCount) ?? 0;
+    const charCount = nonnegativeInteger(history.charCount) ?? 0;
+    if (turnCount <= 8 && charCount <= 1_000_000 && typeof history.saturated === "boolean") {
+      acc.requestRelevanceHistory = { turnCount, charCount, saturated: history.saturated };
+    }
+  }
+
+  delete acc.operatorPolicyToolProjections;
+  if (!Array.isArray(data.operatorPolicyToolProjections)) return;
+  const projections = data.operatorPolicyToolProjections.flatMap((candidate) => {
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const record = candidate as Record<string, unknown>;
+    const toolName = asString(record.toolName);
+    const sectionId = asString(record.sectionId);
+    const contentHash = asString(record.contentHash);
+    const projectedChars = asNumber(record.projectedChars);
+    if (
+      toolName === undefined || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(toolName)
+      || sectionId === undefined || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(sectionId)
+      || contentHash === undefined || !/^[a-f0-9]{64}$/u.test(contentHash)
+      || projectedChars === undefined || !Number.isSafeInteger(projectedChars)
+      || projectedChars < 0 || projectedChars > 5_000
+    ) return [];
+    return [{ toolName, sectionId, contentHash, projectedChars }];
+  }).slice(0, 16);
+  if (projections.length > 0) acc.operatorPolicyToolProjections = projections;
+}
+
 function ensureBackgroundTool(
   acc: Acc,
   toolName: string,
-): { ok: number; failed: number; errorKinds: Map<string, number> } {
+): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
   const current = acc.toolStats.get(toolName);
   if (current !== undefined) return current;
-  const created = { ok: 0, failed: 0, errorKinds: new Map<string, number>() };
+  const created = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map<string, number>() };
   acc.toolStats.set(toolName, created);
   return created;
 }
@@ -91,6 +203,29 @@ export function accumulateBackgroundTaskRecord(
     if (acc.backgroundTerminalTaskIds.has(taskId)) return;
     acc.backgroundTerminalTaskIds.add(taskId);
     acc.backgroundCompletedTaskIds.add(taskId);
+    if (data.resultOutcome !== "degraded" || toolName === undefined) return;
+    const entry = ensureBackgroundTool(acc, toolName);
+    if (acc.backgroundPromotionsByTask.get(taskId) === toolName && entry.ok > 0) {
+      entry.ok -= 1;
+    }
+    entry.failed += 1;
+    const errorKind = asString(data.errorKind) ?? "internal";
+    const failureCode = narrow(
+      ["mutation_not_persisted"] as const,
+      data.failureCode,
+    );
+    entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
+    acc.failures.push({
+      seq,
+      toolName,
+      classifiedFailureBy: "background_task",
+      transportOk: false,
+      errorKind,
+      ...(failureCode !== undefined ? { failureCode } : {}),
+      resultDigest: fingerprint(`${taskId}:${toolName}:${errorKind}`),
+      resultBytes: 0,
+      errorPreview: "",
+    });
     return;
   }
   if (type === "background_task.failed") {
@@ -103,7 +238,14 @@ export function accumulateBackgroundTaskRecord(
     }
     entry.failed += 1;
     const errorKind = asString(data.errorKind) ?? "internal";
-    const failureCode = narrow(["skill_import_incomplete"] as const, data.failureCode);
+    const failureCode = narrow(
+      [
+        "skill_import_incomplete",
+        "mcp_connection_details_missing",
+        "mcp_secret_reference_missing",
+      ] as const,
+      data.failureCode,
+    );
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
     acc.failures.push({
       seq,
@@ -205,6 +347,7 @@ export function emptyLearningFold(): LearningFoldState {
     skillsDemoted: 0,
     failuresAttributed: 0,
     skillsSurfacedButUncredited: new Map(),
+    skillsCreditedFromPriorTurn: new Set(),
     skillsDemotedNames: new Set(),
   };
 }
@@ -300,7 +443,19 @@ export function accumulateSkillSurfacedRecord(state: LearningFoldState, data: Re
   if (!Array.isArray(data.scores)) return;
   for (const s of data.scores) {
     if (s === null || typeof s !== "object") continue;
-    const score = s as { name?: unknown; coverage?: unknown; credited?: unknown };
+    const score = s as {
+      name?: unknown;
+      coverage?: unknown;
+      credited?: unknown;
+      creditSource?: unknown;
+    };
+    if (
+      score.credited === true
+      && score.creditSource === "prior_turn"
+      && typeof score.name === "string"
+    ) {
+      state.skillsCreditedFromPriorTurn.add(score.name);
+    }
     if (score.credited === true) continue; // credited skills are already in skillsUsed
     if (typeof score.name !== "string") continue;
     const coverage = typeof score.coverage === "number" && Number.isFinite(score.coverage) ? score.coverage : 0;
@@ -398,6 +553,9 @@ export function buildLearningSignal(state: LearningFoldState): IncidentLearningS
             .map(([name, coverage]) => ({ name, coverage }))
             .sort((a, b) => b.coverage - a.coverage),
         }
+      : {}),
+    ...(state.skillsCreditedFromPriorTurn.size > 0
+      ? { skillsCreditedFromPriorTurn: [...state.skillsCreditedFromPriorTurn] }
       : {}),
   };
 }

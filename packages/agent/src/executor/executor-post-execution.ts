@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   type SessionKey,
@@ -37,9 +37,11 @@ import {
   // finds a redaction.
   validateMemoryWrite,
   type ResponseLocalePolicy,
+  type UserTrustLevel,
   type AgentExecutionFinishReason,
   type ExecutionSideEffectSummary,
   createConversationRef,
+  SessionCompactionConfigSchema,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -59,6 +61,8 @@ import {
   setBreakpointIndex,
   deleteBreakpointIndex,
   getBreakpointIndexMapSize,
+  getSessionCompactionBand,
+  setSessionCompactionBand,
 } from "./executor-session-state.js";
 // The surfaced-skill census is STORED during assembly and emitted HERE (post-execution,
 // after the trajectory bridge subscribes) — see the prompt-assembly note on SkillSurfacedCensus.
@@ -82,6 +86,8 @@ import { stripDiscoverySchemas } from "./schema-stripping.js";
 // invocation. The agent↛memory cut: lcd-ingest imports only the core port type
 // + the core codec — never @comis/memory.
 import { ingestTurnGuarded } from "./lcd-ingest.js";
+import { ingestProjectedConversationHistory } from "../session/context-history-replacement.js";
+import { projectInboundConversation } from "../session/inbound-message-provenance.js";
 // LCD afterTurn leaf-pass trigger. Activates the inert
 // contextThreshold: a thin gated call right after the ingest fires one leaf pass
 // when utilization is over threshold. The body (gating + opts + summarize +
@@ -103,6 +109,7 @@ import { enqueueContextMaintenance } from "./lcd-maintenance-queue.js";
 // (mirrors the condense pass's own non-fatal wrapping). The agent↛memory cut:
 // the runner imports only core TYPE-only ports — no @comis/memory import.
 import { runDistillationPassAfterTurn } from "./lcd-distillation-runner.js";
+import { runSessionCompactionAfterTurn } from "./session-compaction-trigger.js";
 import type { LeafSummarizerDeps, CompactionModelSnapshot } from "../context-engine/lcd-leaf-summarizer.js";
 // In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
@@ -124,16 +131,22 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
+  enforceProviderModelFailureGrounding,
+  enforceAgentUpdateNoOpGrounding,
+  enforceOngoingWorkEvidence,
+  enforceSenderAuthorityGrounding,
+  enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
   isTrustedBackgroundCompletionEnvelope,
 } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
+import { recoverFinalResponseLocaleFailure } from "./prompt-runner/response-locale-enforcement.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -251,11 +264,13 @@ export interface PostExecutionBridge {
 export interface PostExecutionParams {
   result: ExecutionResult;
   session: AgentSession;
-  sm: { buildSessionContext(): unknown };
+  sm: SessionManager;
   config: PerAgentConfig;
   msg: NormalizedMessage;
   /** Exact typed response-locale decision used for this turn. */
   responseLocalePolicy: ResponseLocalePolicy;
+  /** Current request sender trust captured at the execution boundary. */
+  senderTrust: UserTrustLevel;
   sessionKey: SessionKey;
   formattedKey: string;
   /** Conversation authority used for active-run deregistration. */
@@ -319,6 +334,8 @@ export interface PostExecutionParams {
    * is the more useful signal for operator-side cache-hit-rate segmentation.
    */
   provider: string;
+  /** Exact model identifier used for this execution. */
+  modelId: string;
   /**
    * Provider family derived from `resolveProviderCapabilities(provider).providerFamily`.
    * One of "anthropic" | "openai" | "google" | "default". Pre-computed at the
@@ -348,6 +365,9 @@ export interface PostExecutionParams {
      *  identity captured BEFORE `session.dispose()` so a detached pass never
      *  re-reads a torn-down `session.agent.state`. */
     getSummarizerDeps?: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
+    getFlushSummarizerDeps?: (
+      modelSnapshot?: CompactionModelSnapshot,
+    ) => LeafSummarizerDeps | undefined;
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
@@ -703,6 +723,7 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // (see promoteNarrationStall) — a small/nano turn that ended on intent
   // narration with no tool call and did not recover after the one nudge.
   narration_stall: "narration_stall",
+  tool_invocation_stall: "tool_invocation_stall",
   // Known in-union reasons — explicit, not via the catch-all fallthrough.
   loop_detected: "error",
   session_reset: "error",
@@ -787,6 +808,24 @@ export function promoteNarrationStall(
   }
   if (narrateNudge?.fired === true && narrateNudge.recovered === false) {
     return "narration_stall";
+  }
+  return effectiveFinishReason;
+}
+
+/** Promote an unrecovered repeated-answer action turn to a named failure. */
+export function promoteToolInvocationStall(
+  effectiveFinishReason: string,
+  requestToolNudge: { fired: boolean; recovered: boolean } | undefined,
+): string {
+  if (
+    effectiveFinishReason !== "stop"
+    && effectiveFinishReason !== "end_turn"
+    && effectiveFinishReason !== "completed_with_tool_errors"
+  ) {
+    return effectiveFinishReason;
+  }
+  if (requestToolNudge?.fired === true && requestToolNudge.recovered === false) {
+    return "tool_invocation_stall";
   }
   return effectiveFinishReason;
 }
@@ -959,16 +998,21 @@ export function emitSessionSummary(
  * @param getSummarizerDeps - the live, session-coupled deps getter (or undefined).
  * @returns a model-snapshot-bound getter safe to call post-dispose (or undefined).
  */
-export function snapshotSummarizerDepsForDefer(
-  getSummarizerDeps: ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined,
-): ((modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps) | undefined {
+export function snapshotSummarizerDepsForDefer<T extends LeafSummarizerDeps | undefined>(
+  getSummarizerDeps: ((modelSnapshot?: CompactionModelSnapshot) => T) | undefined,
+  snapshotSource?: (
+    modelSnapshot?: CompactionModelSnapshot
+  ) => LeafSummarizerDeps | undefined,
+): ((modelSnapshot?: CompactionModelSnapshot) => T) | undefined {
   if (getSummarizerDeps === undefined) return undefined;
   // Capture the LIVE model identity now (session still alive). If the live read
   // throws at capture time, leave the getter unchanged — the deferred pass then
   // degrades non-fatally through the trigger's try/catch.
   let modelSnapshot: CompactionModelSnapshot | undefined;
   try {
-    modelSnapshot = getSummarizerDeps().getModel();
+    const resolved = (snapshotSource ?? getSummarizerDeps)();
+    if (resolved === undefined) return getSummarizerDeps;
+    modelSnapshot = resolved.getModel();
   } catch {
     return getSummarizerDeps;
   }
@@ -989,8 +1033,10 @@ export function snapshotSummarizerDepsForDefer(
  * plumbed on some path) every failed tool is reported as unrecovered —
  * so this never HIDES a genuine unrecovered failure.
  *
- * Observability is unaffected: effectiveFinishReason / logs / system rollup still
- * record the failure. Only the user-facing reply is gated.
+ * Raw tool statistics retain every failed attempt. Terminal classification and
+ * the user-facing failure notice consume the unrecovered subset, so a later
+ * matching success can settle the requested operation cleanly without erasing
+ * the diagnostic record of the rejected attempt.
  *
  * Pure: no I/O, no side effects. Returns deduped names with no proven recovery.
  */
@@ -1005,12 +1051,10 @@ export function unrecoveredFailedToolNames(
  * The COMPLEMENT of {@link unrecoveredFailedToolNames}: failed tools with a
  * later matching recovery in the same turn.
  *
- * Surfaced on the execution bookend (`recoveredTools`) so an operator reading
- * `failedTools:["write"]` + `completed_with_tool_errors` can tell a SELF-HEALED
- * turn from a terminally-degraded one without diffing the raw per-call
- * `toolExecResults`. This does NOT change the degraded classification: by
- * design effectiveFinishReason / the rollup STILL record the failure (the
- * tool DID error); this only makes the recovery VISIBLE.
+ * Surfaced on the execution bookend (`recoveredTools`) so an operator can tell
+ * a corrected attempt from a turn with no failures without diffing the raw
+ * per-call `toolExecResults`. The raw failure remains in tool statistics while
+ * terminal classification consumes the unrecovered complement.
  * Pure; deduped; empty when nothing was recovered.
  */
 export function recoveredFailedToolNames(
@@ -1187,18 +1231,91 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     recordLastResponseTs(formattedKey, capturedRetention.getRetention(), deps.clock);
   }
 
+  const pendingBackground = reconcilePendingBackgroundTurn({
+    response: result.response ?? "",
+    executionId,
+    tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
+  });
+  if (pendingBackground.finishReason !== undefined) {
+    result.response = pendingBackground.response;
+  }
+
+  // Run the deterministic current-model self-status guard before terminal
+  // classification. Locale enforcement may have failed closed on the model's
+  // mismatched draft; this guard can replace that draft with the exact captured
+  // runtime identity, which must be re-evaluated before the bookend and session
+  // summary decide whether the turn is degraded.
+  const activeModelSelfStatus = enforceActiveModelSelfStatus({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    provider: params.provider,
+    modelId: params.modelId,
+  });
+  if (activeModelSelfStatus.corrected) {
+    result.response = activeModelSelfStatus.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        provider: params.provider,
+        modelId: params.modelId,
+        errorKind: "validation" as const,
+        hint:
+          "The model omitted or contradicted the captured execution identity; inspect the "
+          + "system-prompt report and current-turn transcript in comis explain.",
+      },
+      "Current model self-status replaced with captured runtime identity",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.active_model_self_status_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "current_model_status",
+        reason: activeModelSelfStatus.reason,
+      },
+    });
+  }
+  if (
+    activeModelSelfStatus.corrected
+    && recoverFinalResponseLocaleFailure(result, params.responseLocalePolicy)
+  ) {
+    deps.logger.info(
+      {
+        step: "response-locale-recovery",
+        provider: params.provider,
+        modelId: params.modelId,
+        durationMs: 0,
+      },
+      "Final response guard satisfied the captured locale policy",
+    );
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "locale_fidelity",
+      succeeded: true,
+      timestamp: deps.clock.now(),
+    });
+  }
+
   // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
   // The bookend must log effectiveFinishReason (not result.finishReason) so that
   // an output_starved turn — which carries result.finishReason="stop" until promoted here —
   // is visible in the bookend as degraded. The variables are declared early and referenced
   // again by the tool-failure append and degraded-reply gate below (no double-computation).
-  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
+  const unrecoveredToolFailures = unrecoveredFailedToolNames(
+    bridgeResult.failedTools ?? [],
+    bridgeResult.toolExecResults,
+  );
   const finishReasonStr = result.finishReason as string;
   const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
-  // Stage 1: tool-failure reconciliation (a clean stop turn with failed tools
-  // becomes completed_with_tool_errors).
+  // Stage 1: tool-failure reconciliation. A clean stop turn becomes
+  // completed_with_tool_errors only when a failed operation has no proven
+  // later matching success. Raw tool statistics still retain every attempt.
   const toolReconciledFinishReason =
-    hasToolFailures && isStopTurn
+    unrecoveredToolFailures.length > 0 && isStopTurn
       ? "completed_with_tool_errors"
       : result.finishReason;
   // Stage 2: promote a PATHOLOGICAL terminal output truncation. Fires ONLY
@@ -1209,24 +1326,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
   // Stage 3: promote a narrate-without-emit terminal that the one
   // bounded nudge could not recover — same conservative shape as stage 2.
-  const baseEffectiveFinishReason = promoteNarrationStall(
-    promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
-    result.narrateNudge,
+  const baseEffectiveFinishReason = promoteToolInvocationStall(
+    promoteNarrationStall(
+      promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
+      result.narrateNudge,
+    ),
+    result.requestToolNudge,
   );
-  const pendingBackground = reconcilePendingBackgroundTurn({
-    response: result.response ?? "",
-    executionId,
-    tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
-  });
   const effectiveFinishReasonCandidate = pendingBackground.finishReason ?? baseEffectiveFinishReason;
   const effectiveFinishReason = (
     effectiveFinishReasonCandidate === "end_turn"
       ? "stop"
       : effectiveFinishReasonCandidate
   ) as AgentExecutionFinishReason;
-  if (pendingBackground.finishReason !== undefined) {
-    result.response = pendingBackground.response;
-  }
   settleExecutionResult(result, effectiveFinishReason, {
     sideEffectSummary: bridgeResult.sideEffectSummary ?? result.sideEffectSummary,
     toolExecResults: bridgeResult.toolExecResults,
@@ -1251,9 +1363,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // fields read from the same observation (the getter is cheap but the
   // read-twice pattern would still be a micro-divergence risk).
   const scrubCounters = ceSetup.getSignatureScrubCounters();
-  // recoveredTools: failed tools that self-healed in the same turn. Surfaced on the bookend so a self-healed
-  // turn is distinguishable from a terminally-degraded one. effectiveFinishReason
-  // STILL records the failure (by design) — this is visibility only.
+  // recoveredTools: failed tools that self-healed in the same turn. The raw
+  // failed count remains visible alongside the clean terminal classification.
   const recoveredTools = recoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1325,7 +1436,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       provider,
       providerFamily,
       deferredCount: deferralResult.deferredCount,
-      activeToolCount: mergedCustomTools.length,
+      // Auto-discovery stubs remain in the local SDK registry but are removed
+      // before the provider request. Report only the tools that cross that
+      // boundary so active + deferred reconcile to the runtime inventory.
+      activeToolCount: Math.max(
+        0,
+        mergedCustomTools.length - deferralResult.deferredCount,
+      ),
       guidesDelivered: deliveredGuides.size,
       schemaPruned: capabilityClass === "nano",
       failedToolCalls: bridgeResult.failedToolCalls ?? 0,
@@ -1356,6 +1473,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         postBatchContinuationFired: result.continuationMetrics.fired,
         postBatchContinuationAttempts: result.continuationMetrics.attempts,
         postBatchContinuationOutcome: result.continuationMetrics.outcome,
+      }),
+      ...(result.requestToolNudge?.fired === true && {
+        requestToolNudgeFired: true,
+        requestToolNudgeRecovered: result.requestToolNudge.recovered,
+        requestToolNudgeMatchedTools: result.requestToolNudge.matchedToolNames,
       }),
       // Thinking token tracking (conditional -- only when thinking tokens detected)
       ...(bridgeResult.thinkingTokens != null && bridgeResult.thinkingTokens > 0 && {
@@ -1417,6 +1539,137 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "unknown locale pack message id ignored",
     );
   });
+  const agentUpdateNoOpGrounding = enforceAgentUpdateNoOpGrounding({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildAgentUpdateNoOpReply(
+      replyLanguage,
+      params.provider,
+      params.modelId,
+      localeCatalog,
+    ),
+  });
+  if (agentUpdateNoOpGrounding.corrected) {
+    result.response = agentUpdateNoOpGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        provider: params.provider,
+        modelId: params.modelId,
+        errorKind: "validation" as const,
+        hint:
+          "The model contradicted a successful unchanged agents_manage update; inspect "
+          + "the latest update receipt, recalled skills, and final response in comis explain.",
+      },
+      "Agent update no-op response replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.agent_update_noop_grounding_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "configuration_noop",
+        reason: agentUpdateNoOpGrounding.reason,
+        requiredTool: "agents_manage",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "agent_update_noop_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const ongoingWorkGrounding = enforceOngoingWorkEvidence({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    ongoingWorkEvidence: pendingBackground.finishReason !== undefined,
+    honestResponse: buildOngoingWorkEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (ongoingWorkGrounding.corrected) {
+    result.response = ongoingWorkGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "The final reply promised continued work after a failed step, but this "
+          + "execution had no background receipt; inspect tool failures and background "
+          + "task ownership in comis explain.",
+      },
+      "Unsupported ongoing-work promise replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.ongoing_work_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "ongoing_work",
+        reason: ongoingWorkGrounding.reason,
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_ongoing_work_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const senderAuthorityGrounding = enforceSenderAuthorityGrounding({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    senderTrust: params.senderTrust,
+    honestResponse: buildSenderAuthorityOverclaimReply(replyLanguage, localeCatalog),
+  });
+  if (senderAuthorityGrounding.corrected) {
+    result.response = senderAuthorityGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        senderTrust: params.senderTrust,
+        errorKind: "validation" as const,
+        hint:
+          "The model assigned admin-only authority to the current below-admin sender; "
+          + "inspect sender trust resolution, recalled skills, and the deferred tool surface in comis explain.",
+      },
+      "Sender self-authority overclaim replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.sender_authority_grounding_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "sender_authority",
+        reason: senderAuthorityGrounding.reason,
+        senderTrust: params.senderTrust,
+        requiredTrust: "admin",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "sender_authority_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
   const delegationEvidence = enforceCurrentTurnDelegationEvidence({
     request: msg.text ?? "",
     response: result.response ?? "",
@@ -1516,10 +1769,38 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
-  const unrecoveredFailed = unrecoveredFailedToolNames(
-    bridgeResult.failedTools ?? [],
-    bridgeResult.toolExecResults,
-  );
+  const providerModelFailureGrounding = enforceProviderModelFailureGrounding({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildProviderRequiresModelReply(replyLanguage, localeCatalog),
+  });
+  if (providerModelFailureGrounding.corrected) {
+    result.response = providerModelFailureGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "validation" as const,
+        hint:
+          `Test the provider credentials, list exact models with models_manage, then retry `
+          + `agents.${effectiveAgentId}.provider and agents.${effectiveAgentId}.model together`,
+      },
+      "Provider-as-model response replaced with grounded guidance",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.provider_model_grounding_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "configuration_failure",
+        reason: providerModelFailureGrounding.reason,
+        requiredTool: "agents_manage",
+      },
+    });
+  }
+  const unrecoveredFailed = unrecoveredToolFailures;
   const subagentTerminalToolFailureReply = buildSubagentTerminalToolFailureReply({
     operationType: params.executionOverrides?.operationType,
     finishReason: effectiveFinishReason,
@@ -1621,6 +1902,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
   if (
     !unavailableVision &&
+    !providerModelFailureGrounding.corrected &&
+    !ongoingWorkGrounding.corrected &&
     userVisibleFailed.length > 0 &&
     isStopTurn &&
     !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&
@@ -1655,6 +1938,23 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Resolve the open response-locale policy once and pass the canonical tag to
   // each deterministic degraded-reply builder. Missing locale packs fall back
   // to the injected catalog's English strings.
+  if (effectiveFinishReason === "tool_invocation_stall") {
+    result.response = buildPersistentActionEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    );
+    deps.logger.warn(
+      {
+        step: "request-tool-nudge",
+        matchedToolNames: result.requestToolNudge?.matchedToolNames ?? [],
+        errorKind: "internal" as const,
+        hint:
+          "The model repeated an earlier answer and the bounded continuation still "
+          + "emitted no matched tool call; inspect request-tool-nudge in comis explain.",
+      },
+      "tool_invocation_stall — synthesized honest reply delivered",
+    );
+  }
   if (effectiveFinishReason === "output_starved") {
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage, localeCatalog);
     deps.logger.warn(
@@ -1743,7 +2043,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     effectiveFinishReason === "output_starved" ||
     effectiveFinishReason === "context_exhausted" ||
     effectiveFinishReason === "loop_detected" ||
-    effectiveFinishReason === "narration_stall";
+    effectiveFinishReason === "narration_stall" ||
+    effectiveFinishReason === "tool_invocation_stall";
   if (!isDegradedTurn && shouldRunCritic({ // critic hook (keyless-only gate)
     capabilityClass, config, executionPlanRef, provider,
     logger: deps.logger,
@@ -1765,12 +2066,36 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const responseSync = synchronizeFinalAssistantResponse(
     session,
     result.response ?? "",
+    sm,
   );
   if (responseSync === "updated") {
     deps.logger.info(
       { step: "response-persistence" },
       "Synchronized post-processed response with live session transcript",
     );
+  } else if (responseSync === "updated_memory_only") {
+    deps.logger.warn(
+      {
+        step: "response-persistence",
+        errorKind: "resource" as const,
+        hint:
+          "The corrected response reached delivery and live LCD ingest, but its append-only "
+          + "session replacement branch could not be written; inspect the session JSONL leaf and disk health.",
+      },
+      "Corrected response could not be made canonical in durable session history",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.persistence_projection_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "assistant_response",
+        reason: "durable_replacement_unavailable",
+      },
+    });
   } else if (responseSync === "missing" && (result.response?.length ?? 0) > 0) {
     deps.logger.warn(
       {
@@ -1988,11 +2313,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
     };
-    // The live canonical AgentMessage[] (pi-executor.ts:1118 reads the same
-    // ref). Typed as unknown on AgentSession — no public SDK type for it.
+    // The SDK JSONL retains rendered current-turn context for forensics.
+    // Re-project the completed branch so LCD receives physical inbound history
+    // and generated locale repair never becomes conversation state.
+    const completedProjection = projectInboundConversation(sm);
     const live =
       ((session.agent as unknown as { state?: { messages?: unknown[] } }).state?.messages ??
         []) as Parameters<typeof ingestTurnGuarded>[2];
+    if (completedProjection.ok) {
+      session.agent.state.messages = completedProjection.value.messages;
+    }
     const store = deps.contextStore;
 
     // Route the live ingest write through the per-conversation short mutation
@@ -2007,52 +2337,101 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // trace-correlated signal: the symptom otherwise looks like a successful
     // model execution whose channel reply arrived minutes late.
     const ingestStart = deps.clock.now();
-    await store.runOnConversation(conversationRef, () =>
-      ingestTurnGuarded(
+    const onFailClosed = (): void => {
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "fail_closed_rollover",
+        durationMs: Math.max(0, deps.clock.now() - ingestStart),
+        timestamp: deps.clock.now(),
+      });
+    };
+    const onDivergence = (): void => {
+      // The live/store-divergence skip emits a content-free
+      // context:dag_degraded so the divergence persists as a health_signal row
+      // (queryable by the system health view) instead of being a Pino-only WARN.
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "live_store_divergence",
+        durationMs: Math.max(0, deps.clock.now() - ingestStart),
+        timestamp: deps.clock.now(),
+      });
+    };
+    const onRebase = (): void => {
+      // A detected epoch re-base that continues emits a distinct
+      // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
+      // continuation, not degradation) so operators can tell "continued after
+      // restart/JSONL-housekeeping" from "skipped due to corruption".
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        reason: "session_rebase",
+        durationMs: Math.max(0, deps.clock.now() - ingestStart),
+        timestamp: deps.clock.now(),
+      });
+    };
+    if (completedProjection.ok) {
+      const projectedIngest = await ingestProjectedConversationHistory({
         store,
         scope,
-        live,
-        deps.clock.now(),
-        deps.logger,
-        () => {
-          deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationRef,
+        sourceMessages: completedProjection.value.sourceMessages,
+        projectedMessages: completedProjection.value.messages,
+        now: deps.clock.now(),
+        logger: deps.logger,
+        onFailClosed,
+        onDivergence,
+        onRebase,
+      });
+      if (!projectedIngest.ok) {
+        deps.logger.warn(
+          {
+            conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
-            reason: "fail_closed_rollover",
+            step: "inbound-history-lcd-reconciliation",
             durationMs: Math.max(0, deps.clock.now() - ingestStart),
-            timestamp: deps.clock.now(),
-          });
+            failureKind: projectedIngest.error.message,
+            hint:
+              "Inspect LCD storage health and structured inbound-provenance "
+              + "records; the completed canonical history could not be persisted.",
+            errorKind: projectedIngest.error.errorKind,
+          },
+          "Completed projected conversation LCD ingest failed",
+        );
+        onDivergence();
+      }
+    } else {
+      deps.logger.warn(
+        {
+          conversationRef,
+          agentId: scope.agentId,
+          sessionKey: scope.sessionKey,
+          step: "inbound-history-projection",
+          durationMs: Math.max(0, deps.clock.now() - ingestStart),
+          hint:
+            "Inspect the active SDK branch and inbound-provenance records; "
+            + "the unprojected live history was retained for this ingest.",
+          errorKind: "resource" as const,
         },
-        // The live/store-divergence skip emits a content-free
-        // context:dag_degraded so the divergence persists as a health_signal row
-        // (queryable by the system health view) instead of being a Pino-only WARN.
-        () => {
-          deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationRef,
-            agentId: scope.agentId,
-            sessionKey: scope.sessionKey,
-            reason: "live_store_divergence",
-            durationMs: Math.max(0, deps.clock.now() - ingestStart),
-            timestamp: deps.clock.now(),
-          });
-        },
-        // A detected epoch re-base that continues emits a distinct
-        // content-free context:dag_degraded reason:"session_rebase" (INFO — a correct
-        // continuation, not degradation) so operators can tell "continued after
-        // restart/JSONL-housekeeping" from "skipped due to corruption".
-        () => {
-          deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationRef,
-            agentId: scope.agentId,
-            sessionKey: scope.sessionKey,
-            reason: "session_rebase",
-            durationMs: Math.max(0, deps.clock.now() - ingestStart),
-            timestamp: deps.clock.now(),
-          });
-        },
-      ),
-    );
+        "Completed conversation projection failed before LCD ingest",
+      );
+      await store.runOnConversation(conversationRef, () =>
+        ingestTurnGuarded(
+          store,
+          scope,
+          live,
+          deps.clock.now(),
+          deps.logger,
+          onFailClosed,
+          onDivergence,
+          onRebase,
+        ),
+      );
+    }
     const ingestDurationMs = Math.max(0, deps.clock.now() - ingestStart);
     if (ingestDurationMs >= 1_000) {
       const traceId = tryGetContext()?.traceId;
@@ -2088,7 +2467,35 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // reads the live session.
     const runDeferredPasses = async (
       summarizerGetter: typeof deps.getSummarizerDeps,
+      flushSummarizerGetter: typeof deps.getFlushSummarizerDeps,
     ): Promise<void> => {
+      await runSessionCompactionAfterTurn({
+        store,
+        scope,
+        sessionKey,
+        formattedKey,
+        sessionCompaction: SessionCompactionConfigSchema.parse(
+          config.session?.compaction ?? {},
+        ),
+        contextEngine: config.contextEngine,
+        budgetWindowTokens: params.budgetWindowTokens,
+        getSummarizerDeps: summarizerGetter,
+        getFlushSummarizerDeps: flushSummarizerGetter,
+        memoryPort: deps.memoryPort,
+        memoryScope: {
+          turnScope,
+          visibility: { kind: "conversation" },
+        },
+        state: {
+          get: getSessionCompactionBand,
+          set: setSessionCompactionBand,
+        },
+        now: deps.clock.now(),
+        nowFn: () => deps.clock.now(),
+        logger: deps.logger,
+        eventBus: deps.eventBus,
+        embeddingEnqueue: deps.embeddingEnqueue,
+      });
       await runLeafPassAfterTurn({
         store,
         scope,
@@ -2175,16 +2582,27 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // outlive the session. (Lifetime contract, documented on
       // snapshotSummarizerDepsForDefer.)
       const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
+      const deferredFlushSummarizerGetter =
+        snapshotSummarizerDepsForDefer(
+          deps.getFlushSummarizerDeps,
+          deps.getSummarizerDeps,
+        );
       const deferred = enqueueContextMaintenance(
         conversationRef,
-        () => runDeferredPasses(deferredSummarizerGetter),
+        () => runDeferredPasses(
+          deferredSummarizerGetter,
+          deferredFlushSummarizerGetter,
+        ),
       );
       suppressError(deferred, "postExecution deferred LCD compaction");
     } else {
       // INLINE: await the passes (the deterministic path retained for
       // tests). Non-fatal — never surfaces an error to the live turn. Reads the
       // LIVE session model (no snapshot needed — the session is alive inline).
-      await runDeferredPasses(deps.getSummarizerDeps);
+      await runDeferredPasses(
+        deps.getSummarizerDeps,
+        deps.getFlushSummarizerDeps,
+      );
     }
   }
 

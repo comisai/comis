@@ -144,7 +144,7 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt as assembleExecutionPromptRaw, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, getSessionPromptSkillLocations, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt as assembleExecutionPromptRaw, resolvePromptModeForProfile, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearWr02SenderTrustWarned, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, getSessionPromptSkillLocations, getSessionPromptTopicMatchedSkills, getSessionPromptSkillSurfacedCensus, getSessionPromptMemoryInjected, clearSessionPromptMemoryInjected, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 // node:fs (sync) is NOT mocked here (only node:fs/promises is) — safe for the
 // sub-agent-language source-grep chokepoint below.
@@ -1032,6 +1032,27 @@ describe("assembleExecutionPrompt", () => {
         createdAt: 1_000,
       };
     }
+    function skillDoc(): import("@comis/core").MentalModel {
+      return {
+        id: "mm-skill-grocery-sort",
+        name: "skill-grocery-sort",
+        description: "Sort a supplied item list under a stated budget",
+        body: "(rendered)",
+        kind: "skill",
+        topicKey: "grocery-sort",
+        trustLevel: "learned",
+        state: "candidate",
+        proofCount: 1,
+        confidence: 0.7,
+        mutating: false,
+        sourceTrajIds: ["s1", "s2"],
+        structuredBody: {
+          topicTokens: ["180", "grocery", "list", "shekel", "sort", "under"],
+          sections: [],
+        },
+        createdAt: 1_000,
+      };
+    }
     /**
      * A spy MentalModelStorePort counting list() calls + recording the (scope, kind)
      * each call received, returning a fixed doc set.
@@ -1327,6 +1348,79 @@ describe("assembleExecutionPrompt", () => {
       // The single shared list is unfiltered (kind omitted) —
       // partitioned in-process for the profile block + the skill topic-match.
       expect(spy.lastKind()).toBeUndefined();
+    });
+
+    it("credits a matched learned skill on one immediate data follow-up but not a later unrelated turn", async () => {
+      const opening = "sort the picnic groceries from the park list and keep it under 180 shekels";
+      const suppliedData =
+        "bread 14 hummus 18 tomatoes 12 cucumbers 10 apples 16 juice 9 plates 12 napkins 8 sunscreen 45 cookies 13";
+      const sessionKey = {
+        tenantId: "t",
+        agentId: "agent-1",
+        userId: "u",
+        channelId: "skill-follow-up",
+      } as SessionKey;
+      const formattedKey = formatSessionKey(sessionKey);
+      const spy = makeSpyStore([skillDoc()]);
+      const deps = {
+        workspaceDir: "/workspace",
+        mentalModelStore: spy.store,
+      };
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps,
+        msg: makeMsg({ id: "turn-opening", text: opening }),
+        recentUserTurns: [],
+        sessionKey,
+      }));
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual(["skill-grocery-sort"]);
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps,
+        msg: makeMsg({ id: "turn-supplied-data", text: suppliedData }),
+        recentUserTurns: [opening],
+        sessionKey,
+      }));
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual(["skill-grocery-sort"]);
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps,
+        msg: makeMsg({ id: "turn-unrelated", text: "book a dentist appointment tomorrow" }),
+        recentUserTurns: [opening, suppliedData],
+        sessionKey,
+      }));
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual([]);
+    });
+
+    it("does not topic-credit a stale learned skill excluded from the model-facing surface", async () => {
+      const stale = { ...skillDoc(), state: "stale" as const };
+      const sessionKey = {
+        tenantId: "t",
+        agentId: "agent-1",
+        userId: "u",
+        channelId: "terminal-skill-credit",
+      } as SessionKey;
+      const formattedKey = formatSessionKey(sessionKey);
+
+      await assembleExecutionPrompt(makeParams({
+        config: learningOnlyConfig(),
+        deps: {
+          workspaceDir: "/workspace",
+          mentalModelStore: makeSpyStore([stale]).store,
+        },
+        msg: makeMsg({
+          id: "turn-after-demotion",
+          text: "sort the picnic groceries from the park list and keep it under 180 shekels",
+        }),
+        recentUserTurns: [],
+        sessionKey,
+      }));
+
+      expect(getSessionPromptTopicMatchedSkills(formattedKey)).toEqual([]);
+      expect(getSessionPromptSkillSurfacedCensus(formattedKey)).toBeUndefined();
     });
   });
 
@@ -2820,6 +2914,9 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain("## Your Recent Outbound Messages");
       expect(result.dynamicPreamble).toContain("[You sent on telegram]: First message");
       expect(result.dynamicPreamble).toContain("[You sent on discord]: Second message");
+      expect(result.dynamicPreamble.lastIndexOf("## Current Execution")).toBeGreaterThan(
+        result.dynamicPreamble.lastIndexOf("## Your Recent Outbound Messages"),
+      );
     });
 
     it("respects maxEntriesPerInjection budget", async () => {
@@ -3110,6 +3207,9 @@ describe("bootstrap file snapshotting", () => {
 
       expect(result.inlineMemory).toBeUndefined();
       expect(result.dynamicPreamble).toContain("## Relevant Memories");
+      expect(result.dynamicPreamble.lastIndexOf("## Current Execution")).toBeGreaterThan(
+        result.dynamicPreamble.lastIndexOf("## Relevant Memories"),
+      );
     });
 
     it("returns undefined inlineMemory when RAG is disabled", async () => {
@@ -3178,6 +3278,36 @@ describe("bootstrap file snapshotting", () => {
   // dynamic preamble relocation
   // -----------------------------------------------------------------
   describe("dynamic preamble relocation", () => {
+    it("projects the exact resolved model as authoritative current execution state", async () => {
+      const result = await assembleExecutionPrompt(makeParams({
+        config: makeConfig({
+          provider: "configured-provider",
+          model: "configured-model",
+        }),
+        resolvedModelProvider: "resolved-provider",
+        resolvedModelId: "resolved-model",
+      }));
+
+      expect(result.dynamicPreamble).toContain("## Current Execution");
+      expect(result.dynamicPreamble).toContain(
+        'Active model: {"provider":"resolved-provider","model":"resolved-model"}',
+      );
+      expect(result.dynamicPreamble).toContain(
+        "Model catalogs do not identify or change this active model.",
+      );
+      expect(result.dynamicPreamble).not.toContain(
+        'Active model: {"provider":"configured-provider","model":"configured-model"}',
+      );
+      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          executionModel: {
+            provider: "resolved-provider",
+            model: "resolved-model",
+          },
+        }),
+      );
+    });
+
     it("prefers clear current prose over the typed device locale", async () => {
       mockBuildBootstrapContextFiles.mockReturnValue([
         { path: "USER.md", content: "- **Preferred language:** fr-CA" },
@@ -4169,8 +4299,11 @@ describe("parent prefix reuse", () => {
     expect(result.dynamicPreamble).toContain("SAFETY-REMINDER"); // safety reinforcement
     expect(result.dynamicPreamble).toContain("test-mcp"); // MCP instructions
     expect(result.dynamicPreamble).toContain("<response-locale");
-    expect(result.dynamicPreamble.lastIndexOf("<response-locale")).toBeGreaterThan(
+    expect(result.dynamicPreamble.lastIndexOf("## Current Execution")).toBeGreaterThan(
       result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
+    );
+    expect(result.dynamicPreamble.lastIndexOf("<response-locale")).toBeGreaterThan(
+      result.dynamicPreamble.lastIndexOf("## Current Execution"),
     );
     expect(result.inlineMemory).toBeUndefined();
   });
@@ -4273,6 +4406,12 @@ describe("parent prefix reuse", () => {
     // Early return should trigger because resolved matches, even though config differs
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
     expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+    expect(result.dynamicPreamble).toContain(
+      'Active model: {"provider":"anthropic","model":"claude-3-opus"}',
+    );
+    expect(result.dynamicPreamble).not.toContain(
+      'Active model: {"provider":"config-provider","model":"claude-config-model"}',
+    );
   });
 
   it("falls back to config.model/config.provider when resolvedModelId/resolvedModelProvider absent", async () => {

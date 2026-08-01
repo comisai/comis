@@ -381,10 +381,10 @@ execution path**.
 
 The static learned-document validator blocks critical secret or poison patterns,
 but warning-level patterns, including some jailbreak-like language, can pass
-validation. A correction signal also does not guarantee demotion or durable
-behavior change. It must be enabled, attributed to a surfaced skill, clear the
-confidence and corroboration gates, and produce a weakening trend before the
-state changes.
+validation. An enabled correction signal from the explicitly trusted owner in
+`single_owner` mode immediately stales the prior turn's attributed skill.
+Corrections from other sources must clear the confidence and corroboration gates
+and produce a weakening trend before the state changes.
 The configuration lives in the
 [Memory configuration](/agents/memory-config#the-one-learning-reflection-engine)
 reference; this page describes the concept.

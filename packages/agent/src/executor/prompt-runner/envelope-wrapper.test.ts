@@ -37,14 +37,14 @@ const sourcePath = resolve(here, "envelope-wrapper.ts");
 const source = readFileSync(sourcePath, "utf-8");
 
 describe("envelope-wrapper.ts — capability-index threading", () => {
-  it("dynamic preamble uses array-concat [dynamicPreamble, keptCapabilityIndex, keptDeferred].filter(Boolean)", () => {
+  it("dynamic preamble keeps request tool guidance ahead of capability context", () => {
     // Source-grep: structural lock on the array-concat shape. Behavioral
     // verification of the rendered output lives in the renderer unit test
     // (capability-index-context.test.ts) and integration tests.
     // capability-index/deferred flow through the tight-window drop first
     // (kept* aliases); dynamicPreamble stays the first element (never dropped).
     expect(source).toMatch(
-      /\[\s*dynamicPreamble\s*,\s*keptCapabilityIndex\s*,\s*keptDeferred\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
+      /\[\s*dynamicPreamble\s*,\s*requestRelevantToolsContext\s*,\s*keptCapabilityIndex\s*,\s*keptDeferred\s*,?\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
     );
   });
 
@@ -101,6 +101,7 @@ function makeParams(overrides: {
   msgText?: string;
   /** Inject a dynamic preamble so emitPreambleDebug estimates over it. */
   dynamicPreamble?: string;
+  requestRelevantToolNames?: readonly string[];
 }): RunPromptParams {
   const {
     scaffoldLevel = "max",
@@ -162,6 +163,7 @@ function makeParams(overrides: {
     executionId: "exec-1",
     bridge: { getResult: () => ({}) } as RunPromptParams["bridge"],
     dynamicPreamble: overrides.dynamicPreamble,
+    requestRelevantToolNames: overrides.requestRelevantToolNames,
     deferredContext: undefined,
     capabilityIndexResult: { text: "", capabilityIndexTokens: 0, clusterCount: 0, activeToolCount: 0, deferredToolCount: 0, promptSkillCount: 0 },
     inlineMemory: undefined,
@@ -188,6 +190,19 @@ function makeParams(overrides: {
 }
 
 describe("GoalAnchor tail injection via wrapEnvelope", () => {
+  it("surfaces request-matched active tools beside the current request", () => {
+    const result = wrapEnvelope(makeParams({
+      msgText: "switch back to the model u had before",
+      requestRelevantToolNames: ["models_manage", "agents_manage"],
+    }));
+
+    expect(result.messageText).toContain("<request-relevant-tools>");
+    expect(result.messageText).toContain("models_manage, agents_manage");
+    expect(result.messageText.indexOf("<request-relevant-tools>")).toBeLessThan(
+      result.messageText.indexOf("switch back to the model u had before"),
+    );
+  });
+
   it("scaffoldLevel=max with active plan → goalAnchor appears at END of message", () => {
     const params = makeParams({
       scaffoldLevel: "max",

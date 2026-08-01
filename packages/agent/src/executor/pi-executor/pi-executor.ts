@@ -74,6 +74,7 @@ import {
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
+  type ContextStoreScope,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { ok, suppressError, type Result } from "@comis/shared";
@@ -104,7 +105,9 @@ import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.
 import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
 import {
   appendInboundMessageProvenance,
+  projectInboundConversation,
 } from "../../session/inbound-message-provenance.js";
+import { ingestProjectedConversationHistory } from "../../session/context-history-replacement.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
@@ -117,11 +120,17 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { appendExecutionResultJournal } from "../../session/execution-result-journal.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
-import { postExecution } from "../executor-post-execution.js";
+import {
+  postExecution,
+  shouldRunContextStorePasses,
+} from "../executor-post-execution.js";
 import { resolveLocale } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
-import { selectRecentUserTurns } from "../../rag/recall-conversation.js";
+import {
+  describeRecentUserTurnSelection,
+  selectRecentUserTurns,
+} from "../../rag/recall-conversation.js";
 import {
   getDeliveredGuides,
   setDeliveredGuides,
@@ -143,7 +152,7 @@ import { diagnoseUnresolvedModel } from "../model-resolution-hint.js";
 import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
-import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
+import { resolveEffectiveCap } from "../../context-engine/budget-capacity-cap.js";
 import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
 import { scriptTokenFactor } from "@comis/core";
 import { resolveProviderCapabilities } from "../../provider/capabilities.js";
@@ -155,6 +164,7 @@ import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
+import { applyMutationSerializer } from "../executor-tool-pipeline.js";
 import { OPERATION_TIMEOUT_DEFAULTS } from "../../model/operation-model-defaults.js";
 import type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "../types.js";
 import { randomUUID } from "node:crypto";
@@ -607,9 +617,10 @@ export function createPiExecutor(
       // large quantized ollama model as "mid" for context budget + security purposes).
 
       // Reconcile effective context window before resolveModelProfile.
-      // capabilityCap is derived from deps.providerCapabilities?.capabilityClass (pre-resolver,
-      // config-side value) — NOT from modelProfile.capabilityClass, which does not exist yet
-      // (resolveModelProfile is what creates it). Using modelProfile here would be circular.
+      // capabilityCap is derived from the explicit config-side capabilityClass
+      // before resolveModelProfile creates the model profile. The numeric cap
+      // comes from the same contextEngine.budget resolver used downstream so
+      // operator overrides and 0=uncapped cannot diverge across the two stages.
       // When no explicit capabilityClass is present (e.g. plain anthropic/openai
       // provider with no providers.entries block), treat the cap as Infinity (no constraint).
       // Only apply a class-derived cap when the operator explicitly set capabilityClass.
@@ -622,9 +633,13 @@ export function createPiExecutor(
       // resolveModelProfile override agree on the same class. Unset on both →
       // undefined → the provider-family heuristic (byte-identical).
       const explicitClass = config.capabilityClass ?? deps.providerCapabilities?.capabilityClass;
-      const capabilityCap = explicitClass != null
-        ? (DEFAULT_EFFECTIVE_CAP_BY_CLASS[explicitClass] ?? Infinity)
-        : Infinity;
+      const capabilityCapResolution = resolveEffectiveCap(
+        explicitClass ?? "frontier",
+        config.contextEngine?.budget?.effectiveContextCapSmall,
+        config.contextEngine?.budget?.effectiveContextCapNano,
+      );
+      const capabilityCap =
+        explicitClass != null ? capabilityCapResolution.cap : Infinity;
       // The probed served window binds ONLY
       // executions on the provider it was probed from. deps.servedContextWindow
       // is bound once at construction to the agent's PRIMARY provider, but
@@ -643,6 +658,10 @@ export function createPiExecutor(
         served: servedWindow,
         capabilityCap,
       });
+      const reconcileSource: WindowProvenance["reconcileSource"] =
+        effectiveContextWindowResult.source === "capability"
+          ? capabilityCapResolution.source
+          : effectiveContextWindowResult.source;
       // The window provenance is BORN here — the TRUE
       // configured window before resolveModelProfile below overwrites
       // profile.contextWindow with the reconciled value. Threaded along the
@@ -652,11 +671,11 @@ export function createPiExecutor(
       const windowProvenance: WindowProvenance = {
         configuredWindow: resolvedModel?.contextWindow ?? 8_192,
         ...(servedWindow !== undefined && { served: servedWindow }),
-        reconcileSource: effectiveContextWindowResult.source,
+        reconcileSource,
       };
       if (effectiveContextWindowResult.source !== "configured") {
         deps.logger.debug({
-          source: effectiveContextWindowResult.source,
+          source: reconcileSource,
           effectiveWindow: effectiveContextWindowResult.effectiveWindow,
           configured: resolvedModel?.contextWindow,
           served: servedWindow,
@@ -673,7 +692,7 @@ export function createPiExecutor(
         if (!getWindowReconcileLogged(reconcileLatchKey)) {
           setWindowReconcileLogged(reconcileLatchKey);
           deps.logger.info({
-            source: effectiveContextWindowResult.source,
+            source: reconcileSource,
             effectiveWindow: effectiveContextWindowResult.effectiveWindow,
             configured: resolvedModel?.contextWindow ?? 8_192,
             served: servedWindow,
@@ -1010,8 +1029,126 @@ async function runSessionLocked(
     }
   }
 
-  // Detect first message in session for BOOT.md injection
-  const sessionContext = sm.buildSessionContext();
+  // Detect first message in session for BOOT.md injection. The append-only SDK
+  // JSONL intentionally retains the exact model-facing prompt for forensics,
+  // including per-turn runtime preambles. Rebuild canonical conversation
+  // history from the structured physical-message records before any consumer
+  // sees it, so transient prompt context never becomes a durable user turn.
+  const historyProjectionStartedAt = deps.clock.now();
+  const historyProjection = projectInboundConversation(sm);
+  const sessionContext = historyProjection.ok
+    ? { messages: historyProjection.value.messages }
+    : sm.buildSessionContext();
+  if (!historyProjection.ok) {
+    deps.logger.warn(
+      {
+        agentId: deps.agentId,
+        step: "inbound-history-projection",
+        durationMs: Math.max(0, deps.clock.now() - historyProjectionStartedAt),
+        err: toSafeErrorLogString(historyProjection.error),
+        hint:
+          "Inspect the active SDK session branch and structured inbound-provenance "
+          + "entries; raw prompt history was retained because projection could not complete.",
+        errorKind: "resource" as const,
+      },
+      "Structured inbound conversation projection failed",
+    );
+  } else {
+    const diagnostics = historyProjection.value.diagnostics;
+    const degraded = diagnostics.invalidProvenanceEntries > 0
+      || diagnostics.incompleteProvenanceBatches > 0;
+    const fields = {
+      agentId: deps.agentId,
+      step: "inbound-history-projection",
+      durationMs: Math.max(0, deps.clock.now() - historyProjectionStartedAt),
+      ...diagnostics,
+    };
+    if (degraded) {
+      deps.logger.warn(
+        {
+          ...fields,
+          hint:
+            "Inspect malformed or incomplete comis.inbound-message-provenance entries; "
+            + "unpaired user turns remain unchanged and projection continues safely.",
+          errorKind: "validation" as const,
+        },
+        "Structured inbound conversation projection degraded",
+      );
+    } else if (
+      diagnostics.projectedUserMessages > 0
+      || diagnostics.omittedLocaleRepairTurns > 0
+    ) {
+      deps.logger.info(
+        fields,
+        "Structured inbound conversation history projected",
+      );
+    }
+  }
+
+  // The structured provenance projection is the canonical conversation
+  // history. Reconcile an LCD cursor that still names the former rendered
+  // prompt epoch BEFORE context assembly can read it. The helper replaces only
+  // an exact source-anchor match; an unrelated session rebase stays append-only.
+  if (historyProjection.ok && shouldRunContextStorePasses(config)) {
+    const projectedHistoryIngestStartedAt = deps.clock.now();
+    const projectedHistoryScope: ContextStoreScope = {
+      conversationRef: executionConversationRef.value,
+      tenantId: deps.tenantId,
+      agentId: deps.agentId,
+      sessionKey: formatSessionKey(sessionKey),
+    };
+    const projectedHistoryIngest = await ingestProjectedConversationHistory({
+      store: deps.contextStore,
+      scope: projectedHistoryScope,
+      sourceMessages: historyProjection.value.sourceMessages,
+      projectedMessages: historyProjection.value.messages,
+      now: deps.clock.now(),
+      logger: deps.logger,
+    });
+    const durationMs = Math.max(
+      0,
+      deps.clock.now() - projectedHistoryIngestStartedAt,
+    );
+    if (!projectedHistoryIngest.ok) {
+      deps.logger.warn(
+        {
+          agentId: deps.agentId,
+          sessionKey: projectedHistoryScope.sessionKey,
+          conversationRef: projectedHistoryScope.conversationRef,
+          step: "inbound-history-lcd-reconciliation",
+          durationMs,
+          failureKind: projectedHistoryIngest.error.message,
+          hint:
+            "Inspect LCD storage health and the structured inbound-provenance "
+            + "projection; canonical history could not be reconciled before assembly.",
+          errorKind: projectedHistoryIngest.error.errorKind,
+        },
+        "Projected conversation LCD reconciliation failed",
+      );
+      deps.eventBus.emit("context:dag_degraded", {
+        conversationId: projectedHistoryScope.conversationRef,
+        agentId: projectedHistoryScope.agentId,
+        sessionKey: projectedHistoryScope.sessionKey,
+        reason: "live_store_divergence",
+        durationMs,
+        timestamp: deps.clock.now(),
+        traceId: tryGetContext()?.traceId,
+      });
+    } else if (projectedHistoryIngest.value.mode === "replaced_dirty_epoch") {
+      deps.logger.info(
+        {
+          agentId: deps.agentId,
+          sessionKey: projectedHistoryScope.sessionKey,
+          conversationRef: projectedHistoryScope.conversationRef,
+          step: "inbound-history-lcd-reconciliation",
+          durationMs,
+          deletedMessages: projectedHistoryIngest.value.deletedMessages,
+          retainedMessages: historyProjection.value.messages.length,
+        },
+        "Replaced rendered-prompt LCD epoch with canonical conversation history",
+      );
+    }
+  }
 
   // Diagnostic assertion — classify any consecutive same-role adjacency in the
   // assembled context by whether the RAW tree still carries it after repair: a
@@ -1025,7 +1162,12 @@ async function runSessionLocked(
   );
 
   const isFirstMessageInSession = sessionContext.messages.length === 0;
-  const recentUserTurns = selectRecentUserTurns(sessionContext.messages);
+  const recentUserTurns = selectRecentUserTurns(
+    sessionContext.messages,
+    sm.getEntries?.() ?? [],
+    msg.id,
+  );
+  const requestRelevanceHistory = describeRecentUserTurnSelection(recentUserTurns);
 
   // Get or create session-scoped guide delivery tracking.
   // Clear on session reset (isFirstMessageInSession) so guides re-inject.
@@ -1226,6 +1368,7 @@ async function runSessionLocked(
     deferralResult, deferredContext, capabilityIndexResult,
     capabilityClass, budgetWindowTokens, discoveryTracker, settingsManager,
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
+    operatorPolicyToolProjections,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
   const {
@@ -1387,6 +1530,9 @@ async function runSessionLocked(
     return result;
   }
   const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
+  if (historyProjection.ok) {
+    session.agent.state.messages = sessionContext.messages;
+  }
   const executionSignal = executionOverrides?.signal;
   const onExternalAbort = (): void => {
     settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
@@ -1774,6 +1920,11 @@ async function runSessionLocked(
       messageSendLimiter,
       turnLoopDetector,
       failedToolRedirects,
+      msg.text,
+      new Set([
+        ...deps.modelRegistry.getAll().map((model) => model.provider.toLowerCase()),
+        ...[...(deps.providerAliases?.keys() ?? [])].map((provider) => provider.toLowerCase()),
+      ]),
     );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
@@ -1928,6 +2079,7 @@ async function runSessionLocked(
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
     // The selected executor owns the agent authority used by both LCD reads and writes.
     agentId: deps.agentId,
+    workspacePolicySnapshot,
     msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
@@ -2518,9 +2670,14 @@ async function runSessionLocked(
     ) {
       // Inject parent discovery state into sessions_spawn params
       // so sub-agent-runner can persist it in session metadata.
-      if (tool.name === "sessions_spawn" && discoveryTracker.getDiscoveredNames().size > 0) {
+      if (tool.name === "sessions_spawn") {
         const paramsObj = typeof params === "object" && params !== null ? params as Record<string, unknown> : {};
-        paramsObj.discoveredDeferredTools = discoveryTracker.serialize();
+        // The model schema does not expose this key. Always remove any supplied
+        // value before projecting the executor-owned tracker into RPC metadata.
+        delete paramsObj._discoveredDeferredTools;
+        if (discoveryTracker.getDiscoveredNames().size > 0) {
+          paramsObj._discoveredDeferredTools = discoveryTracker.serialize();
+        }
         params = paramsObj;
       }
 
@@ -2590,6 +2747,12 @@ async function runSessionLocked(
     }
   }
 
+  // Serialize mutations outside the runtime wrappers. A queued mutation must
+  // acquire the mutex before its auto-background and hard-timeout clocks begin;
+  // otherwise parallel approval-bearing calls consume their execution budget
+  // while merely waiting behind the first mutation.
+  applyMutationSerializer(mergedCustomTools, deps.logger);
+
   // Prompt execution: envelope, preamble, images, budget, retry, escalation, recovery
   // Extracted to prompt-runner/.
   try {
@@ -2605,7 +2768,17 @@ async function runSessionLocked(
       const promptRunResult = await runPrompt({
         msg: dispatchMessage, session, config, sessionKey, formattedKey, agentId, result,
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
-        bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
+        bridge, dynamicPreamble, responseLocalePolicy,
+        requestRelevantToolNames: deferralResult.requestRelevantToolNames,
+        requestRelevantPromptSkillNames: deferralResult.requestRelevantPromptSkillNames,
+        requestRelevantPromptSkillLocations: deferralResult.requestRelevantPromptSkillLocations,
+        requestRelevantPromptSkillWorkflowToolNames:
+          deferralResult.requestRelevantPromptSkillWorkflowToolNames,
+        requestRelevantPromptSkillWorkflowContext:
+          deferralResult.requestRelevantPromptSkillWorkflowContext,
+        requestRelevanceHistory,
+        operatorPolicyToolProjections,
+        deferredContext, capabilityIndexResult, inlineMemory,
         unavailablePromptSkills,
         systemPrompt: effectiveSystemPrompt,
         mergedCustomTools,
@@ -2683,6 +2856,7 @@ async function runSessionLocked(
       // back into postExecution, which emits the memory:skill_used write-back.
       usedSkillIds: [...bridge.getUsedSkillIds()],
       responseLocalePolicy,
+      senderTrust: tryGetContext()?.trustLevel ?? "guest",
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,
@@ -2690,6 +2864,7 @@ async function runSessionLocked(
       executionPlanRef, isOnboarding,
       geminiCacheHit, geminiCachedTokens, capabilityClass, budgetWindowTokens,
       provider: resolvedModel?.provider ?? config.provider,
+      modelId: resolvedModel?.id ?? config.model,
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,
       deps: {
@@ -2706,6 +2881,7 @@ async function runSessionLocked(
         // afterTurn leaf pass fires live over threshold (gated additionally on
         // deps.contextStore inside postExecution); absent ⇒ the pass is gated off.
         getSummarizerDeps: ceSetup?.getSummarizerDeps,
+        getFlushSummarizerDeps: ceSetup?.getFlushSummarizerDeps,
         activeRunRegistry: deps.activeRunRegistry,
         embeddingEnqueue: deps.embeddingEnqueue,
         // The post-execution / context-engine workspace root is the run's

@@ -33,6 +33,7 @@ import {
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
 import { err, fromPromise, tryCatch } from "@comis/shared";
+import { withConfigMutationFence } from "../../api/shared/persist-to-config.js";
 
 /** Closure-captured deps for building and starting the ChannelManager. */
 // @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The split mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte.
@@ -164,6 +165,7 @@ export async function buildAndStartChannelManager(
       eventBus: container.eventBus,
       config: deps.queueConfig,
       logger: channelsLogger,
+      runInExecutionScope: withConfigMutationFence,
     });
     channelsLogger.info({ mode: deps.queueConfig.defaultMode }, "Command queue enabled");
   }

@@ -19,8 +19,8 @@
 
 import {
   ContextEngineConfigSchema,
-  safePath,
   type PerAgentConfig,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { createContextEngine, type ContextEngine } from "../context-engine/index.js";
@@ -54,7 +54,7 @@ import {
 } from "./executor-session-state.js";
 import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
 import type { ErrorKind } from "@comis/core";
-import { readFileSync } from "node:fs";
+import { workspacePolicyContent } from "./prompt-assembly-shared.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,6 +119,9 @@ export interface ContextEngineSetupParams {
   tenantId: string;
   /** Agent authority bound to the selected executor instance. */
   agentId: string;
+  /** Immutable operator policy captured at turn preparation. Rehydration reads
+   * this exact snapshot instead of rereading mutable workspace files. */
+  workspacePolicySnapshot: WorkspacePolicySnapshot;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
   session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
@@ -186,6 +189,11 @@ export interface ContextEngineSetupResult {
    *  path passes a snapshot captured BEFORE `session.dispose()` so a detached pass
    *  never re-reads a torn-down session. */
   getSummarizerDeps: (modelSnapshot?: CompactionModelSnapshot) => LeafSummarizerDeps;
+  /** Summarizer selected for the session-policy memory flush. An explicit,
+   *  unresolvable `session.compaction.flushModel` fails closed. */
+  getFlushSummarizerDeps: (
+    modelSnapshot?: CompactionModelSnapshot,
+  ) => LeafSummarizerDeps | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,20 +360,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   let signatureScrubs = 0;
   let signatureScrubsToolCallsAffected = 0;
 
-  // Shared compaction-model resolution (getModel / getApiKey / overrideModel) —
-  // the SINGLE source for both the pipeline `getCompactionDeps` (Layer 8) and the
-  // leaf `getSummarizerDeps`. Both compaction surfaces resolve the
-  // SAME 5-level operation-model chain + route getApiKey through resolveProviderApiKey
-  // (no duplicate resolver). Returns the
-  // getters + the optional override model+key.
   const resolveCompactionModelChain = (
-    // When present, the chain uses this CAPTURED model snapshot verbatim
-    // instead of reading `session.agent.state.model`. The deferred compaction
-    // path captures it at the afterTurn boundary (before session.dispose()) so a
-    // detached pass — which resolves the chain when it RUNS, possibly post-dispose
-    // — never touches a torn-down session. Absent ⇒ the live per-call read (honors
-    // mid-session model cycling for the inline path).
     modelSnapshot?: CompactionModelSnapshot,
+    forcedOverride?: NonNullable<LeafSummarizerDeps["overrideModel"]>,
   ): {
     getModel: () => CompactionModelSnapshot;
     getRealModel: () => unknown;
@@ -411,9 +408,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     ...(windowProvenance?.served !== undefined && {
       primaryServedWindow: windowProvenance.served,
     }),
-    // Resolve compaction model via the 5-level priority chain; only set
-    // overrideModel when the resolver picked a non-primary model.
-    ...(() => {
+    ...(forcedOverride !== undefined ? { overrideModel: forcedOverride } : (() => {
       const compactionResolution = resolveOperationModel({
         operationType: "compaction",
         agentProvider: config.provider,
@@ -462,22 +457,14 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         }
       }
       return {};
-    })(),
+    })()),
   });
 
-  // The leaf-summarizer deps getter: the shared model chain + the
-  // production summarizer seam (buildLeafSummarizeFn wraps the SDK generateSummary,
-  // gated by the spend breaker below) + the injected logger. The
-  // afterTurn trigger (executor-post-execution.ts → runLeafPassAfterTurn) calls
-  // this; when wired the leaf pass fires live over threshold. Resolved fresh per
-  // call so model cycling mid-session is honored (same as getCompactionDeps).
-  //
-  // A `modelSnapshot` (when supplied by the DEFERRED compaction path)
-  // flows into the chain so BOTH `getModel` AND the `buildLeafSummarizeFn`-internal
-  // model read use the captured value — a deferred pass resolving this AFTER
-  // `session.dispose()` then never reads `session.agent.state`.
-  const getSummarizerDeps = (modelSnapshot?: CompactionModelSnapshot): LeafSummarizerDeps => {
-    const chain = resolveCompactionModelChain(modelSnapshot);
+  const buildSummarizerDeps = (
+    modelSnapshot?: CompactionModelSnapshot,
+    forcedOverride?: NonNullable<LeafSummarizerDeps["overrideModel"]>,
+  ): LeafSummarizerDeps => {
+    const chain = resolveCompactionModelChain(modelSnapshot, forcedOverride);
     const inner = buildLeafSummarizeFn(chain);
     // Wrap the primary summarizer with the ordered failover list before the
     // spend-breaker. The failover list tries each provider in sequence; only when ALL
@@ -546,6 +533,64 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       overrideModel: chain.overrideModel,
       primaryServedWindow: chain.primaryServedWindow,
     };
+  };
+
+  const getSummarizerDeps = (
+    modelSnapshot?: CompactionModelSnapshot,
+  ): LeafSummarizerDeps => buildSummarizerDeps(modelSnapshot);
+
+  const getFlushSummarizerDeps = (
+    modelSnapshot?: CompactionModelSnapshot,
+  ): LeafSummarizerDeps | undefined => {
+    const configured = config.session?.compaction?.flushModel;
+    if (configured === undefined) return getSummarizerDeps(modelSnapshot);
+    const requested = configured.trim();
+    const resolution = requested.length > 0
+      ? resolveOperationModel({
+          operationType: "compaction",
+          agentProvider: config.provider,
+          agentModel: config.model,
+          operationModels: config.operationModels ?? {},
+          providerFamily: resolveProviderFamily(config.provider),
+          invocationOverride: requested,
+          agentPromptTimeoutMs: config.promptTimeout?.promptTimeoutMs,
+        })
+      : undefined;
+    let model: unknown;
+    if (resolution !== undefined) {
+      try {
+        model = deps.modelRegistry.find(resolution.provider, resolution.modelId);
+      } catch {
+        model = undefined;
+      }
+    }
+    if (resolution === undefined || model === undefined) {
+      deps.logger.warn(
+        {
+          field: "agents.<name>.session.compaction.flushModel",
+          configuredModel: requested,
+          hint: "Register the configured provider and model, or remove agents.<name>.session.compaction.flushModel to use the normal compaction model",
+          errorKind: "config" as const,
+        },
+        "Session compaction flush model is unavailable",
+      );
+      return undefined;
+    }
+    const servedWindow =
+      deps.servedContextWindow?.providerKey === resolution.provider
+        ? deps.servedContextWindow.window
+        : undefined;
+    return buildSummarizerDeps(modelSnapshot, {
+      model,
+      getApiKey: async () =>
+        resolveProviderApiKey(resolution.provider, {
+          authStorage: deps.authStorage,
+          oauthManager: deps.oauthManager,
+          agentConfig: config,
+          configuredApiKeyName: deps.getProviderApiKeyName?.(resolution.provider),
+        }),
+      ...(servedWindow !== undefined && { servedWindow }),
+    });
   };
 
   const contextEngine = createContextEngine(contextEngineConfig, {
@@ -622,16 +667,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // Rehydration deps
     getRehydrationDeps: () => ({
       logger: deps.logger,
-      getAgentsMdContent: () => {
-        // Read AGENTS.md from workspace dir synchronously.
-        // Only called after compaction (rare event), so disk read is acceptable.
-        try {
-          const agentsPath = safePath(deps.workspaceDir, "AGENTS.md");
-          return readFileSync(agentsPath, "utf-8"); // eslint-disable-line security/detect-non-literal-fs-filename
-        } catch {
-          return "";
-        }
-      },
+      getAgentsMdContent: () =>
+        workspacePolicyContent(params.workspacePolicySnapshot, "AGENTS.md") ?? "",
       postCompactionSections: config.session?.compaction?.postCompactionSections ?? ["Session Startup", "Red Lines"],
       getRecentFiles: () => {
         // Extract recently-accessed files from session file entries.
@@ -788,5 +825,6 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     // thread it into postExecution's deps.getSummarizerDeps — wiring the
     // afterTurn leaf pass live.
     getSummarizerDeps,
+    getFlushSummarizerDeps,
   };
 }

@@ -51,6 +51,9 @@ describe("models_manage tool", () => {
     const tool = createModelsManageTool(mockRpcCall);
     expect(tool.name).toBe("models_manage");
     expect(tool.label).toBe("Model Management");
+    expect(tool.description).toContain("catalog");
+    expect(tool.description).toContain("does not identify or change the active model");
+    expect(tool.description).toContain("session_status");
   });
 
   // -----------------------------------------------------------------------
@@ -126,6 +129,11 @@ describe("models_manage tool", () => {
           { name: "openai", modelCount: 1 },
         ],
         totalModels: 3,
+        catalogOnly: true,
+        mutationPerformed: false,
+        catalogNotice:
+          "This is an availability catalog only. It does not identify or change the active model. " +
+          "Use session_status to inspect the active model; use agents_manage update with an exact provider/model pair to change it.",
         hint: "Use provider filter for full model details: models_manage list provider=<name>",
       });
     });
@@ -144,7 +152,14 @@ describe("models_manage tool", () => {
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("models.list", { provider: "anthropic", _trustLevel: "admin" });
-      expect(result.details).toEqual(rpcResult);
+      expect(result.details).toEqual({
+        ...rpcResult,
+        catalogOnly: true,
+        mutationPerformed: false,
+        catalogNotice:
+          "This is an availability catalog only. It does not identify or change the active model. " +
+          "Use session_status to inspect the active model; use agents_manage update with an exact provider/model pair to change it.",
+      });
     });
   });
 

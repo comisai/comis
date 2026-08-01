@@ -42,6 +42,21 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     expect(parsed.cacheBreaks).toBeUndefined();
   });
 
+  it("retains a content-free successful no-op tool count", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      toolStats: {
+        agents_manage: {
+          ok: 1,
+          failed: 0,
+          noOp: 1,
+        },
+      },
+    });
+
+    expect(parsed.toolStats.agents_manage?.noOp).toBe(1);
+  });
+
   it("retains the content-free response locale decision", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
@@ -119,6 +134,34 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     ).toBe("credential_invalid");
   });
 
+  it("retains content-free operator-policy tool projection evidence", () => {
+    const projection = [{
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: 318,
+    }];
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      operatorPolicyToolProjections: projection,
+    });
+
+    expect(parsed.operatorPolicyToolProjections).toEqual(projection);
+  });
+
+  it("retains content-free request relevance history saturation evidence", () => {
+    const evidence = { turnCount: 8, charCount: 147, saturated: true };
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      requestRelevanceHistory: evidence,
+    });
+
+    expect(
+      (parsed as unknown as { requestRelevanceHistory?: typeof evidence })
+        .requestRelevanceHistory,
+    ).toEqual(evidence);
+  });
+
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
@@ -189,6 +232,20 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
       toolResultsReturned: 2,
       truncated: false,
     });
+  });
+
+  it("retains content-free pre-session execution diagnostic coverage", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      coverage: {
+        trajectory: { found: false, records: 0 },
+        rollup: { present: false },
+        offloads: { pointersResolved: 0, pointersTotal: 0 },
+        executionDiagnostic: { found: true },
+      },
+    });
+
+    expect(parsed.coverage?.executionDiagnostic).toEqual({ found: true });
   });
 
   it("accepts a cacheBreaks section ([{reason,count,estCostUsd}]); schemaVersion stays 1", () => {

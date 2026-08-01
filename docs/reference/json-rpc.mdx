@@ -4027,7 +4027,7 @@ Sub-agent lifecycle management and process-lifetime spawn admission control. `su
 |--------|-------|-------------|
 | `subagent.list` | `rpc`, `admin` | List recent owner-scoped or admin-selected runs |
 | `subagent.wait` | `rpc`, `admin` | Wait for bounded completion outcomes without polling |
-| `subagent.kill` | `rpc`, `admin` | Kill an owned or admin-selected running sub-agent |
+| `subagent.kill` | `rpc`, `admin` | Kill an owned or admin-selected run, or the caller's trusted current spawn tree |
 | `subagent.steer` | `rpc`, `admin` | Inject into a live child or kill and respawn it, depending on configuration |
 | `subagent.pause` | `admin` | Pause admission of new sub-agent spawns for this daemon process |
 | `subagent.resume` | `admin` | Resume admission of new sub-agent spawns |
@@ -4118,10 +4118,10 @@ Each `results` entry includes its `runId`; its `status` is `completed`, `denied_
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc`, `admin` |
-| **Parameters** | `{ target: string }` -- `target` is the sub-agent `runId` |
-| **Returns** | `{ killed: true, runId: string }` |
+| **Parameters** | `{ target: string }` -- `target` is the sub-agent `runId`; an agent caller may use the reserved target `tree` for its trusted current spawn tree |
+| **Returns** | `{ killed: boolean, runId: string, count: number }` |
 
-Agent callers may kill only an owned direct child. Admin callers may target any run. On success, `killed` is `true` and `runId` repeats the target. A missing, unknown, or non-running target fails the RPC; it does not return `{ killed: false }`.
+Agent callers may kill an owned direct child. The reserved target `tree` hard-stops every running or queued descendant in the caller's trusted current spawn tree, revokes its leases, and reports the exact `count`; it never accepts a caller-supplied root identifier. Admin callers may target any individual run and use `run.kill` with an explicit root. An individual missing, unknown, or non-running target fails the RPC. A tree with nothing left to stop returns `killed` as false and `count` as 0.
 
 <CodeGroup>
 ```json Request
@@ -4135,7 +4135,7 @@ Agent callers may kill only an owned direct child. Admin callers may target any 
 ```json Response
 {
   "jsonrpc": "2.0",
-  "result": { "killed": true, "runId": "run_abc" },
+  "result": { "killed": true, "runId": "run_abc", "count": 1 },
   "id": 1
 }
 ```

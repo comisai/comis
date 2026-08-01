@@ -878,6 +878,115 @@ describe("agents_manage tool", () => {
         expect.objectContaining({ agentId: "bot-1", updated: true }),
       );
     });
+
+    it("returns a bounded completion contract after a model binding update", async () => {
+      const rpcReturn = {
+        agentId: "bot-1",
+        config: {
+          provider: "provider_b",
+          model: "model_two",
+          unrelatedSettings: "large-setting-value".repeat(1_000),
+        },
+        toolReference: "unrelated-management-reference".repeat(1_000),
+        updated: true,
+      };
+      mockRpcCall.mockResolvedValue(rpcReturn);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-bounded", {
+          action: "update",
+          agent_id: "bot-1",
+          config: { provider: "provider_b", model: "model_two" },
+        } as never),
+      );
+      const text = result.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+
+      expect(text.length).toBeLessThan(500);
+      expect(text).toContain("provider_b");
+      expect(text).toContain("model_two");
+      expect(text).toMatch(/complete/i);
+      expect(text).not.toContain("unrelated-management-reference");
+      expect(result.details).toEqual(rpcReturn);
+    });
+
+    it("returns an honest bounded contract when the requested binding is unchanged", async () => {
+      const rpcReturn = {
+        agentId: "bot-1",
+        config: { provider: "provider_b", model: "model_two" },
+        updated: false,
+        changed: false,
+        dryRun: false,
+      };
+      mockRpcCall.mockResolvedValue(rpcReturn);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-noop", {
+          action: "update",
+          agent_id: "bot-1",
+          config: { provider: "provider_b", model: "model_two" },
+        } as never),
+      );
+      const text = result.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+
+      expect(text.length).toBeLessThan(500);
+      expect(text).toContain("provider_b");
+      expect(text).toContain("model_two");
+      expect(text).toMatch(/no configuration change/i);
+      expect(text).toMatch(/already uses/i);
+      expect(text).not.toMatch(/update complete/i);
+      expect(result.details).toEqual(rpcReturn);
+    });
+
+    it.each([
+      ["model-only", { model: "model_two" }],
+      ["provider-only", { provider: "provider_b" }],
+    ])("rejects a %s model binding patch before mutation", async (_label, config) => {
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-u-pair", {
+            action: "update",
+            agent_id: "bot-1",
+            config,
+          } as never),
+        ),
+      ).rejects.toThrow(
+        /\[invalid_value\].*config\.provider and config\.model.*together.*Previous active model.*active binding/,
+      );
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("accepts an exact provider and model pair for an update", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "bot-1",
+        config: { provider: "provider_b", model: "model_two" },
+        updated: true,
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-exact-pair", {
+          action: "update",
+          agent_id: "bot-1",
+          config: { provider: "provider_b", model: "model_two" },
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.update", {
+        agentId: "bot-1",
+        config: { provider: "provider_b", model: "model_two" },
+        _trustLevel: "admin",
+      });
+    });
   });
 
   // -----------------------------------------------------------------------

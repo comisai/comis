@@ -24,7 +24,8 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { createGatewayTool, confirmationRequiredHint } from "./gateway-tool.js";
-import type { ComisLogger } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
+import type { ApprovalGate, ComisLogger, RequestContext } from "@comis/core";
 
 /**
  * Build a Pino-shaped mock logger compatible with `ComisLogger`. The gateway
@@ -111,6 +112,50 @@ function createMockRpcCall() {
     }
     return { stub: true, method, params };
   });
+}
+
+function makeContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    agentId: "test-agent",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: "test-agent",
+        partition: { kind: "agent" },
+      },
+      principal: { principalId: "test-user" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+    },
+    traceId: crypto.randomUUID(),
+    startedAt: 0,
+    trustLevel: "admin",
+    channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
+  };
+}
+
+function createApprovedApprovalGate(): ApprovalGate {
+  return {
+    requestApproval: vi.fn(async () => ({
+      requestId: crypto.randomUUID(),
+      approved: true,
+      approvedBy: "operator",
+      resolvedAt: 1,
+    })),
+  } as unknown as ApprovalGate;
 }
 
 describe("gateway tool", () => {
@@ -554,45 +599,213 @@ describe("gateway tool", () => {
   });
 
   describe("env_set action", () => {
-    it("requires confirmation when not confirmed", async () => {
+    it("refuses to replace an existing secret without an explicit overwrite request", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall, mockLogger);
+      const approvalGate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
 
-      const result = await tool.execute("call-e1", {
-        action: "env_set" as "read",
-        env_key: "MY_KEY",
-        env_value: "secret-val",
-      } as any);
+      await expect(
+        runWithContext(makeContext(), () =>
+          tool.execute("call-existing-secret", {
+            action: "env_set" as "read",
+            env_key: "OPENAI_API_KEY",
+            env_value: "replacement-test-value",
+          } as any),
+        ),
+      ).rejects.toThrow(/already exists/i);
 
-      // env.set is classified as "destructive" so the gate fires
-      const details = result.details as Record<string, unknown>;
-      expect(details.requiresConfirmation).toBe(true);
-      expect(details.actionType).toBe("env.set");
-      expect(details.hint).toContain("MY_KEY");
-      expect(details.hint).toContain("_confirmed");
+      expect(rpcCall).toHaveBeenCalledWith("env.list", expect.objectContaining({
+        filter: "OPENAI_API_KEY",
+        _trustLevel: "admin",
+      }));
+      expect(approvalGate.requestApproval).not.toHaveBeenCalled();
       expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
-    it("delegates to env.set RPC when confirmed", async () => {
+    it("requires central approval for an explicit existing-secret overwrite", async () => {
+      const rpcCall = createMockRpcCall();
+      const approvalGate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      await runWithContext(makeContext(), () =>
+        tool.execute("call-approved-overwrite", {
+          action: "env_set" as "read",
+          env_key: "OPENAI_API_KEY",
+          env_value: "replacement-test-value",
+          overwrite: true,
+        } as any),
+      );
+
+      expect(approvalGate.requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+        action: "env.set",
+        params: {
+          action: "env_set",
+          env_key: "OPENAI_API_KEY",
+          overwrite: true,
+        },
+        fingerprintParams: expect.objectContaining({
+          action: "env_set",
+          env_key: "OPENAI_API_KEY",
+          env_value: "replacement-test-value",
+          overwrite: true,
+        }),
+      }));
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
+        key: "OPENAI_API_KEY",
+        value: "replacement-test-value",
+      }));
+    });
+
+    it("repairs a secret-shaped config patch without bypassing central approval", async () => {
+      const rpcCall = createMockRpcCall();
+      const approvalGate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      const result = await runWithContext(makeContext(), () =>
+        tool.execute("call-secret-patch", {
+          action: "patch",
+          section: "secrets",
+          key: "MY_KEY",
+          value: "private-test-value",
+          _confirmed: true,
+        }),
+      );
+
+      expect(approvalGate.requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: "gateway",
+        action: "env.set",
+        params: { action: "env_set", env_key: "MY_KEY" },
+        fingerprintParams: expect.objectContaining({
+          action: "env_set",
+          env_key: "MY_KEY",
+          env_value: "private-test-value",
+        }),
+      }));
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
+        key: "MY_KEY",
+        value: "private-test-value",
+      }));
+      expect(rpcCall).not.toHaveBeenCalledWith("config.patch", expect.anything());
+      expect(result.details).toEqual(expect.objectContaining({ set: true, key: "MY_KEY" }));
+    });
+
+    it("pauses the original secret write until central approval resolves", async () => {
+      const rpcCall = createMockRpcCall();
+      let resolveApproval:
+        | ((resolution: {
+            requestId: string;
+            approved: boolean;
+            approvedBy: string;
+            resolvedAt: number;
+          }) => void)
+        | undefined;
+      const requestApproval = vi.fn(() => new Promise((resolve) => {
+        resolveApproval = resolve;
+      }));
+      const approvalGate = { requestApproval } as unknown as ApprovalGate;
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      const execution = runWithContext(makeContext(), () =>
+        tool.execute("call-central-approval", {
+          action: "env_set" as "read",
+          env_key: "MY_KEY",
+          env_value: "private-test-value",
+        } as any),
+      );
+
+      await vi.waitFor(() => expect(requestApproval).toHaveBeenCalledOnce());
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+      const approval = requestApproval.mock.calls[0]![0] as {
+        params: Record<string, unknown>;
+        fingerprintParams: Record<string, unknown>;
+      };
+      expect(approval.params).toEqual({ action: "env_set", env_key: "MY_KEY" });
+      expect(JSON.stringify(approval.params)).not.toContain("private-test-value");
+      expect(approval.fingerprintParams).toMatchObject({
+        action: "env_set",
+        env_key: "MY_KEY",
+        env_value: "private-test-value",
+      });
+
+      resolveApproval?.({
+        requestId: crypto.randomUUID(),
+        approved: true,
+        approvedBy: "operator",
+        resolvedAt: 1,
+      });
+      const result = await execution;
+
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
+        key: "MY_KEY",
+        value: "private-test-value",
+        _trustLevel: "admin",
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        set: true,
+        key: "MY_KEY",
+      }));
+    });
+
+    it("fails closed when the central approval gate is unavailable", async () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
-      const result = await tool.execute("call-e2", {
-        action: "env_set" as "read",
-        env_key: "MY_KEY",
-        env_value: "secret-val",
-        _confirmed: true,
-      } as any);
+      await expect(
+        tool.execute("call-e1", {
+          action: "env_set" as "read",
+          env_key: "MY_KEY",
+          env_value: "secret-val",
+        } as any),
+      ).rejects.toThrow(/central approval service/);
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+
+    it("delegates to env.set RPC after central approval", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger, createApprovedApprovalGate());
+
+      const result = await runWithContext(makeContext(), () =>
+        tool.execute("call-e2", {
+          action: "env_set" as "read",
+          env_key: "MY_KEY",
+          env_value: "secret-val",
+        } as any),
+      );
 
       expect(rpcCall).toHaveBeenCalledWith("env.set", expect.objectContaining({
         key: "MY_KEY",
         value: "secret-val",
-        _trustLevel: "guest",
+        _trustLevel: "admin",
       }));
       const details = result.details as Record<string, unknown>;
       expect(details.set).toBe(true);
       expect(details.key).toBe("MY_KEY");
       expect(details.storage).toBe("encrypted");
+    });
+
+    it("does not write the secret when central approval is denied", async () => {
+      const rpcCall = createMockRpcCall();
+      const approvalGate = {
+        requestApproval: vi.fn(async () => ({
+          requestId: crypto.randomUUID(),
+          approved: false,
+          approvedBy: "operator",
+          reason: "operator denied",
+          resolvedAt: 1,
+        })),
+      } as unknown as ApprovalGate;
+      const tool = createGatewayTool(rpcCall, mockLogger, approvalGate);
+
+      await expect(
+        runWithContext(makeContext(), () =>
+          tool.execute("call-denied", {
+            action: "env_set" as "read",
+            env_key: "MY_KEY",
+            env_value: "secret-val",
+          } as any),
+        ),
+      ).rejects.toThrow(/not approved/);
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
     it("strips value from result even if RPC returns it", async () => {
@@ -605,16 +818,20 @@ describe("gateway tool", () => {
             secretsStoreAvailable: true,
           };
         }
+        if (method === "env.list") {
+          return { secrets: [], total: 0, truncated: false };
+        }
         return { set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret" };
       });
-      const tool = createGatewayTool(rpcCall, mockLogger);
+      const tool = createGatewayTool(rpcCall, mockLogger, createApprovedApprovalGate());
 
-      const result = await tool.execute("call-e3", {
-        action: "env_set" as "read",
-        env_key: "MY_KEY",
-        env_value: "secret-val",
-        _confirmed: true,
-      } as any);
+      const result = await runWithContext(makeContext(), () =>
+        tool.execute("call-e3", {
+          action: "env_set" as "read",
+          env_key: "MY_KEY",
+          env_value: "secret-val",
+        } as any),
+      );
 
       const details = result.details as Record<string, unknown>;
       // value should be stripped (set to undefined)
@@ -637,7 +854,7 @@ describe("gateway tool", () => {
       ).rejects.toThrow(/Missing required parameter: env_key/);
     });
 
-    it("returns a structured error when env_value is missing (names the confirm-by-id path)", async () => {
+    it("returns a structured error when env_value is missing", async () => {
       const rpcCall = vi.fn(async (method: string) =>
         method === "gateway.status"
           ? { pid: 1, uptime: 1, memoryUsage: 1, nodeVersion: "v22", configPaths: [], sections: [], secretsStoreAvailable: true }
@@ -649,8 +866,8 @@ describe("gateway tool", () => {
       } as any);
       const details = result.details as Record<string, unknown>;
       expect(details.error).toBe("missing_env_value");
-      // …and teaches the confirm-by-id path instead of demanding a re-send.
-      expect(String(details.hint)).toContain("pending_action_id");
+      expect(String(details.hint)).toContain("single approval-gated call");
+      expect(String(details.hint)).not.toContain("_confirmed");
     });
 
     it("rejects literal [REDACTED] placeholder without calling env.set", async () => {
@@ -1060,6 +1277,9 @@ describe("gateway tool", () => {
       if (method === "env.set") {
         return { set: true, key: params.key, storage: "encrypted", restarting: true };
       }
+      if (method === "env.list") {
+        return { secrets: [], total: 0, truncated: false };
+      }
       return { stub: true, method, params };
     });
   }
@@ -1081,6 +1301,9 @@ describe("gateway tool", () => {
       }
       if (method === "env.set") {
         return { set: true, key: params.key, storage: "encrypted", restarting: true };
+      }
+      if (method === "env.list") {
+        return { secrets: [], total: 0, truncated: false };
       }
       return { stub: true, method, params };
     });
@@ -1191,33 +1414,26 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
-    // When gateway.status returns the REAL contract shape with secretsStoreAvailable=true,
-    // the preflight MUST allow the call through.
-    // Reads secretsStoreAvailable=true → passes through to confirmation gate.
     it("allows env_set through when real gateway.status field secretsStoreAvailable=true", async () => {
       const rpcCall = createAvailableStoreMockRpcCall();
-      const tool = createGatewayTool(rpcCall, mockLogger);
+      const gate = createApprovedApprovalGate();
+      const tool = createGatewayTool(rpcCall, mockLogger, gate);
 
-      // First call (without _confirmed) must NOT get secrets_store_unavailable.
-      // It should reach the confirmation gate and return requiresConfirmation.
-      const result = await tool.execute("call-store-03", {
-        action: "env_set" as "read",
-        env_key: "MY_SECRET",
-        env_value: "secret-value-here",
-      } as any);
+      const result = await runWithContext(makeContext(), () =>
+        tool.execute("call-store-03", {
+          action: "env_set" as "read",
+          env_key: "MY_SECRET",
+          env_value: "secret-value-here",
+        } as any),
+      );
 
       const details = result.details as Record<string, unknown>;
-      // Reaches confirmation gate → requiresConfirmation: true
       expect(details.error).toBeUndefined();
-      expect(details.requiresConfirmation).toBe(true);
-      // env.set must not have been called (first pass is confirmation gate)
-      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+      expect(gate.requestApproval).toHaveBeenCalledOnce();
+      expect(rpcCall).toHaveBeenCalledWith("env.set", expect.anything());
     });
 
-    // If gateway.status throws (e.g. non-admin caller), preflight must NOT
-    // make env_set unusable — it must fall through to the downstream handler guard
-    // rather than propagating a raw thrown error.
-    it("falls through gracefully when gateway.status throws (non-admin caller)", async () => {
+    it("falls through gracefully when gateway.status throws", async () => {
       const rpcCall = vi.fn(async (method: string, params: Record<string, unknown>) => {
         if (method === "gateway.status") {
           throw new Error("Admin access required for gateway status");
@@ -1225,41 +1441,27 @@ describe("gateway tool", () => {
         if (method === "env.set") {
           return { set: true, key: params.key, storage: "encrypted", restarting: true };
         }
+        if (method === "env.list") {
+          return { secrets: [], total: 0, truncated: false };
+        }
         return { stub: true, method, params };
       });
-      const tool = createGatewayTool(rpcCall, mockLogger);
+      const tool = createGatewayTool(rpcCall, mockLogger, createApprovedApprovalGate());
 
-      // Must not throw — must return a structured tool result
-      let result: unknown;
-      await expect(
-        (async () => {
-          result = await tool.execute("call-w3", {
-            action: "env_set" as "read",
-            env_key: "MY_KEY",
-            env_value: "my-value",
-          } as any);
-        })(),
-      ).resolves.not.toThrow();
+      const result = await runWithContext(makeContext(), () =>
+        tool.execute("call-w3", {
+          action: "env_set" as "read",
+          env_key: "MY_KEY",
+          env_value: "my-value",
+        } as any),
+      );
 
-      // After a thrown preflight, the tool should return some structured result
-      // (either a confirmation gate or a graceful error — NOT an unhandled throw).
-      expect(result).toBeDefined();
-      const details = (result as { details?: Record<string, unknown> }).details ?? {};
-      // The result must NOT be an unhandled error propagation from gateway.status
-      // (i.e. it must not throw, and the error must be structured, not "Admin access required")
-      // Fall through to downstream guard → requiresConfirmation (no secretStore)
-      // or secrets_store_unavailable from the downstream env.set path.
-      // The key invariant: no raw thrown error propagated to the caller.
-      expect(typeof details).toBe("object");
+      expect(result.details).toEqual(expect.objectContaining({ set: true, key: "MY_KEY" }));
     });
   });
 });
 
-describe("confirmationRequiredHint (approval foot-gun fix)", () => {
-  // The pre-fix hints ("Confirm setting secret X. Call again with _confirmed: true.") told the
-  // agent to re-call but never said the action had NOT run / not to report success — so an agent
-  // given an inline "I confirm" replied "done" without re-calling (nothing was stored). The hint
-  // now leads with the negative and forbids the false success.
+describe("confirmationRequiredHint action-state honesty", () => {
   it("states NOT performed, forbids reporting success, names the re-call + the action", () => {
     const hint = confirmationRequiredHint('setting secret "SERVICE_PASSWORD"');
     expect(hint).toContain("NOT performed");
@@ -1272,14 +1474,6 @@ describe("confirmationRequiredHint (approval foot-gun fix)", () => {
 });
 
 describe("the env_set placeholder hint must not cause credential re-transmission", () => {
-  // Observed live: a user was asked to paste their password into the chat a SECOND
-  // time. An approval-gated `env_set` needs a follow-up call carrying
-  // `_confirmed: true`, but the redaction pass rewrites the secret in the
-  // originating message between the two calls, and `scrubRedactedToolCalls`
-  // removes the earlier tool-call pair — so the value is genuinely gone from the
-  // agent's context by the time consent arrives. The old hint told the agent to
-  // "re-read the user's most recent message and call env_set again with the
-  // literal value", which can only be satisfied by asking for re-transmission.
   function hint(): string {
     const src = fs.readFileSync(
       new URL("./gateway-tool.ts", import.meta.url),
@@ -1298,148 +1492,15 @@ describe("the env_set placeholder hint must not cause credential re-transmission
     expect(hint()).toMatch(/DO NOT ask the user to send the credential again/i);
   });
 
-  it("names the approval/redaction deadlock as the cause", () => {
+  it("does not suggest a second confirmation call", () => {
     const h = hint();
-    expect(h).toMatch(/_confirmed: true/);
-    expect(h).toMatch(/redaction pass/i);
+    expect(h).not.toMatch(/_confirmed: true/);
+    expect(h).not.toMatch(/pending_action_id/i);
   });
 
   it("gives an out-of-band recovery that never routes the secret through a session", () => {
     const h = hint();
     expect(h).toMatch(/comis secrets set/);
     expect(h).toMatch(/never enters the session|encrypted store/i);
-  });
-});
-
-describe("gated env_set survives its own confirmation (the approval/redaction deadlock)", () => {
-  // Live shape: request → gate → user approves → the redaction pass has
-  // rewritten the secret in context → the confirm re-sent "[REDACTED]" → dead
-  // end, and the user was asked to re-paste their password into the chat.
-  // With the pending stash, the confirm replays the ORIGINAL value by id.
-  function statusOk() {
-    return {
-      pid: 1, uptime: 1, memoryUsage: 1, nodeVersion: "v22", configPaths: [], sections: [],
-      secretsStoreAvailable: true,
-    };
-  }
-
-  it("the gate returns a pending_action_id and the confirm-by-id replays the ORIGINAL value", async () => {
-    const envSetCalls: Array<Record<string, unknown>> = [];
-    const rpcCall = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === "gateway.status") return statusOk();
-      if (method === "env.set") { envSetCalls.push(params!); return { set: true, key: params!.key, storage: "encrypted" }; }
-      return {};
-    });
-    const tool = createGatewayTool(rpcCall, mockLogger);
-
-    // 1) the gated request — carries the real secret ONCE
-    const gated = await tool.execute("call-p1", {
-      action: "env_set" as "read",
-      env_key: "VENDOR_PASSWORD",
-      env_value: "the-real-secret-value",
-    } as any);
-    const gatedDetails = gated.details as Record<string, unknown>;
-    expect(gatedDetails.requiresConfirmation).toBe(true);
-    const pendingId = gatedDetails.pending_action_id as string;
-    expect(typeof pendingId).toBe("string");
-    expect(String(gatedDetails.hint)).toContain("OMIT env_value");
-
-    // 2) the confirm — NO env_value at all (context may have been redacted)
-    const confirmed = await tool.execute("call-p2", {
-      action: "env_set" as "read",
-      env_key: "VENDOR_PASSWORD",
-      _confirmed: true,
-      pending_action_id: pendingId,
-    } as any);
-    const confirmedDetails = confirmed.details as Record<string, unknown>;
-    expect(confirmedDetails.set).toBe(true);
-    // the daemon received the ORIGINAL value, not a placeholder
-    expect(envSetCalls).toHaveLength(1);
-    expect(envSetCalls[0]!.value).toBe("the-real-secret-value");
-  });
-
-  it("a confirm whose context re-sent the PLACEHOLDER still succeeds via the stash", async () => {
-    const envSetCalls: Array<Record<string, unknown>> = [];
-    const rpcCall = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === "gateway.status") return statusOk();
-      if (method === "env.set") { envSetCalls.push(params!); return { set: true }; }
-      return {};
-    });
-    const tool = createGatewayTool(rpcCall, mockLogger);
-    const gated = await tool.execute("call-p3", {
-      action: "env_set" as "read", env_key: "K", env_value: "real-value",
-    } as any);
-    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
-
-    const confirmed = await tool.execute("call-p4", {
-      action: "env_set" as "read",
-      env_key: "K",
-      env_value: "[REDACTED]", // what a redacted replay context would supply
-      _confirmed: true,
-      pending_action_id: pendingId,
-    } as any);
-    expect((confirmed.details as Record<string, unknown>).set).toBe(true);
-    expect(envSetCalls[0]!.value).toBe("real-value");
-  });
-
-  it("the pending id is ONE-SHOT — a second confirm replays nothing", async () => {
-    const rpcCall = vi.fn(async (method: string) =>
-      method === "gateway.status" ? statusOk() : { set: true });
-    const tool = createGatewayTool(rpcCall, mockLogger);
-    const gated = await tool.execute("call-p5", {
-      action: "env_set" as "read", env_key: "K2", env_value: "v",
-    } as any);
-    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
-    await tool.execute("call-p6", {
-      action: "env_set" as "read", env_key: "K2", _confirmed: true, pending_action_id: pendingId,
-    } as any);
-    const second = await tool.execute("call-p7", {
-      action: "env_set" as "read", env_key: "K2", _confirmed: true, pending_action_id: pendingId,
-    } as any);
-    expect((second.details as Record<string, unknown>).error).toBe("pending_action_expired");
-  });
-
-  it("a key mismatch between stash and confirm is rejected", async () => {
-    const rpcCall = vi.fn(async (method: string) =>
-      method === "gateway.status" ? statusOk() : { set: true });
-    const tool = createGatewayTool(rpcCall, mockLogger);
-    const gated = await tool.execute("call-p8", {
-      action: "env_set" as "read", env_key: "RIGHT_KEY", env_value: "v",
-    } as any);
-    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
-    const wrong = await tool.execute("call-p9", {
-      action: "env_set" as "read", env_key: "WRONG_KEY", _confirmed: true, pending_action_id: pendingId,
-    } as any);
-    expect((wrong.details as Record<string, unknown>).error).toBe("pending_action_key_mismatch");
-
-    const correct = await tool.execute("call-p10", {
-      action: "env_set" as "read", env_key: "RIGHT_KEY", _confirmed: true, pending_action_id: pendingId,
-    } as any);
-    expect((correct.details as Record<string, unknown>).set).toBe(true);
-  });
-
-  it("retains the pending action when env.set fails transiently", async () => {
-    let attempts = 0;
-    const rpcCall = vi.fn(async (method: string) => {
-      if (method === "gateway.status") return statusOk();
-      if (method === "env.set") {
-        attempts++;
-        if (attempts === 1) throw new Error("temporary store failure");
-        return { set: true };
-      }
-      return {};
-    });
-    const tool = createGatewayTool(rpcCall, mockLogger);
-    const gated = await tool.execute("call-p11", {
-      action: "env_set" as "read", env_key: "RETRY_KEY", env_value: "secret-value",
-    } as any);
-    const pendingId = (gated.details as Record<string, unknown>).pending_action_id as string;
-    const confirm = {
-      action: "env_set" as "read", env_key: "RETRY_KEY", _confirmed: true, pending_action_id: pendingId,
-    } as any;
-
-    await expect(tool.execute("call-p12", confirm)).rejects.toThrow("temporary store failure");
-    const retry = await tool.execute("call-p13", confirm);
-    expect((retry.details as Record<string, unknown>).set).toBe(true);
   });
 });

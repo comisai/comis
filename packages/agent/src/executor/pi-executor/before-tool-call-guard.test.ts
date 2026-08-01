@@ -146,6 +146,196 @@ describe("createBeforeToolCallGuard", () => {
     circuitBreaker: { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} },
   });
 
+  it("blocks substitution of an explicit model identifier before agent mutation", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "use gpt-turbo-9",
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-4-turbo" },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("gpt-turbo-9"),
+    });
+  });
+
+  it("blocks substitution of an explicit provider identifier before agent mutation", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "use provider_a instead",
+      new Set(["provider_a"]),
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "model_b" },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("provider_a"),
+    });
+  });
+
+  it("allows one explicit provider and model binding before agent mutation", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "switch to openai-codex gpt-5.4-mini",
+      new Set(["openai", "openai-codex"]),
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: {
+          provider: "openai-codex",
+          model: "gpt-5.4-mini",
+        },
+      },
+    })).resolves.toBeUndefined();
+  });
+
+  it("reports the requested model when a paired binding substitutes it", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "switch to openai-codex gpt-5.4-mini",
+      new Set(["openai", "openai-codex"]),
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: {
+          provider: "openai-codex",
+          model: "gpt-4-turbo",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(
+        /requested model identifier "gpt-5\.4-mini".*proposes "gpt-4-turbo"/,
+      ),
+    });
+  });
+
+  it("supplies the exact requested binding when a provider is omitted", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "switch to openai-codex gpt-5.4-mini",
+      new Set(["openai", "openai-codex"]),
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-5.4-mini" },
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(
+        /config\.provider="openai-codex".*config\.model="gpt-5\.4-mini"/,
+      ),
+    });
+  });
+
+  it("allows an exact explicit model identifier and a qualitative model choice", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const exactGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "use gpt-turbo-9",
+    ]);
+    const qualitativeGuard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "pick something cheaper and switch to it",
+    ]);
+
+    await expect(exactGuard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-turbo-9" },
+      },
+    })).resolves.toBeUndefined();
+    await expect(qualitativeGuard({
+      toolCall: { name: "agents_manage" },
+      args: {
+        action: "update",
+        agent_id: "default",
+        config: { model: "gpt-4.1-nano" },
+      },
+    })).resolves.toBeUndefined();
+  });
+
   it("short-circuits a repeat idempotent read with the steer surfaced as the block reason", async () => {
     const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
     const detector = createTurnLoopDetector();

@@ -23,7 +23,7 @@
 
 import { getProviderOAuth } from "@comis/core";
 import type { ComisCredentialStore } from "./auth-storage-adapter.js";
-import type { PerAgentConfig } from "@comis/core";
+import type { ErrorKind, PerAgentConfig } from "@comis/core";
 import type { OAuthTokenManager } from "./oauth-token-manager.js";
 
 /** Dependencies for the resolveProviderApiKey helper. */
@@ -45,6 +45,17 @@ export interface ResolveProviderApiKeyDeps {
   configuredApiKeyName?: string;
 }
 
+/** Typed credential-resolution failure retained across the SDK key callback. */
+export class ProviderCredentialError extends Error {
+  constructor(
+    message: string,
+    readonly errorKind: ErrorKind,
+  ) {
+    super(message);
+    this.name = "ProviderCredentialError";
+  }
+}
+
 /**
  * Resolve the API key for a provider, routing OAuth-eligible providers
  * through the OAuthTokenManager and writing the resolved OAuth credential into
@@ -64,8 +75,9 @@ export async function resolveProviderApiKey(
       includeFallback: false,
     });
     if (!configuredKey) {
-      throw new Error(
+      throw new ProviderCredentialError(
         `Configured credential "${deps.configuredApiKeyName}" for provider "${providerId}" is unavailable. Set it with comis secrets set ${deps.configuredApiKeyName}, then retry.`,
+        "auth",
       );
     }
     return configuredKey;
@@ -94,7 +106,10 @@ export async function resolveProviderApiKey(
     if (!noCredentials || requestedProfile !== undefined) {
       // Propagate as throw — outer callers (PiExecutor.execute, gateway
       // routes) lift the throw into a user-facing error result.
-      throw new Error(result.error.message);
+      throw new ProviderCredentialError(
+        result.error.message,
+        result.error.errorKind === "timeout" ? "timeout" : "auth",
+      );
     }
     // Fall through to authStorage — providers like anthropic accept both
     // OAuth and direct API keys; without an OAuth profile, the plain key

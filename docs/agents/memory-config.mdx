@@ -207,11 +207,12 @@ agents:
   stale, archived, and evicted docs do not surface.
 - **Promotion, correction, and demotion** -- attributed reuse labeled `success`
   increments proof and can promote `candidate` to `active` at
-  `promoteAtProofCount`. A recorded correction does not by itself guarantee
-  demotion or a durable behavior change. The correction detector must be enabled,
-  the prior turn must attribute a surfaced skill, confidence and failure
-  corroboration must pass, and the trend must become weakening before a skill
-  moves to `stale`. When an accepted profile or topic update supersedes an
+  `promoteAtProofCount`. When the correction detector classifies a follow-up from
+  the explicitly trusted owner in `single_owner` mode, the prior turn's
+  attributed skill moves immediately to `stale`, and continuation attribution on
+  the correction turn cannot add proof to it. Corrections from other sources
+  require confidence, failure corroboration, and a weakening trend. When an
+  accepted profile or topic update supersedes an
   existing doc, the prior body is appended to `history` rather than hard-deleted.
 - **Authority and scope** -- learned docs contain advisory Markdown and no
   executable column. The model re-authors any action through its existing tools,

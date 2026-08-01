@@ -94,7 +94,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   slack_action: "Perform actions on Slack platform",
   whatsapp_action: "Perform actions on WhatsApp platform",
   // Privileged / Supervisor
-  agents_manage: "Manage full agent system (admin)",
+  agents_manage: "Create and manage dedicated agents (admin)",
   obs_query: "Query platform diagnostics data (admin)",
   sessions_manage: "Manage session lifecycle operations (admin)",
   memory_manage: "Admin memory CRUD operations (admin)",
@@ -103,7 +103,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   models_manage: "List models and test availability",
   providers_manage: "Manage LLM provider endpoints (admin)",
   skills_manage: "Manage skill registry entries (admin)",
-  mcp_manage: "Manage MCP server connections (admin)",
+  mcp_manage: "Connect and inspect external accounts via MCP (admin)",
   heartbeat_manage: "Manage agent heartbeat schedules (admin)",
   // Discovery
   discover_tools: "Find MCP/deferred tools by keyword",
@@ -159,10 +159,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // SYSTEM_PROMPT_GUIDES supplies the detailed procedure after the first
   // successful tool result.
   sessions_spawn:
-    "Spawn a background sub-agent and return its run ID. Delegate tasks needing >30s, media"
-    + " generation, 3+ files, deep research, or 4+ steps; use parallel calls for independent work."
-    + " If the task names a required tool, pass it in required_tools with matching tool_groups;"
-    + " prose cannot grant tools.",
+    "Spawn background sub-agent; returns run ID. Delegate >30s, media, 3+ files, research, or 4+"
+    + " steps. Spawn one; parallelize only distinct independent subtasks—never duplicate tasks."
+    + " Bind named tools via required_tools + tool_groups. Results announce automatically; do not"
+    + " call message.",
   subagents: "List, wait for, steer, or kill sub-agent runs for this session.",
   pipeline: "Define, execute, monitor, and cancel multi-node DAG execution graphs.",
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
@@ -170,7 +170,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   session_search: "Search full session transcript including evicted content. For stored facts, use memory_search.",
   // ----- Platform -----
   cron: "Manage cron jobs, scheduled tasks, and reminders.",
-  gateway: "Read/patch config, restart gateway, check status.",
+  gateway:
+    "Read/patch config; env_set stores credentials. Use the exact operator-provided secret name or key."
+    + " Never infer it from token contents or the active channel, and never overwrite an unrelated"
+    + " existing secret. Use mcp_manage for MCP connections.",
   image_analyze: "Analyze images (PNG, JPG, GIF, WebP) via vision model. Accepts file paths, URLs, base64, or attachment_url.",
   tts_synthesize: "Text-to-speech synthesis with configurable voice and format.",
   transcribe_audio: "Transcribe audio (MP3, OGG, WAV, M4A) to text. Pass attachment_url from message hint.",
@@ -186,7 +189,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agent system: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
+    const base = "Manage agents: list, create, get, update, delete, suspend, resume. A separate or dedicated assistant request is a complete create intent: create immediately with reasonable defaults. Do not require a heartbeat unless asked.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
@@ -200,7 +203,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   },
   // Confusable pair: memory_manage / memory_search
   memory_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Admin memory CRUD: stats, browse, delete, forget, flush, export. Use forget with a query when the user asks to forget something; use memory_search for read-only queries.";
+    const base = "Admin memory CRUD: stats, browse, delete, forget, flush, export, roundtrip. For export-and-import-back requests, use roundtrip; it keeps entries out of model context and reports deduplication. For forget requests, use forget with a query; use memory_search for read-only queries.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   channels_manage: (ctx: ToolDescriptionContext): string => {
@@ -221,11 +224,14 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   mcp_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage MCP server connections: list, connect, disconnect, status.";
+    const base =
+      "Connect and inspect external accounts via MCP. For stdio, command is the executable; "
+        + "put scripts/packages in args. Preserve operator-provided command, args, and env exactly. "
+        + "Store credentials with gateway env_set first, then pass ${NAME} env references.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   heartbeat_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage heartbeat schedules: list, create, update, delete, trigger.";
+    const base = "Manage heartbeat schedules: list, create, update, delete, trigger. Use only when the user explicitly asks for a heartbeat, recurring check, or monitoring. Do not use for a separate assistant; use agents_manage.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
 
@@ -485,7 +491,7 @@ Enable, disable, and configure actions persist to config.yaml and trigger daemon
 
   mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.
 ## STDIO servers that need credentials/env
-A stdio server that reads credentials or config from the environment (e.g. SERVICE_USERNAME/SERVICE_PASSWORD) takes them via the connect action's env field: mcp_manage(action:"connect", server_name, command:"npx", args:[...], env:{"SERVICE_PASSWORD":"\${SERVICE_PASSWORD}", ...}). Reference stored secrets as \${VAR_NAME} (store them first with gateway env_set / your secret tool) so the plaintext never enters config — the daemon resolves them at spawn. If connect returns "Connection closed" for a stdio server, the most common cause is a MISSING or wrong env — check the server's required env vars and pass them via env, do NOT switch to gateway.
+For stdio, command is the executable (such as node or npx); a script or package belongs in args. Preserve distinct command, args, and env fields from operator policy exactly instead of collapsing or omitting them. A server that reads credentials or config from the environment (e.g. SERVICE_USERNAME/SERVICE_PASSWORD) takes them via the connect action's env field: mcp_manage(action:"connect", server_name, command:"npx", args:[...], env:{"SERVICE_PASSWORD":"\${SERVICE_PASSWORD}", ...}). Reference stored secrets as \${VAR_NAME} (store them first with gateway env_set / your secret tool) so the plaintext never enters config — the daemon resolves them at spawn. If connect returns "Connection closed" for a stdio server, the most common cause is a MISSING or wrong env — check the server's required env vars and pass them via env, do NOT switch to gateway.
 ## OAuth-required MCP servers
 When mcp_manage(action:"connect", url:..., transport:"http") returns an Unauthorized error or a structured needs_oauth_login action hint, the server requires OAuth. Retry as: mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http"). If the daemon then responds with a needs_oauth_login action, invoke mcp_login({server_name}) to start the PKCE flow. mcp_login returns a verification URL — deliver it to the user via the message tool BEFORE starting any background polling. Do NOT curl device-code endpoints. Do NOT write tokens to the workspace. Do NOT call gateway(action:"patch") against integrations.mcp.servers. For RFC 8628 device-flow servers (when mcp_login returns status:"device_code_pending"), deliver BOTH the verificationUri AND the userCode to the user via the message tool in the form \`Verification URL: <verificationUri>\\nCode: <userCode>\` BEFORE waiting for the poll to complete. Do NOT continue with other tool calls until the operator has had time to authorize at the verification URL.`,
 
@@ -635,13 +641,14 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 - **Time-intensive operations**: Any task where tool execution alone will take >30 seconds
 
 ### How to Delegate
-1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background
+1. Use \`sessions_spawn\` with a **goal-oriented** task description; every spawn runs in the background.
+   Spawn one unless the user requests multiple helpers or the work has distinct independent subtasks
 2. When the task explicitly requires a named tool, you MUST list it in \`required_tools\` and include a matching
    \`tool_groups\` profile (for example, \`required_tools: ['obs_query']\` with \`tool_groups: ['coding', 'supervisor']\`).
    Task prose does not grant a tool. If it cannot be delegated, call it yourself and pass only the bounded result.
-3. A sub-agent gets a RESTRICTED default profile: MCP tools and \`message\` are OUTSIDE it. When the child
-   must call an MCP tool or deliver the result itself, include that tool in \`required_tools\` and pass
-   \`tool_groups: ['full']\` on the spawn -- otherwise the reachability gate rejects the spawn before work starts
+3. Child tools are restricted by config. MCP inheritance follows
+   \`security.agentToAgent.subAgentMcpTools\`; \`message\` may be absent and is not needed for result delivery.
+   Bind named required tools with compatible \`tool_groups\` so the reachability gate can validate the spawn
 4. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
 5. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
 6. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
@@ -650,8 +657,9 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 9. Continue the conversation -- the result will be announced automatically when done
 
 ### Parallel Sub-Agents
-When a task has independent subtasks, spawn multiple sub-agents in parallel:
+When a task has distinct independent subtasks, spawn multiple sub-agents in parallel:
 - Call \`sessions_spawn\` multiple times in the SAME response (parallel tool calls)
+- Never spawn duplicate or reworded-equivalent tasks; one requested outcome gets one child
 - Each sub-agent gets a focused, self-contained task description
 - All sub-agents run concurrently and announce results independently
 - Use \`subagents\` (action="wait") to collect owned results without polling; use action="list" only for a status snapshot
@@ -727,7 +735,7 @@ calling a gated action will pause execution until the operator approves or denie
 - providers_manage: list, get, update, enable, disable, set_default, test
 - agents_manage: get, update, suspend, resume
 - sessions_manage: export, compact
-- memory_manage: stats, browse, export
+- memory_manage: stats, browse, export, roundtrip
 - channels_manage: list, get
 - tokens_manage: list
 

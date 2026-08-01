@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
+import type { ErrorKind } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 
 export const CAP_KNOB_BY_CLASS: Readonly<Record<string, string>> = {
@@ -21,11 +22,17 @@ export type LocaleMessageId =
   | "tool_failure_notice"
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
+  | "execution_failed"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
   | "persistent_action_evidence_missing"
   | "destructive_action_not_verified"
-  | "vision_unavailable";
+  | "provider_requires_model"
+  | "agent_update_noop"
+  | "ongoing_work_evidence_missing"
+  | "sender_authority_overclaim"
+  | "vision_unavailable"
+  | "response_locale_unavailable";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -61,6 +68,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + " incomplete.",
   prompt_timeout:
     "The request took too long to process. Please try again with a simpler message.",
+  execution_failed:
+    "I couldn't complete that request because a required service failed. The request was not completed.",
   background_task_failed_notice:
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
@@ -69,10 +78,29 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
+  provider_requires_model:
+    "I did not change the agent. The requested value names a provider, not an exact model. "
+      + "Test that provider's credentials, list its available models, then retry with both "
+      + "the provider and an exact model identifier.",
+  agent_update_noop:
+    "No configuration change was needed. This agent already uses",
+  ongoing_work_evidence_missing:
+    "I did not start ongoing work in this turn. A required step failed, so there "
+      + "is no background task running or result still pending. Please retry the request.",
+  sender_authority_overclaim:
+    "Your current trust does not authorize admin-only changes. I can use tools available at "
+      + "your current trust level, but your approval cannot grant admin access. Installing "
+      + "skills, connecting services, changing agent or system configuration, and similar "
+      + "management actions require an authorized administrator and may also require runtime "
+      + "approval. I cannot raise my own trust, grant myself access, disable sandboxing, or "
+      + "bypass approval controls.",
   vision_unavailable:
     "I couldn't analyze this image because no vision provider is available. "
       + "Re-uploading the same image will not help until the vision configuration changes. "
       + "Settings:",
+  response_locale_unavailable:
+    "I couldn't produce a response in the language and writing system requested for this message. "
+      + "Please retry or select a model that supports it.",
   pipeline_timeout:
     "I stopped this request because it was taking too long and hit the time limit "
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
@@ -247,6 +275,18 @@ export function selectPromptTimeoutReply(
   return catalog.resolve(locale, "prompt_timeout");
 }
 
+/** Honest terminal reply for an execution rejection before a normal answer. */
+export function selectExecutionFailureReply(
+  locale: string | undefined,
+  opts: { errorKind: ErrorKind; traceId?: string },
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  const incident = opts.traceId === undefined || opts.traceId.length === 0
+    ? ""
+    : `; incident ${opts.traceId}`;
+  return `${catalog.resolve(locale, "execution_failed")} (reason: ${opts.errorKind}${incident})`;
+}
+
 /** Deterministic terminal-state disclosure for a failed background task. */
 export function selectBackgroundTaskFailedNotice(
   locale: string | undefined,
@@ -279,12 +319,54 @@ export function selectDestructiveActionNotVerifiedReply(
   return catalog.resolve(locale, "destructive_action_not_verified");
 }
 
+/** Honest replacement when a provider name was supplied as a model identifier. */
+export function selectProviderRequiresModelReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "provider_requires_model");
+}
+
+/** Honest replacement when the requested agent binding already matches runtime state. */
+export function selectAgentUpdateNoOpReply(
+  locale: string | undefined,
+  provider: string,
+  modelId: string,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return `${catalog.resolve(locale, "agent_update_noop")} ${provider} / ${modelId}.`;
+}
+
+/** Honest replacement when a terminal reply promises unrecorded ongoing work. */
+export function selectOngoingWorkEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "ongoing_work_evidence_missing");
+}
+
+/** Honest replacement when a below-admin sender is described as the authority grantor. */
+export function selectSenderAuthorityOverclaimReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "sender_authority_overclaim");
+}
+
 /** Honest replacement when image analysis reached the unavailable terminal. */
 export function selectVisionUnavailableReply(
   locale: string | undefined,
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "vision_unavailable");
+}
+
+/** Honest replacement after the bounded locale repair still violates policy. */
+export function selectResponseLocaleUnavailableReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "response_locale_unavailable");
 }
 
 export function selectPipelineTimeoutReply(

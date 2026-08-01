@@ -364,6 +364,7 @@ describe("assembleTools — window-aware fit runs against the EFFECTIVE window (
       discoverTool: null,
       deferredCount: 0,
       deferredNames: [],
+      requestRelevantToolNames: [],
     };
     applyToolBudgetFit(dr as never, {
       systemPromptText: "x".repeat(50_800), // budget ~717 tok → fits ~1 tool

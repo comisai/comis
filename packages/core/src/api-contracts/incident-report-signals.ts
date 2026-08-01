@@ -16,6 +16,7 @@ import type {
   IncidentCronWakeGate,
   IncidentPromptTimeout,
   IncidentQueueTimelineEntry,
+  IncidentRehydration,
   SpawnTreeNode,
   OrchestrateRun,
 } from "./incident-report-sections.js";
@@ -61,10 +62,10 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 26 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 27 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
-// distinct trajectory record class (contextBudget / promptTimeout /
+// distinct trajectory record class (contextBudget / rehydration / promptTimeout /
 // toolSchemaUnsupported / recall / cacheBreaks / spend / image / vision /
 // videoGenerated / voice / learning / deliveryDispatch / channel / agentId / spawnTree / orchestrate / …) — absent
 // when that record class did not occur. Clustering them would couple unrelated
@@ -96,6 +97,21 @@ export interface IncidentSignals {
   skillAvailability?: {
     unavailable: Array<{ name: string; reason: string }>;
   };
+  /** The LAST prompt's bounded request-relevant tool names. */
+  requestRelevantToolNames?: string[];
+  /** Content-free evidence about the selected prior-user-turn relevance window. */
+  requestRelevanceHistory?: {
+    turnCount: number;
+    charCount: number;
+    saturated: boolean;
+  };
+  /** Content-free proof that immutable policy reached request-relevant tool schemas. */
+  operatorPolicyToolProjections?: Array<{
+    toolName: string;
+    sectionId: string;
+    contentHash: string;
+    projectedChars: number;
+  }>;
   /** The latest selected turn whose locale repair was safety-skipped. */
   responseLocaleRepairSkipped?: ResponseLocaleRepairSkipped;
   /** The terminal provider rejected a persisted structured protocol identity
@@ -121,7 +137,7 @@ export interface IncidentSignals {
   };
   toolStats: Record<
     string,
-    { ok: number; failed: number; topErrorKind?: string }
+    { ok: number; failed: number; noOp?: number; topErrorKind?: string }
   >;
   /** Set when a terminal/coding-CLI drive was promoted to a backgrounded
    *  drive-owner during the session — folded from `terminal.drive_promoted` trajectory
@@ -293,6 +309,11 @@ export interface IncidentSignals {
    * tool-schema share instead of the generic speculation.
    */
   contextBudget?: IncidentContextBudget;
+  /**
+   * The latest `context.rehydrated` receipt. `currentTurn` is false when the
+   * session contains an old rehydration event followed by a newer prompt.
+   */
+  rehydration?: IncidentRehydration;
   /** The per-turn context-budget cascade toward the terminal `contextBudget` (≥2 distinct states;
    *  deduped on transition, most-recent-40 capped). The assembler folds it onto IncidentReport. */
   contextBudgetHistory?: IncidentContextBudgetHistoryEntry[];
@@ -407,8 +428,9 @@ export interface IncidentSignals {
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /**
-   * Recovery-attempt fold from `execution.recovery_attempted` records: total +
-   * succeeded tally + per-reason counts. Absent ⇒ no recovery attempts.
+   * Runtime-recovery fold from `execution.recovery_attempted` records: total +
+   * succeeded tally + per-reason counts. Includes model re-entry and
+   * deterministic response-grounding corrections. Absent ⇒ no recovery attempts.
    */
   recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /**

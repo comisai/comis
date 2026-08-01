@@ -251,13 +251,11 @@ export type MethodName = keyof WebRpcMethodMap;
 // ---------------------------------------------------------------------------
 
 export function validateRequest(method: MethodName, v: unknown): boolean {
-  const entry = CONTRACTS[method];
-  return validateNode(entry.request, v);
+  return validateNode(CONTRACTS[method].request, v);
 }
 
 export function validateResponse(method: MethodName, v: unknown): boolean {
-  const entry = CONTRACTS[method];
-  return validateNode(entry.response, v);
+  return validateNode(CONTRACTS[method].response, v);
 }
 `;
 

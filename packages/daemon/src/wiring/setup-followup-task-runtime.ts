@@ -64,6 +64,11 @@ export interface FollowupTaskRuntime {
     input: HeartbeatCoordinatorAgentRunInput,
   ): Promise<Result<HeartbeatTickOutcome, HeartbeatTickError>>;
   requestRescan(agentId: string): Promise<Result<void, { readonly errorKind: ErrorKind }>>;
+  retireAgent(agentId: string): {
+    readonly taskCheckActiveCount: number;
+    readonly extractionActiveCount: number;
+    readonly droppedExtractionCount: number;
+  };
   enterMaintenance(agentId: string): {
     readonly taskCheckActiveCount: number;
     readonly extractionActiveCount: number;
@@ -239,6 +244,17 @@ export function createFollowupTaskRuntime(
       if (schedule === undefined) return err({ errorKind: "precondition" as const });
       const rescanned = await schedule.requestRescan();
       return rescanned.ok ? ok(undefined) : err({ errorKind: rescanned.error.errorKind });
+    },
+    retireAgent(agentId) {
+      maintenanceAgents.add(agentId);
+      schedules.get(agentId)?.shutdown();
+      schedules.delete(agentId);
+      const extraction = extractionRuntime.retireAgent(agentId);
+      return {
+        taskCheckActiveCount: activeTaskChecks.get(agentId) ?? 0,
+        extractionActiveCount: extraction.activeCount,
+        droppedExtractionCount: extraction.droppedCount,
+      };
     },
     enterMaintenance(agentId) {
       maintenanceAgents.add(agentId);

@@ -79,6 +79,29 @@ export interface RunPromptParams {
   bridge: PromptRunnerBridge;
   // Prompt assembly data
   dynamicPreamble: string | undefined;
+  /** Active tools selected specifically because they match the current request. */
+  requestRelevantToolNames?: readonly string[];
+  /** Prompt skills selected as the procedural route for the current request. */
+  requestRelevantPromptSkillNames?: readonly string[];
+  /** Trusted registry locations for request-relevant prompt skills. */
+  requestRelevantPromptSkillLocations?: readonly string[];
+  /** Tools required to execute the request-relevant prompt skill procedure. */
+  requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
+  /** Bounded prior request used to ground context-dependent workflow arguments. */
+  requestRelevantPromptSkillWorkflowContext?: string;
+  /** Content-free evidence about the bounded prior-user-turn relevance window. */
+  requestRelevanceHistory?: {
+    readonly turnCount: number;
+    readonly charCount: number;
+    readonly saturated: boolean;
+  };
+  /** Content-free evidence that immutable operator policy reached tool schemas. */
+  operatorPolicyToolProjections?: readonly {
+    readonly toolName: string;
+    readonly sectionId: string;
+    readonly contentHash: string;
+    readonly projectedChars: number;
+  }[];
   responseLocalePolicy?: ResponseLocalePolicy;
   deferredContext: string | undefined;
   /**

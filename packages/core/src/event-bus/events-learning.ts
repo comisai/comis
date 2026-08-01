@@ -90,7 +90,15 @@ export interface LearningEvents {
     /** How many of them this turn CREDITED (== the usedSkillIds the topic-match leg contributes). */
     creditedCount: number;
     /** Per-surfaced-skill score — content-free (name is an id; coverage/sharedCount are numbers). */
-    scores: Array<{ name: string; coverage: number; sharedCount: number; credited: boolean; hasTopicTokens: boolean }>;
+    scores: Array<{
+      name: string;
+      coverage: number;
+      sharedCount: number;
+      credited: boolean;
+      hasTopicTokens: boolean;
+      /** Present only when the credit was retained from the immediately preceding turn. */
+      creditSource?: "prior_turn";
+    }>;
     timestamp: number;
   };
 
@@ -243,6 +251,14 @@ export interface LearningEvents {
     sessionId: string;
     /** The PRIOR trajectory the correction soft-failed (the verdict turn whose skill should demote). */
     trajectoryId: string;
+    /** The CURRENT correction turn, when the channel supplied its trace identity. */
+    correctionTrajectoryId?: string;
+    /**
+     * True only when the operator explicitly named this non-external sender and
+     * selected single-owner corroboration. Such a correction is an authoritative
+     * preference update rather than noisy outcome evidence.
+     */
+    authoritative: boolean;
     /** The capped correction confidence (the soft-failure reward). */
     confidence: number;
     timestamp: number;

@@ -16,6 +16,141 @@ import type { CircuitBreaker } from "../../safety/circuit-breaker.js";
 import type { ToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
 import type { MessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { TurnLoopDetector } from "../turn-loop-detector.js";
+import { tryCatch } from "@comis/shared";
+
+const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
+
+function explicitModelTargets(
+  sourceText: string,
+  knownProviderIdentifiers?: ReadonlySet<string>,
+): { models: string[]; providers: string[] } {
+  const candidates = sourceText.match(TECHNICAL_TOKEN_PATTERN) ?? [];
+  const providers = candidates.filter(
+    (candidate) => knownProviderIdentifiers?.has(candidate.toLowerCase()) === true,
+  );
+  const models = candidates.filter((candidate) => {
+    if (knownProviderIdentifiers?.has(candidate.toLowerCase()) === true) {
+      return false;
+    }
+    const hasDigit = /\d/.test(candidate);
+    const hasSeparator = /[._:/-]/.test(candidate);
+    const compactModelId = /^[A-Za-z]{1,8}\d[A-Za-z0-9]*$/.test(candidate);
+    return (hasDigit && hasSeparator) || compactModelId;
+  });
+  return {
+    models: [...new Set(models)],
+    providers: [...new Set(providers)],
+  };
+}
+
+function readMutationConfig(args: unknown): Record<string, unknown> | undefined {
+  if (args === null || typeof args !== "object") return undefined;
+  const params = args as { action?: unknown; config?: unknown };
+  if (params.action !== "update") return undefined;
+  if (params.config !== null && typeof params.config === "object") {
+    return params.config as Record<string, unknown>;
+  }
+  if (typeof params.config !== "string") return undefined;
+  const parsed = tryCatch(
+    () => JSON.parse(params.config as string) as unknown,
+  );
+  if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") {
+    return undefined;
+  }
+  return parsed.value as Record<string, unknown>;
+}
+
+function exactBindingRetryInstruction(
+  requestedProvider: string | undefined,
+  requestedModel: string | undefined,
+): string {
+  if (requestedProvider !== undefined && requestedModel !== undefined) {
+    return (
+      ` Retry exactly with config.provider=${JSON.stringify(requestedProvider)} and ` +
+      `config.model=${JSON.stringify(requestedModel)}.`
+    );
+  }
+  if (requestedProvider !== undefined) {
+    return ` Retry exactly with config.provider=${JSON.stringify(requestedProvider)}.`;
+  }
+  if (requestedModel !== undefined) {
+    return ` Retry exactly with config.model=${JSON.stringify(requestedModel)}.`;
+  }
+  return "";
+}
+
+function explicitModelMutationVerdict(
+  sourceText: string | undefined,
+  context: unknown,
+  knownProviderIdentifiers?: ReadonlySet<string>,
+): { block: true; reason: string } | undefined {
+  if (!sourceText || context === null || typeof context !== "object") return undefined;
+  const call = context as { toolCall?: { name?: string }; args?: unknown };
+  if (call.toolCall?.name !== "agents_manage") return undefined;
+  const config = readMutationConfig(call.args);
+  const proposedModel = config?.model;
+  if (typeof proposedModel !== "string") return undefined;
+
+  const targets = explicitModelTargets(sourceText, knownProviderIdentifiers);
+  if (targets.models.length > 1) {
+    return {
+      block: true,
+      reason:
+        `The request contains multiple explicit model identifiers (${targets.models.join(", ")}). ` +
+        "Do not infer which one to persist; ask the user to name one exact model identifier.",
+    };
+  }
+  if (targets.providers.length > 1) {
+    return {
+      block: true,
+      reason:
+        `The request contains multiple explicit provider identifiers (${targets.providers.join(", ")}). ` +
+        "Do not infer which one to persist; ask the user to name one exact provider identifier.",
+    };
+  }
+
+  const requestedModel = targets.models[0];
+  const requestedProvider = targets.providers[0];
+  if (requestedModel === undefined && requestedProvider === undefined) return undefined;
+  const proposedProvider = typeof config?.provider === "string"
+    ? config.provider
+    : undefined;
+  if (requestedModel !== undefined) {
+    const exactTargets = new Set([
+      proposedModel,
+      ...(proposedProvider === undefined
+        ? []
+        : [
+            `${proposedProvider}/${proposedModel}`,
+            `${proposedProvider}:${proposedModel}`,
+          ]),
+    ]);
+    if (!exactTargets.has(requestedModel)) {
+      return {
+        block: true,
+        reason:
+          `The user explicitly requested model identifier "${requestedModel}", but this call proposes ` +
+          `"${proposedModel}". Never substitute a different model identifier.` +
+          exactBindingRetryInstruction(requestedProvider, requestedModel) +
+          " Retry with the exact " +
+          "identifier; if it is unavailable, report that without changing configuration.",
+      };
+    }
+  }
+
+  if (requestedProvider !== undefined && proposedProvider !== requestedProvider) {
+    return {
+      block: true,
+      reason:
+        `The user explicitly requested provider identifier "${requestedProvider}", but this call proposes ` +
+        `"${proposedProvider ?? "<omitted>"}". Never omit or substitute an explicit provider identifier.` +
+        exactBindingRetryInstruction(requestedProvider, requestedModel) +
+        " " +
+        "Retry with the exact provider and model binding; if it is unavailable, report that without changing configuration.",
+    };
+  }
+  return undefined;
+}
 
 /**
  * Create a beforeToolCall guard that proactively blocks tool execution when
@@ -40,6 +175,8 @@ export function createBeforeToolCallGuard(
   messageSendLimiter?: MessageSendLimiter,
   turnLoopDetector?: TurnLoopDetector,
   failedToolRedirects?: ReadonlyMap<string, string>,
+  explicitMutationSource?: string,
+  knownProviderIdentifiers?: ReadonlySet<string>,
 ) {
   return async (context: unknown, _signal?: AbortSignal) => {
     // Proactive step limit check
@@ -55,6 +192,13 @@ export function createBeforeToolCallGuard(
     if (circuitBreaker.isOpen()) {
       return { block: true, reason: "Provider circuit breaker open" };
     }
+
+    const exactModelVerdict = explicitModelMutationVerdict(
+      explicitMutationSource,
+      context,
+      knownProviderIdentifiers,
+    );
+    if (exactModelVerdict) return exactModelVerdict;
 
     // Short-circuit a repeat idempotent read (the loop-breaker seam).
     // The SDK's BeforeToolCallResult has only {block, reason} -- no content

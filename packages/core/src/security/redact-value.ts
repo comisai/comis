@@ -9,7 +9,7 @@
  * call it and `core` cannot import `observability`.
  *
  * Guarantees (the redaction keystone):
- *   - No secrets: values under the 9 Pino redact keys become
+ *   - No secrets: values under credential-bearing keys become
  *     `<redacted>`; values matching a secret SHAPE (sk_*, ghp_*, AKIA*, JWT
  *     triples, provider tokens) become `<redacted>` even under a benign key.
  *   - No absolute paths: `$HOME`/home roots compact to `~`; other
@@ -142,9 +142,10 @@ export interface RedactOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * The 9 secret KEYS (case-insensitive) — mirrors the CLAUDE.md "Pino
- * auto-redacts" taxonomy. A value under any of these is fully replaced
- * regardless of its content (key-based).
+ * Secret keys (case-insensitive). A value under any of these is fully
+ * replaced regardless of its content. `env_value` is included independently
+ * of tool identity because a model can send an env-set payload to the wrong
+ * tool, whose validation diagnostics are still an observability boundary.
  */
 const SECRET_KEYS: ReadonlySet<string> = new Set([
   "apikey",
@@ -156,6 +157,12 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
   "privatekey",
   "cookie",
   "webhooksecret",
+  "env_value",
+  // Tool credential containers may use arbitrary operator-defined child keys,
+  // so their entire value is sensitive even when no leaf matches a known
+  // provider credential name or shape.
+  "env",
+  "headers",
 ]);
 
 /**
@@ -413,9 +420,22 @@ function redactString(
 // Recursive walker (same walk discipline as observability/value-shapes.ts)
 // ---------------------------------------------------------------------------
 
-/** Case-insensitive exact match of a key against the 9 secret keys. */
+/** Case-insensitive exact match of a key against the secret-key set. */
 function isSecretKey(key: string): boolean {
   return SECRET_KEYS.has(key.toLowerCase());
+}
+
+/**
+ * Detect the gateway's secret-write intent even when a caller used the
+ * config-patch shape. `value` is normally too generic to redact globally, but
+ * it is credential material when paired with this exact action and section.
+ */
+function isContextualSecretKey(parent: Record<string, unknown>, key: string): boolean {
+  return key === "value"
+    && parent.action === "patch"
+    && parent.section === "secrets"
+    && typeof parent.key === "string"
+    && parent.key.length > 0;
 }
 
 /** Mutable accumulator threaded through the recursive walk. */
@@ -505,7 +525,8 @@ function walk(value: unknown, depth: number, keyForValue: string, state: WalkSta
   }
 
   // Plain object — rebuild within the key cap; never mutate the input.
-  const entries = Object.entries(obj as Record<string, unknown>);
+  const record = obj as Record<string, unknown>;
+  const entries = Object.entries(record);
   const keyLimit = state.limits.maxKeysPerLevel;
   if (entries.length > keyLimit) flagTruncation(state, keyForValue, "keys_exceeded");
   const kept = entries.length > keyLimit ? entries.slice(0, keyLimit) : entries;
@@ -517,7 +538,7 @@ function walk(value: unknown, depth: number, keyForValue: string, state: WalkSta
       break;
     }
     state.bytes += k.length;
-    if (isSecretKey(k)) {
+    if (isSecretKey(k) || isContextualSecretKey(record, k)) {
       // Key-based redaction: the whole value collapses regardless of content.
       out[k] = REDACTED;
       state.sink.push({ key: k, reason: "secret_key" });

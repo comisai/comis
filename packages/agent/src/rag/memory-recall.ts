@@ -49,6 +49,7 @@ import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability, emitRecallDegraded } from "./recall-observability.js";
 import { applyProvenanceDownweighting } from "./recall-provenance.js";
 import { buildRelevanceQuery } from "./relevance-scorer.js";
+import { partitionRecentTailRecall } from "./recent-tail-recall-filter.js";
 import { gateLanes, resolveEffectiveBaseFloor, logPrefilterDrops, passesBaseFloor, type PrefilterAccumulator } from "./recall-security-prefilter.js";
 import {
   vectorLaneCouldContribute,
@@ -450,6 +451,17 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // Stage-2 snapshot: the post-fuse id order (the fused ranking before rerank/score).
       const fusedOrder = ranked.map((r) => r.entry.id);
 
+      // Current-session paired memories can duplicate the exact user turns already
+      // present in the fresh conversation tail. Suppress only those redundant rows
+      // before reranking: the live conversation is authoritative, while distinct
+      // same-session memories and all cross-session relationship memory remain eligible.
+      const recentTailPartition = partitionRecentTailRecall(
+        ranked,
+        sessionKey,
+        recentUserTurns,
+      );
+      ranked = recentTailPartition.kept;
+
       // Read the per-memory usefulness signal (flag-gated), then fold its used-rate
       // into the usefulnessFactor in score.ts (boost proven-useful, demote recalled-but-
       // ignored). DEFAULT-OFF BYTE-IDENTITY: when feedback is OFF, no store is
@@ -808,6 +820,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           finalRanked: finalRankedWithPins,
           trustFilteredIds,
           dedupedIds,
+          recentTailDuplicateIds: recentTailPartition.duplicateIds,
           breakdownById,
           degradations,
           durationMs: deps.clock.now() - recallStart,

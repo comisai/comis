@@ -315,6 +315,9 @@ function nextStoredSequence(store: ContextStorePort, scope: ContextStoreScope): 
  * @param onRebase     Optional callback fired ONLY on an epoch re-base continuation,
  *                     carrying `"session_rebase"`. An INFO signal (correct continuation,
  *                     not degradation). Never carries message content.
+ * @param epochAnchorOverride Optional canonical-history discriminator. Projection
+ *                            callers use this so a shared compaction prefix cannot
+ *                            make rendered and canonical epochs look identical.
  */
 export function ingestTurnGuarded(
   store: ContextStorePort,
@@ -325,6 +328,7 @@ export function ingestTurnGuarded(
   onFailClosed?: (reason: string) => void,
   onDivergence?: (reason: string) => void,
   onRebase?: (reason: string) => void,
+  epochAnchorOverride?: string,
 ): void {
   // Fail-closed rollover: refuse the write on an ambiguous/malformed
   // scope BEFORE touching the store, so a mis-derived session key can never
@@ -357,7 +361,7 @@ export function ingestTurnGuarded(
   const storedCursor = store.getIngestCursor(scope);
 
   // Compute the identity of the current live[0].
-  const currentAnchor = messageEpochAnchor(live[0]!);
+  const currentAnchor = epochAnchorOverride ?? messageEpochAnchor(live[0]!);
 
   // Epoch change detection — if the anchor differs from the stored cursor,
   // the live transcript has re-based (JSONL deleted/re-created).

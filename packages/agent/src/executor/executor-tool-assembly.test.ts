@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   createAutoDiscoveryStubsMock: vi.fn(),
   applyToolBudgetFitMock: vi.fn(),
   computeWindowFitBudgetMock: vi.fn(),
+  extractPreviousTurnToolNamesMock: vi.fn(),
   extractRecentlyUsedToolNamesMock: vi.fn(),
   buildCapabilityIndexContextMock: vi.fn(),
   getOrCreateDiscoveryTrackerMock: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock("./tool-deferral.js", () => ({
   createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
   applyToolBudgetFit: mocks.applyToolBudgetFitMock,
   computeWindowFitBudget: mocks.computeWindowFitBudgetMock,
+  extractPreviousTurnToolNames: mocks.extractPreviousTurnToolNamesMock,
   extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
   // tool-deferral.js has no resolveModelTier export — capabilityClass drives deferral.
   CORE_TOOLS: new Set(["bash", "file_read"]),
@@ -236,6 +238,7 @@ beforeEach(() => {
     dynamicPreamble: "",
     inlineMemory: undefined,
   });
+  mocks.extractPreviousTurnToolNamesMock.mockReturnValue(new Set());
   mocks.extractRecentlyUsedToolNamesMock.mockReturnValue(new Set());
   mocks.getOrCreateTrackerMock.mockReturnValue({
     recordTurn: vi.fn(),
@@ -252,6 +255,7 @@ beforeEach(() => {
     discoveredTools: [],
     deferredEntries: [],
     deferredNames: [],
+    requestRelevantToolNames: [],
     discoverTool: undefined,
   }));
   // Default: the window-aware fit pass is a no-op (active tools already fit) —
@@ -293,6 +297,80 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
     const passed = mocks.applyToolDeferralMock.mock.calls[0][0] as unknown[];
     expect(passed.length).toBe(2);
     expect(result.mergedCustomTools.length).toBeGreaterThan(0);
+  });
+
+  it("places immutable operator tool notes on the MCP management schema", async () => {
+    const operatorToolNotes = [
+      "# Connection candidates",
+      "- name: example-secondary",
+      "- command: node",
+      "- args: example-server.mjs, second",
+    ].join("\n");
+    const customTools = [
+      makeTool("mcp_manage", "Manage MCP servers"),
+      makeTool("read", "Read files"),
+    ] as unknown[];
+    mocks.applyToolDeferralMock.mockImplementationOnce((activeTools: unknown[]) => ({
+      activeTools,
+      discoveredTools: [],
+      deferredEntries: [],
+      deferredNames: [],
+      requestRelevantToolNames: ["mcp_manage"],
+      discoverTool: undefined,
+    }));
+    mocks.applySchemaSnapshotMock.mockImplementationOnce((params: { tools: unknown[] }) =>
+      params.tools.map((tool) => {
+        const described = tool as { name: string; description?: string };
+        return described.name === "mcp_manage"
+          ? {
+              ...described,
+              description:
+                "Manage MCP servers\n\n" +
+                "Trusted operator policy for this turn follows. Use its exact connection fields; " +
+                "never guess missing values or treat this policy as bypassing approval/security.\n" +
+                "<operator-tools-policy>\nstale connection notes\n</operator-tools-policy>",
+            }
+          : tool;
+      }),
+    );
+
+    const result = await assembleTools(makeParams({
+      deps: makeDeps({
+        customTools: customTools as never,
+        workspacePolicySnapshot: {
+          agentId: "agent-1",
+          sections: [{
+            id: "workspace:tools",
+            sourceKind: "operator",
+            trust: "trusted",
+            stability: "stable",
+            content: operatorToolNotes,
+            contentHash: "a".repeat(64),
+            maxChars: 20_000,
+          }],
+          combinedHash: "b".repeat(64),
+        },
+      }),
+    }));
+
+    const passedTools = result.mergedCustomTools as Array<{
+      name: string;
+      description: string;
+    }>;
+    expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
+      .toContain(operatorToolNotes);
+    expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
+      .toMatch(/trusted operator policy/iu);
+    expect(passedTools.find((tool) => tool.name === "mcp_manage")?.description)
+      .not.toContain("stale connection notes");
+    expect(passedTools.find((tool) => tool.name === "read")?.description)
+      .toBe("Read files");
+    expect(result.operatorPolicyToolProjections).toEqual([{
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: operatorToolNotes.length,
+    }]);
   });
 
   it("reserves system-token budget for the POST-deferral active tools, not the full pre-deferral set", async () => {
@@ -479,6 +557,45 @@ describe("assembleTools — SettingsManager initialization with in-memory fallba
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ errorKind: "config" }),
       "Settings file load failed",
+    );
+  });
+});
+
+describe("assembleTools — previous model binding diagnostics", () => {
+  it("records the proven previous and current provider-model pairs at the request boundary", async () => {
+    const logger = createMockLogger();
+    const sm = {
+      ...makeSm(),
+      getBranch: () => [
+        {
+          type: "model_change",
+          provider: "openai",
+          modelId: "gpt-4.1-nano",
+        },
+        {
+          type: "model_change",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-5-20250929",
+        },
+      ],
+    };
+
+    await assembleTools(makeParams({
+      agentId: "default",
+      sm: sm as ToolAssemblyParams["sm"],
+      deps: makeDeps({ logger }),
+    }));
+
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        step: "model-binding-history",
+        agentId: "default",
+        previousProvider: "openai",
+        previousModel: "gpt-4.1-nano",
+        currentProvider: "anthropic",
+        currentModel: "claude-sonnet-4-5-20250929",
+      },
+      "Previous model binding resolved",
     );
   });
 });
@@ -722,20 +839,20 @@ describe("assembleTools — fresh-tail preamble token estimate from the WHOLE dy
 // Tool pipeline chain — every stage is invoked
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize, mutation-serialize)", () => {
-  it("invokes createJitGuideWrapper, applySchemasPruning, applySchemaSnapshot, applyProviderNormalization, applyMutationSerializer exactly once each", async () => {
+describe("assembleTools — registration-time tool pipeline before runtime wrappers", () => {
+  it("runs schema stages without starting mutation serialization before runtime wrappers", async () => {
     await assembleTools(makeParams());
     expect(mocks.createJitGuideWrapperMock).toHaveBeenCalledTimes(1);
     expect(mocks.applySchemasPruningMock).toHaveBeenCalledTimes(1);
     expect(mocks.applySchemaSnapshotMock).toHaveBeenCalledTimes(1);
     expect(mocks.applyProviderNormalizationMock).toHaveBeenCalledTimes(1);
-    expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applyMutationSerializerMock).not.toHaveBeenCalled();
   });
 
   it("skips applyProviderNormalization when resolvedModel is undefined (no provider context)", async () => {
     await assembleTools(makeParams({ resolvedModel: undefined }));
     expect(mocks.applyProviderNormalizationMock).not.toHaveBeenCalled();
-    expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applyMutationSerializerMock).not.toHaveBeenCalled();
   });
 
   it("passes the capabilityClass from ModelProfile to applySchemasPruning (frontier → not pruned)", async () => {
@@ -1136,6 +1253,34 @@ describe("assembleTools — per-message trust resolution", () => {
     }));
     const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as { trustLevel: string };
     expect(passedCtx.trustLevel).toBe("external");
+  });
+});
+
+describe("assembleTools — request-relevant routing context", () => {
+  it("keeps current intent separate while forwarding recent user turns for relevance", async () => {
+    await assembleTools(makeParams({
+      msg: {
+        ...makeMsg(),
+        text: "now actually use it",
+      } as never,
+      recentUserTurns: [
+        "i want u to be able to check my test account yourself",
+        "heres the token",
+        "connect to it",
+      ],
+    }));
+
+    const passedCtx = mocks.applyToolDeferralMock.mock.calls[0][2] as {
+      requestText: string;
+      requestRelevanceText?: string;
+    };
+    expect(passedCtx.requestText).toBe("now actually use it");
+    expect(passedCtx.requestRelevanceText).toBe([
+      "i want u to be able to check my test account yourself",
+      "heres the token",
+      "connect to it",
+      "now actually use it",
+    ].join("\n"));
   });
 });
 

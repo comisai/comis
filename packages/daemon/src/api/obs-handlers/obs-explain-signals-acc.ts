@@ -37,6 +37,7 @@ export interface LearningFoldState {
   skillsDemoted: number;
   failuresAttributed: number;
   skillsSurfacedButUncredited: Map<string, number>;
+  skillsCreditedFromPriorTurn: Set<string>;
   skillsDemotedNames: Set<string>;
 }
 
@@ -77,6 +78,7 @@ export function summarizeToolStats(
     toolStats[tool] = {
       ok: entry.ok,
       failed: entry.failed,
+      ...(entry.noOp > 0 ? { noOp: entry.noOp } : {}),
       ...(topErrorKind !== undefined ? { topErrorKind } : {}),
     };
     if (entry.failed > 0) repeatedFailureCount[tool] = entry.failed;
@@ -93,13 +95,13 @@ export function summarizeToolStats(
 }
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
-// is a DISTINCT terminal-record signal (breaker tool, contextBudget, promptTimeout,
+// is a DISTINCT terminal-record signal (breaker tool, contextBudget, rehydration, promptTimeout,
 // toolSchemaUnsupported, providerErrorCode, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
 export interface Acc {
-  toolStats: Map<string, { ok: number; failed: number; errorKinds: Map<string, number> }>;
+  toolStats: Map<string, { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> }>;
   failures: IncidentFailure[];
   breakerEvents: IncidentSignals["breakerEvents"];
   queueTimeline: NonNullable<IncidentSignals["queueTimeline"]>;
@@ -126,6 +128,18 @@ export interface Acc {
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
   /** The LAST prompt's installed-but-unavailable skill facts. */
   skillAvailability?: NonNullable<IncidentSignals["skillAvailability"]>;
+  /** The LAST prompt's bounded request-relevant tool names. */
+  requestRelevantToolNames?: NonNullable<
+    IncidentSignals["requestRelevantToolNames"]
+  >;
+  /** The LAST prompt's bounded relevance-history evidence. */
+  requestRelevanceHistory?: NonNullable<
+    IncidentSignals["requestRelevanceHistory"]
+  >;
+  /** The LAST prompt's content-free operator-policy tool projections. */
+  operatorPolicyToolProjections?: NonNullable<
+    IncidentSignals["operatorPolicyToolProjections"]
+  >;
   /** The LAST valid locale-repair skip from a session summary. */
   responseLocaleRepairSkipped?: NonNullable<
     IncidentSignals["responseLocaleRepairSkipped"]
@@ -141,6 +155,8 @@ export interface Acc {
   misclassTokenByTool: Map<string, string>;
   /** The LAST context.budget trajectory record (the terminal fit check). */
   contextBudget?: IncidentContextBudget;
+  /** The LAST valid `context.rehydrated` receipt. */
+  rehydration?: IncidentSignals["rehydration"];
   /** The per-turn context-budget CASCADE (the progression toward `contextBudget`). Deduped on
    *  transition + most-recent-40 capped (see the context.budget fold). Surfaced only when ≥2 states. */
   contextBudgetHistory: IncidentContextBudgetHistoryEntry[];
@@ -204,7 +220,8 @@ export interface Acc {
   deliveryAborts?: { events: number; chunksNotSent: number };
   /** The LAST valid `delivery.dispatched` terminal outcome. */
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
-  /** Recovery-attempt fold from `execution.recovery_attempted` records:
+  /** Runtime-recovery fold from `execution.recovery_attempted` records:
+   *  model re-entries and deterministic response corrections, summarized as
    *  total + succeeded tally + per-reason counts. */
   recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /** Σ of the session's `session.summary` records' costUsd (one record per

@@ -17,6 +17,7 @@ import { chmodSync, lstatSync, readFileSync } from "node:fs";
 import { scrubSecretsFromText, type ComisLogger } from "@comis/core";
 import { writeRegularFile } from "@comis/observability";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
+import { formatValidationError } from "../safety/validation-error-formatter.js";
 
 // ---------------------------------------------------------------------------
 // API key pattern detection
@@ -201,22 +202,28 @@ function projectPersistenceValue(
   seen: WeakSet<object>,
 ): PersistenceSecretProjection<unknown> {
   if (typeof value === "string") {
+    const formattedValidation = formatValidationError(value);
+    const safeText = formattedValidation ?? value;
+    const validationRedactions = formattedValidation === null ? 0 : 1;
     if (
       fieldName !== undefined
-      && value.length > 0
-      && isSensitiveArgName(fieldName, value)
-      && !isSafePersistencePlaceholder(value)
+      && safeText.length > 0
+      && isSensitiveArgName(fieldName, safeText)
+      && !isSafePersistencePlaceholder(safeText)
     ) {
       return { value: REDACTION_PLACEHOLDER, redactions: 1 };
     }
-    if (isStructuralIdentifier(fieldName, value)) {
-      return { value, redactions: 0 };
+    if (isStructuralIdentifier(fieldName, safeText)) {
+      return { value: safeText, redactions: validationRedactions };
     }
-    if (looksLikeApiKey(value)) {
+    if (looksLikeApiKey(safeText)) {
       return { value: REDACTION_PLACEHOLDER, redactions: 1 };
     }
-    const scrubbed = scrubSecretsFromText(value);
-    return { value: scrubbed.text, redactions: scrubbed.redactions };
+    const scrubbed = scrubSecretsFromText(safeText);
+    return {
+      value: scrubbed.text,
+      redactions: validationRedactions + scrubbed.redactions,
+    };
   }
   if (value === null || typeof value !== "object") {
     return { value, redactions: 0 };

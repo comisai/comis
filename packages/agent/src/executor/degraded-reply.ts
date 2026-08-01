@@ -19,6 +19,7 @@
  */
 
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
+import type { ErrorKind } from "@comis/core";
 import {
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
@@ -27,11 +28,17 @@ import {
   selectToolFailureNotice,
   selectToolFailureNoticeUnnamed,
   selectPromptTimeoutReply,
+  selectExecutionFailureReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
   selectPersistentActionEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
+  selectProviderRequiresModelReply,
+  selectAgentUpdateNoOpReply,
+  selectOngoingWorkEvidenceMissingReply,
+  selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
+  selectResponseLocaleUnavailableReply,
   type LocaleCatalog,
 } from "./degraded-reply-i18n.js";
 
@@ -167,6 +174,21 @@ export function buildPromptTimeoutReply(
   return selectPromptTimeoutReply(language, localeCatalog);
 }
 
+/** Localized reason-coded reply for a turn that rejected before normal output. */
+export function buildExecutionFailureReply(
+  opts: {
+    errorKind: ErrorKind;
+    traceId?: string;
+    language?: string;
+    localeCatalog?: LocaleCatalog;
+  },
+): string {
+  return selectExecutionFailureReply(opts.language, {
+    errorKind: opts.errorKind,
+    traceId: opts.traceId,
+  }, opts.localeCatalog);
+}
+
 /**
  * Localized deterministic disclosure appended after a model rewrites a failed
  * background-task result. The terminal state is runtime-owned and cannot be
@@ -201,6 +223,48 @@ export function buildDestructiveActionNotVerifiedReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDestructiveActionNotVerifiedReply(language, localeCatalog);
+}
+
+/** Honest replacement when a provider name was supplied as a model identifier. */
+export function buildProviderRequiresModelReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectProviderRequiresModelReply(language, localeCatalog);
+}
+
+/** Honest replacement when the requested agent binding already matches runtime state. */
+export function buildAgentUpdateNoOpReply(
+  language: string | undefined,
+  provider: string,
+  modelId: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectAgentUpdateNoOpReply(language, provider, modelId, localeCatalog);
+}
+
+/** Honest replacement when no runtime receipt supports continued-work prose. */
+export function buildOngoingWorkEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOngoingWorkEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when the model assigns admin authority to a below-admin sender. */
+export function buildSenderAuthorityOverclaimReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectSenderAuthorityOverclaimReply(language, localeCatalog);
+}
+
+/** Honest replacement after the bounded locale repair still violates policy. */
+export function buildResponseLocaleUnavailableReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectResponseLocaleUnavailableReply(language, localeCatalog);
 }
 
 interface VisionFailureRecord {

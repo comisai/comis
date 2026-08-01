@@ -154,6 +154,15 @@ export function registerExplainCommand(program: Command): void {
           info(
             `Outcome:    ${report.outcome.severity} (endReason=${endReasonLabel}, degraded=${report.outcome.degraded})`,
           );
+          if (report.learning !== undefined) {
+            const sources = report.learning.sources.length > 0
+              ? report.learning.sources.join(",")
+              : "none";
+            info(
+              `Learning:   ${report.learning.outcome ?? "unknown"} `
+              + `(resolved=${report.learning.outcomeResolved}, sources=${sources})`,
+            );
+          }
           info(
             // Name the token basis: explain sums the full per-LLM-call ledger
             // (input+output+cacheRead+cacheCreation), so it is much larger than

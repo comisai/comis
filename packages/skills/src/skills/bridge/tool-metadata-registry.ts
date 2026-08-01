@@ -98,7 +98,7 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("sessions_manage", { isReadOnly: false });
   registerToolMetadata("sessions_send",   { isReadOnly: false });
-  registerToolMetadata("sessions_spawn",  { isReadOnly: false });
+  registerToolMetadata("sessions_spawn", { isReadOnly: false, mutationRequestPrefixes: ["have one of your helpers", "have a helper", "ask one of your helpers", "ask a helper"] });
   registerToolMetadata("subagents",       { isReadOnly: false });
 
   registerToolMetadata("pipeline",        { isReadOnly: false });
@@ -265,26 +265,59 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("mcp_manage", {
     validActions: ["list", "status", "connect", "disconnect", "reconnect"],
     validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth", "env"],
-    // connect requires only [server_name] at this pre-flight gate. `transport` is
-    // INFERABLE (stdio from `command`, http from `url`) and the real "command OR
-    // url" requirement is transport-conditional — neither can be expressed as a
-    // flat required-list entry, so both are validated downstream by the handler
-    // (validateConnectParams + transport inference, mcp-manage-tool.ts). Listing
-    // `transport` here HARD-FAILED a valid stdio connect before the handler could
-    // infer it (comis-daniel 2026-07-09: `connect(server_name, command:"npx",
-    // args:[...])` → "[invalid_value] missing … transport"). `auth` ("headers" |
-    // "oauth") is the OAuth opt-in — must be in validKeys so the bridge
-    // schema-validator doesn't reject before execute() runs.
+    mutationRequestPrefixes: [
+      "connect",
+      "disconnect",
+      "reconnect",
+      "here is the token",
+      "heres the token",
+      "here is the credential",
+      "heres the credential",
+    ],
+    mutationRecoveryGuidance:
+      "Before asking for missing MCP connection details, inspect the trusted operator policy embedded in "
+      + "mcp_manage's active description. For the matching candidate, map Server name to server_name, "
+      + "Transport to transport, Command to command, Arguments to an args string array, and Credential "
+      + "environment variable plus Stored secret name to an env entry whose value is a ${STORED_SECRET_NAME} "
+      + "reference. Submit every matching field in one connect call. Ask only when trusted policy lacks a "
+      + "complete candidate; never use model-authored history as configuration.",
+    // `transport` is inferred from `command` or `url`, so neither transport field
+    // can be represented by the flat required-list contract. The custom check
+    // keeps that disjunction at the pre-approval boundary while still accepting
+    // both stdio and network transports.
     requiredByAction: {
       status:     ["server_name"],
       connect:    ["server_name"],
       disconnect: ["server_name"],
       reconnect:  ["server_name"],
     },
+    validateInput: (params) => {
+      if (params.action !== "connect") return undefined;
+      const hasCommand = typeof params.command === "string" && params.command.trim().length > 0;
+      const hasUrl = typeof params.url === "string" && params.url.trim().length > 0;
+      if (hasCommand || hasUrl) return undefined;
+      return (
+        "mcp_manage connect requires command or url (command for stdio; url for HTTP/SSE). " +
+        "Resolve omitted connection fields only from trusted operator workspace policy such as TOOLS.md. " +
+        "If policy does not define them, ask the operator; never guess or reuse model-authored values."
+      );
+    },
   });
 
   registerToolMetadata("agents_manage", {
     validActions: ["create", "get", "update", "delete", "suspend", "resume", "list"],
+    readOnlyActions: ["list", "get"],
+    mutationRequestPrefixes: [
+      "create",
+      "update",
+      "delete",
+      "suspend",
+      "resume",
+      "configure",
+      "switch",
+      "change model",
+      "change the model",
+    ],
     validKeys: ["action", "agent_id", "config"],
     // agent_id is required for every action except list.
     requiredByAction: {
@@ -348,7 +381,9 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("skills_manage", {
     validActions: ["list", "import", "delete", "create", "update"],
+    readOnlyActions: ["list"],
     validKeys: ["action", "url", "name", "content", "description", "scope"],
+    mutationRequestPrefixes: ["install", "import", "delete", "create", "update"],
     requiredByAction: {
       import: ["url"],
       delete: ["name"],
@@ -365,7 +400,9 @@ export function registerAllToolMetadata(): void {
     // memory.pin RPC fully supporting it (admin-manage-tools live-test 2026-06-25).
     // Kept in lockstep with the tool's TypeBox action enum + `id` param by the
     // schema↔metadata parity test in tool-metadata-registry.test.ts.
-    validActions: ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"],
+    validActions: [
+      "stats", "browse", "delete", "forget", "flush", "export", "roundtrip", "pin", "unpin",
+    ],
     validKeys: [
       "action", "tenant_id", "agent_id", "ids", "id", "query", "offset", "limit", "sort",
       "memory_type", "trust_level", "tags",
@@ -552,7 +589,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_list",    { searchHint: "active sessions connections users online list enumerate" });
   registerToolMetadata("sessions_history", { searchHint: "chat log transcript conversation history messages past" });
   registerToolMetadata("sessions_send",    { searchHint: "send reply respond direct message channel session inject" });
-  registerToolMetadata("sessions_spawn",   { searchHint: "delegate subagent background async child worker spawn" });
+  registerToolMetadata("sessions_spawn",   { searchHint: "delegate subagent background async child worker helper helpers spawn" });
   registerToolMetadata("subagents",        { searchHint: "parallel fan-out concurrent multi-agent batch delegate" });
   registerToolMetadata("pipeline",         { searchHint: "workflow dag graph orchestrate chain multi-step sequential" });
   registerToolMetadata("session_status",   { searchHint: "session state alive running progress heartbeat check" });
@@ -584,7 +621,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("tokens_manage",    { searchHint: "api key token rotate revoke generate auth credential" });
   registerToolMetadata("models_manage",    { searchHint: "llm provider model switch configure cost tier pricing" });
   registerToolMetadata("skills_manage",    { searchHint: "skill plugin capability register unregister enable toggle" });
-  registerToolMetadata("mcp_manage",       { searchHint: "mcp server protocol connect disconnect tool external" });
+  registerToolMetadata("mcp_manage",       { searchHint: "mcp server connect inspect check external integration account access credential" });
   registerToolMetadata("heartbeat_manage", { searchHint: "heartbeat keepalive watchdog health probe interval alive" });
 
   // =========================================================================
@@ -594,6 +631,8 @@ export function registerAllToolMetadata(): void {
   // Model switching requires both models_manage (catalog) and agents_manage (apply model to agent)
   registerToolMetadata("models_manage", { coDiscoverWith: ["agents_manage"] });
   registerToolMetadata("agents_manage", { coDiscoverWith: ["models_manage"] });
+  // MCP connections may require gateway env_set for encrypted secret storage.
+  registerToolMetadata("mcp_manage", { coDiscoverWith: ["gateway"] });
 
   // =========================================================================
   // MCP Export Policy

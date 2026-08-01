@@ -37,6 +37,7 @@ export function classifyExecutionFinishReason(
       return { status: "error", failureStage: "execution", errorKind: "dependency" };
     case "session_reset":
     case "narration_stall":
+    case "tool_invocation_stall":
       return { status: "error", failureStage: "execution", errorKind: "internal" };
     case "background_pending":
       return { status: "error", failureStage: "execution", errorKind: "precondition" };

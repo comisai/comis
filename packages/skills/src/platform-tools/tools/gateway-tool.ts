@@ -11,7 +11,6 @@
  */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import {
   tryGetContext,
@@ -22,15 +21,16 @@ import {
   getManagedSectionRedirect,
   formatRedirectHint,
 } from "@comis/core";
+import type { ApprovalGate, ComisLogger } from "@comis/core";
 import {
   readStringParam,
   throwToolError,
   createActionGate,
 } from "../tool-helpers.js";
 import { createMultiActionDispatchTool } from "../messaging-factory.js";
+import { resolveApprovalRequestContext } from "../approval-request-context.js";
 import type { RpcCall } from "./cron-tool.js";
-import { isDocker, systemNowMs } from "@comis/core";
-import type { ComisLogger } from "@comis/core";
+import { isDocker } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Canonical action list -- single source of truth
@@ -112,6 +112,13 @@ const GatewayToolParams = Type.Object({
       description: "Secret value to store. Required for env_set. Write-only: cannot be read back.",
     }),
   ),
+  overwrite: Type.Optional(
+    Type.Boolean({
+      description:
+        "Set true only when the operator explicitly asked to replace the existing secret named by env_key. " +
+        "Without it, env_set refuses to change an existing secret.",
+    }),
+  ),
   filter: Type.Optional(
     Type.String({
       description:
@@ -124,16 +131,9 @@ const GatewayToolParams = Type.Object({
       description:
         "Set to true when re-calling a destructive action after user approval. " +
         "When a gated action returns requiresConfirmation, present the action to the user, " +
-        "and after they approve, call the same action again with _confirmed: true.",
-    }),
-  ),
-  pending_action_id: Type.Optional(
-    Type.String({
-      description:
-        "The pending_action_id returned by a gated env_set. Pass it back with " +
-        "_confirmed: true INSTEAD of re-sending env_value — the daemon replays the " +
-        "stashed value, so the secret never has to survive in conversation context " +
-        "across the approval round-trip.",
+        "and after they approve, call the same action again with _confirmed: true. " +
+        "env_set is different: its original call pauses at the central approval gate " +
+        "and resumes automatically after the operator decides.",
     }),
   ),
 });
@@ -143,65 +143,8 @@ const GatewayToolParams = Type.Object({
  * "NOT performed — do NOT report success" so the agent cannot claim a gated action
  * succeeded on a pending confirmation: the action runs ONLY when the agent RE-CALLS the
  * same action with `_confirmed: true` after the operator approves — a chat "yes"/"I confirm"
- * is not itself the confirmation. Fixes the foot-gun where an agent, seeing an inline
- * pre-confirmation, replied "done" without re-calling (nothing was actually written).
+ * is not itself the confirmation.
  */
-// ── Pending gated env_set stash (the approval/redaction deadlock fix) ──
-//
-// An approval-gated env_set needs a SECOND call with `_confirmed: true`, but the
-// session-redaction pass rewrites the secret in the originating message between
-// the two calls — so by the time consent exists, the value is gone from every
-// surface the agent can read, and the only way to comply was to ask the user to
-// re-send the credential through the chat (observed live). The fix: the FIRST
-// call stashes {key, value} server-side (this module runs in the daemon — the
-// same trust domain that will store the secret anyway) and returns an opaque
-// pending_action_id; the confirm passes the id back and the stashed value is
-// replayed. The secret never needs to survive in conversation context, so the
-// redaction pass can stay maximally aggressive.
-//
-// Bounded: TTL + a small cap, sweep on every touch. In-memory by design — a
-// daemon restart voids pending approvals, which is the safe failure mode.
-
-const PENDING_ENV_SET_TTL_MS = 5 * 60 * 1000;
-const PENDING_ENV_SET_MAX = 20;
-
-interface PendingEnvSet {
-  envKey: string;
-  envValue: string;
-  expiresAtMs: number;
-}
-
-const pendingEnvSets = new Map<string, PendingEnvSet>();
-
-function sweepPendingEnvSets(nowMs: number): void {
-  for (const [id, entry] of pendingEnvSets) {
-    if (entry.expiresAtMs <= nowMs) pendingEnvSets.delete(id);
-  }
-  // Oldest-first eviction beyond the cap (Map preserves insertion order).
-  while (pendingEnvSets.size > PENDING_ENV_SET_MAX) {
-    const oldest = pendingEnvSets.keys().next().value;
-    if (oldest === undefined) break;
-    pendingEnvSets.delete(oldest);
-  }
-}
-
-/** Stash a gated env_set; returns the opaque id the confirm passes back. */
-export function stashPendingEnvSet(envKey: string, envValue: string, nowMs: number): string {
-  sweepPendingEnvSets(nowMs);
-  const id = randomUUID();
-  pendingEnvSets.set(id, { envKey, envValue, expiresAtMs: nowMs + PENDING_ENV_SET_TTL_MS });
-  return id;
-}
-
-export function getPendingEnvSet(id: string, nowMs: number): PendingEnvSet | undefined {
-  sweepPendingEnvSets(nowMs);
-  return pendingEnvSets.get(id);
-}
-
-export function consumePendingEnvSet(id: string, entry: PendingEnvSet): void {
-  if (pendingEnvSets.get(id) !== entry) return;
-  pendingEnvSets.delete(id);
-}
 
 export function confirmationRequiredHint(action: string): string {
   return (
@@ -234,17 +177,18 @@ export function confirmationRequiredHint(action: string): string {
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @param logger - Structured logger for surfacing operator-relevant events
  *   (e.g., the Docker restart-policy WARN on the `restart` action)
+ * @param approvalGate - Central operator approval gate for secret writes
  * @returns AgentTool implementing the gateway control interface
  */
 export function createGatewayTool(
   rpcCall: RpcCall,
   logger: ComisLogger,
+  approvalGate?: ApprovalGate,
 ): AgentTool<typeof GatewayToolParams> {
   const restartGate = createActionGate("gateway.restart");
   const patchGate = createActionGate("config.patch");
   const applyGate = createActionGate("config.apply");
   const rollbackGate = createActionGate("config.rollback");
-  const envSetGate = createActionGate("env.set");
 
   return createMultiActionDispatchTool(
     {
@@ -257,8 +201,26 @@ export function createGatewayTool(
       actionHandler: async (action, p, rpcCall) => {
         const ctx = tryGetContext();
         const _trustLevel = ctx?.trustLevel ?? "guest";
+        const repairsSecretPatch =
+          action === "patch"
+          && p.section === "secrets"
+          && typeof p.key === "string"
+          && p.key.length > 0
+          && typeof p.value === "string"
+          && p.value.length > 0;
+        if (repairsSecretPatch) {
+          logger.info(
+            {
+              step: "gateway-action-repair",
+              fromAction: "patch",
+              toAction: "env_set",
+              section: "secrets",
+            },
+            "Gateway secret write action repaired",
+          );
+        }
 
-        switch (action) {
+        switch (repairsSecretPatch ? "env_set" : action) {
           case "read": {
             const section = readStringParam(p, "section", false);
             return rpcCall("config.read", { section, _trustLevel });
@@ -401,48 +363,21 @@ export function createGatewayTool(
 
           default: {
             // action === "env_set"
-            const envKey = readStringParam(p, "env_key")!;
-            // Optional on the confirm-by-id leg (the caller is TOLD to omit it —
-            // the stashed value is replayed server-side); required otherwise.
-            let envValue = readStringParam(p, "env_value", false);
-
-            // CONFIRM leg: when the caller passes back the pending_action_id,
-            // replay the STASHED value — the one from the original request —
-            // regardless of what (possibly redaction-mangled) env_value the
-            // model still holds. One-shot + TTL'd; an expired/unknown id gets
-            // an honest error rather than silently writing the mangled value.
-            const pendingActionId = readStringParam(p, "pending_action_id", false);
-            let pendingEnvSet: PendingEnvSet | undefined;
-            if (p._confirmed === true && pendingActionId !== undefined && pendingActionId.length > 0) {
-              const pending = getPendingEnvSet(pendingActionId, systemNowMs());
-              if (pending === undefined) {
-                return {
-                  error: "pending_action_expired",
-                  hint:
-                    "The pending env_set was not found — it expired (5 min TTL), was already " +
-                    "consumed, or the daemon restarted. Re-initiate the env_set from scratch; " +
-                    "if the secret is no longer available in the conversation, have the operator " +
-                    "run `comis secrets set <KEY>` on the host instead.",
-                };
-              }
-              if (pending.envKey !== envKey) {
-                return {
-                  error: "pending_action_key_mismatch",
-                  hint:
-                    `The pending action stashed a value for "${pending.envKey}", not "${envKey}". ` +
-                    "Confirm the SAME action that was gated, or re-initiate.",
-                };
-              }
-              envValue = pending.envValue;
-              pendingEnvSet = pending;
-            }
+            const envParams = repairsSecretPatch
+              ? {
+                  action: "env_set",
+                  env_key: p.key,
+                  env_value: p.value,
+                }
+              : p;
+            const envKey = readStringParam(envParams, "env_key")!;
+            const envValue = readStringParam(envParams, "env_value", false);
             if (envValue === undefined || envValue.length === 0) {
               return {
                 error: "missing_env_value",
                 hint:
-                  "env_set needs env_value on the first (gated) call. On the confirm leg, " +
-                  "pass pending_action_id with _confirmed: true instead — the original value " +
-                  "is replayed server-side.",
+                  "env_set needs env_value on its single approval-gated call. The call pauses " +
+                  "until the operator approves or denies it; do not issue a second tool call.",
               };
             }
 
@@ -457,32 +392,10 @@ export function createGatewayTool(
             if (envValue === "[REDACTED]" || /^\[REDACTED[^\]]*\]$/.test(envValue)) {
               return {
                 error: "env_value_is_placeholder",
-                // The old hint said "re-read the user's most recent message and
-                // call env_set again with the literal value". That instruction is
-                // IMPOSSIBLE to follow after the redaction pass has run, and the
-                // only way an agent can comply is to ask the user to re-send the
-                // credential — which is exactly what happened live: a user was
-                // asked to paste their password into the chat a second time.
-                //
-                // Why it is impossible: an approval-gated env_set needs a SECOND
-                // call carrying `_confirmed: true`, but between the two calls the
-                // LCD/session redaction rewrites the secret-bearing fields of the
-                // user's own inbound message. `scrubRedactedToolCalls` removes the
-                // prior tool-call pair, so the agent has neither its own earlier
-                // argument nor the user's original text — the value is genuinely
-                // gone from context by the time consent arrives.
-                //
-                // So the hint must (a) name the deadlock, (b) forbid asking for
-                // re-transmission, and (c) give the path that never routes a
-                // credential through chat history at all.
                 hint:
-                  "env_value is a session-redaction placeholder, not a real secret. This is the "
-                  + "approval/redaction deadlock, NOT a value the caller can recover: an "
-                  + "approval-gated env_set requires a second call with `_confirmed: true`, and the "
-                  + "redaction pass rewrites the secret in the originating message before that "
-                  + "second call happens. "
-                  + "DO NOT ask the user to send the credential again — re-transmission writes it "
-                  + "into the conversation a second time and does not fix the gate. "
+                  "env_value is a session-redaction placeholder, not a real secret. "
+                  + "DO NOT ask the user to send the credential again. "
+                  + "Do not report that it was stored. "
                   + "Tell the operator to set it outside the conversation instead: "
                   + "`comis secrets set <KEY>` on the host (it is written straight to the "
                   + "encrypted store and never enters the session), then retry the action that "
@@ -520,29 +433,84 @@ export function createGatewayTool(
               };
             }
 
-            const gate = envSetGate(p);
-            if (gate.requiresConfirmation) {
-              // Stash the request server-side so the confirm can replay it by id
-              // — the value must NOT need to survive in conversation context
-              // across the approval round-trip (the redaction pass will rewrite
-              // it there, and that deadlock forced a live user to re-paste a
-              // password into the chat).
-              const pendingId = stashPendingEnvSet(envKey, envValue, systemNowMs());
-              return {
-                requiresConfirmation: true,
-                actionType: gate.actionType,
-                pending_action_id: pendingId,
-                hint:
-                  confirmationRequiredHint(`setting secret "${envKey}"`) +
-                  ` When re-calling, pass pending_action_id: "${pendingId}" with _confirmed: true` +
-                  " and OMIT env_value — the original value is replayed server-side (do not" +
-                  " re-send the secret; it may have been redacted from your context).",
-              };
+            const existingSecretCheck = await rpcCall("env.list", {
+              filter: envKey,
+              limit: 2,
+              _trustLevel,
+            }).then((listResult) => {
+              if (typeof listResult !== "object" || listResult === null) {
+                return { known: false, exists: false };
+              }
+              const secrets = (listResult as Record<string, unknown>).secrets;
+              if (!Array.isArray(secrets)) {
+                return { known: false, exists: false };
+              }
+              const exists = secrets.some((entry) =>
+                typeof entry === "object"
+                && entry !== null
+                && (entry as Record<string, unknown>).name === envKey
+              );
+              return { known: true, exists };
+            }).catch(() => ({ known: false, exists: false }));
+            if (!existingSecretCheck.known) {
+              throwToolError(
+                "conflict",
+                `Could not verify whether secret "${envKey}" already exists`,
+                {
+                  hint:
+                    "Retry after env_list is available; secret writes fail closed when overwrite state is unknown",
+                },
+              );
+            }
+            const overwrite = envParams.overwrite === true;
+            if (existingSecretCheck.exists && !overwrite) {
+              throwToolError(
+                "conflict",
+                `Secret "${envKey}" already exists and was not changed`,
+                {
+                  hint:
+                    "Use the exact new secret name from operator policy, or set overwrite:true only when "
+                    + "the operator explicitly requested rotation of this same existing secret",
+                },
+              );
+            }
+
+            if (approvalGate === undefined) {
+              throwToolError(
+                "permission_denied",
+                "Secret storage requires the central approval service",
+                { hint: "Retry after the daemon approval gate is available." },
+              );
+            }
+            const approvalContext = resolveApprovalRequestContext();
+            if (!approvalContext.ok) {
+              throwToolError("permission_denied", approvalContext.error.message, {
+                hint: "Retry from a resolved agent request scope.",
+              });
+            }
+            const approvalParams = {
+              action: "env_set",
+              env_key: envKey,
+              ...(overwrite ? { overwrite: true } : {}),
+            };
+            const resolution = await approvalGate.requestApproval({
+              toolName: "gateway",
+              action: "env.set",
+              params: approvalParams,
+              fingerprintParams: {
+                ...approvalParams,
+                env_value: envValue,
+              },
+              ...approvalContext.value,
+            });
+            if (!resolution.approved) {
+              throwToolError(
+                "permission_denied",
+                "Action denied: env.set was not approved",
+                { hint: resolution.reason ?? "Request approval before retrying." },
+              );
             }
             const result = await rpcCall("env.set", { key: envKey, value: envValue, _trustLevel });
-            if (pendingActionId !== undefined && pendingEnvSet !== undefined) {
-              consumePendingEnvSet(pendingActionId, pendingEnvSet);
-            }
             // Return result but strip any value that might have leaked through
             return typeof result === "object" && result !== null
               ? { ...(result as Record<string, unknown>), value: undefined }

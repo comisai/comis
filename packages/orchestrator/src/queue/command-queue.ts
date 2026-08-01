@@ -76,6 +76,8 @@ export interface CommandQueueDeps {
   readonly config: QueueConfig;
   /** Optional structured logger for queue lifecycle tracing. */
   readonly logger?: ComisLogger;
+  /** Optional host-owned scope that must remain active through handler settlement. */
+  readonly runInExecutionScope?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -170,7 +172,7 @@ export interface CommandQueue {
  * @returns CommandQueue instance
  */
 export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
-  const { eventBus, config, logger } = deps;
+  const { eventBus, config, logger, runInExecutionScope } = deps;
 
   const lanes = new Map<string, SessionLane>();
   const globalGate = new PQueue({ concurrency: config.maxConcurrentSessions });
@@ -397,16 +399,22 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
           "Message dequeued",
         );
         lane.isExecuting = true;
-        lane.abortController = new AbortController();
+        const executionController = new AbortController();
+        lane.abortController = executionController;
         lane.activeEntry = entry;
         entry.ownership.executionStarted = true;
         try {
-          await entry.handler([entry.message], {
-            signal: lane.abortController.signal,
+          const runHandler = () => entry.handler([entry.message], {
+            signal: executionController.signal,
             receivedAt: entry.receivedAt,
             sourceTerminalScope: entry.sourceTerminalScope,
             inboundProvenancePlans: entry.inboundProvenancePlans,
           });
+          if (runInExecutionScope) {
+            await runInExecutionScope(runHandler);
+          } else {
+            await runHandler();
+          }
         } finally {
           lane.isExecuting = false;
           delete lane.abortController;

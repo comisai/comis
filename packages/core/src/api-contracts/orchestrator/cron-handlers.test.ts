@@ -78,9 +78,9 @@ describe("cron operator and agent route scopes", () => {
     })).toThrow();
   });
 
-  it("declares inventory history status and manual run as agent-reachable RPC routes", () => {
+  it("declares inventory as agent and admin reachable while other reads remain RPC routes", () => {
+    expect(CronListContract.scopes).toEqual(["rpc", "admin"]);
     for (const contract of [
-      CronListContract,
       CronRunContract,
       CronRunsContract,
       CronStatusContract,

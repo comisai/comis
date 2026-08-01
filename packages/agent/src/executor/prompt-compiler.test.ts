@@ -38,6 +38,26 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/do not ask.*missing parameters/iu);
   });
 
+  it("includes live tools and current sender trust in self-authority grounding", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(
+      /asked.*(?:own|your).*capabilit.*(?:authorit|access|change)/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /registered tool.*current sender.*trust.*authoritative/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /(?:memory|prompt skill).*not.*(?:authorit|evidence)/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /below.*required trust.*authorized administrator/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /do not (?:say|imply).*sender.*(?:approve|authorize)/iu,
+    );
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{

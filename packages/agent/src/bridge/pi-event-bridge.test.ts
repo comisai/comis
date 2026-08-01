@@ -879,6 +879,115 @@ describe("createPiEventBridge", () => {
       );
     });
 
+    it("redacts a misrouted env_value from failed-call arguments and validation text", () => {
+      const { listener } = createPiEventBridge(deps);
+      const secret = "test-key";
+      const args = {
+        action: "env_set",
+        env_key: "EXAMPLE_TOKEN",
+        env_value: secret,
+      };
+      listener({
+        type: "tool_execution_start",
+        toolName: "mcp_manage",
+        toolCallId: "tc-misrouted-secret",
+        args,
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "mcp_manage",
+        "tc-misrouted-secret",
+        true,
+        {
+          content: [{
+            type: "text",
+            text:
+              'Validation failed for tool "mcp_manage":\n'
+              + "  - action: must be equal to one of the allowed values\n\n"
+              + `Received arguments:\n${JSON.stringify(args)}`,
+          }],
+          details: {},
+        },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-misrouted-secret",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].argsPreview.env_value).toBe("<redacted>");
+      expect(endEmit![1].errorMessage).not.toContain(secret);
+      expect(endEmit![1].errorMessage).not.toContain("Received arguments:");
+      expect(JSON.stringify(endEmit![1])).not.toContain(secret);
+    });
+
+    it("redacts arbitrary credential values nested in a failed MCP env map", () => {
+      const { listener } = createPiEventBridge(deps);
+      const secret = "synthetic-credential-value";
+      listener({
+        type: "tool_execution_start",
+        toolName: "mcp_manage",
+        toolCallId: "tc-mcp-env-secret",
+        args: {
+          action: "connect",
+          env: {
+            SERVICE_CREDENTIAL: secret,
+          },
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "mcp_manage",
+        "tc-mcp-env-secret",
+        true,
+        {
+          message: "[invalid_value] missing for action='connect': server_name",
+        },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-mcp-env-secret",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].argsPreview.env).toBe("<redacted>");
+      expect(endEmit![1].params.env).toBe("<redacted>");
+      expect(JSON.stringify(endEmit![1])).not.toContain(secret);
+    });
+
+    it("redacts the value in a failed secret-shaped config patch", () => {
+      const { listener } = createPiEventBridge(deps);
+      const secret = "private-test-value";
+      listener({
+        type: "tool_execution_start",
+        toolName: "gateway",
+        toolCallId: "tc-secret-patch",
+        args: {
+          action: "patch",
+          section: "secrets",
+          key: "EXAMPLE_TOKEN",
+          value: secret,
+          _confirmed: true,
+        },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "gateway",
+        "tc-secret-patch",
+        true,
+        { message: "Config validation failed" },
+      ) as any);
+
+      const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+      const endEmit = emit.mock.calls.find(
+        (call) => call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-secret-patch",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].params.value).toBe("<redacted>");
+      expect(endEmit![1].argsPreview.value).toBe("<redacted>");
+      expect(JSON.stringify(endEmit![1])).not.toContain(secret);
+    });
+
     it("does NOT carry argsPreview on a SUCCESSFUL tool:executed (failure-only — keeps the trajectory lean)", () => {
       const { listener } = createPiEventBridge(deps);
       listener(makeToolExecutionStartEvent("read", "tc-ok") as any);
@@ -2974,6 +3083,76 @@ describe("createPiEventBridge", () => {
       expect(result.toolExecResults![0]).toMatchObject({ toolName: "read", success: true });
       expect(result.toolExecResults![0].errorText).toBeUndefined();
       expect(result.toolExecResults![1]).toMatchObject({ toolName: "bash", success: false, errorText: "command failed" });
+    });
+
+    it("tracks an unchanged management result as a successful no-op effect", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "agents_manage",
+        toolCallId: "tc-agent-noop",
+        args: { action: "update" },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "agents_manage",
+        "tc-agent-noop",
+        false,
+        {
+          content: [{ type: "text", text: "No configuration change." }],
+          details: { updated: false, changed: false, dryRun: false },
+        },
+      ) as any);
+
+      expect(getResult().toolExecResults?.[0]).toMatchObject({
+        toolName: "agents_manage",
+        action: "update",
+        success: true,
+        changed: false,
+      });
+      const event = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) =>
+          call[0] === "tool:executed"
+          && call[1].toolCallId === "tc-agent-noop",
+      );
+      expect(event?.[1]).toMatchObject({
+        success: true,
+        changed: false,
+      });
+    });
+
+    it("carries a bounded builtin failure code into the execution result", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener({
+        type: "tool_execution_start",
+        toolName: "agents_manage",
+        toolCallId: "tc-provider-as-model",
+        args: { action: "update" },
+      } as any);
+      listener(makeToolExecutionEndEvent(
+        "agents_manage",
+        "tc-provider-as-model",
+        true,
+        "[provider_requires_model] The requested value is a provider, not an exact model.",
+      ) as any);
+
+      expect(getResult().toolExecResults?.[0]).toMatchObject({
+        toolName: "agents_manage",
+        action: "update",
+        success: false,
+        errorKind: "validation",
+        failureCode: "provider_requires_model",
+      });
+      const event = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call) =>
+          call[0] === "tool:executed"
+          && call[1].toolName === "agents_manage",
+      );
+      expect(event?.[1]).toMatchObject({
+        errorKind: "validation",
+        failureCode: "provider_requires_model",
+      });
     });
 
     it("carries only content-free message route identity in tool results", () => {

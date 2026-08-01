@@ -897,6 +897,71 @@ describe("obs-explain-heuristics", () => {
     expect(JSON.stringify(r)).not.toContain("../");
   });
 
+  it("names a missing MCP secret reference without requesting an unavailable preview", () => {
+    const r = rootCause(makeSignals({
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+      failures: [{
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "background_task",
+        transportOk: false,
+        errorKind: "dependency",
+        failureCode: "mcp_secret_reference_missing" as never,
+        resultDigest: "",
+        resultBytes: 0,
+        errorPreview: "",
+      }],
+    }));
+
+    expect(r?.code).toBe("mcp_secret_reference_missing");
+    expect(r?.detail).toMatch(/secret.*reference.*store/iu);
+    expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/errorPreview/iu);
+  });
+
+  it("names an authorization denial before the generic tool-error verdict", () => {
+    const r = rootCause(makeSignals({
+      endReason: "completed_with_tool_errors",
+      degraded: true,
+      failures: [{
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "sdk_iserror",
+        transportOk: false,
+        errorKind: "auth",
+        failureCode: "permission_denied",
+        resultDigest: "digest",
+        resultBytes: 196,
+        errorPreview: "",
+      }],
+    }));
+
+    expect(r?.code).toBe("tool_authorization_denied");
+    expect(r?.detail).toMatch(/mcp_manage.*authorization.*no mutation/iu);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/trust|approval/iu);
+    expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/retry.*same/iu);
+  });
+
+  it("explains a background mutation that ran but did not persist", () => {
+    const r = rootCause(makeSignals({
+      failures: [{
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "background_task",
+        transportOk: false,
+        errorKind: "config",
+        failureCode: "mutation_not_persisted",
+        resultDigest: "",
+        resultBytes: 0,
+        errorPreview: "",
+      }],
+    }));
+
+    expect(r?.code).toBe("mutation_not_persisted");
+    expect(r?.detail).toMatch(/runtime.*not persisted/iu);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/config/iu);
+  });
+
   it("background pending outranks an incidental recall miss", () => {
     const r = rootCause(makeSignals({
       endReason: "background_pending",
@@ -907,6 +972,27 @@ describe("obs-explain-heuristics", () => {
     expect(r!.code).toBe("background_pending");
     expect(r!.detail).toMatch(/completion|background/i);
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/delivery|lifecycle/i);
+  });
+
+  it("ranks a tool invocation stall above an incidental recall miss", () => {
+    const r = rootCause(makeSignals({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      recall: allMissRecall,
+      requestRelevantToolNames: ["mcp__test-service--account_summary"],
+      recoveries: {
+        total: 1,
+        succeeded: 0,
+        byReason: { request_tool_nudge: 1 },
+      },
+      breakerOpenedTool: "skills_manage",
+      hasDoNotRetrySignal: true,
+      repeatedFailureCount: { skills_manage: 0 },
+    }));
+
+    expect(r?.code).toBe("tool_invocation_stall");
+    expect(r?.detail).toContain("mcp__test-service--account_summary");
+    expect(r?.detail).toMatch(/request_tool_nudge|recovery/iu);
   });
 
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {

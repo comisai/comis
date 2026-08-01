@@ -17,11 +17,9 @@ import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprot
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { SystemIntervalHandle, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import type PQueue from "p-queue";
-
 import type { RefreshResult } from "./oauth/refresh-deduper.js";
 import type { TokenStore } from "./oauth/token-store.js";
 import type { ResolveDiscoveryArgs } from "./oauth/discovery.js";
-
 // ---------------------------------------------------------------------------
 // Qualified name helpers (pure; co-located with types to break no-cycles)
 // ---------------------------------------------------------------------------
@@ -284,6 +282,8 @@ export interface McpToolDefinition {
   readonly description?: string;
   /** JSON Schema describing input parameters. */
   readonly inputSchema: Record<string, unknown>;
+  /** Untrusted MCP hints may tighten routing but never grant authority. */
+  readonly annotations?: import("@modelcontextprotocol/sdk/types.js").ToolAnnotations;
 }
 
 /** Result of calling an MCP tool. */

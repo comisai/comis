@@ -59,26 +59,44 @@ ${resultsHtml}
 </html>`;
 }
 
+/**
+ * Zero-result page markup as the endpoint actually serves it: the row carries
+ * `result--no-result`, and the message sits in a `no-results__message` block
+ * whose heading text varies with the query and locale.
+ */
 function makeDdgEmptyResultsPage(): string {
   return wrapDdgPage(`
 <div class="result results_links results_links_deep web-result result--no-result">
   <div class="links_main links_deep result__body">
-    <h2 class="result__title"></h2>
-    <div class="no-results">No results.</div>
+    <div class="no-results__container result__title">
+      <span class='no-results'>
+        <div class="no-results__message">
+          <h1>No results found for <strong>&quot;zqxjv wubblefratz&quot;</strong></h1>
+          <p><strong>Suggestions</strong>:<ul><li>Check spelling</li></ul></p>
+        </div>
+      </span>
+    </div>
   </div>
 </div>`);
 }
 
+/**
+ * Anomaly challenge page markup as the endpoint actually serves it: an
+ * `anomaly-modal` tree plus a form posting to the `anomaly.js` verifier.
+ */
 function makeDdgChallengePage(): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><title>DuckDuckGo</title></head>
 <body>
-  <div class="anomaly-modal">
-    <p>Unfortunately, bots use DuckDuckGo too.</p>
-    <p>Please complete the following challenge to confirm this search was made by a human.</p>
-    <form id="challenge-form" action="//duckduckgo.com/anomaly.js"></form>
-  </div>
+  <form id="challenge-form" action="//duckduckgo.com/anomaly.js?sv=html&amp;cc=sre" method="POST">
+    <div class="anomaly-modal__mask">
+      <div class="anomaly-modal__modal" data-testid="anomaly-modal">
+        <div class="anomaly-modal__title">Unfortunately, bots use DuckDuckGo too.</div>
+        <div class="anomaly-modal__instructions">Select all squares containing a duck:</div>
+      </div>
+    </div>
+  </form>
 </body>
 </html>`;
 }
@@ -182,6 +200,26 @@ describe("parseDdgHtml", () => {
     expect(results[0].url).toBe("https://good.com");
   });
 
+  it("does not lend a later result's snippet to an earlier snippetless result", () => {
+    // Pairing links and snippets by their own ordinal misattributes every
+    // snippet after the first gap, which silently mislabels real URLs.
+    const html = `
+<div class="result">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ffirst.com">First Result</a>
+</div>
+<div class="result">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fsecond.com">Second Result</a>
+  <a class="result__snippet">Description belonging to the second result.</a>
+</div>`;
+
+    const results = parseDdgHtml(html);
+    expect(results).toHaveLength(2);
+    expect(results[0].url).toBe("https://first.com");
+    expect(results[0].description).toBe("");
+    expect(results[1].url).toBe("https://second.com");
+    expect(results[1].description).toBe("Description belonging to the second result.");
+  });
+
   it("includes results with title but no snippet", () => {
     // When there are more links than snippets, description should be empty string
     const html = `
@@ -232,6 +270,64 @@ describe("runDuckDuckGoSearch", () => {
     expect(result.results[0].url).toBe("https://test.com");
   });
 
+  it("issues the search as a GET with the query carried in the URL", async () => {
+    mockImpitFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () =>
+        wrapDdgPage(
+          makeDdgResult({
+            title: "Test Result",
+            href: "//duckduckgo.com/l/?uddg=https%3A%2F%2Ftest.com",
+            snippet: "A test snippet.",
+          }),
+        ),
+    });
+
+    await runDuckDuckGoSearch({
+      query: "current events today",
+      count: 5,
+      timeoutSeconds: 10,
+    });
+
+    // The endpoint answers a form POST with its anomaly challenge page, so the
+    // query has to travel as a GET query parameter.
+    const [requestUrl, requestInit] = mockImpitFetch.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(requestInit.method).toBe("GET");
+    expect(requestInit.body).toBeUndefined();
+    expect(new URL(requestUrl).searchParams.get("q")).toBe("current events today");
+  });
+
+  it("carries the freshness window as a df query parameter", async () => {
+    mockImpitFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () =>
+        wrapDdgPage(
+          makeDdgResult({
+            title: "Fresh Result",
+            href: "//duckduckgo.com/l/?uddg=https%3A%2F%2Ffresh.com",
+            snippet: "Recent snippet.",
+          }),
+        ),
+    });
+
+    await runDuckDuckGoSearch({
+      query: "ai news",
+      count: 5,
+      timeoutSeconds: 10,
+      df: "d",
+    });
+
+    const [requestUrl] = mockImpitFetch.mock.calls[0] as [string, Record<string, unknown>];
+    expect(new URL(requestUrl).searchParams.get("df")).toBe("d");
+  });
+
   it("handles empty results page", async () => {
     mockImpitFetch.mockResolvedValue({
       ok: true,
@@ -251,7 +347,7 @@ describe("runDuckDuckGoSearch", () => {
   });
 
   it.each([200, 202])(
-    "rejects an anti-automation challenge returned with HTTP %i",
+    "reports an anomaly challenge returned with HTTP %i as a transient per-IP rate limit",
     async (status) => {
       mockImpitFetch.mockResolvedValue({
         ok: true,
@@ -260,13 +356,21 @@ describe("runDuckDuckGoSearch", () => {
         text: async () => makeDdgChallengePage(),
       });
 
-      await expect(
-        runDuckDuckGoSearch({
-          query: "latest artificial intelligence news today",
-          count: 5,
-          timeoutSeconds: 10,
-        }),
-      ).rejects.toThrow("DuckDuckGo search blocked by CAPTCHA challenge");
+      // The challenge is a source-IP rate limit that clears on its own, so the
+      // message must say so rather than implying a puzzle someone has to solve.
+      const failure = runDuckDuckGoSearch({
+        query: "latest artificial intelligence news today",
+        count: 5,
+        timeoutSeconds: 10,
+      });
+      await expect(failure).rejects.toThrow(`anomaly challenge (HTTP ${status})`);
+      await expect(failure).rejects.toThrow(/clears after about a minute/);
+      // The web_search failure detector buckets a provider reason by matching this
+      // rule against it. Wording that drifts out of the rule downgrades the verdict
+      // from the rate-limit class to the unrecognized-reason catch-all.
+      await expect(failure).rejects.toThrow(
+        /rate limit|quota exceeded|usage limit|too many requests/i,
+      );
     },
   );
 
@@ -326,7 +430,7 @@ describe("runDuckDuckGoSearch", () => {
     ).rejects.toThrow("DuckDuckGo search error (403)");
   });
 
-  it("sends POST request to DDG endpoint with form body", async () => {
+  it("targets the HTML endpoint once and applies the caller's timeout", async () => {
     mockImpitFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -342,11 +446,9 @@ describe("runDuckDuckGoSearch", () => {
 
     expect(mockImpitFetch).toHaveBeenCalledTimes(1);
     const [url, opts] = mockImpitFetch.mock.calls[0] as [string, Record<string, unknown>];
-    expect(url).toBe("https://html.duckduckgo.com/html/");
-    expect(opts.method).toBe("POST");
-    const headers = opts.headers as Record<string, string>;
-    expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
-    expect(opts.body).toContain("q=test+query");
+    const parsed = new URL(url);
+    expect(`${parsed.origin}${parsed.pathname}`).toBe("https://html.duckduckgo.com/html/");
+    expect(parsed.searchParams.get("q")).toBe("test query");
     expect(opts.timeout).toBe(10_000);
   });
 });

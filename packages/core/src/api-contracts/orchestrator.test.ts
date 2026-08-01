@@ -134,8 +134,9 @@ describe("orchestrator-umbrella domain contracts", () => {
   // Route-scope invariant
   // -------------------------------------------------------------------------
 
-  it("only owner-scoped subagent lifecycle methods expose both agent and admin routes", () => {
+  it("only explicitly operator-readable methods expose both agent and admin routes", () => {
     const dualScopeMethods = new Set([
+      "cron.list",
       "subagent.list",
       "subagent.wait",
       "subagent.kill",
@@ -152,10 +153,9 @@ describe("orchestrator-umbrella domain contracts", () => {
   // Scope assignment per handler-file cluster
   // -------------------------------------------------------------------------
 
-  it("cron-handlers and graph-handlers are scoped to rpc per setup-gateway-api.ts:130-157 + 317-321", () => {
+  it("cron and graph mutations stay agent-reachable while cron inventory is also operator-readable", () => {
     const cronAndGraph = [
       CronAddContract,
-      CronListContract,
       CronUpdateContract,
       CronRemoveContract,
       CronStatusContract,
@@ -176,6 +176,7 @@ describe("orchestrator-umbrella domain contracts", () => {
       GraphDeleteRunContract,
     ];
     for (const c of cronAndGraph) expect(c.scopes, `${c.method} scopes`).toEqual(["rpc"]);
+    expect(CronListContract.scopes).toEqual(["rpc", "admin"]);
     expect(CronResetContract.scopes).toEqual(["admin"]);
   });
 
@@ -375,6 +376,7 @@ describe("CronAddContract strict authoring projection", () => {
         jobId: "uuid-1",
         name: "test-job",
         schedule: { kind: "every", everyMs: 60000, anchorMs: 1_800_000_000_000 },
+        resolvedAgentId: "agent-a",
       }),
     ).not.toThrow();
   });
@@ -385,6 +387,7 @@ describe("CronAddContract strict authoring projection", () => {
         jobId: "uuid-1",
         name: "test-job",
         schedule: { kind: "every", everyMs: 60000 },
+        resolvedAgentId: "agent-a",
       }),
     ).toThrow();
   });
@@ -400,12 +403,16 @@ describe("CronListContract", () => {
   });
 
   it("accepts response with empty jobs", () => {
-    expect(() => CronListContract.response.parse({ jobs: [] })).not.toThrow();
+    expect(() => CronListContract.response.parse({
+      resolvedAgentId: "agent-a",
+      jobs: [],
+    })).not.toThrow();
   });
 
   it("accepts strict authored and built-in job projections", () => {
     expect(() =>
       CronListContract.response.parse({
+        resolvedAgentId: "agent-a",
         jobs: [
           {
             id: "j1",
@@ -471,7 +478,11 @@ describe("CronUpdateContract", () => {
 
   it("response carries jobName + updated", () => {
     expect(() =>
-      CronUpdateContract.response.parse({ jobName: "x", updated: true }),
+      CronUpdateContract.response.parse({
+        jobName: "x",
+        updated: true,
+        resolvedAgentId: "agent-a",
+      }),
     ).not.toThrow();
   });
 });
@@ -491,7 +502,11 @@ describe("CronRemoveContract", () => {
 
   it("response carries jobName + removed", () => {
     expect(() =>
-      CronRemoveContract.response.parse({ jobName: "x", removed: true }),
+      CronRemoveContract.response.parse({
+        jobName: "x",
+        removed: true,
+        resolvedAgentId: "agent-a",
+      }),
     ).not.toThrow();
   });
 });
@@ -550,7 +565,10 @@ describe("CronRunsContract", () => {
   });
 
   it("response with empty runs", () => {
-    expect(() => CronRunsContract.response.parse({ runs: [] })).not.toThrow();
+    expect(() => CronRunsContract.response.parse({
+      runs: [],
+      resolvedAgentId: "agent-a",
+    })).not.toThrow();
   });
 
   it("response preserves bounded internal-action diagnostic counters", () => {
@@ -574,12 +592,16 @@ describe("CronRunsContract", () => {
       ],
     };
 
-    expect(CronRunsContract.response.parse({ runs: [run] })).toEqual({ runs: [run] });
+    expect(CronRunsContract.response.parse({
+      runs: [run],
+      resolvedAgentId: "agent-a",
+    })).toEqual({ runs: [run], resolvedAgentId: "agent-a" });
     expect(() => CronRunsContract.response.parse({
       runs: [{
         ...run,
         counters: Array.from({ length: 33 }, (_, index) => ({ name: `counter_${index}`, value: index })),
       }],
+      resolvedAgentId: "agent-a",
     })).toThrow();
   });
 });
@@ -951,6 +973,14 @@ describe("HeartbeatStatesContract", () => {
             enabled: true,
             intervalMs: 60000,
             nextDueAtMs: 61000,
+            terminalCount: 2,
+            lastRunAtMs: 60000,
+            lastStatus: "skipped",
+            lastReason: "empty_file",
+            lastLlmCalls: 0,
+            lastDeliveryStatus: "suppressed",
+            lastDeliveryReason: "quiet_hours",
+            lastDeliveryErrorKind: null,
           },
         ],
       }),
@@ -966,6 +996,14 @@ describe("HeartbeatStatesContract", () => {
             enabled: false,
             intervalMs: 1,
             nextDueAtMs: null,
+            terminalCount: 0,
+            lastRunAtMs: null,
+            lastStatus: null,
+            lastReason: null,
+            lastLlmCalls: null,
+            lastDeliveryStatus: null,
+            lastDeliveryReason: null,
+            lastDeliveryErrorKind: null,
           },
         ],
       }),
@@ -1105,10 +1143,10 @@ describe("SubagentKillContract", () => {
     expect(() => SubagentKillContract.request.parse({})).toThrow();
   });
 
-  it("accepts the canonical response shape", () => {
-    expect(() =>
-      SubagentKillContract.response.parse({ killed: true, runId: "r1" }),
-    ).not.toThrow();
+  it("preserves the exact killed-run count in the canonical response", () => {
+    expect(
+      SubagentKillContract.response.parse({ killed: true, runId: "r1", count: 1 }),
+    ).toEqual({ killed: true, runId: "r1", count: 1 });
   });
 });
 

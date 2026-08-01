@@ -283,6 +283,29 @@ describe("strict cron RPC mutations", () => {
       .rejects.toThrow(/admin access required/i);
   });
 
+  it("states the resolved agent for every agent-scoped cron response", async () => {
+    const authored = job();
+    const cronScheduler = scheduler([authored]);
+    const bound = handlers(deps(cronScheduler));
+
+    await expect(bound["cron.add"]!({
+      name: "Extra status",
+      schedule: { kind: "every", everyMs: 120_000 },
+      payload: { kind: "heartbeat_event", text: "check", wakeMode: "now" },
+      _agentId: "agent-a",
+    })).resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.list"]!({ _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.list"]!({ agentId: "*", _trustLevel: "admin" }))
+      .resolves.toMatchObject({ resolvedAgentId: "*" });
+    await expect(bound["cron.update"]!({ jobName: authored.name, paused: true, _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.remove"]!({ jobName: authored.name, _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+    await expect(bound["cron.runs"]!({ jobName: authored.name, _agentId: "agent-a" }))
+      .resolves.toMatchObject({ resolvedAgentId: "agent-a" });
+  });
+
   it("reports raw failed-authority status without inventing a scheduler", async () => {
     const controller = maintenance();
     const bound = handlers(deps(scheduler([]), {
@@ -397,20 +420,23 @@ describe("strict cron RPC mutations", () => {
     const result = await bound["cron.runs"]!({ jobName: "Daily status", limit: 7 });
 
     expect(executionTracker.listHistory).toHaveBeenCalledWith({ jobId: "job-a", limit: 7 });
-    expect(result).toEqual({ runs: [{
-      executionId: "execution-a",
-      jobId: "job-a",
-      agentId: "agent-a",
-      scheduledForMs: NOW_MS,
-      trigger: "manual",
-      workKind: "heartbeat_event",
-      rootRunId: null,
-      startedAtMs: NOW_MS,
-      terminalAtMs: NOW_MS + 20,
-      durationMs: 20,
-      status: "dispatched",
-      deliveryStatus: "not_requested",
-    }] });
+    expect(result).toEqual({
+      resolvedAgentId: "agent-a",
+      runs: [{
+        executionId: "execution-a",
+        jobId: "job-a",
+        agentId: "agent-a",
+        scheduledForMs: NOW_MS,
+        trigger: "manual",
+        workKind: "heartbeat_event",
+        rootRunId: null,
+        startedAtMs: NOW_MS,
+        terminalAtMs: NOW_MS + 20,
+        durationMs: 20,
+        status: "dispatched",
+        deliveryStatus: "not_requested",
+      }],
+    });
   });
 
   it("projects internal-action counters through cron.runs without model content", async () => {
@@ -468,6 +494,7 @@ describe("strict cron RPC mutations", () => {
     }));
 
     await expect(bound["cron.runs"]!({ jobName: "Reflection", limit: 1 })).resolves.toEqual({
+      resolvedAgentId: "agent-a",
       runs: [{
         executionId: "execution-reflection-a",
         jobId: "reflection-agent-a",
@@ -504,6 +531,7 @@ describe("strict cron RPC mutations", () => {
     await expect(bound["cron.remove"]!({ jobId: authored.id })).resolves.toEqual({
       jobName: authored.name,
       removed: true,
+      resolvedAgentId: "agent-a",
     });
     expect(cronScheduler.removeJob).toHaveBeenCalledWith(authored.id);
     await expect(bound["cron.remove"]!({ jobId: builtIn.id }))

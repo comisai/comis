@@ -6,10 +6,13 @@ import {
   enforceResponseLocale,
   unrepairedMismatchHint,
 } from "./response-locale-enforcement.js";
+import * as responseLocaleEnforcement from "./response-locale-enforcement.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 import { allowProviderDispatch } from "../provider-dispatch.js";
 import { err } from "@comis/shared";
 import { buildToolRecoveryIdentity } from "../../bridge/tool-failure-recovery.js";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 
 const ARABIC_POLICY: ResponseLocalePolicy = {
   locale: "ar",
@@ -17,7 +20,96 @@ const ARABIC_POLICY: ResponseLocalePolicy = {
   enforceLocale: true,
 };
 
+const LATIN_POLICY: ResponseLocalePolicy = {
+  locale: "und-Latn",
+  source: "request",
+  enforceLocale: true,
+};
+
 const RECOVERY_IDENTITY_SALT = "identity-salt-a";
+
+const TEST_MODEL = {
+  id: "test-model",
+  name: "Test Model",
+  api: "openai-responses",
+  provider: "example",
+  baseUrl: "https://example.com",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 16_000,
+  maxTokens: 2_000,
+} as never;
+
+const TEST_USAGE = {
+  input: 1,
+  output: 1,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 2,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function makeRealLocaleSession(
+  initialResponse: string,
+  repairedResponse: string | undefined,
+  options: {
+    onStream?: () => void;
+    tools?: never[];
+  } = {},
+) {
+  const streamFunction = vi.fn(() => {
+    options.onStream?.();
+    const stream = createAssistantMessageEventStream();
+    const message = {
+      role: "assistant" as const,
+      content: repairedResponse === undefined
+        ? []
+        : [{ type: "text" as const, text: repairedResponse }],
+      api: "openai-responses" as const,
+      provider: "example",
+      model: "test-model",
+      usage: TEST_USAGE,
+      stopReason: repairedResponse === undefined ? "error" as const : "stop" as const,
+      ...(repairedResponse === undefined
+        ? { errorMessage: "provider repair failed" }
+        : {}),
+      timestamp: 20,
+    };
+    stream.push(repairedResponse === undefined
+      ? { type: "error", reason: "error", error: message }
+      : { type: "done", reason: "stop", message });
+    return stream;
+  });
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: "Keep the rewrite faithful.",
+      model: TEST_MODEL,
+      thinkingLevel: "off",
+      tools: options.tools ?? [],
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: initialResponse }],
+        api: "openai-responses",
+        provider: "example",
+        model: "test-model",
+        usage: TEST_USAGE,
+        stopReason: "stop",
+        timestamp: 10,
+      }],
+    },
+    streamFn: streamFunction,
+  });
+  const prompt = vi.fn((instruction: string) => agent.prompt(instruction));
+  return {
+    agent,
+    prompt,
+    get messages() {
+      return agent.state.messages;
+    },
+    streamFunction,
+  };
+}
 
 function messageToolResult(input: {
   success: boolean;
@@ -139,6 +231,7 @@ describe("enforceResponseLocale", () => {
     const outcome = await enforceResponseLocale({
       policy: ARABIC_POLICY,
       response: originalResponse,
+      requestText: "can u save item-7",
       session,
       getVisibleResponse: () => visibleResponse,
       guardProviderDispatch: allowProviderDispatch,
@@ -158,6 +251,16 @@ describe("enforceResponseLocale", () => {
       attribution: "assistant_visible_draft",
       instructionAuthority: "none",
       text: originalResponse,
+    });
+    const serializedRequest = repairPrompt
+      .split("\n")
+      .find((line) => line.startsWith('{"attribution":"current_user_request"'));
+    expect(serializedRequest).toBeDefined();
+    if (serializedRequest === undefined) return;
+    expect(JSON.parse(serializedRequest)).toEqual({
+      attribution: "current_user_request",
+      instructionAuthority: "language_sample_only",
+      text: "can u save item-7",
     });
   });
 
@@ -260,6 +363,136 @@ describe("enforceResponseLocale", () => {
 });
 
 describe("applyResponseLocaleEnforcement", () => {
+  it("repairs in an isolated transcript without persisting a synthetic user turn", async () => {
+    const draft = "המעבר בוצע בהצלחה.";
+    const session = makeRealLocaleSession(
+      draft,
+      "The switch completed successfully.",
+    );
+    const beforeMessages = JSON.stringify(session.messages);
+    const result = { response: draft };
+    const params = {
+      responseLocalePolicy: LATIN_POLICY,
+      result,
+      msg: { text: "switch back to the model u had before" },
+      session,
+      config: { localePacks: {} },
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus: new TypedEventBus(),
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe("The switch completed successfully.");
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(JSON.stringify(session.messages)).toBe(beforeMessages);
+    expect(session.streamFunction).toHaveBeenCalledTimes(1);
+    const providerContext = session.streamFunction.mock.calls[0]?.[1] as {
+      messages: Array<{ role: string; content: unknown }>;
+      tools?: unknown[];
+    };
+    expect(providerContext.messages).toHaveLength(1);
+    expect(providerContext.messages[0]?.role).toBe("user");
+    expect(providerContext.tools ?? []).toEqual([]);
+  });
+
+  it("recovers the locale terminal error when a later deterministic guard satisfies the policy", () => {
+    const candidate = (
+      responseLocaleEnforcement as Record<string, unknown>
+    ).recoverFinalResponseLocaleFailure;
+    expect(candidate).toBeTypeOf("function");
+    const result: Record<string, unknown> = {
+      response: "openai / gpt-4.1-nano",
+      finishReason: "error",
+      terminalErrorKind: "validation",
+      errorContext: {
+        errorType: "ResponseLocaleMismatch",
+        retryable: true,
+      },
+    };
+
+    const recovered = (candidate as (
+      result: Record<string, unknown>,
+      policy: ResponseLocalePolicy,
+    ) => boolean)(result, LATIN_POLICY);
+
+    expect(recovered).toBe(true);
+    expect(result).toMatchObject({
+      response: "openai / gpt-4.1-nano",
+      finishReason: "stop",
+    });
+    expect(result).not.toHaveProperty("terminalErrorKind");
+    expect(result).not.toHaveProperty("errorContext");
+  });
+
+  it("fails visibly when the bounded repair still violates the enforced current-request script", async () => {
+    const eventBus = new TypedEventBus();
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const hebrew = "המודל הפעיל הוא openai gpt-4.1-nano";
+    const session = makeRealLocaleSession(hebrew, hebrew);
+    const result: Record<string, unknown> = {
+      response: hebrew,
+      finishReason: "stop",
+    };
+    const params = {
+      responseLocalePolicy: LATIN_POLICY,
+      result,
+      msg: { text: "what model are u actually using now" },
+      session,
+      config: { localePacks: {} },
+      bridge: {
+        getResult: () => ({}),
+        hasOutboundDelivery: () => false,
+      },
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result).toMatchObject({
+      response:
+        "I couldn't produce a response in the language and writing system requested for this message. Please retry or select a model that supports it.",
+      finishReason: "error",
+      terminalErrorKind: "validation",
+      errorContext: {
+        errorType: "ResponseLocaleMismatch",
+        retryable: true,
+      },
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(JSON.stringify(session.streamFunction.mock.calls[0]?.[1]))
+      .toContain("what model are u actually using now");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "validation",
+        expectedScript: "Latn",
+        actualScript: "Hebr",
+      }),
+      "Response locale remained mismatched after repair",
+    );
+  });
+
   it("preserves the original response when locale repair records an empty provider error", async () => {
     let now = 10;
     const eventBus = new TypedEventBus();
@@ -269,27 +502,11 @@ describe("applyResponseLocaleEnforcement", () => {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
     };
     const originalResponse = "English answer after the requested tools completed.";
-    const session = {
-      agent: { state: { tools: [{ name: "write" }] } },
-      messages: [{
-        role: "assistant",
-        content: [{ type: "text", text: originalResponse }],
-        stopReason: "stop",
-      }],
-      prompt: vi.fn(async (instruction: string) => {
-        now = 17;
-        session.messages.push({
-          role: "user",
-          content: [{ type: "text", text: instruction }],
-          stopReason: "stop",
-        });
-        session.messages.push({
-          role: "assistant",
-          content: [],
-          stopReason: "error",
-        });
-      }),
-    };
+    const session = makeRealLocaleSession(
+      originalResponse,
+      undefined,
+      { onStream: () => { now = 17; } },
+    );
     const result = { response: originalResponse };
     const params = {
       responseLocalePolicy: ARABIC_POLICY,
@@ -339,17 +556,11 @@ describe("applyResponseLocaleEnforcement", () => {
     const logger = {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
     };
-    const session = {
-      agent: { state: { tools: [{ name: "write" }] } },
-      messages: [{ role: "assistant", content: [{ type: "text", text: "English draft" }] }],
-      prompt: vi.fn(async () => {
-        now = 17;
-        session.messages.push({
-          role: "assistant",
-          content: [{ type: "text", text: "هذه إجابة مصححة." }],
-        });
-      }),
-    };
+    const session = makeRealLocaleSession(
+      "English draft",
+      "هذه إجابة مصححة.",
+      { onStream: () => { now = 17; } },
+    );
     const result = { response: "English draft" };
     const params = {
       responseLocalePolicy: ARABIC_POLICY,
@@ -473,16 +684,10 @@ describe("applyResponseLocaleEnforcement", () => {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
     };
     const originalResponse = "The file was sent after the delivery tool recovered.";
-    const session = {
-      agent: { state: { tools: [{ name: "message" }] } },
-      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
-      prompt: vi.fn(async () => {
-        session.messages.push({
-          role: "assistant",
-          content: [{ type: "text", text: "تم إرسال الملف بعد استعادة أداة التسليم." }],
-        });
-      }),
-    };
+    const session = makeRealLocaleSession(
+      originalResponse,
+      "تم إرسال الملف بعد استعادة أداة التسليم.",
+    );
     const result = { response: originalResponse };
     const params = {
       responseLocalePolicy: ARABIC_POLICY,
@@ -523,7 +728,7 @@ describe("applyResponseLocaleEnforcement", () => {
     await applyResponseLocaleEnforcement(params);
 
     expect(result.response).toBe("تم إرسال الملف بعد استعادة أداة التسليم.");
-    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 
   it("returns silently when a failed-tool turn has no locale mismatch", async () => {
@@ -621,19 +826,12 @@ describe("applyResponseLocaleEnforcement", () => {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
     };
     const originalResponse = "The operation succeeded for item-alpha-7 after 3600000 ms.";
-    const tools = [{ name: "write" }];
-    const session = {
-      agent: { state: { tools } },
-      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
-      prompt: vi.fn(async () => {
-        expect(session.agent.state.tools).toEqual([]);
-        now = 17;
-        session.messages.push({
-          role: "assistant",
-          content: [{ type: "text", text: "لم تنجح العملية ولا يوجد سجل." }],
-        });
-      }),
-    };
+    const tools = [{ name: "write" }] as never[];
+    const session = makeRealLocaleSession(
+      originalResponse,
+      "لم تنجح العملية ولا يوجد سجل.",
+      { onStream: () => { now = 17; }, tools },
+    );
     const result = { response: originalResponse };
     const params = {
       responseLocalePolicy: ARABIC_POLICY,

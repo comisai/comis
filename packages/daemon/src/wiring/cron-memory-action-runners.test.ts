@@ -117,7 +117,14 @@ function deps() {
         agents: {
           "agent-a": {
             memoryReview: { enabled: true },
-            learning: { enabled: true, forget: { failureEvictionFloor: 3 } },
+            learning: {
+              enabled: true,
+              forget: {
+                maxDormantDays: 240,
+                failureEvictionFloor: 4,
+                highProofFloor: 8,
+              },
+            },
           },
         },
         providers: {
@@ -176,7 +183,12 @@ describe("cron memory action runners", () => {
       tenantId: "tenant-a",
       agentId: "agent-a",
       now: NOW_MS,
-      policy: { evictionEnabled: true, failureEvictionFloor: 3 },
+      policy: {
+        evictionEnabled: true,
+        maxDormantDays: 240,
+        failureEvictionFloor: 4,
+        highProofFloor: 8,
+      },
     });
     expect(runtimeDeps._emit).toHaveBeenCalledWith("learning:lifecycle_swept", {
       agentId: "agent-a",

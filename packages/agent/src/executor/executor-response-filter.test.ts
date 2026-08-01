@@ -1341,6 +1341,346 @@ describe("destructive effect evidence guard", () => {
   });
 });
 
+type ProviderModelFailureGroundingGuard = (params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    failureCode?: string;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "provider_requires_model";
+};
+
+function providerModelFailureGroundingGuard(): ProviderModelFailureGroundingGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceProviderModelFailureGrounding;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ProviderModelFailureGroundingGuard;
+}
+
+describe("provider-model failure grounding guard", () => {
+  const honestResponse =
+    "I did not change the agent. The requested value names a provider, not an exact model.";
+
+  it("replaces model prose after an unrecovered provider-as-model rejection", () => {
+    const guarded = providerModelFailureGroundingGuard()({
+      response:
+        "That model is unavailable. I can switch to a different model from the current provider.",
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: false,
+        failureCode: "provider_requires_model",
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "provider_requires_model",
+    });
+  });
+
+  it("preserves the response after a later successful agent update", () => {
+    const response = "The agent now uses the selected provider and exact model.";
+    const guarded = providerModelFailureGroundingGuard()({
+      response,
+      toolExecResults: [
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: false,
+          failureCode: "provider_requires_model",
+        },
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+        },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({ response, corrected: false });
+  });
+
+  it("does not replace ordinary agent-management failures", () => {
+    const response = "I could not update the agent because the request was rejected.";
+    const guarded = providerModelFailureGroundingGuard()({
+      response,
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: false,
+        failureCode: "model_not_found",
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({ response, corrected: false });
+  });
+});
+
+type AgentUpdateNoOpGroundingGuard = (params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    changed?: boolean;
+  }>;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "agent_update_noop_grounding";
+};
+
+function agentUpdateNoOpGroundingGuard(): AgentUpdateNoOpGroundingGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceAgentUpdateNoOpGrounding;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as AgentUpdateNoOpGroundingGuard;
+}
+
+describe("agent-update no-op grounding guard", () => {
+  const honestResponse =
+    "No configuration change was needed. This agent already uses provider_a / model_a.";
+
+  it("replaces model prose that contradicts the latest successful no-op update", () => {
+    const guarded = agentUpdateNoOpGroundingGuard()({
+      response:
+        "I can change my active model, switch providers, and adjust certain settings.",
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: true,
+        changed: false,
+      }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "agent_update_noop_grounding",
+    });
+  });
+
+  it("preserves the exact runtime-owned no-op disclosure", () => {
+    expect(agentUpdateNoOpGroundingGuard()({
+      response: honestResponse,
+      toolExecResults: [{
+        toolName: "agents_manage",
+        action: "update",
+        success: true,
+        changed: false,
+      }],
+      honestResponse,
+    })).toEqual({ response: honestResponse, corrected: false });
+  });
+
+  it("does not let an earlier no-op override a later applied update", () => {
+    const response = "The agent now uses provider_b / model_b.";
+    expect(agentUpdateNoOpGroundingGuard()({
+      response,
+      toolExecResults: [
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+          changed: false,
+        },
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+          changed: true,
+        },
+      ],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("leaves a later failed update for the failure-grounding path", () => {
+    const response = "The requested model was rejected.";
+    expect(agentUpdateNoOpGroundingGuard()({
+      response,
+      toolExecResults: [
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: true,
+          changed: false,
+        },
+        {
+          toolName: "agents_manage",
+          action: "update",
+          success: false,
+        },
+      ],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+});
+
+type SenderAuthorityGroundingGuard = (params: {
+  request: string;
+  response: string;
+  senderTrust: string;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "sender_authority_overclaim";
+};
+
+function senderAuthorityGroundingGuard(): SenderAuthorityGroundingGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceSenderAuthorityGrounding;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as SenderAuthorityGroundingGuard;
+}
+
+describe("sender self-authority grounding guard", () => {
+  const honestResponse =
+    "Your current trust does not authorize admin-only changes. An authorized administrator is required.";
+
+  it("replaces a user-trust claim that the sender can grant system access", () => {
+    const guarded = senderAuthorityGroundingGuard()({
+      request: "and what would u need me for",
+      response:
+        "You would need to provide the necessary system-level permissions or approvals "
+        + "for me to connect to external services. Without your direct authorization, I cannot proceed.",
+      senderTrust: "user",
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "sender_authority_overclaim",
+    });
+  });
+
+  it("replaces a user-trust claim covering skill and settings mutations", () => {
+    const guarded = senderAuthorityGroundingGuard()({
+      request: "and what would u need me for",
+      response:
+        "You mainly need to provide authorization or approval for installing skills, "
+        + "connecting external services, or changing system settings.",
+      senderTrust: "user",
+      honestResponse,
+    });
+
+    expect(guarded.corrected).toBe(true);
+    expect(guarded.response).toBe(honestResponse);
+  });
+
+  it("preserves an accurate below-admin limitation", () => {
+    const response =
+      "I cannot increase my own trust or permissions. Those changes require an authorized administrator.";
+    expect(senderAuthorityGroundingGuard()({
+      request: "could you give yourself more access if you wanted",
+      response,
+      senderTrust: "user",
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("preserves the same answer for an admin sender", () => {
+    const response =
+      "You would need to approve an agent configuration change before I apply it.";
+    expect(senderAuthorityGroundingGuard()({
+      request: "and what would u need me for",
+      response,
+      senderTrust: "admin",
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not reinterpret ordinary user approval as admin authority", () => {
+    const response = "I need your approval before I send that message.";
+    expect(senderAuthorityGroundingGuard()({
+      request: "what do u need me for",
+      response,
+      senderTrust: "user",
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+});
+
+type ActiveModelSelfStatusGuard = (params: {
+  request: string;
+  response: string;
+  provider: string;
+  modelId: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "active_model_status_mismatch";
+};
+
+function activeModelSelfStatusGuard(): ActiveModelSelfStatusGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceActiveModelSelfStatus;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ActiveModelSelfStatusGuard;
+}
+
+describe("active-model self-status grounding guard", () => {
+  it("replaces an ungrounded live self-status answer with exact runtime identity", () => {
+    const guarded = activeModelSelfStatusGuard()({
+      request: "what model are u actually using now",
+      response: "The provider is provider_a, but the exact model is unspecified.",
+      provider: "provider_a",
+      modelId: "model_a",
+    });
+
+    expect(guarded).toEqual({
+      response: "provider_a / model_a",
+      corrected: true,
+      reason: "active_model_status_mismatch",
+    });
+  });
+
+  it("preserves a self-status answer carrying both exact runtime fields", () => {
+    const response = "I am running provider_a / model_a.";
+    expect(activeModelSelfStatusGuard()({
+      request: "what model are u actually using now",
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not reinterpret a recommendation request as current self-status", () => {
+    const response = "model_b would fit that workload.";
+    expect(activeModelSelfStatusGuard()({
+      request: "what model should i use now",
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not alter unrelated model-catalog discussion", () => {
+    const response = "The catalog has several pricing tiers.";
+    expect(activeModelSelfStatusGuard()({
+      request: "tell me about model pricing",
+      response,
+      provider: "provider_a",
+      modelId: "model_a",
+    })).toEqual({ response, corrected: false });
+  });
+});
+
 describe("empty-turn recovery does not narrate an already-delivered reply", () => {
   // LIVE: an onboarding turn sent its question via message({action:"send"}), so the
   // final assistant text was empty. Recovery then posted a SECOND bubble on top of

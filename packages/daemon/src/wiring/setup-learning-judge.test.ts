@@ -397,16 +397,17 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
   });
 
   it("readTurnTranscript excludes messages before the latest user turn", () => {
-    const message = (role: "user" | "assistant", text: string) => ({
+    const message = (role: "user" | "assistant", text: string, createdAt: number) => ({
       role,
+      createdAt,
       parts: [{ kind: "text", metadata: { raw: { text } } }],
     });
     const lcd = {
       getMessages: vi.fn(() => [
-        message("user", "older request"),
-        message("assistant", "older failed answer"),
-        message("user", "current request"),
-        message("assistant", "current answer"),
+        message("user", "older request", 100),
+        message("assistant", "older failed answer", 100),
+        message("user", "current request", 200),
+        message("assistant", "current answer", 200),
       ]),
     } as never;
     const built = buildOutcomeJudgeWiring(
@@ -428,6 +429,45 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     });
 
     expect(transcript).toBe("user: current request\nassistant: current answer");
+  });
+
+  it("readTurnTranscript evaluates the visible endpoints of a repaired ingest cohort", () => {
+    const message = (role: "user" | "assistant", text: string, createdAt: number) => ({
+      role,
+      createdAt,
+      parts: [{ kind: "text", metadata: { raw: { text } } }],
+    });
+    const lcd = {
+      getMessages: vi.fn(() => [
+        message("user", "older request", 100),
+        message("assistant", "older answer", 100),
+        message("user", "what model are u actually using now", 200),
+        message("assistant", "rejected draft in the wrong locale", 200),
+        message("user", "<response-locale-repair>internal rewrite instruction</response-locale-repair>", 200),
+        message("assistant", "openai / gpt-4.1-nano", 200),
+      ]),
+    } as never;
+    const built = buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: { a1: { provider: "anthropic", learningOutcome: { enabled: true, judge: { enabled: true } } } },
+        secrets: { ANTHROPIC_API_KEY: "test-key" },
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      lcd,
+    );
+
+    const transcript = built.readTurnTranscript!({
+      tenantId: TENANT,
+      agentId: "a1",
+      sessionId: "sess-1",
+      trajectoryId: TRACE,
+      conversationRef: JUDGE_CONVERSATION.value.conversationRef,
+    });
+
+    expect(transcript).toBe(
+      "user: what model are u actually using now\nassistant: openai / gpt-4.1-nano",
+    );
   });
 
   it("passes the exact previously loaded policy snapshot instead of rereading workspace files", async () => {

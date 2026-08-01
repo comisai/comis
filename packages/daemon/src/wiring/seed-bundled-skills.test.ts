@@ -117,11 +117,18 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
 
     expect(description).toMatch(/^MANDATORY:/u);
     expect(description).toMatch(/load this skill/iu);
+    expect(description).toMatch(/elliptical follow-ups/iu);
+    expect(description).toMatch(/preceding turn names the task/iu);
     expect(description).toMatch(/do not answer from general capabilities/iu);
     expect(manifest).toMatch(
       /installed-state request[\s\S]*skills_manage[\s\S]*action:\s*["'`]list["'`]/iu,
     );
     expect(manifest).toMatch(/must run `npx skills find <query>` first/iu);
+    expect(manifest).toMatch(/do not call the `find` file tool/iu);
+    expect(manifest).toMatch(/call `exec`/iu);
+    expect(manifest).toMatch(
+      /same-turn response[\s\S]*exact `owner\/repo@skill-name` identifier/iu,
+    );
     expect(manifest).toMatch(
       /catalog result[\s\S]*never proves[\s\S]*installed/iu,
     );

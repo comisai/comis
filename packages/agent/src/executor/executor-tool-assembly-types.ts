@@ -39,6 +39,7 @@ import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionPromptResult } from "./prompt-assembly.js";
 import type { McpInstructionBlock } from "@comis/core";
 import type { ExecutionOverrides } from "./types.js";
+import type { OperatorPolicyToolProjection } from "./mcp-operator-policy.js";
 
 /** Subset of PiExecutorDeps used by the tool assembly pipeline. */
 // @optional-field-count: documented Subset of PiExecutorDeps — inherits the parent bag's
@@ -221,6 +222,8 @@ export interface ToolAssemblyResult {
    *  counted on purpose (it rides the unconditionally-shipped fresh tail and is
    *  reserved nowhere else); see token-budget.ts. */
   cachedFreshTailPreambleTokens: number;
+  /** Content-free reports for operator policy projected onto tool schemas. */
+  operatorPolicyToolProjections: readonly OperatorPolicyToolProjection[];
 }
 
 /** Parameters for the assembleTools function. */
@@ -238,6 +241,7 @@ export interface ToolAssemblyParams {
   sm: {
     buildSessionContext(): { messages: unknown[] };
     getSessionDir(): string;
+    getBranch?(): unknown[];
   };
   formattedKeyForGuides: string;
   deliveredGuides: Set<string>;

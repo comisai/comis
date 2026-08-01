@@ -29,7 +29,7 @@
  * @module
  */
 
-import { AuthorizationError } from "../errors.js";
+import { AuthorizationError, ValidationError } from "../errors.js";
 import { ObsSpendSnapshotContract, stripInternalFields } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
@@ -57,9 +57,9 @@ function scopeRows(
 
 /**
  * Bind the `obs.spend.snapshot` handler — the admin gate + strip-before-parse +
- * the LIVE-snapshot read. COMPUTED-KEY form (`[ObsSpendSnapshotContract.method]`)
- * is MANDATORY (the `obs-audit.ts` precedent). The request is empty, so there are
- * no per-field literals to reference for the parity gate.
+ * the LIVE-snapshot read. The optional `currentRoot` scope reads the trusted
+ * internal root identity and the tree-wide governor counter; the default keeps
+ * the daemon-wide governance view.
  *
  * @param deps - the shared obs-handler deps; `deps.spendSnapshot` is the threaded
  *   live reader, `deps.obsStore` exposes `pricingCoverage`. Both absent
@@ -74,7 +74,30 @@ export function bindObsSpendHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
 
       // stripInternalFields BEFORE contract parse — `_trustLevel` (and any smuggled
       // field) cannot reach the parsed params or the result.
-      ObsSpendSnapshotContract.request.parse(stripInternalFields(rawParams));
+      const params = ObsSpendSnapshotContract.request.parse(stripInternalFields(rawParams));
+
+      if (params.scope === "currentRoot") {
+        const rootRunId = (rawParams as Record<string, unknown>)._rootRunId;
+        if (
+          typeof rootRunId !== "string"
+          || rootRunId.length === 0
+          || deps.boundedAutonomy === undefined
+        ) {
+          throw new ValidationError(
+            "Current autonomy root is unavailable; query total, agent, or session billing instead",
+          );
+        }
+        const result = {
+          snapshot: {
+            enabled: true,
+            scope: "currentRoot" as const,
+            rootRunId,
+            ...deps.boundedAutonomy.spendSnapshot(rootRunId),
+          },
+        };
+        if (IS_DEV) ObsSpendSnapshotContract.response.parse(result);
+        return result;
+      }
 
       const live = deps.spendSnapshot?.();
 

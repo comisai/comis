@@ -37,6 +37,15 @@ const SubagentsParams = Type.Object({
   target: Type.Optional(
     Type.String({ description: "Run ID of the target subagent (for kill/steer)" }),
   ),
+  scope: Type.Optional(
+    Type.Union(
+      [Type.Literal("run"), Type.Literal("tree")],
+      {
+        description:
+          "Kill scope (default: run). Use tree for requests such as stop everything or cancel all work; it hard-stops every descendant in the trusted current spawn tree and reports the exact count.",
+      },
+    ),
+  ),
   message: Type.Optional(
     Type.String({ description: "New task description for the subagent (for steer)" }),
   ),
@@ -122,7 +131,7 @@ export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): Agen
     name: "subagents",
     label: "Subagents",
     description:
-      "List, wait for, kill, or steer sub-agents. Wait is event-driven and defaults to this caller's active direct children.",
+      "List, wait for, kill, or steer sub-agents. Wait is event-driven and defaults to this caller's active direct children. For stop-everything requests, kill with scope tree so all descendants are hard-stopped and the exact count is returned.",
     parameters: SubagentsParams,
 
     async execute(
@@ -179,6 +188,22 @@ export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): Agen
               actionType: gate.actionType,
               hint: "Ask the user to confirm killing this sub-agent, then call again with _confirmed: true.",
             });
+          }
+          const scope = readStringParam(p, "scope", false) ?? "run";
+          if (scope !== "run" && scope !== "tree") {
+            throwToolError("invalid_value", `Invalid kill scope: "${scope}".`, {
+              validValues: ["run", "tree"],
+              param: "scope",
+              hint: "Use run for one direct child or tree to stop every descendant in the current spawn tree.",
+            });
+          }
+          if (scope === "tree") {
+            logger?.debug(
+              { toolName: "subagents", action: "kill", scope },
+              "Subagent tree kill requested",
+            );
+            const result = await rpcCall("subagent.kill", { target: "tree" });
+            return jsonResult(result);
           }
           const target = readStringParam(p, "target");
           logger?.debug({ toolName: "subagents", action: "kill", target }, "Subagent killed");

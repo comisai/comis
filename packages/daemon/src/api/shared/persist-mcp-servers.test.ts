@@ -40,6 +40,7 @@ import { stringify as yamlStringify } from "yaml";
 
 vi.mock("./persist-to-config.js", () => ({
   persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
+  readOnDiskConfig: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock("../../config/audit-hook.js", () => ({
@@ -58,11 +59,12 @@ vi.mock("../mcp-config-mutated-coalescer.js", () => ({
 
 import { persistMcpServers } from "./persist-mcp-servers.js";
 import type { PersistMcpResult } from "./persist-mcp-servers.js";
-import { persistToConfig } from "./persist-to-config.js";
+import { persistToConfig, readOnDiskConfig } from "./persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import type { McpServerEntry } from "@comis/core";
 
 const mockPersistToConfig = vi.mocked(persistToConfig);
+const mockReadOnDiskConfig = vi.mocked(readOnDiskConfig);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -134,6 +136,8 @@ describe("persistMcpServers (extracted)", () => {
   beforeEach(() => {
     mockPersistToConfig.mockClear();
     mockPersistToConfig.mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } } as never);
+    mockReadOnDiskConfig.mockReset();
+    mockReadOnDiskConfig.mockReturnValue({});
   });
 
   // -------------------------------------------------------------------------
@@ -271,6 +275,55 @@ describe("persistMcpServers (extracted)", () => {
     expect(container.config.integrations.mcp.servers).not.toBe(before);
     expect(container.config.integrations.mcp.servers).toEqual([
       expect.objectContaining({ name: "new", command: "new-cmd" }),
+    ]);
+  });
+
+  it("restores existing on-disk secret references when persisting a second server from resolved runtime state", async () => {
+    const existingResolved = {
+      ...makeEntry("existing"),
+      env: { API_TOKEN: "resolved-secret-value" },
+      headers: { Authorization: "Bearer resolved-secret-value" },
+    } as McpServerEntry;
+    const added = {
+      ...makeEntry("added"),
+      env: { API_TOKEN: "${ADDED_API_TOKEN}" },
+    } as McpServerEntry;
+    const { deps } = makeDeps([existingResolved]);
+    mockReadOnDiskConfig.mockReturnValue({
+      integrations: {
+        mcp: {
+          servers: [{
+            ...existingResolved,
+            env: { API_TOKEN: "${EXISTING_API_TOKEN}" },
+            headers: { Authorization: "Bearer ${EXISTING_API_TOKEN}" },
+          }],
+        },
+      },
+    });
+
+    const result = await persistMcpServers(
+      deps as never,
+      [existingResolved, added],
+      "mcp.connect",
+      "added",
+      undefined,
+    );
+
+    expect(result.persistence).toBe("persisted");
+    const [, callOpts] = mockPersistToConfig.mock.calls[0] as never as [
+      unknown,
+      { patch: { integrations: { mcp: { servers: McpServerEntry[] } } } },
+    ];
+    expect(callOpts.patch.integrations.mcp.servers).toEqual([
+      expect.objectContaining({
+        name: "existing",
+        env: { API_TOKEN: "${EXISTING_API_TOKEN}" },
+        headers: { Authorization: "Bearer ${EXISTING_API_TOKEN}" },
+      }),
+      expect.objectContaining({
+        name: "added",
+        env: { API_TOKEN: "${ADDED_API_TOKEN}" },
+      }),
     ]);
   });
 });

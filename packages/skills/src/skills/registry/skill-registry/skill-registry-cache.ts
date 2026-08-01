@@ -303,6 +303,7 @@ export function createSkillRegistry(
             cluster,
             summary,
             replacesPackages: Object.freeze([...rawReplaces]),
+            requiredBins: Object.freeze([...(metadata.requires?.bins ?? [])]),
             source: metadata.source,
           }),
         );

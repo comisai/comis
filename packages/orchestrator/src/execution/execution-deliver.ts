@@ -125,6 +125,7 @@ export async function deliverExecutionResponse(
   deliverySignal: AbortSignal,
   typingLifecycle: TypingLifecycleController | undefined,
   enforcement?: VisibleRepliesEnforcement,
+  deliveryOrigin: string = "agent",
 ): Promise<InteractiveDeliveryStageResult> {
   // === VISIBLE-REPLIES ENFORCEMENT ===
   // Runs AFTER the response filter (the caller passes the post-filter
@@ -249,7 +250,7 @@ export async function deliverExecutionResponse(
         extra: threadOpts?.extra,
         skipFormat: true,
         skipChunking: true,
-        origin: "agent",
+        origin: deliveryOrigin,
         replyMode: resolvedReplyMode,
         abortSignal: deliverySignal,
       });
@@ -354,7 +355,7 @@ export async function deliverExecutionResponse(
       chunksDelivered: deliveredChunks,
       totalChunks: coalescedGroups.length,
       durationMs: Math.round(performance.now() - deliveryStartMs),
-      origin: "agent",
+      origin: deliveryOrigin,
       timestamp: systemNowMs(),
     });
   }

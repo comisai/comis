@@ -28,6 +28,10 @@ export interface SystemPromptBlocks {
 export interface AssemblerParams {
   promptMode?: PromptMode;
   instructionSections?: readonly InstructionSection[];
+  executionModel?: {
+    readonly provider: string;
+    readonly model: string;
+  };
   bootstrapFiles?: BootstrapContextFile[];
   extraSystemPrompt?: string;
   additionalSections?: string[];
@@ -98,6 +102,7 @@ export function compileRichSystemPrompt(params: AssemblerParams): CompiledExecut
     operatorPolicy: params.instructionSections
       ?? legacyBootstrapSections(params.bootstrapFiles ?? []),
     runtimeSections: runtimeSections(params),
+    executionModel: params.executionModel,
     requireFinalTags: params.reasoningTagHint,
   });
 }

@@ -81,12 +81,10 @@ export function computeTokenBudgetForProfile(
   // binding (tightest) constraint — name the budget knob (raising it genuinely
   // works on this branch). Otherwise consult the executor-side
   // reconcile provenance: "served" when the Ollama-served window bound
-  // upstream; "capabilityClass" when the executor's DEFAULT_EFFECTIVE_CAP_BY_CLASS
-  // cap bound upstream (that cap comes from the operator's
-  // providers.entries.<id>.capabilities.capabilityClass pin — it never reads
-  // the contextEngine.budget.* knobs, so naming the budget knob here would send
-  // operators to a dead lever); "none" when nothing clamped or no provenance
-  // was threaded.
+  // upstream; the exact small/nano knob when the executor's shared numeric cap
+  // resolver bound upstream; "capabilityClass" only for an unclassified
+  // capability provenance supplied by a non-executor caller; "none" when
+  // nothing clamped or no provenance was threaded.
   const capBit = effectiveWindow < profile.contextWindow;
   const windowCapSource: WindowCapSource = capBit
     ? capKnob
@@ -94,7 +92,9 @@ export function computeTokenBudgetForProfile(
       ? "none"
       : windowProvenance.reconcileSource === "served"
         ? "served"
-        : "capabilityClass"; // "capability" reconcile: the executor-side class-pin cap bound upstream — name the PIN (no silent clamp, no dead budget knob)
+        : windowProvenance.reconcileSource === "capability"
+          ? "capabilityClass"
+          : windowProvenance.reconcileSource;
 
   // 8K-starvation fix: cap O at maxOutputTokens so it cannot consume the whole window.
   // On an 8K window with OUTPUT_RESERVE_TOKENS=8192, uncapped O leaves H=0.
@@ -146,7 +146,7 @@ export function computeTokenBudgetForProfile(
  * safety net is attributed to the small knob — it mirrors that knob's default
  * and only non-schema callers can reach it.
  */
-function resolveEffectiveCap(
+export function resolveEffectiveCap(
   capabilityClass: string,
   effectiveContextCapSmall: number | undefined,
   effectiveContextCapNano: number | undefined,

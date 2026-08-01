@@ -548,6 +548,7 @@ export type { CodeRegion } from "./response-filter/code-regions.js";
 // Thinking tag filter
 export { createThinkingTagFilter } from "./response-filter/thinking-tag-filter.js";
 export {
+  buildExecutionFailureReply,
   buildPipelineTimeoutReply,
   buildBackgroundTaskFailedNotice,
   catalogFromLocalePacks,
@@ -564,7 +565,13 @@ export type { OperationModelResolution } from "./model/operation-model-resolver.
 // what actually runs). Only
 // the resolver + CapabilityClass type cross the package boundary; the memory jobs
 // (also in @comis/agent) own the resolveMemoryOpsStrategy call internally.
-export { resolveModelProfile, capabilityClassFromProvider, resolveEffectiveCapabilityClass, autoRepairForClass } from "./executor/model-profile.js";
+export {
+  resolveModelProfile,
+  capabilityClassFromModel,
+  capabilityClassFromProvider,
+  resolveEffectiveCapabilityClass,
+  autoRepairForClass,
+} from "./executor/model-profile.js";
 export type { CapabilityClass } from "./executor/model-profile.js";
 // Canonical DAG template seeding. seedDefaultDagTemplates is wired
 // into daemon bootstrap (idempotent INSERT-OR-IGNORE) so the four canonical

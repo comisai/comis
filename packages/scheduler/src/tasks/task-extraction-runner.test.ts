@@ -288,6 +288,32 @@ describe("governed task extraction runner", () => {
     }));
   });
 
+  it("retires one agent without closing admission for the remaining runtime", async () => {
+    let resolveModel: ((value: ReturnType<typeof ok<{ raw: string }>>) => void) | undefined;
+    const data = setup();
+    data.modelRun.mockImplementationOnce(() => new Promise((resolve) => { resolveModel = resolve; }));
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await vi.waitFor(() => expect(data.withModelSession).toHaveBeenCalledOnce());
+    const retireAgent = (data.runner as unknown as {
+      retireAgent(agentId: string): { readonly activeCount: number };
+    }).retireAgent;
+
+    expect(retireAgent("agent-a")).toEqual({ activeCount: 1 });
+    expect(data.withModelSession.mock.calls[0]![0].signal.aborted).toBe(true);
+    expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 1 });
+    resolveModel?.(ok({ raw: validOutput() }));
+    await data.runner.waitForIdle();
+
+    expect(data.persistCandidates).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "persistence_fence",
+      errorKind: "precondition",
+    }));
+    expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 0 });
+  });
+
   it("reports rejected and explicit root registration failures without model access", async () => {
     const rejected = setup({ registerRoot: async () => { throw new Error("registry unavailable"); } });
     rejected.runner.activate();

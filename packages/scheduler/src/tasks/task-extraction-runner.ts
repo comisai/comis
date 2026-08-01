@@ -59,6 +59,7 @@ export type TaskExtractionSubmitError =
 export interface TaskExtractionRunner {
   activate(): Result<void, { readonly code: "closed"; readonly errorKind: "precondition" }>;
   submit(agentId: string, items: readonly TaskExtractionItem[]): Result<void, TaskExtractionSubmitError>;
+  retireAgent(agentId: string): { readonly activeCount: number };
   close(): { readonly activeCount: number };
   waitForIdle(): Promise<void>;
   getStatus(): { readonly accepting: boolean; readonly activeCount: number };
@@ -242,6 +243,14 @@ export function createTaskExtractionRunner(deps: {
     return { activeCount: active.size };
   }
 
+  function retireAgent(agentId: string): { readonly activeCount: number } {
+    const operation = active.get(agentId);
+    if (operation === undefined) return { activeCount: 0 };
+    operation.persistFenceOpen = false;
+    operation.controller.abort();
+    return { activeCount: 1 };
+  }
+
   async function waitForIdle(): Promise<void> {
     while (active.size > 0) {
       await Promise.all([...active.values()].map((operation) => operation.done));
@@ -262,6 +271,7 @@ export function createTaskExtractionRunner(deps: {
   return {
     activate,
     submit,
+    retireAgent,
     close,
     waitForIdle,
     getStatus: () => ({ accepting: lifecycle === "active", activeCount: active.size }),

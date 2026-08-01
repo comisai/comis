@@ -429,6 +429,37 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("fail() identifies missing MCP connection details without retaining the error body", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote(
+        "mcp_manage",
+        new Promise(() => {}),
+        new AbortController(),
+        origin,
+        undefined,
+        CORR,
+      );
+      if (!r.ok) throw new Error("promote failed");
+
+      manager.fail(
+        r.value,
+        new Error(
+          '[missing_param] mcp_manage(action="connect") is missing required parameters: transport, command or url.',
+        ),
+        "dependency",
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({
+          failureCode: "mcp_connection_details_missing",
+        }),
+      );
+      expect(loadTask(dataDir, "agent-1", r.value)?.failureCode).toBe(
+        "mcp_connection_details_missing",
+      );
+    });
+
     it("a promote WITHOUT correlation emits terminals without the fields (pre-upgrade shape)", () => {
       const origin = buildOrigin({ agentId: "agent-1" });
       const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin);
@@ -470,6 +501,29 @@ describe("BackgroundTaskManager", () => {
         "background_task:completed",
         expect.objectContaining({ agentId: "agent-1", toolName: "tool" }),
       );
+    });
+
+    it("projects a runtime-only mutation as a content-free degraded completion", () => {
+      const result = manager.promote("mcp_manage", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
+      if (!result.ok) return;
+      manager.complete(result.value, {
+        content: [{ type: "text", text: "sensitive result body" }],
+        details: {
+          persistence: "runtime_only",
+          warning: "sensitive persistence warning",
+        },
+      });
+
+      const call = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        ([event]) => event === "background_task:completed",
+      );
+      expect(call?.[1]).toMatchObject({
+        resultOutcome: "degraded",
+        persistence: "runtime_only",
+        errorKind: "config",
+        failureCode: "mutation_not_persisted",
+      });
+      expect(JSON.stringify(call?.[1])).not.toMatch(/sensitive/iu);
     });
 
     it("atomically acknowledges an explicitly read terminal result", () => {
@@ -670,6 +724,28 @@ describe("BackgroundTaskManager", () => {
       expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
         "background_task:failed",
         expect.objectContaining({ agentId: "agent-1", error: "error" }),
+      );
+    });
+
+    it("classifies a missing MCP secret reference without retaining its error body", () => {
+      const result = manager.promote(
+        "mcp_manage",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) return;
+
+      manager.fail(
+        result.value,
+        new Error(
+          '[invalid_value] enabled MCP server "example-primary" references env var MISSING_KEY which is not in the secrets store.',
+        ),
+      );
+
+      expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({ failureCode: "mcp_secret_reference_missing" }),
       );
     });
   });

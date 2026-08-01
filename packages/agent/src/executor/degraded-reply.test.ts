@@ -22,6 +22,9 @@ import {
   buildContextExhaustedReply,
   buildLoopDetectedReply,
   buildDegradedReply,
+  buildProviderRequiresModelReply,
+  buildOngoingWorkEvidenceMissingReply,
+  buildSenderAuthorityOverclaimReply,
   catalogFromLocalePacks,
   LOCALE_MESSAGE_IDS,
 } from "./degraded-reply.js";
@@ -350,6 +353,90 @@ describe("builders consume the resolved language tag (delegate to i18n)", () => 
     expect(buildDegradedReply("loop_detected", { language: "ru", traceId: "z" })).toBe(
       selectLoopDetectedReply("ru", { traceId: "z" }),
     );
+  });
+});
+
+describe("buildProviderRequiresModelReply", () => {
+  it("states that configuration was unchanged and requires an exact model", () => {
+    const reply = buildProviderRequiresModelReply();
+
+    expect(reply).toContain("did not change the agent");
+    expect(reply).toContain("provider");
+    expect(reply).toContain("exact model");
+    expect(LOCALE_MESSAGE_IDS).toContain("provider_requires_model");
+  });
+
+  it("uses the operator locale pack without embedding a preferred language", () => {
+    const catalog = catalogFromLocalePacks({
+      he: {
+        provider_requires_model:
+          "הסוכן לא שונה כי הערך הוא ספק ולא מזהה מודל מדויק",
+      },
+    });
+
+    expect(buildProviderRequiresModelReply("he", catalog)).toBe(
+      "הסוכן לא שונה כי הערך הוא ספק ולא מזהה מודל מדויק",
+    );
+  });
+});
+
+describe("buildAgentUpdateNoOpReply", () => {
+  it("names the unchanged runtime binding and supports operator locale packs", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildAgentUpdateNoOpReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language: string | undefined,
+      provider: string,
+      modelId: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        agent_update_noop: "לא נדרש שינוי. הסוכן כבר משתמש ב",
+      },
+    });
+
+    expect(build(undefined, "provider_a", "model_a")).toBe(
+      "No configuration change was needed. This agent already uses provider_a / model_a.",
+    );
+    expect(build("he", "provider_a", "model_a", catalog)).toBe(
+      "לא נדרש שינוי. הסוכן כבר משתמש ב provider_a / model_a.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("agent_update_noop");
+  });
+});
+
+describe("buildSenderAuthorityOverclaimReply", () => {
+  it("returns a below-admin boundary that cannot grant admin authority", () => {
+    const reply = buildSenderAuthorityOverclaimReply();
+
+    expect(reply).toMatch(/current trust.*admin-only/iu);
+    expect(reply).toMatch(/your approval cannot grant admin access/iu);
+    expect(reply).toMatch(/authorized administrator/iu);
+    expect(reply).toMatch(/cannot.*raise.*own trust/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("sender_authority_overclaim");
+  });
+
+  it("uses an operator-provided open-locale message", () => {
+    const catalog = catalogFromLocalePacks({
+      "en-x-agent": {
+        sender_authority_overclaim: "localized authority boundary",
+      },
+    });
+
+    expect(buildSenderAuthorityOverclaimReply("en-x-agent", catalog))
+      .toBe("localized authority boundary");
+  });
+});
+
+describe("buildOngoingWorkEvidenceMissingReply", () => {
+  it("states that no background result remains pending", () => {
+    const reply = buildOngoingWorkEvidenceMissingReply();
+
+    expect(reply).toMatch(/did not start ongoing work/iu);
+    expect(reply).toMatch(/no background task running/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("ongoing_work_evidence_missing");
   });
 });
 

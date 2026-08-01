@@ -14,7 +14,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate, ComisLogger } from "@comis/core";
 import { registerActivityLabelSpec } from "@comis/core";
-import { readStringParam } from "../tool-helpers.js";
+import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 
@@ -65,8 +65,17 @@ export const AgentsManageToolParams = Type.Object({
       Type.Object(
         {
           name: Type.Optional(Type.String({ description: "Human-readable agent name" })),
-          model: Type.Optional(Type.String({ description: "LLM model identifier" })),
-          provider: Type.Optional(Type.String({ description: "LLM provider name" })),
+          model: Type.Optional(Type.String({
+            description:
+              "Exact LLM model identifier. When the user names an identifier, copy it verbatim; " +
+              "never replace it with a similar or preferred model. List the provider catalog first " +
+              "when availability is unknown.",
+          })),
+          provider: Type.Optional(Type.String({
+            description:
+              "Exact LLM provider name. When the user names a provider, copy it verbatim; never " +
+              "substitute a different provider.",
+          })),
           maxSteps: Type.Optional(Type.Integer({ description: "Maximum execution steps per turn" })),
           workspace_profile: Type.Optional(
             Type.Union([Type.Literal("full"), Type.Literal("specialist")], {
@@ -317,6 +326,80 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
   return raw as Record<string, unknown> | undefined;
 }
 
+function validateAgentUpdateParams(
+  action: string,
+  params: Record<string, unknown>,
+): void {
+  if (action !== "update") return;
+  const config = coerceConfig(params);
+  if (config === undefined) return;
+
+  const hasProvider = typeof config.provider === "string";
+  const hasModel = typeof config.model === "string";
+  if (hasProvider === hasModel) return;
+  throwToolError(
+    "invalid_value",
+    "Model binding updates require config.provider and config.model together",
+    {
+      param: "config",
+      hint:
+        "Retry agents_manage update with both values copied exactly from the intended binding. "
+        + "When the request refers to a prior binding, copy provider and model from the "
+        + "Previous active model execution fact rather than combining either value with the active binding",
+    },
+  );
+}
+
+function buildUpdateContract(
+  agentId: string | undefined,
+  config: Record<string, unknown> | undefined,
+  result: unknown,
+): string {
+  const target = agentId ?? "requested agent";
+  const resultRecord =
+    result !== null && typeof result === "object"
+      ? result as Record<string, unknown>
+      : undefined;
+  const effectiveConfig =
+    resultRecord?.config !== null && typeof resultRecord?.config === "object"
+      ? resultRecord.config as Record<string, unknown>
+      : config;
+  const provider =
+    typeof effectiveConfig?.provider === "string"
+      ? effectiveConfig.provider
+      : undefined;
+  const model =
+    typeof effectiveConfig?.model === "string"
+      ? effectiveConfig.model
+      : undefined;
+  const binding =
+    provider !== undefined && model !== undefined
+      ? (
+          ` Configured model binding: config.provider=${JSON.stringify(provider)}, ` +
+          `config.model=${JSON.stringify(model)}.`
+        )
+      : "";
+
+  if (resultRecord?.dryRun === true) {
+    return (
+      `✓ Agent ${target} configuration validated; no update was applied.` +
+      binding
+    );
+  }
+  if (resultRecord?.changed === false) {
+    return (
+      `✓ No configuration change for agent ${target}; it already uses the requested settings.` +
+      binding +
+      " Do not repeat agents_manage for this request."
+    );
+  }
+  return (
+    `✓ Agent ${target} update complete.` +
+    binding +
+    " Do not repeat agents_manage for this request."
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -363,10 +446,13 @@ export function createAgentsManageTool(
       label: "Agent Management",
       description:
         "Manage agent system: create, get, update, delete, suspend, resume, list. " +
-        "Use update to switch an agent's LLM provider or model (e.g. switch to Gemini, change model). " +
+        "Use update with provider and model together to switch an agent's LLM binding. " +
+        "Explicit provider and model identifiers are exact targets: never silently substitute another value. " +
+        "If an exact target is unavailable, leave configuration unchanged and report the failure. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,
+      validateParams: validateAgentUpdateParams,
       rpcPrefix: "agents",
       gatedActions: ["create", "delete"],
       actionOverrides: {
@@ -498,7 +584,14 @@ export function createAgentsManageTool(
           mapWorkspaceProfile(config);
           callbacks?.onMutationStart?.();
           try {
-            return await rpcCall("agents.update", { agentId, config, _trustLevel: ctx.trustLevel });
+            const result = await rpcCall(
+              "agents.update",
+              { agentId, config, _trustLevel: ctx.trustLevel },
+            );
+            return {
+              content: [{ type: "text", text: buildUpdateContract(agentId, config, result) }],
+              details: result,
+            } satisfies AgentToolResult<typeof result>;
           } finally {
             callbacks?.onMutationEnd?.();
           }

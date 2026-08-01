@@ -231,17 +231,34 @@ export const sessionPromptSkillsXmlSnapshots = new Map<string, string | undefine
 export const sessionPromptSkillLocations = new Map<string, ReadonlyMap<string, string>>();
 
 /** Reuse-attribution carrier: per-session, per-TURN set of the learned-skill NAMES whose stored
- *  common-core (topicTokens) the CURRENT turn instantiates (`topicMatchedSkillNames`). The
+ *  common-core (topicTokens) the current turn instantiates, plus at most one immediately following
+ *  continuation turn. The
  *  pi-event-bridge UNIONS these into the turn's `usedSkillIds`, so a skill APPLIED from the surfaced
  *  `<available_skills>` summary / recall — without an explicit `read` of its SKILL.md (the
- *  read-attribution path) — still promotes on success. Overwritten every prompt assembly (the same per-turn lifecycle
- *  as the XML/location snapshots). Empty/no-match ⇒ the no-op default. */
+ *  read-attribution path) — still promotes on success. Overwritten every prompt assembly (the same
+ *  per-turn lifecycle as the XML/location snapshots). Empty/no-match ⇒ the no-op default. */
 export const sessionPromptTopicMatchedSkills = new Map<string, ReadonlyArray<string>>();
+
+/** Direct-match state retained only to bridge one immediate follow-up. `previousDirectMatches`
+ *  makes repeated assembly of the same message deterministic (for example prompt-fit fallback);
+ *  a carried match is never written as `directMatches`, so it cannot carry again. */
+export interface SessionPromptTopicMatchState {
+  messageId: string;
+  directMatches: ReadonlyArray<string>;
+  previousDirectMatches: ReadonlyArray<string>;
+}
+export const sessionPromptTopicMatchStates = new Map<string, SessionPromptTopicMatchState>();
 
 /** Read the per-turn topic-matched learned-skill names for a session. The pi-event-bridge
  *  calls this when assembling the turn's `usedSkillIds`. Undefined when nothing matched this turn. */
 export function getSessionPromptTopicMatchedSkills(snapshotKey: string): ReadonlyArray<string> | undefined {
   return sessionPromptTopicMatchedSkills.get(snapshotKey);
+}
+
+/** Clear both the effective per-turn carrier and its bounded continuation state. */
+export function clearSessionPromptTopicMatchState(snapshotKey: string): void {
+  sessionPromptTopicMatchedSkills.delete(snapshotKey);
+  sessionPromptTopicMatchStates.delete(snapshotKey);
 }
 
 /** The per-turn topic-match reuse CENSUS: every surfaced skill that overlapped the
@@ -250,10 +267,14 @@ export function getSessionPromptTopicMatchedSkills(snapshotKey: string): Readonl
  *  assembly runs BEFORE the trajectory bridge subscribes (assembleTools precedes
  *  attachTrajectoryToEventBus in pi-executor), so an inline emit fires to no listener (proven
  *  live). Same store→read-at-postExecution pattern as the usedSkillIds carrier above. */
+export type SkillSurfacedScore = TopicMatchScore & {
+  /** Present only when credit came from the immediately preceding direct topic match. */
+  creditSource?: "prior_turn";
+};
 export interface SkillSurfacedCensus {
   surfacedCount: number;
   creditedCount: number;
-  scores: TopicMatchScore[];
+  scores: SkillSurfacedScore[];
 }
 export const sessionPromptSkillSurfacedCensus = new Map<string, SkillSurfacedCensus>();
 
@@ -636,6 +657,8 @@ export interface PromptAssemblyParams {
   /** Whether the resolved model has native reasoning support (e.g. encrypted thinking blocks).
    *  When true, the `<think>`/`<final>` tag hint is suppressed to avoid double-reasoning. */
   resolvedModelReasoning?: boolean;
+  /** Previous distinct model binding proven by successful session transitions. */
+  previousModelBinding?: import("../session/model-binding-history.js").ModelBinding;
   /** Operation type from ExecutionOverrides. Resolves promptMode and bootstrap filter.
    *  When omitted by callers at the TypeScript level, executor-tool-assembly supplies
    *  "interactive" as the default before invoking this function, so this is required

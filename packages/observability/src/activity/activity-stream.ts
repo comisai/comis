@@ -135,6 +135,50 @@ function isFailureEvent(e: ActivityEvent): boolean {
   return e.status === "failed" || e.kind === "approval";
 }
 
+function approvalText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.replace(/[\p{C}\s]+/gu, " ").trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function approvalLabel(p: EventMap["approval:requested"]): string {
+  const action = approvalText(p.params.action) ?? approvalText(p.action);
+  const details: string[] = [];
+  const serverName = approvalText(p.params.server_name);
+  const envKey = approvalText(p.params.env_key);
+  const transport = approvalText(p.params.transport);
+  const command = approvalText(p.params.command);
+  const credentialKeys = Array.isArray(p.params.credential_keys)
+    ? p.params.credential_keys
+        .map(approvalText)
+        .filter((value): value is string => value !== undefined)
+    : [];
+  if (serverName !== undefined) details.push(`server ${serverName}`);
+  if (envKey !== undefined) details.push(`credential ${envKey}`);
+  if (transport !== undefined) details.push(transport);
+  if (command !== undefined) details.push(`command ${command}`);
+  if (credentialKeys.length > 0) {
+    details.push(`secret ${credentialKeys.join(",")}`);
+  }
+  const operation = action === undefined ? p.toolName : `${p.toolName} ${action}`;
+  if (serverName !== undefined) {
+    const execution = [transport, command].filter(
+      (value): value is string => value !== undefined,
+    );
+    const compactDetails = [
+      serverName,
+      ...(execution.length > 0 ? [execution.join(" ")] : []),
+      ...(credentialKeys.length > 0 ? [`secret ${credentialKeys.join(",")}`] : []),
+    ];
+    return clampLabel(`approval: ${operation} — ${compactDetails.join("; ")}`);
+  }
+  return clampLabel(
+    details.length === 0
+      ? `approval required: ${operation}`
+      : `approval required: ${operation} — ${details.join("; ")}`,
+  );
+}
+
 interface CorrelationEntry {
   readonly activityId: string;
   readonly agentId: string;
@@ -600,7 +644,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
             { id: "deny", defaultLabel: "Deny", style: "danger" },
           ],
         },
-        defaultLabel: clampLabel(`approval required: ${p.toolName}`),
+        defaultLabel: approvalLabel(p),
       },
       { requestId: p.requestId, shortId: p.shortId },
     );

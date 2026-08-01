@@ -342,6 +342,25 @@ describe("session.spawn caller context", () => {
     }));
   });
 
+  it("forwards trusted parent discovery state into the child spawn packet", async () => {
+    const { deps, spawn } = createDeps();
+    const handler = bindSessionMutateHandlers(deps)["session.spawn"]!;
+    const deliveryOrigin = createDeliveryOrigin({
+      channelType: "telegram",
+      channelId: "chat_a",
+      userId: "user_a",
+      tenantId: "tenant_a",
+    });
+
+    await runWithContext(context({ deliveryOrigin }), () => handler(spawnParams({
+      _discoveredDeferredTools: ["mcp__service--lookup", "mcp__service--summary"],
+    })));
+
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
+      discoveredDeferredTools: ["mcp__service--lookup", "mcp__service--summary"],
+    }));
+  });
+
   it("inherits the live parent run's own lease and attenuated capabilities for a descendant", async () => {
     const { deps, spawn, getRunBySessionKey } = createDeps();
     getRunBySessionKey.mockReturnValue({

@@ -345,6 +345,40 @@ describe("comis explain default (table) renders key report fields", () => {
     expect(output).toContain("Trace:      6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     expect(output).not.toContain("session totals below include prior turns");
   });
+
+  it("renders the learning verdict when it differs from a successful runtime outcome", async () => {
+    const learningReport = {
+      ...FAKE_REPORT,
+      outcome: { endReason: "success", degraded: false, severity: "ok" as const },
+      learning: {
+        outcomeResolved: true,
+        outcome: "failure" as const,
+        sources: ["judge" as const],
+        skillsUsed: [],
+        skillFailures: [],
+        synthesisAbstained: false,
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(learningReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync([
+      "node",
+      "test",
+      "explain",
+      "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Outcome:    ok");
+    expect(output).toContain("Learning:   failure (resolved=true, sources=judge)");
+  });
 });
 
 describe("comis explain renders durable task-check lifecycle evidence", () => {

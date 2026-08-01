@@ -56,12 +56,14 @@ export type RecallRerankOutcome = (typeof RECALL_RERANK_OUTCOMES)[number];
  *   - `trust_filtered`  — excluded by the trust-level filter.
  *   - `deduped`         — excluded as a near-duplicate of a higher-ranked memory.
  *   - `below_budget`    — excluded because it fell below the token/count budget.
+ *   - `recent_tail_duplicate` — excluded because the live conversation already carries it.
  */
 export const RECALL_INCLUDE_REASONS = [
   "included",
   "trust_filtered",
   "deduped",
   "below_budget",
+  "recent_tail_duplicate",
 ] as const;
 
 /** Closed string union of include/exclude reason names. */

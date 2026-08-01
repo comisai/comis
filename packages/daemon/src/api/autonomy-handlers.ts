@@ -44,14 +44,14 @@ import {
   AutonomyEvictContract,
   stripInternalFields,
   systemGetEnv,
-  toSafeErrorLogString,
 } from "@comis/core";
-import type { DurableRunPort, EventMap } from "@comis/core";
-import type { LeaseManager } from "@comis/infra";
-import type { ComisLogger } from "@comis/infra";
 
 import type { EvictRegistry } from "../autonomy/evict-registry.js";
-import type { GraphCoordinator } from "../graph/graph-coordinator.js";
+import {
+  invalidateSpawnTreeState,
+  killSpawnTree,
+  type SpawnTreeControlDeps,
+} from "./shared/spawn-tree-control.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -75,36 +75,7 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
  * threaded onto `OrchestratorApiDeps`, `subAgentRunner` already lives there, and
  * `logger` is required on every slice.
  */
-export interface AutonomyHandlerDeps {
-  /** The credential-broker lease authority — the revoke fan-outs. */
-  leaseManager: LeaseManager;
-  /** The sub-agent runner — `killByRootRun` aborts a whole spawn tree. */
-  subAgentRunner: { killByRootRun(rootRunId: string): { killed: number } };
-  /**
-   * The graph authority. A graph owns retry and terminal state, so a hard stop
-   * must cancel matching graphs before sweeping any remaining spawn-tree runs.
-   */
-  graphCoordinator?: Pick<GraphCoordinator, "cancelByRootRunId">;
-  /**
-   * The durable-run store. OPTIONAL — when a `rootRunId` is
-   * revoked (lease.revoke by rootRunId, OR run.kill), the handler ALSO calls
-   * `invalidateForRevoke(rootRunId)` so the persisted checkpoint flips to status
-   * `revoked` and a subsequent boot can NEVER re-mint the pre-revoke caps (the
-   * resurrection-window close). **Absent ⇒ inert** (the lease
-   * revoke alone still stops the live bearer; the persisted record is just not
-   * poisoned — only matters once durability is enabled, which is when the daemon
-   * wires this). Best-effort: an invalidate error is WARN-logged, never fails the
-   * revoke RPC (the lease is already revoked — the cooperative/hard stop holds).
-   */
-  durableRuns?: DurableRunPort;
-  /** Release retained DAG budget authority at an explicit root revoke/kill. */
-  revokeDurableRoot?: (rootRunId: string) => void;
-  /**
-   * Retire the active session-root generation after a root-wide revoke/kill.
-   * The durable tombstone remains permanent; only a later authenticated turn
-   * can resolve a fresh generation.
-   */
-  retireRootRunId?: (rootRunId: string) => boolean;
+export interface AutonomyHandlerDeps extends SpawnTreeControlDeps {
   /**
    * The daemon-wide evicted-`rootRunId` set. OPTIONAL —
    * the composition root constructs `createEvictRegistry` and threads it
@@ -116,26 +87,6 @@ export interface AutonomyHandlerDeps {
    * unknown-method path) — no build break, no half-wired handler.
    */
   evictRegistry?: EvictRegistry;
-  /**
-   * The typed event bus. OPTIONAL — when wired, the
-   * handlers emit a content-free `autonomy:revoked` (lease.revoke by rootRunId) /
-   * `autonomy:killed` (run.kill) BESIDE the existing INFO line so `comis system-health`
-   * surfaces the revoke/kill counts. **Absent ⇒ no emit**
-   * (mirrors the `durableRuns?`/`evictRegistry?` optional-dep convention).
-   * The PRODUCTION construction site (rpc-dispatch.ts createAutonomyHandlers)
-   * MUST supply `deps.container.eventBus` — otherwise the live daemon emits
-   * nothing and the system revoke/kill counts are silently zero.
-   */
-  eventBus?: { emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): void };
-  /**
-   * The wiring-layer clock for the emitted-event timestamp. Supplied as
-   * `systemNowMs` by the construction site (the globals-gate-safe wiring clock the
-   * execution:aborted emit uses) — NEVER `Date.now()`/`new Date()` here. Only read
-   * when `eventBus` is present (the production site supplies both together).
-   */
-  now?: () => number;
-  /** Structured logger for the content-free §2.7 instrumentation. */
-  logger: ComisLogger;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,30 +98,6 @@ export interface AutonomyHandlerDeps {
  * dispatcher alongside `...createSubagentHandlers(deps)`.
  */
 export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string, RpcHandler> {
-  /**
-   * Poison the persisted run record on revoke so a subsequent boot finds
-   * status='revoked' and ORPHANS the run rather than re-minting the pre-revoke
-   * caps. Best-effort — a write error is WARN-logged but never fails the revoke
-   * RPC (the in-memory lease is already revoked, so the live bearer is dead
-   * regardless; this only affects post-restart resumability). Inert when no
-   * durable store is wired (durability off).
-   */
-  async function invalidatePersistedRecord(rootRunId: string, method: string): Promise<boolean> {
-    if (!deps.durableRuns) {
-      deps.revokeDurableRoot?.(rootRunId);
-      return deps.retireRootRunId?.(rootRunId) ?? false;
-    }
-    const r = await deps.durableRuns.invalidateForRevoke(rootRunId);
-    if (!r.ok) {
-      deps.logger.warn(
-        { method, err: toSafeErrorLogString(r.error), hint: "could not flip the durable run record to 'revoked'; a restart could resume it — verify the run is dead", errorKind: "dependency" as const },
-        "Durable record invalidate-on-revoke failed (lease still revoked)",
-      );
-    }
-    deps.revokeDurableRoot?.(rootRunId);
-    return deps.retireRootRunId?.(rootRunId) ?? false;
-  }
-
   // Capture the OPTIONAL evictRegistry once so the conditional spread
   // narrows it to non-undefined inside the evict handler closure (no `!`
   // non-null assertion needed). Absent ⇒ the autonomy.evict key is omitted from
@@ -196,7 +123,8 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
         revoked = deps.leaseManager.revokeByRootRun(rootRunId).revoked;
         // ALSO poison the persisted checkpoint so a restart cannot
         // resurrect the pre-revoke caps (the resurrection-window close).
-        rootGenerationRetired = await invalidatePersistedRecord(
+        rootGenerationRetired = await invalidateSpawnTreeState(
+          deps,
           rootRunId,
           LeaseRevokeContract.method,
         );
@@ -246,43 +174,7 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
       const userParams = stripInternalFields(rawParams);
       RunKillContract.request.parse(userParams);
 
-      // HARD stop: cancel graph authorities first so killed nodes cannot be
-      // interpreted as retryable failures. Then sweep any non-graph runs left
-      // in the tree and revoke every lease so a survivor cannot keep operating.
-      const graphCancellation = deps.graphCoordinator?.cancelByRootRunId(rootRunId)
-        ?? { graphsCancelled: 0, killed: 0 };
-      const runnerCancellation = deps.subAgentRunner.killByRootRun(rootRunId);
-      const killed = graphCancellation.killed + runnerCancellation.killed;
-      deps.leaseManager.revokeByRootRun(rootRunId);
-      // ALSO poison the persisted checkpoint so a restart cannot resume
-      // the killed tree under re-minted pre-revoke caps (the hard stop holds across restart).
-      const rootGenerationRetired = await invalidatePersistedRecord(
-        rootRunId,
-        RunKillContract.method,
-      );
-
-      // §2.7: content-free completion line — the killed COUNT + method only.
-      deps.logger.info(
-        {
-          method: RunKillContract.method,
-          killed,
-          graphsCancelled: graphCancellation.graphsCancelled,
-          rootGenerationRetired,
-        },
-        "Spawn tree killed (hard stop) and its leases revoked",
-      );
-
-      // A DISTINCT autonomy:killed event (separate from revoke — kill
-      // flips durable status to 'revoked' INDISTINGUISHABLY from a cooperative
-      // revoke, so the event is the only separator for the killed count). COUNT +
-      // id + timestamp ONLY. Absent eventBus ⇒ no emit.
-      deps.eventBus?.emit("autonomy:killed", {
-        rootRunId,
-        killed,
-        timestamp: deps.now?.() ?? 0,
-      });
-
-      const result = { killed };
+      const result = await killSpawnTree(deps, rootRunId);
       if (IS_DEV) RunKillContract.response.parse(result);
       return result;
     },

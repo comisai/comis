@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { getAllToolMetadata, getToolMetadata, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
+import { classifyToolInvocationMutation, getAllToolMetadata, getToolMetadata, matchesToolMutationRequest, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
 import { Type } from "typebox";
 import { registerAllToolMetadata } from "./tool-metadata-registry.js";
@@ -1049,7 +1049,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
     ["sessions_manage",  ["delete", "reset", "export", "compact"], 5],
     ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
-    ["memory_manage",    ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"], 12],
+    ["memory_manage",    ["stats", "browse", "delete", "forget", "flush", "export", "roundtrip", "pin", "unpin"], 12],
     ["models_manage",    ["list", "test", "list_providers"], 3],
     ["heartbeat_manage", ["get", "update", "status", "trigger"], 15],
   ] as const)(
@@ -1079,6 +1079,16 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
       disconnect: ["server_name"],
       reconnect: ["server_name"],
     });
+  });
+
+  it("mcp_manage declares complete trusted-policy field mapping for mutation recovery", () => {
+    const guidance = getToolMetadata("mcp_manage")?.mutationRecoveryGuidance;
+
+    expect(guidance).toMatch(/Server name.*server_name/isu);
+    expect(guidance).toMatch(/Command.*command/isu);
+    expect(guidance).toMatch(/Arguments.*args string array/isu);
+    expect(guidance).toMatch(/Credential environment variable.*Stored secret name.*env/isu);
+    expect(guidance).toMatch(/never use model-authored history/iu);
   });
 
   it("pre-flight gate accepts a stdio connect with command but no explicit transport (comis-daniel 2026-07-09)", () => {
@@ -1212,6 +1222,38 @@ describe("tool-metadata-registry -- failure detectors", () => {
   // `message`/`failures` — the human-readable reason (rate limit / blocked) lives in
   // message+failures, NOT in the stable `error` code. Detectors classify off those structured
   // fields, never the per-result snippets.
+  it("web_search flags DuckDuckGo's anomaly challenge as a rate-limit resource failure", () => {
+    const detect = webSearchDetector()!;
+    // The keyless provider's challenge page is a per-source-IP request-rate limit.
+    // It has to land in the rate-limit class rather than the unrecognized-reason
+    // catch-all, so that the verdict names the throttle and the config key.
+    const reason =
+      "duckduckgo: DuckDuckGo served its anomaly challenge (HTTP 202) instead of results. "
+      + "The endpoint applies a rate limit per source IP and clears after about a minute. "
+      + "Space searches further apart, or configure a keyed web_search provider "
+      + "(tools.web.search.provider: brave, tavily, or exa) for sustained use.";
+
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message: `All web_search providers failed: ${reason}`,
+          failures: [reason],
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "resource",
+      classifiedField: "message",
+      matchedRule: "/rate limit|quota exceeded|usage limit|too many requests/",
+      matchedToken: "tools.web.search",
+      failureDisclosure: {
+        kind: "quota_exhausted",
+        configKey: "tools.web.search",
+      },
+    });
+  });
+
   it("web_search flags a rate-limit failure (structured error/message/failures) as a resource failure with provenance", () => {
     const detect = webSearchDetector()!;
     // Enriched verdict (P2/D2a): the rate-limit branch attributes the verdict to the
@@ -1703,6 +1745,49 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
     const meta = getToolMetadata("agents_manage");
     expect(meta).toBeDefined();
     expect(meta!.coDiscoverWith).toContain("models_manage");
+    expect(meta!.readOnlyActions).toEqual(["list", "get"]);
+    expect(meta!.mutationRequestPrefixes).toContain("switch");
+  });
+
+  it("mcp_manage co-discovers the encrypted secret workflow", () => {
+    const meta = getToolMetadata("mcp_manage");
+
+    expect(meta).toBeDefined();
+    expect(meta!.coDiscoverWith).toContain("gateway");
+  });
+
+  it("mcp_manage treats a supplied credential as a connection continuation", () => {
+    expect(
+      matchesToolMutationRequest(
+        "mcp_manage",
+        "heres the token [REDACTED]",
+      ),
+    ).toBe(true);
+  });
+
+  it("skills_manage recognizes a contextual install continuation", () => {
+    expect(
+      matchesToolMutationRequest(
+        "skills_manage",
+        "install it",
+      ),
+    ).toBe(true);
+  });
+
+  it("skills_manage does not count list as a completed mutation", () => {
+    expect(classifyToolInvocationMutation("skills_manage", { action: "list" }))
+      .toBe("read_only");
+    expect(classifyToolInvocationMutation("skills_manage", { action: "import" }))
+      .toBe("mutating");
+  });
+
+  it("sessions_spawn recognizes a natural helper delegation request", () => {
+    expect(
+      matchesToolMutationRequest(
+        "sessions_spawn",
+        "have one of your helpers use that new service",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -1797,5 +1882,17 @@ describe("tool-metadata-registry -- mcp_manage env parity", () => {
       meta,
     );
     expect(error).toBeUndefined();
+  });
+
+  it("rejects connect before approval when neither command nor url is supplied", async () => {
+    const meta = getToolMetadata("mcp_manage");
+    const error = await meta?.validateInput?.({
+      action: "connect",
+      server_name: "example-service",
+    });
+
+    expect(error).toContain("command or url");
+    expect(error).toContain("TOOLS.md");
+    expect(error).toMatch(/never guess/iu);
   });
 });

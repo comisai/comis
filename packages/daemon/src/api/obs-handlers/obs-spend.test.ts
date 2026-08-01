@@ -19,7 +19,7 @@
  *
  * @module
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
@@ -44,10 +44,21 @@ const clock = { now: () => 1_000, nowDate: () => new Date(1_000) };
 function makeHandler(opts: {
   spendSnapshot?: ObsHandlerDeps["spendSnapshot"];
   store?: ObservabilityStore;
+  boundedAutonomy?: ObsHandlerDeps["boundedAutonomy"];
 }) {
   const deps = {
     spendSnapshot: opts.spendSnapshot,
     obsStore: opts.store,
+    boundedAutonomy: opts.boundedAutonomy,
+  } as unknown as ObsHandlerDeps;
+  return bindObsSpendHandlers(deps)["obs.spend.snapshot"];
+}
+
+function makeRootHandler(opts: {
+  boundedAutonomy?: ObsHandlerDeps["boundedAutonomy"];
+}) {
+  const deps = {
+    boundedAutonomy: opts.boundedAutonomy,
   } as unknown as ObsHandlerDeps;
   return bindObsSpendHandlers(deps)["obs.spend.snapshot"];
 }
@@ -164,5 +175,56 @@ describe("obs.spend.snapshot handler", () => {
     const json = JSON.stringify(result);
     expect(json).not.toContain("OPENAI_API_KEY");
     expect(json).not.toContain("_trustLevel");
+  });
+});
+
+describe("obs.spend.snapshot current-root scope", () => {
+  it("returns the exact priced spend for the trusted current autonomy root", async () => {
+    const spendSnapshot = vi.fn(() => ({
+      rootRunId: "root-active",
+      totalCost: 1.25,
+      capUsd: 10,
+      headroomUsd: 8.75,
+      pricingScope: "priced_only" as const,
+    }));
+    const handler = makeRootHandler({
+      boundedAutonomy: { spendSnapshot } as unknown as ObsHandlerDeps["boundedAutonomy"],
+    });
+
+    const result = await handler({
+      _trustLevel: "admin",
+      _rootRunId: "root-active",
+      _agentId: "default",
+      scope: "currentRoot",
+    });
+
+    expect(spendSnapshot).toHaveBeenCalledWith("root-active");
+    expect(result).toEqual({
+      snapshot: {
+        enabled: true,
+        scope: "currentRoot",
+        rootRunId: "root-active",
+        totalCost: 1.25,
+        capUsd: 10,
+        headroomUsd: 8.75,
+        pricingScope: "priced_only",
+      },
+    });
+  });
+
+  it("fails honestly when no trusted current root is available", async () => {
+    const handler = makeRootHandler({
+      boundedAutonomy: {
+        spendSnapshot: () => {
+          throw new Error("must not be called");
+        },
+      } as unknown as ObsHandlerDeps["boundedAutonomy"],
+    });
+
+    await expect(handler({
+      _trustLevel: "admin",
+      rootRunId: "forged-root",
+      scope: "currentRoot",
+    })).rejects.toThrow(/current autonomy root is unavailable/i);
   });
 });

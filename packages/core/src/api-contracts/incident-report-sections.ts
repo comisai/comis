@@ -7,6 +7,7 @@
  * self-contained, content-free sections the `obs.explain` normalizer folds from
  * the trajectory and the report/`IncidentSignals` both reference:
  *   - `IncidentContextBudgetSchema` — the per-LLM-call budget equation.
+ *   - `IncidentRehydrationSchema` — the latest post-compaction policy injection.
  *   - `IncidentPromptTimeoutSchema` — the terminal prompt-timeout attribution.
  *   - `IncidentQueueTimelineEntrySchema` — one queue or steering decision.
  *   - `SpawnTreeNodeSchema` — one node of the per-cap spawn tree.
@@ -96,6 +97,23 @@ export const IncidentContextBudgetSchema = z.object({
 
 /** The per-call context budget equation (see {@link IncidentContextBudgetSchema}). */
 export type IncidentContextBudget = z.infer<typeof IncidentContextBudgetSchema>;
+
+/**
+ * The latest post-compaction policy rehydration receipt. `currentTurn`
+ * distinguishes evidence for the explained turn from an earlier rehydration
+ * retained in a whole-session trajectory. Counts and booleans only.
+ */
+export const IncidentRehydrationSchema = z.object({
+  seq: z.number(),
+  currentTurn: z.boolean(),
+  sectionsInjected: z.number().int().nonnegative(),
+  filesInjected: z.number().int().nonnegative(),
+  skillsInjected: z.number().int().nonnegative(),
+  overflowStripped: z.boolean(),
+});
+
+/** The post-compaction policy rehydration receipt. */
+export type IncidentRehydration = z.infer<typeof IncidentRehydrationSchema>;
 
 /**
  * The woke-fire wake-gate fact (content-free — counts/ids/boolean ONLY, no free

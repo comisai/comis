@@ -31,7 +31,7 @@ import {
   accumulateSpendExceeded, accumulateCapabilityAuditedRecord, accumulateGraphNodeSpawnedRecord, accumulateSubAgentSpawnedRecord, accumulateSubAgentCompletedRecord,
   accumulateOrchestrateRunSummaryRecord, accumulateOrchestrateToolCall,
   accumulateBackgroundTaskRecord, buildBackgroundTasksSignal,
-  parseContextBudgetRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
+  accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
@@ -48,10 +48,13 @@ const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
 const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
 
-function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; errorKinds: Map<string, number> } {
+function ensureTool(
+  acc: Acc,
+  tool: string,
+): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);
   if (entry === undefined) {
-    entry = { ok: 0, failed: 0, errorKinds: new Map() };
+    entry = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map() };
     acc.toolStats.set(tool, entry);
   }
   return entry;
@@ -142,9 +145,11 @@ function handleEventRecord(
   const isCurrentTurn = latestPromptSeq === undefined
     || (recordSeq !== undefined && recordSeq > latestPromptSeq);
   if (accumulateQueueRecord(acc, type, recordSeq, data)) return;
+  if (accumulateContextRecord(acc, type, data, recordSeq, isCurrentTurn)) return;
   switch (type) {
     case "prompt.submitted": {
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
+      accumulatePromptRequestRecord(acc, data);
       const inboundKind = asString(data.inboundKind);
       if (inboundKind === "message" || inboundKind === "edit") acc.inboundEdit = inboundKind === "edit";
       const groupHistoryMessageCount = nonnegativeInteger(data.groupHistoryMessageCount);
@@ -306,6 +311,7 @@ function handleEventRecord(
       const entry = ensureTool(acc, tool);
       if (success) {
         entry.ok += 1;
+        if (data.changed === false) entry.noOp += 1;
         return;
       }
       entry.failed += 1;
@@ -422,37 +428,8 @@ function handleEventRecord(
     case "orchestrate.run_summary":
       accumulateOrchestrateRunSummaryRecord(acc.orchestrateRunsByRunId, data);
       return;
-    // The budget equation (LCD pre-flight) + prompt-timeout attribution —
-    // schema-validated LAST-wins folds delegated to helpers (subdir cap). An
-    // undefined parse leaves acc.* unchanged (malformed/partial ignored, fwd-compat).
-    case "context.budget": {
-      const b = parseContextBudgetRecord(data);
-      if (b !== undefined) {
-        acc.contextBudget = b; // The terminal fit-check (LAST wins).
-        // Also record the per-turn CASCADE. Dedup on transition (the window is fixed per session
-        // + S is ~fixed, so push only when assembled-input/eviction/verdict MOVES) so a stable
-        // multi-turn session adds nothing; cap to the most-recent 40 (the tightening toward an
-        // exhaustion is at the tail). Surfaced only when ≥2 states (see the assemble guard).
-        const entry = {
-          windowTokens: b.windowTokens,
-          assembledInputTokens: b.assembledInputTokens,
-          keptCount: b.keptCount,
-          verdict: b.verdict,
-        };
-        const prev = acc.contextBudgetHistory[acc.contextBudgetHistory.length - 1];
-        if (
-          prev === undefined ||
-          prev.assembledInputTokens !== entry.assembledInputTokens ||
-          prev.keptCount !== entry.keptCount ||
-          prev.verdict !== entry.verdict ||
-          prev.windowTokens !== entry.windowTokens
-        ) {
-          acc.contextBudgetHistory.push(entry);
-          if (acc.contextBudgetHistory.length > 40) acc.contextBudgetHistory.shift();
-        }
-      }
-      return;
-    }
+    // Prompt-timeout attribution uses a schema-validated LAST-wins fold. An
+    // undefined parse leaves the accumulator unchanged.
     case "execution.prompt_timeout": {
       const t = parsePromptTimeoutRecord(data);
       if (t !== undefined) acc.promptTimeout = t;
@@ -566,8 +543,8 @@ function handleEventRecord(
       return;
     }
     case "execution.recovery_attempted": {
-      // Fold the model re-entry recoveries (silent_retry / lkw_fallback /
-      // continuation_nudge) → counts by reason + a succeeded tally.
+      // Fold model re-entry and deterministic response-grounding recoveries
+      // into counts by reason plus a succeeded tally.
       const reason = asString(data.reason) ?? "unknown";
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
@@ -804,6 +781,15 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
+    ...(acc.requestRelevantToolNames !== undefined
+      ? { requestRelevantToolNames: acc.requestRelevantToolNames }
+      : {}),
+    ...(acc.requestRelevanceHistory !== undefined
+      ? { requestRelevanceHistory: acc.requestRelevanceHistory }
+      : {}),
+    ...(acc.operatorPolicyToolProjections !== undefined
+      ? { operatorPolicyToolProjections: acc.operatorPolicyToolProjections }
+      : {}),
     ...(acc.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }
       : {}),
@@ -850,6 +836,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(misclassifiedTool !== undefined ? { misclassifiedTool } : {}),
     ...(misclassifiedToken !== undefined ? { misclassifiedToken } : {}),
     ...(acc.contextBudget !== undefined ? { contextBudget: acc.contextBudget } : {}),
+    ...(acc.rehydration !== undefined ? { rehydration: acc.rehydration } : {}),
     // A single budget state adds nothing beyond `contextBudget`.
     ...(acc.contextBudgetHistory.length >= 2 ? { contextBudgetHistory: acc.contextBudgetHistory } : {}),
     // A woke fire's wake-gate fact (absent when the trajectory carries no

@@ -47,6 +47,7 @@ import {
   makeRealReader,
   resolveSessionFilePath,
   type IncidentSourceReader,
+  type MessageLifecycleDiagnosticEvidence,
   type TaskCheckLifecycleEvidence,
 } from "./obs-explain-readers.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
@@ -264,6 +265,70 @@ function metadataForTaskCheckExecution(
   };
 }
 
+function metadataForMessageLifecycleDiagnostic(
+  evidence: MessageLifecycleDiagnosticEvidence,
+): Record<string, unknown> {
+  const clean = evidence.status === "success" || evidence.status === "filtered";
+  return {
+    traceId: evidence.traceId,
+    agentId: evidence.agentId,
+    channel: {
+      type: evidence.channelType,
+      id: evidence.channelId,
+    },
+    sessionEnd: {
+      endReason: evidence.status,
+      degraded: !clean,
+      durationMs: evidence.totalDurationMs,
+      totalTokens: evidence.tokensUsed,
+      costUsd: evidence.cost,
+      turnCount: 1,
+      toolStats: {},
+      breakerTripCount: 0,
+      topErrorKinds: evidence.errorKind === undefined
+        ? {}
+        : { [evidence.errorKind]: 1 },
+    },
+  };
+}
+
+function messageLifecycleFailureVerdict(
+  evidence: MessageLifecycleDiagnosticEvidence | null,
+  trajectoryRecordCount: number,
+): IncidentReport["likelyRootCause"] {
+  if (
+    evidence === null
+    || trajectoryRecordCount > 0
+    || evidence.status === "success"
+    || evidence.status === "filtered"
+  ) {
+    return null;
+  }
+  const stage = evidence.failureStage ?? "unknown";
+  const errorKind = evidence.errorKind ?? "unknown";
+  const code = stage === "execution"
+    ? "pre_session_execution_failure"
+    : stage === "delivery"
+      ? "pre_session_delivery_failure"
+      : "pre_session_message_failure";
+  const credentialStep = evidence.errorKind === "auth"
+    ? [
+        "verify the configured provider profile has a valid credential, then retry the request",
+      ]
+    : [];
+  return {
+    code,
+    detail:
+      `the message ended with status=${evidence.status} at the ${stage} boundary `
+      + `(errorKind=${errorKind}) before a trajectory/session rollup was recorded`,
+    suggestedNextSteps: [
+      ...credentialStep,
+      `inspect the ${stage} boundary configuration and retry after correcting ${errorKind}`,
+      "use system-health to check whether the same errorKind is recurring across sessions",
+    ],
+  };
+}
+
 function taskCheckReportSection(
   evidence: TaskCheckLifecycleEvidence,
 ): NonNullable<IncidentReport["taskCheck"]> {
@@ -344,11 +409,19 @@ export async function assembleIncidentReportFromSources(
     ? traceIdFromCronRootRun(params.rootRunId)
     : undefined;
   const fallbackTraceId = params.traceId ?? cronExecutionTraceId ?? graphTraceId;
+  const executionDiagnostic =
+    fallbackTraceId !== undefined && reader.readMessageLifecycleDiagnostic !== undefined
+      ? await reader.readMessageLifecycleDiagnostic(fallbackTraceId)
+      : null;
   const sessionKey =
     indexedSessionKey.length === 0 &&
-      fallbackTraceId !== undefined &&
-      reader.resolveTraceSessionKey !== undefined
-      ? await reader.resolveTraceSessionKey(fallbackTraceId, params.includeSynthetic)
+      fallbackTraceId !== undefined
+      ? executionDiagnostic?.sessionKey
+        ?? (
+          reader.resolveTraceSessionKey === undefined
+            ? ""
+            : await reader.resolveTraceSessionKey(fallbackTraceId, params.includeSynthetic)
+        )
       : indexedSessionKey;
 
   // A traceId OR a rootRunId that resolves to "" (no row in
@@ -424,11 +497,18 @@ export async function assembleIncidentReportFromSources(
     selectedTraceId === undefined
       ? records
       : recordsForExecution(sessionRecords, selectedTraceId);
-  const metadata = taskCheck !== null
+  const selectedMetadata = taskCheck !== null
     ? metadataForTaskCheckExecution(sessionMetadata, taskCheck)
     : selectedTraceId === undefined
       ? sessionMetadata
       : metadataForExecution(sessionMetadata, metadataRecords, selectedTraceId);
+  const metadata =
+    selectedMetadata
+    ?? (
+      executionDiagnostic !== null && selectedRecords.length === 0
+        ? metadataForMessageLifecycleDiagnostic(executionDiagnostic)
+        : null
+    );
   // Diagnostics rows are session-scoped and last-write-wins. They cannot
   // safely contribute to a historical cron execution report.
   const rollup =
@@ -538,6 +618,13 @@ export async function assembleIncidentReportFromSources(
           truncated: losslessEvidence.truncated,
         },
   );
+  if (executionDiagnostic !== null && selectedRecords.length === 0) {
+    report.coverage = {
+      ...report.coverage!,
+      rollup: { present: false },
+      executionDiagnostic: { found: true },
+    };
+  }
   if (taskCheck !== null) report.taskCheck = taskCheckReportSection(taskCheck);
   if (graph !== null) report.graph = graph;
   // The report is genuinely empty only when NO source surfaced any activity.
@@ -608,6 +695,13 @@ export async function assembleIncidentReportFromSources(
       endReason: report.outcome.endReason,
       degraded: report.outcome.degraded,
     });
+  }
+  const lifecycleFailureVerdict = messageLifecycleFailureVerdict(
+    executionDiagnostic,
+    selectedRecords.length,
+  );
+  if (lifecycleFailureVerdict !== null) {
+    report.likelyRootCause = lifecycleFailureVerdict;
   }
   const visionFallbackVerdict = visionFallbackGroundedVerdict(
     auditRows,

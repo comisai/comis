@@ -29,6 +29,7 @@ const internalFieldNames = new Set([
   "_chatType",
   "_context",
   "_deliveryTarget",
+  "_discoveredDeferredTools",
   "_originChannelId",
   "_outwardStepIndex",
   "_outwardOperationId",
@@ -135,6 +136,28 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
 
     const forwarded = rpcCall.mock.calls[0]![1] as Record<string, unknown>;
     expect(forwarded._abortSignal).toBe(controller.signal);
+  });
+
+  it("re-injects trusted parent discovery metadata after stripping forged params", async () => {
+    currentCtx = undefined;
+    const rpcCall = vi.fn(async () => "ok");
+    const agentRpc = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    })("agent-1");
+
+    await agentRpc(
+      "session.spawn",
+      {
+        task: "inspect the service",
+        _discoveredDeferredTools: ["forged_tool"],
+      },
+      { discoveredDeferredTools: ["mcp__service--lookup"] },
+    );
+
+    const forwarded = rpcCall.mock.calls[0]![1] as Record<string, unknown>;
+    expect(forwarded._discoveredDeferredTools).toEqual(["mcp__service--lookup"]);
   });
   it("injects _agentId and the resolved _capabilities into every forwarded rpcCall", async () => {
     currentCtx = undefined;

@@ -143,7 +143,10 @@ describe("resolveProviderApiKey", () => {
         authStorage: authStorage as AuthStorage,
         oauthManager: manager as OAuthTokenManager,
       }),
-    ).rejects.toThrow(/not found in store/);
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/not found in store/),
+      errorKind: "auth",
+    });
     expect(authStorage.setRuntimeOAuthCredential).not.toHaveBeenCalled();
   });
 

@@ -11,13 +11,20 @@
  * `buildSessionContext()` or alters model context.
  */
 
-import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  sessionEntryToContextMessages,
+  type SessionEntry,
+  type SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   getOriginalInboundMessages,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   parseInboundMessageProvenanceBatch,
   scrubSecretsFromText,
+  systemDateFrom,
   type NormalizedMessage,
+  type OriginalInboundMessage,
 } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 
@@ -48,6 +55,35 @@ export interface InboundMessageProvenancePlanError {
   readonly error: Error;
   readonly errorKind: "validation" | "precondition" | "resource";
 }
+
+export interface InboundConversationProjectionDiagnostics {
+  readonly projectedUserMessages: number;
+  readonly omittedLocaleRepairTurns: number;
+  readonly duplicateProvenanceEntries: number;
+  readonly invalidProvenanceEntries: number;
+  readonly incompleteProvenanceBatches: number;
+}
+
+export interface InboundConversationProjection {
+  /** Canonical model/LCD history rebuilt from structured physical-message records. */
+  readonly messages: AgentMessage[];
+  /** Unmodified SDK context used only to reconcile an already-persisted dirty LCD epoch. */
+  readonly sourceMessages: AgentMessage[];
+  readonly diagnostics: InboundConversationProjectionDiagnostics;
+}
+
+interface PendingProvenanceBatch {
+  readonly batchId: string;
+  readonly recordedAt: number;
+  readonly chunkCount: number;
+  readonly chunks: Map<number, {
+    readonly serialized: string;
+    readonly messages: OriginalInboundMessage[];
+  }>;
+  invalid: boolean;
+}
+
+const GENERATED_LOCALE_REPAIR_PREFIX = "<response-locale-repair locale=\"";
 
 /** Validate and fully bound every durable record before any file append occurs. */
 export function planInboundMessageProvenance(
@@ -174,5 +210,207 @@ export function appendInboundMessageProvenance(
       );
     }
     return finalEntryId;
+  });
+}
+
+function messageText(message: AgentMessage): string {
+  const content = (message as unknown as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block): block is { type: "text"; text: string } =>
+      typeof block === "object"
+      && block !== null
+      && (block as { type?: string }).type === "text"
+      && typeof (block as { text?: unknown }).text === "string")
+    .map((block) => block.text)
+    .join("");
+}
+
+function replaceUserText(message: AgentMessage, text: string): AgentMessage {
+  const user = message as unknown as { content?: unknown };
+  if (typeof user.content === "string" || !Array.isArray(user.content)) {
+    return { ...message, content: text } as AgentMessage;
+  }
+  let insertedText = false;
+  const content = user.content.flatMap((block) => {
+    if (
+      typeof block !== "object"
+      || block === null
+      || (block as { type?: string }).type !== "text"
+    ) {
+      return [block];
+    }
+    if (insertedText) return [];
+    insertedText = true;
+    return [{ ...block, text }];
+  });
+  if (!insertedText) content.unshift({ type: "text", text });
+  return { ...message, content } as AgentMessage;
+}
+
+function renderPhysicalMessages(messages: readonly OriginalInboundMessage[]): string {
+  return messages.map((message) =>
+    `[${message.channelType}] ${message.senderId} `
+    + `(${systemDateFrom(message.timestamp).toISOString()}):\n${message.text}`,
+  ).join("\n\n");
+}
+
+function collectProjectedUserText(
+  branch: readonly SessionEntry[],
+  diagnostics: {
+    projectedUserMessages: number;
+    duplicateProvenanceEntries: number;
+    invalidProvenanceEntries: number;
+    incompleteProvenanceBatches: number;
+  },
+): Map<string, string> {
+  const projectedByEntryId = new Map<string, string>();
+  const pendingByBatchId = new Map<string, PendingProvenanceBatch>();
+  const pendingOrder: string[] = [];
+
+  for (const entry of branch) {
+    if (
+      entry.type === "custom"
+      && entry.customType === INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE
+    ) {
+      const parsed = parseInboundMessageProvenanceBatch(entry.data);
+      if (!parsed.ok) {
+        diagnostics.invalidProvenanceEntries++;
+        continue;
+      }
+      const payload = parsed.value;
+      const serialized = JSON.stringify(payload.messages);
+      const existing = pendingByBatchId.get(payload.batchId);
+      if (existing === undefined) {
+        pendingOrder.push(payload.batchId);
+        pendingByBatchId.set(payload.batchId, {
+          batchId: payload.batchId,
+          recordedAt: payload.recordedAt,
+          chunkCount: payload.chunkCount,
+          chunks: new Map([[
+            payload.chunkIndex,
+            { serialized, messages: payload.messages },
+          ]]),
+          invalid: false,
+        });
+        continue;
+      }
+      if (
+        existing.recordedAt !== payload.recordedAt
+        || existing.chunkCount !== payload.chunkCount
+      ) {
+        existing.invalid = true;
+        diagnostics.invalidProvenanceEntries++;
+        continue;
+      }
+      const priorChunk = existing.chunks.get(payload.chunkIndex);
+      if (priorChunk === undefined) {
+        existing.chunks.set(payload.chunkIndex, {
+          serialized,
+          messages: payload.messages,
+        });
+      } else if (priorChunk.serialized === serialized) {
+        diagnostics.duplicateProvenanceEntries++;
+      } else {
+        existing.invalid = true;
+        diagnostics.invalidProvenanceEntries++;
+      }
+      continue;
+    }
+
+    if (entry.type !== "message" || entry.message.role !== "user") continue;
+    const physicalMessages: OriginalInboundMessage[] = [];
+    for (const batchId of pendingOrder) {
+      const batch = pendingByBatchId.get(batchId);
+      if (batch === undefined || batch.invalid) continue;
+      if (batch.chunks.size !== batch.chunkCount) {
+        diagnostics.incompleteProvenanceBatches++;
+        continue;
+      }
+      for (let chunkIndex = 0; chunkIndex < batch.chunkCount; chunkIndex++) {
+        const chunk = batch.chunks.get(chunkIndex);
+        if (chunk === undefined) {
+          diagnostics.incompleteProvenanceBatches++;
+          break;
+        }
+        physicalMessages.push(...chunk.messages);
+      }
+    }
+    if (physicalMessages.length > 0) {
+      projectedByEntryId.set(entry.id, renderPhysicalMessages(physicalMessages));
+      diagnostics.projectedUserMessages++;
+    }
+    pendingByBatchId.clear();
+    pendingOrder.length = 0;
+  }
+
+  return projectedByEntryId;
+}
+
+/**
+ * Rebuild the active conversation from structured inbound provenance.
+ *
+ * Dynamic prompt sections remain in the append-only SDK JSONL for forensics,
+ * but never become canonical model or LCD history. A generated locale-repair
+ * instruction replaces its rejected assistant draft with the finalized
+ * assistant response. A user who types the same protocol-shaped text keeps
+ * their message because their structured record is paired first.
+ */
+export function projectInboundConversation(
+  sessionManager: SessionManager,
+): Result<InboundConversationProjection, Error> {
+  const read = tryCatch(() => ({
+    branch: sessionManager.getBranch(),
+    contextEntries: sessionManager.buildContextEntries(),
+    sourceMessages: sessionManager.buildSessionContext().messages,
+  }));
+  if (!read.ok) return read;
+
+  const diagnostics = {
+    projectedUserMessages: 0,
+    omittedLocaleRepairTurns: 0,
+    duplicateProvenanceEntries: 0,
+    invalidProvenanceEntries: 0,
+    incompleteProvenanceBatches: 0,
+  };
+  const projectedByEntryId = collectProjectedUserText(
+    read.value.branch,
+    diagnostics,
+  );
+  const messages: AgentMessage[] = [];
+  let replaceLocaleRepairDraft = false;
+
+  for (const entry of read.value.contextEntries) {
+    if (entry.type === "message" && entry.message.role === "user") {
+      const projectedText = projectedByEntryId.get(entry.id);
+      if (projectedText !== undefined) {
+        replaceLocaleRepairDraft = false;
+        messages.push(replaceUserText(entry.message, projectedText));
+        continue;
+      }
+      if (messageText(entry.message).trimStart().startsWith(GENERATED_LOCALE_REPAIR_PREFIX)) {
+        if (messages.at(-1)?.role === "assistant") messages.pop();
+        replaceLocaleRepairDraft = true;
+        diagnostics.omittedLocaleRepairTurns++;
+        continue;
+      }
+      replaceLocaleRepairDraft = false;
+    } else if (
+      replaceLocaleRepairDraft
+      && entry.type === "message"
+      && entry.message.role === "assistant"
+    ) {
+      replaceLocaleRepairDraft = false;
+      messages.push(...sessionEntryToContextMessages(entry));
+      continue;
+    }
+    messages.push(...sessionEntryToContextMessages(entry));
+  }
+
+  return ok({
+    messages,
+    sourceMessages: read.value.sourceMessages,
+    diagnostics,
   });
 }

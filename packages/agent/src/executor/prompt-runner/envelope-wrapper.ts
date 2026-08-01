@@ -62,6 +62,7 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
     msg,
     deps,
     dynamicPreamble,
+    requestRelevantToolNames,
     deferredContext,
     capabilityIndexResult,
     inlineMemory,
@@ -89,6 +90,16 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
   // all-zero counts) yields text === "" which .filter(Boolean) drops
   // automatically.
   const capabilityIndexContext = capabilityIndexResult.text;
+  const requestRelevantToolsContext = requestRelevantToolNames?.length
+    ? [
+        "<request-relevant-tools>",
+        `The current request most closely matches these active tools: ${requestRelevantToolNames.join(", ")}.`,
+        "Use a matching tool when the current request asks for work that tool performs. "
+          + "Prior responses are context, not evidence that this request completed. "
+          + "Never report an action as completed without a successful current-turn tool result.",
+        "</request-relevant-tools>",
+      ].join("\n")
+    : "";
   // On a tight window where the system prompt dominates, the
   // capability-index + deferred-tools context (tool-DISCOVERY scaffolding, NOT needed
   // to answer the current message) can be the marginal overflow: the protected fresh
@@ -105,7 +116,12 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
       { capabilityIndexContext, deferredContext, dynamicPreamble, messageText },
       { modelProfile, config, getSystemTokensEstimate: deps.getSystemTokensEstimate, logger: deps.logger },
     );
-  const fullDynamicPreamble = [dynamicPreamble, keptCapabilityIndex, keptDeferred]
+  const fullDynamicPreamble = [
+    dynamicPreamble,
+    requestRelevantToolsContext,
+    keptCapabilityIndex,
+    keptDeferred,
+  ]
     .filter(Boolean)
     .join("\n\n");
 

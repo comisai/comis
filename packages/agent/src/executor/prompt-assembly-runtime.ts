@@ -62,6 +62,7 @@ import {
   sessionPromptSkillLocations,
   sessionPromptSkillsXmlSnapshots,
   sessionPromptSkillSurfacedCensus,
+  sessionPromptTopicMatchStates,
   sessionPromptTopicMatchedSkills,
   sessionToolNameSnapshots,
   workspacePolicyContent,
@@ -69,9 +70,26 @@ import {
   wr02SenderTrustWarnedAgents,
   type ExecutionPromptResult,
   type PromptAssemblyParams,
+  type SkillSurfacedScore,
 } from "./prompt-assembly-shared.js";
 export async function assembleExecutionPrompt(params: PromptAssemblyParams): Promise<ExecutionPromptResult> {
   const { config, deps, msg, sessionKey, agentId, mergedCustomTools, logger } = params;
+  const promptSnapshotKey = formatSessionKey(sessionKey);
+  const priorTopicState = sessionPromptTopicMatchStates.get(promptSnapshotKey);
+  const previousDirectMatches =
+    priorTopicState?.messageId === msg.id
+      ? priorTopicState.previousDirectMatches
+      : params.recentUserTurns.length > 0
+        ? priorTopicState?.directMatches ?? []
+        : [];
+  // Fail closed on a skipped/failed learning read: never let the preceding turn's
+  // effective carrier survive merely because this assembly did not reach the matcher.
+  sessionPromptTopicMatchedSkills.set(promptSnapshotKey, []);
+  sessionPromptTopicMatchStates.set(promptSnapshotKey, {
+    messageId: msg.id,
+    directMatches: [],
+    previousDirectMatches,
+  });
 
   function resolveWorkspacePolicyContent(fileName: WorkspaceFileName): string | undefined {
     return workspacePolicyContent(deps.workspacePolicySnapshot, fileName);
@@ -513,18 +531,43 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         }
 
         // --- reuse-attribution by TOPIC MATCH (kind=skill).
-        // Credit any learned skill whose stored common-core (topicTokens) THIS turn instantiates,
-        // so a skill APPLIED from the surfaced `<available_skills>` summary / recall — without an
-        // explicit `read` of its SKILL.md (the read-attribution path) — still enters `usedSkillIds` and
-        // promotes on success. Per-turn (the match depends on the turn's request text); the carrier
-        // is unioned into the turn's usedSkillIds by the pi-event-bridge.
-        const skills = docs.value.filter((d) => d.kind === "skill");
+        // Credit any learned skill whose stored common-core (topicTokens) this turn
+        // instantiates. When the next user turn supplies the data needed to finish that
+        // request, retain the direct match for exactly that one immediate continuation.
+        // A carried match is never stored as direct, so it cannot leak into a third turn.
+        // Topic attribution uses the same eligibility contract as the
+        // model-facing learned-skill surface: only read-only candidate/active
+        // procedures can have influenced this turn. Reading the raw store without
+        // this lifecycle filter let a demoted stale skill keep earning proof even
+        // though it was no longer visible to the model.
+        const skills = docs.value.filter(
+          (d) =>
+            d.kind === "skill" &&
+            (d.state === "candidate" || d.state === "active") &&
+            !d.mutating,
+        );
+        const surfaced = skills.map((s) => ({
+          name: s.name,
+          topicTokens: s.structuredBody?.topicTokens,
+        }));
         const scores = topicMatchScores(
           msg.text,
-          skills.map((s) => ({ name: s.name, topicTokens: s.structuredBody?.topicTokens })),
+          surfaced,
         );
-        const matched = [...new Set(scores.filter((s) => s.credited).map((s) => s.name))];
-        sessionPromptTopicMatchedSkills.set(formatSessionKey(sessionKey), matched);
+        const directMatches = [...new Set(scores.filter((s) => s.credited).map((s) => s.name))];
+        const surfacedNames = new Set(skills.map((skill) => skill.name));
+        const continuationMatches =
+          directMatches.length === 0 && params.recentUserTurns.length > 0
+            ? previousDirectMatches.filter((name) => surfacedNames.has(name))
+            : [];
+        const matched = directMatches.length > 0 ? directMatches : continuationMatches;
+        const continuedFromPriorTurn = directMatches.length === 0 && continuationMatches.length > 0;
+        sessionPromptTopicMatchStates.set(promptSnapshotKey, {
+          messageId: msg.id,
+          directMatches,
+          previousDirectMatches,
+        });
+        sessionPromptTopicMatchedSkills.set(promptSnapshotKey, matched);
         // One DEBUG line when a turn TOPIC-CREDITS ≥1 learned skill WITHOUT an explicit read —
         // otherwise the credit is invisible until a downstream proof bump, so confirming "did
         // reuse-attribution fire this turn" meant grepping outcome_events. Gated on a non-empty
@@ -532,7 +575,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // never the skill body.
         if (matched.length > 0) {
           logger.debug(
-            { agentId, step: "skill-topic-match", skillsConsidered: skills.length, matchedCount: matched.length },
+            {
+              agentId,
+              step: "skill-topic-match",
+              skillsConsidered: skills.length,
+              matchedCount: matched.length,
+              creditSource: continuedFromPriorTurn ? "prior_turn" : "current_turn",
+            },
             "reuse-attribution: turn topic-credited learned skill(s) without an explicit read",
           );
         }
@@ -546,12 +595,30 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // trajectory bridge has subscribed. Keep only the skills with token overlap (credited +
         // near-misses); zero-overlap skills are noise. Capped at 25 (coverage desc).
         if (skills.length > 0) {
-          const relevant = scores
-            .filter((s) => s.sharedCount > 0 || s.credited)
+          const relevantByName = new Map<string, SkillSurfacedScore>(
+            scores
+              .filter((score) => score.sharedCount > 0 || score.credited)
+              .map((score) => [score.name, score]),
+          );
+          if (continuedFromPriorTurn) {
+            const priorTurn = params.recentUserTurns.at(-1);
+            if (priorTurn !== undefined) {
+              const priorScores = topicMatchScores(priorTurn, surfaced);
+              for (const score of priorScores) {
+                if (!continuationMatches.includes(score.name)) continue;
+                relevantByName.set(score.name, {
+                  ...score,
+                  credited: true,
+                  creditSource: "prior_turn" as const,
+                });
+              }
+            }
+          }
+          const relevant = [...relevantByName.values()]
             .sort((a, b) => b.coverage - a.coverage || b.sharedCount - a.sharedCount)
             .slice(0, 25);
           if (relevant.length > 0) {
-            sessionPromptSkillSurfacedCensus.set(formatSessionKey(sessionKey), {
+            sessionPromptSkillSurfacedCensus.set(promptSnapshotKey, {
               surfacedCount: skills.length,
               creditedCount: matched.length,
               scores: relevant,
@@ -705,6 +772,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // One typed compiler input feeds the monolithic and cache-block views.
   const assemblerParams: import("../bootstrap/index.js").AssemblerParams = {
     promptMode,
+    executionModel: {
+      provider: params.resolvedModelProvider ?? config.provider,
+      model: params.resolvedModelId ?? config.model,
+    },
     // From the CACHE-STABLE tool snapshot, not the live list: the directive is
     // part of the cached system prefix, so it must not flip between turns when
     // MCP servers connect or disconnect.

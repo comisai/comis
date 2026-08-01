@@ -52,6 +52,9 @@ const ModelsManageToolParams = Type.Object({
 });
 
 const VALID_ACTIONS = ["list", "test", "list_providers"] as const;
+const MODEL_CATALOG_NOTICE =
+  "This is an availability catalog only. It does not identify or change the active model. " +
+  "Use session_status to inspect the active model; use agents_manage update with an exact provider/model pair to change it.";
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -77,7 +80,8 @@ export function createModelsManageTool(rpcCall: RpcCall): AgentTool<typeof Model
       name: "models_manage",
       label: "Model Management",
       description:
-        "List available models, test provider availability.",
+        "Query the read-only model availability catalog or test a provider. " +
+        "The catalog does not identify or change the active model; use session_status for current execution state.",
       parameters: ModelsManageToolParams,
       validActions: VALID_ACTIONS,
       rpcPrefix: "models",
@@ -93,11 +97,19 @@ export function createModelsManageTool(rpcCall: RpcCall): AgentTool<typeof Model
               providers: (result.providers as Array<{ name: string; modelCount: number }>)
                 .map((p) => ({ name: p.name, modelCount: p.modelCount })),
               totalModels: result.totalModels,
+              catalogOnly: true,
+              mutationPerformed: false,
+              catalogNotice: MODEL_CATALOG_NOTICE,
               hint: "Use provider filter for full model details: models_manage list provider=<name>",
             };
           }
 
-          return result;
+          return {
+            ...result,
+            catalogOnly: true,
+            mutationPerformed: false,
+            catalogNotice: MODEL_CATALOG_NOTICE,
+          };
         },
         async test(p, rpcCall, ctx) {
           const provider = readStringParam(p, "provider");

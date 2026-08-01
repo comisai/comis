@@ -83,6 +83,7 @@ function createMockDeps(): SubagentHandlerDeps {
       ]),
       waitForCompletions: vi.fn().mockResolvedValue([]),
       killRun: vi.fn().mockReturnValue({ killed: true }),
+      killByRootRun: vi.fn().mockReturnValue({ killed: 3 }),
       steerRun: vi.fn().mockResolvedValue({ steered: true, mode: "steer" }),
       pauseSpawns: vi.fn().mockReturnValue({
         paused: true, acceptingSpawns: true, changed: true, resetsOnRestart: true,
@@ -97,6 +98,7 @@ function createMockDeps(): SubagentHandlerDeps {
     },
     defaultAgentId: "default",
     tenantId: "default",
+    schedulerNowMs: vi.fn().mockReturnValue(123),
     // securityConfig.agentToAgent.steerInject gates the steer handler
     // (flag-on inject / flag-off byte-identical kill+respawn). Default the flag
     // OFF here — individual tests flip it on.
@@ -441,9 +443,34 @@ describe("createSubagentHandlers", () => {
     const result = await handlers["subagent.kill"]!({ target: "run-1" });
 
     expect(deps.subAgentRunner.killRun).toHaveBeenCalledWith("run-1");
-    const r = result as { killed: boolean; runId: string };
+    const r = result as { killed: boolean; runId: string; count: number };
     expect(r.killed).toBe(true);
     expect(r.runId).toBe("run-1");
+    expect(r.count).toBe(1);
+  });
+
+  it("agent tree kill hard-stops the trusted root and reports the exact descendant count", async () => {
+    const revokeByRootRun = vi.fn().mockReturnValue({ revoked: 4 });
+    deps.leaseManager = {
+      revokeByRootRun,
+    } as unknown as NonNullable<SubagentHandlerDeps["leaseManager"]>;
+    const callerHandlers = createSubagentHandlers(deps);
+
+    const result = await callerHandlers["subagent.kill"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
+      _rootRunId: "root-current",
+      target: "tree",
+    });
+
+    expect(result).toEqual({ killed: true, runId: "tree", count: 3 });
+    expect(deps.subAgentRunner.killByRootRun).toHaveBeenCalledWith("root-current");
+    expect(revokeByRootRun).toHaveBeenCalledWith("root-current");
+    expect(deps.eventBus!.emit).toHaveBeenCalledWith("autonomy:killed", {
+      rootRunId: "root-current",
+      killed: 3,
+      timestamp: 123,
+    });
   });
 
   it("subagent.kill throws when run not found", async () => {
@@ -889,7 +916,7 @@ describe("createSubagentHandlers", () => {
 
       expect(deps.subAgentRunner.killRun).toHaveBeenCalledWith("run-1");
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
-      expect(result).toEqual({ killed: true, runId: "run-1" });
+      expect(result).toEqual({ killed: true, runId: "run-1", count: 1 });
     });
 
     it("subagent.kill calls killRun and returns {killed, runId} with steerInject:true", async () => {
@@ -900,7 +927,7 @@ describe("createSubagentHandlers", () => {
 
       expect(deps.subAgentRunner.killRun).toHaveBeenCalledWith("run-1");
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
-      expect(result).toEqual({ killed: true, runId: "run-1" });
+      expect(result).toEqual({ killed: true, runId: "run-1", count: 1 });
     });
   });
 });

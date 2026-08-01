@@ -10,7 +10,7 @@
 
 import type { ChannelPort, ClockPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService, ErrorKind } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
-import { ERROR_KINDS } from "@comis/core";
+import { ERROR_KINDS, RUNTIME_FAILURE_DELIVERY_ORIGIN } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import { createConversationRef, formatSessionKey, tryGetContext, systemNowMs, narrowChatType, toSafeErrorLogString } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
@@ -610,6 +610,10 @@ export async function executeAndDeliver(
       deps, adapter, effectiveMsg, filterResult.text,
       blockStreamCfg, activePacers, replyTo,
       deliverySignal, typingLifecycle,
+      undefined,
+      readExecutionLifecycle().status === "success"
+        ? "agent"
+        : RUNTIME_FAILURE_DELIVERY_ORIGIN,
     );
     const deliveryReceipt = toActivityDeliveryStageResult(strictDeliveryOutcome);
 

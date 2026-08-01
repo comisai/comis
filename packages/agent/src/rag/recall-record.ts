@@ -28,7 +28,12 @@ import type { ScoreBreakdown } from "./score.js";
  * (mirrors @comis/observability's RECALL_INCLUDE_REASONS; redeclared here to keep
  * the agent↛observability surface a TYPE-only seam at the record-assembly layer).
  */
-export type RecallIncludeReason = "included" | "trust_filtered" | "deduped" | "below_budget";
+export type RecallIncludeReason =
+  | "included"
+  | "trust_filtered"
+  | "deduped"
+  | "below_budget"
+  | "recent_tail_duplicate";
 
 /** Closed union of rerank outcomes (mirrors RECALL_RERANK_OUTCOMES). */
 export type RecallRerankOutcome = "ran" | "fell_back" | "timed_out";

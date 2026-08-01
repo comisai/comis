@@ -12,6 +12,8 @@ import { createRehydrationLayer } from "./rehydration.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { RehydrationLayerDeps, TokenBudget } from "./types.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { summaryRefToMessage } from "./lcd-summary-render.js";
+import type { LcdSummary } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Test Helpers
@@ -21,6 +23,24 @@ function makeCompactionSummary(text = "Compacted conversation"): AgentMessage {
     compactionSummary: true,
     content: [{ type: "text", text: `<summary>\n${text}\n</summary>` }],
   } as unknown as AgentMessage;
+}
+
+function makeLcdSummary(text = "Lossless context summary"): AgentMessage {
+  return summaryRefToMessage({
+    summaryId: "summary_a",
+    conversationRef: `cv_${"c".repeat(43)}` as LcdSummary["conversationRef"],
+    kind: "leaf",
+    depth: 0,
+    earliestAt: 1_751_328_000_000,
+    latestAt: 1_751_328_000_000,
+    descendantCount: 24,
+    tokenCount: 100,
+    content: text,
+    fileIds: [],
+    taint: false,
+    fallback: false,
+    createdAt: 1_751_328_000_000,
+  });
 }
 
 function makeUserMsg(text: string): AgentMessage {
@@ -115,7 +135,7 @@ describe("createRehydrationLayer", () => {
     expect(result).toBe(messages);
   });
 
-  it("2) compaction detected -- split rehydration: position-1 + end", async () => {
+  it("2) compaction detected -- split rehydration preserves current request authority", async () => {
     const { deps } = createMockDeps();
     const layer = createRehydrationLayer(deps);
 
@@ -126,10 +146,10 @@ describe("createRehydrationLayer", () => {
 
     const result = await layer.apply(messages, largeBudget);
 
-    // Should have 4 messages: compaction + position1 + user + end
+    // Should have 4 messages: compaction + position1 + current-turn context + user
     expect(result).toHaveLength(4);
     expect(result[0]).toBe(messages[0]); // compaction summary unchanged
-    expect(result[2]).toBe(messages[1]); // original user message preserved
+    expect(result[3]).toBe(messages[1]); // original user message remains final
 
     // Position-1 message at index 1 (AGENTS.md + files)
     const position1 = result[1]!;
@@ -149,23 +169,61 @@ describe("createRehydrationLayer", () => {
     expect(position1Text).not.toContain("[Resume instruction]");
     expect(position1Text).not.toContain("[Active state]");
 
-    // End message at index 3 (resume + state)
-    const endMsg = result[3]!;
-    expect(endMsg.role).toBe("user");
-    const endText = getMessageText(endMsg);
+    // Current-turn context at index 2 (resume + state)
+    const currentTurnMsg = result[2]!;
+    expect(currentTurnMsg.role).toBe("user");
+    const currentTurnText = getMessageText(currentTurnMsg);
 
-    // End should contain resume instruction and active state
-    expect(endText).toContain("[Resume instruction]");
-    expect(endText).toContain("[End resume instruction]");
-    expect(endText).toContain("[Active state]");
-    expect(endText).toContain("Channel type: discord");
-    expect(endText).toContain("Channel ID: ch-123");
-    expect(endText).toContain("Agent ID: agent-abc");
-    expect(endText).toContain("[End active state]");
+    // Current-turn context should contain resume instruction and active state
+    expect(currentTurnText).toContain("[Resume instruction]");
+    expect(currentTurnText).toContain("[End resume instruction]");
+    expect(currentTurnText).toContain("[Active state]");
+    expect(currentTurnText).toContain("Channel type: discord");
+    expect(currentTurnText).toContain("Channel ID: ch-123");
+    expect(currentTurnText).toContain("Agent ID: agent-abc");
+    expect(currentTurnText).toContain("[End active state]");
 
-    // End should NOT contain AGENTS.md or files
-    expect(endText).not.toContain("[Critical instructions from AGENTS.md]");
-    expect(endText).not.toContain("[File:");
+    // Current-turn context should NOT contain AGENTS.md or files
+    expect(currentTurnText).not.toContain("[Critical instructions from AGENTS.md]");
+    expect(currentTurnText).not.toContain("[File:");
+  });
+
+  it("2a) current request remains the final instruction after rehydration", async () => {
+    const { deps } = createMockDeps();
+    const layer = createRehydrationLayer(deps);
+    const currentRequest = makeUserMsg("switch back to the earlier model");
+    const messages = [
+      makeCompactionSummary("The previous task was checking the active model."),
+      makeAssistantMsg("The active model is model-small."),
+      currentRequest,
+    ];
+
+    const result = await layer.apply(messages, largeBudget);
+
+    expect(result.at(-1)).toBe(currentRequest);
+    expect(getMessageText(result.at(-1)!)).toBe("switch back to the earlier model");
+  });
+
+  it("2b) LCD summary triggers configured workspace-section rehydration", async () => {
+    const onRehydrated = vi.fn();
+    const { deps } = createMockDeps({ onRehydrated });
+    const layer = createRehydrationLayer(deps);
+    const messages = [
+      makeLcdSummary(),
+      makeUserMsg("continue"),
+    ];
+
+    const result = await layer.apply(messages, largeBudget);
+
+    expect(result).toHaveLength(4);
+    expect(result[0]).toBe(messages[0]);
+    expect(getMessageText(result[1]!)).toContain("Critical startup rules here.");
+    expect(getMessageText(result[1]!)).toContain("Never do these things.");
+    expect(getMessageText(result[2]!)).toContain("[Resume instruction]");
+    expect(result[3]).toBe(messages[1]);
+    expect(onRehydrated).toHaveBeenCalledWith(expect.objectContaining({
+      sectionsInjected: 1,
+    }));
   });
 
   it("3) AGENTS.md sections extracted and truncated to 3K", async () => {
@@ -236,7 +294,7 @@ describe("createRehydrationLayer", () => {
     expect(text).not.toContain("[File: /f7.ts]");
   });
 
-  it("6) overflow -- strip files from position-1, keep AGENTS.md + end message", async () => {
+  it("6) overflow -- strip files from position-1 and keep current-turn context", async () => {
     const { deps, logger } = createMockDeps({
       readFile: async () => "x".repeat(500), // Moderate file content
       getAgentsMdContent: () => "## Session Startup\nRules.",
@@ -257,10 +315,10 @@ describe("createRehydrationLayer", () => {
     expect(position1Text).not.toContain("[File:");
     expect(position1Text).toContain("[Critical instructions from AGENTS.md]");
 
-    // End message should still have resume instruction
-    const endMsg = result[result.length - 1]!;
-    const endText = getMessageText(endMsg);
-    expect(endText).toContain("[Resume instruction]");
+    // Current-turn context should still have the resume instruction.
+    const currentTurnMsg = result[result.length - 1]!;
+    const currentTurnText = getMessageText(currentTurnMsg);
+    expect(currentTurnText).toContain("[Resume instruction]");
 
     // Should log WARN about overflow
     expect(logger.warn).toHaveBeenCalledWith(
@@ -278,7 +336,7 @@ describe("createRehydrationLayer", () => {
     const messages = [makeCompactionSummary("short summary"), makeUserMsg("hello")];
     const result = await layer.apply(messages, tinyBudget);
 
-    // Should return original messages (both position-1 and end messages removed)
+    // Should return original messages after all rehydration content is removed.
     expect(result).toHaveLength(2);
     expect(result[0]).toBe(messages[0]);
     expect(result[1]).toBe(messages[1]);
@@ -299,7 +357,7 @@ describe("createRehydrationLayer", () => {
 
     // First call: rehydration fires (split injection)
     const result1 = await layer.apply(messages, largeBudget);
-    expect(result1).toHaveLength(4); // compaction + position1 + user + end
+    expect(result1).toHaveLength(4); // compaction + position1 + current-turn context + user
 
     // Reset logger to track second call
     logger.info.mockClear();
@@ -332,7 +390,7 @@ describe("createRehydrationLayer", () => {
     expect(result2).toHaveLength(4); // rehydration fires again for new compaction
   });
 
-  it("9) active state formatting -- present fields only (in end message)", async () => {
+  it("9) active state formatting -- present fields only in current-turn context", async () => {
     const { deps } = createMockDeps({
       getActiveState: () => ({
         channelType: "telegram",
@@ -344,16 +402,16 @@ describe("createRehydrationLayer", () => {
     const messages = [makeCompactionSummary()];
     const result = await layer.apply(messages, largeBudget);
 
-    // Active state is in the end message (last message)
-    const endText = getMessageText(result[result.length - 1]!);
+    // With no live user turn, current-turn context is the final message.
+    const currentTurnText = getMessageText(result[result.length - 1]!);
 
-    expect(endText).toContain("[Active state]");
-    expect(endText).toContain("Channel type: telegram");
-    expect(endText).not.toContain("Channel ID:");
-    expect(endText).not.toContain("Agent ID:");
+    expect(currentTurnText).toContain("[Active state]");
+    expect(currentTurnText).toContain("Channel type: telegram");
+    expect(currentTurnText).not.toContain("Channel ID:");
+    expect(currentTurnText).not.toContain("Agent ID:");
   });
 
-  it("9b) active state omitted when all fields absent (end has resume only)", async () => {
+  it("9b) active state omitted when all fields are absent", async () => {
     const { deps } = createMockDeps({
       getActiveState: () => ({}),
     });
@@ -362,14 +420,14 @@ describe("createRehydrationLayer", () => {
     const messages = [makeCompactionSummary()];
     const result = await layer.apply(messages, largeBudget);
 
-    // End message should have resume but no active state
-    const endText = getMessageText(result[result.length - 1]!);
+    // Current-turn context should have resume but no active state.
+    const currentTurnText = getMessageText(result[result.length - 1]!);
 
-    expect(endText).not.toContain("[Active state]");
-    expect(endText).toContain("[Resume instruction]");
+    expect(currentTurnText).not.toContain("[Active state]");
+    expect(currentTurnText).toContain("[Resume instruction]");
   });
 
-  it("10) empty AGENTS.md and no files -- only end message with resume instruction", async () => {
+  it("10) empty AGENTS.md and no files -- only current-turn context is injected", async () => {
     const { deps } = createMockDeps({
       getAgentsMdContent: () => "",
       getRecentFiles: () => [],
@@ -380,8 +438,7 @@ describe("createRehydrationLayer", () => {
     const messages = [makeCompactionSummary()];
     const result = await layer.apply(messages, largeBudget);
 
-    // No position-1 message (no AGENTS.md, no files), only end message
-    // Result: compaction + end
+    // No position-1 message: result is compaction + current-turn context.
     expect(result).toHaveLength(2);
     const endText = getMessageText(result[1]!);
     expect(endText).toContain("[Resume instruction]");
@@ -393,7 +450,7 @@ describe("createRehydrationLayer", () => {
   // Position-aware rehydration split
   // ---------------------------------------------------------------------------
 
-  it("11) position-1 has AGENTS.md + files, end has resume + state", async () => {
+  it("11) position-1 is stable while current-turn context has resume and state", async () => {
     const { deps } = createMockDeps();
     const layer = createRehydrationLayer(deps);
 
@@ -405,7 +462,7 @@ describe("createRehydrationLayer", () => {
 
     const result = await layer.apply(messages, largeBudget);
 
-    // 5 messages: compaction + position1 + u1 + a1 + end
+    // 5 messages: compaction + position1 + current-turn context + u1 + a1
     expect(result).toHaveLength(5);
 
     // Position-1 (index 1): AGENTS.md + files
@@ -413,17 +470,17 @@ describe("createRehydrationLayer", () => {
     expect(pos1Text).toContain("[Critical instructions from AGENTS.md]");
     expect(pos1Text).toContain("[File:");
 
-    // Original messages preserved in order (indices 2 and 3)
-    expect(result[2]).toBe(messages[1]); // u1
-    expect(result[3]).toBe(messages[2]); // a1
+    // Original messages preserved in order after the current-turn context.
+    expect(result[3]).toBe(messages[1]); // u1
+    expect(result[4]).toBe(messages[2]); // a1
 
-    // End (index 4): resume + state
-    const endText = getMessageText(result[4]!);
-    expect(endText).toContain("[Resume instruction]");
-    expect(endText).toContain("[Active state]");
+    // Current-turn context (index 2): resume + state
+    const currentTurnText = getMessageText(result[2]!);
+    expect(currentTurnText).toContain("[Resume instruction]");
+    expect(currentTurnText).toContain("[Active state]");
   });
 
-  it("12) no files or AGENTS.md -- only end message (resume + state)", async () => {
+  it("12) no files or AGENTS.md -- current-turn context precedes the request", async () => {
     const { deps } = createMockDeps({
       getAgentsMdContent: () => "",
       getRecentFiles: () => [],
@@ -437,20 +494,20 @@ describe("createRehydrationLayer", () => {
 
     const result = await layer.apply(messages, largeBudget);
 
-    // 3 messages: compaction + u1 + end (no position-1 message)
+    // 3 messages: compaction + current-turn context + u1 (no position-1 message)
     expect(result).toHaveLength(3);
     expect(result[0]).toBe(messages[0]); // compaction
-    expect(result[1]).toBe(messages[1]); // u1
+    expect(result[2]).toBe(messages[1]); // u1 remains final
 
-    // End message has resume + active state
-    const endText = getMessageText(result[2]!);
-    expect(endText).toContain("[Resume instruction]");
-    expect(endText).toContain("[Active state]");
-    expect(endText).not.toContain("[Critical instructions");
-    expect(endText).not.toContain("[File:");
+    // Current-turn context has resume + active state
+    const currentTurnText = getMessageText(result[1]!);
+    expect(currentTurnText).toContain("[Resume instruction]");
+    expect(currentTurnText).toContain("[Active state]");
+    expect(currentTurnText).not.toContain("[Critical instructions");
+    expect(currentTurnText).not.toContain("[File:");
   });
 
-  it("13) active state absent -- end message has only resume instruction", async () => {
+  it("13) active state absent -- current-turn context has only resume instruction", async () => {
     const { deps } = createMockDeps({
       getActiveState: () => ({}),
     });
@@ -459,10 +516,11 @@ describe("createRehydrationLayer", () => {
     const messages = [makeCompactionSummary(), makeUserMsg("u1")];
     const result = await layer.apply(messages, largeBudget);
 
-    // End message should contain resume instruction but NOT active state
-    const endText = getMessageText(result[result.length - 1]!);
-    expect(endText).toContain("[Resume instruction]");
-    expect(endText).not.toContain("[Active state]");
+    // Current-turn context should contain resume instruction but NOT active state
+    const currentTurnText = getMessageText(result[2]!);
+    expect(currentTurnText).toContain("[Resume instruction]");
+    expect(currentTurnText).not.toContain("[Active state]");
+    expect(result.at(-1)).toBe(messages[1]);
   });
 
   // ---------------------------------------------------------------------------
@@ -653,7 +711,7 @@ describe("createRehydrationLayer", () => {
     );
   });
 
-  it("21) overflow stage 3 -- removes position-1 entirely, keeps the end message", async () => {
+  it("21) overflow stage 3 -- removes position-1 and keeps current-turn context", async () => {
     const onOverflow = vi.fn();
     const { deps } = createMockDeps({
       getAgentsMdContent: () => "## Session Startup\n" + "X".repeat(800),
@@ -663,7 +721,7 @@ describe("createRehydrationLayer", () => {
     });
     const layer = createRehydrationLayer(deps);
 
-    // Budget: large enough for compaction + user + end (resume ~250 chars) but NOT for position-1 (AGENTS.md ~850 chars)
+    // Budget: large enough for compaction + current-turn context + user but NOT position-1.
     // Compaction summary ~50 chars + user msg ~5 chars + resume ~250 chars = ~305 chars
     // Adding position-1 AGENTS.md ~900 chars pushes total to ~1205 chars (over 800 budget)
     const veryTightBudget: TokenBudget = {
@@ -674,7 +732,7 @@ describe("createRehydrationLayer", () => {
     const messages = [makeCompactionSummary("short"), makeUserMsg("hello")];
     const result = await layer.apply(messages, veryTightBudget);
 
-    // Should have end message but NO position-1
+    // Current-turn context remains but position-1 does not.
     const hasPosition1 = result.some((m, i) => {
       if (i === 0) return false; // skip compaction
       const text = getMessageText(m);

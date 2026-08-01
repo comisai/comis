@@ -58,8 +58,9 @@ export type WindowCapSource =
 /**
  * Window provenance threaded from the executor's resolveEffectiveContextWindow
  * reconcile (pi-executor) into computeTokenBudgetForProfile. Absent ⇒ the
- * budget reports the profile window as raw with no cap provenance. reconcileSource
- * reuses the EffectiveContextWindowResult.source vocabulary.
+ * budget reports the profile window as raw with no cap provenance. A class-cap
+ * winner carries the exact numeric config source so diagnostics identify the
+ * lever that produced the cap.
  */
 export interface WindowProvenance {
   /** The model's TRUE configured contextWindow (registry-enriched), BEFORE the
@@ -69,7 +70,12 @@ export interface WindowProvenance {
    *  probe result exists for the provider). */
   served?: number;
   /** Which constraint won the executor-side reconcile. */
-  reconcileSource: "configured" | "served" | "capability";
+  reconcileSource:
+    | "configured"
+    | "served"
+    | "capability"
+    | "effectiveContextCapSmall"
+    | "effectiveContextCapNano";
 }
 
 /**

@@ -16,6 +16,7 @@
  */
 
 import { AuthorizationError, PreconditionError } from "./errors.js";
+import { isDeepStrictEqual } from "node:util";
 import {
   PerAgentConfigSchema,
   AgentsCreateContract,
@@ -76,6 +77,97 @@ import type { RpcHandler } from "./types.js";
 import type { AgentsApiDeps, MemoryApiDeps } from "./types.js";
 type AgentHandlerWorkspaceDeps = Pick<MemoryApiDeps, "workspaceDirs" | "dataDir">;
 export type AgentHandlerDeps = AgentsApiDeps & AgentHandlerWorkspaceDeps;
+
+function assertKnownAgentModel(
+  deps: AgentHandlerDeps,
+  agentId: string,
+  config: PerAgentConfig,
+  patch: Partial<PerAgentConfig>,
+): void {
+  const providerSuppliedAsModel =
+    patch.provider === undefined &&
+    patch.model !== undefined &&
+    (deps.modelCatalog?.getByProvider(patch.model).length ?? 0) > 0;
+  if (providerSuppliedAsModel) {
+    const hint =
+      `Set config.provider="${patch.model}" and choose an exact modelId from ` +
+      `models_manage action=list with provider="${patch.model}"; leave the agent unchanged ` +
+      `if credentials for that provider are unavailable`;
+    deps.persistDeps?.logger.warn(
+      {
+        method: "agents.update",
+        step: "agent-model-validation",
+        agentId,
+        provider: config.provider,
+        model: patch.model,
+        hint,
+        errorKind: "validation" as const,
+      },
+      "Rejected provider identifier supplied as an agent model",
+    );
+    deps.persistDeps?.container.eventBus.emit("audit:event", {
+      timestamp: systemNowMs(),
+      agentId,
+      tenantId: deps.persistDeps.container.config.tenantId,
+      actionType: "agents.update",
+      classification: "destructive" as const,
+      outcome: "failure" as const,
+      metadata: {
+        entityId: agentId,
+        error: `provider "${patch.model}" was supplied in the model field`,
+      },
+    });
+    throw new PreconditionError(
+      `[provider_requires_model] "${patch.model}" is a provider, not a model identifier. ${hint}.`,
+    );
+  }
+
+  if (config.model === "default" || config.provider === "default") return;
+
+  const catalogModels = deps.modelCatalog?.getByProvider(config.provider) ?? [];
+  const providerEntry = deps.providerEntries?.[config.provider];
+  const declaredModels = providerEntry?.enabled === true
+    ? providerEntry.models
+    : [];
+  if (catalogModels.length === 0 && declaredModels.length === 0) return;
+
+  const known =
+    catalogModels.some((entry) => entry.modelId === config.model) ||
+    declaredModels.some((entry) => entry.id === config.model);
+  if (known) return;
+
+  const hint =
+    `Use models_manage action=list with provider="${config.provider}" and copy an exact modelId, ` +
+    `or declare the model under providers.entries.${config.provider}.models before retrying`;
+  deps.persistDeps?.logger.warn(
+    {
+      method: "agents.update",
+      step: "agent-model-validation",
+      agentId,
+      provider: config.provider,
+      model: config.model,
+      hint,
+      errorKind: "validation" as const,
+    },
+    "Rejected agent model update outside the configured catalog",
+  );
+  deps.persistDeps?.container.eventBus.emit("audit:event", {
+    timestamp: systemNowMs(),
+    agentId,
+    tenantId: deps.persistDeps.container.config.tenantId,
+    actionType: "agents.update",
+    classification: "destructive" as const,
+    outcome: "failure" as const,
+    metadata: {
+      entityId: agentId,
+      error: `model "${config.model}" is not listed for provider "${config.provider}"`,
+    },
+  });
+  throw new PreconditionError(
+    `Cannot set agents.${agentId}.model to "${config.model}": the model is not listed for ` +
+    `provider "${config.provider}". ${hint}.`,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Operator-only security-posture guard
@@ -385,6 +477,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
     },
 
     [AgentsUpdateContract.method]: async (rawParams) => {
+      const startedAt = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new AuthorizationError("Admin access required for agent modification");
@@ -460,6 +553,14 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
 
       const merged = { ...existing, ...config };
       const parsedConfig = PerAgentConfigSchema.parse(merged);
+
+      // The provider/model catalog is the authoritative runtime vocabulary.
+      // Validate the resulting pair before any credential lookup, in-memory
+      // replacement, or durable write. Providers with no catalog or declared
+      // models remain open for dynamically discovered local/custom runtimes.
+      if (config.model !== undefined || config.provider !== undefined) {
+        assertKnownAgentModel(deps, agentId, parsedConfig, config);
+      }
 
       // Validate oauthProfiles patch — each profileId must exist in the
       // OAuth credential store. Skipped when no oauthCredentialStore is
@@ -542,6 +643,9 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
+      const activeConfig = PerAgentConfigSchema.parse(existing);
+      const changed = !isDeepStrictEqual(activeConfig, parsedConfig);
+
       // dryRun stops here: validation above has passed (it would have thrown
       // otherwise), so report success WITHOUT hot-applying or persisting. The
       // in-memory agent map is left as the pre-call reference and config.yaml
@@ -551,7 +655,34 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
           { method: "agents.update", agentId, step: "dry-run-validate" },
           "agents.update dry-run validated config without persisting or hot-applying",
         );
-        const result = { agentId, config: parsedConfig, updated: true as const };
+        const result = {
+          agentId,
+          config: parsedConfig,
+          updated: false,
+          changed,
+          dryRun: true,
+        };
+        if (IS_DEV) AgentsUpdateContract.response.parse(result);
+        return result;
+      }
+
+      if (!changed) {
+        deps.persistDeps?.logger.info(
+          {
+            method: "agents.update",
+            agentId,
+            step: "update-noop",
+            durationMs: systemNowMs() - startedAt,
+          },
+          "Agent configuration already matched the requested update",
+        );
+        const result = {
+          agentId,
+          config: parsedConfig,
+          updated: false,
+          changed: false,
+          dryRun: false,
+        };
         if (IS_DEV) AgentsUpdateContract.response.parse(result);
         return result;
       }
@@ -576,7 +707,13 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
-      const result = { agentId, config: parsedConfig, updated: true as const };
+      const result = {
+        agentId,
+        config: parsedConfig,
+        updated: true,
+        changed: true,
+        dryRun: false,
+      };
       if (IS_DEV) AgentsUpdateContract.response.parse(result);
       return result;
     },

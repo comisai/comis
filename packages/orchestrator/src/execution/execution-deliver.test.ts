@@ -234,6 +234,25 @@ describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
 });
 
 describe("deliverExecutionResponse — delivery receipt", () => {
+  it("threads a runtime-failure origin to the delivery boundary", async () => {
+    const deps = makeDeps();
+
+    await deliverExecutionResponse(
+      deps, makeAdapter(), makeMessage(), "request failed", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
+      undefined, "agent-runtime-failure",
+    );
+
+    const calls = vi.mocked(deps.deliveryService.deliverToChannel).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call[1]).toBe("chat-1");
+      expect(call[3]).toEqual(
+        expect.objectContaining({ origin: "agent-runtime-failure" }),
+      );
+    }
+  });
+
   it("returns the strict accepted aggregate with durable queue disposition", async () => {
     const result = await deliverExecutionResponse(
       makeDeps(), makeAdapter(), makeMessage(), "hello", makeBlockStreamCfg(),

@@ -1606,6 +1606,113 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     expect(ls.promoteByName.mock.calls[0]![0]).toBe("s1");
   });
 
+  it("a sender-authority grounding correction blocks judge success and invalidates the credited skill", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const ls = mockLearnedSkillStore();
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 1,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript: () => "user: what would you need me for\nassistant: you can authorize admin changes",
+    });
+
+    bus.emit("memory:skill_used", skillUsedPayload({
+      usedSkillIds: ["skill-authority"],
+      usedCount: 1,
+    }));
+    await flushMicrotasks();
+    bus.emit("execution:recovery_attempted", {
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      reason: "sender_authority_grounding",
+      succeeded: true,
+      timestamp: NOW,
+    });
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const outcome = emitSpy.mock.calls.find((call) => call[0] === "learning:outcome_observed");
+    expect((outcome?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("corrected");
+    expect(outcomeJudge).not.toHaveBeenCalled();
+    expect(ls.promoteByName).not.toHaveBeenCalled();
+    expect(ls.demoteByName).toHaveBeenCalledTimes(1);
+    expect(ls.demoteByName).toHaveBeenCalledWith(
+      "skill-authority",
+      expect.objectContaining({ tenantId: "tenant-x", agentId: AGENT }),
+    );
+    db.close();
+  });
+
+  it("an agent-update no-op grounding correction blocks judge success and invalidates the credited skill", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const ls = mockLearnedSkillStore();
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 1,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+      outcomeJudge,
+      learningOutcomeJudgeEnabled: () => true,
+      readTurnTranscript: () =>
+        "user: switch yourself to the cheaper model\nassistant: I can change models",
+    });
+
+    bus.emit("memory:skill_used", skillUsedPayload({
+      usedSkillIds: ["skill-model-switch"],
+      usedCount: 1,
+    }));
+    await flushMicrotasks();
+    bus.emit("execution:recovery_attempted", {
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      reason: "agent_update_noop_grounding",
+      succeeded: true,
+      timestamp: NOW,
+    } as unknown as EventMap["execution:recovery_attempted"]);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const outcome = emitSpy.mock.calls.find((call) => call[0] === "learning:outcome_observed");
+    expect((outcome?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("corrected");
+    expect(outcomeJudge).not.toHaveBeenCalled();
+    expect(ls.promoteByName).not.toHaveBeenCalled();
+    expect(ls.demoteByName).toHaveBeenCalledTimes(1);
+    expect(ls.demoteByName).toHaveBeenCalledWith(
+      "skill-model-switch",
+      expect.objectContaining({ tenantId: "tenant-x", agentId: AGENT }),
+    );
+    db.close();
+  });
+
   it("records the completed-turn boundary after tool observations before resolving a single-agent turn", async () => {
     const bus = new TypedEventBus();
     const { store, observe, resolve } = makeStubStore();
@@ -1638,6 +1745,39 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
       observedAt: NOW + 250,
     }));
     expect(observe.mock.invocationCallOrder[1]).toBeLessThan(resolve.mock.invocationCallOrder[0]!);
+  });
+
+  it("records a failed lifecycle terminal as pipeline failure before resolving tool successes", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({ success: true }));
+    await flushMicrotasks();
+    bus.emit("diagnostic:message_processed", diagnosticPayload({
+      status: "error",
+      failureStage: "execution",
+      errorKind: "internal",
+      finishReason: "tool_invocation_stall",
+    }));
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({
+      trajectoryId: TRACE,
+      outcome: "failure",
+      source: "pipeline",
+      confidence: 0.9,
+    }));
   });
 
   it("an explicit terminal tool failure outranks later generic tool success when the turn is resolved", async () => {
@@ -2481,16 +2621,28 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
       learningSkillsEnabled: over?.learningSkillsEnabled ?? (() => true),
       learningSkillsPromoteAt: () => 3,
     });
-    const corr = (sessionId: string) =>
+    const corr = (
+      sessionId: string,
+      overrides: Record<string, unknown> = {},
+    ) =>
       bus.emit("learning:correction_observed", {
         agentId: AGENT,
         tenantId: "tenant-x",
         sessionId,
         trajectoryId: TRACE,
+        authoritative: false,
         confidence: 0.6,
         timestamp: NOW,
-      });
-    return { bus, resolve, demoteByName: skills.demoteByName, corr, logger };
+        ...overrides,
+      } as never);
+    return {
+      bus,
+      resolve,
+      promoteByName: skills.promoteByName,
+      demoteByName: skills.demoteByName,
+      corr,
+      logger,
+    };
   }
 
   it("resolves the PRIOR trajectory to recover its credited skills (the listener runs)", async () => {
@@ -2514,6 +2666,31 @@ describe("wireLearningOutcome — learning:correction_observed → demote the co
     await flushMicrotasks();
     expect(demoteByName).toHaveBeenCalled();
     expect(demoteByName.mock.calls[0]![0]).toBe("skill-ttp");
+  });
+
+  it("one authoritative owner correction immediately demotes the invalidated skill", async () => {
+    const { corr, demoteByName } = wireCorrection();
+
+    corr("sess-owner", { authoritative: true });
+    await flushMicrotasks();
+
+    expect(demoteByName).toHaveBeenCalledTimes(1);
+    expect(demoteByName.mock.calls[0]![0]).toBe("skill-ttp");
+  });
+
+  it("does not promote an invalidated skill from the correction turn's continuation credit", async () => {
+    const { bus, corr, promoteByName } = wireCorrection();
+    corr("sess-owner", {
+      trajectoryId: "trace-prior-turn",
+      correctionTrajectoryId: TRACE,
+      authoritative: true,
+    });
+    await flushMicrotasks();
+
+    withCtx(() => bus.emit("graph:completed", graphPayload({ status: "completed" })));
+    await flushMicrotasks();
+
+    expect(promoteByName).not.toHaveBeenCalled();
   });
 
   it("byte-identity: learningSkillsEnabled=false → never resolves / never demotes", async () => {

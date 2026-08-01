@@ -258,6 +258,9 @@ vi.mock("@comis/observability", async (importOriginal) => {
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   createAgentSession: vi.fn().mockResolvedValue({ session: mockSession, extensionsResult: {} }),
+  convertToLlm: (messages: unknown[]) => messages,
+  sessionEntryToContextMessages: (entry: { type: string; message?: unknown }) =>
+    entry.type === "message" && entry.message !== undefined ? [entry.message] : [],
   SettingsManager: {
     create: mockSettingsManagerCreate,
     inMemory: mockSettingsManagerInMemory,
@@ -332,6 +335,7 @@ vi.mock("../../rag/rag-retriever.js", () => ({
 
 vi.mock("../../rag/hybrid-memory-injector.js", () => ({
   createHybridMemoryInjector: mockCreateHybridMemoryInjector,
+  stripInlineRecalledMemory: (text: string) => text,
 }));
 
 vi.mock("../../envelope/message-envelope.js", () => ({
@@ -561,7 +565,9 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
         async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => {
           const mockSm = {
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
+            getLeafEntry: vi.fn().mockReturnValue(undefined),
             appendMessage: vi.fn(),
             appendCustomEntry: mockAppendCustomEntry,
             getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
@@ -678,6 +684,7 @@ describe("PiExecutor", () => {
     });
     // Reset streamFunction to original mock (PiExecutor replaces it with wrapper chain)
     mockSession.agent.streamFunction = mockStreamFn;
+    mockSession.agent.state.messages = [];
     // Reset steering mocks
     mockSteer.mockResolvedValue(undefined);
     mockFollowUp.mockResolvedValue(undefined);
@@ -726,6 +733,77 @@ describe("PiExecutor", () => {
       expect.objectContaining({
         confinedBaseDir: "/tmp/comis-isolated-data",
       }),
+    );
+  });
+
+  it("injects discovered parent tools into sessions_spawn as internal state", async () => {
+    const discoveryExecute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "discovered" }],
+      isError: false,
+      sideEffects: { discoveredTools: ["mcp__service--lookup"] },
+    });
+    const discoveryTool = {
+      name: "discover_tools",
+      label: "Discover Tools",
+      description: "Discover a tool",
+      parameters: { type: "object", properties: {} },
+      execute: discoveryExecute,
+    };
+    const originalExecute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "spawned" }],
+      isError: false,
+    });
+    const spawnTool = {
+      name: "sessions_spawn",
+      label: "Sessions Spawn",
+      description: "Spawn a helper",
+      parameters: { type: "object", properties: {} },
+      execute: originalExecute,
+    };
+    const sessionKey: SessionKey = {
+      tenantId: "t1",
+      agentId: "agent-1",
+      channelId: "discovery-spawn",
+      userId: "u1",
+    };
+    const executor = createPiExecutor(
+      testConfig,
+      createMockDeps({ customTools: [discoveryTool, spawnTool] as any }),
+    );
+
+    await executor.execute(testMessage, sessionKey);
+    const sessionOptions = (createAgentSession as Mock).mock.calls.at(-1)![0];
+    const discoveryToolInSession = sessionOptions.customTools.find(
+      (tool: { name: string }) => tool.name === "discover_tools",
+    );
+    const spawnToolInSession = sessionOptions.customTools.find(
+      (tool: { name: string }) => tool.name === "sessions_spawn",
+    );
+
+    await discoveryToolInSession.execute(
+      "discovery-call",
+      { query: "service lookup" },
+      undefined,
+      vi.fn(),
+      undefined,
+    );
+
+    await spawnToolInSession.execute(
+      "spawn-call",
+      { task: "inspect the service" },
+      undefined,
+      vi.fn(),
+      undefined,
+    );
+
+    expect(originalExecute).toHaveBeenCalledWith(
+      "spawn-call",
+      expect.objectContaining({
+        _discoveredDeferredTools: ["mcp__service--lookup"],
+      }),
+      undefined,
+      expect.any(Function),
+      undefined,
     );
   });
 
@@ -1033,6 +1111,91 @@ describe("PiExecutor", () => {
           customTools: deps.customTools,
         }),
       );
+    });
+
+    it("loads structured physical-message history into the live SDK agent state", async () => {
+      const payload = {
+        schemaVersion: 1,
+        batchId: testMessage.id,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: testMessage.timestamp + 100,
+        messages: [{
+          id: testMessage.id,
+          channelId: testMessage.channelId,
+          channelType: testMessage.channelType,
+          senderId: testMessage.senderId,
+          text: testMessage.text,
+          timestamp: testMessage.timestamp,
+        }],
+      };
+      const entries = [{
+        type: "custom",
+        id: "custom-a",
+        parentId: null,
+        timestamp: "2026-03-12T00:00:00.000Z",
+        customType: INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+        data: payload,
+      }, {
+        type: "message",
+        id: "user-a",
+        parentId: "custom-a",
+        timestamp: "2026-03-12T00:00:00.001Z",
+        message: {
+          role: "user",
+          content:
+            "[System context]\nlarge transient preamble\n[End system context]\n\n"
+            + "envelope-wrapped text",
+          timestamp: testMessage.timestamp,
+        },
+      }, {
+        type: "message",
+        id: "assistant-a",
+        parentId: "user-a",
+        timestamp: "2026-03-12T00:00:00.002Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "prior answer" }],
+          provider: "example",
+          model: "test-model",
+          stopReason: "stop",
+          timestamp: testMessage.timestamp + 1,
+        },
+      }];
+      const sm = {
+        buildSessionContext: vi.fn().mockReturnValue({
+          messages: entries
+            .filter((entry) => entry.type === "message")
+            .map((entry) => entry.message),
+        }),
+        buildContextEntries: vi.fn().mockReturnValue(entries),
+        getBranch: vi.fn().mockReturnValue(entries),
+        appendMessage: vi.fn(),
+        appendCustomEntry: mockAppendCustomEntry,
+        getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+      };
+      const deps = createMockDeps();
+      vi.mocked(deps.sessionAdapter.withSession).mockImplementation(
+        async (_sessionKey, fn) => ok(await fn(sm as never)),
+      );
+      const executor = createPiExecutor(testConfig, deps);
+
+      await withTestTurnScope("agent-1", () =>
+        executor.execute(testMessage, testSessionKey));
+
+      const loaded = mockSession.agent.state.messages as Array<{
+        role: string;
+        content: string;
+      }>;
+      expect(loaded[0]).toMatchObject({
+        role: "user",
+        content: expect.stringContaining(testMessage.text),
+      });
+      expect(loaded[0]?.content).not.toContain("System context");
+      expect(loaded[1]).toMatchObject({
+        role: "assistant",
+        content: [{ type: "text", text: "prior answer" }],
+      });
     });
 
     // A `spawn --worktree` child runs IN an isolated git worktree, so the
@@ -6156,7 +6319,9 @@ describe("PiExecutor", () => {
         async (_key, callback) => {
           const value = await withTestTurnScope("agent-1", () => callback({
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
+            getLeafEntry: vi.fn().mockReturnValue(undefined),
             appendMessage: vi.fn(),
             getEntries: vi.fn(() => entries),
             appendCustomEntry: vi.fn((customType, data) => {
@@ -6222,7 +6387,9 @@ describe("PiExecutor", () => {
         async (_key, callback) => {
           const value = await withTestTurnScope("agent-1", () => callback({
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            buildContextEntries: vi.fn().mockReturnValue([]),
             getBranch: vi.fn().mockReturnValue([]),
+            getLeafEntry: vi.fn().mockReturnValue(undefined),
             appendMessage: vi.fn(),
             getEntries: vi.fn(() => entries),
             appendCustomEntry: vi.fn((customType, data) => {
@@ -6490,7 +6657,7 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("Parallel read-only execution", () => {
-    it("applies mutation serializer to custom tools before session creation", async () => {
+    it("applies mutation serializer once after runtime wrappers are registered", async () => {
       const { createMutationSerializer } = await import("../tool-parallelism.js");
 
       const deps = createMockDeps();
@@ -6499,6 +6666,21 @@ describe("PiExecutor", () => {
       await executor.execute(testMessage, testSessionKey);
 
       expect(createMutationSerializer).toHaveBeenCalledOnce();
+    });
+
+    it("starts auto-background timing only after a mutating call acquires serialization", () => {
+      const source = readFileSync(
+        resolve(dirname(fileURLToPath(import.meta.url)), "pi-executor.ts"),
+        "utf-8",
+      );
+      const autoBackgroundIndex = source.indexOf("wrapToolForAutoBackground(");
+      const serializerIndex = source.indexOf(
+        "applyMutationSerializer(",
+        autoBackgroundIndex,
+      );
+
+      expect(autoBackgroundIndex).toBeGreaterThan(-1);
+      expect(serializerIndex).toBeGreaterThan(autoBackgroundIndex);
     });
   });
 });
@@ -8120,8 +8302,51 @@ describe("regression: pi-executor capabilityCap is Infinity when providerCapabil
     expect(capLogCall).toBeDefined();
     // Verify the capabilityCap in the log is 32_000 (not Infinity, not 16_000).
     const logPayload = capLogCall![0] as Record<string, unknown>;
-    expect(logPayload["source"]).toBe("capability");
+    expect(logPayload["source"]).toBe("effectiveContextCapSmall");
     expect(logPayload["effectiveWindow"]).toBe(32_000);
+  });
+
+  it("agent small-class pin honors the configured effective context cap during executor reconcile", async () => {
+    const deps = createMockDeps({
+      modelRegistry: {
+        find: vi.fn().mockReturnValue({
+          provider: "anthropic",
+          id: "claude-sonnet-4-5-20250929",
+          contextWindow: 256_000,
+        }),
+        getAll: vi.fn().mockReturnValue([]),
+        getAvailable: vi.fn().mockReturnValue([]),
+      } as any,
+      providerCapabilities: undefined,
+      servedContextWindow: undefined,
+    });
+    const configuredCap = 225_000;
+    const executor = createPiExecutor({
+      ...testConfig,
+      capabilityClass: "small",
+      contextEngine: {
+        ...testConfig.contextEngine,
+        budget: {
+          ...testConfig.contextEngine?.budget,
+          effectiveContextCapSmall: configuredCap,
+        },
+      },
+    } as PerAgentConfig, deps);
+
+    await executor.execute(testMessage, testSessionKey);
+
+    const capLogCall = vi.mocked(deps.logger.debug).mock.calls.find(
+      (args) =>
+        typeof args[1] === "string"
+        && args[1].includes("Context window reconciled"),
+    );
+    expect(capLogCall).toBeDefined();
+    expect(capLogCall![0]).toMatchObject({
+      source: "effectiveContextCapSmall",
+      effectiveWindow: configuredCap,
+      configured: 256_000,
+      capabilityCap: configuredCap,
+    });
   });
 });
 
@@ -8327,6 +8552,17 @@ describe("per-turn locale inheritance wiring", () => {
     expect(policyIndex).toBeGreaterThan(0);
     expect(assignmentIndex).toBeGreaterThan(policyIndex);
     expect(prepareIndex).toBeGreaterThan(assignmentIndex);
+  });
+});
+
+describe("recent recall context provenance wiring", () => {
+  it("derives recent raw user turns from structured session entries", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(
+      /selectRecentUserTurns\(\s*sessionContext\.messages,\s*sm\.getEntries\?\.\(\) \?\? \[\],\s*msg\.id,\s*\)/,
+    );
   });
 });
 

@@ -49,12 +49,16 @@ export interface ToolExecutionResultRecord {
   /** Bounded structured action discriminator from the tool arguments. */
   readonly action?: string;
   readonly success: boolean;
+  /** Whether a successful side-effecting tool changed its target state. */
+  readonly changed?: boolean;
   /** True when this record is a non-terminal background handoff placeholder. */
   readonly backgrounded?: boolean;
   readonly durationMs: number;
   readonly invocationSequence?: number;
   readonly errorText?: string;
   readonly errorKind?: ErrorKind;
+  /** Bounded snake_case terminal code emitted by the trusted tool boundary. */
+  readonly failureCode?: string;
   /** Trusted, bounded adapter classification; never raw tool/provider prose. */
   readonly failureDisclosure?: ToolFailureDisclosure;
   readonly recoveryIdentity?: ToolRecoveryIdentity;

@@ -131,16 +131,61 @@ export interface BackgroundTaskManager {
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
 const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
+const MCP_CONNECT_MISSING_PARAM_PREFIX = '[missing_param] mcp_manage(action="connect")';
+const MCP_SECRET_REFERENCE_MISSING_PREFIX = '[invalid_value] enabled MCP server "';
 
 function classifyBackgroundTaskFailure(
   toolName: string,
   error: unknown,
 ): BackgroundTaskFailureCode | undefined {
-  if (toolName !== "skills_manage") return undefined;
   const message = error instanceof Error ? error.message : String(error);
-  return message.startsWith(SKILL_IMPORT_INCOMPLETE_PREFIX)
-    ? "skill_import_incomplete"
-    : undefined;
+  if (toolName === "skills_manage" && message.startsWith(SKILL_IMPORT_INCOMPLETE_PREFIX)) {
+    return "skill_import_incomplete";
+  }
+  if (
+    toolName === "mcp_manage"
+    && message.startsWith(MCP_CONNECT_MISSING_PARAM_PREFIX)
+    && message.includes("command or url")
+  ) {
+    return "mcp_connection_details_missing";
+  }
+  if (
+    toolName === "mcp_manage"
+    && message.startsWith(MCP_SECRET_REFERENCE_MISSING_PREFIX)
+    && message.includes(" references ")
+    && message.includes(" which is not in the secrets store")
+  ) {
+    return "mcp_secret_reference_missing";
+  }
+  return undefined;
+}
+
+function projectBackgroundCompletionResult(
+  serializedResult: string | undefined,
+): {
+  resultOutcome?: "success" | "degraded";
+  persistence?: "persisted" | "runtime_only" | "skipped";
+  errorKind?: ErrorKind;
+  failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
+} {
+  if (serializedResult === undefined) return {};
+  const parsed = tryCatch(() => JSON.parse(serializedResult) as unknown);
+  if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") return {};
+  const details = (parsed.value as Record<string, unknown>).details;
+  if (details === null || typeof details !== "object" || Array.isArray(details)) return {};
+  const persistence = (details as Record<string, unknown>).persistence;
+  if (persistence === "persisted") {
+    return { resultOutcome: "success", persistence };
+  }
+  if (persistence === "runtime_only" || persistence === "skipped") {
+    return {
+      resultOutcome: "degraded",
+      persistence,
+      errorKind: "config",
+      failureCode: "mutation_not_persisted",
+    };
+  }
+  return {};
 }
 
 export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): BackgroundTaskManager {
@@ -435,6 +480,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
       const durationMs = terminal.completedAt - task.startedAt;
+      const completionProjection = projectBackgroundCompletionResult(terminal.result);
       emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
         agentId: task.origin.turnScope.conversation.agentId,
         taskId,
@@ -445,6 +491,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
         ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
         ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
+        ...completionProjection,
       });
       return ok(undefined);
     },
@@ -627,6 +674,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         }
         if (task.status === "completed") {
           count++;
+          const completionProjection = projectBackgroundCompletionResult(task.result);
           emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
             agentId: task.origin.turnScope.conversation.agentId,
             taskId: task.id,
@@ -637,6 +685,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...(task.toolCallId !== undefined ? { toolCallId: task.toolCallId } : {}),
             ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
             ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
+            ...completionProjection,
           });
         } else if (task.status === "failed") {
           count++;
@@ -843,7 +892,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           dispatchRedelivery: true,
         };
         if (event === "background_task:completed") {
-          emitObservationalEventSafely({ eventBus, logger }, event, common);
+          emitObservationalEventSafely({ eventBus, logger }, event, {
+            ...common,
+            ...projectBackgroundCompletionResult(current.result),
+          });
         } else {
           emitObservationalEventSafely({ eventBus, logger }, event, {
             ...common,

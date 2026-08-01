@@ -113,6 +113,74 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+describe("assembleIncidentReport — request-relevant tool selection", () => {
+  it("surfaces selected tools when a turn completed without invoking one", () => {
+    const selected = ["mcp_manage", "gateway"];
+    const signals = makeSignals({
+      requestRelevantToolNames: selected,
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { requestRelevantToolNames?: string[] })
+        .requestRelevantToolNames,
+    ).toEqual(selected);
+    expect(
+      (IncidentReportSchema.parse(report) as unknown as {
+        requestRelevantToolNames?: string[];
+      }).requestRelevantToolNames,
+    ).toEqual(selected);
+  });
+
+  it("surfaces operator-policy tool projection evidence on the one-call report", () => {
+    const projection = [{
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: 318,
+    }];
+    const report = assembleIncidentReport(
+      makeSignals({ operatorPolicyToolProjections: projection }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.operatorPolicyToolProjections).toEqual(projection);
+    expect(IncidentReportSchema.parse(report).operatorPolicyToolProjections)
+      .toEqual(projection);
+  });
+
+  it("surfaces request relevance history saturation on the one-call report", () => {
+    const evidence = { turnCount: 8, charCount: 147, saturated: true };
+    const report = assembleIncidentReport(
+      makeSignals({ requestRelevanceHistory: evidence } as unknown as Partial<IncidentSignals>),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { requestRelevanceHistory?: typeof evidence })
+        .requestRelevanceHistory,
+    ).toEqual(evidence);
+    expect(
+      (IncidentReportSchema.parse(report) as unknown as {
+        requestRelevanceHistory?: typeof evidence;
+      }).requestRelevanceHistory,
+    ).toEqual(evidence);
+  });
+});
+
 describe("assembleIncidentReport — queue disposition timeline", () => {
   it("surfaces queue and steering decisions on the one-call explain report", () => {
     const queueTimeline = [
@@ -729,6 +797,22 @@ describe("assembleIncidentReport — outcome", () => {
     expect(report.outcome.severity).toBe("failed");
   });
 
+  it("treats a tool invocation stall as a hard failure even without a persisted degraded flag", () => {
+    const report = assembleIncidentReport(
+      makeSignals({ failures: [] }),
+      makeMetadata({ sessionEnd: { endReason: "tool_invocation_stall", degraded: false } }),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      severity: "failed",
+    });
+  });
+
   it("derives degraded from the F2 rollup degraded flag when metadata lacks it", () => {
     const report = assembleIncidentReport(
       makeSignals(),
@@ -1315,6 +1399,28 @@ describe("assembleIncidentReport — contextBudget threading", () => {
   });
 });
 
+describe("assembleIncidentReport — rehydration threading", () => {
+  it("carries signals.rehydration into the report verbatim", () => {
+    const rehydration = {
+      seq: 11,
+      currentTurn: true,
+      sectionsInjected: 1,
+      filesInjected: 0,
+      skillsInjected: 1,
+      overflowStripped: false,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({ rehydration }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(IncidentReportSchema.parse(report).rehydration).toEqual(rehydration);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The report falls back to signals-derived
 // agentId/channel when the metadata rollup lacks them (the live rollup carries
@@ -1479,12 +1585,13 @@ describe("assembleIncidentReport — recovery attempts", () => {
       { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 1, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: false } },
       { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 2, sessionKey: SESSION_KEY, data: { reason: "silent_retry", succeeded: true } },
       { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 3, sessionKey: SESSION_KEY, data: { reason: "lkw_fallback", succeeded: true } },
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 4, sessionKey: SESSION_KEY, data: { reason: "sender_authority_grounding", succeeded: true } },
     ]);
-    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 3);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 4);
     expect(report.recoveries).toEqual({
-      total: 3,
-      succeeded: 2,
-      byReason: { silent_retry: 2, lkw_fallback: 1 },
+      total: 4,
+      succeeded: 3,
+      byReason: { silent_retry: 2, lkw_fallback: 1, sender_authority_grounding: 1 },
     });
   });
 

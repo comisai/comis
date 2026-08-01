@@ -149,6 +149,8 @@ export interface BoundedAutonomy {
     outwardQuota: ReturnType<OutwardQuota["remaining"]>;
     leaseIds: ReadonlyArray<string>;
   };
+  /** Pure live priced-spend snapshot for one autonomy tree. */
+  spendSnapshot(rootRunId: string): ReturnType<PerRootBudget["spendSnapshot"]>;
   /**
    * The agent's live cron-job count — the NAMED count source the cap
    * endpoint consults THROUGH this service. Delegates to the injected
@@ -418,6 +420,10 @@ export function createBoundedAutonomy(deps: {
         outwardQuota: quota.remaining(agentId, channelId),
         leaseIds: [...(leaseIdsByRoot.get(rootRunId) ?? new Set<string>())],
       };
+    },
+
+    spendSnapshot(rootRunId): ReturnType<PerRootBudget["spendSnapshot"]> {
+      return budget.spendSnapshot(rootRunId);
     },
 
     cronCount(agentId): number {

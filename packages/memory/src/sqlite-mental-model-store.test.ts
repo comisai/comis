@@ -891,6 +891,26 @@ describe("createSqliteMentalModelStore — promoteByName / demoteByName (name→
     if (r.ok) expect(r.value.changed).toBe(false); // 0 rows → caller must not count/emit
   });
 
+  it("promoteByName does not reinforce a stale terminal skill after a delayed success attribution", async () => {
+    await store.admit(makeInput({ name: "stale-no-reinforce", proofCount: 2 }), SCOPE_A);
+    await store.promoteByName("stale-no-reinforce", SCOPE_A, 1);
+    await store.demoteByName("stale-no-reinforce", { ...SCOPE_A, now: 2_000 });
+    const before = await store.get("stale-no-reinforce", SCOPE_A);
+
+    const promoted = await store.promoteByName(
+      "stale-no-reinforce",
+      { ...SCOPE_A, now: 3_000 },
+      1,
+    );
+    const after = await store.get("stale-no-reinforce", SCOPE_A);
+
+    expect(promoted.ok && promoted.value.changed).toBe(false);
+    expect(before.ok && before.value?.state).toBe("stale");
+    expect(after.ok && after.value?.state).toBe("stale");
+    expect(after.ok && after.value?.proofCount).toBe(before.ok ? before.value?.proofCount : undefined);
+    expect(after.ok && after.value?.updatedAt).toBe(before.ok ? before.value?.updatedAt : undefined);
+  });
+
   it("promoteByName is (tenant, agent)-scoped — a foreign scope's same name matches a DIFFERENT id → changed=false here, no cross-mutation", async () => {
     await store.admit(makeInput({ name: "scoped-name", proofCount: 0 }), SCOPE_A);
     // Promote the SAME name under SCOPE_B: a distinct (tenant, agent) hashes to a

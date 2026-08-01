@@ -114,6 +114,62 @@ function event(
   return { traceSchema: "comis-trajectory", schemaVersion: 1, type, seq, data };
 }
 
+describe("toIncidentSignals — request-relevant tool selection", () => {
+  it("retains the latest prompt tool selection needed to diagnose a no-call turn", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        requestRelevantToolNames: ["old_tool"],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+      event("prompt.submitted", 2, {
+        requestRelevantToolNames: ["mcp_manage", "gateway"],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as { requestRelevantToolNames?: string[] })
+        .requestRelevantToolNames,
+    ).toEqual(["mcp_manage", "gateway"]);
+  });
+
+  it("retains the latest content-free operator-policy tool projection", () => {
+    const projection = {
+      toolName: "mcp_manage",
+      sectionId: "workspace:tools",
+      contentHash: "a".repeat(64),
+      projectedChars: 318,
+    };
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        operatorPolicyToolProjections: [projection],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(signals.operatorPolicyToolProjections).toEqual([projection]);
+  });
+
+  it("retains the latest request relevance history saturation evidence", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        requestRelevanceHistory: { turnCount: 8, charCount: 147, saturated: true },
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as {
+        requestRelevanceHistory?: { turnCount: number; charCount: number; saturated: boolean };
+      }).requestRelevanceHistory,
+    ).toEqual({ turnCount: 8, charCount: 147, saturated: true });
+  });
+});
+
 describe("toIncidentSignals — queue disposition timeline", () => {
   it("retains bounded queue and steering decisions needed to diagnose interruption handling", () => {
     const signals = toIncidentSignals([
@@ -1425,6 +1481,42 @@ describe("context.budget extraction", () => {
   });
 });
 
+describe("context.rehydrated extraction", () => {
+  it("reports current-turn rehydration statistics", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 10, {}),
+      event("context.rehydrated", 11, {
+        sectionsInjected: 1,
+        filesInjected: 0,
+        skillsInjected: 1,
+        overflowStripped: false,
+      }),
+    ]);
+    expect(signals.rehydration).toEqual({
+      seq: 11,
+      currentTurn: true,
+      sectionsInjected: 1,
+      filesInjected: 0,
+      skillsInjected: 1,
+      overflowStripped: false,
+    });
+  });
+
+  it("marks rehydration before the latest prompt as stale", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 10, {}),
+      event("context.rehydrated", 11, {
+        sectionsInjected: 1,
+        filesInjected: 0,
+        skillsInjected: 1,
+        overflowStripped: false,
+      }),
+      event("prompt.submitted", 20, {}),
+    ]);
+    expect(signals.rehydration?.currentTurn).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // scheduler.wake_gate extraction — a fire the gate WOKE runs the model in its
 // main session, so its content-free wake-gate record must reach IncidentSignals
@@ -1484,6 +1576,28 @@ describe("scheduler.wake_gate extraction (incident fork)", () => {
 // ---------------------------------------------------------------------------
 
 describe("toolStats fidelity", () => {
+  it("counts successful unchanged effects separately from applied tool outcomes", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 1,
+        data: {
+          toolName: "agents_manage",
+          toolCallId: "tc-agent-noop",
+          success: true,
+          changed: false,
+        },
+      },
+    ]);
+
+    expect(s.toolStats.agents_manage).toEqual({
+      ok: 1,
+      failed: 0,
+      noOp: 1,
+    });
+  });
+
   it("a comis-cache-trace tool:after record does not count as a tool success", () => {
     const s = toIncidentSignals([
       {
@@ -1586,6 +1700,97 @@ describe("toolStats fidelity", () => {
         toolName: "mcp__reports--slow_lookup",
         errorKind: "dependency",
         failureCode: "skill_import_incomplete",
+      }),
+    ]);
+  });
+
+  it("explains an MCP background validation failure from its content-free code", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-mcp",
+          toolName: "mcp_manage",
+          errorKind: "dependency",
+          failureCode: "mcp_connection_details_missing",
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp_manage",
+        failureCode: "mcp_connection_details_missing",
+      }),
+    ]);
+  });
+
+  it("retains the content-free code for a missing MCP secret reference", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-mcp-secret",
+          toolName: "mcp_manage",
+          errorKind: "dependency",
+          failureCode: "mcp_secret_reference_missing",
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp_manage",
+        failureCode: "mcp_secret_reference_missing",
+      }),
+    ]);
+  });
+
+  it("replaces a promoted success with a degraded runtime-only background completion", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.promoted",
+        seq: 1,
+        data: { taskId: "task-mutation", toolName: "mcp_manage" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        data: { toolName: "mcp_manage", toolCallId: "call-1", success: true },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.completed",
+        seq: 3,
+        data: {
+          taskId: "task-mutation",
+          toolName: "mcp_manage",
+          resultOutcome: "degraded",
+          persistence: "runtime_only",
+          errorKind: "config",
+          failureCode: "mutation_not_persisted",
+        },
+      },
+    ]);
+
+    expect(s.toolStats.mcp_manage).toEqual({
+      ok: 0,
+      failed: 1,
+      topErrorKind: "config",
+    });
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        seq: 3,
+        toolName: "mcp_manage",
+        classifiedFailureBy: "background_task",
+        errorKind: "config",
+        failureCode: "mutation_not_persisted",
       }),
     ]);
   });

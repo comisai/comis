@@ -63,7 +63,7 @@ const McpManageToolParams = Type.Object({
   ),
   command: Type.Optional(
     Type.String({
-      description: "Command to execute for stdio transport (e.g. npx). Required for stdio connect.",
+      description: "Executable for stdio transport (e.g. node or npx), not its script/package; put the script/package in args. Preserve separate operator-provided Command and Arguments fields exactly. Required for stdio connect.",
     }),
   ),
   args: Type.Optional(
@@ -93,7 +93,7 @@ const McpManageToolParams = Type.Object({
   env: Type.Optional(
     Type.Record(Type.String(), Type.String(), {
       description:
-        'Environment variables for a STDIO server (e.g. SERVICE_USERNAME). REQUIRED for stdio servers that need credentials/config in the environment. Values may reference stored secrets as ${VAR_NAME} (e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config. Keys are env-var names, values are the value or a ${VAR} reference.',
+        'Environment variables for a STDIO server (e.g. SERVICE_USERNAME). Preserve operator-provided env fields exactly. REQUIRED for stdio servers that need credentials/config in the environment. Store credentials with gateway env_set first, then reference them as ${VAR_NAME} (e.g. {"SERVICE_PASSWORD":"${SERVICE_PASSWORD}"}) — resolved from the encrypted secret store at spawn, so the plaintext never enters config.',
     }),
   ),
 });
@@ -237,6 +237,48 @@ function coerceEnv(p: Record<string, unknown>): unknown {
   );
 }
 
+function inferredTransport(p: Record<string, unknown>): string | undefined {
+  const explicit =
+    typeof p.transport === "string" && p.transport.length > 0
+      ? p.transport
+      : undefined;
+  if (explicit !== undefined) return explicit;
+  if (typeof p.command === "string" && p.command.length > 0) return "stdio";
+  if (typeof p.url === "string" && p.url.length > 0) return "http";
+  return undefined;
+}
+
+function referencedCredentialKeys(p: Record<string, unknown>): string[] {
+  const env = coerceEnv(p);
+  if (typeof env !== "object" || env === null || Array.isArray(env)) return [];
+  const keys = new Set<string>();
+  for (const value of Object.values(env)) {
+    if (typeof value !== "string") continue;
+    const match = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u.exec(value);
+    if (match?.[1] !== undefined) keys.add(match[1]);
+  }
+  return [...keys].sort();
+}
+
+function approvalParams(
+  action: string,
+  p: Record<string, unknown>,
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = { action };
+  if (typeof p.server_name === "string" && p.server_name.length > 0) {
+    summary.server_name = p.server_name;
+  }
+  if (action !== "connect") return summary;
+  const transport = inferredTransport(p);
+  if (transport !== undefined) summary.transport = transport;
+  if (typeof p.command === "string" && p.command.length > 0) {
+    summary.command = p.command;
+  }
+  const credentialKeys = referencedCredentialKeys(p);
+  if (credentialKeys.length > 0) summary.credential_keys = credentialKeys;
+  return summary;
+}
+
 /**
  * Coerce and validate the `auth` field.
  *
@@ -298,7 +340,10 @@ function validateConnectParams(
       "missing_param",
       `mcp_manage(action="connect") is missing required parameters: ${missing.join(", ")}.`,
       {
-        hint: 'Provide all required fields: server_name, transport ("stdio"|"sse"|"http"), and either command (for stdio) or url (for sse/http).',
+        hint:
+          'Provide all required fields: server_name, transport ("stdio"|"sse"|"http"), and either command (for stdio) or url (for sse/http). ' +
+          "Resolve omitted connection fields only from trusted operator workspace policy such as TOOLS.md. " +
+          "If policy does not define them, ask the operator; never guess or reuse model-authored values.",
       },
     );
   }
@@ -330,11 +375,14 @@ export function createMcpManageTool(
       name: "mcp_manage",
       label: "MCP Server Management",
       description:
-        "Manage MCP servers: list, status, connect, disconnect, reconnect.",
+        "Connect and inspect an external account or service through MCP. For stdio, command is the executable; "
+          + "put scripts/packages in args. Preserve operator-provided command, args, and env exactly. Store credentials "
+          + "with gateway env_set first, then pass ${NAME} env references. Supports list, status, connect, disconnect, reconnect.",
       parameters: McpManageToolParams,
       validActions: VALID_ACTIONS,
       rpcPrefix: "mcp",
       gatedActions: ["connect", "disconnect", "reconnect"],
+      approvalParams,
       actionOverrides: {
         async list(_p, rpcCall, ctx) {
           return rpcCall("mcp.list", { _trustLevel: ctx.trustLevel });
@@ -352,22 +400,15 @@ export function createMcpManageTool(
           // (McpServerEntrySchema z.preprocess). Kept inline here so the
           // multi-field LLM-UX missing-param error from
           // validateConnectParams fires BEFORE the RPC round-trip.
-          const explicitTransport =
-            typeof p.transport === "string" && p.transport.length > 0
-              ? p.transport
-              : undefined;
-          const hasCommand = typeof p.command === "string" && p.command.length > 0;
-          const hasUrl = typeof p.url === "string" && p.url.length > 0;
-          const inferredTransport =
-            explicitTransport ?? (hasCommand ? "stdio" : hasUrl ? "http" : undefined);
+          const transport = inferredTransport(p);
           const coercedAuth = coerceAuth(p);
-          validateConnectParams(serverName, inferredTransport, p.command, p.url);
+          validateConnectParams(serverName, transport, p.command, p.url);
           // validateConnectParams threw if any field was missing — past this
-          // point both serverName and inferredTransport are non-empty strings.
+          // point both serverName and transport are non-empty strings.
           try {
             const connectResult = await rpcCall("mcp.connect", {
               server_name: serverName,
-              transport: inferredTransport,
+              transport,
               command: p.command,
               args: coercedArgs,
               url: p.url,

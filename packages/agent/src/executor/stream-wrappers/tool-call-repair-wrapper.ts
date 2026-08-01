@@ -2,10 +2,11 @@
 /**
  * Tool-call repair stream wrapper.
  *
- * Intercepts AssistantMessage items in the context where ToolCall arguments
- * arrive as a raw JSON string (when the provider/SDK passes through unparsed
- * argument text) and attempts shape-only repair via the SDK's parseStreamingJson
- * before the message reaches the tool executor.
+ * Repairs both directions of the provider boundary:
+ * - outgoing history containing raw JSON-string tool arguments is normalized
+ *   before the next model request;
+ * - incoming assistant events whose selected tool rejects an `action` that
+ *   exactly one other visible tool owns are renamed before SDK validation.
  *
  * When repair fails ("irreparable"), the wrapper injects a synthetic
  * ToolResultMessage with a "Validation failed: ..." prefix into the outgoing
@@ -22,9 +23,10 @@
  * is not a PARAMETER_VALIDATION_TAGS breaker carve-out (there is nothing to
  * carve out, because the breaker never sees this turn).
  *
- * INVARIANT: repair is shape-only. Repaired args flow through the EXISTING
- * downstream exec-security gates (validateExecCommand for exec tools) — those
- * gates are the final authority on scope for ALL tool types.
+ * INVARIANT: arguments are never invented or broadened. Shape repair preserves
+ * values. Selection repair changes only the tool name and only on one unique,
+ * fully validating action-schema match. The destination tool's existing trust,
+ * approval, validation, and execution gates remain authoritative.
  *
  * Placement: BEFORE validationErrorFormatter in the stream wrapper chain
  * (executor-stream-setup.ts wrappers array). When repair succeeds, the
@@ -33,16 +35,186 @@
  * @module
  */
 
-import { parseStreamingJson } from "@earendil-works/pi-ai";
+import { parseStreamingJson, validateToolArguments } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import type { Message, AssistantMessage, ToolResultMessage, ToolCall } from "@earendil-works/pi-ai";
+import type {
+  Message,
+  AssistantMessage,
+  AssistantMessageEvent,
+  AssistantMessageEventStream,
+  ToolResultMessage,
+  ToolCall,
+} from "@earendil-works/pi-ai";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { StreamFnWrapper } from "./types.js";
 import type { ModelProfile } from "../model-profile.js";
 
+interface DispatchTool {
+  name: string;
+  parameters: unknown;
+  prepareArguments?: (args: unknown) => unknown;
+}
+
+interface SelectionRepair {
+  fromTool: string;
+  toTool: string;
+  action: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function actionSchemaAllows(schema: unknown, action: string): boolean {
+  if (!isRecord(schema)) return false;
+  if (schema.const === action) return true;
+  if (Array.isArray(schema.enum) && schema.enum.includes(action)) return true;
+
+  for (const branches of [schema.anyOf, schema.oneOf]) {
+    if (
+      Array.isArray(branches)
+      && branches.some((branch) => actionSchemaAllows(branch, action))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function explicitActionSchema(tool: DispatchTool): unknown {
+  if (!isRecord(tool.parameters)) return undefined;
+  const properties = tool.parameters.properties;
+  if (!isRecord(properties)) return undefined;
+  return properties.action;
+}
+
+function acceptsToolCall(tool: DispatchTool, toolCall: ToolCall): boolean {
+  try {
+    const preparedArguments = tool.prepareArguments
+      ? tool.prepareArguments(toolCall.arguments)
+      : toolCall.arguments;
+    if (!isRecord(preparedArguments)) return false;
+    validateToolArguments(
+      tool as Parameters<typeof validateToolArguments>[0],
+      { ...toolCall, name: tool.name, arguments: preparedArguments },
+    );
+    return true;
+  } catch {
+    // SDK validation is a throwing boundary; selection repair translates it
+    // immediately into a boolean candidate verdict.
+    return false;
+  }
+}
+
+function findUniqueActionOwner(
+  tools: DispatchTool[],
+  toolCall: ToolCall,
+): SelectionRepair | undefined {
+  if (!isRecord(toolCall.arguments)) return undefined;
+  const action = toolCall.arguments.action;
+  if (typeof action !== "string") return undefined;
+
+  const selected = tools.find((tool) => tool.name === toolCall.name);
+  if (!selected) return undefined;
+  const selectedActionSchema = explicitActionSchema(selected);
+  if (
+    selectedActionSchema === undefined
+    || actionSchemaAllows(selectedActionSchema, action)
+  ) {
+    return undefined;
+  }
+
+  const candidates = tools.filter((tool) => {
+    if (tool.name === selected.name) return false;
+    const candidateActionSchema = explicitActionSchema(tool);
+    return candidateActionSchema !== undefined
+      && actionSchemaAllows(candidateActionSchema, action)
+      && acceptsToolCall(tool, toolCall);
+  });
+  if (candidates.length !== 1) return undefined;
+
+  return {
+    fromTool: selected.name,
+    toTool: candidates[0]!.name,
+    action,
+  };
+}
+
+function wrapSelectionRepairStream(
+  stream: AssistantMessageEventStream,
+  tools: DispatchTool[],
+  logger: ComisLogger,
+): AssistantMessageEventStream {
+  const repairs = new Map<string, SelectionRepair>();
+
+  const repairToolCall = (toolCall: ToolCall): ToolCall => {
+    const prior = repairs.get(toolCall.id);
+    if (prior) {
+      return toolCall.name === prior.toTool
+        ? toolCall
+        : { ...toolCall, name: prior.toTool };
+    }
+
+    const repair = findUniqueActionOwner(tools, toolCall);
+    if (!repair) return toolCall;
+    repairs.set(toolCall.id, repair);
+    logger.info(
+      {
+        step: "tool-selection-repair",
+        submodule: "tool-call-repair-wrapper",
+        fromTool: repair.fromTool,
+        toTool: repair.toTool,
+        action: repair.action,
+      },
+      "Repaired tool selection from unique action schema match",
+    );
+    return { ...toolCall, name: repair.toTool };
+  };
+
+  const repairMessage = (message: AssistantMessage): AssistantMessage => {
+    let modified = false;
+    const content = message.content.map((block) => {
+      if (block.type !== "toolCall") return block;
+      const repaired = repairToolCall(block);
+      if (repaired !== block) modified = true;
+      return repaired;
+    });
+    return modified ? { ...message, content } : message;
+  };
+
+  const repairEvent = (event: AssistantMessageEvent): AssistantMessageEvent => {
+    switch (event.type) {
+      case "toolcall_end": {
+        const toolCall = repairToolCall(event.toolCall);
+        const partial = repairMessage(event.partial);
+        return toolCall === event.toolCall && partial === event.partial
+          ? event
+          : { ...event, toolCall, partial };
+      }
+      case "done":
+        return { ...event, message: repairMessage(event.message) };
+      case "error":
+        return { ...event, error: repairMessage(event.error) };
+      default:
+        return event;
+    }
+  };
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const event of stream) {
+        yield repairEvent(event);
+      }
+    },
+    async result() {
+      return repairMessage(await stream.result());
+    },
+  } as unknown as AssistantMessageEventStream;
+}
+
 /**
- * Create a stream wrapper that attempts shape-only repair of malformed tool-call
- * JSON arguments BEFORE the existing validationErrorFormatter sees the messages.
+ * Create a stream wrapper that repairs malformed history arguments and
+ * uniquely identifiable incoming action/tool mismatches.
  *
  * When a ToolCall's arguments field arrives as a raw JSON string (runtime value
  * is a string despite being typed as Record<string, any>), this wrapper:
@@ -215,7 +387,16 @@ export function createToolCallRepairWrapper(
         }
       }
 
-      return next(model, { ...context, messages: repairedMessages }, options);
+      const stream = next(
+        model,
+        { ...context, messages: repairedMessages },
+        options,
+      );
+      const tools = (context.tools ?? []) as DispatchTool[];
+      return stream instanceof Promise
+        ? stream.then((resolved) =>
+            wrapSelectionRepairStream(resolved, tools, logger))
+        : wrapSelectionRepairStream(stream, tools, logger);
     };
   };
 }

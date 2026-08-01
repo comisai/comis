@@ -55,6 +55,7 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
   "circuit_open",
   "budget_exceeded",
   "budget_exhausted",
+  "tool_invocation_stall",
   // The dollars kill-switch abort is a hard failure (never
   // "ok") — so `comis explain` marks severity:"failed" and `comis system-health`
   // degradedByCause buckets the spend-killed session on the named "spend_exceeded"
@@ -340,7 +341,7 @@ export function assembleIncidentReport(
   const subagentCompletionDegraded = (signals.subagentCompletions?.failed ?? 0) > 0;
   const activityRenderDegraded = signals.turnFinalized?.renderErrorKind !== undefined;
   const degraded =
-    deliveryFailed
+    isHardFailure
     || deliveryPartial
     || channelDegraded
     || subagentDeliveryDegraded
@@ -411,6 +412,7 @@ export function assembleIncidentReport(
       toolStats[tool] = {
         ok: asNumber(entry.ok) ?? 0,
         failed: asNumber(entry.failed) ?? 0,
+        ...(asNumber(entry.noOp) !== undefined ? { noOp: asNumber(entry.noOp) } : {}),
       };
     }
   }
@@ -419,6 +421,7 @@ export function assembleIncidentReport(
     toolStats[tool] = {
       ok: stat.ok,
       failed: stat.failed,
+      ...(stat.noOp !== undefined ? { noOp: stat.noOp } : {}),
       ...(stat.topErrorKind !== undefined ? { topErrorKind: stat.topErrorKind } : {}),
     };
   }
@@ -514,6 +517,15 @@ export function assembleIncidentReport(
     ...(signals.skillAvailability !== undefined
       ? { skillAvailability: signals.skillAvailability }
       : {}),
+    ...(signals.requestRelevantToolNames !== undefined
+      ? { requestRelevantToolNames: signals.requestRelevantToolNames }
+      : {}),
+    ...(signals.requestRelevanceHistory !== undefined
+      ? { requestRelevanceHistory: signals.requestRelevanceHistory }
+      : {}),
+    ...(signals.operatorPolicyToolProjections !== undefined
+      ? { operatorPolicyToolProjections: signals.operatorPolicyToolProjections }
+      : {}),
     ...(signals.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: signals.responseLocaleRepairSkipped }
       : {}),
@@ -543,6 +555,8 @@ export function assembleIncidentReport(
     // The terminal per-call budget equation (absent when the trajectory carries
     // no context.budget record).
     ...(signals.contextBudget !== undefined ? { contextBudget: signals.contextBudget } : {}),
+    // The latest post-compaction policy rehydration receipt.
+    ...(signals.rehydration !== undefined ? { rehydration: signals.rehydration } : {}),
     // The per-turn budget cascade toward that terminal (present only when ≥2 distinct states).
     ...(signals.contextBudgetHistory !== undefined ? { contextBudgetHistory: signals.contextBudgetHistory } : {}),
     // The woke-fire wake-gate fact (absent when the trajectory has no
@@ -602,8 +616,8 @@ export function assembleIncidentReport(
     ...(signals.subagentDeliverySkipped !== undefined
       ? { subagentDeliverySkipped: signals.subagentDeliverySkipped }
       : {}),
-    // The silent-failure recovery re-drives (model re-entry) — previously
-    // log-only, so explain could not show a session re-entered the model.
+    // Runtime recovery events — model re-entry or a deterministic response
+    // correction — were previously log-only and invisible in explain.
     ...(signals.recoveries !== undefined ? { recoveries: signals.recoveries } : {}),
     ...(signals.backgroundRecovery !== undefined
       ? { backgroundRecovery: signals.backgroundRecovery }

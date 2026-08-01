@@ -26,6 +26,8 @@ export type { ApprovalGate, ApprovalGateDeps } from "../approval/index.js";
 export {
   registerToolMetadata,
   getToolMetadata,
+  classifyToolInvocationMutation,
+  matchesToolMutationRequest,
   getAllToolMetadata,
   truncateContentBlocks,
 } from "../tool-metadata.js";
@@ -34,4 +36,5 @@ export type {
   ToolCapabilityMetadata,
   ToolFailureDisclosure,
   TrackedInvocationSideEffect,
+  ToolInvocationMutation,
 } from "../tool-metadata.js";

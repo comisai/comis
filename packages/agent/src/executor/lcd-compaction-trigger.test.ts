@@ -1193,7 +1193,7 @@ describe("trigger denominator is the turn's budget window", () => {
     expect(summaries.every((s) => s.kind === "leaf")).toBe(true);
   });
 
-  it("wiring source-lock: postExecution threads params.budgetWindowTokens into BOTH afterTurn passes; neither trigger reads the getModel snapshot window", () => {
+  it("wiring source-lock: postExecution threads params.budgetWindowTokens into all three afterTurn passes; no trigger reads the getModel snapshot window", () => {
     // Structural locks (recall-dag-budget-partition.test.ts precedent). The
     // threading chain is compiler-enforced hop-by-hop (required field at every
     // hop), but the runDeferredPasses call objects are plain literals a refactor
@@ -1210,7 +1210,7 @@ describe("trigger denominator is the turn's budget window", () => {
     //      only the utilization DENOMINATOR is the threaded budget value).
     const postExecSource = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const threaded = postExecSource.match(/budgetWindowTokens: params\.budgetWindowTokens/g) ?? [];
-    expect(threaded.length).toBe(2);
+    expect(threaded.length).toBe(3);
 
     // Code-only literal (the JSDoc prose uses a different phrasing): the exact
     // getModel-snapshot denominator expression must be ABSENT from both trigger sources.

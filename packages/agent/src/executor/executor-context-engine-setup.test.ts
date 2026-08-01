@@ -65,7 +65,13 @@ import {
 } from "./executor-session-state.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { createConversationRef, TypedEventBus } from "@comis/core";
+import {
+  computeWorkspacePolicyCombinedHash,
+  createConversationRef,
+  hashWorkspacePolicyContent,
+  TypedEventBus,
+  type WorkspacePolicySnapshot,
+} from "@comis/core";
 import type { ContextEngineSetupParams, ContextEngineSetupDeps } from "./executor-context-engine-setup.js";
 import { SummarizerDegradeError, type SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
 import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
@@ -114,6 +120,11 @@ function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngin
     sessionKey: "tenant-a:user_a:chan-a",
     conversationRef: conversationRef.value,
     agentId: deps.agentId,
+    workspacePolicySnapshot: {
+      agentId: deps.agentId,
+      sections: [],
+      combinedHash: computeWorkspacePolicyCombinedHash([]),
+    },
     msg: { channelType: "test", channelId: "chan-a" },
     sm: { fileEntries: [] },
     session: {
@@ -158,6 +169,37 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("setupContextEngine — createContextEngine() dependency wiring", () => {
+  it("sources post-compaction AGENTS content from the immutable turn snapshot", () => {
+    const agentsContent = `# Operator policy
+
+## Session Startup
+Resume from the durable summary.
+`;
+    const agentsSection = {
+      id: "workspace:agents",
+      sourceKind: "operator" as const,
+      trust: "trusted" as const,
+      stability: "stable" as const,
+      content: agentsContent,
+      contentHash: hashWorkspacePolicyContent(agentsContent),
+      maxChars: 100_000,
+    };
+    const workspacePolicySnapshot: WorkspacePolicySnapshot = {
+      agentId: "agent-1",
+      sections: [agentsSection],
+      combinedHash: computeWorkspacePolicyCombinedHash([agentsSection]),
+    };
+    const params = makeParams() as ContextEngineSetupParams & {
+      workspacePolicySnapshot: WorkspacePolicySnapshot;
+    };
+    params.workspacePolicySnapshot = workspacePolicySnapshot;
+
+    setupContextEngine(params);
+
+    const rehydrationDeps = captured.calls[0]?.deps.getRehydrationDeps();
+    expect(rehydrationDeps.getAgentsMdContent()).toBe(agentsContent);
+  });
+
   it("invokes createContextEngine() exactly once per setupContextEngine call (no extra invocations)", () => {
     setupContextEngine(makeParams());
     expect(captured.calls.length).toBe(1);
@@ -477,6 +519,61 @@ describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiri
     const summarizerDeps = result.getSummarizerDeps();
     // Absent breaker ⇒ a real (unwrapped) summarizer function, no crash.
     expect(typeof summarizerDeps.summarize).toBe("function");
+  });
+
+  it("resolves session compaction flushModel as the strict memory-flush override", () => {
+    const flushModel = { id: "economy-model", provider: "provider_b" };
+    const find = vi.fn((provider: string, modelId: string) =>
+      provider === "provider_b" && modelId === "economy-model"
+        ? flushModel
+        : undefined,
+    );
+    const result = setupContextEngine(
+      makeParams({
+        config: {
+          name: "test-agent",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          contextEngine: { enabled: true },
+          session: {
+            compaction: {
+              flushModel: "provider_b:economy-model",
+            },
+          },
+        } as never,
+        deps: makeDeps({ modelRegistry: { find } as never }),
+      }),
+    );
+
+    const flushDeps = result.getFlushSummarizerDeps();
+
+    expect(find).toHaveBeenCalledWith("provider_b", "economy-model");
+    expect(flushDeps?.overrideModel?.model).toBe(flushModel);
+  });
+
+  it("fails closed when session compaction flushModel is not registered", () => {
+    const logger = createMockLogger();
+    const result = setupContextEngine(
+      makeParams({
+        config: {
+          name: "test-agent",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          contextEngine: { enabled: true },
+          session: { compaction: { flushModel: "missing:model" } },
+        } as never,
+        deps: makeDeps({ logger }),
+      }),
+    );
+
+    expect(result.getFlushSummarizerDeps()).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        field: "agents.<name>.session.compaction.flushModel",
+        errorKind: "config",
+      }),
+      "Session compaction flush model is unavailable",
+    );
   });
 
   it("emits a content-free context:dag_degraded (reason spend_cap) + re-throws when the gate degrades over-cap", async () => {

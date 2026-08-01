@@ -1971,6 +1971,25 @@ describe("getPromptSkillCapabilities", () => {
     expect(cap.source).toBe("bundled");
   });
 
+  it("surfaces binary prerequisites for prompt skill workflow routing", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithNewFields(
+      skillsDir,
+      "catalog-skill",
+      "Search a catalog",
+      "Run the catalog workflow.",
+      { requires: { bins: ["git"] } },
+    );
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    expect(registry.getPromptSkillCapabilities(() => undefined)[0]?.requiredBins)
+      .toEqual(["git"]);
+  });
+
   it("filter chain: disableModelInvocation === true is FILTERED OUT", () => {
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });

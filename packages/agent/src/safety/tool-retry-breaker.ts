@@ -274,6 +274,18 @@ export function isCompletedCommandExit(errorText: string | undefined): boolean {
   }
 }
 
+/**
+ * True when a tool reached the approval boundary and the requested action was
+ * not approved. This is a policy outcome, not evidence that the tool transport
+ * or implementation is unavailable.
+ */
+export function isUnapprovedAction(errorText: string | undefined): boolean {
+  return errorText !== undefined
+    && errorText.includes("[permission_denied]")
+    && errorText.includes("Action denied:")
+    && errorText.includes("was not approved");
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -543,6 +555,14 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
         return (hadConsecutive && !stillBlocked)
           ? { transition: "reset", toolName, reason: "success", consecutiveFailures: 0, errorTag: "" }
           : undefined;
+      }
+
+      // An approval denial, expiry, or shutdown resolution describes user or
+      // system policy, not tool health. Counting it can permanently block the
+      // tool after repeated unapproved requests, including when durable
+      // background settlements are replayed after daemon restart.
+      if (isUnapprovedAction(errorText)) {
+        return undefined;
       }
 
       // Skip counter updates for parameter-validation tags — these are

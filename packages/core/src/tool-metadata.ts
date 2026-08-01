@@ -53,6 +53,11 @@ export type ToolInvocationSideEffects =
       >;
     };
 
+export type ToolInvocationMutation =
+  | "read_only"
+  | "mutating"
+  | "unclassified";
+
 /** Model-visible recovery guidance for one structured tool failure. */
 export interface ToolFailureFallback {
   /** Structured `details.error` code that activates this alternative. */
@@ -68,7 +73,7 @@ export interface ToolFailureFallback {
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
-// @optional-field-count: 17 optional fields — this is a side-channel metadata
+// @optional-field-count: 21 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
 // schema, MCP-export policy, capability routing, activity hints, failure
@@ -82,6 +87,21 @@ export interface ComisToolMetadata {
   maxResultSizeChars?: number;
   /** Tool does not mutate state -- safe for optimistic execution. */
   isReadOnly?: boolean;
+  /** An external capability explicitly warned that the tool may mutate state.
+   * This is restrictive routing evidence only: its absence or false value
+   * never grants read-only trust or bypasses approval/security policy. */
+  externalMutationHint?: boolean;
+  /** Read-only actions on a tool that otherwise supports mutation. Values must
+   * also appear in `validActions`; known valid actions outside this set mutate. */
+  readOnlyActions?: readonly string[];
+  /** Normalized request prefixes that directly ask this tool to mutate state.
+   * Capability adapters may declare locale-specific phrases without teaching
+   * the generic runtime a closed vocabulary. */
+  mutationRequestPrefixes?: readonly string[];
+  /** Bounded capability-owned instruction for the small-model mutation
+   * continuation. It may explain how to map already-visible trusted policy
+   * into the tool schema, but cannot supply authority or bypass validation. */
+  mutationRecoveryGuidance?: string;
   /** Safe for parallel execution with other concurrency-safe tools. */
   isConcurrencySafe?: boolean;
   /** BM25 keyword hints for deferred tool discovery. */
@@ -219,6 +239,53 @@ export function getToolMetadata(
   name: string,
 ): ComisToolMetadata | undefined {
   return registry.get(name);
+}
+
+/** Classify one invocation from registered capability metadata and arguments. */
+export function classifyToolInvocationMutation(
+  name: string,
+  args: unknown,
+): ToolInvocationMutation {
+  const metadata = registry.get(name);
+  if (metadata?.isReadOnly === true) return "read_only";
+  if (metadata?.isReadOnly !== false) return "unclassified";
+  if (metadata.readOnlyActions === undefined) return "mutating";
+
+  const action =
+    typeof args === "object"
+    && args !== null
+    && !Array.isArray(args)
+    && typeof (args as { action?: unknown }).action === "string"
+      ? (args as { action: string }).action
+      : undefined;
+  if (action === undefined || !metadata.validActions?.includes(action)) {
+    return "unclassified";
+  }
+  return metadata.readOnlyActions.includes(action) ? "read_only" : "mutating";
+}
+
+function normalizeMutationRequestText(value: string): string {
+  return value.toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
+}
+
+/** Match a direct mutation request using capability-owned request prefixes. */
+export function matchesToolMutationRequest(
+  name: string,
+  requestText: string,
+): boolean {
+  const prefixes = registry.get(name)?.mutationRequestPrefixes;
+  if (prefixes === undefined || prefixes.length === 0) return false;
+
+  const normalizedRequest = normalizeMutationRequestText(requestText);
+  if (normalizedRequest.length === 0) return false;
+  return prefixes.some((candidate) => {
+    const normalizedPrefix = normalizeMutationRequestText(candidate);
+    return normalizedPrefix.length > 0
+      && (
+        normalizedRequest === normalizedPrefix
+        || normalizedRequest.startsWith(`${normalizedPrefix} `)
+      );
+  });
 }
 
 /**

@@ -470,13 +470,14 @@ export interface MessagingEvents {
     windowCapSource: "effectiveContextCapSmall" | "effectiveContextCapNano" | "served" | "capabilityClass" | "none";
     /** S: system prompt + tool schemas estimate. */
     systemTokens: number;
-    /** Estimated fresh-tail tokens (latest user message + preamble + pending tool results). */
+    /** Estimated non-evictable turn-local tokens: fresh tail plus any one-shot
+     * post-compaction rehydration messages. */
     freshTailTokens: number;
     /** Token sum of the history items kept by budget eviction. */
     budgetedHistoryTokens: number;
     /** Count of history items kept by budget eviction (0 = model sees no history). */
     keptCount: number;
-    /** S + kept history + fresh tail — what is actually dispatched to the LLM. */
+    /** S + kept history + non-evictable turn-local context — what is dispatched. */
     assembledInputTokens: number;
     /** Output headroom reserved at the final effective thinking level. */
     outputHeadroom: number;
@@ -714,23 +715,38 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
-  /** A silent-failure recovery path fired — the runner re-entered the model
-   *  after an empty/thinking-only turn. `reason` is the closed recovery class:
+  /** A runtime recovery path fired. Most reasons mean the runner re-entered
+   *  the model after an empty/thinking-only turn; the grounding reasons mean a
+   *  deterministic delivery guard replaced prose that contradicted runtime
+   *  authority or configuration evidence.
+   *  `reason` is the closed recovery class:
    *  `silent_retry` (strip empty turn + re-enter), `lkw_fallback` (retry on the last-known-working model
    *  after a silent auth failure), `continuation_nudge` (a single followUp on a
-   *  thinking-only "stop" turn), `interactive_silent_sentinel` (an interactive
+   *  thinking-only "stop" turn), `request_tool_nudge` (one bounded retry after
+   *  a matched mutation request emitted no action), `interactive_silent_sentinel` (an interactive
    *  request returned a silent-control token without exact-route delivery), or
-   *  `locale_fidelity` (one tools-disabled response-locale repair turn).
+   *  `locale_fidelity` (one tools-disabled response-locale repair turn), or
+   *  `sender_authority_grounding` (a below-admin sender was incorrectly told
+   *  they could authorize admin-only changes), or
+   *  `agent_update_noop_grounding` (an unchanged successful agent update was
+   *  contradicted by the final prose), or `missing_ongoing_work_evidence`
+   *  (terminal prose promised continued work without a background receipt).
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
     sessionKey: string;
+    /** Exact turn correlation when the recovery originates after execution. */
+    traceId?: string;
     reason:
       | "silent_retry"
       | "lkw_fallback"
       | "continuation_nudge"
+      | "request_tool_nudge"
       | "interactive_silent_sentinel"
-      | "locale_fidelity";
+      | "locale_fidelity"
+      | "sender_authority_grounding"
+      | "agent_update_noop_grounding"
+      | "missing_ongoing_work_evidence";
     succeeded: boolean;
     timestamp: number;
   };

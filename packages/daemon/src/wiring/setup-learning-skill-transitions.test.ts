@@ -35,7 +35,7 @@ describe("applySkillOutcomeTransitions — promote/demote", () => {
     expect(emit).toHaveBeenCalledWith("learning:skill_promoted", expect.objectContaining({ count: 1 }));
   });
 
-  it("does not turn a reward-capped judge success into discrete skill proof", async () => {
+  it("turns an attributed reward-capped judge success into skill proof", async () => {
     const emit = vi.fn();
     const promoteByName = vi.fn(async () => ({ ok: true as const, value: { changed: true } }));
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never;
@@ -56,12 +56,12 @@ describe("applySkillOutcomeTransitions — promote/demote", () => {
         skillTrend: createSkillTrendTracker(),
       },
     );
-    expect(promoteByName).not.toHaveBeenCalled();
-    expect(emit).not.toHaveBeenCalledWith("learning:skill_promoted", expect.anything());
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ promotionConfidenceGated: 1, confidenceGatedSkillNames: ["my-skill"] }),
-      "Learned-skill promote/demote complete",
+    expect(promoteByName).toHaveBeenCalledWith(
+      "my-skill",
+      expect.objectContaining({ tenantId: "t", agentId: "a" }),
+      3,
     );
+    expect(emit).toHaveBeenCalledWith("learning:skill_promoted", expect.objectContaining({ count: 1 }));
   });
 
   it("VALUE-GATES a success-promotion when the skill is in a WEAKENING standing (earns back trust, no proof bump)", async () => {

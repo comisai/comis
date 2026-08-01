@@ -53,7 +53,7 @@ describe("stripInternalFields()", () => {
   });
 
   it("exposes every dispatcher-injected internal field name in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(25);
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(26);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -65,6 +65,16 @@ describe("stripInternalFields()", () => {
     const result = stripInternalFields({ _capabilities: ["orch:spawn"], foo: 1 });
     expect(result).toEqual({ foo: 1 });
     expect(result._capabilities).toBeUndefined();
+  });
+
+  it("includes inherited discovery state and projects it away from public contracts", () => {
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_discoveredDeferredTools");
+    const result = stripInternalFields({
+      _discoveredDeferredTools: ["mcp__service--lookup"],
+      foo: 1,
+    });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._discoveredDeferredTools).toBeUndefined();
   });
 
   it("includes `_outwardStepIndex` and strips a forged inbound value", () => {

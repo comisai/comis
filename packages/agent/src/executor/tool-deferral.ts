@@ -17,7 +17,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ComisLogger } from "@comis/core";
 import type { EmbeddingPort } from "@comis/core";
-import { getToolMetadata } from "@comis/core";
+import { getToolMetadata, matchesToolMutationRequest } from "@comis/core";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
@@ -72,7 +72,14 @@ export interface DeferralContext {
   trustLevel: string;
   channelType?: string;
   capabilityClass: CapabilityClass;
+  /** Current user-authored request used for content-free capability routing. */
+  requestText?: string;
+  /** Bounded user-authored conversation text used only for lexical relevance.
+   * The current request above remains authoritative for mutation intent. */
+  requestRelevanceText?: string;
   recentlyUsedToolNames: Set<string>;
+  /** Tool names from the most recent tool-bearing assistant message. */
+  previousTurnToolNames?: ReadonlySet<string>;
   toolNames: string[];
   /** Tool names demoted by lifecycle management. When provided, these tools
    *  are treated as an additional deferral source so discover_tools covers them. */
@@ -123,6 +130,16 @@ export interface ExcludeDeferralResult {
   deferredCount: number;
   /** Names of all tools in the deferral set (before discovery re-inclusion). */
   deferredNames: string[];
+  /** Active tools selected specifically because they match the current request. */
+  requestRelevantToolNames: string[];
+  /** Prompt skills selected as the procedural route for the current request. */
+  requestRelevantPromptSkillNames?: string[];
+  /** Trusted registry locations for the selected prompt skills. */
+  requestRelevantPromptSkillLocations?: string[];
+  /** Tools required to execute the selected prompt skill procedure. */
+  requestRelevantPromptSkillWorkflowToolNames?: string[];
+  /** Bounded prior request used to ground context-dependent workflow arguments. */
+  requestRelevantPromptSkillWorkflowContext?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +274,27 @@ export function extractRecentlyUsedToolNames(
     }
   }
   return names;
+}
+
+/** Extract the latest actual tool-call group, skipping internal completion narration. */
+export function extractPreviousTurnToolNames(
+  messages: Array<Record<string, unknown>>,
+): Set<string> {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    const names = new Set<string>();
+    for (const block of message.content as Record<string, unknown>[]) {
+      if (
+        (block.type === "tool_use" || block.type === "toolCall")
+        && typeof block.name === "string"
+      ) {
+        names.add(block.name);
+      }
+    }
+    if (names.size > 0) return names;
+  }
+  return new Set<string>();
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +449,7 @@ export function applyToolDeferral(
   scoreConfig?: ToolDiscoveryScoreConfig,
 ): ExcludeDeferralResult {
   const deferredSet = new Set<string>();
+  const requestRelevantToolNames: string[] = [];
   const originalToolMap = new Map<string, ToolDefinition>();
   for (const t of tools) {
     originalToolMap.set(t.name, t);
@@ -426,6 +465,7 @@ export function applyToolDeferral(
       }
     }
   }
+  const policyDeferredSet = new Set(deferredSet);
 
   // MCP tools are ACTIVE BY DEFAULT. Empirically, the model rarely invokes
   // the server-side discovery tool (`tool_search_tool_regex`) and falls back
@@ -447,6 +487,102 @@ export function applyToolDeferral(
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
         deferredSet.add(t.name);
       }
+    }
+  }
+
+  // Nano models often fail to invoke discover_tools even when the current
+  // request names a connected capability plainly. Prefer a capability-declared
+  // direct mutation match, otherwise keep the strongest lexical match active
+  // for this turn, along with its declared workflow peers. An exact mutation
+  // request may expose its privileged management tool so the tool's runtime
+  // trust guard can return the authoritative denial; this never grants the
+  // operation or bypasses approval. Other policy and channel deferrals remain
+  // authoritative. Later lifecycle and operator overrides also retain precedence.
+  if (
+    deferralContext.capabilityClass === "nano"
+    && deferralContext.requestText?.trim()
+  ) {
+    const requestText = deferralContext.requestText;
+    const requestRelevanceText =
+      deferralContext.requestRelevanceText?.trim() || requestText;
+    const eligibleTools = tools.filter((tool) =>
+      deferredSet.has(tool.name) && !policyDeferredSet.has(tool.name)
+    );
+    const previousTurnRetryCandidates = /^\s*(?:please\s+)?(?:retry|try\s+again|again)\b/iu
+      .test(requestText)
+      ? [...(deferralContext.previousTurnToolNames ?? [])].filter((name) =>
+          tools.some((tool) => tool.name === name)
+          && !policyDeferredSet.has(name)
+        )
+      : [];
+    const previousTurnRetryTool = previousTurnRetryCandidates.length === 1
+      ? tools.find((tool) => tool.name === previousTurnRetryCandidates[0])
+      : undefined;
+    const directMutationTool = previousTurnRetryTool ?? tools.find((tool) =>
+      matchesToolMutationRequest(tool.name, requestText)
+      && (
+        !policyDeferredSet.has(tool.name)
+        || PRIVILEGED_TOOL_NAMES.includes(tool.name)
+      )
+    );
+    const currentRequestTerms = new Set(tokenize(requestText));
+    const documents = eligibleTools.flatMap((tool) => {
+      const metadata = getToolMetadata(tool.name);
+      const searchText = metadata?.searchHint ?? resolveToolDescription(tool);
+      if (
+        directMutationTool === undefined
+        && (metadata?.isReadOnly === false || metadata?.externalMutationHint === true)
+        && !tokenize(`${searchText} ${tool.name}`).some((term) =>
+          currentRequestTerms.has(term)
+        )
+      ) {
+        return [];
+      }
+      return [{ name: tool.name, text: searchText }];
+    });
+    const lexicalMatches = bm25Score(
+      requestRelevanceText.slice(0, MAX_EMBED_QUERY_CHARS),
+      documents,
+    );
+    const lexicalTopScore = lexicalMatches[0]?.score ?? 0;
+    const strongestMatches = directMutationTool === undefined
+      ? lexicalMatches.filter(
+          (match) => lexicalTopScore > 0 && match.score === lexicalTopScore,
+        )
+      : [{ name: directMutationTool.name }];
+    if (strongestMatches.length > 0) {
+      const selectedNames = new Set(strongestMatches.map((match) => match.name));
+      for (const match of strongestMatches) {
+        const relatedNames = getToolMetadata(match.name)?.coDiscoverWith ?? [];
+        for (const relatedName of relatedNames) {
+          if (
+            tools.some((tool) => tool.name === relatedName)
+            && !policyDeferredSet.has(relatedName)
+          ) {
+            selectedNames.add(relatedName);
+          }
+        }
+      }
+      let promotedCount = 0;
+      for (const name of selectedNames) {
+        if (deferredSet.delete(name)) promotedCount++;
+      }
+      requestRelevantToolNames.push(...selectedNames);
+      logger.info(
+        {
+          step: "request-relevant-tool-selection",
+          selectedCount: selectedNames.size,
+          selectedNames: [...selectedNames],
+          promotedCount,
+          selectionSource:
+            previousTurnRetryTool !== undefined
+              ? "previous_turn_retry"
+              : directMutationTool === undefined
+                ? "lexical"
+                : "declared_mutation",
+        },
+        "Request-relevant tools selected",
+      );
     }
   }
 
@@ -506,7 +642,15 @@ export function applyToolDeferral(
 
   // If nothing deferred, return original tools unchanged
   if (deferredSet.size === 0) {
-    return { activeTools: tools, deferredEntries: [], discoveredTools: [], discoverTool: null, deferredCount: 0, deferredNames: [] };
+    return {
+      activeTools: tools,
+      deferredEntries: [],
+      discoveredTools: [],
+      discoverTool: null,
+      deferredCount: 0,
+      deferredNames: [],
+      requestRelevantToolNames,
+    };
   }
 
   // Partition tools into active and deferred entries (exclude model)
@@ -560,6 +704,7 @@ export function applyToolDeferral(
     discoverTool,
     deferredCount: deferredSet.size,
     deferredNames,
+    requestRelevantToolNames,
   };
 }
 
@@ -939,6 +1084,9 @@ export function applyToolBudgetFit(
   deferralResult.deferredNames = [
     ...new Set([...deferralResult.deferredNames, ...fit.newlyDeferred]),
   ];
+  deferralResult.requestRelevantToolNames = deferralResult.requestRelevantToolNames.filter(
+    (name) => survivingNames.has(name),
+  );
   // Observability: enforceToolBudgetFit already emitted the structured WARN
   // (window/budget/droppedCount + actionable hint). The downstream
   // context:budget_computed event (lcd-preflight) then reflects the corrected,
@@ -981,8 +1129,52 @@ interface BM25Document {
   text: string;
 }
 
+const TOOL_SEARCH_STOP_WORDS = new Set([
+  "a",
+  "able",
+  "an",
+  "and",
+  "be",
+  "can",
+  "could",
+  "do",
+  "for",
+  "i",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "please",
+  "the",
+  "this",
+  "to",
+  "u",
+  "use",
+  "want",
+  "with",
+  "you",
+  "your",
+  "yourself",
+]);
+
 function tokenize(text: string): string[] {
-  return text.toLowerCase().replace(/[^a-z0-9_]/g, " ").split(/\s+/).filter(Boolean);
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 0 && !TOOL_SEARCH_STOP_WORDS.has(token));
+}
+
+/** Remove the MCP server namespace from lexical capability scoring. Server
+ * labels identify instances, not different capabilities; including them lets
+ * recent setup prose select one peer even when the request asks about both. */
+function capabilityNameForScoring(toolName: string): string {
+  const serverName = extractMcpServerName(toolName);
+  if (serverName === undefined) return toolName;
+  return toolName.slice("mcp__".length + serverName.length + "--".length);
 }
 
 function bm25Score(
@@ -991,11 +1183,16 @@ function bm25Score(
   k1 = 1.2,
   b = 0.75,
 ): Array<{ name: string; score: number }> {
-  const queryTerms = tokenize(query);
+  // A retried follow-up can repeat the same deictic wording several times.
+  // Score each distinct signal once so retries cannot outweigh an earlier
+  // concrete referent merely by repetition.
+  const queryTerms = [...new Set(tokenize(query))];
   if (queryTerms.length === 0 || documents.length === 0) return [];
 
   const N = documents.length;
-  const docTokens = documents.map(d => tokenize(d.text + " " + d.name));
+  const docTokens = documents.map(d =>
+    tokenize(d.text + " " + capabilityNameForScoring(d.name))
+  );
   const avgDl = docTokens.reduce((s, t) => s + t.length, 0) / N;
 
   // IDF for each query term
@@ -1125,13 +1322,12 @@ export function createDiscoverTool(
    * Appends searchHint from metadata registry for richer keyword matching.
    * Falls back to display text only when no hint is registered.
    */
-  function resolveBM25Text(tool: ToolDefinition): string {
-    const base = resolveToolDescription(tool);
-    const meta = getToolMetadata(tool.name);
+  function resolveBM25Text(entry: DeferredToolEntry): string {
+    const meta = getToolMetadata(entry.name);
     if (meta?.searchHint) {
-      return base + " " + meta.searchHint;
+      return entry.description + " " + meta.searchHint;
     }
-    return base;
+    return entry.description;
   }
 
   return {
@@ -1175,9 +1371,9 @@ export function createDiscoverTool(
       }
 
       // ---------- Path 2: BM25 (+ optional hybrid) fallback ----------
-      const documents: BM25Document[] = deferredTools.map(t => ({
-        name: t.name,
-        text: resolveBM25Text(t),
+      const documents: BM25Document[] = deferredEntries.map(entry => ({
+        name: entry.name,
+        text: resolveBM25Text(entry),
       }));
 
       const rankedRaw = bm25Score(query, documents);

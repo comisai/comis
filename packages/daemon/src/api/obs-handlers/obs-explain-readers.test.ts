@@ -189,6 +189,33 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
     expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
   });
 
+  it("readSessionRecords keeps the newest bounded records for a long-lived session", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = makeRealSessionDir(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    const records = Array.from({ length: 5_002 }, (_, index) => JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: index === 5_001 ? "session.summary" : "model.completed",
+      seq: index + 1,
+      sessionId: SESSION_KEY,
+      traceId: index === 5_001 ? "trace-current" : `trace-${index + 1}`,
+      data: {},
+    }));
+    fs.writeFileSync(runtimeFile, `${records.join("\n")}\n`, "utf-8");
+
+    const reader = makeRealReader(dataDir);
+    const bounded = await reader.readSessionRecords(SESSION_KEY);
+
+    expect(bounded).toHaveLength(5_000);
+    expect(bounded[0]!.seq).toBe(3);
+    expect(bounded.at(-1)).toMatchObject({
+      seq: 5_002,
+      type: "session.summary",
+      traceId: "trace-current",
+    });
+  });
+
   it("readSessionRecords recovers a co-located trajectory when workspace recreation omitted its pointer", async () => {
     const dataDir = tmpDataDir();
     const sessionFile = makeRealSessionDir(dataDir);
@@ -455,6 +482,89 @@ describe("makeRealReader.readLosslessToolEvidence", () => {
 
     expect(data.success).toBe(false);
     expect(data).not.toHaveProperty("errorKind");
+  });
+});
+
+describe("makeRealReader.readMessageLifecycleDiagnostic", () => {
+  it("projects only closed content-free fields from the exact trace row", async () => {
+    const queryDiagnostics = vi.fn().mockReturnValue([{
+      category: "message",
+      timestamp: 1_000,
+      severity: "info",
+      message: "diagnostic:message_processed",
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      traceId: "trace-auth",
+      details: JSON.stringify({
+        messageId: "private-message",
+        conversationRef: "private-conversation",
+        agentId: "default",
+        sessionKey: SESSION_KEY,
+        traceId: "trace-auth",
+        channelType: "telegram",
+        channelId: "678314278",
+        status: "error",
+        failureStage: "execution",
+        errorKind: "auth",
+        totalDurationMs: 25,
+        tokensUsed: 0,
+        cost: 0,
+      }),
+    }]);
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(tmpDataDir(), obsStore);
+
+    const evidence = await reader.readMessageLifecycleDiagnostic!("trace-auth");
+
+    expect(evidence).toEqual({
+      timestamp: 1_000,
+      sessionKey: SESSION_KEY,
+      traceId: "trace-auth",
+      agentId: "default",
+      channelType: "telegram",
+      channelId: "678314278",
+      status: "error",
+      failureStage: "execution",
+      errorKind: "auth",
+      totalDurationMs: 25,
+      tokensUsed: 0,
+      cost: 0,
+    });
+    expect(evidence).not.toHaveProperty("messageId");
+    expect(evidence).not.toHaveProperty("conversationRef");
+    expect(queryDiagnostics).toHaveBeenCalledWith({
+      category: "message",
+      limit: 1000,
+    });
+  });
+
+  it("rejects a row whose payload conflicts with its indexed authority", async () => {
+    const queryDiagnostics = vi.fn().mockReturnValue([{
+      category: "message",
+      timestamp: 1_000,
+      severity: "info",
+      message: "diagnostic:message_processed",
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      traceId: "trace-auth",
+      details: JSON.stringify({
+        agentId: "default",
+        sessionKey: "default:agent:other:channel:user:peer:user",
+        traceId: "trace-auth",
+        channelType: "telegram",
+        channelId: "678314278",
+        status: "error",
+        failureStage: "execution",
+        errorKind: "auth",
+        totalDurationMs: 25,
+        tokensUsed: 0,
+        cost: 0,
+      }),
+    }]);
+    const obsStore = { queryDiagnostics } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(tmpDataDir(), obsStore);
+
+    expect(await reader.readMessageLifecycleDiagnostic!("trace-auth")).toBeNull();
   });
 });
 

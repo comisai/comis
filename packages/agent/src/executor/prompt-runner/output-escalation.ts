@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Output-size escalation policy and success-path response processing. */
-
-import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
+import {
+  classifyToolInvocationMutation,
+  formatSessionKey,
+  toSafeErrorLogString,
+} from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
@@ -14,6 +17,7 @@ import {
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
+import { runRequestToolNudge } from "../request-tool-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -23,13 +27,9 @@ import { processFailurePath } from "./failure-path.js";
 import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
+import { runBudgetContinuation } from "./budget-continuation.js";
 
-/**
- * Compute the final PromptRunResult by running output escalation, success-
- * path response processing, and failure-path overflow recovery as needed.
- *
- * Mutates the response/result metrics and emits output-escalation events.
- */
+/** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
   messageText: string,
@@ -45,10 +45,7 @@ export async function escalateOutput(
   let ghostCost: PromptRunResult["ghostCost"];
   const bridgeResult = params.bridge.getResult();
 
-  // A bridge abort is already the terminal response for this execution.
-  // Do not let generic success-path recovery mistake the SDK's aborted-empty
-  // assistant turn for a recoverable silent response and start a fresh model
-  // turn after the safety boundary has fired.
+  // A safety abort is terminal and must not start generic silent recovery.
   if (bridgeResult.abortResponse !== undefined) {
     params.result.response = bridgeResult.abortResponse;
     params.deps.logger.debug(
@@ -312,6 +309,7 @@ async function processSuccessPath(
   // Mutually exclusive with L4 by construction (L4 requires an EMPTY final
   // turn; this requires visible text).
   await runNarrateNudgeStep(params);
+  await runRequestToolNudgeStep(params);
 
   // Budget-driven continuation loop
   if (budgetTracker) {
@@ -408,6 +406,9 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    currentSuccessfulDelegationCount: () => Number((params.bridge.getResult().toolExecResults ?? []).some(
+      (record) => record.toolName === "sessions_spawn" && record.success && record.backgrounded !== true,
+    )),
     guardProviderDispatch: resolveProviderDispatchGuard(
       params.executionOverrides?.onProviderStart,
     ),
@@ -422,78 +423,77 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
   }
 }
 
-/**
- * Budget-driven continuation loop. Nudges the LLM to keep producing output
- * until either the budget is reached, diminishing returns, or maxContinuations.
- * Mutates `result.response`, `result.finishReason`, `result.budgetMetrics`.
- */
-async function runBudgetContinuation(
-  params: RunPromptParams,
-  budgetTracker: TurnBudgetTracker,
-  budgetCapped: boolean,
-  requestedBudget: number | undefined,
-): Promise<void> {
-  const { session, bridge, result, deps } = params;
-  let budgetContinuations = 0;
-
-  // Check after initial prompt round
-  const initialOutput = bridge.getResult().tokensUsed?.output ?? 0;
-  let decision = budgetTracker.check(initialOutput);
-
-  while (decision.action === "continue") {
-    budgetContinuations++;
-    const nudgePercent = Math.round(decision.utilization * 100);
-    // Nudge instructs LLM to continue without premature summarization
-    const budgetNudgeText = `[budget:nudge] You have used ${nudgePercent}% of the requested ${budgetTracker.targetTokens.toLocaleString()} token budget. Continue working on the task - do not summarize or wrap up prematurely. Produce more detailed output.`;
-
-    deps.logger.debug(
-      { utilization: decision.utilization, continuations: budgetContinuations, targetTokens: budgetTracker.targetTokens },
-      "Budget continuation nudge",
-    );
-
-    const continuationResult = await runContinuationTurn(
-      session,
-      budgetNudgeText,
-      resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
-    );
-    if (!continuationResult.ok) {
-      deps.logger.warn(
-        { err: toSafeErrorLogString(continuationResult.error), hint: "Budget continuation turn failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
-        "Continuation turn error, stopping budget continuation",
-      );
-      break;
-    }
-
-    // Re-extract response after continuation
-    const continuationResponse = getVisibleAssistantText(session);
-    if (continuationResponse) {
-      result.response = continuationResponse;
-    }
-
-    // Check budget again after continuation
-    const currentOutput = bridge.getResult().tokensUsed?.output ?? 0;
-    decision = budgetTracker.check(currentOutput);
+/** Request-tool nudge step — bounded recovery for an exact stale-answer repeat. */
+async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
+  const { session, agentId, result, deps } = params;
+  if (result.narrateNudge?.fired === true) return;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sessionMessages: unknown[] = (session as any).messages ?? [];
+  const outcome = await runRequestToolNudge({
+    session,
+    requestText:
+      params.msg.originalMessages?.map((message) => message.text).join("\n")
+      ?? params.msg.text,
+    messages: sessionMessages,
+    capabilityClass: params.modelProfile?.capabilityClass,
+    requestRelevantToolNames: params.requestRelevantToolNames ?? [],
+    requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
+    requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
+    requestRelevantPromptSkillWorkflowToolNames:
+      params.requestRelevantPromptSkillWorkflowToolNames ?? [],
+    requestRelevantPromptSkillWorkflowContext:
+      params.requestRelevantPromptSkillWorkflowContext,
+    currentSuccessfulMutationCount: () =>
+      (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) =>
+          record.success
+          && classifyToolInvocationMutation(
+            record.toolName,
+            record.action === undefined ? {} : { action: record.action },
+          ) === "mutating",
+      ).length,
+    currentSuccessfulToolCount: () => {
+      const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0
+        ? params.requestRelevantPromptSkillWorkflowToolNames
+        : params.requestRelevantToolNames;
+      const relevantNames = new Set(completionNames ?? []);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) => record.success && relevantNames.has(record.toolName),
+      ).length;
+    },
+    currentDeferredWorkCount: () => {
+      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) => record.backgrounded === true && relevantNames.has(record.toolName),
+      ).length;
+    },
+    currentTerminalDenialCount: () => {
+      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) =>
+          !record.success
+          && record.failureCode === "permission_denied"
+          && relevantNames.has(record.toolName),
+      ).length;
+    },
+    logger: deps.logger,
+    eventBus: deps.eventBus,
+    sessionKey: formatSessionKey(params.sessionKey),
+    clock: deps.clock,
+    agentId,
+    getVisibleAssistantText,
+    guardProviderDispatch: resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    ),
+  });
+  if (outcome.recovered && outcome.response) {
+    result.response = outcome.response;
   }
-
-  const lastDecisionReason = decision.reason;
-  // Set finish reason based on tracker stop condition
-  if (decision.reason === "budget_reached" || decision.reason === "diminishing_returns" || decision.reason === "max_continuations") {
-    result.finishReason = "budget_exhausted";
-  }
-
-  // Populate budget metrics on result
-  result.budgetMetrics = {
-    requestedBudget: requestedBudget!,
-    effectiveBudget: budgetTracker.targetTokens,
-    wasCapped: budgetCapped,
-    utilization: decision.utilization,
-    continuations: budgetContinuations,
-    stopReason: lastDecisionReason,
-  };
-
-  // Prepend cap notice to response if user budget was capped
-  if (budgetCapped && result.response) {
-    const capNotice = `*Note: Your requested budget of ${requestedBudget!.toLocaleString()} tokens was capped to ${budgetTracker.targetTokens.toLocaleString()} tokens by operator limits.*\n\n`;
-    result.response = capNotice + result.response;
+  if (outcome.fired) {
+    result.requestToolNudge = {
+      fired: true,
+      recovered: outcome.recovered,
+      matchedToolNames: outcome.matchedToolNames,
+    };
   }
 }

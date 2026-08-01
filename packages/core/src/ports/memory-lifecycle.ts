@@ -55,8 +55,13 @@ export type MemoryTier = "durable" | "ephemeral";
  * default DORMANT — byte-identity). Counts-only telemetry; carries no memory content.
  */
 export interface MemoryLifecycleEvictionOverride {
-  /** Activate LIVE soft eviction for THIS sweep (`learningForgetting.eviction.enabled ∧ .enabled`). */
+  /** Activate LIVE soft eviction for THIS sweep (`learning.enabled`). */
   evictionEnabled?: boolean;
+  /**
+   * Dormancy window in days for this agent. A never-recalled memory falls back
+   * to event age; a recalled memory uses its last-useful timestamp.
+   */
+  maxDormantDays?: number;
   /**
    * The corroborated-`failure_count` floor at/above which a NON-EXEMPT memory is
    * soft-evicted — the reachable wrongness-eviction path.
@@ -66,6 +71,11 @@ export interface MemoryLifecycleEvictionOverride {
    * store default.
    */
   failureEvictionFloor?: number;
+  /**
+   * Proof-count floor at/above which a memory is exempt from soft eviction.
+   * Omitted uses the store default.
+   */
+  highProofFloor?: number;
 }
 
 /**

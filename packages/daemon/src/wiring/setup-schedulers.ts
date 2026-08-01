@@ -39,7 +39,7 @@ import {
   type ExecutionTracker,
   type FollowupTaskStore,
 } from "@comis/scheduler";
-import { err, ok, type Result } from "@comis/shared";
+import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { createBrowserService, type BrowserService } from "@comis/skills";
 import { createLateBoundCronRuntime, type CronRuntimeBinding } from "./cron-runtime-binding.js";
 import {
@@ -70,6 +70,10 @@ export interface SchedulersResult {
       readonly message: string;
     }>>;
   }): void;
+  retireAgentRuntime(agentId: string): Promise<Result<void, {
+    readonly errorKind: ErrorKind;
+    readonly message: string;
+  }>>;
   cronMaintenanceControllers: Map<string, CronMaintenanceController>;
   browserServices: Map<string, BrowserService>;
   resetSchedulers: Map<string, SessionResetScheduler>;
@@ -626,6 +630,100 @@ export async function setupSchedulers(deps: {
     agentLogger.info({ agentId, mode: resetConfig.mode }, "Per-agent SessionResetScheduler started");
   }
 
+  async function retireAgentRuntime(agentId: string): Promise<Result<void, {
+    readonly errorKind: ErrorKind;
+    readonly message: string;
+  }>> {
+    const startedAtMs = clock.now();
+    const scheduler = ownedCronSchedulers.get(agentId) ?? cronSchedulers.get(agentId);
+    let failure: { readonly errorKind: ErrorKind; readonly message: string } | undefined;
+    if (scheduler !== undefined) {
+      scheduler.closeAdmission();
+      scheduler.abortActive();
+      const idle = await fromPromise(scheduler.waitForIdle());
+      if (!idle.ok) {
+        failure = {
+          errorKind: "internal",
+          message: `Cron runtime did not settle while retiring agent "${agentId}"`,
+        };
+        schedulerLogger.warn({
+          agentId,
+          step: "agent_cron_retire_wait",
+          hint: "Restart the daemon to guarantee the deleted agent has no surviving cron execution",
+          errorKind: "internal" as const,
+        }, "Deleted agent cron runtime did not settle");
+      }
+      const stopped = await fromPromise(scheduler.stop());
+      const stopErrorKind = !stopped.ok
+        ? "internal" as const
+        : stopped.value.ok
+          ? undefined
+          : stopped.value.error.errorKind;
+      if (stopErrorKind !== undefined) {
+        failure ??= {
+          errorKind: stopErrorKind,
+          message: `Cron runtime did not stop while retiring agent "${agentId}"`,
+        };
+        schedulerLogger.warn({
+          agentId,
+          step: "agent_cron_retire_stop",
+          hint: "Restart the daemon to guarantee the deleted agent has no surviving cron timer",
+          errorKind: stopErrorKind,
+        }, "Deleted agent cron runtime did not stop");
+      }
+    }
+    const reset = resetSchedulers.get(agentId);
+    if (reset !== undefined) {
+      const stopped = tryCatch(() => reset.stop());
+      if (!stopped.ok) {
+        failure ??= {
+          errorKind: "internal",
+          message: `Session-reset runtime did not stop while retiring agent "${agentId}"`,
+        };
+        agentLogger.warn({
+          agentId,
+          step: "agent_session_reset_retire",
+          hint: "Restart the daemon to guarantee the deleted agent has no surviving session-reset timer",
+          errorKind: "internal" as const,
+        }, "Deleted agent session-reset runtime did not stop");
+      }
+    }
+    const browser = browserServices.get(agentId);
+    if (browser !== undefined) {
+      const stopped = await fromPromise(browser.stop());
+      if (!stopped.ok) {
+        failure ??= {
+          errorKind: "dependency",
+          message: `Browser runtime did not stop while retiring agent "${agentId}"`,
+        };
+        skillsLogger.warn({
+          agentId,
+          step: "agent_browser_retire",
+          hint: "Restart the daemon and inspect the browser subprocess if it remains active",
+          errorKind: "dependency" as const,
+        }, "Deleted agent browser runtime did not stop");
+      }
+    }
+    ownedCronSchedulers.delete(agentId);
+    cronSchedulers.delete(agentId);
+    executionTrackers.delete(agentId);
+    followupTaskStores.delete(agentId);
+    taskMaintenanceControllers.delete(agentId);
+    cronMaintenanceControllers.delete(agentId);
+    cronAuthoringConfigs.delete(agentId);
+    agentSchedulerSeeds.delete(agentId);
+    browserServices.delete(agentId);
+    resetSchedulers.delete(agentId);
+    schedulerLogger.info({
+      agentId,
+      cronRuntimeOwned: scheduler !== undefined,
+      browserRuntimeOwned: browser !== undefined,
+      sessionResetRuntimeOwned: reset !== undefined,
+      durationMs: Math.max(0, clock.now() - startedAtMs),
+    }, "Deleted agent scheduler resources retired");
+    return failure === undefined ? ok(undefined) : err(failure);
+  }
+
   return {
     ownedCronSchedulers,
     cronSchedulers,
@@ -637,6 +735,7 @@ export async function setupSchedulers(deps: {
     bindTaskMaintenanceRuntime(control) {
       taskMaintenanceRuntime = control;
     },
+    retireAgentRuntime,
     cronMaintenanceControllers,
     browserServices,
     resetSchedulers,

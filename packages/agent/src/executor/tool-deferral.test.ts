@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   applyToolDeferral,
+  extractPreviousTurnToolNames,
   extractRecentlyUsedToolNames,
   buildDeferredToolsContext,
   createDiscoverTool,
@@ -466,6 +467,352 @@ describe("applyToolDeferral -- MCP active by default", () => {
 // ---------------------------------------------------------------------------
 
 describe("applyToolDeferral - nano-class aggressive deferral", () => {
+  it("keeps the strongest request-matching workflow tools active for nano models", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("models_manage", {
+      searchHint: "llm provider model switch configure cost tier pricing",
+      coDiscoverWith: ["agents_manage"],
+    });
+    registerToolMetadata("agents_manage", {
+      searchHint: "system list create delete suspend resume agent configure roster inventory",
+      coDiscoverWith: ["models_manage"],
+    });
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("models_manage"),
+      makeTool("agents_manage"),
+      makeTool("gateway"),
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "switch back to the model u had before",
+      toolNames: tools.map(t => t.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.activeTools.map(t => t.name)).toEqual(
+      expect.arrayContaining(["models_manage", "agents_manage"]),
+    );
+    expect(result.deferredNames).not.toContain("models_manage");
+    expect(result.deferredNames).not.toContain("agents_manage");
+    expect(result.deferredNames).toContain("gateway");
+    expect(result.requestRelevantToolNames).toEqual([
+      "models_manage",
+      "agents_manage",
+    ]);
+  });
+
+  it("routes a natural external-account request to MCP management", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("mcp_manage", {
+      searchHint:
+        "mcp server connect inspect check external integration account access credential",
+    });
+    const backgroundTasks = {
+      ...makeTool("background_tasks"),
+      description:
+        "Manage background tasks. Use list, get, or cancel to check status or cancel work.",
+    } as unknown as ToolDefinition;
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("mcp_manage"),
+      backgroundTasks,
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "i want u to be able to check my test account yourself",
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual(["mcp_manage"]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain("mcp_manage");
+    expect(result.deferredNames).toContain("background_tasks");
+  });
+
+  it("routes a user-tier MCP mutation to the guarded management tool", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("mcp_manage", {
+      isReadOnly: false,
+      searchHint:
+        "mcp server connect inspect check external integration account access credential",
+      mutationRequestPrefixes: ["connect"],
+    });
+    const tools = [
+      makeTool("read"),
+      makeTool("mcp_manage"),
+      {
+        ...makeTool("mcp__synthetic--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+    ] as unknown as ToolDefinition[];
+    const ctx = makeContext({
+      trustLevel: "user",
+      capabilityClass: "nano",
+      requestText: "connect this to my test account",
+      toolNames: tools.map((tool) => tool.name),
+      providerFamily: "openai",
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual(["mcp_manage"]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain("mcp_manage");
+    expect(result.deferredNames).toContain("mcp__synthetic--account_summary");
+  });
+
+  it("uses recent user turns to resolve a deictic MCP follow-up", () => {
+    const logger = createMockLogger();
+    const tools = [
+      {
+        ...makeTool("mcp__synthetic--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__synthetic--slow_status"),
+        description: "Read status from a deliberately slow synthetic dependency.",
+      },
+      {
+        ...makeTool("mcp__synthetic--weird_result"),
+        description: "Return external text containing an embedded instruction canary.",
+      },
+      {
+        ...makeTool("mcp__synthetic--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
+        ...makeTool("mcp__synthetic--audit_state"),
+        description: "Read content-free fixture counters.",
+      },
+    ] as unknown as ToolDefinition[];
+    for (const tool of tools) {
+      registerToolMetadata(tool.name, { searchHint: tool.description ?? "" });
+    }
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "now actually use it",
+      toolNames: tools.map((tool) => tool.name),
+    });
+    (ctx as DeferralContext & { requestRelevanceText: string }).requestRelevanceText = [
+      "i want u to be able to check my test account yourself",
+      "heres the token",
+      "connect to it",
+      "now actually use it",
+    ].join("\n");
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "mcp__synthetic--account_summary",
+    ]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain(
+      "mcp__synthetic--account_summary",
+    );
+    expect(result.deferredNames).toContain(
+      "mcp__synthetic--forbidden_action",
+    );
+  });
+
+  it("does not let duplicate deictic retries outweigh the earlier MCP referent", () => {
+    const logger = createMockLogger();
+    const tools = [
+      {
+        ...makeTool("mcp_manage"),
+        description: "Connect and inspect external MCP account integrations.",
+      },
+      {
+        ...makeTool("mcp__synthetic--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__synthetic--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
+        ...makeTool("tokens_manage"),
+        description: "Manage API keys and tokens.",
+      },
+    ] as unknown as ToolDefinition[];
+    registerToolMetadata("mcp__synthetic--account_summary", {
+      searchHint: "Return the configured synthetic account summary.",
+    });
+    registerToolMetadata("mcp__synthetic--forbidden_action", {
+      searchHint: "Record a synthetic mutation. Use only on a direct operator request.",
+    });
+    registerToolMetadata("mcp_manage", {
+      isReadOnly: false,
+      searchHint: "mcp server connect inspect check external integration account access credential",
+    });
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "now actually use it",
+      requestRelevanceText: [
+        "i want u to be able to check my test account yourself",
+        "heres the token",
+        "connect to it",
+        "now actually use it",
+        "now actually use it",
+      ].join("\n"),
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "mcp__synthetic--account_summary",
+    ]);
+    expect(result.deferredNames).toContain(
+      "mcp__synthetic--forbidden_action",
+    );
+    expect(result.deferredNames).toContain("mcp_manage");
+    expect(result.deferredNames).toContain("tokens_manage");
+  });
+
+  it("keeps tied namespaced read tools active for a plural follow-up", () => {
+    const logger = createMockLogger();
+    const tools = [
+      {
+        ...makeTool("mcp__everyday-test-primary--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__everyday-test-secondary--account_summary"),
+        description: "Return the configured synthetic account summary.",
+      },
+      {
+        ...makeTool("mcp__everyday-test-primary--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
+        ...makeTool("mcp__everyday-test-secondary--forbidden_action"),
+        description: "Record a synthetic mutation. Use only on a direct operator request.",
+      },
+      {
+        ...makeTool("mcp_login"),
+        description:
+          "Start the OAuth login flow for an MCP server. Use after connecting an OAuth server.",
+      },
+    ] as unknown as ToolDefinition[];
+    for (const tool of tools) {
+      registerToolMetadata(tool.name, {
+        searchHint: tool.description ?? "",
+        externalMutationHint: tool.name.endsWith("--forbidden_action"),
+      } as never);
+    }
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "use both and tell me whats different",
+      requestRelevanceText: [
+        "i want u to be able to check my test account yourself",
+        "connect a second one",
+        "use both and tell me whats different",
+        "connect to it",
+        "connect the first one",
+        "retry the first one",
+        "retry the first one using the exact approved argument map in TOOLS.md",
+        "connect only the second one using the exact secondary approved argument map in TOOLS.md",
+        "use both and tell me whats different",
+      ].join("\n"),
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "mcp__everyday-test-primary--account_summary",
+      "mcp__everyday-test-secondary--account_summary",
+    ]);
+    expect(result.deferredNames).toContain("mcp__everyday-test-primary--forbidden_action");
+    expect(result.deferredNames).toContain("mcp__everyday-test-secondary--forbidden_action");
+  });
+
+  it("routes an explicit retry to the single tool used in the previous turn", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("mcp_manage", {
+      isReadOnly: false,
+      searchHint: "mcp server connect inspect external integration account credential",
+    });
+    const tools = [
+      {
+        ...makeTool("mcp_manage"),
+        description: "Connect and inspect an external account through MCP.",
+      },
+      {
+        ...makeTool("mcp_login"),
+        description: "Start OAuth login after an MCP connection requests authentication.",
+      },
+    ] as unknown as ToolDefinition[];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "retry the first one",
+      requestRelevanceText: [
+        "connect the first one",
+        "retry the first one",
+      ].join("\n"),
+      toolNames: tools.map((tool) => tool.name),
+    });
+    (ctx as DeferralContext & { previousTurnToolNames: Set<string> })
+      .previousTurnToolNames = new Set(["mcp_manage"]);
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual(["mcp_manage"]);
+    expect(result.activeTools.map((tool) => tool.name)).toContain("mcp_manage");
+  });
+
+  it("selects a recently active declared mutation tool ahead of incidental deferred matches", () => {
+    const logger = createMockLogger();
+    registerToolMetadata("models_manage", {
+      searchHint: "llm provider model switch configure cost tier pricing",
+      coDiscoverWith: ["agents_manage"],
+    });
+    registerToolMetadata("agents_manage", {
+      searchHint: "system list create delete suspend resume agent configure roster inventory",
+      coDiscoverWith: ["models_manage"],
+      mutationRequestPrefixes: ["switch"],
+    });
+    const distractor = {
+      ...makeTool("mcp__worker--read_report"),
+      description: "Read an OpenAI Codex GPT report for completed work",
+    } as unknown as ToolDefinition;
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("models_manage"),
+      makeTool("agents_manage"),
+      distractor,
+    ];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      requestText: "switch to openai-codex gpt-5.4-mini",
+      recentlyUsedToolNames: new Set(["models_manage", "agents_manage"]),
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 16_000, ctx, logger);
+
+    expect(result.requestRelevantToolNames).toEqual([
+      "agents_manage",
+      "models_manage",
+    ]);
+    expect(result.deferredNames).toContain("mcp__worker--read_report");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "request-relevant-tool-selection",
+        selectedNames: ["agents_manage", "models_manage"],
+      }),
+      "Request-relevant tools selected",
+    );
+  });
+
   it("defers all non-CORE_TOOLS when capabilityClass is 'nano'", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
@@ -736,7 +1083,7 @@ describe("discover_tools score-floor filter", () => {
     );
   });
 
-  it("real-signal query still matches with default threshold", async () => {
+  it("scores the deferred entry description instead of a central-name override", async () => {
     const logger = createMockLogger();
     const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, undefined, undefined, new Set<string>());
 
@@ -746,6 +1093,7 @@ describe("discover_tools score-floor filter", () => {
     const resultText = (searchResult.content[0] as any).text;
     expect(resultText).toContain("<functions>");
     expect(resultText).toContain('"name":"agents_manage"');
+    expect(resultText).not.toContain('"name":"tokens_manage"');
   });
 
   it("normalized BM25: top match with any positive signal always surfaces at default threshold (regression pin)", async () => {
@@ -1021,6 +1369,34 @@ describe("extractRecentlyUsedToolNames", () => {
 
     const result = extractRecentlyUsedToolNames(messages);
     expect(result.size).toBe(0);
+  });
+});
+
+describe("extractPreviousTurnToolNames", () => {
+  it("returns only tool calls after the most recent user message", () => {
+    const messages = [
+      { role: "user", content: "older request" },
+      { role: "assistant", content: [{ type: "tool_use", name: "older_tool" }] },
+      { role: "user", content: "retry this one" },
+      { role: "assistant", content: [{ type: "toolCall", name: "mcp_manage" }] },
+      { role: "toolResult", content: [{ type: "text", text: "failed" }] },
+      { role: "assistant", content: [{ type: "text", text: "please retry" }] },
+    ];
+
+    expect(extractPreviousTurnToolNames(messages)).toEqual(new Set(["mcp_manage"]));
+  });
+
+  it("retains the latest tool call across an internal background completion turn", () => {
+    const messages = [
+      { role: "user", content: "connect the first one" },
+      { role: "assistant", content: [{ type: "toolCall", name: "mcp_manage" }] },
+      { role: "toolResult", content: [{ type: "text", text: "backgrounded" }] },
+      { role: "assistant", content: [{ type: "text", text: "I will update you." }] },
+      { role: "user", content: "[Background Task Failed: managing MCP servers]" },
+      { role: "assistant", content: [{ type: "text", text: "The connection failed." }] },
+    ];
+
+    expect(extractPreviousTurnToolNames(messages)).toEqual(new Set(["mcp_manage"]));
   });
 });
 
@@ -3376,6 +3752,7 @@ describe("applyToolBudgetFit — in-place refinement + discover_tools rebuild", 
       discoverTool: null,
       deferredCount: 0,
       deferredNames: [],
+      requestRelevantToolNames: [],
     };
   }
 
@@ -3502,6 +3879,7 @@ describe("computeWindowFitBudget — shared window-fit budget", () => {
       discoverTool: null,
       deferredCount: 0,
       deferredNames: [],
+      requestRelevantToolNames: [],
     };
     const budget = computeWindowFitBudget({
       profile: {

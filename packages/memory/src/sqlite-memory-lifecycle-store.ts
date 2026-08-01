@@ -265,7 +265,9 @@ export function createSqliteMemoryLifecycleStore(
         // (`learningForgetting.eviction.enabled` ∧ `.enabled`). With it OFF the sweep stays
         // DORMANT — evicts/demotes nothing, the byte-identity guarantee.
         const liveEviction = effEvictionEnabled === true;
-        const highProofFloor = policy.highProofFloor ?? DEFAULT_HIGH_PROOF_FLOOR;
+        const maxDormantDays = ov?.maxDormantDays ?? policy.maxDormantDays;
+        const highProofFloor =
+          ov?.highProofFloor ?? policy.highProofFloor ?? DEFAULT_HIGH_PROOF_FLOOR;
         // The corroborated-failure eviction floor (the reachable wrongness path). Only
         // consulted under the LIVE policy; the exemptions still gate it.
         const failureEvictionFloor = ov?.failureEvictionFloor ?? policy.failureEvictionFloor ?? DEFAULT_FAILURE_EVICTION_FLOOR;
@@ -313,7 +315,7 @@ export function createSqliteMemoryLifecycleStore(
           // system are never reached, no matter how many failures).
           const isEvictionCandidate =
             !exempt &&
-            (disuseDays > policy.maxDormantDays ||
+            (disuseDays > maxDormantDays ||
               (liveEviction && failureCount >= failureEvictionFloor));
           if (isEvictionCandidate) {
             evictionCandidates += 1;
@@ -356,6 +358,9 @@ export function createSqliteMemoryLifecycleStore(
             demoted,
             evicted,
             liveEviction,
+            maxDormantDays,
+            highProofFloor,
+            failureEvictionFloor,
             durationMs: systemNowMs() - startMs,
           },
           liveEviction

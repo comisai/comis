@@ -37,8 +37,8 @@
 // persistMcpServers helper's new-array computation. Already re-exported
 // from `@comis/core` (packages/core/src/exports/config.ts:188), so a
 // direct named import is the correct path here (no deep-path subpath).
-import type { McpServerEntry } from "@comis/core";
-import { persistToConfig } from "./persist-to-config.js";
+import { isEnvRefString, type McpServerEntry } from "@comis/core";
+import { persistToConfig, readOnDiskConfig } from "./persist-to-config.js";
 import {
   buildConfigAuditBase,
   appendConfigAuditWithOutcome,
@@ -58,6 +58,54 @@ import type { WorkspaceApiDeps } from "../types.js";
 export interface PersistMcpResult {
   persistence: "persisted" | "runtime_only" | "skipped";
   warning?: string;
+}
+
+function restoreUnchangedSecretRefs(candidate: unknown, onDisk: unknown, runtime: unknown): unknown {
+  if (
+    typeof candidate === "string"
+    && typeof onDisk === "string"
+    && candidate === runtime
+    && isEnvRefString(onDisk)
+  ) {
+    return onDisk;
+  }
+  if (Array.isArray(candidate)) {
+    const diskItems = Array.isArray(onDisk) ? onDisk : [];
+    const runtimeItems = Array.isArray(runtime) ? runtime : [];
+    return candidate.map((value, index) =>
+      restoreUnchangedSecretRefs(value, diskItems[index], runtimeItems[index]));
+  }
+  if (candidate !== null && typeof candidate === "object") {
+    const diskRecord = onDisk !== null && typeof onDisk === "object" && !Array.isArray(onDisk)
+      ? onDisk as Record<string, unknown>
+      : {};
+    const runtimeRecord = runtime !== null && typeof runtime === "object" && !Array.isArray(runtime)
+      ? runtime as Record<string, unknown>
+      : {};
+    const restored: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(candidate)) {
+      restored[key] = restoreUnchangedSecretRefs(value, diskRecord[key], runtimeRecord[key]);
+    }
+    return restored;
+  }
+  return candidate;
+}
+
+function buildPersistableServers(
+  servers: McpServerEntry[],
+  onDiskConfig: Record<string, unknown>,
+  runtimeServers: readonly McpServerEntry[],
+): McpServerEntry[] {
+  const integrations = onDiskConfig.integrations as Record<string, unknown> | undefined;
+  const mcp = integrations?.mcp as Record<string, unknown> | undefined;
+  const diskServers = Array.isArray(mcp?.servers) ? mcp.servers : [];
+  return servers.map((candidate) => {
+    const onDisk = diskServers.find((entry) =>
+      entry !== null && typeof entry === "object"
+      && (entry as Record<string, unknown>).name === candidate.name);
+    const runtime = runtimeServers.find((entry) => entry.name === candidate.name);
+    return restoreUnchangedSecretRefs(candidate, onDisk, runtime) as McpServerEntry;
+  });
 }
 
 /**
@@ -108,8 +156,19 @@ export async function persistMcpServers(
   const auditBase = buildConfigAuditBase(localPath, actionType);
 
   // Step 2: write.
+  // The runtime config contains resolved secret values, while the local YAML
+  // contains their references. Full-array mutations must restore unchanged
+  // references by server identity before handing the array to the persistence
+  // firewall. New or changed plaintext values are deliberately left intact so
+  // the firewall still rejects them.
+  const runtimeServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+  const persistableServers = buildPersistableServers(
+    servers,
+    readOnDiskConfig(deps.persistDeps),
+    runtimeServers,
+  );
   const persistResult = await persistToConfig(deps.persistDeps, {
-    patch: { integrations: { mcp: { servers } } },
+    patch: { integrations: { mcp: { servers: persistableServers } } },
     skipRestart: true,
     actionType,
     entityId,

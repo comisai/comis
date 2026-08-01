@@ -325,13 +325,24 @@ export function applyPersistedReactiveStrip(params: PersistedReactiveStripParams
  * Apply mutation serializer to tool execute() methods.
  * SDK runs in default "parallel" mode -- read-only tools execute concurrently,
  * mutating tools serialize via the mutex to prevent ordering bugs.
+ *
+ * Mutates only each registered tool object's `execute` reference and returns
+ * the same array. The SDK retains the original tool objects, so applying this
+ * after runtime wrappers are installed must update those objects in place.
  */
 export function applyMutationSerializer(tools: ToolDefinition[], logger: ComisLogger): ToolDefinition[] {
   const serializeTools = createMutationSerializer();
-  const result = serializeTools(tools);
+  const serialized = serializeTools(tools);
+  for (let index = 0; index < tools.length; index++) {
+    const registered = tools[index];
+    const wrapped = serialized[index];
+    if (registered !== undefined && wrapped !== undefined) {
+      registered.execute = wrapped.execute;
+    }
+  }
   logger.debug(
-    { mutatingToolCount: result.filter(t => !isConcurrencySafe(t.name)).length },
+    { mutatingToolCount: tools.filter(t => !isConcurrencySafe(t.name)).length },
     "Mutation serializer applied to tool pipeline",
   );
-  return result;
+  return tools;
 }

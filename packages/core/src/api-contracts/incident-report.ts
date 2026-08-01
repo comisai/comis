@@ -26,6 +26,7 @@ import {
   IncidentGraphRunSchema,
   IncidentPromptTimeoutSchema,
   IncidentQueueTimelineEntrySchema,
+  IncidentRehydrationSchema,
   SpawnTreeNodeSchema,
   OrchestrateRunSchema,
 } from "./incident-report-sections.js";
@@ -112,6 +113,23 @@ export const IncidentReportSchema = z.object({
     messageCount: z.number().int().positive(),
     charCount: z.number().int().nonnegative(),
   }).optional(),
+  /** Bounded tool names selected as relevant to the selected turn. */
+  requestRelevantToolNames: z.array(
+    z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+  ).max(16).optional(),
+  /** Content-free evidence about the selected prior-user-turn relevance window. */
+  requestRelevanceHistory: z.strictObject({
+    turnCount: z.number().int().nonnegative().max(8),
+    charCount: z.number().int().nonnegative().max(1_000_000),
+    saturated: z.boolean(),
+  }).optional(),
+  /** Content-free immutable-policy projection evidence for selected tool schemas. */
+  operatorPolicyToolProjections: z.array(z.strictObject({
+    toolName: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+    sectionId: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    projectedChars: z.number().int().nonnegative().max(5_000),
+  })).max(16).optional(),
   /** Content-free response-locale decision for the selected turn (exact trace)
    * or latest turn (whole session). */
   responseLocale: z
@@ -145,6 +163,8 @@ export const IncidentReportSchema = z.object({
     z.object({
       ok: z.number(),
       failed: z.number(),
+      /** Successful calls that found the requested state already active. */
+      noOp: z.number().optional(),
       topErrorKind: z.string().optional(),
     }),
   ),
@@ -227,6 +247,8 @@ export const IncidentReportSchema = z.object({
    *  session's trajectory carries `context.budget` records; additive, schemaVersion
    *  stays 1). */
   contextBudget: IncidentContextBudgetSchema.optional(),
+  /** The latest content-free post-compaction policy rehydration receipt. */
+  rehydration: IncidentRehydrationSchema.optional(),
   /** The woke-fire wake-gate fact (optional — present ONLY when the session's
    *  trajectory carries a `scheduler.wake_gate` record, i.e. a gate that woke the
    *  model). A skipped fire opens no session, so it never reaches here. Content-free;
@@ -507,6 +529,10 @@ export const IncidentReportSchema = z.object({
       skillsSurfacedButUncredited: z
         .array(z.object({ name: z.string(), coverage: z.number() }))
         .optional(),
+      // Skills whose topic credit was retained from the immediately preceding turn.
+      // This makes a multi-turn reuse explainable without reading raw trajectories.
+      // Names only; optional and additive.
+      skillsCreditedFromPriorTurn: z.array(z.string()).optional(),
       // The block stays counts/ids-only — no user-model or generalization fields belong here.
     })
     .optional(),
@@ -620,10 +646,10 @@ export const IncidentReportSchema = z.object({
       backgroundPendingCleanupCount: z.number().optional(),
     })
     .optional(),
-  /** Silent-failure recovery attempts folded from the session's
-   *  `execution.recovery_attempted` records — the model re-entries
-   *  (silent_retry / lkw_fallback / continuation_nudge) that were previously
-   *  log-only. `total` attempts, `succeeded` count, and per-reason counts.
+  /** Runtime recovery attempts folded from the session's
+   *  `execution.recovery_attempted` records — model re-entries and deterministic
+   *  response-grounding corrections that would otherwise be log-only.
+   *  `total` attempts, `succeeded` count, and per-reason counts.
    *  Absent ⇒ no recovery attempts this session. */
   recoveries: z
     .object({
@@ -707,6 +733,16 @@ export const IncidentReportSchema = z.object({
       trajectory: z.object({ found: z.boolean(), records: z.number() }),
       rollup: z.object({ present: z.boolean() }),
       offloads: z.object({ pointersResolved: z.number(), pointersTotal: z.number() }),
+      /**
+       * A durable per-message lifecycle row supplied the exact-trace outcome
+       * when execution ended before a trajectory or session rollup was written.
+       * The row is projected to closed, content-free fields before assembly.
+       */
+      executionDiagnostic: z
+        .object({
+          found: z.literal(true),
+        })
+        .optional(),
       /**
        * Content-free fallback coverage from the lossless SQLite context store.
        * Present only when trajectory records were unavailable and the bounded

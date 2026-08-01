@@ -48,6 +48,10 @@ export interface FollowupTaskExtractionRuntimeDeps {
 
 export interface FollowupTaskExtractionRuntime {
   readonly taskExtractionPort: TaskExtractionPort;
+  retireAgent(agentId: string): {
+    readonly droppedCount: number;
+    readonly activeCount: number;
+  };
   closeAdmission(): { readonly droppedCount: number };
   abortActive(): { readonly activeCount: number };
   waitForIdle(): Promise<void>;
@@ -229,6 +233,14 @@ export function createFollowupTaskExtractionRuntime(
   };
   return ok({
     taskExtractionPort,
+    retireAgent(agentId) {
+      const queued = queue.retireAgent(agentId);
+      const running = runner.retireAgent(agentId);
+      return {
+        droppedCount: queued.droppedCount,
+        activeCount: running.activeCount,
+      };
+    },
     closeAdmission: () => queue.close(),
     abortActive: () => runner.close(),
     waitForIdle: () => runner.waitForIdle(),

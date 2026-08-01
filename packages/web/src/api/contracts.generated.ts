@@ -834,14 +834,21 @@ export const CONTRACTS = {
           "additionalProperties": {}
         },
         "updated": {
-          "type": "boolean",
-          "const": true
+          "type": "boolean"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "dryRun": {
+          "type": "boolean"
         }
       },
       "required": [
         "agentId",
         "config",
-        "updated"
+        "updated",
+        "changed",
+        "dryRun"
       ],
       "additionalProperties": false
     },
@@ -3330,12 +3337,18 @@ export const CONTRACTS = {
               "additionalProperties": false
             }
           ]
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "jobId",
         "name",
-        "schedule"
+        "schedule",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -3359,6 +3372,19 @@ export const CONTRACTS = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "resolvedAgentId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "string",
+              "const": "*"
+            }
+          ]
+        },
         "jobs": {
           "type": "array",
           "items": {
@@ -3999,6 +4025,7 @@ export const CONTRACTS = {
         }
       },
       "required": [
+        "resolvedAgentId",
         "jobs"
       ],
       "additionalProperties": false
@@ -4033,11 +4060,17 @@ export const CONTRACTS = {
         },
         "removed": {
           "type": "boolean"
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "jobName",
-        "removed"
+        "removed",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -4551,10 +4584,16 @@ export const CONTRACTS = {
             ],
             "additionalProperties": false
           }
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
-        "runs"
+        "runs",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -5433,11 +5472,17 @@ export const CONTRACTS = {
         },
         "updated": {
           "type": "boolean"
+        },
+        "resolvedAgentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [
         "jobName",
-        "updated"
+        "updated",
+        "resolvedAgentId"
       ],
       "additionalProperties": false
     },
@@ -6493,13 +6538,159 @@ export const CONTRACTS = {
                     "type": "null"
                   }
                 ]
+              },
+              "terminalCount": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "lastRunAtMs": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastStatus": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "settled",
+                      "skipped",
+                      "aborted",
+                      "unsettled",
+                      "failed_before_side_effect",
+                      "cancelled_before_start"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastReason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "empty_file",
+                      "task_disabled",
+                      "task_no_due",
+                      "task_quiet_hours",
+                      "task_daily_cap",
+                      "deadline_termination_unestablished",
+                      "task_state_unsettled",
+                      "deadline",
+                      "shutdown",
+                      "target_removed",
+                      "feature_disabled",
+                      "maintenance"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastLlmCalls": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastDeliveryStatus": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "not_requested",
+                      "suppressed",
+                      "pre_send_failed",
+                      "accepted",
+                      "partial",
+                      "rejected",
+                      "unknown"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastDeliveryReason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "heartbeat_token",
+                      "ack_under_threshold",
+                      "empty_reply",
+                      "response_filter",
+                      "no_target",
+                      "dm_policy",
+                      "channel_not_ready",
+                      "quiet_hours",
+                      "visibility_filter",
+                      "duplicate",
+                      "output_guard",
+                      "target_precondition",
+                      "cancelled"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lastDeliveryErrorKind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "config",
+                      "network",
+                      "auth",
+                      "validation",
+                      "precondition",
+                      "timeout",
+                      "resource",
+                      "dependency",
+                      "internal",
+                      "platform",
+                      "sandbox_unavailable"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
               "agentId",
               "enabled",
               "intervalMs",
-              "nextDueAtMs"
+              "nextDueAtMs",
+              "terminalCount",
+              "lastRunAtMs",
+              "lastStatus",
+              "lastReason",
+              "lastLlmCalls",
+              "lastDeliveryStatus",
+              "lastDeliveryReason",
+              "lastDeliveryErrorKind"
             ],
             "additionalProperties": false
           }
@@ -11236,6 +11427,14 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "requestRelevantToolNames": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
         "responseLocale": {
           "anyOf": [
             {
@@ -11356,6 +11555,9 @@ export const CONTRACTS = {
                 "type": "number"
               },
               "failed": {
+                "type": "number"
+              },
+              "noOp": {
                 "type": "number"
               },
               "topErrorKind": {
@@ -11987,6 +12189,44 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "rehydration": {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "type": "number"
+            },
+            "currentTurn": {
+              "type": "boolean"
+            },
+            "sectionsInjected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "filesInjected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "skillsInjected": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "overflowStripped": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "seq",
+            "currentTurn",
+            "sectionsInjected",
+            "filesInjected",
+            "skillsInjected",
+            "overflowStripped"
+          ],
+          "additionalProperties": false
+        },
         "cronWakeGate": {
           "type": "object",
           "properties": {
@@ -12491,6 +12731,12 @@ export const CONTRACTS = {
                 ],
                 "additionalProperties": false
               }
+            },
+            "skillsCreditedFromPriorTurn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -12856,6 +13102,19 @@ export const CONTRACTS = {
               ],
               "additionalProperties": false
             },
+            "executionDiagnostic": {
+              "type": "object",
+              "properties": {
+                "found": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "found"
+              ],
+              "additionalProperties": false
+            },
             "losslessContext": {
               "type": "object",
               "properties": {
@@ -13134,7 +13393,12 @@ export const CONTRACTS = {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "scope": {
+          "type": "string",
+          "const": "currentRoot"
+        }
+      },
       "additionalProperties": false
     },
     "response": {
@@ -16277,11 +16541,17 @@ export const CONTRACTS = {
         },
         "runId": {
           "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
         "killed",
-        "runId"
+        "runId",
+        "count"
       ],
       "additionalProperties": false
     },
@@ -18504,11 +18774,9 @@ export type MethodName = keyof WebRpcMethodMap;
 // ---------------------------------------------------------------------------
 
 export function validateRequest(method: MethodName, v: unknown): boolean {
-  const entry = CONTRACTS[method];
-  return validateNode(entry.request, v);
+  return validateNode(CONTRACTS[method].request, v);
 }
 
 export function validateResponse(method: MethodName, v: unknown): boolean {
-  const entry = CONTRACTS[method];
-  return validateNode(entry.response, v);
+  return validateNode(CONTRACTS[method].response, v);
 }

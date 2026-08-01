@@ -108,6 +108,9 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       (total, entry) => total + entry.senderId.length + entry.text.length + 4,
       Math.max(0, (groupHistoryContext?.length ?? 0) - 1),
     );
+    const requestRelevantToolNames = [
+      ...new Set(params.requestRelevantToolNames ?? []),
+    ].slice(0, 16);
 
     params.deps.eventBus.emit("prompt:submitted", {
       agentId: params.agentId ?? params.config.name,
@@ -121,6 +124,16 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       messagesDigest,
       inboundKind: params.msg.metadata?.isEdited === true ? "edit" : "message",
       unavailableSkills: params.unavailablePromptSkills,
+      ...(requestRelevantToolNames.length > 0
+        ? { requestRelevantToolNames }
+        : {}),
+      ...(params.requestRelevanceHistory !== undefined
+        ? { requestRelevanceHistory: params.requestRelevanceHistory }
+        : {}),
+      ...(params.operatorPolicyToolProjections !== undefined
+        && params.operatorPolicyToolProjections.length > 0
+        ? { operatorPolicyToolProjections: params.operatorPolicyToolProjections }
+        : {}),
       ...(groupHistoryContext !== undefined && groupHistoryContext.length > 0
         ? {
             groupHistoryMessageCount: groupHistoryContext.length,

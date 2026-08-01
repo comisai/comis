@@ -51,7 +51,7 @@ describe("sub-agent JSON-RPC documentation parity", () => {
       "timeout", "cancelled", "completion", "endReason", "completedAtMs", "errorKind",
       "summary", "resultRef",
     ]);
-    expectTokens(methodSection("subagent.kill"), ["target", "killed", "runId"]);
+    expectTokens(methodSection("subagent.kill"), ["target", "tree", "killed", "runId", "count"]);
     expectTokens(methodSection("subagent.steer"), [
       "target", "message", "security.agentToAgent.steerInject", "steered", "oldRunId",
       "newRunId", "steered_inject", "runId",

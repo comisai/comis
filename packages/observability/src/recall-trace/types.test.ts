@@ -170,7 +170,7 @@ describe("RecallTraceEventSchema -- closed unions", () => {
     expect(RecallTraceEventSchema.safeParse(bad).success).toBe(false);
   });
 
-  it("ranked[].reason is a CLOSED union: included | trust_filtered | deduped | below_budget parse, unknown rejects", () => {
+  it("ranked[].reason accepts every closed include and exclusion reason while rejecting unknown values", () => {
     for (const reason of RECALL_INCLUDE_REASONS) {
       const record = makeValidRecord();
       (record.ranked as Array<Record<string, unknown>>)[0]!.reason = reason;

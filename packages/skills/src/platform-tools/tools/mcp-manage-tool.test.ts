@@ -66,10 +66,22 @@ describe("mcp_manage tool", () => {
   // Metadata
   // -----------------------------------------------------------------------
 
-  it("has correct name and label", () => {
+  it("describes external-account connection for request routing", () => {
     const tool = createMcpManageTool(mockRpcCall);
     expect(tool.name).toBe("mcp_manage");
     expect(tool.label).toBe("MCP Server Management");
+    expect(tool.description).toContain("external account");
+    expect(tool.description).toContain("connect");
+  });
+
+  it("describes the executable, operator-field, and secret-reference connect contract", () => {
+    const tool = createMcpManageTool(mockRpcCall);
+
+    expect(tool.description).toMatch(/command.*executable/i);
+    expect(tool.description).toMatch(/script.*args/i);
+    expect(tool.description).toMatch(/operator.*command.*args.*env/i);
+    expect(tool.description).toMatch(/gateway env_set/i);
+    expect(tool.description).toMatch(/\$\{NAME\}/);
   });
 
   // -----------------------------------------------------------------------
@@ -295,7 +307,10 @@ describe("mcp_manage tool", () => {
           transport: "stdio",
           command: "npx",
           headers: { Authorization: "Bearer private-test-value" },
-          env: { SERVICE_PASSWORD: "private-env-value" },
+          env: {
+            SERVICE_PASSWORD: "private-env-value",
+            SERVICE_TOKEN: "${SERVICE_TOKEN}",
+          },
         } as never),
       );
 
@@ -308,11 +323,20 @@ describe("mcp_manage tool", () => {
       expect(approval).toMatchObject({
         toolName: "mcp_manage",
         action: "mcp.connect",
-        params: { action: "connect" },
+        params: {
+          action: "connect",
+          server_name: "test-mcp",
+          transport: "stdio",
+          command: "npx",
+          credential_keys: ["SERVICE_TOKEN"],
+        },
       });
       expect(approval.fingerprintParams).toMatchObject({
         headers: { Authorization: "Bearer private-test-value" },
-        env: { SERVICE_PASSWORD: "private-env-value" },
+        env: {
+          SERVICE_PASSWORD: "private-env-value",
+          SERVICE_TOKEN: "${SERVICE_TOKEN}",
+        },
       });
       expect(JSON.stringify(approval.params)).not.toContain("private-test-value");
       expect(JSON.stringify(approval.params)).not.toContain("private-env-value");
@@ -545,7 +569,9 @@ describe("mcp_manage tool", () => {
             server_name: "x",
           } as never),
         ),
-      ).rejects.toThrow(/\[missing_param\][\s\S]*transport[\s\S]*(command|url)/);
+      ).rejects.toThrow(
+        /\[missing_param\][\s\S]*transport[\s\S]*(command|url)[\s\S]*TOOLS\.md[\s\S]*never guess/iu,
+      );
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
 

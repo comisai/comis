@@ -18,9 +18,10 @@ export type { BackgroundTaskOrigin };
 
 export const BackgroundTaskStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
 export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
-export const BackgroundTaskFailureCodeSchema = z.literal(
+export const BackgroundTaskFailureCodeSchema = z.enum([
   "skill_import_incomplete",
-) satisfies z.ZodType<BackgroundTaskFailureCode>;
+  "mcp_connection_details_missing",
+]) satisfies z.ZodType<BackgroundTaskFailureCode>;
 
 /**
  * Notification policy for a background task. Typed enum (NOT a boolean):

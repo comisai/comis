@@ -31,7 +31,7 @@ import { translateVideoPayload } from "./translate-video-payload.js";
 import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
 import { translateSessionSummaryPayload } from "./translate-session-summary.js";
-import { boundedUnavailableSkills } from "./translate-skill-availability.js";
+import { translatePromptPayload } from "./translate-prompt-payload.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -60,6 +60,7 @@ export function translatePayload(
         toolCallId: payload.toolCallId,
         durationMs: payload.durationMs,
         success: payload.success,
+        ...(payload.changed !== undefined ? { changed: payload.changed } : {}),
         ...(payload.backgrounded === true ? { backgrounded: true } : {}),
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
         ...(payload.errorMessage !== undefined ? { errorMessage: payload.errorMessage } : {}),
@@ -218,37 +219,7 @@ export function translatePayload(
       };
 
     case "prompt:submitted":
-      return {
-        promptChars: payload.promptChars,
-        provider: payload.provider,
-        modelId: payload.modelId,
-        messageCount: payload.messageCount,
-        systemDigest: payload.systemDigest,
-        messagesDigest: payload.messagesDigest,
-        ...(payload.inboundKind === "message" || payload.inboundKind === "edit"
-          ? { inboundKind: payload.inboundKind }
-          : {}),
-        ...(Array.isArray(payload.unavailableSkills)
-          ? { unavailableSkills: boundedUnavailableSkills(payload.unavailableSkills) }
-          : {}),
-        ...(typeof payload.groupHistoryMessageCount === "number"
-          ? { groupHistoryMessageCount: payload.groupHistoryMessageCount }
-          : {}),
-        ...(typeof payload.groupHistoryCharCount === "number"
-          ? { groupHistoryCharCount: payload.groupHistoryCharCount }
-          : {}),
-        ...(typeof payload.responseLocale === "string"
-          ? { responseLocale: payload.responseLocale }
-          : {}),
-        ...(payload.responseLocaleSource === "request"
-          || payload.responseLocaleSource === "explicit"
-          || payload.responseLocaleSource === "unset"
-          ? { responseLocaleSource: payload.responseLocaleSource }
-          : {}),
-        ...(typeof payload.responseLocaleEnforced === "boolean"
-          ? { responseLocaleEnforced: payload.responseLocaleEnforced }
-          : {}),
-      };
+      return translatePromptPayload(payload);
 
     case "session:started":
       return {
@@ -381,14 +352,36 @@ export function translatePayload(
     case "background_task:promoted":
       return { taskId: payload.taskId, toolName: payload.toolName };
     case "background_task:completed":
-      return { taskId: payload.taskId, toolName: payload.toolName, durationMs: payload.durationMs };
+      return {
+        taskId: payload.taskId,
+        toolName: payload.toolName,
+        durationMs: payload.durationMs,
+        ...(payload.resultOutcome === "success" || payload.resultOutcome === "degraded"
+          ? { resultOutcome: payload.resultOutcome }
+          : {}),
+        ...(payload.persistence === "persisted"
+          || payload.persistence === "runtime_only"
+          || payload.persistence === "skipped"
+          ? { persistence: payload.persistence }
+          : {}),
+        ...(payload.errorKind === "config" ? { errorKind: payload.errorKind } : {}),
+        ...(payload.failureCode === "mutation_not_persisted"
+          ? { failureCode: payload.failureCode }
+          : {}),
+      };
     case "background_task:failed":
       return {
         taskId: payload.taskId,
         toolName: payload.toolName,
         durationMs: payload.durationMs,
         errorKind: payload.errorKind,
-        ...(payload.failureCode === "skill_import_incomplete" ? { failureCode: payload.failureCode } : {}),
+        ...(
+          payload.failureCode === "skill_import_incomplete"
+          || payload.failureCode === "mcp_connection_details_missing"
+          || payload.failureCode === "mcp_secret_reference_missing"
+            ? { failureCode: payload.failureCode }
+            : {}
+        ),
       };
     case "background_task:notified":
       // The fallback-notice decision — taskId + tool NAME + the notified bool +

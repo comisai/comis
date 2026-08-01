@@ -104,3 +104,41 @@ export function resolveChatSessionArtifacts(dataDir, chatId) {
     ? undefined
     : { sessionFile: newest.sessionFile, trajectoryFile: newest.trajectoryFile };
 }
+
+export function resolveChatApprovalAuthority(dataDir, chatId, db) {
+  const artifacts = resolveChatSessionArtifacts(dataDir, chatId);
+  if (artifacts === undefined) {
+    throw new Error("current Telegram session artifacts are unavailable");
+  }
+  const pointerFile = `${artifacts.sessionFile}.trajectory-path.json`;
+  let pointer;
+  try {
+    pointer = JSON.parse(readFileSync(pointerFile, "utf8"));
+  } catch {
+    throw new Error("current Telegram session pointer is unavailable");
+  }
+  if (
+    pointer.traceSchema !== "comis-trajectory-pointer"
+    || pointer.schemaVersion !== 1
+    || typeof pointer.sessionId !== "string"
+    || pointer.sessionId.length === 0
+  ) {
+    throw new Error("current Telegram session pointer has no durable session id");
+  }
+  const row = db.prepare(
+    "SELECT tenant_id, agent_id, conversation_ref FROM lcd_messages "
+    + "WHERE session_key = ? ORDER BY seq DESC LIMIT 1",
+  ).get(pointer.sessionId);
+  if (
+    typeof row?.tenant_id !== "string"
+    || typeof row?.agent_id !== "string"
+    || typeof row?.conversation_ref !== "string"
+  ) {
+    throw new Error("current Telegram approval authority is unavailable");
+  }
+  return {
+    tenant_id: row.tenant_id,
+    agent_id: row.agent_id,
+    conversation_ref: row.conversation_ref,
+  };
+}

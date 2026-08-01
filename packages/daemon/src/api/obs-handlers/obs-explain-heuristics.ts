@@ -85,10 +85,12 @@ import {
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
+import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
+import { toolAuthorizationDeniedVerdict } from "./obs-explain-authorization-verdict.js";
 import {
   nodeBudgetExceededVerdict,
   spawnCeilingVerdict,
@@ -343,6 +345,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A terminal trust or approval denial is authoritative and must not be
+  // hidden by the generic tool-error catch-all or retained breaker noise.
+  toolAuthorizationDeniedVerdict,
+
   // A structured MCP machine code is the provider's concrete failure verdict.
   // It is upstream of retry-breaker and response-honesty symptoms.
   (s) => {
@@ -372,6 +378,25 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A management tool may finish its runtime mutation while its durable
+  // config write fails. The terminal background event is authoritative over
+  // the foreground handoff success and must name the persistence boundary.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) => candidate.failureCode === "mutation_not_persisted",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "mutation_not_persisted",
+      detail:
+        `${failure.toolName} completed its runtime mutation but the change was not persisted`,
+      suggestedNextSteps: [
+        "inspect the config persistence warning and repair the named config path or secret reference",
+        `retry ${failure.toolName} and confirm the resulting config change survives a daemon restart`,
+      ],
+    };
+  },
+
   // A skill bundle whose declared local references do not resolve inside the
   // approved immutable directory is a concrete import rejection. The closed
   // failure code retains that diagnosis without retaining any source path.
@@ -394,6 +419,34 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // MCP configuration resolves ${NAME} references only from the encrypted
+  // secret store. Preserve the closed failure class across background
+  // promotion so explain can name this pre-handshake rejection without
+  // retaining an arbitrary provider error body.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.toolName === "mcp_manage"
+        && candidate.failureCode === "mcp_secret_reference_missing",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "mcp_secret_reference_missing",
+      detail:
+        "mcp_manage supplied a secret reference whose name is absent from the encrypted secrets store; "
+        + "the background connection failed before the server handshake",
+      suggestedNextSteps: [
+        "compare the candidate's Stored secret name with gateway env_list (names only)",
+        "retry mcp_manage with each env value using the exact ${STORED_SECRET_NAME} reference from trusted operator policy",
+      ],
+    };
+  },
+
+  // A request-relevant capability was selected, but neither the model nor its
+  // deterministic recovery completed an invocation. This acute terminal state
+  // outranks retained breaker noise from earlier turns.
+  toolInvocationStallVerdict,
 
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {

@@ -296,6 +296,7 @@ async function reconnectionLoop(
         qualifiedName: qualifyToolName(serverName, tool.name),
         description: tool.description,
         inputSchema: tool.inputSchema as Record<string, unknown>,
+        ...(tool.annotations !== undefined && { annotations: tool.annotations }),
       }));
 
       // Wire lifecycle callbacks for reconnection
