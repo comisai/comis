@@ -30,6 +30,7 @@ const skills: PromptSkillCapability[] = [
     description:
       "For skill discovery, including elliptical follow-ups such as find something that does when the preceding turn names the task.",
     replacesPackages: [],
+    requiredBins: ["git"],
   },
   {
     name: "image-generation",
@@ -56,7 +57,8 @@ describe("prompt skill request routing", () => {
     });
 
     expect(selected).toEqual(["find-skills"]);
-    expect(deferral.requestRelevantToolNames).toContain("read");
+    expect(deferral.requestRelevantToolNames).toEqual(["read", "exec"]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual(["exec"]);
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/find-skills/SKILL.md",
     ]);

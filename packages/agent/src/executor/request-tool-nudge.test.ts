@@ -125,6 +125,7 @@ describe("runRequestToolNudge", () => {
       requestRelevantToolNames: ["test_read_only_tool"],
       requestRelevantPromptSkillNames: ["find-skills"],
       requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["exec"],
     });
 
     const outcome = await runRequestToolNudge(deps);
@@ -132,6 +133,10 @@ describe("runRequestToolNudge", () => {
     expect(deps.session.prompt).toHaveBeenCalledTimes(1);
     expect(deps.session.prompt).toHaveBeenCalledWith(
       expect.stringContaining("/skills/find-skills/SKILL.md"),
+      expect.anything(),
+    );
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/required workflow tools.*exec/iu),
       expect.anything(),
     );
     expect(outcome.outcome).toBe("recovered");
