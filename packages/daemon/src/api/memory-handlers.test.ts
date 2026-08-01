@@ -1262,6 +1262,8 @@ describe("createMemoryHandlers - diagnostics", () => {
       expect(result.records).toHaveLength(0);
       expect(result.tracingEnabled).toBe(false);
       expect(result.hint).toContain("diagnostics.recallTrace.enabled");
+      expect(result.hint).not.toContain("defaults to false");
+      expect(result.hint).toContain("disabled for this runtime");
     });
 
     it("an enabled recorder with no matching traces hints 're-run', not 'enable'", async () => {
