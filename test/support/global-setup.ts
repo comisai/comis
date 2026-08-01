@@ -99,7 +99,7 @@ function cleanTestArtifacts(removeResultsFile: boolean): void {
 export async function setup(): Promise<void> {
   cleanTestArtifacts(true);
   // Pre-seed the shared embedding-model cache ONCE so per-fork daemon boots
-  // hard-link it (via seedModelCache) instead of each downloading the ~146 MB
+  // hard-link it (via seedModelCache) instead of each downloading the ~635 MB
   // GGUF in parallel — the cause of the chronic CI "Hook timed out" failures.
   await ensureSharedModelCache();
 }

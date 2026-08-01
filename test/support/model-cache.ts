@@ -4,22 +4,20 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * Each test daemon boots on its own throwaway dataDir (see the D14
+ * Each test daemon boots on its own throwaway dataDir (see the
  * single-instance-lock rationale in `daemon-harness.ts`). The daemon resolves
  * its local embedding/reranker models dir as `<dataDir>/models` (Zod default
  * `embedding.local.modelsDir = "models"`, resolved via `safePath(dataDir,
  * "models")`). Because every fork gets a fresh `mkdtempSync` dataDir, every
- * test daemon with local embedding enabled re-downloads the ~139 MB
- * `nomic-embed-text-v1.5` GGUF (and, when the reranker auto-ons, the ~606 MB
+ * test daemon with local embedding enabled re-downloads the ~635 MB `bge-m3`
+ * GGUF (and, when the reranker auto-ons, the ~606 MB
  * `bge-reranker-v2-m3` GGUF) from Hugging Face into that temp dir.
  *
  * On a developer machine that is fatal in two ways:
- *   1. Disk: 30+ parallel test daemons each writing a 139 MB model into temp
+ *   1. Disk: 30+ parallel test daemons each writing a 635 MB model into temp
  *      exhausts the volume → `ENOSPC` cascades that fail hundreds of files.
- *   2. Latency: a cold 139 MB download over a ~2-3 MB/s link takes ~50-60 s —
- *      right at the suite's 60 s `hookTimeout`, so daemon `beforeAll` boots
- *      intermittently time out (observed: `gateway-auth` / `tool-link` files
- *      timing out at exactly 60003 ms while the model downloaded).
+ *   2. Latency: a cold model download can exceed the suite's 60 s
+ *      `hookTimeout`, so daemon `beforeAll` boots intermittently time out.
  *
  * THE FIX
  * -------
@@ -92,7 +90,7 @@ export function seedModelCache(dataDir: string): void {
  * as before (degraded, never broken).
  */
 const DEFAULT_EMBEDDING_MODEL_URI =
-  "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf";
+  "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf";
 
 /** Cap the one-time download so a stalled network can never wedge globalSetup
  *  longer than the per-fork-download fallback would have cost anyway. */
@@ -104,7 +102,7 @@ const MODEL_CACHE_DOWNLOAD_TIMEOUT_MS = 240_000;
  *
  * `seedModelCache` is a no-op when `~/.comis/models` is empty — the case on CI
  * runners and fresh checkouts. There, every parallel test daemon downloads the
- * ~146 MB embedding GGUF into its own throwaway dataDir simultaneously,
+ * ~635 MB embedding GGUF into its own throwaway dataDir simultaneously,
  * saturating disk/network so `beforeAll` daemon boots exceed the 60 s
  * `hookTimeout` (the chronic CI failure: integration files failing with
  * "Hook timed out", zero assertion failures).
@@ -125,7 +123,7 @@ export async function ensureSharedModelCache(): Promise<void> {
     const cacheDir = join(homedir(), ".comis", "models");
     mkdirSync(cacheDir, { recursive: true });
     // Already cached → nothing to download; seedModelCache will link it.
-    if (readdirSync(cacheDir).some((n) => /nomic-embed.*\.gguf$/i.test(n))) return;
+    if (readdirSync(cacheDir).some((n) => /bge-m3.*\.gguf$/i.test(n))) return;
     const llamaCpp = (await import("node-llama-cpp")) as {
       resolveModelFile: (uri: string, dir: string) => Promise<string>;
     };
