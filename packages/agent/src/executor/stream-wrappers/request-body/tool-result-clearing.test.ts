@@ -42,7 +42,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 1: only last assistant message keeps thinking blocks
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     expect(cleared).toBe(2); // 2 thinking blocks cleared from first 2 assistant messages
     // First assistant: thinking removed, text preserved
@@ -71,7 +71,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 1: first assistant beyond window
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     expect(cleared).toBe(1); // Only non-redacted thinking cleared
     const firstAssistantContent = messages[1]!.content as any[];
@@ -94,7 +94,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
       { role: "assistant", content: [{ type: "text", text: "Latest" }] },
     ];
 
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     expect(cleared).toBe(1);
     const content = messages[1]!.content as any[];
@@ -119,7 +119,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 5: all 2 assistant messages fit within window
-    const cleared = clearStaleThinkingBlocks(messages, 5);
+    const cleared = clearStaleThinkingBlocks(messages, 5, 0);
 
     expect(cleared).toBe(0);
     // Both messages should retain their thinking blocks
@@ -147,7 +147,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 1: first 2 assistants beyond window, 3rd within
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     // First assistant: 2 thinking blocks cleared, second assistant: 1 thinking cleared
     expect(cleared).toBe(3);
@@ -672,5 +672,58 @@ describe("clearStaleToolResults COMPACTABLE_TOOL_NAMES (pure) — emitted-name m
     expect(a.find(b => b.type === "text").text).toBe(bigAssistantText);
     // The read tool_result WAS cleared (it is compactable + outside the window).
     expect((messages[2]!.content as any[])[0].text).toBe(PLACEHOLDER);
+  });
+});
+
+describe("clearStaleThinkingBlocks — unknown cache fence must fail SAFE", () => {
+  // Live incident (comis-moshe, 2026-08-01): a short-turn Hebrew chat never met the
+  // minTokens gap, so NO message breakpoint was ever placed ("Cache fence unset in
+  // mature session" x6) and the fence stayed -1. Every fence guard is
+  // `if (idx <= fenceIndex) continue`, which with fenceIndex=-1 protects NOTHING, so the
+  // sliding keepWindow cleared thinking from one ALREADY-CACHED assistant message per turn
+  // ("Unstable prefix detected" x25, firstDivergentIndex marching 3 -> 11 -> 19,
+  // assistant|b3|t0 -> b2|t0). The cached prefix mutated every turn, so cache_read was 0 on
+  // 38 of 71 calls and a ~190K-token cache_write was re-paid each turn: $30.64 of $32.22.
+  //
+  // Invariant: when the cached extent is UNKNOWN, already-sent content must be treated as
+  // possibly-cached and left byte-stable.
+  const A = (i: number) => ({
+    role: "assistant",
+    content: [{ type: "thinking", thinking: `reasoning ${i}` }, { type: "text", text: `a${i}` }],
+  });
+  const U = (i: number) => ({ role: "user", content: [{ type: "text", text: `u${i}` }] });
+  const sig = (m: Record<string, unknown>) =>
+    `${m.role}|b${Array.isArray(m.content) ? (m.content as unknown[]).length : 0}`;
+
+  it("keeps already-sent assistant messages byte-stable across turns when the fence is unset", () => {
+    const keepWindow = 3;
+    let msgs: Array<Record<string, unknown>> = [];
+    const seen: string[][] = [];
+
+    // Each iteration is one EXECUTION: append a turn, then run the pass as production does.
+    for (let turn = 1; turn <= 8; turn++) {
+      msgs = [...msgs.map(m => ({ ...m, content: (m.content as unknown[]).slice() })), U(turn), A(turn)];
+      clearStaleThinkingBlocks(msgs, keepWindow, -1); // -1 == fence unset / cached extent unknown
+      seen.push(msgs.map(sig));
+    }
+
+    const drift: string[] = [];
+    for (let e = 1; e < seen.length; e++) {
+      const prev = seen[e - 1]!, cur = seen[e]!;
+      for (let i = 0; i < prev.length; i++) {
+        if (prev[i] !== cur[i]) drift.push(`turn${e}->${e + 1} idx${i}: ${prev[i]} -> ${cur[i]}`);
+      }
+    }
+    expect(drift).toEqual([]);
+  });
+
+  it("still clears beyond the keep window once the cached extent is known", () => {
+    const msgs: Array<Record<string, unknown>> = [
+      U(1), A(1), U(2), A(2), U(3), A(3), U(4), A(4),
+    ];
+    // Fence at 1 == messages 0..1 are cached; 2.. are safe to clear.
+    const cleared = clearStaleThinkingBlocks(msgs, 1, 1);
+    expect(cleared).toBeGreaterThan(0);
+    expect((msgs[1]!.content as Array<Record<string, unknown>>).some(b => b.type === "thinking")).toBe(true);
   });
 });
