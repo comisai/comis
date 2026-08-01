@@ -60,12 +60,14 @@ fi
 #          sessions/memory.db/logs for real.
 #   GW_PORT — free port or one already owned by that exact data root.
 #   SERVICE — dedicated lifecycle name; `local-up.sh` refuses `comis`.
+#   COMIS_TRAJECTORY_DIR — canonical absolute path inside DATA; defaults to `$DATA/trajectories`.
 #   LOCAL_SUPERVISOR — auto (pm2 when it manages $SERVICE, else tmux when installed, else direct) |
 #          pm2 | tmux | direct.
 #
 # : "${DATA:=$HOME/.comis-live}"; export DATA
 # : "${GW_PORT:=4767}"; export GW_PORT
 # : "${SERVICE:=comis-local-drive}"; export SERVICE
+# : "${COMIS_TRAJECTORY_DIR:=$DATA/trajectories}"; export COMIS_TRAJECTORY_DIR
 # : "${LOCAL_SUPERVISOR:=auto}"; export LOCAL_SUPERVISOR
 
 # ---- Both rigs --------------------------------------------------------------------------------

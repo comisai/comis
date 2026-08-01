@@ -200,8 +200,10 @@ Explicit shell values take precedence over `.live-env` and the rendered `.rig-en
 compare the requested and effective tuple. `local-up.sh` additionally requires the parsed config root and
 port to match it, and refuses before build, emulator, config, or process mutation if any value differs.
 They also refuse the `~/.comis` tree, `SERVICE=comis`, an unowned listening port, or a pm2 service name
-bound to another data root. Later helpers may reuse the rendered selection, but every scored campaign
-command should keep the explicit tuple visible in its transcript.
+bound to another data root. Local daemon launches pin `COMIS_TRAJECTORY_DIR` to `$DATA/trajectories` by
+default and reject non-canonical or config/environment trajectory paths outside `DATA` before touching a
+supervisor. Later helpers may reuse the rendered selection, but every scored campaign command should keep
+the explicit tuple visible in its transcript.
 
 **What it is for.** The remote round-trip costs an ssh hop per inject and a deploy+restart per patch.
 Local mode removes both: edit `packages/*/src`, `pnpm build`, `./restart-daemon.sh`, re-drive. Use it to

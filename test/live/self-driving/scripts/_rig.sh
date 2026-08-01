@@ -117,7 +117,7 @@ rig_load_env() {
   local -a _explicit_values=()
   local -a _selected_keys=()
   local -a _selected_values=()
-  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS EMU_LOG"
+  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_TRAJECTORY_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS EMU_LOG"
   local _explicit_keys_source="$_rig_keys COMIS_CONFIG_PATHS COMIS_CONFIG GW_HOST WH_BASE WH_PATH SKIP_BUILD PROTECT_CONTINUITY_AFTER_RESTART ALLOW_CONTINUITY_WIPE CONTINUITY_SENTINEL WIPE_CRONS"
 
   for _key in $_explicit_keys_source; do
@@ -180,6 +180,7 @@ rig_defaults() {
     : "${PKG:=$REPO}"
     : "${SERVICE:=comis}"
     : "${GW_PORT:=4766}"
+    : "${COMIS_TRAJECTORY_DIR:=$DATA/trajectories}"
     : "${CHATID:=678314278}"
     # No rsync: the emulator runs straight out of the checkout.
     : "${EMU_DIR:=$REPO}"
@@ -202,6 +203,7 @@ rig_defaults() {
   export COMIS_USER COMIS_HOME DATA PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON
   [ -n "${REPO:-}" ] && export REPO
   [ -n "${LOCAL_SUPERVISOR:-}" ] && export LOCAL_SUPERVISOR
+  [ -n "${COMIS_TRAJECTORY_DIR:-}" ] && export COMIS_TRAJECTORY_DIR
   return 0
 }
 
@@ -220,6 +222,45 @@ rig_canonical_path() {
     }
     process.stdout.write(path.resolve(fs.realpathSync.native(existing), ...missing));
   ' "$1"
+}
+
+rig_local_trajectory_dir() {
+  local _selected="${COMIS_TRAJECTORY_DIR:-${DATA:-}/trajectories}"
+  local _canonical=""
+  local _canonical_data=""
+
+  if ! rig_is_local; then
+    echo "trajectory isolation is a local-rig boundary" >&2
+    return 2
+  fi
+  case "$_selected" in
+  /*) ;;
+  *)
+    echo "COMIS_TRAJECTORY_DIR must be an absolute path inside DATA (got '$_selected')" >&2
+    return 2
+    ;;
+  esac
+  case "$_selected" in
+  *"'"*)
+    echo "COMIS_TRAJECTORY_DIR must not contain a single quote" >&2
+    return 2
+    ;;
+  esac
+  _canonical="$(rig_canonical_path "$_selected")" || return 2
+  _canonical_data="$(rig_canonical_path "${DATA:-}")" || return 2
+  if [ "$_selected" != "$_canonical" ]; then
+    echo "COMIS_TRAJECTORY_DIR must be canonical and symlink-free (use '$_canonical')" >&2
+    return 2
+  fi
+  case "$_canonical" in
+  "$_canonical_data" | "$_canonical_data"/*)
+    printf '%s' "$_canonical"
+    ;;
+  *)
+    echo "COMIS_TRAJECTORY_DIR must stay inside the isolated DATA root '$_canonical_data'" >&2
+    return 2
+    ;;
+  esac
 }
 
 rig_assert_isolated_local_selection() {

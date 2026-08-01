@@ -587,6 +587,51 @@ describe("local rig mode", () => {
     expect(`${wrongPort.stdout}${wrongPort.stderr}`).toContain(
       "config gateway.port must be exactly 4882",
     );
+
+    const outsideTrajectory = resolve(directory, "..", "everyday-trajectories");
+    writeFileSync(
+      configPath,
+      [
+        `dataDir: ${directory}`,
+        "gateway:",
+        "  port: 4882",
+        "diagnostics:",
+        "  trajectory:",
+        `    dir: ${outsideTrajectory}`,
+        "",
+      ].join("\n"),
+    );
+    const wrongTrajectory = spawnSync(
+      "node",
+      [LOCAL_CONFIG, "validate", configPath, directory, "4882"],
+      { encoding: "utf8", env: { ...process.env } },
+    );
+    expect(wrongTrajectory.status).not.toBe(0);
+    expect(`${wrongTrajectory.stdout}${wrongTrajectory.stderr}`).toContain(
+      "diagnostics.trajectory.dir must stay inside the isolated data root",
+    );
+
+    writeFileSync(
+      configPath,
+      [
+        `dataDir: ${directory}`,
+        "gateway:",
+        "  port: 4882",
+        "observability:",
+        "  trajectory:",
+        `    dirOverride: ${outsideTrajectory}`,
+        "",
+      ].join("\n"),
+    );
+    const wrongObservabilityTrajectory = spawnSync(
+      "node",
+      [LOCAL_CONFIG, "validate", configPath, directory, "4882"],
+      { encoding: "utf8", env: { ...process.env } },
+    );
+    expect(wrongObservabilityTrajectory.status).not.toBe(0);
+    expect(
+      `${wrongObservabilityTrajectory.stdout}${wrongObservabilityTrajectory.stderr}`,
+    ).toContain("observability.trajectory.dirOverride must stay inside the isolated data root");
   });
 
   it("loads the rendered rig selection in every standalone local gate", () => {
@@ -748,6 +793,69 @@ describe("local rig mode", () => {
     expect(restart).toMatch(
       /COMIS_DATA_DIR=['"]?\$DATA['"]?[^]*COMIS_CONFIG_PATHS=['"]?\$DATA\/config\.yaml/u,
     );
+  });
+
+  it("rejects inherited trajectory paths outside the isolated data root", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-trajectory-outside-");
+    const data = resolve(directory, "isolated-data");
+    const home = resolve(directory, "operator-home");
+    const everydayTrajectory = resolve(home, ".comis", "trajectories");
+    mkdirSync(data, { recursive: true });
+    mkdirSync(everydayTrajectory, { recursive: true });
+
+    const result = spawnSync("bash", [RESTART_DAEMON], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        RIG_MODE: "local",
+        DATA: data,
+        COMIS_DATA_DIR: data,
+        COMIS_TRAJECTORY_DIR: everydayTrajectory,
+        GW_PORT: "4883",
+        SERVICE: "comis-local-trajectory",
+        LOCAL_SUPERVISOR: "direct",
+      },
+    });
+
+    expect(result.status).toBe(2);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "COMIS_TRAJECTORY_DIR must stay inside the isolated DATA root",
+    );
+    expect(result.stdout).not.toContain("supervisor:");
+    expect(result.stdout).not.toContain("no daemon dist found");
+  });
+
+  it("accepts canonical trajectory paths inside the isolated data root", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-trajectory-inside-");
+    const data = resolve(directory, "isolated-data");
+    const trajectory = resolve(data, "custom-trajectories");
+    mkdirSync(data, { recursive: true });
+
+    const output = runRigHelper('rig_defaults; rig_local_trajectory_dir', {
+      HOME: directory,
+      RIG_MODE: "local",
+      DATA: data,
+      COMIS_TRAJECTORY_DIR: trajectory,
+      SERVICE: "comis-local-trajectory",
+    });
+
+    expect(output).toBe(trajectory);
+  });
+
+  it("pins the trajectory path across every local supervisor branch", () => {
+    const restart = readFileSync(RESTART_DAEMON, "utf8");
+    const guard = restart.indexOf('COMIS_TRAJECTORY_DIR="$(rig_local_trajectory_dir)"');
+    const pm2 = restart.indexOf('COMIS_TRAJECTORY_DIR="$COMIS_TRAJECTORY_DIR"');
+    const tmux = restart.indexOf("COMIS_TRAJECTORY_DIR='$COMIS_TRAJECTORY_DIR'");
+    const directOuter = restart.indexOf('COMIS_LOCAL_TRAJECTORY_DIR="$COMIS_TRAJECTORY_DIR"');
+    const directChild = restart.indexOf('COMIS_TRAJECTORY_DIR="$COMIS_LOCAL_TRAJECTORY_DIR"');
+
+    expect(guard).toBeGreaterThan(0);
+    expect(pm2).toBeGreaterThan(guard);
+    expect(tmux).toBeGreaterThan(guard);
+    expect(directOuter).toBeGreaterThan(guard);
+    expect(directChild).toBeGreaterThan(directOuter);
   });
 
   it("blocks the baseline while first-run onboarding is still pending", () => {

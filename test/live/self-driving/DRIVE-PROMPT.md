@@ -122,9 +122,11 @@ Before driving:
    `test/live/self-driving/scripts/`, bring up the primary with the equivalent of:
    `RIG_MODE=local DATA=<primary-absolute-path> COMIS_DATA_DIR=<same-path> COMIS_CONFIG_PATHS=<same-path>/config.yaml GW_PORT=<primary-free-port> SERVICE=<primary-unique-service> ./local-up.sh`.
    `local-up.sh` must parse the authoritative config and fail before build, emulator, config, or daemon
-   mutation unless its effective `dataDir` and `gateway.port` match that explicit tuple. Then require
-   `rig-doctor.sh` and `verify-build.sh` to pass with the same explicit tuple. There is no local deploy
-   step: this checkout's built `dist/` is the build under test.
+   mutation unless its effective `dataDir` and `gateway.port` match that explicit tuple. Every local daemon
+   launch must also pin `COMIS_TRAJECTORY_DIR` to a canonical path inside that same root and reject config
+   or environment trajectory overrides that escape it. Then require `rig-doctor.sh` and `verify-build.sh`
+   to pass with the same explicit tuple. There is no local deploy step: this checkout's built `dist/` is
+   the build under test.
 6. Establish a clean initial state once, then enable `PROTECT_CONTINUITY_AFTER_RESTART=1`. From that point,
    restart the primary daemon normally and use only the separate scratch root for clean-slate or
    destructive reproductions.
