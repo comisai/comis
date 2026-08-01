@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PromptSkillCapability } from "@comis/core";
+import { registerToolMetadata, type PromptSkillCapability } from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
@@ -24,6 +24,8 @@ function result(): ExcludeDeferralResult {
   };
 }
 
+registerToolMetadata("find", { isReadOnly: true });
+
 const skills: PromptSkillCapability[] = [
   {
     name: "find-skills",
@@ -42,6 +44,7 @@ const skills: PromptSkillCapability[] = [
 describe("prompt skill request routing", () => {
   it("routes an elliptical discovery follow-up through the skill-loading read tool", () => {
     const deferral = result();
+    deferral.requestRelevantToolNames.push("find");
 
     const selected = applyPromptSkillRequestRouting(deferral, {
       capabilityClass: "nano",
