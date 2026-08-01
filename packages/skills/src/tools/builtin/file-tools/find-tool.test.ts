@@ -61,6 +61,16 @@ afterEach(async () => {
   await fs.rm(workspaceDir, { recursive: true, force: true });
 });
 
+describe("tool selection contract", () => {
+  it("distinguishes workspace file lookup from skill discovery", () => {
+    const tool = createComisFindTool(workspaceDir);
+
+    expect(tool.description).toMatch(/workspace files/iu);
+    expect(tool.description).toMatch(/not.*skills or capabilities/iu);
+    expect(tool.description).toMatch(/find-skills/iu);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // mtime sort (most recently modified first)
 // ---------------------------------------------------------------------------
