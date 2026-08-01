@@ -134,7 +134,7 @@ later re-embeds existing memories automatically (`embedding.autoReindex`).
 | `embedding.enabled` | boolean | `true` | Enable embedding generation for meaning-based search |
 | `embedding.provider` | string | `"auto"` | Provider: `auto`, `local`, or `openai` |
 | `embedding.multilingual` | boolean | _(inferred from model id)_ | Advisory only: declares the embedder multilingual for the `comis system-health` health line — gates no behavior |
-| `embedding.local.modelUri` | string | `nomic-embed-text-v1.5` GGUF | Local GGUF model (HuggingFace `hf:` URI or path); set a `bge-m3` GGUF for multilingual recall |
+| `embedding.local.modelUri` | string | `bge-m3` GGUF | Local GGUF model (HuggingFace `hf:` URI or path); select nomic explicitly for a smaller English-centric model |
 | `embedding.local.gpu` | string | `"auto"` | GPU acceleration: `auto`, `metal`, `cuda`, `vulkan`, or `false` |
 | `embedding.local.contextSize` | number | `2048` | Maximum text length the local model can process (in tokens) |
 | `embedding.openai.model` | string | `"text-embedding-3-small"` | OpenAI embedding model to use |

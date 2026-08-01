@@ -1513,7 +1513,7 @@ describe("createMemoryRecall — recall-trace capture", () => {
     expect(typeof rec.durationMs).toBe("number");
   });
 
-  it("DEFAULT-OFF: with recallTrace absent, recall output is byte-identical to today and no record is written (optional-dep no-op path)", async () => {
+  it("with the optional recorder absent, recall output remains identical and no trace is written", async () => {
     const input = [
       makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW - 10 * 86_400_000 }),
       makeResult("b", { base: 0.6, trustLevel: "system", createdAt: NOW - 1 * 86_400_000 }),
@@ -4557,7 +4557,7 @@ describe("createMemoryRecall — security gates upstream of fusion (bypass-attem
 /**
  * The documented default recall pipeline WITHOUT the provenance pass, used as the
  * byte-identity / un-down-weighted reference. Mirrors the reference computation in
- * the recall-trace DEFAULT-OFF test (fuse → score → trust-filter → dedup), with
+ * the absent-recorder test (fuse → score → trust-filter → dedup), with
  * DIST_NEUTRAL_SCORING so the only score deltas a test can observe are the pass's ×0.5.
  */
 async function runReference(input: MemorySearchResult[]): Promise<MemorySearchResult[]> {
