@@ -5,6 +5,7 @@ import {
   emitObservationalEventSafely,
   getToolMetadata,
   matchesToolMutationRequest,
+  scrubSecretsFromText,
   wrapExternalContent,
   type ClockPort,
   type ComisLogger,
@@ -62,6 +63,7 @@ export interface RunRequestToolNudgeDeps {
 
 const SUBMODULE = "executor.request-tool-nudge";
 const MAX_RECOVERY_GUIDANCE_CHARS = 800;
+const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function visibleTextOf(content: unknown): string {
@@ -71,6 +73,38 @@ function visibleTextOf(content: unknown): string {
     .filter((block) => block?.type === "text" && typeof block.text === "string")
     .map((block) => block.text as string)
     .join(" ");
+}
+
+function workflowArgumentHint(context: string): string | undefined {
+  const terms = context.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const hint = terms.slice(-4).join(" ");
+  return hint.length > 0 ? hint : undefined;
+}
+
+function latestWorkflowToolReceipt(
+  messages: readonly unknown[],
+  workflowToolNames: readonly string[],
+): string | undefined {
+  const names = new Set(workflowToolNames);
+  const entries = messages as Array<{
+    role?: unknown;
+    toolName?: unknown;
+    content?: unknown;
+    isError?: unknown;
+  }>;
+  for (const entry of [...entries].reverse()) {
+    if (
+      entry.role !== "toolResult"
+      || typeof entry.toolName !== "string"
+      || !names.has(entry.toolName)
+      || entry.isError === true
+    ) continue;
+    const receipt = scrubSecretsFromText(visibleTextOf(entry.content)).text
+      .slice(0, MAX_WORKFLOW_RECEIPT_CHARS)
+      .trim();
+    if (receipt.length > 0) return receipt;
+  }
+  return undefined;
 }
 
 function hasToolCallBlock(content: unknown): boolean {
@@ -149,6 +183,11 @@ function buildDirective(
                 source: "channel_history",
                 includeWarning: true,
               }),
+              ...(workflowArgumentHint(promptSkillWorkflowContext)
+                ? [
+                    `Concrete workflow argument hint: ${JSON.stringify(workflowArgumentHint(promptSkillWorkflowContext))}. Use these prior-request terms instead of terms from the current elliptical wording.`,
+                  ]
+                : []),
             ]
           : []),
       ]
@@ -204,12 +243,18 @@ function buildPromptSkillWorkflowDirective(
   ].join("\n");
 }
 
-function buildPromptSkillResultNarrationDirective(): string {
+function buildPromptSkillResultNarrationDirective(receipt?: string): string {
   return [
     "[comis: continuation — narrate the completed prompt skill workflow]",
     "A required prompt-skill workflow tool succeeded in this turn.",
     "Give the final user-facing answer now from that successful receipt.",
     "Follow the loaded procedure's response contract exactly and preserve canonical identifiers from the result.",
+    ...(receipt
+      ? [
+          "The relevant successful workflow receipt is:",
+          wrapExternalContent(receipt, { source: "unknown", includeWarning: true }),
+        ]
+      : []),
     "Do not invoke another tool, ask for context already supplied, or replace a specific result with a generic capability.",
   ].join("\n");
 }
@@ -396,7 +441,9 @@ export async function runRequestToolNudge(
     );
     continuation = await runContinuationTurn(
       deps.session,
-      buildPromptSkillResultNarrationDirective(),
+      buildPromptSkillResultNarrationDirective(
+        latestWorkflowToolReceipt(deps.messages, promptSkillWorkflowTools),
+      ),
       deps.guardProviderDispatch,
       { restrictToToolNames: [] },
     );
