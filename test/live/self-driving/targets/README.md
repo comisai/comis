@@ -4,7 +4,7 @@ Runtime-contract targets exercise domain-neutral mechanics with synthetic data. 
 
 Runtime-contract and worked-example targets:
 
-- `real-user-everyday-assistant.md` — the pinned spec for the `DRIVE-PROMPT.md §1` real-user Telegram drive: the everyday relationship arcs plus the whole-surface power arcs (sub-agents, DAG, background work, learning, context stress, MCP and skill installation, coding, scheduling, heartbeat and proactive tasks, multi-agent, autonomy), with per-arc predicates/oracles/HARD oracles and the capability coverage matrix.
+- `real-user-everyday-assistant.md` — the authoritative A/B/C arc, oracle, polarity, trap, and capability-coverage spec for the local real-user Telegram drive launched by `DRIVE-PROMPT.md`.
 - `generic-runtime-campaign.md` — end-to-end generic-agent boundary, security, locale, policy-snapshot, prompt-compiler, MCP-trust, health-surface, and restart-provenance acceptance.
 - `EXAMPLE-cron-wake-gate.md` — scheduler and wake-gate mechanics.
 - `EXAMPLE-verified-learning.md` — content-free learning and outcome evidence.

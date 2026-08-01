@@ -1,3 +1,4 @@
+/* eslint-disable security/detect-non-literal-fs-filename -- All caller-selected paths are canonicalized and containment-checked before file access. */
 import { randomBytes } from "node:crypto";
 import {
   appendFileSync,

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Per-rig live-test config. THIS is where your rig choice, ssh target and gateway token go.
 #
 #   Setup:  cp .live-env.example .live-env   &&  $EDITOR .live-env   (it's gitignored — never committed)
@@ -52,7 +53,7 @@ if [ "${RIG_MODE:-remote}" = remote ]; then
 fi
 
 # ---- LOCAL rig --------------------------------------------------------------------------------
-# Uncomment the block below (and set RIG_MODE=local above) to drive this machine instead. Every
+# Uncomment the block below (and set RIG_MODE=local above) to drive this machine instead. These
 # values are examples for standalone helpers; `local-up.sh` still requires all three isolation selectors
 # explicitly so a stale file cannot select an everyday installation:
 #

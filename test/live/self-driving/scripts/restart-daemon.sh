@@ -136,6 +136,7 @@ if rig_is_local; then
       fi
       echo "supervisor: direct ($ENTRY)"
       pid_file="${LOCAL_DAEMON_PID_FILE:-$DATA/.local-daemon.pid}"
+      # shellcheck disable=SC2016 # trap variables expand inside the nested supervisor shell
       COMIS_LOCAL_DATA="$DATA" COMIS_LOCAL_ENTRY="$ENTRY" COMIS_LOCAL_PID_FILE="$pid_file" COMIS_LOCAL_TRAJECTORY_DIR="$COMIS_TRAJECTORY_DIR" \
         nohup bash -c '
           trap '\''[ -n "${daemon_pid:-}" ] && kill "$daemon_pid" 2>/dev/null || true; rm -f "$COMIS_LOCAL_PID_FILE"; exit 143'\'' TERM INT
