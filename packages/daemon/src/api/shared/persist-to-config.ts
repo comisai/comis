@@ -468,7 +468,7 @@ export async function persistToConfig(
         traceId: opts.traceId,
         summary: `${opts.actionType}: ${opts.entityId}`,
       };
-      deps.configGitManager.commit(meta).then(() => {
+      await deps.configGitManager.commit(meta).then(() => {
         deps.logger.debug({ method: "persistToConfig", durationMs: systemNowMs() - gitStart, outcome: "success" }, "Git commit recorded");
       }).catch((gitErr: unknown) => {
         deps.logger.debug({ method: "persistToConfig", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, hint: "Git commit failed (best-effort)", errorKind: "internal" as const }, "Git commit failed (best-effort)");
