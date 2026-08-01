@@ -61,10 +61,12 @@ Run on THIS MACHINE only:
 - Set `RIG_MODE=local` for every rig command.
 - Do not use SSH, a VPS, remote deployment scripts, systemd, or a real Telegram bot/account.
 - Drive channel behavior only through the loopback Telegram emulator and the real Telegram adapter.
-- Use a dedicated absolute `DATA` directory and a non-conflicting `GW_PORT`. Never use, clean, rewrite,
-  or repoint the operator's everyday `~/.comis` data root.
+- Use separate dedicated absolute `DATA` directories for the primary campaign and destructive scratch
+  verification. Give each root its own free `GW_PORT` and non-default `SERVICE`; never use the service
+  named `comis`, clean or repoint the operator's everyday `~/.comis`, or share a lifecycle owner.
 - Preserve any existing `scripts/.live-env`; do not overwrite user configuration. Prefer explicit
-  per-command overrides or add only the isolated local values needed for this campaign.
+  per-command overrides. The effective values after `.live-env` and rendered rig-env loading must exactly
+  match the selected tuple before any helper mutates config or processes.
 - Never print, log, paste into prompts, or commit provider keys, gateway tokens, master keys, real user
   content, or environment values. Use the encrypted secret store and existing safe CLI flows.
 - Do not push, open a PR, merge, or contact external people. Local commits required by `AGENTS.md` are
@@ -74,9 +76,10 @@ Choose and record a durable campaign root such as:
 
 `test/live/self-driving/runs/real-user-telegram-local-<YYYYMMDD>/`
 
-Keep the isolated Comis data root outside tracked source and record its absolute path in the run's local
-state file. Create a second isolated scratch data root for destructive fix verification. The primary root
-carries the long relationship and must never be wiped after continuity protection is enabled.
+Keep both isolated Comis data roots outside tracked source and record their absolute paths, ports, services,
+and supervisor ownership in the run's local state file. The primary root carries the long relationship and
+must never be wiped after continuity protection is enabled. The scratch tuple must differ in all three
+selection fields and its daemon must be stopped after each destructive proof.
 
 Local macOS cannot prove Linux-only behavior. Mark each affected row explicitly
 `NO-ACCESS: needs Linux rig`; never call it PASS or COMIS-FAIL merely because the local mechanism is
@@ -96,22 +99,28 @@ Before driving:
    `RESULTS-LOG.md`. Plan beyond them and prepare a previous-run matrix diff; do not simply replay their
    conclusions.
 2. Create the run directory and copy the three templates into it as `TEST-PLAN.md`, `RESULTS-LOG.md`, and
-   `FIX-VERIFY-LOG.md`. Add `CAMPAIGN-STATE.md` containing the selected rig paths, port, HEAD, fixture IDs,
-   current stage, next row, and open finding count. These run artifacts are local-only and must contain no
-   credentials or real private data.
+   `FIX-VERIFY-LOG.md`. Add `CAMPAIGN-STATE.md` containing the primary and scratch data roots, their distinct
+   ports and dedicated service names, supervisor ownership, HEAD, fixture IDs, current stage, next row, and
+   open finding count. These run artifacts are local-only and must contain no credentials or real private
+   data.
 3. Use these neutral emulator identities unless the current target spec requires another value:
    U1 owner `678314278` with `admin` trust; U2 housemate `678314279` allowlisted with `user` trust; U3
    stranger `678314299` absent from both allowlist and trust map; G1 group `-1001234567890` containing U1,
    U2, and the emulator bot. Configure `EMU_GROUPS` before emulator launch because groups cannot be added
    later through `/control`.
-4. Initialize the isolated local config through the checked-in setup helpers. Reuse provider credentials
-   only through approved encrypted-secret mechanisms; never copy or expose secret values in commands or
-   artifacts. A genuinely unavailable provider/capability becomes a named NO-ACCESS row rather than a
-   fabricated result.
-5. From `test/live/self-driving/scripts/`, run the equivalent of:
-   `RIG_MODE=local DATA=<isolated-absolute-path> GW_PORT=<free-port> ./local-up.sh`.
-   Then require `rig-doctor.sh` and `verify-build.sh` to pass in the same explicit local environment.
-   There is no local deploy step: this checkout's built `dist/` is the build under test.
+4. Initialize each isolated local config through the checked-in setup helpers with that root's complete
+   explicit `RIG_MODE`/`DATA`/`GW_PORT`/`SERVICE` tuple; never run a bare init command that can select
+   `~/.comis`. Reuse provider credentials only through approved encrypted-secret mechanisms; never copy or
+   expose secret values in commands or artifacts. A genuinely unavailable provider/capability becomes a
+   named NO-ACCESS row rather than a fabricated result.
+5. Before any setup mutation, prove both selected paths are canonical absolute paths distinct from
+   `~/.comis`, both ports are free or already owned by their matching root, both service names are distinct
+   and neither is `comis`, and no same-named pm2 process belongs to another root. From
+   `test/live/self-driving/scripts/`, bring up the primary with the equivalent of:
+   `RIG_MODE=local DATA=<primary-absolute-path> COMIS_DATA_DIR=<same-path> COMIS_CONFIG_PATHS=<same-path>/config.yaml GW_PORT=<primary-free-port> SERVICE=<primary-unique-service> ./local-up.sh`.
+   `local-up.sh` must fail before build, emulator, config, or daemon mutation if its effective tuple differs
+   from those explicit values. Then require `rig-doctor.sh` and `verify-build.sh` to pass with the same
+   explicit tuple. There is no local deploy step: this checkout's built `dist/` is the build under test.
 6. Establish a clean initial state once, then enable `PROTECT_CONTINUITY_AFTER_RESTART=1`. From that point,
    restart the primary daemon normally and use only the separate scratch root for clean-slate or
    destructive reproductions.
@@ -225,9 +234,10 @@ At the first COMIS-FAIL:
    required commit-message rationale. Documentation, prompt, and harness-only edits are test-exempt.
 4. Make the smallest generic-runtime-safe production fix, run focused tests, and commit GREEN. Preserve
    unrelated working-tree changes and never add backward-compatibility shims.
-5. Reproduce from zero on the separate scratch data root, including the real nested on-disk layout when a
-   resolver is involved. Then rebuild, restart the continuity-protected primary daemon, and replay the
-   failing shape there without wiping its relationship.
+5. Reproduce from zero on the separate scratch tuple, including the real nested on-disk layout when a
+   resolver is involved. Stop only the scratch tuple's verified supervisor/PID afterward. Then rebuild,
+   restart the continuity-protected primary daemon with its explicit tuple, and replay the failing shape
+   there without wiping its relationship.
 6. Prove both the success path and forced honest-failure path against dual ground truth.
 7. Close any diagnosis gap exposed by the incident: the next occurrence must be answerable with one or two
    observability calls. Fix misleading hints, missing trajectory/report data, stale harness helpers, or
@@ -257,8 +267,9 @@ including:
   residue;
 - relevant focused tests, architecture/security checks, build, and `pnpm validate` green;
 - every completed repository change committed locally, no `Co-Authored-By:` trailers, no push;
-- the isolated daemon left healthy on the final built code and the operator's everyday Comis/Telegram
-  configuration confirmed untouched.
+- the scratch daemon stopped without touching any other process, the isolated primary daemon left healthy
+  on the final built code, and the operator's everyday Comis/Telegram config and daemon state confirmed
+  unchanged.
 
 Fill `RESULTS-LOG.md` with the exact local rig boundary, initial and final HEAD, provider/model, paths
 without credentials, fixture identities, previous-run diff, resolved capability matrix, pass@k results,
