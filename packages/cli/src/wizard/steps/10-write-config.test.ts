@@ -817,6 +817,34 @@ describe("writeConfigStep", () => {
     });
   });
 
+  it("enables human approvals when setup has an administrator", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      senderTrustEntries: [{ senderId: "12345", level: "admin" }],
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.approvals).toEqual({ enabled: true });
+  });
+
+  it("keeps human approvals disabled when no administrator can resolve them", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      senderTrustEntries: [{ senderId: "12345", level: "user" }],
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.approvals).toBeUndefined();
+  });
+
   it("omits elevatedReply when no senderTrustEntries", async () => {
     const state = populatedState(); // no senderTrustEntries
     const prompter = createMockPrompter();
