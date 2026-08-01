@@ -90,6 +90,7 @@ import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
+import { toolAuthorizationDeniedVerdict } from "./obs-explain-authorization-verdict.js";
 import {
   nodeBudgetExceededVerdict,
   spawnCeilingVerdict,
@@ -343,6 +344,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // A terminal trust or approval denial is authoritative and must not be
+  // hidden by the generic tool-error catch-all or retained breaker noise.
+  toolAuthorizationDeniedVerdict,
 
   // A structured MCP machine code is the provider's concrete failure verdict.
   // It is upstream of retry-breaker and response-honesty symptoms.
