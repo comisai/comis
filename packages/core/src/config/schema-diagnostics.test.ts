@@ -307,20 +307,18 @@ describe("cacheTrace.maxFileBytes config field", () => {
 // ---------------------------------------------------------------------------
 // recallTrace subsection
 //
-// `diagnostics.recallTrace` is the OPT-IN sibling of `cacheTrace` — it gates
-// the per-recall ranking-preview JSONL recorder. Default OFF (distinct
-// from cacheTrace's enabled:true digests) because it records ranking previews
-// for a debug session. It has NO includeMessages/includeSystem slot: the
-// recorder always full-sanitizes (no raw-content opt-in).
+// `diagnostics.recallTrace` is the bounded, sanitized sibling of `cacheTrace`.
+// It is available from first boot so a recall incident can be explained without
+// changing configuration after the evidence has already been lost. It has NO
+// includeMessages/includeSystem slot: the recorder always full-sanitizes.
 // ---------------------------------------------------------------------------
 
 describe("DiagnosticsConfigSchema.recallTrace — fields and defaults", () => {
-  it("empty parse populates recallTrace with enabled:false (opt-in) + 50 MB cap", () => {
+  it("empty parse enables bounded recall diagnostics from first boot", () => {
     const result = DiagnosticsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Opt-IN: distinct from cacheTrace/trajectory which default enabled:true.
-      expect(result.data.recallTrace.enabled).toBe(false);
+      expect(result.data.recallTrace.enabled).toBe(true);
       expect(result.data.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
       expect(result.data.recallTrace.filePath).toBeUndefined();
     }
@@ -330,16 +328,16 @@ describe("DiagnosticsConfigSchema.recallTrace — fields and defaults", () => {
     const result = DiagnosticsConfigSchema.safeParse(undefined);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.recallTrace.enabled).toBe(false);
+      expect(result.data.recallTrace.enabled).toBe(true);
       expect(result.data.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
     }
   });
 
-  it("a minimal AppConfig with NO diagnostics key still populates recallTrace (existing YAML parses unchanged)", () => {
+  it("a minimal AppConfig enables recall diagnostics without an explicit diagnostics key", () => {
     const result = AppConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (!result.success) throw new Error("unreachable");
-    expect(result.data.diagnostics.recallTrace.enabled).toBe(false);
+    expect(result.data.diagnostics.recallTrace.enabled).toBe(true);
     expect(result.data.diagnostics.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
   });
 
