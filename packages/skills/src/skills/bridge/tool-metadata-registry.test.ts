@@ -1764,6 +1764,15 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
       ),
     ).toBe(true);
   });
+
+  it("sessions_spawn recognizes a natural helper delegation request", () => {
+    expect(
+      matchesToolMutationRequest(
+        "sessions_spawn",
+        "have one of your helpers use that new service",
+      ),
+    ).toBe(true);
+  });
 });
 
 // ===========================================================================
