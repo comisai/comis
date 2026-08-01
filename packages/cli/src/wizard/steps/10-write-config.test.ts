@@ -162,6 +162,29 @@ describe("writeConfigStep", () => {
     );
   });
 
+  it("writes every configuration artifact under the requested config directory", async () => {
+    const state = {
+      ...populatedState(),
+      configDir: "/custom/config",
+    } as WizardState;
+
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    expect(renameSync).toHaveBeenCalledWith(
+      "/custom/config/config.yaml.tmp",
+      "/custom/config/config.yaml",
+    );
+    expect(mkdirSync).toHaveBeenCalledWith(
+      "/custom/config",
+      expect.objectContaining({ recursive: true, mode: 0o700 }),
+    );
+    expect(vi.mocked(writeFileSync).mock.calls).toContainEqual([
+      "/custom/config/.env",
+      expect.any(String),
+      { mode: 0o600 },
+    ]);
+  });
+
   it(".env file written with API key env var", async () => {
     const prompter = createMockPrompter();
 

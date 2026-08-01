@@ -1327,8 +1327,9 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
 
     const startState: WizardState = {
       ...INITIAL_STATE,
+      configDir: "/custom/config",
       provider: { id: "openai-codex" } as ProviderConfig,
-    };
+    } as WizardState;
 
     const result = await credentialsStep.execute(startState, prompter);
 
@@ -1351,8 +1352,8 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
       displayName: "Offline User",
       version: 1,
     });
-    expect(arg.dataDir.endsWith("/.comis")).toBe(true);
-    expect(arg.envFilePath.endsWith("/.comis/.env")).toBe(true);
+    expect(arg.dataDir).toBe("/custom/config");
+    expect(arg.envFilePath).toBe("/custom/config/.env");
 
     // Success state returned (validated + profile id), no apiKey in state.
     expect(result.provider?.validated).toBe(true);

@@ -207,12 +207,21 @@ describe("daemonStartStep", () => {
       select: ["yes"],
     });
 
-    await daemonStartStep.execute(stateWithGateway(), prompter);
+    const customState = {
+      ...stateWithGateway(),
+      configDir: "/custom/config",
+    } as WizardState;
+    await daemonStartStep.execute(customState, prompter);
 
     expect(spawn).toHaveBeenCalledWith(
       "node",
       expect.arrayContaining([expect.stringContaining("daemon")]),
-      expect.objectContaining({ detached: true }),
+      expect.objectContaining({
+        detached: true,
+        env: expect.objectContaining({
+          COMIS_CONFIG_PATHS: "/custom/config/config.yaml",
+        }),
+      }),
     );
 
     // Spinner lifecycle

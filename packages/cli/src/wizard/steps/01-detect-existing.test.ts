@@ -97,6 +97,18 @@ describe("detectExistingStep", () => {
     expect(prompter.note).not.toHaveBeenCalled();
   });
 
+  it("checks the requested config directory instead of the user home", async () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    const state = {
+      ...INITIAL_STATE,
+      configDir: "/custom/config",
+    } as WizardState;
+
+    await detectExistingStep.execute(state, createMockPrompter());
+
+    expect(existsSync).toHaveBeenCalledWith("/custom/config/config.yaml");
+  });
+
   it("displays summary and offers update/fresh/cancel for valid config", async () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(loadConfigFile).mockReturnValue({

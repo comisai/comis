@@ -920,8 +920,9 @@ describe("buildNonInteractiveState", () => {
     });
 
     it("provisions the key at opts.configDir when set (still not /data)", () => {
-      buildNonInteractiveState(validOpts({ configDir: "/custom/config" }));
+      const state = buildNonInteractiveState(validOpts({ configDir: "/custom/config" }));
       expect(writeMasterKeyIfAbsent).toHaveBeenCalledWith("/custom/config");
+      expect((state as WizardState & { configDir?: string }).configDir).toBe("/custom/config");
     });
 
     it("includes 'storage' in completedSteps so the runner skips the interactive step", () => {
