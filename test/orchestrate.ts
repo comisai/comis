@@ -29,6 +29,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
 const RESULTS_FILE = resolve(__dirname, ".test-results.json");
 const VITEST_CONFIG = resolve(__dirname, "vitest.config.ts");
+const TEST_RUN_TIMEOUT_MS = 1_800_000;
 
 // ---------------------------------------------------------------------------
 // Types (Vitest JSON reporter output)
@@ -179,11 +180,23 @@ try {
   execSync(cmd, {
     cwd: PROJECT_ROOT,
     stdio: "inherit",
-    timeout: 1_200_000,
+    // The daemon-backed suite initializes real local models in isolated
+    // subprocesses. Keep a finite ceiling while allowing cold CI runners to
+    // finish the full suite and emit the JSON report consumed below.
+    timeout: TEST_RUN_TIMEOUT_MS,
   });
-} catch {
+} catch (error) {
   // Non-zero exit code means test failures -- continue to parse results
   testsFailed = true;
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "ETIMEDOUT"
+  ) {
+    console.error(
+      `ERROR: Vitest exceeded the ${TEST_RUN_TIMEOUT_MS / 60_000}-minute orchestration timeout.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
