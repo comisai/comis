@@ -1765,6 +1765,15 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
     ).toBe(true);
   });
 
+  it("skills_manage recognizes a contextual install continuation", () => {
+    expect(
+      matchesToolMutationRequest(
+        "skills_manage",
+        "install it",
+      ),
+    ).toBe(true);
+  });
+
   it("sessions_spawn recognizes a natural helper delegation request", () => {
     expect(
       matchesToolMutationRequest(
