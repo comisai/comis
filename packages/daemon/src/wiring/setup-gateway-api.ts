@@ -61,8 +61,9 @@ export interface RpcMethodDeps {
  * architecture test (`test/architecture/api-contracts-bidirectional.test.ts`)
  * catches misalignment between registry and handlers.
  *
- * Dual-route contracts receive an any-of scope set. The authenticated
- * request context determines whether the handler receives admin authority.
+ * Multi-scope contracts receive an any-of scope set. Independently, the
+ * authenticated request context determines whether the handler receives
+ * admin authority after route admission succeeds.
  */
 export function registerRpcMethods(deps: RpcMethodDeps): void {
   const { dynamicRouter, rpcCall } = deps;
@@ -73,10 +74,11 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
   // WS/REST caller params at BOTH branches before dispatch. External callers
   // must never be able to forge an `_X` control field; in particular, after
   // this strip the PRESENCE of `_agentId` is a sound, unforgeable agent-origin
-  // signal — the prerequisite that makes deny-by-origin sound. On the admin
-  // branch the order is strip-THEN-inject so the daemon's own trusted
-  // `_trustLevel` is never stripped. The in-process `createAgentRpcCall` path
-  // (the legitimate `_agentId` injector) does NOT pass through here.
+  // signal — the prerequisite that makes deny-by-origin sound. On an
+  // admin-authorized path the order is strip-THEN-inject so the daemon's own
+  // trusted `_trustLevel` is never stripped. The in-process
+  // `createAgentRpcCall` path (the legitimate `_agentId` injector) does NOT
+  // pass through here.
   for (const c of API_CONTRACTS_ORDERED) {
     // Capability-gated orchestration RPCs
     // (graph/skills/session.spawn/cron/message-mutate) check the injected
@@ -101,8 +103,7 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
       routeScopes,
       async (params: Record<string, unknown> | undefined, context) => {
         const adminOnly = c.scopes.length === 1 && c.scopes[0] === "admin";
-        const authenticatedAsAdmin = c.scopes.includes("admin")
-          && context !== undefined
+        const authenticatedAsAdmin = context !== undefined
           && checkScope(context.scopes, "admin");
         return rpcCall(c.method, {
           ...stripInternalFields(params ?? {}),
