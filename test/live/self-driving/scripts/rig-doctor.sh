@@ -11,10 +11,9 @@
 # unit, `lsof` instead of `ss`, the checkout instead of an installed package).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
-rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
 PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
 
 fails=0

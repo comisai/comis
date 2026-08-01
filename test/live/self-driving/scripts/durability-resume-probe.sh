@@ -8,13 +8,12 @@
 #   durability-resume-probe.sh [chatId] [emuApiRoot] [launchWaitSeconds]
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
 # shellcheck source=./_rig.sh
 . "$HERE/_rig.sh" 2>/dev/null || {
   echo "missing $HERE/_rig.sh — deploy the complete live-test script kit" >&2
   exit 2
 }
-rig_load_persisted_env "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
 rig_banner
 
 export COMIS_DATA_DIR="$DATA"
