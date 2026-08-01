@@ -117,6 +117,8 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
 
     expect(description).toMatch(/^MANDATORY:/u);
     expect(description).toMatch(/load this skill/iu);
+    expect(description).toMatch(/elliptical follow-ups/iu);
+    expect(description).toMatch(/preceding turn names the task/iu);
     expect(description).toMatch(/do not answer from general capabilities/iu);
     expect(manifest).toMatch(
       /installed-state request[\s\S]*skills_manage[\s\S]*action:\s*["'`]list["'`]/iu,
