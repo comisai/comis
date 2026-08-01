@@ -1,6 +1,6 @@
 #!/bin/sh
-# Local mirror of CI's required, deterministic checks — the gate that would have
-# stopped the #133 build-cycle cascade from ever reaching `main`.
+# Local mirror of CI's required, deterministic checks. It prevents a push when
+# the repository does not pass the same clean validation gate.
 #
 # Runs `pnpm validate`:
 #   build:clean (clean-room build) → cycles (madge dist) → cycles:refs
@@ -15,6 +15,13 @@
 # Bypass a single push (e.g. docs-only, or a known-slow machine):
 #   git push --no-verify
 set -e
+
+# Git exports repository-local variables to hooks. Child Git processes in the
+# test suite must discover the temporary repository supplied by each test,
+# rather than inheriting the repository that launched this hook.
+git_local_env="$(git rev-parse --local-env-vars)"
+# Intentional word splitting: git prints one variable name per line.
+unset $git_local_env
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "pre-push: pnpm not on PATH — skipping local checks (CI will still run them)." >&2
