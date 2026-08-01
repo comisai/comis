@@ -299,8 +299,24 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
  * Mutates messages in place. Returns the number of messages whose thinking was stripped.
  */
 export function stripReplayThinking(messages: Array<Record<string, unknown>>): number {
+  // The LATEST assistant message is off-limits: Anthropic rejects any request whose
+  // newest assistant turn has had its thinking content altered --
+  // `messages.<n>.content.<k>: 'thinking' or 'redacted_thinking' blocks in the latest
+  // assistant message cannot be modified`. Stripping it produced that 400 live, and the
+  // executor's retry re-sent the same mutated shape, so the turn ended in consecutive
+  // empty assistant responses and the user got silence.
+  //
+  // Skipping it costs at most ONE prefix mutation when that message later goes historical
+  // and is stripped -- and only if it sits inside the cache fence. With the SDK's marker on
+  // the last user message it sits AFTER the fence, so the later strip is free.
+  let latestAssistant = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "assistant") { latestAssistant = i; break; }
+  }
+
   let stripped = 0;
   for (let i = 0; i < messages.length; i++) {
+    if (i === latestAssistant) continue;
     const msg = messages[i]!;
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const content = msg.content as Array<Record<string, unknown>>;

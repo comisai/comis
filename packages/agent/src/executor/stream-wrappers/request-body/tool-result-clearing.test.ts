@@ -155,21 +155,18 @@ describe("clearStaleThinkingBlocks (pure)", () => {
 });
 
 describe("stripReplayThinking (pure) — replayed-thinking cache stability", () => {
-  // A keep-last exception would cache the active tool cycle (the last assistant in the
-  // outgoing request) WITH its thinking blocks, but
-  // the LCD parts-codec reconstructs assistant messages WITHOUT thinking. So the
-  // active assistant would be cached WITH thinking and re-sent WITHOUT it the next call
-  // (when it becomes historical and gets stripped) → the cached prefix mutates → cache-read
-  // collapse on thinking-heavy (coding) turns, re-written every turn boundary.
+  // Historical assistant messages are stripped so the cached form matches the durable LCD
+  // form (zero historical thinking), which keeps the prefix byte-stable turn-over-turn.
   //
-  // Hence: strip
-  // thinking from EVERY replayed assistant message (no keep-last exception), making the
-  // cached form byte-identical to the durable LCD form (zero historical thinking).
-  // Anthropic tolerates a tool-use assistant with no thinking block as the active cycle
-  // (validated live: zero 400s, correct multi-step coding, total cache-read +5%, write -38%).
-  // Generation-time thinking is unaffected — this only strips the messages being REPLAYED.
+  // The LATEST assistant message is EXCLUDED. Anthropic rejects a request whose newest
+  // assistant turn has had its thinking content altered:
+  // `messages.<n>.content.<k>: 'thinking' or 'redacted_thinking' blocks in the latest
+  // assistant message cannot be modified`. Stripping it produced that 400 live
+  // (comis-moshe, 2026-08-01, amazon-bedrock) and the retry re-sent the same mutated shape,
+  // so the turn ended in consecutive empty assistant responses and the user got silence.
+  // Generation-time thinking is unaffected — this only strips messages being REPLAYED.
 
-  it("strips thinking from ALL replayed assistant messages, including the last (active) one", () => {
+  it("strips historical replayed assistant messages but never the latest one", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "old reasoning" }, { type: "text", text: "a1" }] },
@@ -179,16 +176,16 @@ describe("stripReplayThinking (pure) — replayed-thinking cache stability", () 
       { role: "assistant", content: [{ type: "thinking", thinking: "CURRENT reasoning" }, { type: "tool_use", id: "t2", name: "bash", input: {} }] },
     ];
     const stripped = stripReplayThinking(messages);
-    expect(stripped).toBe(3); // idx 1, 3, AND 5 (the active assistant too)
+    expect(stripped).toBe(2); // idx 1 and 3 only — idx 5 is the latest assistant
     expect((messages[1]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
     expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
-    // The LAST/active assistant (idx 5) is ALSO stripped — no keep-last exception.
-    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    // The latest assistant (idx 5) keeps its thinking — modifying it is a provider 400.
+    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
     // Non-thinking blocks (tool_use, text) are preserved.
     expect((messages[5]!.content as any[]).some(b => b.type === "tool_use")).toBe(true);
   });
 
-  it("strips thinking even when only the last assistant message has it", () => {
+  it("is a no-op when only the latest assistant message has thinking", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "text", text: "a1" }] },
@@ -196,9 +193,27 @@ describe("stripReplayThinking (pure) — replayed-thinking cache stability", () 
       { role: "assistant", content: [{ type: "thinking", thinking: "current" }, { type: "text", text: "a2" }] },
     ];
     const stripped = stripReplayThinking(messages);
-    expect(stripped).toBe(1);
-    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    expect(stripped).toBe(0);
+    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
     expect((messages[3]!.content as any[]).some(b => b.type === "text")).toBe(true);
+  });
+
+  it("preserves a redacted_thinking sibling on the latest assistant message (the live 400 shape)", () => {
+    // Live shape: the newest assistant turn carried thinking + redacted_thinking + tool_use.
+    // Removing the plain thinking block changed that turn's thinking content -> 400.
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "old" }, { type: "text", text: "a1" }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t0", content: "ok" }] },
+      { role: "assistant", content: [
+        { type: "thinking", thinking: "live" },
+        { type: "redacted_thinking", data: "enc" },
+        { type: "tool_use", id: "t1", name: "mcp__ituran--ituran_fleet_activity_report", input: {} },
+      ] },
+    ];
+    const before = JSON.stringify(messages[3]);
+    stripReplayThinking(messages);
+    expect(JSON.stringify(messages[3])).toBe(before);
   });
 
   it("no-op on a conversation with no thinking blocks (echo-style tool turns)", () => {
