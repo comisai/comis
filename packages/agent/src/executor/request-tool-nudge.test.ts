@@ -132,6 +132,13 @@ describe("runRequestToolNudge", () => {
       requestRelevantPromptSkillWorkflowToolNames: ["exec"],
       requestRelevantPromptSkillWorkflowContext:
         "u dont really know how to make flash cards properly",
+      messages: [
+        {
+          role: "toolResult",
+          toolName: "exec",
+          content: [{ type: "text", text: "example/skills@flashcard-maker" }],
+        },
+      ],
     });
 
     const outcome = await runRequestToolNudge(deps);
@@ -150,7 +157,17 @@ describe("runRequestToolNudge", () => {
       expect.anything(),
     );
     expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Concrete workflow argument hint: "make flash cards properly"',
+      ),
+      expect.anything(),
+    );
+    expect(deps.session.prompt).toHaveBeenCalledWith(
       expect.stringMatching(/preserve canonical identifiers/iu),
+      expect.anything(),
+    );
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringContaining("example/skills@flashcard-maker"),
       expect.anything(),
     );
     expect(outcome.outcome).toBe("recovered");
