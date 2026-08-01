@@ -32,6 +32,14 @@ SERVICE="${SERVICE:-comis}"
 DATA="${DATA:-/home/comis/.comis}"
 GW_PORT="${GW_PORT:-4766}"
 
+if rig_is_local; then
+  if ! COMIS_TRAJECTORY_DIR="$(rig_local_trajectory_dir)"; then
+    exit 2
+  fi
+  export COMIS_TRAJECTORY_DIR
+  node "$HERE/local-config.mjs" validate "$DATA/config.yaml" "$DATA" "$GW_PORT" || exit $?
+fi
+
 MARK="$(date +%s)"
 
 if rig_is_local; then
@@ -73,7 +81,7 @@ if rig_is_local; then
 
   if [ "$use_pm2" = 1 ]; then
     echo "supervisor: pm2 (${SERVICE})"
-    COMIS_DATA_DIR="$DATA" COMIS_CONFIG_PATHS="$DATA/config.yaml" \
+    COMIS_DATA_DIR="$DATA" COMIS_CONFIG_PATHS="$DATA/config.yaml" COMIS_TRAJECTORY_DIR="$COMIS_TRAJECTORY_DIR" \
       pm2 restart "$SERVICE" --update-env >/dev/null || {
       echo "pm2 restart $SERVICE FAILED:"
       pm2 describe "$SERVICE" 2>&1 | tail -8
@@ -106,7 +114,7 @@ if rig_is_local; then
       # selects as the local command shell, so use a portable variable name.
       # Redirect the whole supervisor loop so shell-level failures are visible.
       tmux new-session -d -s "$tmux_session" \
-        "while true; do env COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' node ${NODE_ARGS:-} '$ENTRY'; daemon_exit_code=\$?; if [ \"\$daemon_exit_code\" -eq 42 ]; then continue; fi; exit \"\$daemon_exit_code\"; done >>'$DATA/daemon.console.log' 2>&1"
+        "while true; do env COMIS_DATA_DIR='$DATA' COMIS_CONFIG_PATHS='$DATA/config.yaml' COMIS_TRAJECTORY_DIR='$COMIS_TRAJECTORY_DIR' node ${NODE_ARGS:-} '$ENTRY'; daemon_exit_code=\$?; if [ \"\$daemon_exit_code\" -eq 42 ]; then continue; fi; exit \"\$daemon_exit_code\"; done >>'$DATA/daemon.console.log' 2>&1"
       tmux set-environment -t "$tmux_session" COMIS_LOCAL_DATA_OWNER "$DATA"
     else
       pid="$(LOCAL_SUPERVISOR=direct rig_daemon_pid)"
@@ -128,12 +136,12 @@ if rig_is_local; then
       fi
       echo "supervisor: direct ($ENTRY)"
       pid_file="${LOCAL_DAEMON_PID_FILE:-$DATA/.local-daemon.pid}"
-      COMIS_LOCAL_DATA="$DATA" COMIS_LOCAL_ENTRY="$ENTRY" COMIS_LOCAL_PID_FILE="$pid_file" \
+      COMIS_LOCAL_DATA="$DATA" COMIS_LOCAL_ENTRY="$ENTRY" COMIS_LOCAL_PID_FILE="$pid_file" COMIS_LOCAL_TRAJECTORY_DIR="$COMIS_TRAJECTORY_DIR" \
         nohup bash -c '
           trap '\''[ -n "${daemon_pid:-}" ] && kill "$daemon_pid" 2>/dev/null || true; rm -f "$COMIS_LOCAL_PID_FILE"; exit 143'\'' TERM INT
           trap '\''rm -f "$COMIS_LOCAL_PID_FILE"'\'' EXIT
           while true; do
-            env COMIS_DATA_DIR="$COMIS_LOCAL_DATA" COMIS_CONFIG_PATHS="$COMIS_LOCAL_DATA/config.yaml" node ${NODE_ARGS:-} "$COMIS_LOCAL_ENTRY" &
+            env COMIS_DATA_DIR="$COMIS_LOCAL_DATA" COMIS_CONFIG_PATHS="$COMIS_LOCAL_DATA/config.yaml" COMIS_TRAJECTORY_DIR="$COMIS_LOCAL_TRAJECTORY_DIR" node ${NODE_ARGS:-} "$COMIS_LOCAL_ENTRY" &
             daemon_pid=$!
             umask 077
             printf "%s\n" "$daemon_pid" >"$COMIS_LOCAL_PID_FILE"

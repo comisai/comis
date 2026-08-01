@@ -61,6 +61,21 @@ function assertSelectedPaths(configPath, dataDir) {
   }
 }
 
+function assertContainedPath(label, input, dataDir) {
+  if (input === undefined) return;
+  if (typeof input !== "string" || !isAbsolute(input)) {
+    fail(`${label} must be an absolute path inside '${dataDir}'`);
+  }
+  const canonical = canonicalPath(input);
+  if (input !== canonical) {
+    fail(`${label} must be canonical and symlink-free (use '${canonical}')`);
+  }
+  const canonicalData = canonicalPath(dataDir);
+  if (canonical !== canonicalData && !canonical.startsWith(`${canonicalData}/`)) {
+    fail(`${label} must stay inside the isolated data root '${canonicalData}'`);
+  }
+}
+
 function parseConfig(configPath) {
   let config;
   try {
@@ -91,6 +106,12 @@ function validate(configPath, dataDir, portInput) {
   if (config.gateway.port !== port) {
     fail(`config gateway.port must be exactly ${port} (got '${String(config.gateway.port)}')`);
   }
+  assertContainedPath("diagnostics.trajectory.dir", config.diagnostics?.trajectory?.dir, dataDir);
+  assertContainedPath(
+    "observability.trajectory.dirOverride",
+    config.observability?.trajectory?.dirOverride,
+    dataDir,
+  );
   console.log(`validated isolated config root ${dataDir} on gateway port ${port}`);
 }
 

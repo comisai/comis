@@ -1073,9 +1073,10 @@ re-confirm it. What remains per-run:
 - **T6** A media-only turn prints `[NO SUBSTANTIVE ANSWER]`. Read recorded outbound and delivery mirror.
 - **T7** Every local helper must resolve the same explicit absolute `DATA`, free `GW_PORT`, and dedicated
   `SERVICE`. Initialize once through `init-local-config.sh`; `local-up.sh` then parses the authoritative
-  config and requires its data root and gateway port to match. Both refuse the everyday `comis` service,
-  the everyday data tree, an unowned port, or a pm2 name bound to another root; do not bypass that
-  pre-mutation gate.
+  config and requires its data root and gateway port to match. Every local launch also pins trajectories
+  inside that root and rejects escaping config or environment overrides before supervisor mutation. Both
+  entry points refuse the everyday `comis` service, the everyday data tree, an unowned port, or a pm2 name
+  bound to another root; do not bypass that pre-mutation gate.
 
 The power-surface traps continue:
 
