@@ -170,6 +170,34 @@ describe("runRequestToolNudge", () => {
     ]);
   });
 
+  it("keeps the policy-filtered workflow surface available after loading a prompt skill", async () => {
+    const activeTools = ["read", "exec", "test_read_only_tool"];
+    const setActiveToolsByName = vi.fn();
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      expect(activeTools).toEqual(["read", "exec", "test_read_only_tool"]);
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      requestText: "find something that does",
+      requestRelevantToolNames: ["test_read_only_tool"],
+      requestRelevantPromptSkillNames: ["find-skills"],
+      requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
+      session: {
+        prompt,
+        getActiveToolNames: () => [...activeTools],
+        setActiveToolsByName,
+      },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () => "Catalog result.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(outcome.outcome).toBe("recovered");
+    expect(setActiveToolsByName).not.toHaveBeenCalled();
+  });
+
   it("does not run for an informational mention of a read-only tool", async () => {
     const deps = makeDeps({
       requestText: "describe the account summary capability",
