@@ -93,7 +93,7 @@ const EXTERNAL_ACTION_ATTEMPT_PATTERN =
   /\b(?:i|we)\s+(?:attempted|tried)\s+to\s+(?:access|apply|change|check|connect|create|delete|download|edit|fetch|install|invoke|modify|open|post|read|remove|restart|run|save|search|send|set|store|update|upload|verify|write)\b/iu;
 
 const EXPLICIT_TOOL_USE_REQUEST_PATTERN =
-  /\b(?:call|check|compare|fetch|get|inspect|invoke|look\s+up|query|read|run|search|test|use|verify)\b/iu;
+  /\b(?:call|check|compare|discover|fetch|find|get|inspect|invoke|look\s+up|query|read|run|search|test|use|verify)\b/iu;
 
 function claimsExternalActionAttempt(messages: unknown[]): boolean {
   const entries = messages as Array<{ role?: unknown; content?: unknown }>;

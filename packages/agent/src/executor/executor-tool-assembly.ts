@@ -50,6 +50,7 @@ import {
   attachMcpOperatorPolicy,
   describeMcpOperatorPolicyProjection,
 } from "./mcp-operator-policy.js";
+import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
 import type {
   ToolAssemblyParams,
   ToolAssemblyResult,
@@ -651,6 +652,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps.embeddingPort,
     config.skills?.toolDiscovery,
   );
+  applyPromptSkillRequestRouting(deferralResult, {
+    capabilityClass,
+    requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
+    skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
+  });
 
   const mcpOperatorPolicyRelevant =
     deferralResult.requestRelevantToolNames?.includes("mcp_manage") === true;
