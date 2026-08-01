@@ -126,6 +126,8 @@ describe("runRequestToolNudge", () => {
       requestRelevantPromptSkillNames: ["find-skills"],
       requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
       requestRelevantPromptSkillWorkflowToolNames: ["exec"],
+      requestRelevantPromptSkillWorkflowContext:
+        "u dont really know how to make flash cards properly",
     });
 
     const outcome = await runRequestToolNudge(deps);
@@ -236,6 +238,9 @@ describe("runRequestToolNudge", () => {
 
     expect(outcome.outcome).toBe("recovered");
     expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[1]?.[0]).toContain(
+      "u dont really know how to make flash cards properly",
+    );
     expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, ["exec"]);
     expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, [
       "read",

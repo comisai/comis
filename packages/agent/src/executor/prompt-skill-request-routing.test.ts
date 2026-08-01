@@ -49,6 +49,7 @@ describe("prompt skill request routing", () => {
         "u dont really know how to make flash cards properly",
         "find something that does",
       ].join("\n"),
+      priorUserRequest: "u dont really know how to make flash cards properly",
       skills,
       locations: new Map([
         ["/skills/find-skills/SKILL.md", "find-skills"],
@@ -59,6 +60,8 @@ describe("prompt skill request routing", () => {
     expect(selected).toEqual(["find-skills"]);
     expect(deferral.requestRelevantToolNames).toEqual(["read", "exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual(["exec"]);
+    expect(deferral.requestRelevantPromptSkillWorkflowContext)
+      .toBe("u dont really know how to make flash cards properly");
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/find-skills/SKILL.md",
     ]);
