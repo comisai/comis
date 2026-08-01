@@ -5843,7 +5843,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -5851,7 +5851,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("diagn
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "diagnostics.recallTrace.enabled",
     "type": "boolean"
@@ -5980,7 +5980,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("embed
     "default": {
       "contextSize": 2048,
       "gpu": "auto",
-      "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+      "modelUri": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
       "modelsDir": "models"
     },
     "immutable": false,
@@ -6000,7 +6000,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("embed
     "type": "string"
   },
   {
-    "default": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+    "default": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
     "immutable": false,
     "path": "embedding.local.modelUri",
     "type": "string"
@@ -6012,6 +6012,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("embed
     "type": "string"
   },
   {
+    "default": true,
     "immutable": false,
     "path": "embedding.multilingual",
     "type": "boolean"
@@ -11541,7 +11542,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "rotateAtBytes": 10485760
       },
       "recallTrace": {
-        "enabled": false,
+        "enabled": true,
         "maxFileBytes": 52428800
       },
       "trajectory": {
@@ -11630,7 +11631,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "maxFileBytes": 52428800
     },
     "immutable": false,
@@ -11638,7 +11639,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": false,
     "path": "diagnostics.recallTrace.enabled",
     "type": "boolean"
@@ -11765,9 +11766,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "local": {
         "contextSize": 2048,
         "gpu": "auto",
-        "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+        "modelUri": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
         "modelsDir": "models"
       },
+      "multilingual": true,
       "openai": {
         "dimensions": 1536,
         "model": "text-embedding-3-small"
@@ -11855,7 +11857,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": {
       "contextSize": 2048,
       "gpu": "auto",
-      "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+      "modelUri": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
       "modelsDir": "models"
     },
     "immutable": false,
@@ -11875,7 +11877,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+    "default": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
     "immutable": false,
     "path": "embedding.local.modelUri",
     "type": "string"
@@ -11887,6 +11889,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "default": true,
     "immutable": false,
     "path": "embedding.multilingual",
     "type": "boolean"
@@ -23675,7 +23678,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
       "rotateAtBytes": 10485760
     },
     "recallTrace": {
-      "enabled": false,
+      "enabled": true,
       "maxFileBytes": 52428800
     },
     "trajectory": {
@@ -23764,12 +23767,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("dia
     "recallTrace": {
       "additionalProperties": false,
       "default": {
-        "enabled": false,
+        "enabled": true,
         "maxFileBytes": 52428800
       },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "filePath": {
@@ -35671,7 +35674,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "rotateAtBytes": 10485760
         },
         "recallTrace": {
-          "enabled": false,
+          "enabled": true,
           "maxFileBytes": 52428800
         },
         "trajectory": {
@@ -35760,12 +35763,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "recallTrace": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "maxFileBytes": 52428800
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "filePath": {
@@ -35918,9 +35921,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "local": {
           "contextSize": 2048,
           "gpu": "auto",
-          "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+          "modelUri": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
           "modelsDir": "models"
         },
+        "multilingual": true,
         "openai": {
           "dimensions": 1536,
           "model": "text-embedding-3-small"
@@ -36010,7 +36014,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "default": {
             "contextSize": 2048,
             "gpu": "auto",
-            "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+            "modelUri": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
             "modelsDir": "models"
           },
           "properties": {
@@ -36032,7 +36036,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "string"
             },
             "modelUri": {
-              "default": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+              "default": "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf",
               "type": "string"
             },
             "modelsDir": {
@@ -36049,6 +36053,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "type": "object"
         },
         "multilingual": {
+          "default": true,
           "type": "boolean"
         },
         "openai": {
@@ -36088,6 +36093,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "required": [
         "enabled",
         "provider",
+        "multilingual",
         "local",
         "openai",
         "cache",

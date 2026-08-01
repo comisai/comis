@@ -4,9 +4,11 @@ description: "Human approval on execution paths that explicitly use the approval
 icon: "clipboard-check"
 ---
 
-Comis can pause selected agent actions for an operator decision. The approval
-workflow is disabled by default. Set `approvals.enabled: true` to wire the
-`ApprovalGate` into the execution paths that support it.
+Comis can pause selected agent actions for an operator decision. The schema
+default is disabled so a deployment without an authorized responder cannot
+deadlock. `comis init` enables approvals automatically when setup creates an
+administrator sender mapping; otherwise set `approvals.enabled: true` only after
+configuring a principal who can resolve requests.
 
 <Warning>
 The approval gate is not a universal interceptor. It protects only code paths

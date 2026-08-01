@@ -668,25 +668,24 @@ Recall is the path that selects which memories enter the prompt. When it surpris
 
     **How to diagnose:**
 
-    1. **Enable the recall trace** (opt-in, default off). Add to `config.yaml`, then reload:
-       ```yaml
-       diagnostics:
-         recallTrace:
-           enabled: true        # opt-in — redacted, bounded (50 MB) JSONL
-       ```
-    2. **Reproduce the surprising recall** (send the message that triggered it).
-    3. **Read the per-memory ranking breakdown** with `--format json`:
+    1. **Read the recall trace** (enabled by default) for the affected session:
        ```bash
        node packages/cli/dist/cli.js memory recall-trace <session> --format json
        ```
+    2. If the command reports that tracing is disabled, enable it, reload, and reproduce the recall:
+       ```yaml
+       diagnostics:
+         recallTrace:
+           enabled: true        # redacted, bounded (50 MB) JSONL
+       ```
        The JSON record shows, for each candidate: which lanes matched (FTS / vector / entity), the fused order, the pre- and post-rerank scores, the recency / temporal / proof / trust score components, and the **include/exclude reason** for every memory. The table view (omit `--format json`) shows just the correlation keys (`trace`, `session`, `finalCount`, `ts`) for locating the right record first.
-    4. **Cross-reference the trust filter.** If the memory you expected is *excluded*, the reason field will say why — most often a trust-level filter (`includeTrustLevels`) rather than a low score.
+    3. **Cross-reference the trust filter.** If the memory you expected is *excluded*, the reason field will say why — most often a trust-level filter (`includeTrustLevels`) rather than a low score.
 
     <Info>
     The recall-trace payload is **full-sanitized** — it records the ranking *structure* and *scores*, never raw memory bodies or query text. There is no toggle to include raw content; see [Observability → Memory & Recall Diagnostics](/operations/observability#15-memory-recall-diagnostics).
     </Info>
 
-    Turn `recallTrace.enabled` back to `false` once you have the answer — it is a debug-session writer, not a steady-state one.
+    Leave the recorder enabled for post-incident diagnosis, or set `recallTrace.enabled: false` when your local retention policy requires it.
   </Accordion>
 
   <Accordion title="Why is recall slow?">

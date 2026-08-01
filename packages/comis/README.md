@@ -111,7 +111,7 @@ Important defaults and boundaries:
 - The ordinary `exec` tool can run on the host when its sandbox is disabled or unavailable.
 - The default tool-policy profile is `full`.
 - An empty per-agent `secrets.allow` list is unrestricted.
-- Human approvals are disabled by default and protect only explicitly connected paths.
+- Human approvals protect only explicitly connected paths. The schema default is off; guided setup enables it when it creates an administrator mapping.
 
 Narrow tool access and secret rules before accepting untrusted input. Read the [security documentation](https://docs.comis.ai/security) and [known limitations](https://docs.comis.ai/reference/known-limitations) before granting sensitive access.
 

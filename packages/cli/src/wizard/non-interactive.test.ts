@@ -525,7 +525,7 @@ describe("buildNonInteractiveState", () => {
     expect(state.provider).toEqual({ id: "amazon-bedrock", validated: false });
   });
 
-  it("no --embedding-multilingual → no recallProvider (keeps the daemon nomic default)", () => {
+  it("no embedding flags leaves the multilingual daemon default in control", () => {
     expect(buildNonInteractiveState(validOpts()).recallProvider).toBeUndefined();
   });
 

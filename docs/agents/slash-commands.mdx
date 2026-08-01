@@ -52,7 +52,8 @@ These commands are handled before the general command dispatcher:
 | `/deny [short-id\|all]` | Denies a pending approval under the same conditions |
 | `/send on\|off\|inherit` | Lets the session owner override the runtime send policy for that session |
 
-Approvals are disabled by default. Enable and configure them before relying on
+The approvals schema defaults off, while guided setup enables it when it creates
+an administrator mapping. Confirm the gate is enabled before relying on
 `/approve` or `/deny`; see [Approvals](/security/approvals).
 
 ## Prompt skills are not slash commands

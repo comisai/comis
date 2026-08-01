@@ -367,24 +367,17 @@ describe("setupSingleAgent structural parity", () => {
 // ---------------------------------------------------------------------------
 // Recall-trace config threading
 //
-// The recall-trace recorder + sanitization pipeline are built and proven in
-// isolation, but the daemon never threaded diagnostics.recallTrace into the
-// executor — so buildRecallTrace always received cfg=undefined → returned null
-// → ZERO recall traces were written even with diagnostics.recallTrace.enabled:
-// true. The fix mirrors the EXISTING cacheTraceConfig wiring: a parallel
-// `recallTraceConfig: container.config.diagnostics?.recallTrace` entry inside
-// the createPiExecutor deps object.
+// The daemon must thread diagnostics.recallTrace into the executor so
+// buildRecallTrace receives the configured gate and bounded-writer settings.
+// The dependency mirrors the sibling cacheTraceConfig wiring.
 // ---------------------------------------------------------------------------
 
 describe("setupSingleAgent recall-trace config wiring", () => {
   const source = readRuntimeSource();
 
   it("threads container.config.diagnostics.recallTrace into createPiExecutor deps as recallTraceConfig", () => {
-    // Production-wiring regression guard. Before this wiring existed, the
-    // createPiExecutor deps block carried cacheTraceConfig but NOT
-    // recallTraceConfig, so the recall trace was structurally unreachable
-    // from operator YAML. The assertion is scoped to the deps block (not the
-    // whole file) so a stray comment elsewhere cannot satisfy it.
+    // Scope the assertion to the executor dependency block so a reference in an
+    // unrelated comment cannot satisfy the wiring contract.
     const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
     const depsEnd = source.indexOf("});", depsStart);
     expect(depsStart).toBeGreaterThan(-1);

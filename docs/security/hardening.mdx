@@ -5,7 +5,8 @@ icon: "lock"
 ---
 
 Comis enables several defensive controls by default, but the default deployment
-is intentionally usable rather than maximally restrictive: approvals are off,
+is intentionally usable rather than maximally restrictive: the approvals schema
+default is off (guided setup enables it when it creates an administrator),
 the tool policy is `full`, and exec isolation can fall back to ordinary host
 execution. Use this checklist before exposing Comis to untrusted users or a
 network.

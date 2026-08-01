@@ -585,9 +585,8 @@ export interface PromptAssemblyParams {
      * Recall-trace writer configuration. Forwarded from
      * AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
      * When omitted or `enabled: false`, the recall-trace recorder is null
-     * (createRecallTrace returns null), so createMemoryRecall captures nothing and
-     * behaves exactly as before — recall-trace is OPT-IN (default-off). The recorder
-     * has NO raw-content slot; every payload is full-sanitized before disk.
+     * (createRecallTrace returns null), so createMemoryRecall captures nothing. The
+     * recorder has NO raw-content slot; every payload is full-sanitized before disk.
      */
     recallTraceConfig?: {
       readonly enabled?: boolean;

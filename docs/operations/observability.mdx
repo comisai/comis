@@ -468,26 +468,26 @@ identifiers.
 
 Recall is the path that decides *which* memories enter the prompt. When recall surprises you — the wrong memory injected, or recall feeling slow — these are the signals that explain it. The runbook for *acting* on them lives in [Troubleshooting → "Why did recall pick X / why is recall slow?"](/operations/troubleshooting#memory-recall-issues); this section documents the artifacts and events those workflows read.
 
-### 15.1 The recall-trace artifact (opt-in)
+### 15.1 The recall-trace artifact
 
-The recall trace is a per-recall JSONL artifact that records the ranking preview for each recall: which lanes matched, the fused order, the pre/post-rerank scores, the recency/temporal/proof/trust score components, and the include/exclude reason for every candidate. It is the sibling of the [cache trace](/agents/cache) — same writer family, same rotation policy — but **opt-in**.
+The recall trace is a per-recall JSONL artifact that records the ranking preview for each recall: which lanes matched, the fused order, the pre/post-rerank scores, the recency/temporal/proof/trust score components, and the include/exclude reason for every candidate. It is the sibling of the [cache trace](/agents/cache), with the same bounded writer family and rotation policy.
 
 | Property | Value |
 |---|---|
 | Config key | `diagnostics.recallTrace.enabled` |
-| Default | `false` — **opt-in** (the only diagnostics writer that ships off; `trajectory` and `cacheTrace` default `true`) |
+| Default | `true` — available from first boot; set `false` when local retention policy requires it |
 | Default path | `~/.comis/logs/recall-trace.jsonl` (override via `diagnostics.recallTrace.filePath`; `~` expansion supported) |
 | File cap | `52428800` (50 MB), via `diagnostics.recallTrace.maxFileBytes` |
 | Env hard-off | `COMIS_DISABLE_RECALL_TRACE` disables the writer regardless of config |
 | Sanitization | **Always full-sanitized.** Every payload runs through `sanitizeForPersistence` (bound → sanitize → redact) before it touches disk |
 
-It is OFF by default because it records per-recall ranking previews you only want captured during a focused debug session. Enable it for a session, reproduce the surprising recall, then turn it back off:
+It is enabled by default because the bounded, sanitized evidence must exist before a surprising recall occurs. You can override its cap or disable it explicitly:
 
 ```yaml
 # config.yaml
 diagnostics:
   recallTrace:
-    enabled: true          # opt-in (default false) — redacted, bounded JSONL
+    enabled: true          # default — redacted, bounded JSONL
     # filePath: ~/.comis/logs/recall-trace.jsonl   # optional override
     # maxFileBytes: 52428800                        # 50 MB cap (default)
 ```
@@ -502,7 +502,7 @@ Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis
 
 Typed events report recall, generation-quality, and curation activity on the event bus. Three of them — **`memory:recalled`**, **`memory:reranked`**, and **`memory:generation_quality`** — are part of the [§4 bridge mapping](#4-bridge-mapping): they cross onto the per-session **trajectory timeline** as `memory.recalled` / `memory.reranked` / `memory.generation_quality`. A recall shows up in `comis explain` (its lane/candidate/final counts and the rerank outcome) and aggregates into the report's [`recall` section](/reference/json-rpc#obs-explain). A memory-generation pass whose output diverged from its source fires `memory:generation_quality` (only on an issue) and rolls up into the `comis system-health` `generation_quality` finding. The remaining recall/curation events (`memory:entities_linked`, `memory:consolidated`, `memory:recall_used`, `memory:review_completed`) are emitted **directly** at a single canonical site each and are **not** bridge-mapped — `test/architecture/trajectory-event-types-known.test.ts` allowlists those four as not-trajectory-mapped, and asserts the disjoint-set invariant (no event is both bridged and direct-emit).
 
-Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
+Every event payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the bounded recall-trace artifact above, not on the bus.
 
 | Event | Fires | Key fields |
 |---|---|---|

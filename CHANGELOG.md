@@ -4,6 +4,12 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [Unreleased]
 
+### Changed
+
+- Fresh configurations use the private multilingual `bge-m3` embedder so semantic memory recall works across scripts without an external embedding service. The smaller English-centric nomic model remains an explicit setup choice.
+- Bounded, sanitized recall-ranking diagnostics are enabled from first boot so recall incidents can be explained without reproducing them after a configuration change.
+- Guided setup enables supported human-approval paths when it creates an administrator sender mapping, while configurations without an authorized responder keep the approval gate disabled.
+
 ## [1.0.55] - 2026-07-25
 
 Aggregates the user-visible changes since 1.0.53, including those first published in the [v1.0.54 release](https://github.com/comisai/comis/releases/tag/v1.0.54).

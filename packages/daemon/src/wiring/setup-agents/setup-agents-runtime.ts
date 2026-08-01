@@ -530,9 +530,9 @@ export async function setupSingleAgent(
     // where buildRecallTrace reads the `enabled` gate. Without this thread
     // buildRecallTrace always saw cfg=undefined and returned null, so zero
     // recall traces were written even with diagnostics.recallTrace.enabled: true.
-    // Recall-trace is OPT-IN (schema default enabled:false) and has NO
-    // raw-content slot (unlike cacheTrace's includeMessages/includeSystem): the
-    // recorder always full-sanitizes before disk.
+    // Recall-trace has NO raw-content slot (unlike cacheTrace's
+    // includeMessages/includeSystem): the recorder always full-sanitizes before
+    // disk and can still be disabled explicitly.
     recallTraceConfig: container.config.diagnostics?.recallTrace
       ? {
           enabled: container.config.diagnostics.recallTrace.enabled,

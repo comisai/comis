@@ -11,7 +11,7 @@ const controls = [
 
 const boundaries = [
   ["Host isolation", "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary. Ordinary exec can reach the host when its sandbox is disabled or unavailable."],
-  ["Defaults", "The default tool profile is full, an empty per-agent secret allowlist is unrestricted, and approvals are off by default. Approvals protect only explicitly wired paths. Narrow these before accepting untrusted input."],
+  ["Defaults", "The default tool profile is full and an empty per-agent secret allowlist is unrestricted. The approvals schema defaults off; guided setup enables it when it creates an administrator mapping. Approvals protect only explicitly wired paths. Narrow these before accepting untrusted input."],
   ["Learning", "The default evidence rule can admit one owner's experience. It is not independent corroboration. Candidate text may affect tool selection, and validation does not catch every harmful instruction."],
   ["External systems", "Self-hosted does not mean offline. Configured model, messaging, media, MCP, and tool providers may receive data you send to them."],
 ] as const;

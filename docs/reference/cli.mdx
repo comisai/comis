@@ -918,7 +918,7 @@ The reflection engine is **per-agent default-off** (`agents.<id>.learning.enable
 
 #### `memory recall-trace <session>`
 
-Inspect the hybrid-recall trace for a session — the per-recall ranking previews recorded by the opt-in [`diagnostics.recallTrace`](/reference/config-yaml) artifact. **Admin-gated** and (tenant, agent)-scoped.
+Inspect the hybrid-recall trace for a session — the per-recall ranking previews recorded by the bounded [`diagnostics.recallTrace`](/reference/config-yaml) artifact. **Admin-gated** and (tenant, agent)-scoped.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
@@ -1075,7 +1075,7 @@ comis memory unpin <entryId> --agent default
 ```
 
 <Note>
-Recall-trace records only exist when `diagnostics.recallTrace.enabled` is on (opt-in, default off). See the [recall runbook](/operations/troubleshooting#memory-recall-issues) for the enable-and-read workflow.
+Recall-trace records exist while `diagnostics.recallTrace.enabled` is on (default `true`). See the [recall runbook](/operations/troubleshooting#memory-recall-issues) for the read workflow and explicit-disable behavior.
 </Note>
 
 ---
