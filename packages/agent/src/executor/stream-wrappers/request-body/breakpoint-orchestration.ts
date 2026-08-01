@@ -39,6 +39,11 @@ import { injectToolDeferral } from "./tool-deferral-injection.js";
 import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
+/** Message count at which a conversation counts as "mature": the fence-unset WARN threshold and
+ *  the point from which a fence is guaranteed rather than merely attempted. One constant so the
+ *  diagnostic and the guarantee cannot drift apart. */
+const MATURE_CONVERSATION_MESSAGES = 10;
+
 /**
  * Run the cache-breakpoint orchestration stage. Mutates `result.system`,
  * `result.tools`, and `result.messages` in place. Returns the
@@ -347,6 +352,26 @@ export function runCacheBreakpointPhase(
         }
         if (highestBreakpointIdx >= 0) break;
       }
+      // Last resort: a MATURE conversation must never be left without a fence. Short chat turns
+      // can leave every token gap below minTokens, so placeCacheBreakpoints places nothing and no
+      // SDK auto-marker exists either. The fence then stays -1 and every consumer takes its
+      // fail-open branch, mutating already-cached content and forfeiting the cache write on each
+      // turn. Anchor the newest user message so the fence is real and the prefix behind it frozen.
+      if (highestBreakpointIdx < 0 && scanMsgs.length >= MATURE_CONVERSATION_MESSAGES) {
+        for (let i = scanMsgs.length - 1; i >= 0; i--) {
+          if (scanMsgs[i]!.role !== "user") continue;
+          const content = scanMsgs[i]!.content;
+          if (!Array.isArray(content) || content.length === 0) continue;
+          addCacheControlToLastBlock(scanMsgs[i]!, eFixFiredAt !== undefined ? "long" : "short");
+          highestBreakpointIdx = i;
+          logger.debug(
+            { highestBreakpointIdx: i, messageCount: scanMsgs.length, modelId: model.id, minTokens },
+            "Cache fence anchored on the newest user message (no gap met minTokens)",
+          );
+          break;
+        }
+      }
+
       if (highestBreakpointIdx >= 0) {
         config.onBreakpointsPlaced(highestBreakpointIdx);
         logger.debug(
@@ -385,7 +410,7 @@ export function runCacheBreakpointPhase(
 
   // Warn when cache fence remains unset in mature conversation.
   // This indicates no cache_control markers exist on any message -- neither explicit nor SDK auto.
-  if (config.onBreakpointsPlaced && Array.isArray(result.messages) && (result.messages as unknown[]).length >= 10) {
+  if (config.onBreakpointsPlaced && Array.isArray(result.messages) && (result.messages as unknown[]).length >= MATURE_CONVERSATION_MESSAGES) {
     const scanForFence = result.messages as Array<Record<string, unknown>>;
     let fenceFound = false;
     for (let i = scanForFence.length - 1; i >= 0; i--) {
