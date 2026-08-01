@@ -119,6 +119,18 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("runs for an explicit find request matched to a read-only tool", async () => {
+    const deps = makeDeps({
+      requestText: "find something that does",
+      requestRelevantToolNames: ["test_read_only_tool"],
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).toHaveBeenCalledTimes(1);
+    expect(outcome.outcome).toBe("recovered");
+  });
+
   it("restricts explicit-use recovery to the matched tools", async () => {
     let activeTools = ["exec", "web_search", "test_read_only_tool"];
     let successfulToolCount = 0;
