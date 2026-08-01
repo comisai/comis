@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { AppConfigSchema } from "@comis/core";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
-import { EMBED_BGE_M3_MODEL_URI } from "../index.js";
+import { EMBED_BGE_M3_MODEL_URI, EMBED_NOMIC_MODEL_URI } from "../index.js";
 import { recallStep } from "./08g-recall.js";
 
 function createMockPrompter(
@@ -42,11 +42,25 @@ describe("recallStep", () => {
     expect(recallStep.label).toBe("Memory Recall");
   });
 
-  it("English (default): keeps nomic, records multilingual:false, and never shows the provider select", async () => {
+  it("an explicit English-only choice selects nomic and skips the provider select", async () => {
     const prompter = createMockPrompter({ confirm: [false] });
     const result = await recallStep.execute(anthropicMain, prompter);
-    expect(result.recallProvider).toEqual({ multilingual: false, provider: "local" });
+    expect(result.recallProvider).toEqual({
+      multilingual: false,
+      provider: "local",
+      modelUri: EMBED_NOMIC_MODEL_URI,
+    });
     expect(prompter.select).not.toHaveBeenCalled();
+  });
+
+  it("defaults a fresh setup to private multilingual recall", async () => {
+    const prompter = createMockPrompter();
+    const result = await recallStep.execute(anthropicMain, prompter);
+    expect(result.recallProvider).toEqual({
+      multilingual: true,
+      provider: "local",
+      modelUri: EMBED_BGE_M3_MODEL_URI,
+    });
   });
 
   it("multilingual + on-device: writes bge-m3 local modelUri", async () => {

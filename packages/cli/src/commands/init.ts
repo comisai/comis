@@ -253,7 +253,7 @@ export function registerInitCommand(program: Command): void {
     .option("--stt-api-key <key>", "Transcription provider API key (reuses --api-key for a matching main provider; auto/local need none)")
     .option("--tts-provider <id>", "Text-to-speech provider: edge|openai|elevenlabs|local")
     .option("--tts-api-key <key>", "TTS provider API key (reuses --api-key for a matching main provider; edge needs none)")
-    .option("--embedding-multilingual", "Use a multilingual semantic-recall embedder (default: English-centric on-device nomic)")
+    .option("--embedding-multilingual", "Select a multilingual semantic-recall provider (default: multilingual on-device bge-m3)")
     .option("--embedding-provider <id>", "Multilingual embedder: local (bge-m3, on-device) | openai (text-embedding-3-small)")
     .option("--embedding-api-key <key>", "OpenAI embedding key (reuses --api-key for an openai main; required for openai embeddings otherwise)")
     // Paths
@@ -373,12 +373,15 @@ export function registerInitCommand(program: Command): void {
       const steps = buildStepRegistry();
 
       // Build initial state from any applicable flags
+      const configDir = options.configDir as string | undefined;
       let initialState: WizardState | undefined;
-      if (options.quick) {
-        // --quick flag pre-sets flow without prompting
+      if (options.quick || configDir !== undefined) {
+        // --quick pre-sets flow without prompting. --config-dir must enter the
+        // shared wizard state before any step reads or writes configuration.
         initialState = {
           completedSteps: [] as readonly WizardStepId[],
-          flow: "quickstart" as const,
+          ...(options.quick ? { flow: "quickstart" as const } : {}),
+          ...(configDir !== undefined ? { configDir } : {}),
         };
       }
 

@@ -13,14 +13,12 @@ const EmbeddingLocalSchema = z.strictObject({
     /** HuggingFace model URI or path to local GGUF file */
     modelUri: z
       .string()
-      .default(
-        "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
-      ),
+      .default("hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf"),
     /** Directory to store downloaded models */
     modelsDir: z.string().default("models"),
     /** GPU acceleration mode */
     gpu: z.enum(["auto", "metal", "cuda", "vulkan", "false"]).default("auto"),
-    /** Context size for embedding model (tokens). nomic-embed-text-v1.5 trains on 2048; 8192 requires YaRN RoPE scaling not available in node-llama-cpp. */
+    /** Context size for embedding model inputs (tokens). */
     contextSize: z.number().int().positive().default(2048),
   });
 
@@ -56,7 +54,7 @@ export const EmbeddingConfigSchema = z.strictObject({
     enabled: z.boolean().default(true),
     /** Provider preference: "auto" tries local then remote */
     provider: z.enum(["auto", "local", "openai"]).default("auto"),
-    /** Advisory: declare the embedder multilingual for the `comis system-health` model-health line. Omitted -> inferred from the model id (system-only; no behavior is gated on it). */
+    /** Advisory override for the `comis system-health` model-health line. Omitted values are inferred from the selected model id. */
     multilingual: z.boolean().optional(),
     /** Local model configuration (node-llama-cpp GGUF) */
     local: EmbeddingLocalSchema.default(() => EmbeddingLocalSchema.parse({})),

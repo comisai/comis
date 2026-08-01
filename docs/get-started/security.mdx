@@ -74,12 +74,13 @@ Learned guidance can still persuade the model to request an action that is
 within its configured reach. Use separate tenants or agents for per-user
 confidentiality, review the learning policy, and keep runtime authority narrow.
 
-### Approvals are opt-in
+### Approvals require an authorized responder
 
-`security.actionConfirmation` classifies actions, but the human approval
-workflow is disabled by default. Enable `approvals.enabled` and add rules before
-claiming that destructive actions require operator confirmation. Test the
-approval path from the same channel and tool surface you plan to use.
+`security.actionConfirmation` classifies actions, but the approval workflow is
+disabled by default in the schema. Guided setup enables the gate when it creates
+an administrator sender mapping. Otherwise enable `approvals.enabled` only after
+configuring an authorized responder. Test the approval path from the same
+channel and tool surface you plan to use.
 
 ### Tool access starts broad
 

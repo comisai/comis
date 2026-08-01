@@ -223,6 +223,23 @@ describe("reviewStep", () => {
     expect(summaryCall).toBeDefined();
   });
 
+  it("summary names the selected custom configuration files", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      configDir: "/custom/config",
+    };
+    const prompter = createMockPrompter({ select: ["confirm"] });
+
+    await reviewStep.execute(state, prompter);
+
+    const summary = vi.mocked(prompter.note).mock.calls
+      .map(([message]) => String(message))
+      .join("\n");
+    expect(summary).toContain("/custom/config/config.yaml");
+    expect(summary).toContain("/custom/config/.env");
+    expect(summary).not.toContain("~/.comis/config.yaml");
+  });
+
   it("summary includes the image provider when imageProvider is set", async () => {
     const state: WizardState = {
       ...populatedState(),

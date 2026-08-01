@@ -12,6 +12,7 @@
  */
 
 import type { GatewayConfig, WizardState, WizardStep } from "../types.js";
+import { safePath } from "@comis/core";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { brand, info, sectionSeparator, warning } from "../theme.js";
@@ -83,10 +84,14 @@ function buildAccessTokenBlock(state: WizardState): string | undefined {
 
   if (!state.gateway.token) return undefined;
 
+  const envPath = state.configDir
+    ? safePath(state.configDir, ".env")
+    : "~/.comis/.env";
+
   const storageGuidance = state.storageMode === "file"
-    ? info("Stored in ~/.comis/.env with file mode 0600; keep that file private.")
+    ? info(`Stored in ${envPath} with file mode 0600; keep that file private.`)
     : info(
-        "Stored in the encrypted secrets database. Its decryption key is in ~/.comis/.env; keep both private.",
+        `Stored in the encrypted secrets database. Its decryption key is in ${envPath}; keep both private.`,
       );
 
   return [

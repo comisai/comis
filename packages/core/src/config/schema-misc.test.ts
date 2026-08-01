@@ -366,7 +366,8 @@ describe("EmbeddingConfigSchema", () => {
     const result = EmbeddingConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.local.modelUri).toContain("nomic-embed-text");
+      expect(result.data.local.modelUri).toBe("hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf");
+      expect(result.data.multilingual).toBeUndefined();
       expect(result.data.local.modelsDir).toBe("models");
       expect(result.data.local.gpu).toBe("auto");
     }

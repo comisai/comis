@@ -338,7 +338,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // Forward the recall-trace config so buildRecallTrace receives the
       // operator's `enabled` gate + bounds. Sourced from
       // AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
-      // When omitted/disabled, buildRecallTrace returns null (default-off).
+      // When omitted or explicitly disabled, buildRecallTrace returns null.
       recallTraceConfig: deps.recallTraceConfig,
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,

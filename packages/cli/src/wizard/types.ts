@@ -171,13 +171,10 @@ export const EMBED_BGE_M3_MODEL_URI = "hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf"
  * Recall/embedding selection from the `recall` step — the embedder for semantic
  * memory recall.
  *
- * - `multilingual: false` → keep the default English-centric on-device nomic
- *   embedder. No `embedding` block is written (the daemon default applies); the
- *   choice is recorded only for the review screen.
- * - `multilingual: true` → write an explicit `embedding` block: on-device
- *   `bge-m3` (1024-d, private, $0, ~635MB) or OpenAI `text-embedding-3-small`
- *   (1536-d, hosted — offered only when the main provider is OpenAI so its key
- *   is already collected).
+ * - `multilingual: true` → on-device `bge-m3` (1024-d, private, $0, ~635MB)
+ *   or OpenAI `text-embedding-3-small` (1536-d, hosted).
+ * - `multilingual: false` → explicit smaller English-centric on-device nomic
+ *   selection.
  */
 export type RecallProviderConfig = {
   multilingual: boolean;
@@ -266,6 +263,8 @@ export type WizardState = {
   readonly recallProvider?: RecallProviderConfig;
   /** Text-to-speech provider selection from the `tts` step. */
   readonly ttsProvider?: TtsProviderConfig;
+  /** Directory containing config.yaml, .env, encrypted secrets, and daemon launcher files. */
+  readonly configDir?: string;
   readonly dataDir?: string;
   /** When true, skip post-setup health checks (set by --skip-health in non-interactive mode). */
   readonly skipHealth?: boolean;

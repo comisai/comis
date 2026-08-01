@@ -623,7 +623,7 @@ export interface AgentEvents {
   /**
    * Hybrid memory recall completed for one turn. MINIMAL payload — counts/booleans/ids
    * ONLY, NEVER query text, memory bodies, or entity names (§2.7); the per-recall ranking
-   * detail lives in the opt-in `diagnostics.recallTrace` artifact. Drives the in-process
+   * detail lives in the bounded `diagnostics.recallTrace` artifact. Drives the in-process
    * recall counters. Emit site: `createMemoryRecall` (memory-recall.ts), one-per-recall
    * after fuse/rerank/score.
    */
@@ -646,8 +646,8 @@ export interface AgentEvents {
      * conversation (`entry.userId !== sessionKey.userId`). `> 0` means agent-scoped
      * recall injected another sender's memory into THIS turn — the cross-sender/privacy
      * signal a recall or privacy audit needs from the ALWAYS-ON event, so "was
-     * cross-sender data injected into this turn's context?" is answerable without the
-     * opt-in `diagnostics.recallTrace` artifact having been pre-enabled. A COUNT only —
+     * cross-sender data injected into this turn's context?" is answerable even when the
+     * detailed `diagnostics.recallTrace` recorder is disabled. A COUNT only —
      * never the user-ids or memory bodies (§2.7); the per-row detail stays in the trace.
      */
     crossUserCount: number;

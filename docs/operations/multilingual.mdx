@@ -240,16 +240,17 @@ local model is the risk; a language-capable (qwen-class) model honors the instru
 ## Embedding and reranker
 
 Semantic recall (the vector lane) and recall re-ranking (the local GGUF cross-encoder) are only
-as multilingual as the models you configure. An English-only embedder silently degrades non-Latin
+as multilingual as the models you configure. Fresh configurations use multilingual `bge-m3` for
+the local embedding lane. An explicit English-only embedder silently degrades non-Latin
 recall *coverage*; an English-only reranker silently degrades non-Latin recall *ordering*. Neither
 gates anything — the FTS trigram floor carries recall regardless — but Comis names the degradation
 in `comis system-health` so it is not silently absent.
 
-- **Embedder** — for non-Latin deployments, select a multilingual embedding model: set
-  `embedding.local.modelUri` to a `bge-m3` GGUF (on-device, e.g.
-  `hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf`) or `embedding.provider: openai`
-  (`text-embedding-3-small`, hosted). The `comis init` wizard asks about this at install and
-  writes the block for you (`--embedding-multilingual` / `--embedding-provider` non-interactively).
+- **Embedder** — the default `embedding.local.modelUri` is an on-device `bge-m3`
+  GGUF (`hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf`). Set
+  `embedding.provider: openai` for hosted `text-embedding-3-small`, or explicitly
+  select nomic when a smaller English-only local model is preferable. The `comis init`
+  wizard recommends the private multilingual path and writes an explicit selection.
   `embedding.multilingual: true` is the **advisory** flag for the system health line — it selects
   nothing itself; declare it (or let the advisory infer it from the model id: `bge-m3` /
   `multilingual-e5` / LaBSE / E5 read as multilingual, otherwise `"unknown"`). See

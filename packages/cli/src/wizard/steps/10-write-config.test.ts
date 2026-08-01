@@ -162,6 +162,29 @@ describe("writeConfigStep", () => {
     );
   });
 
+  it("writes every configuration artifact under the requested config directory", async () => {
+    const state = {
+      ...populatedState(),
+      configDir: "/custom/config",
+    } as WizardState;
+
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    expect(renameSync).toHaveBeenCalledWith(
+      "/custom/config/config.yaml.tmp",
+      "/custom/config/config.yaml",
+    );
+    expect(mkdirSync).toHaveBeenCalledWith(
+      "/custom/config",
+      expect.objectContaining({ recursive: true, mode: 0o700 }),
+    );
+    expect(vi.mocked(writeFileSync).mock.calls).toContainEqual([
+      "/custom/config/.env",
+      expect.any(String),
+      { mode: 0o600 },
+    ]);
+  });
+
   it(".env file written with API key env var", async () => {
     const prompter = createMockPrompter();
 
@@ -688,7 +711,7 @@ describe("writeConfigStep", () => {
     });
   });
 
-  it("writes NO embedding block for the English default (multilingual:false) — the daemon keeps nomic", async () => {
+  it("writes an explicit nomic override for an English-only recall choice", async () => {
     const state: WizardState = {
       ...populatedState(),
       recallProvider: { multilingual: false, provider: "local" },
@@ -699,7 +722,13 @@ describe("writeConfigStep", () => {
       ([path]) => typeof path === "string" && path.includes(".tmp"),
     );
     const config = JSON.parse(configWriteCall![1] as string);
-    expect(config.embedding).toBeUndefined();
+    expect(config.embedding).toEqual({
+      provider: "local",
+      multilingual: false,
+      local: {
+        modelUri: "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf",
+      },
+    });
   });
 
   it("writes the FAL_KEY image credential to .env when imageProvider is fal", async () => {
@@ -809,6 +838,34 @@ describe("writeConfigStep", () => {
       enabled: true,
       senderTrustMap: { "12345": "admin" },
     });
+  });
+
+  it("enables human approvals when setup has an administrator", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      senderTrustEntries: [{ senderId: "12345", level: "admin" }],
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.approvals).toEqual({ enabled: true });
+  });
+
+  it("keeps human approvals disabled when no administrator can resolve them", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      senderTrustEntries: [{ senderId: "12345", level: "user" }],
+    };
+    await writeConfigStep.execute(state, createMockPrompter());
+
+    const configWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.approvals).toBeUndefined();
   });
 
   it("omits elevatedReply when no senderTrustEntries", async () => {

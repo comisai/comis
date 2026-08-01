@@ -154,6 +154,17 @@ describe("storageStep", () => {
     expect(result.storageMode).toBe("encrypted");
   });
 
+  it("provisions encrypted storage under the requested config directory", async () => {
+    const state = {
+      ...INITIAL_STATE,
+      configDir: "/custom/config",
+    } as WizardState;
+
+    await storageStep.execute(state, createMockPrompter("encrypted"));
+
+    expect(writeMasterKeyIfAbsent).toHaveBeenCalledWith("/custom/config");
+  });
+
   it("existing master key + encrypted chosen: does NOT call writeMasterKeyIfAbsent, no backup warning", async () => {
     masterKeyState = "a".repeat(64); // key already present
     const prompter = createMockPrompter("encrypted");

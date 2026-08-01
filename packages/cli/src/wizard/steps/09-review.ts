@@ -25,6 +25,7 @@ import type { WizardPrompter } from "../prompter.js";
 import { CancelError } from "../prompter.js";
 import { updateState } from "../state.js";
 import { heading } from "../theme.js";
+import { safePath } from "@comis/core";
 
 // ---------- Helpers ----------
 
@@ -128,8 +129,13 @@ function buildSummary(state: WizardState): string {
   // Files to write section
   lines.push("");
   lines.push("Files to write:");
-  lines.push("  ~/.comis/config.yaml");
-  lines.push("  ~/.comis/.env");
+  if (state.configDir) {
+    lines.push(`  ${safePath(state.configDir, "config.yaml")}`);
+    lines.push(`  ${safePath(state.configDir, ".env")}`);
+  } else {
+    lines.push("  ~/.comis/config.yaml");
+    lines.push("  ~/.comis/.env");
+  }
 
   return lines.join("\n");
 }

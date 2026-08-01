@@ -200,7 +200,7 @@ Important defaults and boundaries:
 - The ordinary `exec` tool can run on the host when its sandbox is disabled or unavailable.
 - The default tool-policy profile is `full`.
 - An empty per-agent `secrets.allow` list is unrestricted.
-- Human approvals are disabled by default and protect only paths explicitly connected to an approval gate.
+- Human approvals protect only explicitly connected paths. The schema default is off; guided setup enables it when it creates an administrator mapping.
 - The Credential Broker is optional.
 - Self-hosted does not mean offline. Configured model, messaging, media, MCP, and tool providers may receive data sent to them.
 - Graph checkpoints recover at node boundaries; they do not exactly replay model calls, tool calls, network requests, or external side effects.

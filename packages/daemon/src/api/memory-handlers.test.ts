@@ -1247,9 +1247,9 @@ describe("createMemoryHandlers - diagnostics", () => {
     }
 
     it("a disabled recorder yields an honest empty — tracingEnabled:false + a hint naming the knob (never a silent {records: []})", async () => {
-      // Right after a live recall, a bare empty response (because
-      // diagnostics.recallTrace.enabled defaults false) is indistinguishable
-      // from "no recalls happened" — hence the explicit flag + knob-naming hint.
+      // A bare empty response from an explicitly disabled recorder is
+      // indistinguishable from "no recalls happened" without the flag and
+      // knob-naming hint.
       const { deps } = makeDiagDeps(); // no dataDir → no trace file; gate unset → disabled
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
@@ -1262,6 +1262,8 @@ describe("createMemoryHandlers - diagnostics", () => {
       expect(result.records).toHaveLength(0);
       expect(result.tracingEnabled).toBe(false);
       expect(result.hint).toContain("diagnostics.recallTrace.enabled");
+      expect(result.hint).not.toContain("defaults to false");
+      expect(result.hint).toContain("disabled for this runtime");
     });
 
     it("an enabled recorder with no matching traces hints 're-run', not 'enable'", async () => {

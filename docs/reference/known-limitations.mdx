@@ -34,8 +34,8 @@ of describing the whole deployment as sandboxed.
 
 - The default agent tool-policy profile is `full`.
 - An empty per-agent `secrets.allow` list is unrestricted.
-- Human approvals are disabled by default and run only on explicitly wired
-  paths when enabled.
+- Human approvals protect only explicitly wired paths. The schema default is
+  disabled; guided setup enables it when it creates an administrator mapping.
 - Action classification informs policy and audit; classification alone does
   not pause an action.
 

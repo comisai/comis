@@ -236,7 +236,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       },
     };
     try {
-      // Recall-trace recorder, null-when-disabled (default-off). Constructed
+      // Recall-trace recorder, null when absent or explicitly disabled. Constructed
       // per assembly but shares a daemon-wide queued writer by path (the recorder's
       // registry contract), so recordRecall is fire-and-forget — no per-recall
       // flushAndClose (that would tear down the shared writer; mirrors the cacheTrace

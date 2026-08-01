@@ -40,10 +40,10 @@ function configWith(overrides: {
 }
 
 describe("resolveModelHealthMultilingual (provider-aware boot helper)", () => {
-  it("classifies the DEFAULT install: nomic embedder -> \"unknown\", bge-reranker-v2-m3 reranker -> true", () => {
+  it("classifies both default retrieval models as multilingual", () => {
     const result = resolveModelHealthMultilingual(AppConfigSchema.parse({}) as unknown as Config);
-    expect(result.embeddingMultilingual).toBe("unknown"); // nomic-embed-text-v1.5, no hit
-    expect(result.rerankerMultilingual).toBe(true); // the shipped multilingual reranker default
+    expect(result.embeddingMultilingual).toBe(true);
+    expect(result.rerankerMultilingual).toBe(true);
   });
 
   it("resolves the LOCAL embedder id from embedding.local.modelUri (provider auto/local)", () => {
@@ -60,9 +60,14 @@ describe("resolveModelHealthMultilingual (provider-aware boot helper)", () => {
     expect(result.embeddingMultilingual).toBe(true); // reads openai.model, not local.modelUri
   });
 
-  it("honors an explicit embedding.multilingual override (declared wins over the English-leaning default id)", () => {
-    const result = resolveModelHealthMultilingual(configWith({ embedding: { multilingual: true } }));
-    expect(result.embeddingMultilingual).toBe(true); // declared true over the nomic default
+  it("honors an explicit embedding.multilingual override over the model-id heuristic", () => {
+    const result = resolveModelHealthMultilingual(configWith({
+      embedding: {
+        multilingual: false,
+        local: { modelUri: "hf:org/bge-m3-GGUF:bge-m3.Q8_0.gguf" },
+      },
+    }));
+    expect(result.embeddingMultilingual).toBe(false);
   });
 
   it("returns rerankerMultilingual \"unknown\" for a non-multilingual reranker id (no per-reranker config flag)", () => {

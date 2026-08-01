@@ -35,6 +35,8 @@ import {
   IMAGE_PROVIDER_ENV_KEYS,
   TRANSCRIPTION_PROVIDER_ENV_KEYS,
   TTS_PROVIDER_ENV_KEYS,
+  EMBED_BGE_M3_MODEL_URI,
+  EMBED_NOMIC_MODEL_URI,
 } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
@@ -123,6 +125,17 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
   }
 
   config.agents = { default: agentConfig };
+
+  // Human approval prompts are useful only when the generated trust map names
+  // a principal who can resolve them. Keep the schema default off for setups
+  // without an administrator so privileged actions cannot wait on an absent
+  // approver.
+  const hasAdministrator = state.senderTrustEntries?.some(
+    (entry) => entry.level === "admin",
+  ) ?? false;
+  if (hasAdministrator) {
+    config.approvals = { enabled: true };
+  }
 
   // Provider connection and credential selection belong to the provider-entry
   // contract. Agent config only references the provider id and model.
@@ -276,17 +289,23 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.integrations = { media };
   }
 
-  // Embedding section — the semantic-recall embedder chosen in step 08g. Only a
-  // multilingual choice is written (English keeps the daemon's nomic default, so
-  // there is nothing to emit). Writes the AUTHORITATIVE `embedding.*` surface,
-  // NOT the legacy `memory.recall.embeddingModel` field. `multilingual: true` is
-  // the advisory flag that reconciles the `comis system-health` model-health line.
-  if (state.recallProvider?.multilingual === true) {
+  // Embedding section — the semantic-recall embedder chosen in step 08g. The
+  // explicit wizard choice is written on both branches so selecting the smaller
+  // English-only model cannot silently inherit the multilingual daemon default.
+  if (state.recallProvider) {
     const rp = state.recallProvider;
     config.embedding =
       rp.provider === "openai"
         ? { provider: "openai", multilingual: true, openai: { model: rp.model, dimensions: rp.dimensions } }
-        : { provider: "local", multilingual: true, local: { modelUri: rp.modelUri } };
+        : {
+            provider: "local",
+            multilingual: rp.multilingual,
+            local: {
+              modelUri:
+                rp.modelUri ??
+                (rp.multilingual ? EMBED_BGE_M3_MODEL_URI : EMBED_NOMIC_MODEL_URI),
+            },
+          };
   }
 
   return config;
@@ -467,7 +486,7 @@ export const writeConfigStep: WizardStep = {
     prompter.note(heading("Writing Configuration"));
 
     // 2. Determine paths using safePath (never path.join)
-    const configDir = safePath(homedir(), ".comis");
+    const configDir = state.configDir ?? safePath(homedir(), ".comis");
     const configPath = safePath(configDir, "config.yaml");
     const envPath = safePath(configDir, ".env");
     const dataDir = state.dataDir ?? safePath(homedir(), ".comis", "data");
@@ -641,11 +660,11 @@ export const writeConfigStep: WizardStep = {
       spinner.stop("Configuration written successfully");
 
       // 13. Show summary
-      prompter.log.success(themeSuccess("~/.comis/config.yaml"));
+      prompter.log.success(themeSuccess(configPath));
       if (!useSecretsStore) {
-        prompter.log.success(themeSuccess("~/.comis/.env (0600)"));
+        prompter.log.success(themeSuccess(`${envPath} (0600)`));
       } else {
-        prompter.log.success(themeSuccess("~/.comis/.env (secrets store)"));
+        prompter.log.success(themeSuccess(`${envPath} (secrets store)`));
       }
       if (dataDirCreated) {
         prompter.log.success(themeSuccess(`${dataDir}/ created`));

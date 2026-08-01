@@ -27,15 +27,15 @@ import {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_RERANKER = "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf";
-const DEFAULT_EMBEDDER = "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf";
+const ENGLISH_EMBEDDER = "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf";
 
 describe("resolveMultilingual (multilingual name heuristic)", () => {
   it("classifies the SHIPPED default reranker bge-reranker-v2-m3 as multilingual=true (a bare /bge-m3/ literal would miss it)", () => {
     expect(resolveMultilingual(undefined, DEFAULT_RERANKER, RERANK_MULTILINGUAL)).toBe(true);
   });
 
-  it("classifies the default embedder nomic-embed-text-v1.5 as \"unknown\" when undeclared (English-leaning, no heuristic hit)", () => {
-    expect(resolveMultilingual(undefined, DEFAULT_EMBEDDER, EMBED_MULTILINGUAL)).toBe("unknown");
+  it("classifies nomic-embed-text-v1.5 as \"unknown\" when undeclared", () => {
+    expect(resolveMultilingual(undefined, ENGLISH_EMBEDDER, EMBED_MULTILINGUAL)).toBe("unknown");
   });
 
   it("classifies a bge-m3 embedder id as multilingual=true", () => {
@@ -84,7 +84,7 @@ describe("RERANK_MULTILINGUAL / EMBED_MULTILINGUAL regexes", () => {
     expect(EMBED_MULTILINGUAL.test(DEFAULT_RERANKER)).toBe(false);
   });
 
-  it("EMBED_MULTILINGUAL does not match the English-leaning nomic default", () => {
-    expect(EMBED_MULTILINGUAL.test(DEFAULT_EMBEDDER)).toBe(false);
+  it("EMBED_MULTILINGUAL does not match the English-leaning nomic model", () => {
+    expect(EMBED_MULTILINGUAL.test(ENGLISH_EMBEDDER)).toBe(false);
   });
 });

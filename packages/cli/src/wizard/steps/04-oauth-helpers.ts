@@ -45,17 +45,20 @@ import { offlineOAuthProfileSet } from "../../util/offline-secrets-store.js";
  * Uses the shared comma-separated COMIS_CONFIG_PATHS contract.
  * Returns "file" when no config is found or the config is invalid.
  */
-export async function loadWizardStorageMode(): Promise<
+export async function loadWizardStorageMode(configDir?: string): Promise<
   "file" | "encrypted" | "env"
 > {
   const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
-  const configPath =
-    parseConfigPaths(envPaths)[0] ?? safePath(homedir(), ".comis", "config.yaml");
+  const configPath = configDir !== undefined
+    ? safePath(configDir, "config.yaml")
+    : parseConfigPaths(envPaths)[0] ?? safePath(homedir(), ".comis", "config.yaml");
 
   // Resolve ${VAR} refs before validation — consistent with daemon bootstrap.
   // Use COMIS_DATA_DIR if set (test isolation), else the standard data dir.
-  const dataDir = systemGetEnv("COMIS_DATA_DIR") ?? safePath(homedir(), ".comis");
-  loadEnvFile(safePath(dataDir, ".env"));
+  const credentialDir = configDir
+    ?? systemGetEnv("COMIS_DATA_DIR")
+    ?? safePath(homedir(), ".comis");
+  loadEnvFile(safePath(credentialDir, ".env"));
 
   const loadResult = loadConfigFile(configPath, {
     getSecret: (k) => systemGetEnv(k),
@@ -89,10 +92,10 @@ export async function loadWizardStorageMode(): Promise<
  * use the daemon RPC path in handleCodexOAuth directly (no store opened in
  * CLI). For env mode, reject before reaching this function.
  */
-export async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
-  const dataDir = safePath(homedir(), ".comis");
+export async function openWizardOAuthStore(configDir?: string): Promise<OAuthCredentialStorePort> {
+  const dataDir = configDir ?? safePath(homedir(), ".comis");
   const fileLock = createFileLock();
-  const storage = await loadWizardStorageMode();
+  const storage = await loadWizardStorageMode(configDir);
   if (storage === "env") {
     // Defensive: env mode is read-only. handleCodexOAuth should have
     // already rejected before reaching this path.
@@ -148,7 +151,7 @@ export async function handleCodexOAuth(
   // opening a store. state.storageMode (set by step 02b) takes precedence: on a
   // fresh init the key was just provisioned but loadWizardStorageMode's env
   // snapshot may not reflect it, so encrypted must not fall back to file.
-  const wizardStorage = state.storageMode ?? await loadWizardStorageMode();
+  const wizardStorage = state.storageMode ?? await loadWizardStorageMode(state.configDir);
 
   if (wizardStorage === "env") {
     // Env is read-only — credentials come from environment variables.
@@ -232,10 +235,11 @@ export async function handleCodexOAuth(
     const sealOAuthProfileOffline = async (
       oauthProfile: OAuthProfile,
     ): Promise<boolean> => {
+      const credentialDir = state.configDir ?? safePath(homedir(), ".comis");
       const res = await offlineOAuthProfileSet({
         profile: oauthProfile,
-        dataDir: safePath(homedir(), ".comis"),
-        envFilePath: safePath(homedir(), ".comis", ".env"),
+        dataDir: credentialDir,
+        envFilePath: safePath(credentialDir, ".env"),
       });
       if (!res.ok) {
         prompter.log.error(
@@ -371,7 +375,7 @@ export async function handleCodexOAuth(
   // File mode: open the store adapter and write directly.
   let store: OAuthCredentialStorePort;
   try {
-    store = await openWizardOAuthStore();
+    store = await openWizardOAuthStore(state.configDir);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     prompter.log.error(msg);
