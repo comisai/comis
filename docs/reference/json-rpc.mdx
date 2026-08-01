@@ -75,7 +75,7 @@ That same pattern works whether you call over WebSocket or `POST /rpc`. For stre
 
 ## Scopes
 
-Every JSON-RPC method requires a specific scope. Tokens are configured in `gateway.tokens[]` with a `scopes` array.
+Every JSON-RPC method declares one or more accepted scopes. Tokens are configured in `gateway.tokens[]` with a `scopes` array.
 
 | Scope | Access Level | Description |
 |-------|-------------|-------------|
@@ -83,7 +83,12 @@ Every JSON-RPC method requires a specific scope. Tokens are configured in `gatew
 | `admin` | Administrative | Config, agent management, memory management, observability, tokens, channels |
 | `*` | Wildcard | Access to all methods (both `rpc` and `admin`) |
 
-A token with `scopes: ["rpc"]` can only call `rpc`-scoped methods. A token with `scopes: ["*"]` has access to all methods. Calling a method without sufficient scope returns error code `-32603` with message `"Insufficient scope: requires 'admin'"`.
+A token with `scopes: ["rpc"]` can only call `rpc`-scoped methods. A token with `scopes: ["*"]` has access to all methods. Calling a method without sufficient scope returns error code `-32603` with a message naming the required scope or scopes.
+
+Methods that list multiple scopes accept any one of them. Route admission and
+handler trust are separate: after admission, an authenticated admin token keeps
+admin trust even when another accepted scope also matched. Internal trust fields
+are stripped from client parameters and cannot be forged.
 
 ## Request Format
 
@@ -470,7 +475,7 @@ Gateway server status, process information, and restart.
 
 <Accordion title="obs (16 methods)">
 
-Observability methods for diagnostics, billing estimation, channel activity tracking, message delivery tracing, context engine inspection, prompt cache statistics, and data management. All methods require `admin` scope **except `obs.diagnostics`, which is `rpc`-scoped** (read-only, scrubbed digests on a single-tenant daemon, so an agent's `obs_query` can self-diagnose its own sessions).
+Observability methods for diagnostics, billing estimation, channel activity tracking, message delivery tracing, context engine inspection, prompt cache statistics, and data management. Most methods require `admin` scope. `obs.diagnostics` is `rpc`-scoped with no in-handler admin gate. `obs.explain` also uses an `rpc` route, but its handler requires authenticated admin trust.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
@@ -784,6 +789,15 @@ durably reset a task transition, the higher-priority
 reconciliation authority and the
 `health_signal:background_task_recovery_failed` system-health signal.
 
+The report may include content-free request-selection evidence:
+`requestRelevantToolNames` lists the bounded tool names selected for the turn;
+`requestRelevanceHistory` records `{ turnCount, charCount, saturated }` for the
+bounded prior-user-turn window; and `operatorPolicyToolProjections` records up
+to 16 `{ toolName, sectionId, contentHash, projectedChars }` receipts for
+immutable operator-policy sections projected into selected tool schemas. These
+fields contain names, hashes, sizes, and counts only -- never policy or message
+bodies.
+
 For `context_exhausted` sessions the report carries an optional **`contextBudget`** section -- the terminal per-LLM-call budget equation extracted from the trajectory's `context.budget` records (last record wins): `{ windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict, freshTailSteps?, freshTailStepsConfigured?, originatingRequestRetained?, freshTailTrimmedCount? }`. `freshTailSteps` / `freshTailStepsConfigured` are the **effective vs operator-configured** count of trailing conversation steps kept verbatim (`contextEngine.freshTailTurns`). The verbatim tail also reaches back to the store's persisted horizon, and residual trimming pins the current turn's originating request while discarding completed tool segments. `originatingRequestRetained` records the resulting coverage directly; only an explicit `false` produces the `fresh_tail_origin_lost` root-cause verdict, while a step-count clamp alone is not treated as evidence of loss. `windowCapSource` names what clamped the effective window below the model's configured `contextWindow`: the exact `contextEngine.budget.*` knob (`effectiveContextCapSmall` / `effectiveContextCapNano`), `served` (the Ollama-served `num_ctx` bound the window -- fix with `OLLAMA_CONTEXT_LENGTH=<configured> ollama serve` or a Modelfile `PARAMETER num_ctx`), `capabilityClass` (the operator's `providers.entries.<id>.capabilities.capabilityClass` pin bound the window -- pin a higher class or remove the pin; the `contextEngine.budget.*` caps do not move this bind), or `none`. `verdict` is the fit-check outcome (`fits` / `downshifted` / `exhausted`). When present, `likelyRootCause` is numbers-backed: it states the assembled-vs-window totals, the binding cap, the system+tools share of the window, and the kept-history count, and its suggested steps name the binding lever (the budget knob to raise, the Ollama serve knobs, or the `capabilityClass` pin) or recommend reducing the active tool surface when tool schemas dominate. The section is absent when the trajectory carries no `context.budget` records; the verdict then falls back to the generic wording.
 
 When the session ran any memory recalls the report carries an optional **`recall`** section -- the memory-recall outcome aggregated over the trajectory's `memory.recalled` records: `{ recalls, zeroHits, lastLanes, lastFinalCount, rerankerAvailable, crossUserRecalls?, lastCrossUserCount? }` (counts and booleans only -- never the query text or any recalled memory body). `recalls` is how many recalls ran, `zeroHits` how many returned **no** injected memories (a recall miss), and the `last*` fields describe the terminal recall (its lane count and final injected-memory count). **`crossUserRecalls`** (present only when `> 0`) is how many recalls injected at least one memory scoped to a **different user** than the conversation -- the cross-sender privacy signal for agent-scoped recall (one shared agent surfacing sender A's memory into sender B's turn), so "was cross-sender data injected into this turn's context?" is answerable from the always-on report without pre-enabling the opt-in `diagnostics.recallTrace` artifact; **`lastCrossUserCount`** is the terminal recall's cross-user injected count. Counts only -- never the user-ids or bodies. This drives a dedicated **`recall_miss`** `likelyRootCause` verdict: a degraded session whose recalls **all** missed (`zeroHits === recalls`) and that matched no tool/context/breaker cause is root-caused as a recall miss, pointing the operator at the recall **scope** (agent- vs user-scoped) and, for non-Latin queries, the trigram-twin lanes (see [`comis system-health`](#obs-system-health) `health_signal` / `config_posture` embedder). A zero-hit recall on a **healthy** turn is benign -- the agent simply did not need memory -- and never names a cause. The section is absent for sessions with no recall records.
@@ -819,9 +833,9 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
+| **Scope** | `rpc` route plus admin trust. A gateway token needs both `rpc` and `admin` (or `*`); the handler rejects non-admin trust. |
 | **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` required. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], contextBudget?, recall?, voice?, learning?, orchestrate?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -1428,7 +1442,7 @@ Strict scheduled-job authoring, authority inspection, immutable execution histor
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `cron.add` | `rpc` | Add an authored job |
-| `cron.list` | `rpc` | List authored and built-in jobs |
+| `cron.list` | `rpc`, `admin` | List authored and built-in jobs |
 | `cron.update` | `rpc` | Update an authored job |
 | `cron.status` | `rpc` | Inspect scheduler and authority state |
 | `cron.runs` | `rpc` | Read immutable execution groups |
@@ -1487,7 +1501,14 @@ The response fields are `jobId`, `name`, and `schedule`, with the schedule in pe
 
 ### `cron.list`
 
-The request is `{ agentId? }`. The response is `{ jobs }`; every job contains `id`, `name`, `agentId`, `source`, `schedule`, `lifecycle`, and `payload`, plus only the optional policy fields that apply: `maxConsecutiveDependencyErrors`, `sessionPolicy`, `continuationMode`, `deliveryTarget`, `wakeGate`, `cacheRetention`, and `toolPolicy`.
+The request is `{ agentId? }`. The response is `{ resolvedAgentId, jobs }`;
+`resolvedAgentId` is the exact selected agent or `"*"` for an all-agent result.
+The method accepts either `rpc` or `admin` scope. Non-admin callers are limited
+to their resolved agent; selecting another agent or `"*"` requires authenticated
+admin trust. Every job contains `id`, `name`, `agentId`, `source`, `schedule`,
+`lifecycle`, and `payload`, plus only the optional policy fields that apply:
+`maxConsecutiveDependencyErrors`, `sessionPolicy`, `continuationMode`,
+`deliveryTarget`, `wakeGate`, `cacheRetention`, and `toolPolicy`.
 
 `source` is `authored` or `built_in`. Persisted `schedule` is `cron`, `every`, or `at`. `lifecycle` is one of:
 

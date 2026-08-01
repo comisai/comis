@@ -157,7 +157,7 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
 }
 
 // ---------------------------------------------------------------------------
-// Deny-by-origin: the authoritative admin-method set.
+// Deny-by-origin: the authoritative admin-only method set.
 // ---------------------------------------------------------------------------
 //
 // Derived once from the contract registry. Admin-only methods are control-plane
@@ -610,7 +610,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // Deny-by-origin chokepoint. BOTH the in-process agent path
       // (createAgentRpcCall -> the same injected rpcCall) AND the gateway path
       // funnel through this one closure to reach every handler — so this is the
-      // single seam at which an agent-origin call to an admin-scoped method is
+      // single seam at which an agent-origin call to an admin-only method is
       // rejected. `params._agentId` is the trusted agent-origin signal (external
       // forgeries are stripped, so presence == agent-origin). The guard fires
       // only for ADMIN_METHODS; a non-admin method's `_agentId` passes untouched.

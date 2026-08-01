@@ -812,9 +812,10 @@ describe("createRpcDispatch", () => {
 
   it("a NON-admin self-scoped method with _agentId PASSES the chokepoint (agent self-reads still work)", async () => {
     const dispatch = await getDispatch();
-    // cron.list is scopes:["rpc"] (NON-admin) — the agent's own _agentId rides
-    // it for tenant self-scoping and must NOT be denied. The chokepoint keys on
-    // ADMIN_METHODS membership, so a non-admin method's _agentId is untouched.
+    // cron.list exposes both RPC and admin routes; its RPC route is intentionally
+    // agent-reachable, so the agent's own _agentId rides it for self-scoping and
+    // must NOT be denied. The chokepoint keys on ADMIN_METHODS membership, so a
+    // multi-scope method's _agentId is untouched.
     await expect(
       dispatch("cron.list", { _agentId: "self" }),
     ).resolves.toBeDefined();
