@@ -4,8 +4,8 @@ import { EmbeddingConfigSchema } from "./schema-embedding.js";
 
 // ---------------------------------------------------------------------------
 // The `embedding.multilingual` advisory config key. Fresh configurations use a
-// multilingual local model and report that posture without relying on a model-id
-// heuristic. Explicit overrides remain available for other embedders.
+// multilingual local model. The advisory remains optional so health reporting
+// infers the actual selected model unless an operator explicitly overrides it.
 // ---------------------------------------------------------------------------
 
 describe("EmbeddingConfigSchema — multilingual advisory key", () => {
@@ -19,9 +19,9 @@ describe("EmbeddingConfigSchema — multilingual advisory key", () => {
     expect(parsed.multilingual).toBe(false);
   });
 
-  it("defaults to a multilingual posture when omitted", () => {
+  it("defaults to a multilingual local model without forcing the advisory", () => {
     const parsed = EmbeddingConfigSchema.parse({});
-    expect(parsed.multilingual).toBe(true);
+    expect(parsed.multilingual).toBeUndefined();
     expect(parsed.local.modelUri).toBe("hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf");
   });
 
