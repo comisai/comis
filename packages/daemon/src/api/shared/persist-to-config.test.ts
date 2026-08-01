@@ -268,6 +268,35 @@ describe("persistToConfig", () => {
   // -----------------------------------------------------------------------
   // 6. Git success: calls configGitManager.commit on successful write
   // -----------------------------------------------------------------------
+  it("waits for config git versioning to settle before returning", async () => {
+    let finishCommit: (() => void) | undefined;
+    const commitPending = new Promise<{ ok: true; value: string }>((resolve) => {
+      finishCommit = () => resolve({ ok: true, value: "test-sha" });
+    });
+    const mockCommit = vi.fn(() => commitPending);
+    const deps = makeDeps({
+      configPaths: [configPath],
+      configGitManager: { commit: mockCommit } as unknown as PersistToConfigDeps["configGitManager"],
+    });
+    const opts = makeOpts({
+      patch: { logLevel: "debug" },
+      skipRestart: true,
+    });
+
+    let persistenceSettled = false;
+    const persistence = persistToConfig(deps, opts).then((result) => {
+      persistenceSettled = true;
+      return result;
+    });
+
+    await vi.waitFor(() => expect(mockCommit).toHaveBeenCalledOnce());
+    expect(persistenceSettled).toBe(false);
+
+    finishCommit?.();
+    const result = await persistence;
+    expect(result.ok).toBe(true);
+  });
+
   it("git success: calls configGitManager.commit on successful write", async () => {
     const mockCommit = vi.fn().mockResolvedValue(undefined);
     const deps = makeDeps({
