@@ -43,6 +43,32 @@ describe("idle continuation turn", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("temporarily restricts a recovery turn to matched tools and restores the prior surface", async () => {
+    let activeTools = ["exec", "mcp__service--account_summary"];
+    const prompt = vi.fn(async () => {
+      expect(activeTools).toEqual(["mcp__service--account_summary"]);
+    });
+    const setActiveToolsByName = vi.fn((names: string[]) => {
+      activeTools = [...names];
+    });
+
+    const result = await runContinuationTurn(
+      {
+        prompt,
+        getActiveToolNames: () => [...activeTools],
+        setActiveToolsByName,
+      },
+      "Use the matched capability now.",
+      allowProviderDispatch,
+      { restrictToToolNames: ["mcp__service--account_summary"] },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, ["mcp__service--account_summary"]);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, ["exec", "mcp__service--account_summary"]);
+    expect(activeTools).toEqual(["exec", "mcp__service--account_summary"]);
+  });
+
   it("keeps post-prompt recovery paths off the queue-only follow-up API", () => {
     for (const source of idleContinuationSources) {
       expect(source).not.toMatch(/session\.followUp\(/);

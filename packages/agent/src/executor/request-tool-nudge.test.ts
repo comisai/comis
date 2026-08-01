@@ -119,6 +119,39 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("restricts explicit-use recovery to the matched tools", async () => {
+    let activeTools = ["exec", "web_search", "test_read_only_tool"];
+    let successfulToolCount = 0;
+    const setActiveToolsByName = vi.fn((names: string[]) => {
+      activeTools = [...names];
+    });
+    const prompt = vi.fn(async () => {
+      expect(activeTools).toEqual(["test_read_only_tool"]);
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      requestText: "use the connected service",
+      requestRelevantToolNames: ["test_read_only_tool"],
+      session: {
+        prompt,
+        getActiveToolNames: () => [...activeTools],
+        setActiveToolsByName,
+      },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () => "Current result.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(outcome.outcome).toBe("recovered");
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(1, ["test_read_only_tool"]);
+    expect(setActiveToolsByName).toHaveBeenNthCalledWith(2, [
+      "exec",
+      "web_search",
+      "test_read_only_tool",
+    ]);
+  });
+
   it("does not run for an informational mention of a read-only tool", async () => {
     const deps = makeDeps({
       requestText: "describe the account summary capability",
