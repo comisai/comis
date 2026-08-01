@@ -160,7 +160,9 @@ function buildDirective(
 }
 
 function buildPromptSkillWorkflowDirective(
-  toolNames: readonly string[],
+  workflowToolNames: readonly string[],
+  promptSkillLocations: readonly string[],
+  actionToolNames: readonly string[],
   workflowContext?: string,
 ): string {
   const priorRequest = workflowContext
@@ -171,8 +173,12 @@ function buildPromptSkillWorkflowDirective(
     : undefined;
   return [
     "[comis: continuation — the loaded prompt skill workflow is still pending]",
-    "The request-relevant prompt skill was loaded, but none of its required workflow tools succeeded.",
-    `Complete the loaded procedure now with: ${toolNames.join(", ")}.`,
+    "The request-relevant prompt skill procedure has not completed the requested action.",
+    ...(promptSkillLocations.length > 0
+      ? [`If it is not loaded yet, use read with: ${promptSkillLocations.join(", ")}.`]
+      : []),
+    `Complete its supporting workflow with: ${workflowToolNames.join(", ")}.`,
+    `Complete the requested action with: ${actionToolNames.join(", ")}.`,
     priorRequest
       ? `The immediately preceding user request was:\n${priorRequest}`
       : "Resolve context-dependent arguments from the recent user requests already in context.",
@@ -329,14 +335,21 @@ export async function runRequestToolNudge(
       },
       "Loaded prompt skill requires one bounded workflow continuation",
     );
+    const workflowRecoveryTools = [...new Set([
+      ...(deps.requestRelevantPromptSkillLocations?.length ? ["read"] : []),
+      ...promptSkillWorkflowTools,
+      ...recoveryToolNames,
+    ])];
     continuation = await runContinuationTurn(
       deps.session,
       buildPromptSkillWorkflowDirective(
         promptSkillWorkflowTools,
+        deps.requestRelevantPromptSkillLocations ?? [],
+        recoveryToolNames,
         deps.requestRelevantPromptSkillWorkflowContext,
       ),
       deps.guardProviderDispatch,
-      { restrictToToolNames: promptSkillWorkflowTools },
+      { restrictToToolNames: workflowRecoveryTools },
     );
   }
   if (!continuation.ok) {
