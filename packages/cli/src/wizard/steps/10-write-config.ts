@@ -126,6 +126,17 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
 
   config.agents = { default: agentConfig };
 
+  // Human approval prompts are useful only when the generated trust map names
+  // a principal who can resolve them. Keep the schema default off for setups
+  // without an administrator so privileged actions cannot wait on an absent
+  // approver.
+  const hasAdministrator = state.senderTrustEntries?.some(
+    (entry) => entry.level === "admin",
+  ) ?? false;
+  if (hasAdministrator) {
+    config.approvals = { enabled: true };
+  }
+
   // Provider connection and credential selection belong to the provider-entry
   // contract. Agent config only references the provider id and model.
   const providerEntries: Record<string, Record<string, unknown>> = {};
