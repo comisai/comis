@@ -652,6 +652,48 @@ describe("writeConfigStep", () => {
     expect(configContent.integrations.media.imageGeneration.provider).toBe("openrouter");
   });
 
+  it("does NOT pin openai-codex image-gen without a completed OAuth login", async () => {
+    // Live (comis-moshe): the config pinned `imageGeneration.provider: openai-codex` with no
+    // openai-codex OAuth profile, so the image pipeline failed at first use while every other surface
+    // looked healthy — surfaced only as `config_posture:media_credential_gap`. openai-codex
+    // authenticates via a separate `comis auth login` the wizard does not collect, so selection alone
+    // is not evidence the credential exists. Omitting the key lets the daemon's `auto` default follow
+    // the main provider, which works out of the box.
+    const state: WizardState = {
+      ...populatedState(),
+      imageProvider: { provider: "openai-codex" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations?.media?.imageGeneration).toBeUndefined();
+  });
+
+  it("DOES pin openai-codex image-gen once the OAuth login succeeded", async () => {
+    const base = populatedState();
+    const state: WizardState = {
+      ...base,
+      provider: { ...base.provider!, id: "openai-codex", oauthProfileId: "openai-codex:someone" },
+      imageProvider: { provider: "openai-codex" },
+    };
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(state, prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.integrations.media.imageGeneration.provider).toBe("openai-codex");
+  });
+
   it("emits BOTH image and video generation under integrations.media when both are set", async () => {
     const state: WizardState = {
       ...populatedState(),
