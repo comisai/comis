@@ -2,23 +2,20 @@
 /**
  * Semantic-memory-recall (embedding) step — step 08g of the init wizard.
  *
- * The default on-device embedder (`nomic-embed-text-v1.5`) is English-centric,
- * so on a non-Latin deployment (Hebrew, Arabic, CJK, Cyrillic) semantic recall
- * degrades to the lexical FTS floor — silently, because the embedder is the one
- * recall knob the wizard never surfaced. This step surfaces it as an informed
- * install-time choice (the cheapest moment: no memories to re-embed yet).
+ * Fresh deployments use the private multilingual `bge-m3` embedder so semantic
+ * recall works across scripts without an external service. This step exposes
+ * the download/privacy tradeoff while memories are still cheap to re-embed.
  *
- * Progressive disclosure — English is the no-friction default:
- *   1. "Mostly non-English?" — No (default) keeps nomic and writes nothing (the
- *      daemon default applies); the multilingual reranker (`bge-reranker-v2-m3`)
- *      is multilingual regardless.
+ * Progressive disclosure:
+ *   1. Multilingual recall is recommended and selected by default.
  *   2. Yes → pick the multilingual embedder:
  *      - `local`  — on-device `bge-m3` (1024-d): private, $0, ~635MB download,
  *                   slower on CPU. The recommended default.
  *      - `openai` — `text-embedding-3-small` (1536-d): hosted, no download, but
  *                   sends memory text to OpenAI and costs per embed. Reuses the
  *                   main OPENAI_API_KEY when the main provider is OpenAI; else
- *                   prompts for a standalone key (mirrors the 08e Deepgram path).
+ *                   prompts for a standalone key.
+ *   3. No → select the smaller English-centric on-device nomic embedder.
  *
  * Writes the AUTHORITATIVE `embedding.*` surface (provider + local.modelUri /
  * openai.model+dimensions + the advisory `multilingual` flag) in step 10 — NOT
@@ -28,7 +25,7 @@
  */
 
 import type { WizardState, WizardStep } from "../types.js";
-import { EMBED_BGE_M3_MODEL_URI } from "../types.js";
+import { EMBED_BGE_M3_MODEL_URI, EMBED_NOMIC_MODEL_URI } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { sectionSeparator } from "../theme.js";
@@ -47,18 +44,22 @@ export const recallStep: WizardStep = {
     prompter.note(sectionSeparator("Semantic Memory Recall"));
 
     const multilingual = await prompter.confirm({
-      message:
-        "Will this assistant mostly handle non-English messages (Hebrew, Arabic, CJK, Cyrillic, …)?",
-      initialValue: state.recallProvider?.multilingual ?? false,
+      message: "Use multilingual semantic recall (recommended for mixed-language conversations)?",
+      initialValue: state.recallProvider?.multilingual ?? true,
     });
 
-    // English (default): keep the small/fast on-device nomic embedder. Write
-    // nothing — the daemon default applies. The reranker stays multilingual.
+    // Explicit English-only choice: keep the smaller on-device nomic embedder.
     if (!multilingual) {
       prompter.log.info(
-        "Keeping the default on-device English embedder (nomic-embed-text-v1.5) — small and fast.",
+        "Using the on-device English embedder (nomic-embed-text-v1.5) — smaller and faster.",
       );
-      return updateState(state, { recallProvider: { multilingual: false, provider: "local" } });
+      return updateState(state, {
+        recallProvider: {
+          multilingual: false,
+          provider: "local",
+          modelUri: EMBED_NOMIC_MODEL_URI,
+        },
+      });
     }
 
     // Multilingual: on-device bge-m3 (recommended) or OpenAI-hosted.

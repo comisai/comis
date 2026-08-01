@@ -599,11 +599,9 @@ export function buildNonInteractiveState(
     }
   }
 
-  // Recall / embedding (step 08g). Default (no --embedding-multilingual): leave
-  // recallProvider undefined → the daemon keeps its nomic default (no 2GB pull
-  // on an unattended install). --embedding-multilingual opts into a multilingual
-  // embedder: local bge-m3 (default) or OpenAI (key reused from an openai main,
-  // else --embedding-api-key; validated above).
+  // Recall / embedding (step 08g). With no recall flags, the daemon's private
+  // multilingual local default applies. The flags can select OpenAI instead,
+  // reusing the main key when possible.
   let recallProvider: RecallProviderConfig | undefined;
   if (opts.embeddingMultilingual === true) {
     if ((opts.embeddingProvider ?? "local") === "openai") {
@@ -670,10 +668,8 @@ export function buildNonInteractiveState(
     "video-providers",
     "transcription",
     "tts",
-    // recall (08g) is skipped in non-interactive mode → the embedder keeps the
-    // daemon default (nomic). A future --embedding-multilingual / --embedding-provider
-    // flag pair would set it here; for now mark it complete so the runner does not
-    // hit the interactive confirm() prompt.
+    // recall (08g) is skipped in non-interactive mode. The daemon's multilingual
+    // local default applies unless the recall flags populated recallProvider.
     "recall",
     "review",
   ];

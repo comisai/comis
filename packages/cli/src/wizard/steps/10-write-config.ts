@@ -35,6 +35,8 @@ import {
   IMAGE_PROVIDER_ENV_KEYS,
   TRANSCRIPTION_PROVIDER_ENV_KEYS,
   TTS_PROVIDER_ENV_KEYS,
+  EMBED_BGE_M3_MODEL_URI,
+  EMBED_NOMIC_MODEL_URI,
 } from "../types.js";
 import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
@@ -276,17 +278,23 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     config.integrations = { media };
   }
 
-  // Embedding section — the semantic-recall embedder chosen in step 08g. Only a
-  // multilingual choice is written (English keeps the daemon's nomic default, so
-  // there is nothing to emit). Writes the AUTHORITATIVE `embedding.*` surface,
-  // NOT the legacy `memory.recall.embeddingModel` field. `multilingual: true` is
-  // the advisory flag that reconciles the `comis system-health` model-health line.
-  if (state.recallProvider?.multilingual === true) {
+  // Embedding section — the semantic-recall embedder chosen in step 08g. The
+  // explicit wizard choice is written on both branches so selecting the smaller
+  // English-only model cannot silently inherit the multilingual daemon default.
+  if (state.recallProvider) {
     const rp = state.recallProvider;
     config.embedding =
       rp.provider === "openai"
         ? { provider: "openai", multilingual: true, openai: { model: rp.model, dimensions: rp.dimensions } }
-        : { provider: "local", multilingual: true, local: { modelUri: rp.modelUri } };
+        : {
+            provider: "local",
+            multilingual: rp.multilingual,
+            local: {
+              modelUri:
+                rp.modelUri ??
+                (rp.multilingual ? EMBED_BGE_M3_MODEL_URI : EMBED_NOMIC_MODEL_URI),
+            },
+          };
   }
 
   return config;
