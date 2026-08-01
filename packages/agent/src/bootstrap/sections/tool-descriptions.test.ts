@@ -717,6 +717,13 @@ describe("SYSTEM_PROMPT_GUIDES trigger reachability", () => {
     expect(lean as string).toMatch(/parallel|multiple/i);
   });
 
+  it("limits first-response fan-out to distinct independent work", () => {
+    const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
+    expect(lean as string).toMatch(/spawn one/i);
+    expect(lean as string).toMatch(/distinct independent/i);
+    expect(lean as string).toMatch(/never duplicate/i);
+  });
+
   it("binds explicitly required child tools in the first-spawn description", () => {
     const lean = LEAN_TOOL_DESCRIPTIONS.sessions_spawn;
     expect(lean as string).toContain("required_tools");
@@ -750,6 +757,11 @@ describe("Task Delegation policy covers the child tool profile", () => {
     expect(guide).toMatch(/MCP/);
     expect(guide).toMatch(/message/);
     expect(guide).not.toContain("MCP tools and `message` are OUTSIDE it");
+  });
+
+  it("forbids reworded duplicate spawns while preserving independent fan-out", () => {
+    expect(guide).toMatch(/distinct.*independent/i);
+    expect(guide).toMatch(/never.*duplicate/i);
   });
 });
 
