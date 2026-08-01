@@ -1,6 +1,6 @@
 ---
 name: find-skills
-version: 1.0.7
+version: 1.0.8
 description: "MANDATORY: For requests asking whether a skill or specialized capability exists, load this skill and run its catalog workflow before answering. This includes elliptical follow-ups such as 'find something that does' when the preceding turn names the task. Do not answer from general capabilities, search workspace filenames, or use generic web search."
 comis:
   requires:
@@ -59,6 +59,9 @@ skill was found.
 Present the strongest verified fit as the clear recommendation, including its
 `owner/repo@skill-name` identifier. Mention alternatives only when they materially differ. Do not
 claim details the catalog output did not establish.
+The same-turn response after a successful catalog search must name one exact `owner/repo@skill-name` identifier.
+Saying only that tools exist is incomplete and leaves a later
+"install it" request without a verified target.
 
 ### Step 5: Install
 
