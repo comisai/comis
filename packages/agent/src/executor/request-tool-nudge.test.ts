@@ -170,7 +170,7 @@ describe("runRequestToolNudge", () => {
       expect.stringContaining("example/skills@flashcard-maker"),
       expect.anything(),
     );
-    expect(outcome.outcome).toBe("recovered");
+    expect(outcome.outcome).toBe("still_no_tool_call");
   });
 
   it("restricts explicit-use recovery to the matched tools", async () => {
