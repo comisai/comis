@@ -124,13 +124,14 @@ describe("runRequestToolNudge", () => {
       requestText: "find something that does",
       requestRelevantToolNames: ["test_read_only_tool"],
       requestRelevantPromptSkillNames: ["find-skills"],
+      requestRelevantPromptSkillLocations: ["/skills/find-skills/SKILL.md"],
     });
 
     const outcome = await runRequestToolNudge(deps);
 
     expect(deps.session.prompt).toHaveBeenCalledTimes(1);
     expect(deps.session.prompt).toHaveBeenCalledWith(
-      expect.stringMatching(/find-skills.*exact <location>/isu),
+      expect.stringContaining("/skills/find-skills/SKILL.md"),
       expect.anything(),
     );
     expect(outcome.outcome).toBe("recovered");

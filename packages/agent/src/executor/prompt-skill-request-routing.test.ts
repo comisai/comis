@@ -49,12 +49,19 @@ describe("prompt skill request routing", () => {
         "find something that does",
       ].join("\n"),
       skills,
+      locations: new Map([
+        ["/skills/find-skills/SKILL.md", "find-skills"],
+        ["/skills/image-generation/SKILL.md", "image-generation"],
+      ]),
     });
 
     expect(selected).toEqual(["find-skills"]);
     expect(deferral.requestRelevantToolNames).toContain("read");
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/find-skills/SKILL.md",
+    ]);
     expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
-      .toMatch(/find-skills.*Available Skills/iu);
+      .toContain("/skills/find-skills/SKILL.md");
   });
 
   it("leaves unrelated requests and non-nano profiles unchanged", () => {
