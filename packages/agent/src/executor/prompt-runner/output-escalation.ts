@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Output-size escalation policy and success-path response processing. */
-
 import {
   classifyToolInvocationMutation,
   formatSessionKey,
@@ -30,12 +29,7 @@ import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
 
-/**
- * Compute the final PromptRunResult by running output escalation, success-
- * path response processing, and failure-path overflow recovery as needed.
- *
- * Mutates the response/result metrics and emits output-escalation events.
- */
+/** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
   messageText: string,
@@ -51,10 +45,7 @@ export async function escalateOutput(
   let ghostCost: PromptRunResult["ghostCost"];
   const bridgeResult = params.bridge.getResult();
 
-  // A bridge abort is already the terminal response for this execution.
-  // Do not let generic success-path recovery mistake the SDK's aborted-empty
-  // assistant turn for a recoverable silent response and start a fresh model
-  // turn after the safety boundary has fired.
+  // A safety abort is terminal and must not start generic silent recovery.
   if (bridgeResult.abortResponse !== undefined) {
     params.result.response = bridgeResult.abortResponse;
     params.deps.logger.debug(

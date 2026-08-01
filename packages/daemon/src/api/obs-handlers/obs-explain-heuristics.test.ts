@@ -974,7 +974,7 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/delivery|lifecycle/i);
   });
 
-  it("tool invocation stall outranks an incidental recall miss", () => {
+  it("ranks a tool invocation stall above an incidental recall miss", () => {
     const r = rootCause(makeSignals({
       endReason: "tool_invocation_stall",
       degraded: true,
