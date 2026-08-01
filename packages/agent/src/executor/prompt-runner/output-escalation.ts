@@ -415,6 +415,9 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
+    currentSuccessfulDelegationCount: () => Number((params.bridge.getResult().toolExecResults ?? []).some(
+      (record) => record.toolName === "sessions_spawn" && record.success && record.backgrounded !== true,
+    )),
     guardProviderDispatch: resolveProviderDispatchGuard(
       params.executionOverrides?.onProviderStart,
     ),
