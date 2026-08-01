@@ -127,6 +127,9 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(manifest).toMatch(/do not call the `find` file tool/iu);
     expect(manifest).toMatch(/call `exec`/iu);
     expect(manifest).toMatch(
+      /same-turn response[\s\S]*exact `owner\/repo@skill-name` identifier/iu,
+    );
+    expect(manifest).toMatch(
       /catalog result[\s\S]*never proves[\s\S]*installed/iu,
     );
     expect(manifest).toMatch(/skills_manage/iu);
