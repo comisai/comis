@@ -98,7 +98,7 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("sessions_manage", { isReadOnly: false });
   registerToolMetadata("sessions_send",   { isReadOnly: false });
-  registerToolMetadata("sessions_spawn",  { isReadOnly: false });
+  registerToolMetadata("sessions_spawn", { isReadOnly: false, mutationRequestPrefixes: ["have one of your helpers", "have a helper", "ask one of your helpers", "ask a helper"] });
   registerToolMetadata("subagents",       { isReadOnly: false });
 
   registerToolMetadata("pipeline",        { isReadOnly: false });
@@ -587,7 +587,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_list",    { searchHint: "active sessions connections users online list enumerate" });
   registerToolMetadata("sessions_history", { searchHint: "chat log transcript conversation history messages past" });
   registerToolMetadata("sessions_send",    { searchHint: "send reply respond direct message channel session inject" });
-  registerToolMetadata("sessions_spawn",   { searchHint: "delegate subagent background async child worker spawn" });
+  registerToolMetadata("sessions_spawn",   { searchHint: "delegate subagent background async child worker helper helpers spawn" });
   registerToolMetadata("subagents",        { searchHint: "parallel fan-out concurrent multi-agent batch delegate" });
   registerToolMetadata("pipeline",         { searchHint: "workflow dag graph orchestrate chain multi-step sequential" });
   registerToolMetadata("session_status",   { searchHint: "session state alive running progress heartbeat check" });
