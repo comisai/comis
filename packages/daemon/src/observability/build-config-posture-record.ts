@@ -100,10 +100,10 @@ export function countPricingGaps(
 }
 
 /** Shipped default stall budget for a SUB-AGENT operation
- *  (`agents.<id>.operationModels.subagent.timeout`; OPERATION_TIMEOUT_DEFAULTS.subagent).
- *  This — not `promptTimeout.promptTimeoutMs` (180000) — is the budget that bound live: the
- *  production timeout hint named `operationModels.subagent.timeout (currently 120000)`. */
-const DEFAULT_SUBAGENT_TIMEOUT_MS = 120_000;
+ *  (`agents.<id>.operationModels.subagent.timeout`; OPERATION_TIMEOUT_DEFAULTS.subagent). This — not
+ *  `promptTimeout.promptTimeoutMs` — is the budget that bound live. Kept in sync with
+ *  OPERATION_TIMEOUT_DEFAULTS.subagent; the stock-defaults test below fails if the two drift. */
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 180_000;
 
 /** Shipped default MCP call deadline (`integrations.mcp.callToolTimeoutMs`;
  *  MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT). The collision arises from the DEFAULTS, so an operator who

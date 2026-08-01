@@ -622,12 +622,22 @@ describe("countToolDeadlineCollisions — MCP call deadline >= the enclosing sta
     ).toBe(0);
   });
 
-  it("flags the ALL-DEFAULTS case — the exact production configuration", () => {
+  it("STOCK DEFAULTS are self-consistent — an untouched config must not collide", () => {
+    // The out-of-the-box promise: an operator who configures nothing gets a working sub-agent.
+    // Before the subagent default was raised above the MCP call deadline this returned 1, and two
+    // live runs died with 0 steps on stock config. If either default moves back into collision this
+    // fails, which is the point.
+    expect(countToolDeadlineCollisions({ default: {} }, undefined)).toBe(0);
+    expect(countToolDeadlineCollisions({ default: {} }, 120_000)).toBe(0);
+  });
+
+  it("still flags an operator who pins the two into collision", () => {
     // Neither knob pinned: the shipped MCP deadline (120000) equals the shipped sub-agent budget
     // (120000), which is precisely what bit production. An earlier version of this counter returned 0
     // here because it treated an unset callToolTimeoutMs as "no deadline" and compared against
     // promptTimeoutMs (180000) — it reported a clean posture on the very config that failed twice.
-    expect(countToolDeadlineCollisions({ default: {} }, undefined)).toBe(1);
-    expect(countToolDeadlineCollisions({ default: {} }, 120_000)).toBe(1);
+    expect(
+      countToolDeadlineCollisions({ default: { operationModels: { subagent: { timeout: 120_000 } } } }, 120_000),
+    ).toBe(1);
   });
 });
