@@ -145,6 +145,10 @@ describe("runRequestToolNudge", () => {
       expect.stringMatching(/required workflow tools.*exec/iu),
       expect.anything(),
     );
+    expect(deps.session.prompt).toHaveBeenCalledWith(
+      expect.stringContaining("u dont really know how to make flash cards properly"),
+      expect.anything(),
+    );
     expect(outcome.outcome).toBe("recovered");
   });
 
