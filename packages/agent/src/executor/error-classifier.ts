@@ -421,8 +421,12 @@ export function classifyPromptTimeout(
         ? // Honest prose for a non-knob — never a raise-suggestion that names
           // a config key the operator cannot set.
           ` — ${knob}`
-        : ` — raise ${knob} (currently ${String(binding?.promptTimeoutMs ?? error.timeoutMs)});` +
-          ` local prefill on consumer hardware can exceed it`);
+        : ` — raise ${knob} (currently ${String(binding?.promptTimeoutMs ?? error.timeoutMs)}).` +
+          ` Zero activity for the whole budget means either the first token never arrived` +
+          ` (a cold local model's prefill can exceed it) or an in-flight tool call is still` +
+          ` blocking. When a tool's own deadline is >= this budget — notably` +
+          ` integrations.mcp.callToolTimeoutMs — this budget always fires first and the tool` +
+          ` can never report its own failure, so raising only this knob will not help`);
   } else {
     // limit undefined ⇒ the non-resettable whole-turn path (retry/fallback
     // prompts keep retryPromptTimeoutMs semantics; never
