@@ -26,7 +26,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
   };
 });
 
-import { createOutcomeJudgeSeam, resolveProviderApiKey } from "@comis/agent";
+import { createOutcomeJudgeSeam, resolveProviderApiKey, PROVIDER_SECRET_KEYS} from "@comis/agent";
 import { createConversationLocator } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -607,5 +607,27 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     // And byte-identity: no seam/reader is constructed when the master switch is off.
     expect(built.outcomeJudge).toBeUndefined();
     expect(built.readTurnTranscript).toBeUndefined();
+  });
+});
+
+describe("resolveOutcomeJudge credential lookup — canonical names, not the _API_KEY convention", () => {
+  // Live (comis-moshe, every boot): "outcome judge unavailable (non-fatal, default-deferred)" and
+  // "correction detector unavailable" fired on a daemon whose main provider (amazon-bedrock) was
+  // authenticating fine and serving claude-opus-5. The judge derived its credential name as
+  // `${provider.toUpperCase()}_API_KEY` -> `AMAZON-BEDROCK_API_KEY`, a name that can never exist, so
+  // it resolved nothing and silently no-opped while learning events kept firing. The real credential,
+  // AWS_BEARER_TOKEN_BEDROCK, was present the whole time.
+  it("PROVIDER_SECRET_KEYS covers amazon-bedrock, whose credential is NOT <NAME>_API_KEY", () => {
+    expect(PROVIDER_SECRET_KEYS["amazon-bedrock"]).toContain("AWS_BEARER_TOKEN_BEDROCK");
+    // The convention the resolver used to rely on is unusable for this provider.
+    expect(PROVIDER_SECRET_KEYS["amazon-bedrock"]).not.toContain("AMAZON-BEDROCK_API_KEY");
+  });
+
+  it("every canonical name is a plausible env-var identifier", () => {
+    // A name with a hyphen (the failure mode: AMAZON-BEDROCK_API_KEY) can never be set as an env var
+    // or a secret-store key, so it silently resolves to nothing.
+    for (const names of Object.values(PROVIDER_SECRET_KEYS)) {
+      for (const name of names) expect(name).toMatch(/^[A-Z][A-Z0-9_]*$/);
+    }
   });
 });

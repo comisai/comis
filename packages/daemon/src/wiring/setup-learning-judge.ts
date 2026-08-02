@@ -49,6 +49,7 @@ import {
   type AuthStorage,
   type CustomCompletionsModelSpec,
   type OutcomeVerdict,
+  PROVIDER_SECRET_KEYS,
 } from "@comis/agent";
 import { fromPromise } from "@comis/shared";
 
@@ -264,8 +265,17 @@ function resolveOutcomeJudge(
     providerFamily: resolveProviderFamily(agentProvider),
   });
   const providerEntry = container.config.providers?.entries?.[resolved.provider];
+  // Canonical provider -> credential-name map FIRST. The `${PROVIDER}_API_KEY` derivation below is a
+  // convention, not a fact: for `amazon-bedrock` it yields `AMAZON-BEDROCK_API_KEY`, a name that can
+  // never exist, so the judge resolved no key and silently no-opped on every Bedrock deployment even
+  // though the real credential (AWS_BEARER_TOKEN_BEDROCK) was present and serving the main model.
+  // Same class for any provider whose credential is not `<NAME>_API_KEY` (github-copilot, …).
+  const canonicalKeyNames = PROVIDER_SECRET_KEYS[resolved.provider] ?? [];
   const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
   const apiKey =
+    (providerEntry?.apiKeyName ? undefined : canonicalKeyNames
+      .map((n) => container.secretManager.get(n))
+      .find((v) => v !== undefined && v !== "")) ??
     container.secretManager.get(apiKeyName) ??
     // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
     // outcome judge is a silent no-op on a local keyless daemon. Mirrors
