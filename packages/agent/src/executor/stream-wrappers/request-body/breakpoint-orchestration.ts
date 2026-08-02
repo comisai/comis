@@ -37,6 +37,7 @@ import {
 } from "./cache-breakpoints.js";
 import { injectToolDeferral } from "./tool-deferral-injection.js";
 import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
+import { deferPreservedThinkingToUncachedTail } from "./tool-result-clearing.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
 /** Message count at which a conversation counts as "mature": the fence-unset WARN threshold and
@@ -463,6 +464,21 @@ export function runCacheBreakpointPhase(
   // Logs WARN with errorKind:"internal" if any upgrade fires — that
   // indicates an upstream placement bug.
   enforceMonotonicTtlOrdering(result, logger, supportsExtendedCacheTtl(model.provider));
+
+  // Keep the preserved-thinking window out of the cached prefix. Runs AFTER every marker is placed
+  // (Comis's own land before it; the one that reaches past it arrives on the trailing message), and
+  // before the provider translation, so both marker shapes are still in their portable form.
+  if (Array.isArray(result.messages)) {
+    const deferred = deferPreservedThinkingToUncachedTail(
+      result.messages as Array<Record<string, unknown>>,
+    );
+    if (deferred > 0) {
+      logger.debug(
+        { deferred, sessionKey: config.sessionKey, step: "defer-preserved-thinking" },
+        "Deferred the preserved-thinking window to the uncached tail",
+      );
+    }
+  }
 
   return resolvedRetention;
 }
