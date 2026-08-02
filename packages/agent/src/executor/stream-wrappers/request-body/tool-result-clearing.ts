@@ -14,6 +14,7 @@
  * @module
  */
 
+import { isThinkingBlock } from "./block-kind.js";
 import { findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 import {
   extractInlineRecalledMemory,
@@ -222,12 +223,11 @@ export function clearStaleThinkingBlocks(
     const content = msg.content;
     if (!Array.isArray(content)) continue;
 
-    // Filter: keep everything EXCEPT non-redacted thinking blocks
-    const filtered = (content as Array<Record<string, unknown>>).filter(block => {
-      if (block.type !== "thinking") return true;
-      // Preserve redacted thinking blocks (encrypted signatures for API continuity)
-      return (block as { redacted?: boolean }).redacted === true;
-    });
+    // Filter: keep everything EXCEPT non-redacted thinking blocks. Resolved through
+    // `isThinkingBlock` so the Bedrock Converse `{reasoningContent}` shape is seen too — a direct
+    // `block.type` read finds no thinking at all on that provider. Redacted reasoning (either
+    // shape) is preserved: it carries the encrypted signature the provider needs for continuity.
+    const filtered = (content as Array<Record<string, unknown>>).filter(block => !isThinkingBlock(block));
 
     if (filtered.length < (content as unknown[]).length) {
       cleared += (content as unknown[]).length - filtered.length;
@@ -308,7 +308,7 @@ export function stripReplayThinking(messages: Array<Record<string, unknown>>): n
     const msg = messages[i]!;
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const content = msg.content as Array<Record<string, unknown>>;
-    const filtered = content.filter(b => b.type !== "thinking");
+    const filtered = content.filter(b => !isThinkingBlock(b));
     if (filtered.length < content.length) { msg.content = filtered; stripped++; }
   }
   return stripped;

@@ -11,8 +11,14 @@
  * conversational turn is stripped immediately and never changes again, instead of keeping its
  * thinking and losing it one turn later (a per-turn prefix mutation at a marching index).
  *
+ * Block kinds are resolved through {@link blockKind}, never by reading `block.type` directly: the
+ * Bedrock Converse shape carries no `type` field, so a direct read finds neither the `toolUse` that
+ * opens a cycle nor the `toolResult` that continues it, and every Bedrock turn looks closed.
+ *
  * @module
  */
+
+import { blockKind } from "./block-kind.js";
 
 /** Index of the newest assistant message, or -1. */
 
@@ -29,7 +35,7 @@ export function isToolResultCarrier(msg: Record<string, unknown>): boolean {
   if (msg.role === "tool") return true;
   const content = msg.content;
   if (!Array.isArray(content) || content.length === 0) return false;
-  return (content as Array<Record<string, unknown>>).every(b => b.type === "tool_result");
+  return (content as Array<Record<string, unknown>>).every(b => blockKind(b) === "tool_result");
 }
 
 /**
@@ -40,7 +46,7 @@ export function isToolResultCarrier(msg: Record<string, unknown>): boolean {
 export function isUnclosedToolUseCycle(messages: Array<Record<string, unknown>>, idx: number): boolean {
   const content = messages[idx]!.content;
   if (!Array.isArray(content)) return false;
-  const hasToolUse = (content as Array<Record<string, unknown>>).some(b => b.type === "tool_use");
+  const hasToolUse = (content as Array<Record<string, unknown>>).some(b => blockKind(b) === "tool_use");
   if (!hasToolUse) return false;
   for (let i = idx + 1; i < messages.length; i++) {
     if (!isToolResultCarrier(messages[i]!)) return false;

@@ -23,6 +23,7 @@
 import type { ComisLogger } from "@comis/core";
 
 import { computeHash } from "../../cache-detection/index.js";
+import { blockKind, blockText } from "./block-kind.js";
 import { sessionPrefixStability } from "./cache-breakpoints.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
@@ -32,7 +33,7 @@ function messageSignature(m: Record<string, unknown>): string {
   const c = m.content;
   const text = typeof c === "string" ? c :
     Array.isArray(c) ? (c as Array<Record<string, unknown>>).map(b =>
-      `${String(b.type)}:${String(b.text ?? b.thinking ?? "")}:${JSON.stringify(b.content ?? b.input ?? "")}`
+      `${blockKind(b)}:${blockText(b)}:${JSON.stringify(b.content ?? b.input ?? b.toolUse ?? b.toolResult ?? "")}`
     ).join("|") : "";
   return `${m.role}:${text}`;
 }
@@ -49,7 +50,7 @@ function hashEachMessage(messages: Array<Record<string, unknown>>, endIdx: numbe
  * block → t drops; an offloaded tool_result → len drops; a stripped inline-recall block →
  * r drops 1→0). Format: `<role>|b<blocks>|t<thinking>|r<0|1>|len<chars>`.
  */
-function messageStructSig(m: Record<string, unknown>): string {
+export function messageStructSig(m: Record<string, unknown>): string {
   const c = m.content;
   let blocks = 1, thinking = 0, len = 0, hadRecall = 0;
   const RECALL_RE = /\[Relevant context from memory:/;
@@ -60,8 +61,13 @@ function messageStructSig(m: Record<string, unknown>): string {
     const arr = c as Array<Record<string, unknown>>;
     blocks = arr.length;
     for (const b of arr) {
-      if (b.type === "thinking") thinking++;
-      const text = String(b.text ?? b.thinking ?? b.content ?? "");
+      // Kind and text are read through the shared resolver, NOT off `b.type`/`b.text`. Under the
+      // Bedrock Converse shape a direct read makes `t` permanently 0 (reasoning is
+      // `{reasoningContent}`) and drops reasoning text from `len` — so a reasoning block vanishing
+      // from a cached message presented as a block-count change with an IDENTICAL length and no
+      // thinking on either side. That reading is what withdrew the correct hypothesis twice.
+      if (blockKind(b) === "thinking") thinking++;
+      const text = blockText(b);
       len += text.length;
       if (RECALL_RE.test(text)) hadRecall = 1;
     }
@@ -74,12 +80,16 @@ function messageStructSig(m: Record<string, unknown>): string {
   return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}|[${blockTypes(c)}]`;
 }
 
-/** Comma-joined content-block `type` discriminators — closed vocabulary only, never any value. */
+/**
+ * Comma-joined canonical block kinds — closed vocabulary only, never any value.
+ *
+ * Resolved via {@link blockKind} so a Bedrock Converse block names itself. Reading `b.type`
+ * directly rendered every Bedrock block as `unknown`, which made the one field added to name the
+ * dropped block report nothing at all.
+ */
 function blockTypes(content: unknown): string {
   if (!Array.isArray(content)) return typeof content === "string" ? "raw-string" : "none";
-  return (content as Array<Record<string, unknown>>)
-    .map((b) => (typeof b?.type === "string" ? b.type : "unknown"))
-    .join(",");
+  return (content as Array<Record<string, unknown>>).map(blockKind).join(",");
 }
 
 /** Per-message structural sigs for the prefix [0..endIdx]. */
