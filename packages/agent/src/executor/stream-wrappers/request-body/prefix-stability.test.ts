@@ -145,3 +145,54 @@ describe("runPrefixStabilityDiagnostic — onPrefixUnstable system callback", ()
     expect((logger as unknown as { warn: ReturnType<typeof vi.fn> }).warn).not.toHaveBeenCalled();
   });
 });
+
+describe("runPrefixStabilityDiagnostic — a sliding history window is the costliest churn", () => {
+  const sessionKey = "tenant:user:slide";
+
+  beforeEach(() => {
+    sessionPrefixStability.delete(sessionKey);
+  });
+
+  /**
+   * LIVE INCIDENT (comis-moshe 2026-08-02). Across one turn's tool loop the assembled
+   * array stayed pinned at 17 messages while the content at every index shifted by two
+   * per call — the LCD fresh-tail slice (`freshTailSteps: 8`) is recomputed per CALL, so
+   * each tool cycle slid the window and dropped messages off the head. Measured effect:
+   * `cache_read_input_tokens` 0 on every call and ~101k cache CREATION re-paid each time
+   * — a 0.0% hit ratio.
+   *
+   * The diagnostic reported ZERO churn WARNs throughout. A fence that shrinks was read as
+   * "compaction — (re)baseline" and cleared the accumulated mutation window, and a sliding
+   * window makes the fence oscillate, so the counter was reset before it could ever reach
+   * its threshold. The single most expensive cache event the diagnostic exists to catch
+   * was the one shape that silenced it.
+   */
+  function slidingCall(offset: number) {
+    // A fixed-size window over a growing conversation: same length, contents shifted.
+    const messages = Array.from({ length: 5 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: [{ type: "text", text: `msg-${i + offset}` }],
+    }));
+    return { messages } as Record<string, unknown>;
+  }
+
+  it("still counts cached-region mutations when the fence oscillates", () => {
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    // The fence oscillates exactly as it did live (16, 18, 16, 16 → here 4, 3, 4, 3 …).
+    let call = 0;
+    const fences = [4, 3, 4, 3, 4, 3];
+    const config = {
+      sessionKey,
+      getCacheFenceIndex: () => fences[Math.min(call, fences.length - 1)],
+      onPrefixUnstable,
+    } as unknown as RequestBodyInjectorConfig;
+
+    for (call = 0; call < 6; call++) {
+      runPrefixStabilityDiagnostic(slidingCall(call), config, logger);
+    }
+
+    // Every call rewrote the whole cached prefix. The diagnostic must say so.
+    expect(onPrefixUnstable).toHaveBeenCalled();
+  });
+});

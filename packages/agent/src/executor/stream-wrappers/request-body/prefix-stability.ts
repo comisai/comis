@@ -224,8 +224,19 @@ export function runPrefixStabilityDiagnostic(
   const WINDOW = 10;
   const THRESHOLD = 3;
 
-  if (!prev || diagFenceIdx < prev.fenceIdx) {
-    // First observation, or fence shrank (compaction) — (re)baseline, empty mutation window.
+  // A COMPACTION fold legitimately replaces the prefix: many messages become one summary, so the
+  // array itself gets SHORTER. Re-baselining there keeps a one-time rebuild out of the churn count.
+  //
+  // A fence shrink ALONE is not that proof. When the LCD fresh-tail slice is recomputed per call, a
+  // turn's tool loop slides a fixed-size window forward — the array length does not change, but the
+  // content at every index does, and the cached prefix is rewritten in full. That makes the fence
+  // oscillate, and re-baselining on each dip cleared the accumulated window before it could ever
+  // reach the WARN threshold. Live (comis-moshe 2026-08-02): `cache_read` 0 with ~101k cache
+  // creation re-paid on EVERY call — a 0.0% hit ratio — and not one churn WARN. The costliest cache
+  // event there is was the one shape that silenced the diagnostic built to catch it.
+  const arrayShrank = !!prev && fullHashes.length < prev.fullHashes.length;
+  if (!prev || (diagFenceIdx < prev.fenceIdx && arrayShrank)) {
+    // First observation, or a genuine compaction fold — (re)baseline, empty mutation window.
     sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
     return;
   }
@@ -239,12 +250,21 @@ export function runPrefixStabilityDiagnostic(
   if (fd >= 0 && fd <= diagFenceIdx) {
     const pSig = prev.fullSigs?.[fd];
     const cSig = fullSigs[fd];
-    const mutationClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
+    // Same array length but the prefix diverges at its very head = the whole cached prefix was
+    // rewritten, not one message edited in place. Name it, because the per-message classes below
+    // describe an EDIT and would otherwise report the symptom (a text/block delta at index 0)
+    // rather than the cause (the history window moved under the cache).
+    const windowSlid = fullHashes.length === prev.fullHashes.length && fd === 0;
+    const mutationClass = windowSlid
+      ? `history-window-slid,${classifyPrefixMutation(msgs[fd], pSig, cSig)}`
+      : classifyPrefixMutation(msgs[fd], pSig, cSig);
     // inline-recall is transient BY DESIGN — the history strip removes it from a user message
     // the turn AFTER it carried the current turn's recall. That is a one-time transition per message,
     // not a recurring bug, so it must NOT accumulate toward the WARN — UNLESS it is also a
     // structural-shift (a role change is a real cache invalidation, never benign).
-    const benignInlineRecall = mutationClass.includes("inline-recall") && !mutationClass.includes("structural-shift");
+    const benignInlineRecall = mutationClass.includes("inline-recall")
+      && !mutationClass.includes("structural-shift")
+      && !mutationClass.includes("history-window-slid");
     if (!benignInlineRecall) {
       mutations = [...mutations, callCount];
       if (mutations.length >= THRESHOLD) {
