@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { KEYED_MAX_CACHE_MARKERS, translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
+import { findCachePointPositions, KEYED_MAX_CACHE_MARKERS, translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
 
 const keyedUser = (text: string, marked = false) => ({
   role: "user",
@@ -100,5 +100,21 @@ describe("translateKeyedCacheMarkers", () => {
 
   it("returns zero on a non-array payload rather than throwing", () => {
     expect(translateKeyedCacheMarkers(undefined as never).converted).toBe(0);
+  });
+});
+
+describe("findCachePointPositions", () => {
+  it("reports every marker as a message/block index pair, bounded to eight", () => {
+    const marked = { role: "user", content: [{ text: "q" }, { cachePoint: { type: "default" } }] };
+    const messages = [
+      { role: "user", content: [{ text: "a" }] },
+      marked,
+      { role: "assistant", content: [{ cachePoint: { type: "default" } }, { text: "r" }] },
+    ];
+
+    expect(findCachePointPositions(messages)).toEqual([[1, 1], [2, 0]]);
+
+    const many = Array.from({ length: 12 }, () => marked);
+    expect(findCachePointPositions(many)).toHaveLength(8);
   });
 });

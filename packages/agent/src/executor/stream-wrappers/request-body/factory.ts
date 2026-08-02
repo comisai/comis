@@ -45,6 +45,7 @@ import { injectServiceTier } from "./service-tier.js";
 import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
 import { findInlineRecallIndices } from "./recall-diagnostics.js";
 import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
+import { findCachePointPositions } from "./keyed-cache-marker.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -391,11 +392,19 @@ export function createRequestBodyInjector(
             const keyedMarkers = translateKeyedCacheMarkers(
               result.messages as Array<Record<string, unknown>>,
             );
-            if (keyedMarkers.converted > 0 || keyedMarkers.dropped > 0) {
+            const cachePointPositions = findCachePointPositions(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            if (keyedMarkers.converted > 0 || keyedMarkers.dropped > 0 || cachePointPositions.length > 0) {
+              // Positions ride the line because the keyed provider hard-rejects a
+              // request whose marker has nothing cacheable before it — diagnosing
+              // that needs WHERE, not how many. [messageIndex, blockIndex] pairs only.
               logger.debug(
                 {
                   cachePointsPlaced: keyedMarkers.converted,
                   markersDroppedOverBudget: keyedMarkers.dropped,
+                  cachePointPositions,
+                  messageCount: (result.messages as unknown[]).length,
                   sessionKey: config.sessionKey,
                 },
                 "Translated cache breakpoints into provider cachePoint blocks",

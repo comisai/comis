@@ -63,6 +63,29 @@ function takeCacheControl(block: Record<string, unknown>): { ttl?: string } | un
 }
 
 /**
+ * Positions of every `{cachePoint}` marker in the finished payload — `[messageIndex, blockIndex]`
+ * pairs, bounded to the first eight. Indices only, no content: the keyed provider hard-rejects a
+ * request whose marker has nothing cacheable before it, and diagnosing that rejection requires
+ * knowing WHERE the markers sat, which counts alone cannot say.
+ */
+export function findCachePointPositions(
+  messages: Array<Record<string, unknown>>,
+): Array<[number, number]> {
+  const positions: Array<[number, number]> = [];
+  for (let i = 0; i < messages.length && positions.length < 8; i++) {
+    const content = contentOf(messages[i]!);
+    if (content === undefined) continue;
+    for (let j = 0; j < content.length; j++) {
+      if (content[j]!.cachePoint !== undefined) {
+        positions.push([i, j]);
+        if (positions.length >= 8) break;
+      }
+    }
+  }
+  return positions;
+}
+
+/**
  * Convert every `cache_control` property on a keyed payload into a `{cachePoint}` block, bounded by
  * the per-request marker cap.
  *
