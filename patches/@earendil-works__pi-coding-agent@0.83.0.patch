@@ -1,0 +1,68 @@
+diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
+index e7ffee7a8566a7556f75e3f3edd228af3d93b141..e1e9d8080b4e51b9abf99277de6b630042326e3f 100644
+--- a/dist/core/compaction/compaction.js
++++ b/dist/core/compaction/compaction.js
+@@ -185,12 +185,36 @@ function estimateTextAndImageContentChars(content) {
+  * Estimate token count for a message using chars/4 heuristic.
+  * This is conservative (overestimates tokens).
+  */
++const NON_LATIN_DENSE_DIVISOR = 2;
++function messageTokenDivisor(message) {
++    // Non-Latin scripts (Hebrew, Arabic, CJK, Cyrillic) tokenize near 1-2 chars
++    // per token, not 4. Undercounting them ~2x lets the summarizer build a
++    // prompt the provider rejects as over the context window, deadlocking
++    // compaction exactly when the window is full. A bounded head+tail sample
++    // decides which divisor fits this message.
++    let text = "";
++    try {
++        const m = message;
++        text = typeof m.summary === "string" ? m.summary : JSON.stringify(m.content ?? "");
++    }
++    catch {
++        return 4;
++    }
++    const sample = text.length > 2048 ? text.slice(0, 1024) + text.slice(-1024) : text;
++    if (sample.length === 0) return 4;
++    let nonAscii = 0;
++    for (let i = 0; i < sample.length; i++) {
++        if (sample.charCodeAt(i) > 127) nonAscii++;
++    }
++    return nonAscii / sample.length > 0.2 ? NON_LATIN_DENSE_DIVISOR : 4;
++}
+ export function estimateTokens(message) {
+     let chars = 0;
++    const divisor = messageTokenDivisor(message);
+     switch (message.role) {
+         case "user": {
+             chars = estimateTextAndImageContentChars(message.content);
+-            return Math.ceil(chars / 4);
++            return Math.ceil(chars / divisor);
+         }
+         case "assistant": {
+             const assistant = message;
+@@ -205,21 +229,21 @@ export function estimateTokens(message) {
+                     chars += block.name.length + JSON.stringify(block.arguments).length;
+                 }
+             }
+-            return Math.ceil(chars / 4);
++            return Math.ceil(chars / divisor);
+         }
+         case "custom":
+         case "toolResult": {
+             chars = estimateTextAndImageContentChars(message.content);
+-            return Math.ceil(chars / 4);
++            return Math.ceil(chars / divisor);
+         }
+         case "bashExecution": {
+             chars = message.command.length + message.output.length;
+-            return Math.ceil(chars / 4);
++            return Math.ceil(chars / divisor);
+         }
+         case "branchSummary":
+         case "compactionSummary": {
+             chars = message.summary.length;
+-            return Math.ceil(chars / 4);
++            return Math.ceil(chars / divisor);
+         }
+     }
+     return 0;

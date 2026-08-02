@@ -22,21 +22,26 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-function installedSource(subpath: string): string {
+// Read through the consumer package's node_modules symlink so the PATCHED copy
+// is asserted — pnpm keys patched installs by hash under .pnpm, and a stale
+// unpatched copy can shadow the repo-root node_modules path. The packages'
+// exports maps block require.resolve for non-exported subpaths, so the link is
+// followed by path, not by the resolver.
+function installedSource(pkg: string, subpath: string): string {
   return readFileSync(
-    resolve(REPO_ROOT, "node_modules", "@earendil-works", "pi-ai", subpath),
+    resolve(REPO_ROOT, "packages", "agent", "node_modules", pkg, subpath),
     "utf8",
   );
 }
 
 describe("pi-ai thinking-budget floor patch", () => {
   it("bedrock simple-stream drops thinking instead of sending a below-minimum budget", () => {
-    const src = installedSource("dist/api/bedrock-converse-stream.js");
+    const src = installedSource("@earendil-works/pi-ai", "dist/api/bedrock-converse-stream.js");
     expect(src).toContain("MIN_PROVIDER_THINKING_BUDGET");
   });
 
   it("anthropic simple-stream drops thinking instead of sending a below-minimum budget", () => {
-    const src = installedSource("dist/api/anthropic-messages.js");
+    const src = installedSource("@earendil-works/pi-ai", "dist/api/anthropic-messages.js");
     expect(src).toContain("MIN_PROVIDER_THINKING_BUDGET");
   });
 });
@@ -47,15 +52,9 @@ describe("pi-coding-agent script-aware compaction estimator patch", () => {
     // so the compaction summarizer builds a prompt the provider rejects as over
     // the context window — deadlocking compaction exactly when the window is
     // full. The patch samples the message text and applies a denser divisor.
-    const src = readFileSync(
-      resolve(
-        REPO_ROOT,
-        "node_modules",
-        "@earendil-works",
-        "pi-coding-agent",
-        "dist/core/compaction/compaction.js",
-      ),
-      "utf8",
+    const src = installedSource(
+      "@earendil-works/pi-coding-agent",
+      "dist/core/compaction/compaction.js",
     );
     expect(src).toContain("NON_LATIN_DENSE_DIVISOR");
   });
