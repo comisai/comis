@@ -1077,6 +1077,7 @@ async function runSessionLocked(
     } else if (
       diagnostics.projectedUserMessages > 0
       || diagnostics.omittedLocaleRepairTurns > 0
+      || diagnostics.strippedRecallMessages > 0
     ) {
       deps.logger.info(
         fields,

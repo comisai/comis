@@ -336,6 +336,7 @@ vi.mock("../../rag/rag-retriever.js", () => ({
 vi.mock("../../rag/hybrid-memory-injector.js", () => ({
   createHybridMemoryInjector: mockCreateHybridMemoryInjector,
   stripInlineRecalledMemory: (text: string) => text,
+  stripInlineRecalledMemoryFromMessage: (message: unknown) => message,
 }));
 
 vi.mock("../../envelope/message-envelope.js", () => ({

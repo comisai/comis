@@ -17,6 +17,7 @@ import {
   type SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import {
   getOriginalInboundMessages,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
@@ -27,6 +28,7 @@ import {
   type OriginalInboundMessage,
 } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
+import { stripInlineRecalledMemoryFromMessage } from "../rag/hybrid-memory-injector.js";
 
 /** Leave headroom for the SDK JSONL record envelope under the reader's 1 MiB cap. */
 const MAX_PROVENANCE_PAYLOAD_BYTES = 900 * 1024;
@@ -62,6 +64,8 @@ export interface InboundConversationProjectionDiagnostics {
   readonly duplicateProvenanceEntries: number;
   readonly invalidProvenanceEntries: number;
   readonly incompleteProvenanceBatches: number;
+  /** Unpaired user turns whose transient inline-recall prefix was carved out. */
+  readonly strippedRecallMessages: number;
 }
 
 export interface InboundConversationProjection {
@@ -373,6 +377,7 @@ export function projectInboundConversation(
     duplicateProvenanceEntries: 0,
     invalidProvenanceEntries: 0,
     incompleteProvenanceBatches: 0,
+    strippedRecallMessages: 0,
   };
   const projectedByEntryId = collectProjectedUserText(
     read.value.branch,
@@ -406,6 +411,26 @@ export function projectInboundConversation(
       continue;
     }
     messages.push(...sessionEntryToContextMessages(entry));
+  }
+
+  // The transient inline-recall block is per-turn rendered prompt context, not
+  // conversation. Provenance-paired turns already lost it with the rest of the
+  // rendered wrapper (their text is the physical render); an UNPAIRED turn
+  // (internally dispatched — cron, queue steer) passes through verbatim above
+  // and must not carry the recall into canonical model/LCD history either:
+  // replayed, it re-presents a block that is stripped from the wire form each
+  // request, and the message mutates once every time it crosses the cache
+  // fence. The model still sees the recall on the turn it was rendered for —
+  // this projection reads only completed turns. The append-only SDK JSONL
+  // keeps the rendered forensic form untouched.
+  for (let i = 0; i < messages.length; i++) {
+    const carved = stripInlineRecalledMemoryFromMessage(
+      messages[i] as unknown as Message,
+    ) as unknown as AgentMessage;
+    if (carved !== messages[i]) {
+      messages[i] = carved;
+      diagnostics.strippedRecallMessages++;
+    }
   }
 
   return ok({
