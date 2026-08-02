@@ -38,6 +38,10 @@ export function wireHealthLogging(deps: {
     container.eventBus,
     () => clock.now(),
   );
+  // Last observed quarantine depth — the WARN fires on CHANGE only, so a standing quarantine is
+  // announced once rather than every health tick.
+  let lastDeadLetterQueueSize = 0;
+
   container.eventBus.on("observability:metrics", async (metrics) => {
     const fiveMinAgo = clock.now() - 5 * 60_000;
     while (promptTimeoutTimestamps.length > 0 && promptTimeoutTimestamps[0]! < fiveMinAgo) {
@@ -94,6 +98,22 @@ export function wireHealthLogging(deps: {
         errorKind: "timeout" as const,
       }, "Stuck sub-agent killed by health handler");
     }
+    // A quarantined announcement is a STANDING condition, not a transient tick value: it means a
+    // background task's outcome is held back because the runtime could not prove whether the user
+    // was already told, and nothing drains it automatically (by design — auto-retry risks a duplicate
+    // delivery). Live, one sat unnoticed for hours because the only trace was this DEBUG line, so an
+    // operator at the default level had no way to know a user's task outcome was in limbo. Promoted
+    // to WARN on the non-zero transition only — steady-state re-warning every tick would be noise.
+    const deadLetterQueueSize = deadLetterQueue?.size() ?? 0;
+    if (deadLetterQueueSize > 0 && deadLetterQueueSize !== lastDeadLetterQueueSize) {
+      daemonLogger.warn({
+        deadLetterQueueSize,
+        hint: "Quarantined background-task announcements are awaiting an operator decision; nothing drains them automatically because retrying risks a duplicate delivery. Inspect <dataDir>/dead-letters.jsonl and decide whether the user was already informed.",
+        errorKind: "internal" as const,
+      }, "Announcements quarantined awaiting an operator decision");
+    }
+    lastDeadLetterQueueSize = deadLetterQueueSize;
+
     daemonLogger.debug({
       rssBytes: metrics.rssBytes, heapUsedBytes: metrics.heapUsedBytes,
       heapTotalBytes: metrics.heapTotalBytes, externalBytes: metrics.externalBytes,
@@ -101,7 +121,7 @@ export function wireHealthLogging(deps: {
       activeHandles: metrics.activeHandles, activeConnections: getActiveConnectionCount(),
       activeExecutions: activeExecutions.size, uptimeSeconds: Math.round(metrics.uptimeSeconds),
       activeSubAgentRuns, stuckSubAgentRuns, stuckKilledThisTick,
-      deadLetterQueueSize: deadLetterQueue?.size() ?? 0,
+      deadLetterQueueSize,
       degradedProviders: [...providerHealth.getHealthSummary().entries()]
         .filter(([, v]) => v.degraded).map(([k]) => k),
       promptTimeoutsLast5m: promptTimeoutTimestamps.length,
