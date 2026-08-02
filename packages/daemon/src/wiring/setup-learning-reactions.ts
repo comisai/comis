@@ -59,6 +59,7 @@ import {
   createCorrectionDetectorSeam,
   resolveOperationModel,
   resolveProviderFamily,
+  PROVIDER_SECRET_KEYS,
   type CorrectionVerdict,
 } from "@comis/agent";
 import { buildCustomJudgeModelSpec, type LearningModelCredentialResolver } from "./setup-learning-judge.js";
@@ -684,8 +685,17 @@ function resolveCorrectionDetector(
     providerFamily: resolveProviderFamily(agentProvider),
   });
   const providerEntry = container.config.providers?.entries?.[resolved.provider];
+  // Canonical provider -> credential-name map FIRST; the `${PROVIDER}_API_KEY` derivation below is a
+  // convention, not a fact. For amazon-bedrock it yields AMAZON-BEDROCK_API_KEY — hyphenated, so
+  // unsettable as an env var or store key — and the correction detector silently no-opped on every
+  // Bedrock deployment while AWS_BEARER_TOKEN_BEDROCK was serving the main model. Same fix as the
+  // outcome judge in setup-learning-judge.ts; both sites derive their own credential.
+  const canonicalKeyNames = PROVIDER_SECRET_KEYS[resolved.provider] ?? [];
   const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
   const apiKey =
+    (providerEntry?.apiKeyName ? undefined : canonicalKeyNames
+      .map((n: string) => container.secretManager.get(n))
+      .find((v: string | undefined) => v !== undefined && v !== "")) ??
     container.secretManager.get(apiKeyName) ??
     // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
     // correction detector (DRIFT/supersede) is a silent no-op on a local keyless daemon.

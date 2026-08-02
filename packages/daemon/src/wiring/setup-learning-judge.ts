@@ -274,8 +274,8 @@ function resolveOutcomeJudge(
   const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
   const apiKey =
     (providerEntry?.apiKeyName ? undefined : canonicalKeyNames
-      .map((n) => container.secretManager.get(n))
-      .find((v) => v !== undefined && v !== "")) ??
+      .map((n: string) => container.secretManager.get(n))
+      .find((v: string | undefined) => v !== undefined && v !== "")) ??
     container.secretManager.get(apiKeyName) ??
     // Keyless by TYPE, not config NAME — a user-named ollama entry must resolve keyless, else the
     // outcome judge is a silent no-op on a local keyless daemon. Mirrors
