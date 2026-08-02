@@ -379,7 +379,7 @@ Override the model and timeout for specific internal operation types. Each entry
 |---------------|-----------------|---------------|-------------------|
 | `cron` | `600000` (10 min) | Scheduled cron task execution | — |
 | `heartbeat` | `60000` (1 min) | Periodic heartbeat check | — |
-| `subagent` | `120000` (2 min) | Sub-agent task delegation | — |
+| `subagent` | `180000` (3 min) | Sub-agent task delegation | Deliberately **above** `integrations.mcp.callToolTimeoutMs` (`120000`) so a delegated turn whose first action is a slow MCP call sees the tool's own timeout instead of being killed at the same instant. Matches the `promptTimeoutMs` default, so a delegated turn gets no less room than a direct one. |
 | `compaction` | `60000` (1 min) | Context compaction summarization | Capable model or `contextEngine.compaction.strongerSummarizerModel` |
 | `taskExtraction` | `30000` (30 s) | Task extraction from conversation | — |
 | `condensation` | `30000` (30 s) | Memory condensation | Capable model |
@@ -1882,7 +1882,7 @@ External service integrations for search, MCP servers, media processing, and aut
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `callToolTimeoutMs` | `number` | `120000` | Default timeout for MCP tool calls in ms. On expiry the tool error **names this key and its current value** and states that an identical retry re-expires the same deadline, so the caller narrows the request (smaller page / date window / fewer entities) instead. This key is an **immutable config path** — an agent cannot patch it via the `gateway` tool, so the error says so explicitly and directs the change to an operator. Raising it means editing this file and restarting the daemon. Slow report and media tools may need well over two minutes. This is an **absolute** ceiling: a server that streams progress notifications resets the idle portion of the deadline but can never exceed this total, so one chatty tool call cannot consume a whole turn's budget. |
+| `callToolTimeoutMs` | `number` | `120000` | Default timeout for MCP tool calls in ms. On expiry the tool error **names this key and its current value** and states that an identical retry re-expires the same deadline, so the caller narrows the request (smaller page / date window / fewer entities) instead. This key is an **immutable config path** — an agent cannot patch it via the `gateway` tool, so the error says so explicitly and directs the change to an operator. Raising it means editing this file and restarting the daemon. Slow report and media tools may need well over two minutes. This is an **absolute** ceiling: a server that streams progress notifications resets the idle portion of the deadline but can never exceed this total, so one chatty tool call cannot consume a whole turn's budget. **Keep it strictly below `agents.<id>.operationModels.subagent.timeout`** (`180000` by default, chosen to clear this deadline): when the two are equal, the enclosing stall budget fires first and a sub-agent whose first action is a slow MCP call aborts with `0` steps before the tool can report its own timeout. The shipped pair is already safe — this only bites if you raise this value or lower that one. `comis system-health` flags that pairing as `config_posture:tool_deadline_collision`. |
 | `servers` | `McpServerEntry[]` | `[]` | List of MCP servers |
 
 **MCP Server Entry (integrations.mcp.servers[])**

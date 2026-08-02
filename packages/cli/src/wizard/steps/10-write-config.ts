@@ -273,8 +273,19 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
   // GOOGLE_API_KEY / OPENROUTER_API_KEY / XAI_API_KEY) straight from the
   // SecretManager.
   const media: Record<string, unknown> = {};
-  if (state.imageProvider?.provider) {
-    media.imageGeneration = { provider: state.imageProvider.provider };
+  // Pin the image provider ONLY when its credential will actually resolve at runtime. `openai-codex`
+  // authenticates by OAuth set up separately (`comis auth login`), which the wizard does not collect —
+  // so pinning it on selection alone produces a config whose image pipeline fails at first use while
+  // every other surface looks healthy (observed live as `config_posture:media_credential_gap`). Leaving
+  // the key unset lets the daemon's `auto` default follow the main provider, which works out of the box.
+  // `state.provider.oauthProfileId` is set only when the interactive login SUCCEEDED, so it is the
+  // honest signal. Deliberately not a runtime fallback: silently substituting a provider an operator
+  // pinned would hide the misconfiguration instead of avoiding it.
+  const imageProvider = state.imageProvider?.provider;
+  const imageCodexOauthReady =
+    state.provider?.id === "openai-codex" && state.provider?.oauthProfileId !== undefined;
+  if (imageProvider && (imageProvider !== "openai-codex" || imageCodexOauthReady)) {
+    media.imageGeneration = { provider: imageProvider };
   }
   if (state.videoProvider?.provider) {
     media.videoGeneration = { provider: state.videoProvider.provider };

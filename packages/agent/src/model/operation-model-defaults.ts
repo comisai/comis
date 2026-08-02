@@ -218,7 +218,13 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
 export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, number>> = {
   heartbeat: 60_000,
   cron: 600_000,
-  subagent: 120_000,
+  // Strictly greater than the shipped `integrations.mcp.callToolTimeoutMs` (120000) so a sub-agent
+  // whose first act is a slow MCP call gets to see the tool's OWN timeout instead of being killed at
+  // the same instant. At parity, the enclosing budget always won and the run died with 0 steps and no
+  // diagnosis — on stock defaults, twice, for one user request. The MCP deadline is not the knob to
+  // lower: slow report and media tools legitimately need well over two minutes. Matches the
+  // `promptTimeout.promptTimeoutMs` default, so a delegated turn gets no less room than a direct one.
+  subagent: 180_000,
   compaction: 60_000,
   taskExtraction: 30_000,
   condensation: 30_000,

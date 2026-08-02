@@ -39,8 +39,17 @@ export function classifyExecutionFinishReason(
     case "narration_stall":
     case "tool_invocation_stall":
       return { status: "error", failureStage: "execution", errorKind: "internal" };
+    // NOT a failure. The foreground turn deliberately promoted its remaining work and ended without
+    // a terminal user reply; the terminal outcome belongs to the background completion, which emits
+    // its OWN delivery record. Recorded as an error it inflated the delivery error count and made a
+    // successful backgrounded turn read as failed.
+    //
+    // `filtered`, not `success`: no reply was delivered ON THIS TURN, and `success` additionally
+    // selects the "agent" delivery origin and paints a success indicator — neither of which is true
+    // of a hand-off. `finishReason` still reaches the delivery tracer, so the background lifecycle
+    // stays identifiable and obs.explain keeps its dedicated `background_pending` verdict.
     case "background_pending":
-      return { status: "error", failureStage: "execution", errorKind: "precondition" };
+      return { status: "filtered" };
     case "input_too_large":
       return { status: "error", failureStage: "execution", errorKind: "validation" };
     case "error":

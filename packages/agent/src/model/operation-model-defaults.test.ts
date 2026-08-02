@@ -380,8 +380,8 @@ describe("OPERATION_TIMEOUT_DEFAULTS", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS.cron).toBe(600_000);
   });
 
-  it("has correct timeout for subagent (120000ms)", () => {
-    expect(OPERATION_TIMEOUT_DEFAULTS.subagent).toBe(120_000);
+  it("has correct timeout for subagent (180000ms — above the MCP call deadline)", () => {
+    expect(OPERATION_TIMEOUT_DEFAULTS.subagent).toBe(180_000);
   });
 
   it("has correct timeout for compaction (60000ms)", () => {
@@ -436,5 +436,22 @@ describe("OPERATION_CACHE_DEFAULTS", () => {
 
   it("planning cache retention is none (planner responses must not be cached)", () => {
     expect(OPERATION_CACHE_DEFAULTS["planning"]).toBe("none");
+  });
+});
+
+describe("OPERATION_TIMEOUT_DEFAULTS — a sub-agent must outlast the tool deadlines it encloses", () => {
+  // Live incident (comis-moshe, 2026-08-01; reproduced on the Linux rig 19:22:44): the sub-agent
+  // budget and integrations.mcp.callToolTimeoutMs BOTH shipped at 120000. A sub-agent whose first act
+  // is a slow MCP call was therefore killed at the exact moment its tool would have reported failure —
+  // the abort logged 1.1s and 87s BEFORE each MCP timeout WARN in production. Two runs died
+  // endReason=timeout with Steps:0 and produced nothing for one user request, on stock defaults.
+  //
+  // The MCP deadline cannot simply be lowered: the shipped value is deliberate because slow report and
+  // media tools legitimately need well over two minutes. So the ENCLOSING budget must be strictly
+  // greater, giving the tool room to fail honestly inside it. Out of the box, with no operator tuning.
+  const MCP_CALL_TOOL_TIMEOUT_MS_SHIPPED = 120_000;
+
+  it("gives a sub-agent strictly more time than the shipped MCP call deadline", () => {
+    expect(OPERATION_TIMEOUT_DEFAULTS.subagent).toBeGreaterThan(MCP_CALL_TOOL_TIMEOUT_MS_SHIPPED);
   });
 });

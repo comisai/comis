@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import type { MemorySearchResult } from "@comis/core";
-import { createHybridMemoryInjector } from "./hybrid-memory-injector.js";
+import type { Message } from "@earendil-works/pi-ai";
+import {
+  createHybridMemoryInjector,
+  stripInlineRecalledMemoryFromMessage,
+} from "./hybrid-memory-injector.js";
 
 /** Helper to create a mock MemorySearchResult. */
 function mockResult(
@@ -238,5 +242,44 @@ describe("createHybridMemoryInjector", () => {
 
     expect(result.systemPromptSections.join("\n")).toContain("[REDACTED]");
     expect(result.systemPromptSections.join("\n")).not.toContain(secret);
+  });
+});
+
+describe("stripInlineRecalledMemoryFromMessage", () => {
+  const RECALL = "[Relevant context from memory: user prefers metric units (recorded 2026-07-01)]\n";
+
+  it("carves the leading recall block out of a string-content user message", () => {
+    const message = { role: "user", content: `${RECALL}what is the forecast?` } as Message;
+
+    const carved = stripInlineRecalledMemoryFromMessage(message);
+
+    expect((carved as { content: string }).content).toBe("what is the forecast?");
+    expect(carved).not.toBe(message);
+  });
+
+  it("carves the recall from the first text block and keeps sibling blocks intact", () => {
+    const image = { type: "image", data: "aGVsbG8=", mimeType: "image/png" };
+    const message = {
+      role: "user",
+      content: [image, { type: "text", text: `${RECALL}describe this photo` }],
+    } as unknown as Message;
+
+    const carved = stripInlineRecalledMemoryFromMessage(message) as unknown as {
+      content: Array<Record<string, unknown>>;
+    };
+
+    expect(carved.content[0]).toBe(image);
+    expect(carved.content[1]).toEqual({ type: "text", text: "describe this photo" });
+  });
+
+  it("returns the identical message object when no recall block is present", () => {
+    const clean = { role: "user", content: "plain question" } as Message;
+    const assistant = {
+      role: "assistant",
+      content: [{ type: "text", text: `${RECALL}echoed by the model` }],
+    } as unknown as Message;
+
+    expect(stripInlineRecalledMemoryFromMessage(clean)).toBe(clean);
+    expect(stripInlineRecalledMemoryFromMessage(assistant)).toBe(assistant);
   });
 });

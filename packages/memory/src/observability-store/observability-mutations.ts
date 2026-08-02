@@ -56,11 +56,19 @@ export type ObservabilityMutations = Pick<
 export function cacheBreakEventToRow(
   payload: EventMap["observability:cache_break"],
 ): DiagnosticRow {
-  // est-$: the event has no $ field, so compute the
-  // directly-lost cache-read saving from the catalog. The model may be absent
-  // (`model?`) — fall back to "" so resolveModelPricing returns ZERO_COST (→ 0).
-  const cacheReadRate = resolveModelPricing(payload.provider, payload.model ?? "").cacheRead;
-  const estCostUsd = payload.tokenDrop * cacheReadRate;
+  // est-$: the event has no $ field, so compute the re-write cost from the catalog. The model may
+  // be absent (`model?`) — fall back to "" so resolveModelPricing returns ZERO_COST (→ 0).
+  const pricing = resolveModelPricing(payload.provider, payload.model ?? "");
+  // The cost of a break is RE-WRITING the dropped prefix, not the read saving forgone: those bytes
+  // must be paid at the cacheWrite rate where they would have been paid at cacheRead. The waste is
+  // therefore the DELTA. Pricing the drop at the read rate alone understated it by (write/read - 1)
+  // -- ~19x on Opus-class pricing -- so a live $30.64 cache incident surfaced as $0.46 of waste in
+  // `comis explain` while the on-disk cache-break records, which already use the delta, totalled
+  // $8.74 for the same events. Same number, two lenses, and the smaller one was the operator-facing
+  // surface. An unknown model still yields 0 (ZERO_COST), and the delta is clamped at 0 so a catalog
+  // whose cacheWrite is below cacheRead can never produce a negative cost.
+  const deltaRate = Math.max(0, pricing.cacheWrite - pricing.cacheRead);
+  const estCostUsd = payload.tokenDrop * deltaRate;
 
   return {
     timestamp: payload.timestamp,

@@ -27,6 +27,7 @@ import {
   validateMemoryWrite,
   themeForName,
   writeMasterKeyIfAbsent,
+  writeCanarySecretIfAbsent,
   preReadStorageMode,
   systemNowMs,
   systemSleep,
@@ -137,7 +138,7 @@ import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
 import { recordModelHealth } from "./observability/record-model-health.js";
-import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./observability/build-config-posture-record.js";
+import { buildConfigPostureRecord, countChimericModels, countUnresolvedModels, countPricingGaps, countMediaCredentialGaps, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost, countToolDeadlineCollisions} from "./observability/build-config-posture-record.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -1007,6 +1008,7 @@ async function bootFoundation(
   const _bootstrap = overrides.bootstrap ?? bootstrap;
   const _preReadStorageMode = overrides.preReadStorageMode ?? preReadStorageMode;
   const _writeMasterKeyIfAbsent = overrides.writeMasterKeyIfAbsent ?? writeMasterKeyIfAbsent;
+  const _writeCanarySecretIfAbsent = overrides.writeCanarySecretIfAbsent ?? writeCanarySecretIfAbsent;
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
   const _createLogLevelManager = overrides.createLogLevelManager ?? createLogLevelManager;
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
@@ -1036,6 +1038,13 @@ async function bootFoundation(
   // file/env modes create NO key material on first boot.
   if (storageMode === "encrypted") {
     _writeMasterKeyIfAbsent(dataDir);
+    // Generate the exfiltration-canary seed on the same gate. Without it the canary token derives
+    // from tenantId+agentId — stable but PREDICTABLE to anyone who knows those, so the canary can be
+    // recognised and stepped around. Idempotent: never rotates an existing value, because rotating
+    // would invalidate every canary already embedded in prior outbound content. Deliberately NOT
+    // written in file/env mode, preserving the boot invariant that those modes create no key
+    // material on first boot.
+    _writeCanarySecretIfAbsent(dataDir);
     // loadEnvFile below picks up the freshly-written key from the .env file,
     // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }
@@ -2827,7 +2836,7 @@ async function bootShutdown(
     (key) => container.secretManager.has(key),
     boot.imageGenProvider?.isAvailable() ?? false,
   );
-  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, terminalUnsafeDisableSandbox, mediaCredentialGapCount }, boot.clock);
+  buildConfigPostureRecord(boot.obsStore, { tlsOff, allowInsecureHttp, strandedFindings: posture.findings, canaryFallbackActive, servedBelowConfiguredCount, chimericModelCount: countChimericModels(container.config.agents), unresolvedModelCount: countUnresolvedModels(container.config.agents, container.config.providers?.entries), pricingGapCount: countPricingGaps(container.config.agents), sandboxNoDowngradeDisabled, browserNoSandbox, terminalUnsafeDisableSandbox, mediaCredentialGapCount, toolDeadlineCollisionCount: countToolDeadlineCollisions(container.config.agents, container.config.integrations?.mcp?.callToolTimeoutMs) }, boot.clock);
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.

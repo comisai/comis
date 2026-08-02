@@ -181,7 +181,9 @@ describe("verify-only cache stack is present and unbroken (do-not-rebuild guard)
     expect(blob).toContain("TOOLS-DEF");
   });
 
-  it("strip-thinking removes non-redacted thinking blocks from assistant messages", () => {
+  it("strip-thinking removes non-redacted thinking blocks from HISTORICAL assistant messages", () => {
+    // A later assistant turn is appended so the first one is historical: the LATEST
+    // assistant message is excluded (modifying its thinking content is a provider 400).
     const messages: Array<Record<string, unknown>> = [
       {
         role: "assistant",
@@ -190,6 +192,8 @@ describe("verify-only cache stack is present and unbroken (do-not-rebuild guard)
           { type: "text", text: "the answer" },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "follow-up" }] },
+      { role: "assistant", content: [{ type: "text", text: "later answer" }] },
     ];
     const stripped = stripReplayThinking(messages);
     expect(stripped).toBe(1);

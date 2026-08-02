@@ -36,6 +36,16 @@ export interface MasterKeyWriteResult {
   readonly keyHex?: string;
 }
 
+/** Result of {@link writeCanarySecretIfAbsent}. */
+export interface CanarySecretWriteResult {
+  /** True when a fresh secret was generated and appended. */
+  written: boolean;
+  /** Resolved `<dataDir>/.env` path. */
+  path: string;
+  /** The generated secret — present ONLY when `written` is true. */
+  secretHex?: string;
+}
+
 /**
  * Generate a 32-byte hex master key.
  *
@@ -87,4 +97,47 @@ export function writeMasterKeyIfAbsent(dataDir: string): MasterKeyWriteResult {
   // Defensive chmod: narrows any pre-existing file that was created at broader mode.
   chmodSync(envPath, 0o600);
   return { written: true, path: envPath, keyHex };
+}
+
+/**
+ * Idempotent canary-secret writer. Mirrors {@link writeMasterKeyIfAbsent}: if
+ * `CANARY_SECRET=` already appears at the start of any line in `<dataDir>/.env`, leaves the file
+ * alone; otherwise appends a fresh 32-byte hex secret and narrows the file to 0o600.
+ *
+ * Why generate rather than fall back: without a configured secret the canary token is derived from
+ * `tenantId` + `agentId`, which is stable across restarts but PREDICTABLE to anyone who knows those
+ * two values — so the exfiltration canary can be recognised and stepped around. Generating one at
+ * first boot makes the token unguessable with no operator action, which is the point: a security
+ * default that needs a manual step is a security default most deployments never get.
+ *
+ * @param dataDir - Absolute path to a writable data directory (typically `~/.comis`).
+ * @returns `{ written, path }`; `secretHex` is present only when a value was generated.
+ */
+export function writeCanarySecretIfAbsent(dataDir: string): CanarySecretWriteResult {
+  const envPath = safePath(dataDir, ".env");
+
+  if (existsSync(envPath)) {
+    const existing = readFileSync(envPath, "utf-8");
+    if (/^CANARY_SECRET=/m.test(existing)) {
+      return { written: false, path: envPath };
+    }
+  }
+
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const secretHex = randomBytes(32).toString("hex");
+  // Same create-with-mode-then-defensive-chmod sequence as the master key: the mode argument to
+  // openSync only applies on creation, so an existing file keeps its permissions and the chmod
+  // below narrows it.
+  if (!existsSync(envPath)) {
+    const fd = openSync(envPath, "a", 0o600);
+    try {
+      writeSync(fd, `\nCANARY_SECRET=${secretHex}\n`);
+    } finally {
+      closeSync(fd);
+    }
+  } else {
+    appendFileSync(envPath, `\nCANARY_SECRET=${secretHex}\n`);
+  }
+  chmodSync(envPath, 0o600);
+  return { written: true, path: envPath, secretHex };
 }

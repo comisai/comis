@@ -1,3 +1,59 @@
+diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
+index 17ec1ac38f1124cbb520522660b6f0dcab70d64d..48873fa11fa919e84c72fd9ac9c4f32d05dc21c0 100644
+--- a/dist/api/anthropic-messages.js
++++ b/dist/api/anthropic-messages.js
+@@ -630,11 +630,21 @@ export const streamSimple = (model, context, options) => {
+     // Do not coerce to 0 here, or the thinking budget would become the entire max_tokens value.
+     const adjusted = adjustMaxTokensForThinking(base.maxTokens, model.maxTokens, options.reasoning, options.thinkingBudgets);
+     const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens);
++    // The provider rejects thinking budgets below 1024 outright. When the context
++    // clamp leaves less output headroom than that, run the call WITHOUT thinking
++    // instead of sending a request that can only fail — on a nearly-full window
++    // that failing request is the overflow-recovery summarizer's own, which
++    // deadlocks recovery.
++    const MIN_PROVIDER_THINKING_BUDGET = 1024;
++    const flooredBudget = Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024));
++    if (flooredBudget < MIN_PROVIDER_THINKING_BUDGET) {
++        return stream(model, context, { ...base, maxTokens });
++    }
+     return stream(model, context, {
+         ...base,
+         maxTokens,
+         thinkingEnabled: true,
+-        thinkingBudgetTokens: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
++        thinkingBudgetTokens: flooredBudget,
+     });
+ };
+ function isOAuthToken(apiKey) {
+diff --git a/dist/api/bedrock-converse-stream.js b/dist/api/bedrock-converse-stream.js
+index a6b1ec2e7590f938e40ca6cc4c6f05a4f4292187..48f8eb14fda4342b3d00b002021f603f82d49f9f 100644
+--- a/dist/api/bedrock-converse-stream.js
++++ b/dist/api/bedrock-converse-stream.js
+@@ -310,13 +310,23 @@ export const streamSimple = (model, context, options) => {
+         // Do not coerce to 0 here, or the thinking budget would become the entire maxTokens value.
+         const adjusted = adjustMaxTokensForThinking(base.maxTokens, model.maxTokens, options.reasoning, options.thinkingBudgets);
+         const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens);
++        // The provider rejects thinking budgets below 1024 outright. When the context
++        // clamp leaves less output headroom than that, run the call WITHOUT thinking
++        // instead of sending a request that can only fail — on a nearly-full window
++        // that failing request is the overflow-recovery summarizer's own, which
++        // deadlocks recovery.
++        const MIN_PROVIDER_THINKING_BUDGET = 1024;
++        const flooredBudget = Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024));
++        if (flooredBudget < MIN_PROVIDER_THINKING_BUDGET) {
++            return stream(model, context, { ...base, maxTokens, reasoning: undefined });
++        }
+         return stream(model, context, {
+             ...base,
+             maxTokens,
+             reasoning: options.reasoning,
+             thinkingBudgets: {
+                 ...(options.thinkingBudgets || {}),
+-                [clampReasoning(options.reasoning)]: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
++                [clampReasoning(options.reasoning)]: flooredBudget,
+             },
+         });
+     }
 diff --git a/dist/utils/error-body.js b/dist/utils/error-body.js
 index 4b148ca716e0145fd73c7195b8afaaeef26c5b28..dbafeacc56a56a5944459714e348d2e34073d083 100644
 --- a/dist/utils/error-body.js

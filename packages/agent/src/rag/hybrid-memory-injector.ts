@@ -11,6 +11,7 @@
  */
 
 import type { MemorySearchResult, WrapExternalContentOptions } from "@comis/core";
+import type { Message } from "@earendil-works/pi-ai";
 import { scrubSecretsFromText, systemDateFrom } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 import { formatMemorySection } from "./rag-retriever.js";
@@ -51,6 +52,45 @@ export function extractInlineRecalledMemory(text: string): { recall: string | nu
   const m = INLINE_RECALL_BLOCK_RE.exec(text);
   if (!m) return { recall: null, rest: text };
   return { recall: m[0], rest: text.slice(m[0].length) };
+}
+
+/**
+ * Carve the TRANSIENT inline-recall block out of a USER message — the
+ * message-shape-aware form of {@link stripInlineRecalledMemory}, shared by every
+ * canonical-history producer (the LCD persistence ingest and the inbound
+ * conversation projection). The recall block is per-turn rendered prompt
+ * context: the model sees it on its own turn, and it must never become durable
+ * conversation state — persisted or replayed, it bloats the store,
+ * cross-contaminates the session, feeds back into later recall, and mutates the
+ * replayed prefix when it rotates out. Assistant / toolResult messages never
+ * carry the prefix → returned referentially unchanged. Pure: returns a NEW
+ * message only when something was stripped, so the common (no-recall) path
+ * keeps the verbatim original.
+ */
+export function stripInlineRecalledMemoryFromMessage(m: Message): Message {
+  if (m.role !== "user") return m;
+  const content = (m as { content: unknown }).content;
+  if (typeof content === "string") {
+    const cleaned = stripInlineRecalledMemory(content);
+    return cleaned === content ? m : ({ ...m, content: cleaned } as Message);
+  }
+  if (Array.isArray(content)) {
+    let changed = false;
+    const next = content.map((b) => {
+      // The recall is prepended to the message text → it rides the FIRST text block.
+      if (!changed && b && (b as { type?: string }).type === "text") {
+        const t = (b as { text: string }).text;
+        const cleaned = stripInlineRecalledMemory(t);
+        if (cleaned !== t) {
+          changed = true;
+          return { ...b, text: cleaned };
+        }
+      }
+      return b;
+    });
+    return changed ? ({ ...m, content: next } as Message) : m;
+  }
+  return m;
 }
 
 // ---------------------------------------------------------------------------

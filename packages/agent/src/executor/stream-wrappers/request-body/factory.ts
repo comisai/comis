@@ -43,6 +43,9 @@ import {
 import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
 import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
+import { findInlineRecallIndices } from "./recall-diagnostics.js";
+import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
+import { describePayloadTail, findCachePointPositions } from "./keyed-cache-marker.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -60,6 +63,7 @@ import { placeSkipCacheWriteMarker } from "./skip-cache-write-marker.js";
 import { applyKillSwitch } from "./kill-switch.js";
 import { estimateTtlSplit } from "./ttl-split-estimation.js";
 import { stripBedrockToolHistory } from "./bedrock-tool-history.js";
+import { translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
 
 /**
  * Create a stream wrapper that mutates the outgoing request body via the
@@ -242,11 +246,22 @@ export function createRequestBodyInjector(
           // Reorder content blocks for stable prefix (before any cache marker placement)
           if (needsCacheBreakpoints && Array.isArray(result.messages)) {
             reorderContentForStablePrefix(result.messages as Array<Record<string, unknown>>);
+            // Positions BEFORE the stabilizers run — which indices still carry the
+            // inline-recall block, where the fence sits, and which message the
+            // current-turn finder selects. Indices only, no content; logged below
+            // together with what the strip/defer actually did.
+            const recallIndices = findInlineRecallIndices(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            const fenceIndex = config.getCacheFenceIndex?.() ?? -1;
             // Strip the TRANSIENT inline-recall block from historical user messages so
             // the cached prefix is byte-stable turn-over-turn. The block is per-turn,
             // query-varying recall (kept only on the latest user message for attention);
             // left on history it mutates the prefix every request → cache_creation churn.
-            const recallStripped = stripTransientRecallFromHistory(result.messages as Array<Record<string, unknown>>);
+            const recallStripped = stripTransientRecallFromHistory(
+              result.messages as Array<Record<string, unknown>>,
+              fenceIndex,
+            );
             if (recallStripped > 0) {
               logger.debug(
                 { recallStripped, sessionKey: config.sessionKey },
@@ -275,6 +290,25 @@ export function createRequestBodyInjector(
               logger.debug(
                 { recallDeferred, sessionKey: config.sessionKey },
                 "Deferred inline-recall to the uncached tail",
+              );
+            }
+            if (recallIndices.length > 0) {
+              // The churn investigations on this path stall without positions: which
+              // messages arrived recall-prefixed, versus the fence and the message the
+              // stabilizers were aimed at. One line per affected request, indices only.
+              logger.debug(
+                {
+                  recallIndices,
+                  fenceIndex,
+                  currentTurnUserIndex: findCurrentTurnUserIndex(
+                    result.messages as Array<Record<string, unknown>>,
+                  ),
+                  messageCount: (result.messages as unknown[]).length,
+                  recallStripped,
+                  recallDeferred,
+                  sessionKey: config.sessionKey,
+                },
+                "Inline-recall positions at prefix stabilization",
               );
             }
           }
@@ -348,6 +382,38 @@ export function createRequestBodyInjector(
             minTokens,
             logger,
           );
+
+          // Express the placed breakpoints in the KEYED provider's own marker form. On that shape a
+          // `cache_control` property is not a marker at all — the marker is a `{cachePoint}` block —
+          // so every breakpoint placed above was dropped by the serializer and the multi-zone budget
+          // bought nothing. Runs as one post-pass because the cap is PER REQUEST and the SDK has
+          // already spent one marker; unaffordable markers are dropped rather than left dead.
+          if (needsCacheBreakpoints && Array.isArray(result.messages)) {
+            const keyedMarkers = translateKeyedCacheMarkers(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            const cachePointPositions = findCachePointPositions(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            if (keyedMarkers.converted > 0 || keyedMarkers.dropped > 0 || cachePointPositions.length > 0) {
+              // Positions ride the line because the keyed provider hard-rejects a
+              // request whose marker has nothing cacheable before it — diagnosing
+              // that needs WHERE, not how many. [messageIndex, blockIndex] pairs only.
+              logger.debug(
+                {
+                  cachePointsPlaced: keyedMarkers.converted,
+                  markersDroppedOverBudget: keyedMarkers.dropped,
+                  cachePointPositions,
+                  payloadTail: describePayloadTail(
+                    result.messages as Array<Record<string, unknown>>,
+                  ),
+                  messageCount: (result.messages as unknown[]).length,
+                  sessionKey: config.sessionKey,
+                },
+                "Translated cache breakpoints into provider cachePoint blocks",
+              );
+            }
+          }
 
           // Promote stable message breakpoints from 5m to 1h TTL
           // Skip breakpoint TTL promotion during eviction cooldown (conservative caching).

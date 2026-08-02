@@ -9,9 +9,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 
-import { generateMasterKey, writeMasterKeyIfAbsent } from "./master-key.js";
+import { generateMasterKey, writeMasterKeyIfAbsent, writeCanarySecretIfAbsent } from "./master-key.js";
 
 describe("generateMasterKey", () => {
   it("returns a 64-character hex string (32 bytes encoded)", () => {
@@ -123,5 +123,54 @@ describe("writeMasterKeyIfAbsent", () => {
     const stats = statSync(result.path);
     // Defensive chmodSync must have narrowed this to 0600
     expect(stats.mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("writeCanarySecretIfAbsent", () => {
+  // Without a configured secret the canary token derives from tenantId+agentId — stable across
+  // restarts but PREDICTABLE to anyone who knows those, so the exfiltration canary can be recognised
+  // and stepped around. Production ran that way for its whole life because the only remediation was a
+  // manual step the operator was never prompted to take. Generating at first boot closes it with no
+  // operator action.
+  it("generates a 32-byte hex secret and narrows the file to 0600", () => {
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    try {
+      const res = writeCanarySecretIfAbsent(dir);
+      expect(res.written).toBe(true);
+      expect(res.secretHex).toMatch(/^[0-9a-f]{64}$/);
+      const body = readFileSync(res.path, "utf-8");
+      expect(body).toMatch(/^CANARY_SECRET=[0-9a-f]{64}$/m);
+      expect(statSync(res.path).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is idempotent — a second call never rotates an existing secret", () => {
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    try {
+      const first = writeCanarySecretIfAbsent(dir);
+      const before = readFileSync(first.path, "utf-8");
+      const second = writeCanarySecretIfAbsent(dir);
+      expect(second.written).toBe(false);
+      expect(second.secretHex).toBeUndefined();
+      // Rotating would invalidate every canary already embedded in prior outbound content.
+      expect(readFileSync(second.path, "utf-8")).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("coexists with the master key in the same .env", () => {
+    const dir = mkdtempSync(join(tmpdir(), "canary-"));
+    try {
+      writeMasterKeyIfAbsent(dir);
+      const res = writeCanarySecretIfAbsent(dir);
+      const body = readFileSync(res.path, "utf-8");
+      expect(body).toMatch(/^SECRETS_MASTER_KEY=[0-9a-f]{64}$/m);
+      expect(body).toMatch(/^CANARY_SECRET=[0-9a-f]{64}$/m);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

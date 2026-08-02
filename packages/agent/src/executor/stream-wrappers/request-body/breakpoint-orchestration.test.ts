@@ -320,3 +320,37 @@ describe("runCacheBreakpointPhase — extended-TTL provider cap", () => {
     expect(JSON.stringify(result)).not.toContain('"1h"');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fence guarantee on a mature conversation
+// ---------------------------------------------------------------------------
+
+describe("runCacheBreakpointPhase — a mature conversation always gets a cache fence", () => {
+  const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" };
+
+  // Live incident (comis-moshe, 2026-08-01): short chat turns never met the minTokens gap, so
+  // placeCacheBreakpoints placed 0 message breakpoints (breakpointBudget.message: 0) and no SDK
+  // auto-marker was present either, leaving the fence at -1. Every fence consumer then took its
+  // fail-open branch and mutated already-cached content, so `Cache fence unset in mature session`
+  // fired 6x in production and 4x on the local rig at messageCount 11/19/35/57. A conversation the
+  // runtime itself calls "mature" must never be left without a fence.
+  it("sets a fence even when every token gap is below minTokens", () => {
+    const messages: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 6; i++) {
+      messages.push({ role: "user", content: [{ type: "text", text: `short u${i}` }] });
+      messages.push({ role: "assistant", content: [{ type: "text", text: `short a${i}` }] });
+    }
+    const result = makeResult(messages);
+    const onBreakpointsPlaced = vi.fn();
+
+    // minTokens far above any gap these 12 tiny messages can produce.
+    runCacheBreakpointPhase(
+      result, model, makeConfig({ onBreakpointsPlaced }), true, false, /* minTokens */ 1_000_000, makeLogger(),
+    );
+
+    expect(onBreakpointsPlaced).toHaveBeenCalled();
+    const fence = onBreakpointsPlaced.mock.calls.at(-1)![0] as number;
+    expect(fence).toBeGreaterThanOrEqual(0);
+    expect(fence).toBeLessThan(messages.length);
+  });
+});

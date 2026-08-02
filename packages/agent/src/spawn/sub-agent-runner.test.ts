@@ -9,8 +9,7 @@ import {
   formatSessionKey,
   RequiredToolsUnreachableError,
   TypedEventBus,
-  type ConversationLocator,
-} from "@comis/core";
+  type ConversationLocator, SUB_AGENT_TOOL_DENYLIST} from "@comis/core";
 import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5235,6 +5234,48 @@ describe("spawn required_tools gate", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("spawn with an MCP required tool and a NARROW profile is admitted (MCP bypasses profile filtering)", () => {
+    // Live (comis-moshe 17:40:11 and again on the Linux rig 19:20:31): a spawn asking for
+    // `mcp__<server>--<tool>` under tool_groups:['coding','mcp'] was REJECTED as outside_profile,
+    // costing a full turn before the model retried with tool_groups:['full'] — i.e. the false
+    // negative pushed callers to escalate to EVERY tool.
+    //
+    // It is a false negative because setup-tools builds MCP tools through a provider that
+    // deliberately bypasses profile filtering, so the child receives them whatever its groups say.
+    // reachableToolNames is derived from the STATIC profile name lists, which a dynamic MCP tool
+    // name can never appear in — the two layers disagreed and the gate lost.
+    const runner = createSubAgentRunner(deps);
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+
+    const handle = runner.spawn({
+      task: "test",
+      agentId: "default",
+      toolGroups: ["coding"],
+      requiredTools: ["mcp__vendor--slow_report"],
+      reachableToolNames: codingSet,
+    });
+
+    expect(handle).toBeDefined();
+  });
+
+  it("an MCP tool on the sub-agent DENYLIST is still rejected", () => {
+    // The bypass is scoped to profile reachability only — the denylist check runs first and wins.
+    const runner = createSubAgentRunner(deps);
+    const denylistedMcp = [...SUB_AGENT_TOOL_DENYLIST].find((t) => t.startsWith("mcp__"));
+    if (denylistedMcp === undefined) return; // no mcp__ entry on the denylist today
+    let caught: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["coding"],
+        requiredTools: [denylistedMcp],
+        reachableToolNames: new Set(["read"]),
+      });
+    } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(RequiredToolsUnreachableError);
   });
 
   it("spawn with requiredTools=['obs_query'] and toolGroups=['coding'] throws RequiredToolsUnreachableError before runId", () => {

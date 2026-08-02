@@ -761,7 +761,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
           `stall budget ${String(t.stallBudgetMs ?? t.timeoutMs)}ms exceeded after ${String(t.durationMs ?? t.timeoutMs)}ms ` +
           `with no stream/tool activity — binding knob: ${knob}`,
         suggestedNextSteps: [
-          `raise ${knob} (currently ${String(t.stallBudgetMs ?? t.timeoutMs)}) — local prefill on consumer hardware can exceed it`,
+          `raise ${knob} (currently ${String(t.stallBudgetMs ?? t.timeoutMs)}) — a cold local model's prefill can exceed it`,
+          `check whether a tool deadline is >= ${String(t.stallBudgetMs ?? t.timeoutMs)} (notably integrations.mcp.callToolTimeoutMs): when it is, this budget fires first and the tool never reports its own failure, so raising only the budget will not help`,
           "obs.explain depth=full",
         ],
       };

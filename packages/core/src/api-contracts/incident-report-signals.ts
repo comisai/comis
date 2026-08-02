@@ -363,7 +363,18 @@ export interface IncidentSignals {
    * est-$ ONLY (never the changed tool names). Absent ⇒ no cache breaks in the
    * trajectory (omitted from the report — the `recall?` presence-conditional mold).
    */
-  cacheBreaks?: Array<{ reason: string; count: number; estCostUsd: number }>;
+  cacheBreaks?: Array<{
+    reason: string;
+    count: number;
+    /** Estimated waste from this break: `tokenDrop x (cacheWrite - cacheRead)` — the dropped bytes
+     *  get re-paid at the write rate where they would have been paid at the read rate. Matches the
+     *  on-disk cache-break record's `estimatedCostUsd`. 0 for an unknown-priced model. */
+    estCostUsd: number;
+    /** Tokens dropped out of the cached prefix for this reason — the magnitude an operator should
+     *  judge a break by. Live, a $30.64 incident reported $0.46 in `estCostUsd` while the drop count
+     *  (920,026) reflected the real damage. */
+    tokenDrop: number;
+  }>;
   /**
    * The spend kill-switch breach folded from the
    * session's terminal `spend.exceeded` trajectory record (last wins). `totalUsd`

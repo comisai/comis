@@ -367,7 +367,7 @@ export async function setupSingleAgent(
   if (!configuredCanarySecret) {
     perAgentLogger.warn(
       {
-        hint: "Set CANARY_SECRET environment variable for stable canary tokens across restarts",
+        hint: "Canary tokens are derived from tenantId+agentId, so they are stable but PREDICTABLE to anyone who knows those. Set a random CANARY_SECRET to make them unguessable: `comis secrets set CANARY_SECRET` under security.storage=encrypted, or the CANARY_SECRET env var under storage=env",
         errorKind: "config" as const,
       },
       "Canary secret not configured, using deterministic fallback",

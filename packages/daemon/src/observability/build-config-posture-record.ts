@@ -99,6 +99,39 @@ export function countPricingGaps(
   ).length;
 }
 
+/** Shipped default stall budget for a SUB-AGENT operation
+ *  (`agents.<id>.operationModels.subagent.timeout`; OPERATION_TIMEOUT_DEFAULTS.subagent). This — not
+ *  `promptTimeout.promptTimeoutMs` — is the budget that bound live. Kept in sync with
+ *  OPERATION_TIMEOUT_DEFAULTS.subagent; the stock-defaults test below fails if the two drift. */
+const DEFAULT_SUBAGENT_TIMEOUT_MS = 180_000;
+
+/** Shipped default MCP call deadline (`integrations.mcp.callToolTimeoutMs`;
+ *  MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT). The collision arises from the DEFAULTS, so an operator who
+ *  pins nothing still inherits it — the count must therefore assume this when unset. */
+const DEFAULT_CALL_TOOL_TIMEOUT_MS = 120_000;
+
+/**
+ * Count configured agents whose MCP call deadline is NOT strictly below the stall budget that
+ * encloses it. When `integrations.mcp.callToolTimeoutMs >= promptTimeoutMs`, the enclosing budget
+ * always fires first, so the tool can never surface its own honest failure — the run aborts with
+ * zero steps and no diagnosis. Observed live twice: both defaults ship at 120000, so an agent that
+ * pins neither inherits the collision.
+ *
+ * A COUNT, never agent names.
+ */
+export function countToolDeadlineCollisions(
+  agents: Readonly<
+    Record<string, { operationModels?: { subagent?: { timeout?: number } } }>
+  >,
+  callToolTimeoutMs: number | undefined,
+): number {
+  const deadline = callToolTimeoutMs ?? DEFAULT_CALL_TOOL_TIMEOUT_MS;
+  return Object.values(agents).filter((a) => {
+    const budget = a.operationModels?.subagent?.timeout ?? DEFAULT_SUBAGENT_TIMEOUT_MS;
+    return deadline >= budget;
+  }).length;
+}
+
 /**
  * Count configured agents whose (provider, model) does NOT resolve in the model
  * catalog — the fail-closed-to-nano class (`modelRegistry.find()` → undefined →
@@ -273,6 +306,12 @@ export interface ConfigPostureInputs {
    * {@link countMediaCredentialGaps} at boot. Optional (defaults to 0).
    */
   mediaCredentialGapCount?: number;
+  /**
+   * Number of configured agents whose MCP call deadline is not strictly below the enclosing stall
+   * budget — the tool can never report its own timeout. A COUNT, never agent names. Computed via
+   * {@link countToolDeadlineCollisions} at boot. Optional (defaults to 0).
+   */
+  toolDeadlineCollisionCount?: number;
 }
 
 /**
@@ -297,6 +336,7 @@ export function buildConfigPostureRecord(
   const browserNoSandbox = inputs.browserNoSandbox ?? false;
   const terminalUnsafeDisableSandbox = inputs.terminalUnsafeDisableSandbox ?? false;
   const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
+  const toolDeadlineCollisionCount = inputs.toolDeadlineCollisionCount ?? 0;
   const hasIssue =
     inputs.tlsOff ||
     inputs.strandedFindings.length > 0 ||
@@ -308,7 +348,8 @@ export function buildConfigPostureRecord(
     sandboxNoDowngradeDisabled ||
     browserNoSandbox ||
     terminalUnsafeDisableSandbox ||
-    mediaCredentialGapCount > 0;
+    mediaCredentialGapCount > 0 ||
+    toolDeadlineCollisionCount > 0;
 
   obsStore?.insertDiagnostic({
     timestamp: clock.now(),
@@ -343,6 +384,7 @@ export function buildConfigPostureRecord(
       // Configured media pipelines whose pinned provider's credential is
       // absent (image/transcription/tts/video). A COUNT, never provider names.
       mediaCredentialGapCount,
+      toolDeadlineCollisionCount,
     }),
   });
 }

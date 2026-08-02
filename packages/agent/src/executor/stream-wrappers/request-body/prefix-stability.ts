@@ -23,6 +23,7 @@
 import type { ComisLogger } from "@comis/core";
 
 import { computeHash } from "../../cache-detection/index.js";
+import { blockKind, blockText } from "./block-kind.js";
 import { sessionPrefixStability } from "./cache-breakpoints.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
 
@@ -32,7 +33,7 @@ function messageSignature(m: Record<string, unknown>): string {
   const c = m.content;
   const text = typeof c === "string" ? c :
     Array.isArray(c) ? (c as Array<Record<string, unknown>>).map(b =>
-      `${String(b.type)}:${String(b.text ?? b.thinking ?? "")}:${JSON.stringify(b.content ?? b.input ?? "")}`
+      `${blockKind(b)}:${blockText(b)}:${JSON.stringify(b.content ?? b.input ?? b.toolUse ?? b.toolResult ?? "")}`
     ).join("|") : "";
   return `${m.role}:${text}`;
 }
@@ -49,7 +50,7 @@ function hashEachMessage(messages: Array<Record<string, unknown>>, endIdx: numbe
  * block → t drops; an offloaded tool_result → len drops; a stripped inline-recall block →
  * r drops 1→0). Format: `<role>|b<blocks>|t<thinking>|r<0|1>|len<chars>`.
  */
-function messageStructSig(m: Record<string, unknown>): string {
+export function messageStructSig(m: Record<string, unknown>): string {
   const c = m.content;
   let blocks = 1, thinking = 0, len = 0, hadRecall = 0;
   const RECALL_RE = /\[Relevant context from memory:/;
@@ -60,13 +61,35 @@ function messageStructSig(m: Record<string, unknown>): string {
     const arr = c as Array<Record<string, unknown>>;
     blocks = arr.length;
     for (const b of arr) {
-      if (b.type === "thinking") thinking++;
-      const text = String(b.text ?? b.thinking ?? b.content ?? "");
+      // Kind and text are read through the shared resolver, NOT off `b.type`/`b.text`. Under the
+      // Bedrock Converse shape a direct read makes `t` permanently 0 (reasoning is
+      // `{reasoningContent}`) and drops reasoning text from `len` — so a reasoning block vanishing
+      // from a cached message presented as a block-count change with an IDENTICAL length and no
+      // thinking on either side. That reading is what withdrew the correct hypothesis twice.
+      if (blockKind(b) === "thinking") thinking++;
+      const text = blockText(b);
       len += text.length;
       if (RECALL_RE.test(text)) hadRecall = 1;
     }
   }
-  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}`;
+  // The block-TYPE list, not just the count. Three separate root-cause attempts on a live
+  // block-count-changed churn failed because `b2 -> b1` says a block vanished but never WHICH, so each
+  // attempt had to infer the mechanism from `t`/`len` movement and each inference was wrong. Types are
+  // closed vocabulary (`text`, `thinking`, `tool_use`, `tool_result`, …) — no content, no tool names,
+  // no argument values — so they are safe to log and they name the dropped block outright.
+  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}|[${blockTypes(c)}]`;
+}
+
+/**
+ * Comma-joined canonical block kinds — closed vocabulary only, never any value.
+ *
+ * Resolved via {@link blockKind} so a Bedrock Converse block names itself. Reading `b.type`
+ * directly rendered every Bedrock block as `unknown`, which made the one field added to name the
+ * dropped block report nothing at all.
+ */
+function blockTypes(content: unknown): string {
+  if (!Array.isArray(content)) return typeof content === "string" ? "raw-string" : "none";
+  return (content as Array<Record<string, unknown>>).map(blockKind).join(",");
 }
 
 /** Per-message structural sigs for the prefix [0..endIdx]. */
@@ -84,7 +107,10 @@ function parseSig(
   // churn cause, reported as "unknown" on 29 of 31 signals while the printed
   // signature already showed b1→b2 (comis-moshe 2026-07-26).
   const b = /\|b(\d+)\|/.exec(sig);
-  const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); const len = /\|len(\d+)$/.exec(sig);
+  const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); // NOT end-anchored: the signature now carries a trailing `|[block,types]` field, and an anchored
+  // `len` pattern silently stopped matching when that was added — every mutation then classified as
+  // "unknown", which is the same blindness this classifier was written to remove.
+  const len = /\|len(\d+)(?:\||$)/.exec(sig);
   return {
     b: b ? Number(b[1]) : 0,
     t: t ? Number(t[1]) : 0,

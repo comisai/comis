@@ -14,7 +14,7 @@
 /**
  * One per-reason aggregate bucket from the cache-break rate query
  * (`queryCacheBreaksByReason` / the standalone `queryCacheBreakRateByReason`). The
- * $-lost (`estCostUsd`) is the summed directly-lost cache-read saving for the reason
+ * $-lost (`estCostUsd`) is the summed re-write waste — tokenDrop x (cacheWrite - cacheRead) — for the reason
  * (0 for an unknown-priced model — honest, never NaN/null). Content-free: a closed
  * reason label + two numbers ONLY. Matches the IncidentReport `cacheBreaks?` type
  * (incident-report.ts), which also declares estCostUsd.

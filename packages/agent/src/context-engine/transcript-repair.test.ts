@@ -232,7 +232,13 @@ describe("sanitizeToolUseResultPairing (pairing invariant)", () => {
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("strip aborted: removes dangling tool_use blocks from an aborted turn, keeping text", () => {
+  it("keeps an aborted turn's tool_use blocks and synthesizes their results instead of stripping", () => {
+    // Stripping changed the assistant message's content-BLOCK COUNT, and changed it late: a freshly
+    // generated turn reaches the provider from live SDK memory unrepaired, and only lost the blocks
+    // once next served through this pass — mutating an already-cached message once per turn at a
+    // marching index (measured live as block-count-changed at idx 51 -> 55 -> ... with t0/len0 on both
+    // sides, which is what identified tool_use as the dropped block). Synthesizing satisfies the same
+    // pairing invariant while leaving block count alone.
     const input = [
       userMsg("hi"),
       assistantMsg([textBlock("partial answer"), toolCallBlock("tu_1")], "aborted"),
@@ -240,17 +246,18 @@ describe("sanitizeToolUseResultPairing (pairing invariant)", () => {
 
     const out = sanitizeToolUseResultPairing(input, NOW);
 
-    // No tool_use for tu_1 survives; no synthesized result for the aborted call.
     const allCallIds = out.flatMap((m) => (role(m) === "assistant" ? callIdsOf(m) : []));
-    expect(allCallIds).not.toContain("tu_1");
-    expect(out.some((m) => role(m) === "toolResult" && resultCallId(m) === "tu_1")).toBe(false);
-    // Assistant text is preserved.
+    expect(allCallIds).toContain("tu_1");
+    // The call is paired by an explicitly-marked placeholder, never a fabricated real result.
+    const synth = out.find((m) => role(m) === "toolResult" && resultCallId(m) === "tu_1")!;
+    expect(synth).toBeDefined();
+    expect(JSON.stringify(synth)).toContain("synthesized placeholder");
     const asst = out.find((m) => role(m) === "assistant")!;
     expect(blocks(asst).some((b) => b.type === "text" && b.text === "partial answer")).toBe(true);
     assertEveryResultFollowsItsCall(out);
   });
 
-  it("strip errored: dangling tool_use blocks get the same treatment for stopReason 'error'", () => {
+  it("treats stopReason 'error' the same way — call kept, result synthesized", () => {
     const input = [
       userMsg("hi"),
       assistantMsg([toolCallBlock("tu_1")], "error"),
@@ -259,8 +266,9 @@ describe("sanitizeToolUseResultPairing (pairing invariant)", () => {
     const out = sanitizeToolUseResultPairing(input, NOW);
 
     const allCallIds = out.flatMap((m) => (role(m) === "assistant" ? callIdsOf(m) : []));
-    expect(allCallIds).not.toContain("tu_1");
-    expect(out.some((m) => role(m) === "toolResult")).toBe(false);
+    expect(allCallIds).toContain("tu_1");
+    expect(out.some((m) => role(m) === "toolResult" && resultCallId(m) === "tu_1")).toBe(true);
+    assertEveryResultFollowsItsCall(out);
   });
 
   it("no-op: a well-formed array round-trips with pairing intact (idempotent)", () => {

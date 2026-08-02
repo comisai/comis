@@ -126,11 +126,15 @@ export function replaceContextStoreHistory(
  * rendered-prompt epoch.
  *
  * The replacement is deliberately narrow: the stored cursor must match the
- * first unmodified SDK message, the canonical projection must have a distinct
- * anchor, and the SDK source may not have shrunk behind its cursor. A cursor
- * belonging to any unrelated epoch follows the normal append-only rebase path.
- * This keeps genuine session continuity while removing runtime prompt wrappers
- * and generated locale-repair turns that were previously persisted as user
+ * first unmodified SDK message — either directly (an epoch persisted from raw
+ * rendered prompts) or through that same verbatim message's canonical
+ * projection anchor (an epoch the projection persisted while it still passed
+ * an unpaired first turn through untouched, before it began carving that
+ * turn) — the canonical projection must have a distinct anchor, and the SDK
+ * source may not have shrunk behind its cursor. A cursor belonging to any
+ * unrelated epoch follows the normal append-only rebase path. This keeps
+ * genuine session continuity while removing runtime prompt wrappers and
+ * generated locale-repair turns that were previously persisted as user
  * conversation.
  */
 export async function ingestProjectedConversationHistory(
@@ -156,11 +160,19 @@ export async function ingestProjectedConversationHistory(
         ? undefined
         : messageEpochAnchor(sourceMessages[0]);
       const projectedAnchor = canonicalProjectionAnchor(persistenceMessages);
+      // A dirty epoch is anchored to the verbatim source[0] in one of two
+      // forms: the raw anchor (persisted from rendered prompts, pre-projection)
+      // or its canonical-projection anchor (persisted by a projection that
+      // still passed the unpaired first turn through verbatim). Requiring the
+      // NEW projected anchor to differ from the cursor keeps steady-state
+      // turns — where the stored anchor already names today's projection —
+      // on the append-only path.
       const matchesRenderedEpoch = cursor !== null
         && sourceAnchor !== undefined
         && projectedAnchor !== undefined
-        && sourceAnchor !== projectedAnchor
-        && cursor.epochAnchor === sourceAnchor
+        && projectedAnchor !== cursor.epochAnchor
+        && (cursor.epochAnchor === sourceAnchor
+          || cursor.epochAnchor === `canonical-projection:${sourceAnchor}`)
         && projectionChangesHistory(sourceMessages, projectedMessages);
 
       if (matchesRenderedEpoch) {

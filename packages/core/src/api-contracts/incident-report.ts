@@ -538,7 +538,7 @@ export const IncidentReportSchema = z.object({
     .optional(),
   /** The prompt-cache breaks the
    *  session incurred, aggregated per-reason from its `cache.break` trajectory
-   *  records. `estCostUsd` is the directly-lost cache-read saving summed
+   *  records. `estCostUsd` is the re-write waste — tokenDrop x (cacheWrite - cacheRead) — summed
    *  per reason (`tokenDrop × resolveModelPricing.cacheRead`; 0 for an unknown
    *  model — honest). Counts + a closed reason label + a number ONLY — never the
    *  changed tool NAMES (the trajectory carries only the changed-dims digest). The
@@ -553,7 +553,8 @@ export const IncidentReportSchema = z.object({
         reason: z.string(),
         /** How many cache breaks of this reason the session incurred. */
         count: z.number(),
-        /** The summed directly-lost cache-read saving in USD (0 for an unknown-priced model). */
+        /** Summed re-write waste in USD: tokenDrop x (cacheWrite - cacheRead), matching the on-disk
+         *  cache-break record (0 for an unknown-priced model). */
         estCostUsd: z.number(),
       }),
     )

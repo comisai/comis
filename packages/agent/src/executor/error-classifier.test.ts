@@ -351,6 +351,33 @@ describe("classifyPromptTimeout — knob-named hints", () => {
     expect(result.userMessage).toBe(GENERIC_TIMEOUT_USER_MESSAGE);
   });
 
+  it("stall hint does not assert local consumer hardware and names the nested tool-deadline collision", () => {
+    // Live incident (comis-moshe, 2026-08-01): two sub-agents on amazon-bedrock died at the
+    // 120000ms stall budget with Steps:0 because their first act was an MCP call whose own
+    // deadline (integrations.mcp.callToolTimeoutMs) is ALSO 120000ms by default, so the stall
+    // budget always fires first and the tool can never report its own failure. The hint sent
+    // the operator to "local prefill on consumer hardware", which is not a Bedrock failure
+    // mode, and never mentioned the nested deadline that actually bound.
+    const result = classifyPromptTimeout(
+      new PromptTimeoutError(120_000, {
+        limit: "stall",
+        stallBudgetMs: 120_000,
+        makespanMs: 1_200_000,
+      }),
+      {
+        source: "agent_config",
+        agentId: "default",
+        promptTimeoutMs: 120_000,
+        retryPromptTimeoutMs: 60_000,
+        stallCeilingMultiplier: 10,
+      },
+      124_436,
+    );
+    expect(result.hint).not.toMatch(/consumer hardware/);
+    expect(result.hint).toMatch(/callToolTimeoutMs/);
+    expect(result.userMessage).toBe(GENERIC_TIMEOUT_USER_MESSAGE);
+  });
+
   it("operation-override binding names the operationModels `timeout` key — never the agent knob, never a timeoutMs key tail, never providers.*", () => {
     const result = classifyPromptTimeout(
       new PromptTimeoutError(180_000, {

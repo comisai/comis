@@ -1950,8 +1950,8 @@ describe("assembleIncidentReport — cacheBreaks?", () => {
     expect(report.cacheBreaks).toBeDefined();
     // count desc, then reason asc (deterministic) → system_changed (2) before tools_changed (1).
     expect(report.cacheBreaks).toEqual([
-      { reason: "system_changed", count: 2, estCostUsd: 0.01 },
-      { reason: "tools_changed", count: 1, estCostUsd: 0 },
+      { reason: "system_changed", count: 2, estCostUsd: 0.01, tokenDrop: 0 },
+      { reason: "tools_changed", count: 1, estCostUsd: 0, tokenDrop: 0 },
     ]);
   });
 
@@ -1962,11 +1962,16 @@ describe("assembleIncidentReport — cacheBreaks?", () => {
   });
 
   it("never carries the changed tool NAMES — only counts + reason + est-$ (content-free)", () => {
-    const signals = toIncidentSignals([cacheBreakRecord({ reason: "tools_changed", estCostUsd: 0.02 }, 1)]);
+    const signals = toIncidentSignals([cacheBreakRecord({ reason: "tools_changed", estCostUsd: 0.02, tokenDrop: 1234 }, 1)]);
     const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
     const serialized = JSON.stringify(report.cacheBreaks);
     expect(serialized).not.toMatch(/toolsAdded|toolsRemoved|changedDimsDigest|secret/);
-    expect(report.cacheBreaks?.[0]).toEqual({ reason: "tools_changed", count: 1, estCostUsd: 0.02 });
+    // tokenDrop rides the report so the MAGNITUDE is visible. `estCostUsd` is only the forgone
+    // cache-READ saving (drop x read-rate); the real cost of a break is re-WRITING the prefix at the
+    // write rate. Live, that made a $30.64 incident read as $0.46 of waste, while the dropped-token
+    // count (920,026) told the true story. Reporting drop alongside cost stops the small number from
+    // being mistaken for the whole picture.
+    expect(report.cacheBreaks?.[0]).toEqual({ reason: "tools_changed", count: 1, estCostUsd: 0.02, tokenDrop: 1234 });
   });
 
   it("caps cacheBreaks at summary depth + records a truncations[] breadcrumb (bounded output)", () => {

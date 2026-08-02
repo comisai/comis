@@ -42,7 +42,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 1: only last assistant message keeps thinking blocks
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     expect(cleared).toBe(2); // 2 thinking blocks cleared from first 2 assistant messages
     // First assistant: thinking removed, text preserved
@@ -71,7 +71,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 1: first assistant beyond window
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     expect(cleared).toBe(1); // Only non-redacted thinking cleared
     const firstAssistantContent = messages[1]!.content as any[];
@@ -94,7 +94,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
       { role: "assistant", content: [{ type: "text", text: "Latest" }] },
     ];
 
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     expect(cleared).toBe(1);
     const content = messages[1]!.content as any[];
@@ -119,7 +119,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 5: all 2 assistant messages fit within window
-    const cleared = clearStaleThinkingBlocks(messages, 5);
+    const cleared = clearStaleThinkingBlocks(messages, 5, 0);
 
     expect(cleared).toBe(0);
     // Both messages should retain their thinking blocks
@@ -147,7 +147,7 @@ describe("clearStaleThinkingBlocks (pure)", () => {
     ];
 
     // keepWindow = 1: first 2 assistants beyond window, 3rd within
-    const cleared = clearStaleThinkingBlocks(messages, 1);
+    const cleared = clearStaleThinkingBlocks(messages, 1, 0);
 
     // First assistant: 2 thinking blocks cleared, second assistant: 1 thinking cleared
     expect(cleared).toBe(3);
@@ -155,21 +155,18 @@ describe("clearStaleThinkingBlocks (pure)", () => {
 });
 
 describe("stripReplayThinking (pure) — replayed-thinking cache stability", () => {
-  // A keep-last exception would cache the active tool cycle (the last assistant in the
-  // outgoing request) WITH its thinking blocks, but
-  // the LCD parts-codec reconstructs assistant messages WITHOUT thinking. So the
-  // active assistant would be cached WITH thinking and re-sent WITHOUT it the next call
-  // (when it becomes historical and gets stripped) → the cached prefix mutates → cache-read
-  // collapse on thinking-heavy (coding) turns, re-written every turn boundary.
+  // Historical assistant messages are stripped so the cached form matches the durable LCD
+  // form (zero historical thinking), which keeps the prefix byte-stable turn-over-turn.
   //
-  // Hence: strip
-  // thinking from EVERY replayed assistant message (no keep-last exception), making the
-  // cached form byte-identical to the durable LCD form (zero historical thinking).
-  // Anthropic tolerates a tool-use assistant with no thinking block as the active cycle
-  // (validated live: zero 400s, correct multi-step coding, total cache-read +5%, write -38%).
-  // Generation-time thinking is unaffected — this only strips the messages being REPLAYED.
+  // The LATEST assistant message is EXCLUDED. Anthropic rejects a request whose newest
+  // assistant turn has had its thinking content altered:
+  // `messages.<n>.content.<k>: 'thinking' or 'redacted_thinking' blocks in the latest
+  // assistant message cannot be modified`. Stripping it produced that 400 live
+  // (comis-moshe, 2026-08-01, amazon-bedrock) and the retry re-sent the same mutated shape,
+  // so the turn ended in consecutive empty assistant responses and the user got silence.
+  // Generation-time thinking is unaffected — this only strips messages being REPLAYED.
 
-  it("strips thinking from ALL replayed assistant messages, including the last (active) one", () => {
+  it("strips historical replayed assistant messages but never the latest one", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "old reasoning" }, { type: "text", text: "a1" }] },
@@ -179,26 +176,104 @@ describe("stripReplayThinking (pure) — replayed-thinking cache stability", () 
       { role: "assistant", content: [{ type: "thinking", thinking: "CURRENT reasoning" }, { type: "tool_use", id: "t2", name: "bash", input: {} }] },
     ];
     const stripped = stripReplayThinking(messages);
-    expect(stripped).toBe(3); // idx 1, 3, AND 5 (the active assistant too)
+    expect(stripped).toBe(2); // idx 1 and 3 only — idx 5 is the latest assistant
     expect((messages[1]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
     expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
-    // The LAST/active assistant (idx 5) is ALSO stripped — no keep-last exception.
-    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+    // The latest assistant (idx 5) keeps its thinking — modifying it is a provider 400.
+    expect((messages[5]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
     // Non-thinking blocks (tool_use, text) are preserved.
     expect((messages[5]!.content as any[]).some(b => b.type === "tool_use")).toBe(true);
   });
 
-  it("strips thinking even when only the last assistant message has it", () => {
+  it("strips the latest assistant message when it is NOT in an unclosed tool-use cycle", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "text", text: "a1" }] },
       { role: "user", content: [{ type: "text", text: "u2" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "current" }, { type: "text", text: "a2" }] },
     ];
+    // No tool_use on that turn, so the provider's "cannot be modified" window does not apply and
+    // stripping now keeps the message byte-stable for the rest of the conversation.
     const stripped = stripReplayThinking(messages);
     expect(stripped).toBe(1);
     expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
     expect((messages[3]!.content as any[]).some(b => b.type === "text")).toBe(true);
+  });
+
+  it("an ordinary conversational turn is stripped immediately — no per-turn prefix drift", () => {
+    // The regression this replaces: preserving the latest assistant turn UNCONDITIONALLY meant every
+    // turn kept its thinking and lost it one turn later, mutating the cached prefix at a marching
+    // index on EVERY turn. Measured live as block-count-changed at idx 19 -> 21 -> 23 -> 27 -> 29.
+    const sig = (m: Record<string, unknown>) => {
+      const c = m.content as Array<Record<string, unknown>> | undefined;
+      return `${m.role}|b${Array.isArray(c) ? c.length : 0}`;
+    };
+    let msgs: Array<Record<string, unknown>> = [];
+    const hist: string[][] = [];
+    for (let n = 1; n <= 6; n++) {
+      msgs = msgs.map(m => ({ ...m, content: (m.content as unknown[]).slice() }));
+      msgs.push({ role: "user", content: [{ type: "text", text: `u${n}` }] });
+      msgs.push({ role: "assistant", content: [
+        { type: "thinking", thinking: `r${n}` }, { type: "text", text: `a${n}` },
+      ] });
+      stripReplayThinking(msgs);
+      hist.push(msgs.map(sig));
+    }
+    const drift: string[] = [];
+    for (let e = 1; e < hist.length; e++) {
+      for (let i = 0; i < hist[e - 1]!.length; i++) {
+        if (hist[e - 1]![i] !== hist[e]![i]) drift.push(`exec${e}->${e + 1} idx${i}: ${hist[e - 1]![i]} -> ${hist[e]![i]}`);
+      }
+    }
+    expect(drift).toEqual([]);
+  });
+
+  it("keeps thinking on an assistant turn whose tool-use cycle is still UNCLOSED", () => {
+    // The provider forbids altering the newest assistant turn's thinking only while that turn is
+    // being continued — tool_use emitted, tool_result coming back. That is the 400 window.
+    const msgs: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [
+        { type: "thinking", thinking: "live" },
+        { type: "tool_use", id: "t1", name: "mcp__vendor--slow_report", input: {} },
+      ] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+    ];
+    stripReplayThinking(msgs);
+    expect((msgs[1]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+  });
+
+  it("strips that same turn once a real user message CLOSES the cycle", () => {
+    const msgs: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [
+        { type: "thinking", thinking: "live" },
+        { type: "tool_use", id: "t1", name: "x", input: {} },
+      ] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+      { role: "user", content: [{ type: "text", text: "next question" }] },
+    ];
+    stripReplayThinking(msgs);
+    expect((msgs[1]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
+  });
+
+  it("preserves a redacted_thinking sibling on the latest assistant message (the live 400 shape)", () => {
+    // Live shape: the newest assistant turn carried thinking + redacted_thinking + tool_use.
+    // Removing the plain thinking block changed that turn's thinking content -> 400.
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "old" }, { type: "text", text: "a1" }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t0", content: "ok" }] },
+      { role: "assistant", content: [
+        { type: "thinking", thinking: "live" },
+        { type: "redacted_thinking", data: "enc" },
+        { type: "tool_use", id: "t1", name: "mcp__vendor--slow_report", input: {} },
+      ] },
+    ];
+    const before = JSON.stringify(messages[3]);
+    stripReplayThinking(messages);
+    expect(JSON.stringify(messages[3])).toBe(before);
   });
 
   it("no-op on a conversation with no thinking blocks (echo-style tool turns)", () => {
@@ -672,5 +747,58 @@ describe("clearStaleToolResults COMPACTABLE_TOOL_NAMES (pure) — emitted-name m
     expect(a.find(b => b.type === "text").text).toBe(bigAssistantText);
     // The read tool_result WAS cleared (it is compactable + outside the window).
     expect((messages[2]!.content as any[])[0].text).toBe(PLACEHOLDER);
+  });
+});
+
+describe("clearStaleThinkingBlocks — unknown cache fence must fail SAFE", () => {
+  // Live incident (comis-moshe, 2026-08-01): a short-turn Hebrew chat never met the
+  // minTokens gap, so NO message breakpoint was ever placed ("Cache fence unset in
+  // mature session" x6) and the fence stayed -1. Every fence guard is
+  // `if (idx <= fenceIndex) continue`, which with fenceIndex=-1 protects NOTHING, so the
+  // sliding keepWindow cleared thinking from one ALREADY-CACHED assistant message per turn
+  // ("Unstable prefix detected" x25, firstDivergentIndex marching 3 -> 11 -> 19,
+  // assistant|b3|t0 -> b2|t0). The cached prefix mutated every turn, so cache_read was 0 on
+  // 38 of 71 calls and a ~190K-token cache_write was re-paid each turn: $30.64 of $32.22.
+  //
+  // Invariant: when the cached extent is UNKNOWN, already-sent content must be treated as
+  // possibly-cached and left byte-stable.
+  const A = (i: number) => ({
+    role: "assistant",
+    content: [{ type: "thinking", thinking: `reasoning ${i}` }, { type: "text", text: `a${i}` }],
+  });
+  const U = (i: number) => ({ role: "user", content: [{ type: "text", text: `u${i}` }] });
+  const sig = (m: Record<string, unknown>) =>
+    `${m.role}|b${Array.isArray(m.content) ? (m.content as unknown[]).length : 0}`;
+
+  it("keeps already-sent assistant messages byte-stable across turns when the fence is unset", () => {
+    const keepWindow = 3;
+    let msgs: Array<Record<string, unknown>> = [];
+    const seen: string[][] = [];
+
+    // Each iteration is one EXECUTION: append a turn, then run the pass as production does.
+    for (let turn = 1; turn <= 8; turn++) {
+      msgs = [...msgs.map(m => ({ ...m, content: (m.content as unknown[]).slice() })), U(turn), A(turn)];
+      clearStaleThinkingBlocks(msgs, keepWindow, -1); // -1 == fence unset / cached extent unknown
+      seen.push(msgs.map(sig));
+    }
+
+    const drift: string[] = [];
+    for (let e = 1; e < seen.length; e++) {
+      const prev = seen[e - 1]!, cur = seen[e]!;
+      for (let i = 0; i < prev.length; i++) {
+        if (prev[i] !== cur[i]) drift.push(`turn${e}->${e + 1} idx${i}: ${prev[i]} -> ${cur[i]}`);
+      }
+    }
+    expect(drift).toEqual([]);
+  });
+
+  it("still clears beyond the keep window once the cached extent is known", () => {
+    const msgs: Array<Record<string, unknown>> = [
+      U(1), A(1), U(2), A(2), U(3), A(3), U(4), A(4),
+    ];
+    // Fence at 1 == messages 0..1 are cached; 2.. are safe to clear.
+    const cleared = clearStaleThinkingBlocks(msgs, 1, 1);
+    expect(cleared).toBeGreaterThan(0);
+    expect((msgs[1]!.content as Array<Record<string, unknown>>).some(b => b.type === "thinking")).toBe(true);
   });
 });

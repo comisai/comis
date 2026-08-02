@@ -14,6 +14,9 @@
  * @module
  */
 
+import { blockKind, isThinkingBlock, makeTextBlockLike } from "./block-kind.js";
+import { clearStaleToolResults as clearStaleToolResultsAcrossShapes } from "./stale-tool-results.js";
+import { findCurrentTurnUserIndex, findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 import {
   extractInlineRecalledMemory,
   stripInlineRecalledMemory,
@@ -74,104 +77,14 @@ export function clearStaleToolResults(
   keepWindow: number,
   fenceIndex: number = -1,
 ): number {
-  // Build tool_use_id -> tool_name map for type filtering
-  const toolNameById = new Map<string, string>();
-  for (const msg of messages) {
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const block of msg.content as Array<Record<string, unknown>>) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
-          toolNameById.set(block.id as string, block.name as string);
-        }
-      }
-    }
-  }
-
-  // Find all tool_result indices (role === "tool" in Anthropic API format)
-  const toolResultIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i]!.role === "tool") {
-      toolResultIndices.push(i);
-    }
-  }
-
-  // Protect the last `keepWindow` tool results
-  const clearableIndices = toolResultIndices.slice(0, Math.max(0, toolResultIndices.length - keepWindow));
-
-  let cleared = 0;
-  for (const idx of clearableIndices) {
-    // Protect messages within the cached prefix (at or below the fence).
-    if (idx <= fenceIndex) continue;
-
-    const msg = messages[idx]!;
-
-    // Only clear compactable (read-only) tool types
-    const toolUseId = msg.tool_use_id as string | undefined;
-    if (toolUseId) {
-      const toolName = toolNameById.get(toolUseId);
-      if (toolName && !COMPACTABLE_TOOL_NAMES.has(toolName)) {
-        continue; // Preserve edit/write tool results
-      }
-      // If tool name not found (orphaned result), skip clearing (conservative)
-      if (!toolName) {
-        continue;
-      }
-    }
-
-    const content = msg.content;
-    if (Array.isArray(content)) {
-      // Check if any content block exceeds the threshold
-      let totalLen = 0;
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (typeof block.text === "string") {
-          totalLen += (block.text as string).length;
-        }
-      }
-      if (totalLen >= MICROCOMPACT_MIN_CONTENT_LENGTH) {
-        // Replace content with lightweight placeholder
-        msg.content = [{ type: "text", text: "[Stale tool result cleared: idle > TTL]" }];
-        cleared++;
-      }
-    } else if (typeof content === "string" && content.length >= MICROCOMPACT_MIN_CONTENT_LENGTH) {
-      msg.content = [{ type: "text", text: "[Stale tool result cleared: idle > TTL]" }];
-      cleared++;
-    }
-  }
-
-  // Second pass -- clear tool_use input blocks for edit/write tools.
-  // These tool_use blocks contain the full file content the LLM wanted to write/edit.
-  // After the result is confirmed, the input is no longer needed and just wastes cache space.
-  const assistantWithToolUseIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]!;
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      const content = msg.content as Array<Record<string, unknown>>;
-      if (content.some(b => b.type === "tool_use")) {
-        assistantWithToolUseIndices.push(i);
-      }
-    }
-  }
-  const clearableAssistantIndices = assistantWithToolUseIndices.slice(
-    0, Math.max(0, assistantWithToolUseIndices.length - keepWindow),
+  return clearStaleToolResultsAcrossShapes(
+    messages,
+    keepWindow,
+    fenceIndex,
+    COMPACTABLE_TOOL_NAMES,
+    CLEARABLE_USES_TOOL_NAMES,
+    MICROCOMPACT_MIN_CONTENT_LENGTH,
   );
-  for (const idx of clearableAssistantIndices) {
-    // Protect messages within the cached prefix.
-    if (idx <= fenceIndex) continue;
-
-    const msg = messages[idx]!;
-    const content = msg.content as Array<Record<string, unknown>>;
-    for (const block of content) {
-      if (block.type !== "tool_use") continue;
-      const toolName = block.name as string;
-      if (!CLEARABLE_USES_TOOL_NAMES.has(toolName)) continue;
-      const inputStr = JSON.stringify(block.input);
-      if (inputStr.length >= MICROCOMPACT_MIN_CONTENT_LENGTH) {
-        block.input = { _cleared: true, reason: "stale edit/write input" };
-        cleared++;
-      }
-    }
-  }
-
-  return cleared;
 }
 
 /**
@@ -182,8 +95,13 @@ export function clearStaleToolResults(
  *
  * Mutates messages in place (same pattern as clearStaleToolResults).
  *
+ * Fail-SAFE on an unknown cached extent (`fenceIndex < 0`): removing a thinking block changes the
+ * message's BLOCK COUNT and the sliding keepWindow newly clears a DIFFERENT one each turn, so the
+ * cached prefix would mutate every turn forever.
+ *
  * @param messages - The messages array (mutated in place)
  * @param keepWindow - Number of most recent assistant messages to preserve thinking blocks in
+ * @param fenceIndex - Highest already-cached message index; negative means UNKNOWN (protects all).
  * @returns Number of thinking blocks cleared
  */
 export function clearStaleThinkingBlocks(
@@ -191,6 +109,8 @@ export function clearStaleThinkingBlocks(
   keepWindow: number,
   fenceIndex: number = -1,
 ): number {
+  // Cached extent unknown: `idx <= fenceIndex` protects NOTHING at -1 (fail-OPEN).
+  if (fenceIndex < 0) return 0;
   // Collect assistant message indices
   const assistantIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -214,12 +134,11 @@ export function clearStaleThinkingBlocks(
     const content = msg.content;
     if (!Array.isArray(content)) continue;
 
-    // Filter: keep everything EXCEPT non-redacted thinking blocks
-    const filtered = (content as Array<Record<string, unknown>>).filter(block => {
-      if (block.type !== "thinking") return true;
-      // Preserve redacted thinking blocks (encrypted signatures for API continuity)
-      return (block as { redacted?: boolean }).redacted === true;
-    });
+    // Filter: keep everything EXCEPT non-redacted thinking blocks. Resolved through
+    // `isThinkingBlock` so the Bedrock Converse `{reasoningContent}` shape is seen too — a direct
+    // `block.type` read finds no thinking at all on that provider. Redacted reasoning (either
+    // shape) is preserved: it carries the encrypted signature the provider needs for continuity.
+    const filtered = (content as Array<Record<string, unknown>>).filter(block => !isThinkingBlock(block));
 
     if (filtered.length < (content as unknown[]).length) {
       cleared += (content as unknown[]).length - filtered.length;
@@ -246,11 +165,19 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
     const content = msg.content as Array<Record<string, unknown>>;
     if (content.length <= 1) continue;
 
-    // Partition: non-text blocks first, then text blocks (stable sort within groups)
+    // Partition: non-text blocks first, then text blocks (stable sort within groups).
+    // Cache markers stay pinned at the END: a marker means "cache everything before
+    // me", so partitioning it ahead of the text moves the cached-prefix boundary in
+    // front of the query — a layout the keyed provider hard-rejects when the
+    // marker's covered delta since the previous marker falls below its minimum.
     const nonText: Array<Record<string, unknown>> = [];
     const text: Array<Record<string, unknown>> = [];
+    const markers: Array<Record<string, unknown>> = [];
     for (const block of content) {
-      if (block.type === "text") {
+      const kind = blockKind(block);
+      if (kind === "cache_marker") {
+        markers.push(block);
+      } else if (kind === "text") {
         text.push(block);
       } else {
         nonText.push(block);
@@ -259,7 +186,7 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
 
     // Only reorder if there are both types (avoid unnecessary mutations)
     if (nonText.length > 0 && text.length > 0) {
-      msg.content = [...nonText, ...text];
+      msg.content = [...nonText, ...text, ...markers];
     }
   }
 }
@@ -285,12 +212,22 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
  * Mutates messages in place. Returns the number of messages whose thinking was stripped.
  */
 export function stripReplayThinking(messages: Array<Record<string, unknown>>): number {
+  // Preserve thinking ONLY on a newest assistant turn still inside an unclosed tool-use cycle — the
+  // one window where the provider forbids altering it (see ./tool-use-cycle.ts). Preserving it
+  // unconditionally, as this did before, made every ordinary turn keep its thinking and lose it one
+  // turn later: a per-turn prefix mutation at a marching index.
+  const latestAssistant = findLatestAssistantIndex(messages);
+  const preserveIndex = latestAssistant >= 0 && isUnclosedToolUseCycle(messages, latestAssistant)
+    ? latestAssistant
+    : -1;
+
   let stripped = 0;
   for (let i = 0; i < messages.length; i++) {
+    if (i === preserveIndex) continue;
     const msg = messages[i]!;
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const content = msg.content as Array<Record<string, unknown>>;
-    const filtered = content.filter(b => b.type !== "thinking");
+    const filtered = content.filter(b => !isThinkingBlock(b));
     if (filtered.length < content.length) { msg.content = filtered; stripped++; }
   }
   return stripped;
@@ -316,18 +253,21 @@ export function stripReplayThinking(messages: Array<Record<string, unknown>>): n
  * prefix-stabilizing strip that runs after structuredClone and before any
  * cache_control marker placement.
  *
+ * Fence-aware, like every microcompact pass: at/below `fenceIndex` the message is already cached, so
+ * stripping there mutates the cached prefix and re-pays the suffix. `-1` keeps the full reach.
+ *
  * Mutates messages in place. Returns the number of messages whose text changed.
  */
-export function stripTransientRecallFromHistory(messages: Array<Record<string, unknown>>): number {
-  // Index of the latest user message — its recall block is the current turn's and stays.
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
-  }
+export function stripTransientRecallFromHistory(messages: Array<Record<string, unknown>>, fenceIndex = -1): number {
+  // The CURRENT TURN's query message — its recall block stays. Tool-result carriers are skipped:
+  // on Bedrock they are user messages, so "newest user message" is a carrier mid-turn and the real
+  // query would be stripped as history while `deferRecallToUncachedTail` protects a different one.
+  const lastUserIdx = findCurrentTurnUserIndex(messages);
   if (lastUserIdx <= 0) return 0; // nothing historical to strip
 
   let stripped = 0;
   for (let i = 0; i < lastUserIdx; i++) {
+    if (i <= fenceIndex) continue; // cached already — rewriting it re-pays the whole suffix
     const msg = messages[i]!;
     if (msg.role !== "user") continue;
     const content = msg.content;
@@ -342,7 +282,7 @@ export function stripTransientRecallFromHistory(messages: Array<Record<string, u
       // The recall block was prepended to the message text → it lives at the start
       // of the first text block (image/media blocks may precede it after reorder).
       const blocks = content as Array<Record<string, unknown>>;
-      const textBlock = blocks.find(b => b.type === "text");
+      const textBlock = blocks.find(b => blockKind(b) === "text");
       if (textBlock && typeof textBlock.text === "string") {
         const cleaned = stripInlineRecalledMemory(textBlock.text);
         if (cleaned !== textBlock.text) { textBlock.text = cleaned; stripped++; }
@@ -380,10 +320,7 @@ const RECALL_PREFIX_RE = /^\s*\[Relevant context from memory:/;
  * Mutates messages in place. Returns 1 if it deferred a recall block, else 0.
  */
 export function deferRecallToUncachedTail(messages: Array<Record<string, unknown>>): number {
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
-  }
+  const lastUserIdx = findCurrentTurnUserIndex(messages);
   if (lastUserIdx < 0) return 0;
   const msg = messages[lastUserIdx]!;
   const content = msg.content;
@@ -403,7 +340,7 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     // The recall-bearing block (recall is prepended to the message text). Target it by
     // content so the cache_control (on the last block) is preserved on the query remainder.
     const recallBlock = blocks.find(
-      b => b.type === "text" && typeof b.text === "string" && RECALL_PREFIX_RE.test(b.text as string),
+      b => blockKind(b) === "text" && typeof b.text === "string" && RECALL_PREFIX_RE.test(b.text as string),
     );
     if (!recallBlock) return 0;
     const { recall, rest } = extractInlineRecalledMemory(recallBlock.text as string);
@@ -411,7 +348,7 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     recallBlock.text = rest; // query remainder keeps its cache_control → stays cached + stable
     // Append the recall AFTER the cache fence (the SDK marker is on the last block) so it
     // rides the uncached tail. No cache_control on this block.
-    blocks.push({ type: "text", text: recall.trim() });
+    blocks.push(makeTextBlockLike(recallBlock, recall.trim()));
     return 1;
   }
   return 0;
