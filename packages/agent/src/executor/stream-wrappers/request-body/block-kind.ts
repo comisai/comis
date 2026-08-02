@@ -127,6 +127,23 @@ export function blockText(block: unknown): string {
 }
 
 /**
+ * Mint a text block in the SAME wire shape as `sibling`, an existing block of the message it will
+ * join.
+ *
+ * A message's blocks are all one shape, and a provider rejects a block carrying no member it
+ * recognises — appending `{type:"text"}` to a Bedrock message is a hard request error, not a
+ * degraded read. When the sibling's shape cannot be established, the `type`-discriminated form is
+ * the safe default: it is what every non-Bedrock provider on this path expects.
+ */
+export function makeTextBlockLike(sibling: unknown, text: string): Record<string, unknown> {
+  const b = asRecord(sibling);
+  const keyDiscriminated = b !== undefined
+    && typeof b.type !== "string"
+    && BEDROCK_KEY_KINDS.some(([key]) => b[key] !== undefined);
+  return keyDiscriminated ? { text } : { type: "text", text };
+}
+
+/**
  * True when a block is STRIPPABLE reasoning — plaintext thinking in either wire shape.
  *
  * Redacted reasoning is deliberately excluded: it carries the encrypted signature the provider

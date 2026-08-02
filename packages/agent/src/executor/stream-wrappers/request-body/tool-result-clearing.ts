@@ -14,7 +14,7 @@
  * @module
  */
 
-import { isThinkingBlock } from "./block-kind.js";
+import { blockKind, isThinkingBlock, makeTextBlockLike } from "./block-kind.js";
 import { findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 import {
   extractInlineRecalledMemory,
@@ -258,7 +258,8 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
     const nonText: Array<Record<string, unknown>> = [];
     const text: Array<Record<string, unknown>> = [];
     for (const block of content) {
-      if (block.type === "text") {
+      // Via the resolver: `block.type` sorts every Bedrock block as non-text → reorder never fires.
+      if (blockKind(block) === "text") {
         text.push(block);
       } else {
         nonText.push(block);
@@ -360,7 +361,7 @@ export function stripTransientRecallFromHistory(messages: Array<Record<string, u
       // The recall block was prepended to the message text → it lives at the start
       // of the first text block (image/media blocks may precede it after reorder).
       const blocks = content as Array<Record<string, unknown>>;
-      const textBlock = blocks.find(b => b.type === "text");
+      const textBlock = blocks.find(b => blockKind(b) === "text");
       if (textBlock && typeof textBlock.text === "string") {
         const cleaned = stripInlineRecalledMemory(textBlock.text);
         if (cleaned !== textBlock.text) { textBlock.text = cleaned; stripped++; }
@@ -421,7 +422,7 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     // The recall-bearing block (recall is prepended to the message text). Target it by
     // content so the cache_control (on the last block) is preserved on the query remainder.
     const recallBlock = blocks.find(
-      b => b.type === "text" && typeof b.text === "string" && RECALL_PREFIX_RE.test(b.text as string),
+      b => blockKind(b) === "text" && typeof b.text === "string" && RECALL_PREFIX_RE.test(b.text as string),
     );
     if (!recallBlock) return 0;
     const { recall, rest } = extractInlineRecalledMemory(recallBlock.text as string);
@@ -429,7 +430,7 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     recallBlock.text = rest; // query remainder keeps its cache_control → stays cached + stable
     // Append the recall AFTER the cache fence (the SDK marker is on the last block) so it
     // rides the uncached tail. No cache_control on this block.
-    blocks.push({ type: "text", text: recall.trim() });
+    blocks.push(makeTextBlockLike(recallBlock, recall.trim()));
     return 1;
   }
   return 0;

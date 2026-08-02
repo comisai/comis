@@ -10,7 +10,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { blockKind, blockText, isThinkingBlock } from "./block-kind.js";
+import { blockKind, blockText, isThinkingBlock, makeTextBlockLike } from "./block-kind.js";
 
 describe("blockKind", () => {
   it("returns the canonical kind for each Anthropic Messages block shape", () => {
@@ -78,6 +78,25 @@ describe("blockText", () => {
   it("never returns a structured object rendered as a string", () => {
     // `String(b.content)` on a tool_result yields "[object Object]" and pollutes length maths.
     expect(blockText({ type: "tool_result", content: [{ type: "text", text: "ok" }] })).not.toContain("[object");
+  });
+});
+
+describe("makeTextBlockLike", () => {
+  it("mints a key-discriminated text block beside a Bedrock sibling", () => {
+    // Appending `{type:"text"}` to a Bedrock message sends a block with no recognised member,
+    // which the provider rejects outright — so a new block must match the shape it joins.
+    expect(makeTextBlockLike({ text: "sibling" }, "added")).toEqual({ text: "added" });
+    expect(makeTextBlockLike({ toolResult: { toolUseId: "t1" } }, "added")).toEqual({ text: "added" });
+  });
+
+  it("mints a type-discriminated text block beside an Anthropic sibling", () => {
+    expect(makeTextBlockLike({ type: "text", text: "sibling" }, "added"))
+      .toEqual({ type: "text", text: "added" });
+  });
+
+  it("defaults to the type-discriminated shape when the sibling shape is unknowable", () => {
+    expect(makeTextBlockLike(undefined, "added")).toEqual({ type: "text", text: "added" });
+    expect(makeTextBlockLike({}, "added")).toEqual({ type: "text", text: "added" });
   });
 });
 

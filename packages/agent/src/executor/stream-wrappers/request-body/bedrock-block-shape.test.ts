@@ -16,7 +16,13 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { clearStaleThinkingBlocks, stripReplayThinking } from "./tool-result-clearing.js";
+import {
+  clearStaleThinkingBlocks,
+  deferRecallToUncachedTail,
+  reorderContentForStablePrefix,
+  stripReplayThinking,
+  stripTransientRecallFromHistory,
+} from "./tool-result-clearing.js";
 import { classifyPrefixMutation, messageStructSig } from "./prefix-stability.js";
 import { isToolResultCarrier, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 
@@ -30,6 +36,8 @@ const bedrockAsst = (thinking: string, text: string) => ({
 });
 
 const bedrockUser = (text: string) => ({ role: "user", content: [{ text }] });
+const blockOneText = (m: { content: unknown } | undefined) =>
+  String((m?.content as Array<Record<string, unknown>>)[0]!.text ?? "");
 const bedrockCarrier = (id: string) => ({
   role: "user",
   content: [{ toolResult: { toolUseId: id, content: [{ text: "ok" }], status: "success" } }],
@@ -109,6 +117,48 @@ describe("tool-use cycle detection under the Bedrock Converse shape", () => {
 
     const closed = [...messages, bedrockUser("next")];
     expect(isUnclosedToolUseCycle(closed, 1)).toBe(false);
+  });
+});
+
+/** The real injected form — the date-anchored terminator is what the extractor matches. */
+const RECALL = "[Relevant context from memory: the preferred colour is teal (recorded 2026-08-02)]";
+
+describe("inline-recall prefix stabilisers under the Bedrock Converse shape", () => {
+  it("strips the transient recall block from a historical Bedrock user message", () => {
+    // Left on history, the recall block makes a cached user message differ between requests — the
+    // dominant turn-boundary re-write these stabilisers exist to prevent.
+    const messages = [
+      { role: "user", content: [{ text: `${RECALL}\n\nfirst question` }] },
+      { role: "assistant", content: [{ text: "a1" }] },
+      { role: "user", content: [{ text: `${RECALL}\n\nsecond question` }] },
+    ];
+
+    expect(stripTransientRecallFromHistory(messages)).toBe(1);
+    expect(blockOneText(messages[0])).not.toContain("Relevant context from memory");
+    // The latest user turn keeps it — it is functional input for the current turn.
+    expect(blockOneText(messages[2])).toContain("Relevant context from memory");
+  });
+
+  it("defers the recall onto the uncached tail as a key-discriminated block", () => {
+    const messages = [{ role: "user", content: [{ text: `${RECALL}\n\nthe question` }] }];
+
+    expect(deferRecallToUncachedTail(messages)).toBe(1);
+    const blocks = messages[0]!.content as Array<Record<string, unknown>>;
+    expect(blocks).toHaveLength(2);
+    // A `{type:"text"}` block appended here carries no member Bedrock recognises and the provider
+    // rejects the whole request.
+    expect(blocks[1]).toEqual({ text: RECALL });
+    expect(blocks[1]).not.toHaveProperty("type");
+    expect(String(blocks[0]!.text).trim()).toBe("the question");
+  });
+});
+
+describe("reorderContentForStablePrefix under the Bedrock Converse shape", () => {
+  it("moves a Bedrock media block ahead of the text block", () => {
+    const messages = [{ role: "user", content: [{ text: "caption" }, { image: { format: "png" } }] }];
+
+    reorderContentForStablePrefix(messages);
+    expect(messages[0]!.content).toEqual([{ image: { format: "png" } }, { text: "caption" }]);
   });
 });
 
