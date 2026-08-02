@@ -4,7 +4,7 @@
  * assistant turn's thinking blocks.
  */
 import { describe, it, expect } from "vitest";
-import { findLatestAssistantIndex, isToolResultCarrier, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
+import { findCurrentTurnUserIndex, findLatestAssistantIndex, isToolResultCarrier, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 
 const user = (text: string) => ({ role: "user", content: [{ type: "text", text }] });
 const carrier = (id: string) => ({ role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] });
@@ -27,6 +27,32 @@ describe("isToolResultCarrier", () => {
   it("rejects a real user turn and an empty message", () => {
     expect(isToolResultCarrier(user("hello"))).toBe(false);
     expect(isToolResultCarrier({ role: "user", content: [] })).toBe(false);
+  });
+
+  it("stays a carrier when a cache marker block rides along with the tool results", () => {
+    // The keyed provider's marker is a SEPARATE {cachePoint} block appended to the
+    // last message — which mid-turn is the tool-result carrier. A marker is not
+    // content: it must not turn the carrier into "the current user turn", or the
+    // history strip removes recall from the real query while the defer targets the
+    // carrier, mutating an already-cached message once per iteration.
+    expect(isToolResultCarrier({
+      role: "user",
+      content: [
+        { toolResult: { toolUseId: "t1", content: [{ text: "ok" }], status: "success" } },
+        { cachePoint: { type: "default" } },
+      ],
+    })).toBe(true);
+    expect(findCurrentTurnUserIndex([
+      user("the real query"),
+      { role: "assistant", content: [{ toolUse: { toolUseId: "t1", name: "x", input: {} } }] },
+      {
+        role: "user",
+        content: [
+          { toolResult: { toolUseId: "t1", content: [{ text: "ok" }], status: "success" } },
+          { cachePoint: { type: "default" } },
+        ],
+      },
+    ])).toBe(0);
   });
 
   it("rejects a mixed message that also carries user text", () => {
