@@ -120,6 +120,36 @@ function parseSig(
 }
 
 /**
+ * How far the history window SLID, or 0 if it did not.
+ *
+ * Returns the `k > 0` for which `curr[i] === prev[i + k]` over a run of consecutive indices
+ * starting at the divergence: the messages did not change, the window moved off their front.
+ * A run (rather than a single match) is required so an incidental hash collision between two
+ * unrelated messages cannot be read as a slide.
+ *
+ * Without this the per-message classifiers describe an EDIT — `block-count-changed` on a
+ * wholesale prefix rewrite — which is the misleading-label failure mode that has twice sent an
+ * investigation the wrong way.
+ */
+function detectWindowShift(
+  prevHashes: number[] | undefined,
+  currHashes: number[],
+  fd: number,
+): number {
+  const MAX_SHIFT = 8;
+  const REQUIRED_RUN = 3;
+  if (!prevHashes) return 0;
+  for (let k = 1; k <= MAX_SHIFT; k++) {
+    let run = 0;
+    for (let i = fd; i < currHashes.length && i + k < prevHashes.length; i++) {
+      if (currHashes[i] !== prevHashes[i + k]) break;
+      if (++run >= REQUIRED_RUN) return k;
+    }
+  }
+  return 0;
+}
+
+/**
  * Index of the first message whose hash diverges from the previous turn, or -1
  * if no per-message divergence is found (e.g. a length change only).
  */
@@ -252,14 +282,14 @@ export function runPrefixStabilityDiagnostic(
   if (fd >= 0 && fd <= diagFenceIdx) {
     const pSig = prev.fullSigs?.[fd];
     const cSig = fullSigs[fd];
-    // Same array length but the prefix diverges at its very head = the whole cached prefix was
-    // rewritten, not one message edited in place. Name it, because the per-message classes below
-    // describe an EDIT and would otherwise report the symptom (a text/block delta at index 0)
-    // rather than the cause (the history window moved under the cache).
-    const windowSlid = fullHashes.length === (prev.fullHashes?.length ?? -1) && fd === 0;
-    const mutationClass = windowSlid
-      ? `history-window-slid,${classifyPrefixMutation(msgs[fd], pSig, cSig)}`
-      : classifyPrefixMutation(msgs[fd], pSig, cSig);
+    // The messages themselves are intact — the window moved off their front, so the whole cached
+    // prefix is rewritten rather than one message edited in place. Name the CAUSE; the per-message
+    // classes below describe an edit and would report only the symptom at the divergence.
+    const shift = detectWindowShift(prev.fullHashes, fullHashes, fd);
+    const perMessageClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
+    const mutationClass = shift > 0
+      ? `history-window-slid-${shift},${perMessageClass}`
+      : perMessageClass;
     // inline-recall is transient BY DESIGN — the history strip removes it from a user message
     // the turn AFTER it carried the current turn's recall. That is a one-time transition per message,
     // not a recurring bug, so it must NOT accumulate toward the WARN — UNLESS it is also a

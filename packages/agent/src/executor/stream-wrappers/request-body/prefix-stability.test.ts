@@ -168,10 +168,12 @@ describe("runPrefixStabilityDiagnostic — a sliding history window is the costl
    * was the one shape that silenced it.
    */
   function slidingCall(offset: number) {
-    // A fixed-size window over a growing conversation: same length, contents shifted.
-    const messages = Array.from({ length: 5 }, (_, i) => ({
+    // A fixed-size window over a growing conversation: same length, contents shifted. The window
+    // advances by a user+assistant PAIR per tool cycle, exactly as measured live — which is why
+    // the role at any given index is unchanged while its content is not.
+    const messages = Array.from({ length: 7 }, (_, i) => ({
       role: i % 2 === 0 ? "user" : "assistant",
-      content: [{ type: "text", text: `msg-${i + offset}` }],
+      content: [{ type: "text", text: `msg-${i + offset * 2}` }],
     }));
     return { messages } as Record<string, unknown>;
   }
@@ -181,7 +183,7 @@ describe("runPrefixStabilityDiagnostic — a sliding history window is the costl
     const logger = noopLogger();
     // The fence oscillates exactly as it did live (16, 18, 16, 16 → here 4, 3, 4, 3 …).
     let call = 0;
-    const fences = [4, 3, 4, 3, 4, 3];
+    const fences = [6, 5, 6, 5, 6, 5];
     const config = {
       sessionKey,
       getCacheFenceIndex: () => fences[Math.min(call, fences.length - 1)],
@@ -192,7 +194,10 @@ describe("runPrefixStabilityDiagnostic — a sliding history window is the costl
       runPrefixStabilityDiagnostic(slidingCall(call), config, logger);
     }
 
-    // Every call rewrote the whole cached prefix. The diagnostic must say so.
+    // Every call rewrote the whole cached prefix. The diagnostic must say so — and must name
+    // the CAUSE (the window moved) rather than the per-message symptom at the divergence.
     expect(onPrefixUnstable).toHaveBeenCalled();
+    const payload = onPrefixUnstable.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(String(payload.mutationClass)).toContain("history-window-slid");
   });
 });
