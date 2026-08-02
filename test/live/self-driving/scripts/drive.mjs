@@ -280,7 +280,7 @@ const resolveCorrelatedAnswer = () => {
 // by checking the daemon log for the block naming THIS sender — else the driver
 // reports a misleading "[TIMEOUT] — NO SUBSTANTIVE ANSWER" on a correct security
 // block, which otherwise looks like a missing substantive answer.
-const detectAllowFromBlock = () => {
+const detectCorrectSilence = () => {
   if (seen.length > 0 || sawAnswer || turnEnded || !DATA) return null;
   try {
     const logDir = `${DATA}/logs`;
@@ -295,6 +295,13 @@ const detectAllowFromBlock = () => {
         if (line.includes('Sender blocked by allowFrom filter') && line.includes(`"senderId":"${fromUser}"`)) {
           return `BLOCKED (allowFrom) — sender ${fromUser} not authorized; rejected at the auth layer, no agent turn (this is a correct security block, NOT a wedge)`;
         }
+        // The other correct silence: an unmentioned group message under the mention-gated default is
+        // persisted as context and never activates the agent. Like the auth block it can NEVER
+        // produce a reply, so waiting out maxMs only delays a verdict the log already carries.
+        if (line.includes('Group message persisted as context without activating agent')
+          && line.includes(`"${chatId}"`)) {
+          return `NOT ACTIVATED (group activation policy) — the message was persisted as context and the agent was deliberately not activated (correct under the mention-gated default, NOT a wedge)`;
+        }
       }
     }
   } catch { /* no log access — fall through to the timeout reason */ }
@@ -308,7 +315,7 @@ while (Date.now() - start < maxMs) {
   // full-timeout row into a seconds-long one, with the identical honest verdict — the check is the
   // same one the post-loop reporter uses, just consulted while there is still time to save.
   if (seen.length === 0 && !sawAnswer && !turnEnded && Date.now() - start > 2000) {
-    const earlyBlock = detectAllowFromBlock();
+    const earlyBlock = detectCorrectSilence();
     if (earlyBlock) { allowFromBlock = earlyBlock; break; }
   }
   // long-poll pre-answer (ride out reasoning gaps); snappy once the answer is in.
@@ -389,7 +396,7 @@ seen.splice(0, seen.length, ...reconciledOutbound);
 sawAnswer = seen.some(isConversationAnswer);
 
 // Reuse the in-loop detection when it already fired; otherwise check once now.
-allowFromBlock ??= detectAllowFromBlock();
+allowFromBlock ??= detectCorrectSilence();
 const correlatedWireAnswer = correlatedAnswer
   ? wireContainsAssistantReply(
       seen,
