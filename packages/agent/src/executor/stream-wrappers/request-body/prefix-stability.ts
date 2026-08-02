@@ -234,7 +234,9 @@ export function runPrefixStabilityDiagnostic(
   // reach the WARN threshold. Live (comis-moshe 2026-08-02): `cache_read` 0 with ~101k cache
   // creation re-paid on EVERY call — a 0.0% hit ratio — and not one churn WARN. The costliest cache
   // event there is was the one shape that silenced the diagnostic built to catch it.
-  const arrayShrank = !!prev && fullHashes.length < prev.fullHashes.length;
+  // No recorded baseline means the fold cannot be confirmed — treat it as NOT shrunk so an
+  // unprovable case counts the mutation rather than silently clearing the window.
+  const arrayShrank = fullHashes.length < (prev?.fullHashes?.length ?? 0);
   if (!prev || (diagFenceIdx < prev.fenceIdx && arrayShrank)) {
     // First observation, or a genuine compaction fold — (re)baseline, empty mutation window.
     sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
@@ -254,7 +256,7 @@ export function runPrefixStabilityDiagnostic(
     // rewritten, not one message edited in place. Name it, because the per-message classes below
     // describe an EDIT and would otherwise report the symptom (a text/block delta at index 0)
     // rather than the cause (the history window moved under the cache).
-    const windowSlid = fullHashes.length === prev.fullHashes.length && fd === 0;
+    const windowSlid = fullHashes.length === (prev.fullHashes?.length ?? -1) && fd === 0;
     const mutationClass = windowSlid
       ? `history-window-slid,${classifyPrefixMutation(msgs[fd], pSig, cSig)}`
       : classifyPrefixMutation(msgs[fd], pSig, cSig);
