@@ -986,3 +986,41 @@ describe("createRehydrationLayer", () => {
     expect(openTags).toBe(closeTags);
   });
 });
+
+describe("rehydration keeps its injections out of the cached prefix", () => {
+  it("injects before the latest user turn, leaving the head byte-stable", async () => {
+    // LIVE (comis-moshe 2026-08-02): the position-1 message was rebuilt from runtime state every
+    // turn and injected right after the compaction summary, so index 1 was re-written turn after
+    // turn and every message behind it shifted. Measured as exactly 2 injections on the FIRST
+    // assembly of each turn, `structural-shift` at index 1, and cache_read pinned at 80,865 —
+    // only the system prefix, which sits ahead of the insertion, ever survived.
+    const { deps } = createMockDeps();
+    const layer = createRehydrationLayer(deps);
+
+    // Prior history between the compaction summary and the latest user turn is what separates the
+    // two layouts; without it they coincide, which is why the existing cases could not see this.
+    const messages = [
+      makeCompactionSummary(),
+      makeUserMsg("older question"),
+      makeAssistantMsg("older answer"),
+      makeUserMsg("continue please"),
+    ];
+
+    const result = await layer.apply(messages, largeBudget);
+
+    // The head — compaction summary + prior history — must be byte-identical and unshifted, since
+    // that is precisely the region the provider caches.
+    expect(result[0]).toBe(messages[0]);
+    expect(result[1]).toBe(messages[1]);
+    expect(result[2]).toBe(messages[2]);
+
+    // Both injections land in the uncached tail, and the user's request stays final.
+    expect(result[result.length - 1]).toBe(messages[3]);
+    const injected = result.filter(m => !messages.includes(m));
+    expect(injected.length).toBeGreaterThan(0);
+    for (const m of injected) {
+      expect(result.indexOf(m)).toBeGreaterThan(2);
+      expect(result.indexOf(m)).toBeLessThan(result.length - 1);
+    }
+  });
+});
