@@ -58,4 +58,15 @@ describe("pi-coding-agent script-aware compaction estimator patch", () => {
     );
     expect(src).toContain("NON_LATIN_DENSE_DIVISOR");
   });
+
+  it("the summarizer bounds its serialized conversation to the model window", () => {
+    // generateSummaryWithUsage serialized the ENTIRE conversation into one
+    // prompt with no input bound, so summarizing an over-window conversation
+    // was itself over-window — rejected by the provider on every attempt.
+    const src = installedSource(
+      "@earendil-works/pi-coding-agent",
+      "dist/core/compaction/compaction.js",
+    );
+    expect(src).toContain("truncated for summarization");
+  });
 });
