@@ -84,7 +84,7 @@ import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
-import { SYNTHESIZED_RESULT_MARKER, sanitizeToolUseResultPairing } from "./transcript-repair.js";
+import { SYNTHESIZED_RESULT_MARKER, sanitizeToolUseResultPairing, type TranscriptRepairStats } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { isToolResultCarrier } from "../executor/stream-wrappers/request-body/tool-use-cycle.js";
 import {
@@ -650,7 +650,11 @@ export function createLcdContextEngine(
       // 7. TRANSCRIPT REPAIR — the FINAL step. Provider-valid pairing on
       //    ANY input: out-of-order results re-placed, unpaired calls get a marked
       //    synthesized result, orphan/duplicate results dropped.
-      const repaired = sanitizeToolUseResultPairing(normalized, now());
+      const repairStats: TranscriptRepairStats = {
+        orphanResults: 0, duplicateResults: 0, synthesized: 0,
+        duplicateEmissions: 0, callIdsInMultipleTurns: 0,
+      };
+      const repaired = sanitizeToolUseResultPairing(normalized, now(), repairStats);
 
       // Pre-flight fit check — enforce assembledInputTokens ≤ effectiveWindow − outputHeadroom.
       // Security-pinned messages are filtered via isSecurityRelevantMessage and NEVER evicted.
@@ -692,6 +696,10 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
+          // Which repair branch moved the count. Only synthesis and a duplicate EMISSION can raise
+          // it, and neither was named in any log — the gap between assembledCount and
+          // historyCount+freshTailCount had to be guessed at, wrongly, three times.
+          repair: repairStats,
           // WHICH seam orphaned a tool call. `assembledCount` exceeding
           // historyCount + freshTailCount means transcript repair synthesized placeholders, and an
           // insertion shifts every index after it — re-writing the cached prefix. Naming the side

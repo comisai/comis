@@ -186,9 +186,33 @@ function makeMissingToolResult(
  * @returns a provider-valid array where every `tool_use` is immediately
  *   followed by its matching `tool_result`
  */
+/**
+ * Per-call tally of what the repair actually did.
+ *
+ * The assembled array gained two messages on every TURN-OPENING assembly with ZERO synthesized
+ * placeholders — so the count rose without the one branch known to add. Only two branches can move
+ * it, and neither was named in any log, which is why three successive hypotheses about this churn
+ * were wrong. `duplicateEmissions` is the one that can raise the count silently: a result is emitted
+ * once per assistant turn carrying its call id, so the SAME result message is pushed twice whenever
+ * a turn appears in both the reconstructed history and the verbatim fresh tail.
+ */
+export interface TranscriptRepairStats {
+  /** Results with no matching call anywhere in the array (dropped). */
+  orphanResults: number;
+  /** Results whose call id was already satisfied (dropped). */
+  duplicateResults: number;
+  /** Placeholders built for a call with no result. */
+  synthesized: number;
+  /** The SAME result message emitted more than once — raises the count with no placeholder. */
+  duplicateEmissions: number;
+  /** Call ids carried by more than one assistant turn — the cause of a duplicate emission. */
+  callIdsInMultipleTurns: number;
+}
+
 export function sanitizeToolUseResultPairing(
   messages: AgentMessage[],
   now: number,
+  stats?: TranscriptRepairStats,
 ): AgentMessage[] {
   // A non-array input degrades to a PASS-THROUGH, never an empty array: the SDK
   // transformContext contract is "return the original messages or another safe
@@ -200,14 +224,19 @@ export function sanitizeToolUseResultPairing(
 
   // Pass A — index every tool_use id an assistant turn emitted.
   const toolUseSeen = new Set<string>();
+  const callIdTurnCount = new Map<string, number>();
   for (const m of messages) {
     const a = asAssistant(m);
     if (!a) continue;
     for (const b of a.content) {
       if (isToolCallBlock(b)) {
         toolUseSeen.add(b.id);
+        callIdTurnCount.set(b.id, (callIdTurnCount.get(b.id) ?? 0) + 1);
       }
     }
+  }
+  if (stats) {
+    for (const n of callIdTurnCount.values()) if (n > 1) stats.callIdsInMultipleTurns++;
   }
 
   // Pass B — collect results by toolCallId; drop orphans and duplicates.
@@ -216,13 +245,14 @@ export function sanitizeToolUseResultPairing(
     const r = asToolResult(m);
     if (!r) continue;
     const id = r.toolCallId;
-    if (!toolUseSeen.has(id)) continue; // orphan — no matching call
-    if (resultByCallId.has(id)) continue; // duplicate — keep the first
+    if (!toolUseSeen.has(id)) { if (stats) stats.orphanResults++; continue; } // orphan — no matching call
+    if (resultByCallId.has(id)) { if (stats) stats.duplicateResults++; continue; } // duplicate — keep the first
     resultByCallId.set(id, m);
   }
 
   // Pass C — rebuild: each tool_use turn immediately followed by its result(s).
   const out: AgentMessage[] = [];
+  const emitted = new Set<AgentMessage>();
   for (const m of messages) {
     if (asToolResult(m)) {
       continue; // re-placed below, after its call
@@ -247,7 +277,14 @@ export function sanitizeToolUseResultPairing(
       for (const b of a.content) {
         if (!isToolCallBlock(b)) continue;
         const result = resultByCallId.get(b.id);
-        out.push(result ?? makeMissingToolResult(b.id, b.name, now));
+        if (result === undefined) {
+          if (stats) stats.synthesized++;
+          out.push(makeMissingToolResult(b.id, b.name, now));
+          continue;
+        }
+        if (stats && emitted.has(result)) stats.duplicateEmissions++;
+        if (stats) emitted.add(result);
+        out.push(result);
       }
       continue;
     }
