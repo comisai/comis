@@ -43,6 +43,8 @@ import {
 import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
 import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
+import { findInlineRecallIndices } from "./recall-diagnostics.js";
+import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -243,13 +245,21 @@ export function createRequestBodyInjector(
           // Reorder content blocks for stable prefix (before any cache marker placement)
           if (needsCacheBreakpoints && Array.isArray(result.messages)) {
             reorderContentForStablePrefix(result.messages as Array<Record<string, unknown>>);
+            // Positions BEFORE the stabilizers run — which indices still carry the
+            // inline-recall block, where the fence sits, and which message the
+            // current-turn finder selects. Indices only, no content; logged below
+            // together with what the strip/defer actually did.
+            const recallIndices = findInlineRecallIndices(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            const fenceIndex = config.getCacheFenceIndex?.() ?? -1;
             // Strip the TRANSIENT inline-recall block from historical user messages so
             // the cached prefix is byte-stable turn-over-turn. The block is per-turn,
             // query-varying recall (kept only on the latest user message for attention);
             // left on history it mutates the prefix every request → cache_creation churn.
             const recallStripped = stripTransientRecallFromHistory(
               result.messages as Array<Record<string, unknown>>,
-              config.getCacheFenceIndex?.() ?? -1,
+              fenceIndex,
             );
             if (recallStripped > 0) {
               logger.debug(
@@ -279,6 +289,25 @@ export function createRequestBodyInjector(
               logger.debug(
                 { recallDeferred, sessionKey: config.sessionKey },
                 "Deferred inline-recall to the uncached tail",
+              );
+            }
+            if (recallIndices.length > 0) {
+              // The churn investigations on this path stall without positions: which
+              // messages arrived recall-prefixed, versus the fence and the message the
+              // stabilizers were aimed at. One line per affected request, indices only.
+              logger.debug(
+                {
+                  recallIndices,
+                  fenceIndex,
+                  currentTurnUserIndex: findCurrentTurnUserIndex(
+                    result.messages as Array<Record<string, unknown>>,
+                  ),
+                  messageCount: (result.messages as unknown[]).length,
+                  recallStripped,
+                  recallDeferred,
+                  sessionKey: config.sessionKey,
+                },
+                "Inline-recall positions at prefix stabilization",
               );
             }
           }
