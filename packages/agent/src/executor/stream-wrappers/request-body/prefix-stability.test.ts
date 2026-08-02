@@ -200,4 +200,68 @@ describe("runPrefixStabilityDiagnostic — a sliding history window is the costl
     const payload = onPrefixUnstable.mock.calls.at(-1)![0] as Record<string, unknown>;
     expect(String(payload.mutationClass)).toContain("history-window-slid");
   });
+
+  it("counts a window that slides AND shrinks (a slide is not a compaction fold)", () => {
+    // Measured live at 15:27 on comis-moshe: the array went 19 -> 17 messages while the same
+    // messages were merely re-indexed, and the hit ratio stayed 0.0%. Reading any shortening as
+    // a compaction fold re-baselined the counter and reported nothing at all.
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    let call = 0;
+    // Fence dips on every other call, exactly as an oscillating fence does live.
+    const fences = [8, 6, 8, 6, 8, 6];
+    const config = {
+      sessionKey,
+      getCacheFenceIndex: () => fences[Math.min(call, fences.length - 1)],
+      onPrefixUnstable,
+    } as unknown as RequestBodyInjectorConfig;
+
+    // Each call slides by a pair AND drops two messages off the end.
+    const shrinkingSlide = (offset: number) =>
+      ({
+        messages: Array.from({ length: 11 - offset }, (_, i) => ({
+          role: i % 2 === 0 ? "user" : "assistant",
+          content: [{ type: "text", text: `msg-${i + offset * 2}` }],
+        })),
+      }) as Record<string, unknown>;
+
+    for (call = 0; call < 5; call++) {
+      runPrefixStabilityDiagnostic(shrinkingSlide(call), config, logger);
+    }
+
+    expect(onPrefixUnstable).toHaveBeenCalled();
+    const payload = onPrefixUnstable.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(String(payload.mutationClass)).toContain("history-window-slid");
+  });
+
+  it("still treats a real compaction fold as a one-time rebuild, not churn", () => {
+    // The fold must stay silent: many messages collapse into a summary and NOTHING is re-indexed.
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    let fence = 8;
+    const config = {
+      sessionKey,
+      getCacheFenceIndex: () => fence,
+      onPrefixUnstable,
+    } as unknown as RequestBodyInjectorConfig;
+
+    const long = {
+      messages: Array.from({ length: 10 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: `original-${i}` }],
+      })),
+    } as Record<string, unknown>;
+    const folded = {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "SUMMARY of the conversation so far" }] },
+        { role: "assistant", content: [{ type: "text", text: "ack" }] },
+      ],
+    } as Record<string, unknown>;
+
+    runPrefixStabilityDiagnostic(long, config, logger);
+    fence = 1;
+    for (let i = 0; i < 4; i++) runPrefixStabilityDiagnostic(folded, config, logger);
+
+    expect(onPrefixUnstable).not.toHaveBeenCalled();
+  });
 });

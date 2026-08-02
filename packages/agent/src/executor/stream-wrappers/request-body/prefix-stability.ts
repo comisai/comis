@@ -264,17 +264,30 @@ export function runPrefixStabilityDiagnostic(
   // reach the WARN threshold. Live (comis-moshe 2026-08-02): `cache_read` 0 with ~101k cache
   // creation re-paid on EVERY call — a 0.0% hit ratio — and not one churn WARN. The costliest cache
   // event there is was the one shape that silenced the diagnostic built to catch it.
-  // No recorded baseline means the fold cannot be confirmed — treat it as NOT shrunk so an
-  // unprovable case counts the mutation rather than silently clearing the window.
-  const arrayShrank = fullHashes.length < (prev?.fullHashes?.length ?? 0);
-  if (!prev || (diagFenceIdx < prev.fenceIdx && arrayShrank)) {
-    // First observation, or a genuine compaction fold — (re)baseline, empty mutation window.
+  if (!prev) {
+    // First observation — baseline, empty mutation window.
     sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
     return;
   }
 
   // First message that DIFFERS from the previous request across the FULL common prefix.
   const fd = firstDivergentMessage(prev.fullHashes, fullHashes);
+  const shift = fd >= 0 ? detectWindowShift(prev.fullHashes, fullHashes, fd) : 0;
+
+  // A compaction FOLD collapses history into a summary: the array gets shorter AND the surviving
+  // messages are genuinely replaced. A SLIDING window also shortens the array (the fresh-tail bound
+  // trims it) while merely re-indexing messages that are all still present — that is a full cache
+  // rewrite, not a one-time rebuild. A detected shift is direct evidence of the latter, so it
+  // disqualifies the fold; without that check a slide measured live (19 → 17 messages, 0.0% hit
+  // ratio) re-baselined silently and reported nothing.
+  const folded = diagFenceIdx < prev.fenceIdx
+    && fullHashes.length < (prev.fullHashes?.length ?? 0)
+    && shift === 0;
+  if (folded) {
+    sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
+    return;
+  }
+
   let mutations = (prev.cacheMutations ?? []).filter(c => c > callCount - WINDOW);
 
   // A divergence at/below the fence is a mutation of content we are trying to CACHE — a
@@ -285,7 +298,6 @@ export function runPrefixStabilityDiagnostic(
     // The messages themselves are intact — the window moved off their front, so the whole cached
     // prefix is rewritten rather than one message edited in place. Name the CAUSE; the per-message
     // classes below describe an edit and would report only the symptom at the divergence.
-    const shift = detectWindowShift(prev.fullHashes, fullHashes, fd);
     const perMessageClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
     const mutationClass = shift > 0
       ? `history-window-slid-${shift},${perMessageClass}`
