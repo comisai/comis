@@ -28,7 +28,13 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import Database from "better-sqlite3";
 import { initSchema } from "@comis/memory";
 import { createLcdStore } from "@comis/memory";
+import { resetFreshTailAnchors } from "./lcd-fresh-tail-anchor.js";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// The fresh-tail turn anchor is module-level state, like the other diagnostic maps in this
+// package. Reset it for EVERY case in this file — a per-describe hook leaves the other blocks
+// inheriting a previous case's boundary.
+beforeEach(() => resetFreshTailAnchors());
 import { createLcdContextEngine, freshTailBoundaryIndex } from "./lcd-assembler.js";
 import type { ContextEngineDeps } from "./types.js";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";

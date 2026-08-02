@@ -86,6 +86,11 @@ import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
+import { isToolResultCarrier } from "../executor/stream-wrappers/request-body/tool-use-cycle.js";
+import {
+  freshTailTurnKey,
+  resolveAnchoredFreshTailStart,
+} from "./lcd-fresh-tail-anchor.js";
 import {
   measureRepresentedCoverage,
   resolveFreshTailStart,
@@ -273,7 +278,22 @@ export function createLcdContextEngine(
       // lcd-coverage.ts owns the invariant + why the clamp needs a readable scope.
       const scopeIsReadable = deps.agentId !== undefined && deps.tenantId !== undefined;
       const stepBoundary = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
-      const tailStart = resolveFreshTailStart(stepBoundary, persistedMsgCount, scopeIsReadable);
+      const computedTailStart = resolveFreshTailStart(stepBoundary, persistedMsgCount, scopeIsReadable);
+      // The boundary is derived from the array LENGTH, which grows on every tool cycle — so
+      // recomputing it per CALL marched it forward mid-turn and dropped already-sent messages off
+      // the head, rewriting the cached prefix on each call (0.0% hit ratio on Bedrock). Pick it once
+      // per turn and hold it for that turn's tool loop; it advances normally at the next turn, so
+      // history still folds into summaries at the same rate.
+      const turnKey = freshTailTurnKey(
+        liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
+        (m) => isToolResultCarrier(m),
+      );
+      const tailStart = resolveAnchoredFreshTailStart(
+        deps.sessionKey,
+        turnKey,
+        computedTailStart,
+        liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
+      );
       // The fresh tail is sliced VERBATIM from the live array (it bypasses the
       // store, so the ingest-time neutralization in executor/lcd-ingest.ts does not
       // reach it). Neutralize any forged context-boundary markers an assistant turn
@@ -296,6 +316,9 @@ export function createLcdContextEngine(
           // shape that used to lose the user's own request.
           stepBoundary,
           persistedMsgCount,
+          // `heldByTurnAnchor > 0` means the boundary was held still for this turn instead of
+          // marching with the array — the difference between a cached prefix and a rewritten one.
+          heldByTurnAnchor: Math.max(0, computedTailStart - tailStart),
           inFlightGapCovered: Math.max(0, stepBoundary - tailStart),
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
