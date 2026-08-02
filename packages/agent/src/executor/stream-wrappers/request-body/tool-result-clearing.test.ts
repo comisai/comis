@@ -185,17 +185,77 @@ describe("stripReplayThinking (pure) — replayed-thinking cache stability", () 
     expect((messages[5]!.content as any[]).some(b => b.type === "tool_use")).toBe(true);
   });
 
-  it("is a no-op when only the latest assistant message has thinking", () => {
+  it("strips the latest assistant message when it is NOT in an unclosed tool-use cycle", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: "u1" }] },
       { role: "assistant", content: [{ type: "text", text: "a1" }] },
       { role: "user", content: [{ type: "text", text: "u2" }] },
       { role: "assistant", content: [{ type: "thinking", thinking: "current" }, { type: "text", text: "a2" }] },
     ];
+    // No tool_use on that turn, so the provider's "cannot be modified" window does not apply and
+    // stripping now keeps the message byte-stable for the rest of the conversation.
     const stripped = stripReplayThinking(messages);
-    expect(stripped).toBe(0);
-    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+    expect(stripped).toBe(1);
+    expect((messages[3]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
     expect((messages[3]!.content as any[]).some(b => b.type === "text")).toBe(true);
+  });
+
+  it("an ordinary conversational turn is stripped immediately — no per-turn prefix drift", () => {
+    // The regression this replaces: preserving the latest assistant turn UNCONDITIONALLY meant every
+    // turn kept its thinking and lost it one turn later, mutating the cached prefix at a marching
+    // index on EVERY turn. Measured live as block-count-changed at idx 19 -> 21 -> 23 -> 27 -> 29.
+    const sig = (m: Record<string, unknown>) => {
+      const c = m.content as Array<Record<string, unknown>> | undefined;
+      return `${m.role}|b${Array.isArray(c) ? c.length : 0}`;
+    };
+    let msgs: Array<Record<string, unknown>> = [];
+    const hist: string[][] = [];
+    for (let n = 1; n <= 6; n++) {
+      msgs = msgs.map(m => ({ ...m, content: (m.content as unknown[]).slice() }));
+      msgs.push({ role: "user", content: [{ type: "text", text: `u${n}` }] });
+      msgs.push({ role: "assistant", content: [
+        { type: "thinking", thinking: `r${n}` }, { type: "text", text: `a${n}` },
+      ] });
+      stripReplayThinking(msgs);
+      hist.push(msgs.map(sig));
+    }
+    const drift: string[] = [];
+    for (let e = 1; e < hist.length; e++) {
+      for (let i = 0; i < hist[e - 1]!.length; i++) {
+        if (hist[e - 1]![i] !== hist[e]![i]) drift.push(`exec${e}->${e + 1} idx${i}: ${hist[e - 1]![i]} -> ${hist[e]![i]}`);
+      }
+    }
+    expect(drift).toEqual([]);
+  });
+
+  it("keeps thinking on an assistant turn whose tool-use cycle is still UNCLOSED", () => {
+    // The provider forbids altering the newest assistant turn's thinking only while that turn is
+    // being continued — tool_use emitted, tool_result coming back. That is the 400 window.
+    const msgs: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [
+        { type: "thinking", thinking: "live" },
+        { type: "tool_use", id: "t1", name: "mcp__vendor--slow_report", input: {} },
+      ] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+    ];
+    stripReplayThinking(msgs);
+    expect((msgs[1]!.content as any[]).some(b => b.type === "thinking")).toBe(true);
+  });
+
+  it("strips that same turn once a real user message CLOSES the cycle", () => {
+    const msgs: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "u1" }] },
+      { role: "assistant", content: [
+        { type: "thinking", thinking: "live" },
+        { type: "tool_use", id: "t1", name: "x", input: {} },
+      ] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      { role: "assistant", content: [{ type: "text", text: "done" }] },
+      { role: "user", content: [{ type: "text", text: "next question" }] },
+    ];
+    stripReplayThinking(msgs);
+    expect((msgs[1]!.content as any[]).some(b => b.type === "thinking")).toBe(false);
   });
 
   it("preserves a redacted_thinking sibling on the latest assistant message (the live 400 shape)", () => {

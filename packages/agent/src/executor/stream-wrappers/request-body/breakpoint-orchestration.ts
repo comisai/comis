@@ -362,6 +362,13 @@ export function runCacheBreakpointPhase(
           if (scanMsgs[i]!.role !== "user") continue;
           const content = scanMsgs[i]!.content;
           if (!Array.isArray(content) || content.length === 0) continue;
+          // Skip tool_result carriers. A carrier sits AFTER an assistant turn that is still in an
+          // unclosed tool-use cycle, and that turn keeps its thinking blocks only until the cycle
+          // closes. Anchoring on the carrier would put the not-yet-final assistant turn INSIDE the
+          // cached prefix, so the deferred strip would invalidate the whole write. Anchoring on the
+          // last real user turn instead leaves the in-flight cycle outside the fence, where its
+          // mutation is free.
+          if ((content as Array<Record<string, unknown>>).every((b) => b.type === "tool_result")) continue;
           addCacheControlToLastBlock(scanMsgs[i]!, eFixFiredAt !== undefined ? "long" : "short");
           highestBreakpointIdx = i;
           logger.debug(

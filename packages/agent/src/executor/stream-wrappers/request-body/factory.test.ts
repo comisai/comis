@@ -5565,17 +5565,18 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     const firstAssistant = msgs[1];
     expect(firstAssistant.content.length).toBe(1);
     expect(firstAssistant.content[0].type).toBe("text");
-    // Second/active assistant: thinking PRESERVED — it is the latest assistant message, and
-    // altering that turn's thinking content is a provider 400
-    // ("blocks in the latest assistant message cannot be modified").
+    // Second/active assistant: thinking STRIPPED. It is the latest assistant message, but it carries
+    // no tool_use, so the provider's "cannot be modified" window (an UNCLOSED tool-use cycle) does not
+    // apply. Stripping it now keeps the message byte-stable for the rest of the conversation instead
+    // of deferring a mutation to the turn it goes historical.
     const secondAssistant = msgs[3];
-    expect(secondAssistant.content.length).toBe(2);
-    expect(secondAssistant.content.some((b: any) => b.type === "thinking")).toBe(true);
+    expect(secondAssistant.content.length).toBe(1);
+    expect(secondAssistant.content.some((b: any) => b.type === "thinking")).toBe(false);
     // onContentModification should have been called
     expect(onContentModification).toHaveBeenCalled();
   });
 
-  it("strips historical replayed thinking even when cache is warm, but never the latest turn", async () => {
+  it("strips historical replayed thinking even when cache is warm, and the latest turn too outside a tool cycle", async () => {
     // Thinking MUST be stripped from EVERY replayed assistant on every
     // request — warm OR stale, historical AND the active/last one — because the durable LCD
     // parts-codec always reconstructs assistant messages WITHOUT thinking. Keeping the
@@ -5614,7 +5615,7 @@ describe("clearStaleThinkingBlocks (integration)", () => {
         ]},
         { role: "user", content: [{ type: "text", text: "Next" }] },
         { role: "assistant", content: [
-          { type: "thinking", thinking: "Active-cycle thinking — preserved; the latest turn is off-limits" },
+          { type: "thinking", thinking: "Latest turn, no tool_use — stripped like any other history" },
           { type: "text", text: "Latest" },
         ]},
       ],
@@ -5624,9 +5625,9 @@ describe("clearStaleThinkingBlocks (integration)", () => {
     // Historical assistant (idx 1): thinking STRIPPED even though warm → byte-stable cached prefix.
     expect(msgs[1].content.length).toBe(1);
     expect(msgs[1].content[0].type).toBe("text");
-    // LAST/active assistant (idx 3): thinking PRESERVED — modifying the latest assistant
-    // turn's thinking content is rejected by the provider with a 400.
-    expect(msgs[3].content.some((b: any) => b.type === "thinking")).toBe(true);
+    // LAST/active assistant (idx 3): thinking STRIPPED — no tool_use on that turn, so it is not an
+    // unclosed cycle and the provider's restriction does not apply.
+    expect(msgs[3].content.some((b: any) => b.type === "thinking")).toBe(false);
     expect(msgs[3].content.some((b: any) => b.type === "text")).toBe(true);
     // The deliberate strip notifies the cache-break detector (suppress the one-time read change).
     expect(onContentModification).toHaveBeenCalled();

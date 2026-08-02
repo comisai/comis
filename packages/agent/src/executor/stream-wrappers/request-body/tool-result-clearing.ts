@@ -14,6 +14,7 @@
  * @module
  */
 
+import { findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 import {
   extractInlineRecalledMemory,
   stripInlineRecalledMemory,
@@ -292,20 +293,18 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
  * Mutates messages in place. Returns the number of messages whose thinking was stripped.
  */
 export function stripReplayThinking(messages: Array<Record<string, unknown>>): number {
-  // The LATEST assistant message is off-limits: the provider rejects a request whose newest
-  // assistant turn has had its thinking content altered (`... blocks in the latest assistant
-  // message cannot be modified`). Stripping it produced that 400 live and the retry re-sent the
-  // same shape, so the turn ended in consecutive empty responses and the user got silence.
-  // Skipping it costs at most ONE later prefix mutation, and only inside the fence; the SDK's
-  // marker on the last user message puts it AFTER the fence, so that strip is free.
-  let latestAssistant = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "assistant") { latestAssistant = i; break; }
-  }
+  // Preserve thinking ONLY on a newest assistant turn still inside an unclosed tool-use cycle — the
+  // one window where the provider forbids altering it (see ./tool-use-cycle.ts). Preserving it
+  // unconditionally, as this did before, made every ordinary turn keep its thinking and lose it one
+  // turn later: a per-turn prefix mutation at a marching index.
+  const latestAssistant = findLatestAssistantIndex(messages);
+  const preserveIndex = latestAssistant >= 0 && isUnclosedToolUseCycle(messages, latestAssistant)
+    ? latestAssistant
+    : -1;
 
   let stripped = 0;
   for (let i = 0; i < messages.length; i++) {
-    if (i === latestAssistant) continue;
+    if (i === preserveIndex) continue;
     const msg = messages[i]!;
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const content = msg.content as Array<Record<string, unknown>>;
