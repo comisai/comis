@@ -2296,6 +2296,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // Denylisted tools are unreachable regardless of profile or reachableToolNames (check first)
         if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
           unreachable.push(classifyRequiredTool(tool, effectiveGroups));
+        } else if (tool.startsWith("mcp__")) {
+          // MCP tools are reachable regardless of profile: setup-tools builds them via a provider
+          // that deliberately BYPASSES profile filtering ("extracted to bypass profile filtering"),
+          // so the child receives them whatever its tool_groups say. reachableSet is computed from
+          // the STATIC profile name lists, which no dynamic `mcp__<server>--<tool>` name can appear
+          // in — so checking membership here rejected spawns for tools the child would in fact have
+          // had. Live, that cost a full turn twice before the model retried with tool_groups:['full'],
+          // i.e. the false negative pushed callers to escalate to EVERY tool. The denylist above still
+          // applies, and per-server filters still apply at the bridge.
         } else if (reachableSet !== undefined && !reachableSet.has(tool)) {
           // reachableSet is provided → use it for membership check (profile/group parity)
           unreachable.push(classifyRequiredTool(tool, effectiveGroups));
