@@ -25,13 +25,17 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptsDir, "../../../..");
 const localRigEnvPath = resolve(scriptsDir, ".rig-env");
 
-const readRigEnv = (path) => {
+export const readRigEnv = (path) => {
   const vars = {};
   try {
     for (const line of readFileSync(path, "utf8").split("\n")) {
       // `export K="${K:-value}"` (deploy-scripts renders this) or plain `K=value` / `K="value"`.
+      // The SINGLE-quoted form must be recognized too: this file is also `source`d by the `.sh`
+      // helpers, so anything a shell accepts can appear here. Reading `K='<48-char token>'` as a
+      // 50-character value (quotes included) makes every RPC fail 4001 while the token is correct.
       const m =
         line.match(/^export\s+(\w+)="\$\{\w+:-(.*)\}"\s*$/) ||
+        line.match(/^(?:export\s+)?(\w+)='([^']*)'\s*$/) ||
         line.match(/^(?:export\s+)?(\w+)="?([^"]*)"?\s*$/);
       if (m && !line.trim().startsWith("#")) vars[m[1]] = m[2];
     }
