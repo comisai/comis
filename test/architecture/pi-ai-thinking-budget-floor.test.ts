@@ -40,3 +40,23 @@ describe("pi-ai thinking-budget floor patch", () => {
     expect(src).toContain("MIN_PROVIDER_THINKING_BUDGET");
   });
 });
+
+describe("pi-coding-agent script-aware compaction estimator patch", () => {
+  it("compaction token estimation carries the non-Latin divisor", () => {
+    // chars/4 undercounts non-Latin scripts (Hebrew, Arabic, CJK) roughly 2x,
+    // so the compaction summarizer builds a prompt the provider rejects as over
+    // the context window — deadlocking compaction exactly when the window is
+    // full. The patch samples the message text and applies a denser divisor.
+    const src = readFileSync(
+      resolve(
+        REPO_ROOT,
+        "node_modules",
+        "@earendil-works",
+        "pi-coding-agent",
+        "dist/core/compaction/compaction.js",
+      ),
+      "utf8",
+    );
+    expect(src).toContain("NON_LATIN_DENSE_DIVISOR");
+  });
+});
