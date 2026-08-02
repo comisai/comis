@@ -24,7 +24,7 @@ import {
   stripTransientRecallFromHistory,
 } from "./tool-result-clearing.js";
 import { classifyPrefixMutation, messageStructSig } from "./prefix-stability.js";
-import { isToolResultCarrier, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
+import { findCurrentTurnUserIndex, isToolResultCarrier, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 
 /** Bedrock Converse assistant turn: reasoning + answer text. */
 const bedrockAsst = (thinking: string, text: string) => ({
@@ -150,6 +150,42 @@ describe("inline-recall prefix stabilisers under the Bedrock Converse shape", ()
     expect(blocks[1]).toEqual({ text: RECALL });
     expect(blocks[1]).not.toHaveProperty("type");
     expect(String(blocks[0]!.text).trim()).toBe("the question");
+  });
+});
+
+describe("current-turn identification mid tool-use cycle", () => {
+  it("returns the query index, not the newer Bedrock tool-result carrier", () => {
+    const messages = [bedrockUser("older"), bedrockAsst("r", "a"), bedrockUser("the query"),
+      bedrockAsstCall("t1"), bedrockCarrier("t1")];
+    // A carrier is role "user" on Bedrock, so a plain newest-user scan returns index 4.
+    expect(findCurrentTurnUserIndex(messages)).toBe(2);
+  });
+
+  it("keeps the current turn's recall while a tool-result carrier is the newest user message", () => {
+    // The regression this pins: mid-turn the strip treated the real query as history and removed a
+    // recall block the defer had never moved off the cached prefix — a ~13k length collapse at an
+    // already-cached index, measured live as 5 `content-cleared` events in one drive.
+    const messages = [
+      { role: "user", content: [{ text: `${RECALL}\n\nthe query` }] },
+      bedrockAsstCall("t1"),
+      bedrockCarrier("t1"),
+    ];
+
+    expect(stripTransientRecallFromHistory(messages)).toBe(0);
+    expect(blockOneText(messages[0])).toContain("Relevant context from memory");
+  });
+
+  it("defers the current turn's recall even when a carrier follows it", () => {
+    const messages = [
+      { role: "user", content: [{ text: `${RECALL}\n\nthe query` }] },
+      bedrockAsstCall("t1"),
+      bedrockCarrier("t1"),
+    ];
+
+    expect(deferRecallToUncachedTail(messages)).toBe(1);
+    const blocks = messages[0]!.content as Array<Record<string, unknown>>;
+    expect(blocks).toHaveLength(2);
+    expect(blocks[1]).toEqual({ text: RECALL });
   });
 });
 

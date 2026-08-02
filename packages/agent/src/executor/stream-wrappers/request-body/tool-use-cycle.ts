@@ -39,6 +39,26 @@ export function isToolResultCarrier(msg: Record<string, unknown>): boolean {
 }
 
 /**
+ * Index of the user message that carries the CURRENT TURN's query — the newest user message that is
+ * not a tool-result carrier — or -1.
+ *
+ * "Newest `role === "user"`" is not the same thing. Bedrock returns tool results as USER messages
+ * carrying `{toolResult}` blocks, so mid-turn the newest user message is a carrier and the real
+ * query sits behind it. Two consumers locating the current turn that way disagree about which
+ * message it is: the recall-history strip treats the query as historical and removes its recall,
+ * while the recall-defer targets the carrier and so never moved that recall onto the uncached tail.
+ * One strips what the other is supposed to protect, mutating an already-cached message.
+ */
+export function findCurrentTurnUserIndex(messages: Array<Record<string, unknown>>): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!;
+    if (msg.role !== "user" || isToolResultCarrier(msg)) continue;
+    return i;
+  }
+  return -1;
+}
+
+/**
  * True when the assistant turn at `idx` is still being continued: it emitted at least one tool_use
  * and every message after it is a tool_result carrier. That is exactly the window in which the
  * provider forbids altering its thinking blocks.

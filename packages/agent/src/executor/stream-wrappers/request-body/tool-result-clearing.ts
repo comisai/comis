@@ -15,7 +15,7 @@
  */
 
 import { blockKind, isThinkingBlock, makeTextBlockLike } from "./block-kind.js";
-import { findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
+import { findCurrentTurnUserIndex, findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 import {
   extractInlineRecalledMemory,
   stripInlineRecalledMemory,
@@ -338,11 +338,10 @@ export function stripReplayThinking(messages: Array<Record<string, unknown>>): n
  * Mutates messages in place. Returns the number of messages whose text changed.
  */
 export function stripTransientRecallFromHistory(messages: Array<Record<string, unknown>>): number {
-  // Index of the latest user message — its recall block is the current turn's and stays.
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
-  }
+  // The CURRENT TURN's query message — its recall block stays. Tool-result carriers are skipped:
+  // on Bedrock they are user messages, so "newest user message" is a carrier mid-turn and the real
+  // query would be stripped as history while `deferRecallToUncachedTail` protects a different one.
+  const lastUserIdx = findCurrentTurnUserIndex(messages);
   if (lastUserIdx <= 0) return 0; // nothing historical to strip
 
   let stripped = 0;
@@ -399,10 +398,7 @@ const RECALL_PREFIX_RE = /^\s*\[Relevant context from memory:/;
  * Mutates messages in place. Returns 1 if it deferred a recall block, else 0.
  */
 export function deferRecallToUncachedTail(messages: Array<Record<string, unknown>>): number {
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
-  }
+  const lastUserIdx = findCurrentTurnUserIndex(messages);
   if (lastUserIdx < 0) return 0;
   const msg = messages[lastUserIdx]!;
   const content = msg.content;
