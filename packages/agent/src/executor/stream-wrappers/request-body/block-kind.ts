@@ -126,6 +126,90 @@ export function blockText(block: unknown): string {
   return "";
 }
 
+/** The nested record a keyed Bedrock block carries under `key`, if any. */
+function keyed(block: unknown, key: string): Record<string, unknown> | undefined {
+  return asRecord(asRecord(block)?.[key]);
+}
+
+/**
+ * The call id a tool_use block carries — `id` on the typed shape, `toolUse.toolUseId` on the keyed
+ * one. Undefined when absent, so callers can treat an unidentifiable call conservatively.
+ */
+export function toolCallId(block: unknown): string | undefined {
+  const b = asRecord(block);
+  if (!b) return undefined;
+  if (typeof b.id === "string") return b.id;
+  const id = keyed(b, "toolUse")?.toolUseId;
+  return typeof id === "string" ? id : undefined;
+}
+
+/** The tool name a tool_use block carries, across both wire shapes. */
+export function toolCallName(block: unknown): string | undefined {
+  const b = asRecord(block);
+  if (!b) return undefined;
+  if (typeof b.name === "string") return b.name;
+  const name = keyed(b, "toolUse")?.name;
+  return typeof name === "string" ? name : undefined;
+}
+
+/** The arguments a tool_use block carries, across both wire shapes. */
+export function toolCallInput(block: unknown): unknown {
+  const b = asRecord(block);
+  if (!b) return undefined;
+  const nested = keyed(b, "toolUse");
+  return nested ? nested.input : b.input;
+}
+
+/** Overwrite a tool_use block's arguments in place, writing to whichever shape it uses. */
+export function setToolCallInput(block: unknown, value: unknown): void {
+  const b = asRecord(block);
+  if (!b) return;
+  const nested = keyed(b, "toolUse");
+  if (nested) nested.input = value;
+  else b.input = value;
+}
+
+/** The call id a tool_RESULT block refers back to, across both wire shapes. */
+export function toolResultCallId(block: unknown): string | undefined {
+  const b = asRecord(block);
+  if (!b) return undefined;
+  if (typeof b.tool_use_id === "string") return b.tool_use_id;
+  const id = keyed(b, "toolResult")?.toolUseId;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * Total length of the text a tool_result block carries, across both wire shapes — the measure that
+ * decides whether the result is worth compacting.
+ */
+export function toolResultTextLength(block: unknown): number {
+  const b = asRecord(block);
+  if (!b) return 0;
+  const nested = keyed(b, "toolResult");
+  const content = nested ? nested.content : b.content;
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+  return content.reduce<number>((n, part) => n + blockText(part).length, 0);
+}
+
+/**
+ * Replace a tool_result block's payload with `placeholder`, preserving the protocol fields the
+ * provider validates. On the keyed shape `toolUseId` and `status` MUST survive: a result that loses
+ * them no longer pairs with its call and the request is rejected outright.
+ */
+export function setToolResultPlaceholder(block: unknown, placeholder: string): boolean {
+  const b = asRecord(block);
+  if (!b) return false;
+  const nested = keyed(b, "toolResult");
+  if (nested) {
+    nested.content = [{ text: placeholder }];
+    return true;
+  }
+  if (b.content === undefined) return false;
+  b.content = [{ type: "text", text: placeholder }];
+  return true;
+}
+
 /**
  * Mint a text block in the SAME wire shape as `sibling`, an existing block of the message it will
  * join.

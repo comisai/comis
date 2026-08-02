@@ -15,6 +15,7 @@
  */
 
 import { blockKind, isThinkingBlock, makeTextBlockLike } from "./block-kind.js";
+import { clearStaleToolResults as clearStaleToolResultsAcrossShapes } from "./stale-tool-results.js";
 import { findCurrentTurnUserIndex, findLatestAssistantIndex, isUnclosedToolUseCycle } from "./tool-use-cycle.js";
 import {
   extractInlineRecalledMemory,
@@ -76,104 +77,14 @@ export function clearStaleToolResults(
   keepWindow: number,
   fenceIndex: number = -1,
 ): number {
-  // Build tool_use_id -> tool_name map for type filtering
-  const toolNameById = new Map<string, string>();
-  for (const msg of messages) {
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const block of msg.content as Array<Record<string, unknown>>) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
-          toolNameById.set(block.id as string, block.name as string);
-        }
-      }
-    }
-  }
-
-  // Find all tool_result indices (role === "tool" in Anthropic API format)
-  const toolResultIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i]!.role === "tool") {
-      toolResultIndices.push(i);
-    }
-  }
-
-  // Protect the last `keepWindow` tool results
-  const clearableIndices = toolResultIndices.slice(0, Math.max(0, toolResultIndices.length - keepWindow));
-
-  let cleared = 0;
-  for (const idx of clearableIndices) {
-    // Protect messages within the cached prefix (at or below the fence).
-    if (idx <= fenceIndex) continue;
-
-    const msg = messages[idx]!;
-
-    // Only clear compactable (read-only) tool types
-    const toolUseId = msg.tool_use_id as string | undefined;
-    if (toolUseId) {
-      const toolName = toolNameById.get(toolUseId);
-      if (toolName && !COMPACTABLE_TOOL_NAMES.has(toolName)) {
-        continue; // Preserve edit/write tool results
-      }
-      // If tool name not found (orphaned result), skip clearing (conservative)
-      if (!toolName) {
-        continue;
-      }
-    }
-
-    const content = msg.content;
-    if (Array.isArray(content)) {
-      // Check if any content block exceeds the threshold
-      let totalLen = 0;
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (typeof block.text === "string") {
-          totalLen += (block.text as string).length;
-        }
-      }
-      if (totalLen >= MICROCOMPACT_MIN_CONTENT_LENGTH) {
-        // Replace content with lightweight placeholder
-        msg.content = [{ type: "text", text: "[Stale tool result cleared: idle > TTL]" }];
-        cleared++;
-      }
-    } else if (typeof content === "string" && content.length >= MICROCOMPACT_MIN_CONTENT_LENGTH) {
-      msg.content = [{ type: "text", text: "[Stale tool result cleared: idle > TTL]" }];
-      cleared++;
-    }
-  }
-
-  // Second pass -- clear tool_use input blocks for edit/write tools.
-  // These tool_use blocks contain the full file content the LLM wanted to write/edit.
-  // After the result is confirmed, the input is no longer needed and just wastes cache space.
-  const assistantWithToolUseIndices: number[] = [];
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]!;
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      const content = msg.content as Array<Record<string, unknown>>;
-      if (content.some(b => b.type === "tool_use")) {
-        assistantWithToolUseIndices.push(i);
-      }
-    }
-  }
-  const clearableAssistantIndices = assistantWithToolUseIndices.slice(
-    0, Math.max(0, assistantWithToolUseIndices.length - keepWindow),
+  return clearStaleToolResultsAcrossShapes(
+    messages,
+    keepWindow,
+    fenceIndex,
+    COMPACTABLE_TOOL_NAMES,
+    CLEARABLE_USES_TOOL_NAMES,
+    MICROCOMPACT_MIN_CONTENT_LENGTH,
   );
-  for (const idx of clearableAssistantIndices) {
-    // Protect messages within the cached prefix.
-    if (idx <= fenceIndex) continue;
-
-    const msg = messages[idx]!;
-    const content = msg.content as Array<Record<string, unknown>>;
-    for (const block of content) {
-      if (block.type !== "tool_use") continue;
-      const toolName = block.name as string;
-      if (!CLEARABLE_USES_TOOL_NAMES.has(toolName)) continue;
-      const inputStr = JSON.stringify(block.input);
-      if (inputStr.length >= MICROCOMPACT_MIN_CONTENT_LENGTH) {
-        block.input = { _cleared: true, reason: "stale edit/write input" };
-        cleared++;
-      }
-    }
-  }
-
-  return cleared;
 }
 
 /**
