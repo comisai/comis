@@ -696,6 +696,15 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
+          // The count at EVERY step between the concatenation and the logged total. `assembled` is
+          // `[...budgeted, ...freshTail]`, so preRepairCount MUST equal historyCount+freshTailCount
+          // — live it did not, while transcript repair was proven count-neutral (every branch tally
+          // zero). Reporting each step names the inserting stage instead of leaving it to be
+          // guessed at, which was wrong four times.
+          preRepairCount: assembled.length,
+          rehydratedCount: rehydrated.length,
+          rehydrationInjected: rehydrationMessages.length,
+          normalizedCount: normalized.length,
           // Which repair branch moved the count. Only synthesis and a duplicate EMISSION can raise
           // it, and neither was named in any log — the gap between assembledCount and
           // historyCount+freshTailCount had to be guessed at, wrongly, three times.
