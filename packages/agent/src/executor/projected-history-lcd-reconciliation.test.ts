@@ -276,4 +276,58 @@ describe("projected conversation LCD reconciliation", () => {
       /^canonical-projection:/,
     );
   });
+
+  it("repairs a projected epoch whose verbatim first turn the projection now changes, without duplicating history", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const logger = createMockLogger();
+    const recallUser = {
+      role: "user",
+      content:
+        "[Relevant context from memory: remembered fact (recorded 2026-07-01)]\n"
+        + "[telegram] sender-a (2026-09-10T00:26:40.100Z):\ncurrent request",
+      timestamp: NOW,
+    } as unknown as AgentMessage;
+    const carvedUser = {
+      ...recallUser,
+      content: "[telegram] sender-a (2026-09-10T00:26:40.100Z):\ncurrent request",
+    } as AgentMessage;
+    const source = [recallUser, assistant("done", NOW + 1)];
+
+    // A cursor stored while the projection still passed the unpaired first
+    // turn through verbatim: its anchor names the recall-prefixed form.
+    const seeded = await ingestProjectedConversationHistory({
+      store,
+      scope: SCOPE,
+      sourceMessages: source,
+      projectedMessages: source,
+      now: NOW + 1,
+      logger,
+    });
+    expect(seeded.ok).toBe(true);
+    expect(store.getMessages(SCOPE)).toHaveLength(2);
+
+    // The projection now carves the recall prefix out of that first turn, so
+    // the canonical anchor changes once. The stored epoch must be repaired in
+    // place — a rebase-append would re-ingest the entire conversation behind
+    // the retained rows and double the history.
+    const result = await ingestProjectedConversationHistory({
+      store,
+      scope: SCOPE,
+      sourceMessages: source,
+      projectedMessages: [carvedUser, assistant("done", NOW + 1)],
+      now: NOW + 2,
+      logger,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.value.mode).toBe("replaced_dirty_epoch");
+    expect(store.getMessages(SCOPE)).toHaveLength(2);
+    expect(store.getIngestCursor(SCOPE)).toEqual({
+      epochAnchor:
+        `canonical-projection:${lcdIngest.messageEpochAnchor(carvedUser)}`,
+      ingestedLiveLen: 2,
+    });
+  });
 });
