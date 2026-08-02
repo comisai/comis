@@ -274,7 +274,43 @@ const resolveCorrelatedAnswer = () => {
   return null;
 };
 
+// A 0-outbound "timeout" is often NOT a wedge: an unauthorized sender (FROMUSER
+// not in the agent's allowFrom list) is rejected at the auth layer BEFORE any
+// agent turn, so there is correctly no reply. Distinguish that from a real hang
+// by checking the daemon log for the block naming THIS sender — else the driver
+// reports a misleading "[TIMEOUT] — NO SUBSTANTIVE ANSWER" on a correct security
+// block, which otherwise looks like a missing substantive answer.
+const detectAllowFromBlock = () => {
+  if (seen.length > 0 || sawAnswer || turnEnded || !DATA) return null;
+  try {
+    const logDir = `${DATA}/logs`;
+    const logs = readdirSync(logDir)
+      .filter((f) => f.startsWith('daemon') && f.endsWith('.log'))
+      .map((f) => `${logDir}/${f}`)
+      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    for (const lf of logs.slice(0, 3)) {
+      const tail = readFileSync(lf, 'utf8').split('\n').slice(-400);
+      for (let i = tail.length - 1; i >= 0; i--) {
+        const line = tail[i];
+        if (line.includes('Sender blocked by allowFrom filter') && line.includes(`"senderId":"${fromUser}"`)) {
+          return `BLOCKED (allowFrom) — sender ${fromUser} not authorized; rejected at the auth layer, no agent turn (this is a correct security block, NOT a wedge)`;
+        }
+      }
+    }
+  } catch { /* no log access — fall through to the timeout reason */ }
+  return null;
+};
+let allowFromBlock = null;
+
 while (Date.now() - start < maxMs) {
+  // An ingress-blocked sender can NEVER reply, so waiting out maxMs only delays a verdict the
+  // daemon log already carries. Detecting the block early turns every stranger-ingress row from a
+  // full-timeout row into a seconds-long one, with the identical honest verdict — the check is the
+  // same one the post-loop reporter uses, just consulted while there is still time to save.
+  if (seen.length === 0 && !sawAnswer && !turnEnded && Date.now() - start > 2000) {
+    const earlyBlock = detectAllowFromBlock();
+    if (earlyBlock) { allowFromBlock = earlyBlock; break; }
+  }
   // long-poll pre-answer (ride out reasoning gaps); snappy once the answer is in.
   const waitMs = sawAnswer ? quiesceMs : 20000;
   const batch = await getOutbound(after, waitMs);
@@ -352,33 +388,8 @@ const reconciledOutbound = reconcileDriveOutbound(initial, seen, finalSnapshot);
 seen.splice(0, seen.length, ...reconciledOutbound);
 sawAnswer = seen.some(isConversationAnswer);
 
-// A 0-outbound "timeout" is often NOT a wedge: an unauthorized sender (FROMUSER
-// not in the agent's allowFrom list) is rejected at the auth layer BEFORE any
-// agent turn, so there is correctly no reply. Distinguish that from a real hang
-// by checking the daemon log for the block naming THIS sender — else the driver
-// reports a misleading "[TIMEOUT] — NO SUBSTANTIVE ANSWER" on a correct security
-// block, which otherwise looks like a missing substantive answer.
-const detectAllowFromBlock = () => {
-  if (seen.length > 0 || sawAnswer || turnEnded || !DATA) return null;
-  try {
-    const logDir = `${DATA}/logs`;
-    const logs = readdirSync(logDir)
-      .filter((f) => f.startsWith('daemon') && f.endsWith('.log'))
-      .map((f) => `${logDir}/${f}`)
-      .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-    for (const lf of logs.slice(0, 3)) {
-      const tail = readFileSync(lf, 'utf8').split('\n').slice(-400);
-      for (let i = tail.length - 1; i >= 0; i--) {
-        const line = tail[i];
-        if (line.includes('Sender blocked by allowFrom filter') && line.includes(`"senderId":"${fromUser}"`)) {
-          return `BLOCKED (allowFrom) — sender ${fromUser} not authorized; rejected at the auth layer, no agent turn (this is a correct security block, NOT a wedge)`;
-        }
-      }
-    }
-  } catch { /* no log access — fall through to the timeout reason */ }
-  return null;
-};
-const allowFromBlock = detectAllowFromBlock();
+// Reuse the in-loop detection when it already fired; otherwise check once now.
+allowFromBlock ??= detectAllowFromBlock();
 const correlatedWireAnswer = correlatedAnswer
   ? wireContainsAssistantReply(
       seen,
