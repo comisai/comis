@@ -51,6 +51,19 @@ fi
 # production `comis init` flow), then a config.yaml literal (rig-token.mjs — the hand-written /
 # init-config.mjs flow). Also self-heals token ROTATION: a re-deploy re-fetches the current value
 # instead of shipping a stale one that 4001s mid-run.
+#
+# A NON-EMPTY .live-env token is verified, not trusted. The emptiness guard alone let a stale or
+# wrong-rig token skip the fetch entirely: every RPC helper then 401s while rig-doctor advises
+# "re-run deploy-scripts.sh (auto-fetch)" — advice that provably cannot work, because the value
+# being non-empty is exactly what suppresses the fetch. Probing costs one RPC and turns a
+# dead-end loop into a self-heal.
+if [ -n "${GWTOKEN:-}" ] && ! rig_is_local; then
+  if ! remote_root "curl -s -o /dev/null --max-time 5 -H 'Authorization: Bearer $GWTOKEN' \
+        'http://127.0.0.1:${GW_PORT:-4766}/health' 2>/dev/null" ; then
+    echo "⚠ the .live-env GWTOKEN did not authenticate against the rig — re-fetching from the box"
+    GWTOKEN=""
+  fi
+fi
 if [ -z "${GWTOKEN:-}" ]; then
   if rig_is_local; then
     # The `comis` CLI is not on PATH in a checkout — call the built dist directly.

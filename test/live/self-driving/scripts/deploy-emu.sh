@@ -37,6 +37,11 @@ echo "2) (Re)launch the emulator (anchored pkill + tmux)…"
 if rig_is_local; then
   EMU_DIR="$EMU_DIR" bash "$HERE/restart-emu.sh"
 else
+  # Ship the launcher WITH the emulator subtree. It used to arrive only via deploy-scripts.sh, so a
+  # box that had never run that script (or had been cleaned) failed here with a bare
+  # `bash: /root/restart-emu.sh: No such file or directory` — a launcher-not-found error that reads
+  # like an emulator fault. The launcher belongs to the thing it launches.
+  COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - restart-emu.sh | remote_root "tar -xf - -C /root"
   remote_root "EMU_DIR='$EMU_DIR' bash /root/restart-emu.sh"
 fi
 
