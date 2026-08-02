@@ -228,6 +228,43 @@ describe("reorderContentForStablePrefix under the Bedrock Converse shape", () =>
     reorderContentForStablePrefix(messages);
     expect(messages[0]!.content).toEqual([{ image: { format: "png" } }, { text: "caption" }]);
   });
+
+  it("keeps a trailing cache marker at the end of the message", () => {
+    // The SDK appends its {cachePoint} to the END of the last user message: "cache
+    // everything before me". Partitioning it ahead of the text moves the covered
+    // prefix boundary in front of the query, and the provider hard-rejects the
+    // request when the marker's covered delta since the previous marker falls to a
+    // few tokens — measured live as a ValidationException on the first call of
+    // every turn, recovered by a continuation nudge that doubles latency and cost.
+    const messages = [{
+      role: "user",
+      content: [{ text: "the current query" }, { cachePoint: { type: "default" } }],
+    }];
+
+    reorderContentForStablePrefix(messages);
+    expect(messages[0]!.content).toEqual([
+      { text: "the current query" },
+      { cachePoint: { type: "default" } },
+    ]);
+  });
+
+  it("orders media first and text after while a cache marker stays last", () => {
+    const messages = [{
+      role: "user",
+      content: [
+        { text: "caption" },
+        { cachePoint: { type: "default" } },
+        { image: { format: "png" } },
+      ],
+    }];
+
+    reorderContentForStablePrefix(messages);
+    expect(messages[0]!.content).toEqual([
+      { image: { format: "png" } },
+      { text: "caption" },
+      { cachePoint: { type: "default" } },
+    ]);
+  });
 });
 
 describe("messageStructSig under the Bedrock Converse shape", () => {
