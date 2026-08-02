@@ -30,12 +30,21 @@ export function findLatestAssistantIndex(messages: Array<Record<string, unknown>
 }
 
 /** True when a message carries ONLY tool_result blocks — a carrier returning answers into an
- *  in-flight assistant turn, not a new user turn. */
+ *  in-flight assistant turn, not a new user turn. A cache-marker block is ignored: the keyed
+ *  provider's marker is a separate `{cachePoint}` block appended to the last message of the
+ *  request, which mid-turn IS the carrier — a marker is placement metadata, not content, and
+ *  must not reclassify the carrier as the current user turn. */
 export function isToolResultCarrier(msg: Record<string, unknown>): boolean {
   if (msg.role === "tool") return true;
   const content = msg.content;
   if (!Array.isArray(content) || content.length === 0) return false;
-  return (content as Array<Record<string, unknown>>).every(b => blockKind(b) === "tool_result");
+  let toolResults = 0;
+  for (const b of content as Array<Record<string, unknown>>) {
+    const kind = blockKind(b);
+    if (kind === "tool_result") toolResults++;
+    else if (kind !== "cache_marker") return false;
+  }
+  return toolResults > 0;
 }
 
 /**
