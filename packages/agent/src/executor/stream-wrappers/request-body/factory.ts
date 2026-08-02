@@ -60,6 +60,7 @@ import { placeSkipCacheWriteMarker } from "./skip-cache-write-marker.js";
 import { applyKillSwitch } from "./kill-switch.js";
 import { estimateTtlSplit } from "./ttl-split-estimation.js";
 import { stripBedrockToolHistory } from "./bedrock-tool-history.js";
+import { translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
 
 /**
  * Create a stream wrapper that mutates the outgoing request body via the
@@ -351,6 +352,27 @@ export function createRequestBodyInjector(
             minTokens,
             logger,
           );
+
+          // Express the placed breakpoints in the KEYED provider's own marker form. On that shape a
+          // `cache_control` property is not a marker at all — the marker is a `{cachePoint}` block —
+          // so every breakpoint placed above was dropped by the serializer and the multi-zone budget
+          // bought nothing. Runs as one post-pass because the cap is PER REQUEST and the SDK has
+          // already spent one marker; unaffordable markers are dropped rather than left dead.
+          if (needsCacheBreakpoints && Array.isArray(result.messages)) {
+            const keyedMarkers = translateKeyedCacheMarkers(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            if (keyedMarkers.converted > 0 || keyedMarkers.dropped > 0) {
+              logger.debug(
+                {
+                  cachePointsPlaced: keyedMarkers.converted,
+                  markersDroppedOverBudget: keyedMarkers.dropped,
+                  sessionKey: config.sessionKey,
+                },
+                "Translated cache breakpoints into provider cachePoint blocks",
+              );
+            }
+          }
 
           // Promote stable message breakpoints from 5m to 1h TTL
           // Skip breakpoint TTL promotion during eviction cooldown (conservative caching).
