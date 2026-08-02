@@ -154,3 +154,37 @@ export function clearFreshTailAnchor(sessionKey: string): void {
 export function resetFreshTailAnchors(): void {
   anchors.clear();
 }
+
+/**
+ * Which SIDE of the history/fresh-tail seam each synthesized tool-result placeholder landed on.
+ *
+ * `sanitizeToolUseResultPairing` inserts a placeholder for any `tool_use` left without its result,
+ * and live the assembled array gained two of them on roughly every third assembly — an insertion
+ * that shifts every index after it and re-writes the cached prefix. Two seams could orphan a call:
+ * the fresh-tail slice and the eviction boundary. Measuring which one produces them is the check
+ * that separates them; asserting it from the code shape got it wrong once already.
+ *
+ * `historyCount` is the pre-repair `budgeted.length`. Placeholders are counted against it, so an
+ * index below it belongs to the evicted-history side and an index at or above it to the tail side.
+ */
+export function classifySynthesizedPlaceholders(
+  repaired: ReadonlyArray<Record<string, unknown>>,
+  historyCount: number,
+  marker: string,
+): { inHistory: number; inFreshTail: number; indices: number[] } {
+  const indices: number[] = [];
+  let inHistory = 0;
+  let inFreshTail = 0;
+  for (let i = 0; i < repaired.length; i++) {
+    const content = repaired[i]!.content;
+    if (!Array.isArray(content)) continue;
+    const isPlaceholder = (content as Array<Record<string, unknown>>).some(
+      b => typeof b.text === "string" && (b.text as string).includes(marker),
+    );
+    if (!isPlaceholder) continue;
+    if (indices.length < 8) indices.push(i);
+    if (i < historyCount) inHistory++;
+    else inFreshTail++;
+  }
+  return { inHistory, inFreshTail, indices };
+}

@@ -46,7 +46,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /** The literal marker carried by every synthesized placeholder result. */
-const SYNTHESIZED_RESULT_MARKER = "[tool result missing — synthesized placeholder]";
+export const SYNTHESIZED_RESULT_MARKER = "[tool result missing — synthesized placeholder]";
 
 // ---------------------------------------------------------------------------
 // Structural narrowing over the opaque AgentMessage.

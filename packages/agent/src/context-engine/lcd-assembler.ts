@@ -84,10 +84,11 @@ import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
-import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
+import { SYNTHESIZED_RESULT_MARKER, sanitizeToolUseResultPairing } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { isToolResultCarrier } from "../executor/stream-wrappers/request-body/tool-use-cycle.js";
 import {
+  classifySynthesizedPlaceholders,
   freshTailTurnKey,
   resolveAnchoredFreshTailStart,
 } from "./lcd-fresh-tail-anchor.js";
@@ -691,6 +692,21 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
+          // WHICH seam orphaned a tool call. `assembledCount` exceeding
+          // historyCount + freshTailCount means transcript repair synthesized placeholders, and an
+          // insertion shifts every index after it — re-writing the cached prefix. Naming the side
+          // is what separates the eviction boundary from the fresh-tail slice; inferring it from
+          // the code shape got it wrong once.
+          ...(() => {
+            const p = classifySynthesizedPlaceholders(
+              repaired as unknown as ReadonlyArray<Record<string, unknown>>,
+              budgeted.length,
+              SYNTHESIZED_RESULT_MARKER,
+            );
+            return p.inHistory + p.inFreshTail > 0
+              ? { synthesizedInHistory: p.inHistory, synthesizedInFreshTail: p.inFreshTail, synthesizedAt: p.indices }
+              : {};
+          })(),
           // The coverage reconciliation, inline: `liveCount` is what the
           // assembled array must account for, `coverageShortfall` is what it
           // failed to (0 on every healthy call).

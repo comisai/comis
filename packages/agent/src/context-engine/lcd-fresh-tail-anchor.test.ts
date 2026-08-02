@@ -16,6 +16,7 @@ import {
   clearFreshTailAnchor,
   freshTailTurnKey,
   resetFreshTailAnchors,
+  classifySynthesizedPlaceholders,
   resolveAnchoredFreshTailStart,
 } from "./lcd-fresh-tail-anchor.js";
 
@@ -159,5 +160,33 @@ describe("resolveAnchoredFreshTailStart — cross-turn hysteresis", () => {
     resolveAnchoredFreshTailStart(sessionKey, "turn-1", 4, convo);
     // A long tool loop drifts well past the threshold; the boundary must still not move.
     expect(resolveAnchoredFreshTailStart(sessionKey, "turn-1", 30, convo)).toBe(4);
+  });
+});
+
+describe("classifySynthesizedPlaceholders", () => {
+  const MARK = "[tool result missing — synthesized placeholder]";
+  const msg = (text: string) => ({ role: "user", content: [{ type: "text", text }] });
+
+  it("attributes a placeholder below the seam to the evicted-history side", () => {
+    const repaired = [msg("a"), msg(MARK), msg("b"), msg("c")];
+    expect(classifySynthesizedPlaceholders(repaired, 3, MARK))
+      .toEqual({ inHistory: 1, inFreshTail: 0, indices: [1] });
+  });
+
+  it("attributes a placeholder at or above the seam to the fresh-tail side", () => {
+    const repaired = [msg("a"), msg("b"), msg(MARK)];
+    expect(classifySynthesizedPlaceholders(repaired, 2, MARK))
+      .toEqual({ inHistory: 0, inFreshTail: 1, indices: [2] });
+  });
+
+  it("counts the live shape: two placeholders in one assembly", () => {
+    const repaired = [msg("a"), msg(MARK), msg("b"), msg(MARK), msg("c")];
+    const out = classifySynthesizedPlaceholders(repaired, 3, MARK);
+    expect(out.inHistory + out.inFreshTail).toBe(2);
+  });
+
+  it("reports nothing when the transcript needed no repair", () => {
+    expect(classifySynthesizedPlaceholders([msg("a"), msg("b")], 1, MARK))
+      .toEqual({ inHistory: 0, inFreshTail: 0, indices: [] });
   });
 });
