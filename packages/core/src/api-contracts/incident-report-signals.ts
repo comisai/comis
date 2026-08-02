@@ -366,9 +366,9 @@ export interface IncidentSignals {
   cacheBreaks?: Array<{
     reason: string;
     count: number;
-    /** Forgone cache-READ saving only (tokenDrop x read-rate) — NOT the cost of re-writing the
-     *  dropped prefix at the write rate, which is the larger number that lands on the bill. Read it
-     *  beside `tokenDrop`, never alone. */
+    /** Estimated waste from this break: `tokenDrop x (cacheWrite - cacheRead)` — the dropped bytes
+     *  get re-paid at the write rate where they would have been paid at the read rate. Matches the
+     *  on-disk cache-break record's `estimatedCostUsd`. 0 for an unknown-priced model. */
     estCostUsd: number;
     /** Tokens dropped out of the cached prefix for this reason — the magnitude an operator should
      *  judge a break by. Live, a $30.64 incident reported $0.46 in `estCostUsd` while the drop count

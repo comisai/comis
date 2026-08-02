@@ -13,6 +13,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { EventMap } from "@comis/core";
+import { resolveModelPricing } from "@comis/core";
 import { cacheBreakEventToRow } from "./observability-mutations.js";
 
 /** A catalog-priced model — resolveModelPricing(...).cacheRead is non-zero (3e-7). */
@@ -91,9 +92,15 @@ describe("cacheBreakEventToRow (category:'cache_break', computed est-$)", () => 
       makeCacheBreak({ provider: PRICED_PROVIDER, model: PRICED_MODEL, tokenDrop: 1000 }),
     );
     const pricedDetails = JSON.parse(pricedRow.details ?? "{}");
-    // 1000 × 3e-7 cacheRead rate = 3e-4 (non-zero, the directly-lost cache-read saving).
+    // The waste is the RE-WRITE cost, not the forgone read saving: the dropped bytes get paid at
+    // cacheWrite where they would have been paid at cacheRead, so the estimate is
+    // tokenDrop x (cacheWrite - cacheRead). Pricing it at cacheRead alone understated a live $30.64
+    // incident as $0.46 while the on-disk records, which already use the delta, said $8.74.
+    const priced = resolveModelPricing(PRICED_PROVIDER, PRICED_MODEL);
+    const deltaRate = Math.max(0, priced.cacheWrite - priced.cacheRead);
+    expect(deltaRate).toBeGreaterThan(0); // guards the fixture: a zero delta would make this vacuous
     expect(pricedDetails.estCostUsd).toBeGreaterThan(0);
-    expect(pricedDetails.estCostUsd).toBeCloseTo(1000 * 3e-7, 12);
+    expect(pricedDetails.estCostUsd).toBeCloseTo(1000 * deltaRate, 12);
 
     const unknownRow = cacheBreakEventToRow(
       makeCacheBreak({ provider: UNKNOWN_PROVIDER, model: UNKNOWN_MODEL, tokenDrop: 1000 }),
