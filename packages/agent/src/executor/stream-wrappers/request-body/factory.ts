@@ -246,7 +246,10 @@ export function createRequestBodyInjector(
             // the cached prefix is byte-stable turn-over-turn. The block is per-turn,
             // query-varying recall (kept only on the latest user message for attention);
             // left on history it mutates the prefix every request → cache_creation churn.
-            const recallStripped = stripTransientRecallFromHistory(result.messages as Array<Record<string, unknown>>);
+            const recallStripped = stripTransientRecallFromHistory(
+              result.messages as Array<Record<string, unknown>>,
+              config.getCacheFenceIndex?.() ?? -1,
+            );
             if (recallStripped > 0) {
               logger.debug(
                 { recallStripped, sessionKey: config.sessionKey },

@@ -335,9 +335,12 @@ export function stripReplayThinking(messages: Array<Record<string, unknown>>): n
  * prefix-stabilizing strip that runs after structuredClone and before any
  * cache_control marker placement.
  *
+ * Fence-aware, like every microcompact pass: at/below `fenceIndex` the message is already cached, so
+ * stripping there mutates the cached prefix and re-pays the suffix. `-1` keeps the full reach.
+ *
  * Mutates messages in place. Returns the number of messages whose text changed.
  */
-export function stripTransientRecallFromHistory(messages: Array<Record<string, unknown>>): number {
+export function stripTransientRecallFromHistory(messages: Array<Record<string, unknown>>, fenceIndex = -1): number {
   // The CURRENT TURN's query message — its recall block stays. Tool-result carriers are skipped:
   // on Bedrock they are user messages, so "newest user message" is a carrier mid-turn and the real
   // query would be stripped as history while `deferRecallToUncachedTail` protects a different one.
@@ -346,6 +349,7 @@ export function stripTransientRecallFromHistory(messages: Array<Record<string, u
 
   let stripped = 0;
   for (let i = 0; i < lastUserIdx; i++) {
+    if (i <= fenceIndex) continue; // cached already — rewriting it re-pays the whole suffix
     const msg = messages[i]!;
     if (msg.role !== "user") continue;
     const content = msg.content;

@@ -153,6 +153,38 @@ describe("inline-recall prefix stabilisers under the Bedrock Converse shape", ()
   });
 });
 
+describe("stripTransientRecallFromHistory honours the cache fence", () => {
+  it("leaves a recall block that is already inside the cached prefix", () => {
+    // The live residual churn: a ~13k recall block removed from an already-cached user message,
+    // reported as `content-cleared` at a cached index. Every microcompact pass threads the fence and
+    // refuses to clear at/below it; this strip was the one prefix mutator called without it.
+    const messages = [
+      { role: "user", content: [{ text: `${RECALL}\n\ncached question` }] },
+      { role: "assistant", content: [{ text: "a1" }] },
+      { role: "user", content: [{ text: `${RECALL}\n\nuncached question` }] },
+      { role: "assistant", content: [{ text: "a2" }] },
+      bedrockUser("current question"),
+    ];
+
+    // Fence at index 1: message 0 is cached, message 2 is not.
+    expect(stripTransientRecallFromHistory(messages, 1)).toBe(1);
+    expect(blockOneText(messages[0])).toContain("Relevant context from memory");
+    expect(blockOneText(messages[2])).not.toContain("Relevant context from memory");
+  });
+
+  it("strips everything historical when the cached extent is unknown", () => {
+    // Fence -1 means nothing is known to be cached, so the strip keeps its full reach.
+    const messages = [
+      { role: "user", content: [{ text: `${RECALL}\n\nq1` }] },
+      { role: "assistant", content: [{ text: "a1" }] },
+      bedrockUser("current"),
+    ];
+
+    expect(stripTransientRecallFromHistory(messages, -1)).toBe(1);
+    expect(blockOneText(messages[0])).not.toContain("Relevant context from memory");
+  });
+});
+
 describe("current-turn identification mid tool-use cycle", () => {
   it("returns the query index, not the newer Bedrock tool-result carrier", () => {
     const messages = [bedrockUser("older"), bedrockAsst("r", "a"), bedrockUser("the query"),
