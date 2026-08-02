@@ -154,3 +154,39 @@ export function clearFreshTailAnchor(sessionKey: string): void {
 export function resetFreshTailAnchors(): void {
   anchors.clear();
 }
+
+/** Hard bound on how far the snap may widen the tail, so a pathological run cannot unbound it. */
+const MAX_SNAP_BACK = 16;
+
+/**
+ * Move the fresh-tail boundary back so the slice never BEGINS inside a tool cycle.
+ *
+ * A boundary that lands on a tool-result carrier leaves that result's `tool_use` on the far side of
+ * the seam. `sanitizeToolUseResultPairing` then synthesizes a
+ * `[tool result missing — synthesized placeholder]` to keep the transcript valid — and whether it
+ * fires depends on exactly where the boundary fell, so the assembled array gained two messages on
+ * some calls and none on others.
+ *
+ * That is the residual churn: an inserted placeholder shifts every index after it, which the churn
+ * classifier reported as `structural-shift` at index 1 (a synthetic user result lands ahead of the
+ * real sequence) plus `content-cleared` (the placeholder is far shorter than the result it stands
+ * in for). Live (comis-moshe 2026-08-02): `assembledCount` alternated +2/+0 against
+ * `historyCount + freshTailCount`, and `cache_read` stayed pinned at exactly 80,865 because every
+ * message-zone marker sat after the shift.
+ *
+ * Snapping BACKWARD only ever widens the tail, so no content is lost — the pair is kept whole on
+ * the tail side instead of being half-summarized.
+ */
+export function snapToToolCycleBoundary(
+  messages: ReadonlyArray<Record<string, unknown>>,
+  tailStart: number,
+  isToolResultCarrier: (m: Record<string, unknown>) => boolean,
+): number {
+  if (tailStart <= 0 || tailStart >= messages.length) return tailStart;
+  let i = tailStart;
+  const floor = Math.max(0, tailStart - MAX_SNAP_BACK);
+  // Walk back over the leading results, then over the assistant turn that issued their calls, so
+  // the tail opens on a whole cycle rather than on its second half.
+  while (i > floor && isToolResultCarrier(messages[i]!)) i--;
+  return i;
+}

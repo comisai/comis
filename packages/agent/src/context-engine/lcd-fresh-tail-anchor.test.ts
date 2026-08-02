@@ -17,6 +17,7 @@ import {
   freshTailTurnKey,
   resetFreshTailAnchors,
   resolveAnchoredFreshTailStart,
+  snapToToolCycleBoundary,
 } from "./lcd-fresh-tail-anchor.js";
 
 /** Tool results ride on user messages; only a REAL user turn opens a new turn. */
@@ -159,5 +160,41 @@ describe("resolveAnchoredFreshTailStart — cross-turn hysteresis", () => {
     resolveAnchoredFreshTailStart(sessionKey, "turn-1", 4, convo);
     // A long tool loop drifts well past the threshold; the boundary must still not move.
     expect(resolveAnchoredFreshTailStart(sessionKey, "turn-1", 30, convo)).toBe(4);
+  });
+});
+
+describe("snapToToolCycleBoundary", () => {
+  const assistantCall = () => ({ role: "assistant", content: [{ type: "tool_use", id: "t" }] });
+  const result = () => ({ role: "user", content: [{ type: "tool_result", tool_use_id: "t" }] });
+  const plain = (r: string) => ({ role: r, content: [{ type: "text", text: "hi" }] });
+
+  it("moves a boundary that lands on a tool result back onto the call that issued it", () => {
+    // Live cause of the residual churn: a boundary inside a tool cycle orphaned the result, and
+    // transcript repair synthesized a placeholder — shifting every index after it.
+    const msgs = [plain("user"), plain("assistant"), assistantCall(), result(), plain("assistant")];
+    expect(snapToToolCycleBoundary(msgs, 3, isToolResultCarrier)).toBe(2);
+  });
+
+  it("walks back over a MULTI-result cycle in one go", () => {
+    const msgs = [plain("user"), assistantCall(), result(), result(), result(), plain("assistant")];
+    expect(snapToToolCycleBoundary(msgs, 4, isToolResultCarrier)).toBe(1);
+  });
+
+  it("leaves a boundary that already opens a clean turn alone", () => {
+    const msgs = [plain("user"), plain("assistant"), plain("user"), plain("assistant")];
+    expect(snapToToolCycleBoundary(msgs, 2, isToolResultCarrier)).toBe(2);
+  });
+
+  it("only ever widens the tail, never narrows it", () => {
+    const msgs = [plain("user"), assistantCall(), result(), plain("assistant")];
+    for (let i = 0; i < msgs.length; i++) {
+      expect(snapToToolCycleBoundary(msgs, i, isToolResultCarrier)).toBeLessThanOrEqual(i);
+    }
+  });
+
+  it("stops at the bound rather than walking an unbounded run of results", () => {
+    const msgs = [plain("user"), assistantCall(), ...Array.from({ length: 40 }, result)];
+    const from = msgs.length - 1;
+    expect(snapToToolCycleBoundary(msgs, from, isToolResultCarrier)).toBeGreaterThanOrEqual(from - 16);
   });
 });

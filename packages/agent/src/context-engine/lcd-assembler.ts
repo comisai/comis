@@ -90,6 +90,7 @@ import { isToolResultCarrier } from "../executor/stream-wrappers/request-body/to
 import {
   freshTailTurnKey,
   resolveAnchoredFreshTailStart,
+  snapToToolCycleBoundary,
 } from "./lcd-fresh-tail-anchor.js";
 import {
   measureRepresentedCoverage,
@@ -284,6 +285,13 @@ export function createLcdContextEngine(
       // the head, rewriting the cached prefix on each call (0.0% hit ratio on Bedrock). Pick it once
       // per turn and hold it for that turn's tool loop; it advances normally at the next turn, so
       // history still folds into summaries at the same rate.
+      // Snap BEFORE anchoring so the boundary that gets held is already whole-cycle: anchoring a
+      // mid-cycle boundary would hold the placeholder synthesis in place turn after turn.
+      const snappedTailStart = snapToToolCycleBoundary(
+        liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
+        computedTailStart,
+        (m) => isToolResultCarrier(m),
+      );
       const turnKey = freshTailTurnKey(
         liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
         (m) => isToolResultCarrier(m),
@@ -291,7 +299,7 @@ export function createLcdContextEngine(
       const tailStart = resolveAnchoredFreshTailStart(
         deps.sessionKey,
         turnKey,
-        computedTailStart,
+        snappedTailStart,
         liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
       );
       // The fresh tail is sliced VERBATIM from the live array (it bypasses the
@@ -319,6 +327,9 @@ export function createLcdContextEngine(
           // `heldByTurnAnchor > 0` means the boundary was held still for this turn instead of
           // marching with the array — the difference between a cached prefix and a rewritten one.
           heldByTurnAnchor: Math.max(0, computedTailStart - tailStart),
+          // `snappedBackBy > 0` means the boundary would have cut a tool cycle — the shape that
+          // made transcript repair synthesize a placeholder and shift the whole prefix.
+          snappedBackBy: Math.max(0, computedTailStart - snappedTailStart),
           inFlightGapCovered: Math.max(0, stepBoundary - tailStart),
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
