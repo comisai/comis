@@ -86,6 +86,33 @@ export function findCachePointPositions(
 }
 
 /**
+ * Role + block-kind skeleton of the payload tail — the last `count` messages as
+ * `"<index>:<role>[<kind>,<kind>,…]"`, kinds resolved by the block key or `type`. Structure only,
+ * never content: a marker rejection is decided by what SURROUNDS the marker, and positions alone
+ * cannot show an empty message or a marker-only content array.
+ */
+export function describePayloadTail(
+  messages: Array<Record<string, unknown>>,
+  count = 6,
+): string[] {
+  const start = Math.max(0, messages.length - count);
+  const out: string[] = [];
+  for (let i = start; i < messages.length; i++) {
+    const msg = messages[i]!;
+    const content = contentOf(msg);
+    const kinds = content === undefined
+      ? (typeof msg.content === "string" ? ["string"] : ["none"])
+      : content.map((b) => {
+        if (typeof b.type === "string") return b.type;
+        const key = Object.keys(b).find((k) => b[k] !== undefined);
+        return key ?? "empty";
+      });
+    out.push(`${i}:${String(msg.role)}[${kinds.join(",")}]`);
+  }
+  return out;
+}
+
+/**
  * Convert every `cache_control` property on a keyed payload into a `{cachePoint}` block, bounded by
  * the per-request marker cap.
  *

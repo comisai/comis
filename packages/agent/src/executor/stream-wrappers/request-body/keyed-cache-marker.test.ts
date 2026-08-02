@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { findCachePointPositions, KEYED_MAX_CACHE_MARKERS, translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
+import { describePayloadTail, findCachePointPositions, KEYED_MAX_CACHE_MARKERS, translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
 
 const keyedUser = (text: string, marked = false) => ({
   role: "user",
@@ -100,6 +100,21 @@ describe("translateKeyedCacheMarkers", () => {
 
   it("returns zero on a non-array payload rather than throwing", () => {
     expect(translateKeyedCacheMarkers(undefined as never).converted).toBe(0);
+  });
+});
+
+describe("describePayloadTail", () => {
+  it("describes the tail as role and block-kind skeletons without content", () => {
+    const messages = [
+      { role: "user", content: [{ text: "secret content" }] },
+      { role: "assistant", content: [] },
+      { role: "user", content: [{ cachePoint: { type: "default" } }, { text: "q" }] },
+    ];
+
+    const tail = describePayloadTail(messages, 2);
+
+    expect(tail).toEqual(["1:assistant[]", "2:user[cachePoint,text]"]);
+    expect(tail.join("|")).not.toContain("secret");
   });
 });
 

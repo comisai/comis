@@ -45,7 +45,7 @@ import { injectServiceTier } from "./service-tier.js";
 import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
 import { findInlineRecallIndices } from "./recall-diagnostics.js";
 import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
-import { findCachePointPositions } from "./keyed-cache-marker.js";
+import { describePayloadTail, findCachePointPositions } from "./keyed-cache-marker.js";
 import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
@@ -404,6 +404,9 @@ export function createRequestBodyInjector(
                   cachePointsPlaced: keyedMarkers.converted,
                   markersDroppedOverBudget: keyedMarkers.dropped,
                   cachePointPositions,
+                  payloadTail: describePayloadTail(
+                    result.messages as Array<Record<string, unknown>>,
+                  ),
                   messageCount: (result.messages as unknown[]).length,
                   sessionKey: config.sessionKey,
                 },
