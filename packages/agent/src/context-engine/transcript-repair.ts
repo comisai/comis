@@ -21,9 +21,13 @@
  *    error placeholder ({@link makeMissingToolResult}); no call is left unpaired.
  *  - DROP ORPHAN — a `tool_result` whose `toolCallId` matches no call is dropped.
  *  - DROP DUPLICATE — a second `tool_result` for an already-resolved id is dropped.
- *  - STRIP ABORTED — an assistant turn with `stopReason "error" | "aborted"` has
- *    its dangling `tool_use` blocks removed (text/thinking preserved), so no
- *    unpaired call survives and no result is synthesized for the aborted call.
+ *  - ABORTED TURNS synthesize too — an assistant turn with `stopReason
+ *    "error" | "aborted"` keeps its `tool_use` blocks and receives the same marked
+ *    placeholder. Removing them instead (the previous behaviour) changed the
+ *    message's content-BLOCK COUNT, and changed it LATE: a freshly generated turn
+ *    reaches the provider straight from live SDK memory, unrepaired, and only lost
+ *    the blocks once it was next served through this pass — mutating an
+ *    already-cached message once per turn at a marching index.
  *
  * Reasoning (`ThinkingContent`) is never re-introduced, reordered, or dropped:
  * the codec already excludes `topLevelReasoningOnly` reasoning on reconstruction
@@ -43,8 +47,6 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /** The literal marker carried by every synthesized placeholder result. */
 const SYNTHESIZED_RESULT_MARKER = "[tool result missing — synthesized placeholder]";
-
-const ABORTED_STOP_REASONS = new Set(["error", "aborted"]);
 
 // ---------------------------------------------------------------------------
 // Structural narrowing over the opaque AgentMessage.
@@ -129,10 +131,6 @@ function isToolCallBlock(b: ContentBlock): b is ToolCallBlock {
   return TOOL_CALL_BLOCK_TYPES.has(b.type) && typeof (b as ToolCallBlock).id === "string";
 }
 
-function isAbortedAssistant(m: AssistantLike): boolean {
-  const sr = m.stopReason;
-  return typeof sr === "string" && ABORTED_STOP_REASONS.has(sr);
-}
 
 // ---------------------------------------------------------------------------
 // Synthetic / rewrite builders (never mutate inputs).
@@ -161,18 +159,6 @@ function makeMissingToolResult(
     isError: true,
     timestamp: now,
   } as unknown as AgentMessage;
-}
-
-/**
- * Return a NEW assistant message with all `toolCall` blocks removed from its
- * content, preserving text/thinking and every other field
- * (strip-dangling-blocks-keep-text). Used for aborted/errored turns whose calls
- * never completed — leaving the calls would put an unpaired `tool_use` in front
- * of the provider. Never mutates the input.
- */
-function stripDanglingToolUseBlocks(m: AgentMessage, a: AssistantLike): AgentMessage {
-  const kept = a.content.filter((b) => !isToolCallBlock(b));
-  return { ...(m as object), content: kept } as unknown as AgentMessage;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +230,18 @@ export function sanitizeToolUseResultPairing(
 
     const a = asAssistant(m);
     if (a) {
-      if (isAbortedAssistant(a)) {
-        // Incomplete turn: strip dangling calls (keep text), synthesize nothing.
-        out.push(stripDanglingToolUseBlocks(m, a));
-        continue;
-      }
+      // An incomplete turn used to have its dangling calls STRIPPED here. That changed the
+      // assistant message's content-BLOCK COUNT, and it changed it late: a freshly generated turn
+      // goes to the provider straight from live SDK memory, unrepaired, and only loses the blocks
+      // once it is next served through this assembler. The result was a b-1 mutation of an
+      // already-cached message, one per turn at a marching index — measured live as
+      // block-count-changed at idx 51 -> 55 -> 57 -> 59 -> 61 -> 65 with `t0`/`len0` on both sides
+      // (neither thinking nor text, which is what identified tool_use as the block being dropped).
+      //
+      // Synthesizing the missing results instead — exactly what the completed-turn branch below
+      // already does — satisfies the same pairing invariant while leaving the block count alone, so
+      // the message is byte-identical whether it came from live memory or from here. The placeholder
+      // is explicitly marked (SYNTHESIZED_RESULT_MARKER), so nothing is presented as a real result.
 
       out.push(m);
       for (const b of a.content) {
