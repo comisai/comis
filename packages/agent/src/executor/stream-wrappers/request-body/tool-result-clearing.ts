@@ -165,12 +165,19 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
     const content = msg.content as Array<Record<string, unknown>>;
     if (content.length <= 1) continue;
 
-    // Partition: non-text blocks first, then text blocks (stable sort within groups)
+    // Partition: non-text blocks first, then text blocks (stable sort within groups).
+    // Cache markers stay pinned at the END: a marker means "cache everything before
+    // me", so partitioning it ahead of the text moves the cached-prefix boundary in
+    // front of the query — a layout the keyed provider hard-rejects when the
+    // marker's covered delta since the previous marker falls below its minimum.
     const nonText: Array<Record<string, unknown>> = [];
     const text: Array<Record<string, unknown>> = [];
+    const markers: Array<Record<string, unknown>> = [];
     for (const block of content) {
-      // Via the resolver: `block.type` sorts every Bedrock block as non-text → reorder never fires.
-      if (blockKind(block) === "text") {
+      const kind = blockKind(block);
+      if (kind === "cache_marker") {
+        markers.push(block);
+      } else if (kind === "text") {
         text.push(block);
       } else {
         nonText.push(block);
@@ -179,7 +186,7 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
 
     // Only reorder if there are both types (avoid unnecessary mutations)
     if (nonText.length > 0 && text.length > 0) {
-      msg.content = [...nonText, ...text];
+      msg.content = [...nonText, ...text, ...markers];
     }
   }
 }
