@@ -25,7 +25,20 @@ if (!existsSync(cfgPath)) {
   process.exit(2);
 }
 const cfg = YAML.parse(readFileSync(cfgPath, "utf8")) ?? {};
-if (!existsSync(backup)) copyFileSync(cfgPath, backup); // first wire only — keep the REAL-telegram original
+// Refresh the backup whenever the LIVE config is not already emulator-wired. The point of the
+// guard is never to snapshot an emu-wired config over the real-Telegram original — not to freeze
+// the first wire's config forever. Guarding on "backup missing" did the latter: a provider switch
+// made between two wirings was silently reverted by the restore, putting production back on a
+// provider the operator had deliberately moved off (comis-moshe 2026-08-02).
+const liveApiRoot = cfg.channels?.telegram?.apiRoot;
+const liveIsEmuWired = typeof liveApiRoot === "string" && /127\.0\.0\.1|localhost/.test(liveApiRoot);
+if (!liveIsEmuWired) copyFileSync(cfgPath, backup);
+else if (!existsSync(backup)) {
+  console.error(`refusing to wire: ${cfgPath} is ALREADY emulator-wired and no ${backup} exists —`);
+  console.error("backing it up now would record the emulator as the 'original'. Restore the real");
+  console.error("channel config by hand first, then re-run.");
+  process.exit(2);
+}
 
 cfg.channels ??= {};
 const tg = (cfg.channels.telegram ??= {});
