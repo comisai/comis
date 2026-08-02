@@ -128,3 +128,36 @@ describe("resolveAnchoredFreshTailStart", () => {
     expect(resolveAnchoredFreshTailStart(sessionKey, "turn-A", 10, convo)).toBe(10);
   });
 });
+
+describe("resolveAnchoredFreshTailStart — cross-turn hysteresis", () => {
+  const sessionKey = "tenant:agent:peer";
+  const convo = Array.from({ length: 40 }, (_, i) => ({
+    role: i % 2 === 0 ? "user" : "assistant",
+    content: [{ type: "text", text: `m${i}` }],
+  }));
+
+  beforeEach(() => resetFreshTailAnchors());
+
+  it("holds the boundary across turns that drift by only one message", () => {
+    // LIVE: the boundary advanced once per TURN, re-writing the message zone every turn, so
+    // cache_read never grew past the stable system prefix (pinned at exactly 80,865).
+    resolveAnchoredFreshTailStart(sessionKey, "turn-1", 4, convo);
+    const held = [2, 3, 4, 5, 6, 7].map((n, i) =>
+      resolveAnchoredFreshTailStart(sessionKey, `turn-${n}`, 4 + i + 1, convo));
+    expect(held).toEqual([4, 4, 4, 4, 4, 4]);
+  });
+
+  it("advances in ONE step once the drift is worth paying for", () => {
+    resolveAnchoredFreshTailStart(sessionKey, "turn-1", 4, convo);
+    // Drift of 8 crosses the threshold — the boundary jumps rather than creeping.
+    expect(resolveAnchoredFreshTailStart(sessionKey, "turn-2", 12, convo)).toBe(12);
+    // ...and the new position is then held again.
+    expect(resolveAnchoredFreshTailStart(sessionKey, "turn-3", 13, convo)).toBe(12);
+  });
+
+  it("never advances mid-turn, however far the array grows", () => {
+    resolveAnchoredFreshTailStart(sessionKey, "turn-1", 4, convo);
+    // A long tool loop drifts well past the threshold; the boundary must still not move.
+    expect(resolveAnchoredFreshTailStart(sessionKey, "turn-1", 30, convo)).toBe(4);
+  });
+});

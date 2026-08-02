@@ -22,6 +22,20 @@
 /** Bound on retained anchors so a long-lived daemon cannot accumulate one per session forever. */
 const MAX_ANCHORS = 512;
 
+/**
+ * How far the computed boundary must drift past the held one before the held one gives way.
+ *
+ * Holding WITHIN a turn stops the boundary marching on every tool cycle, but the boundary still
+ * advanced once per TURN — a one-message slide that re-wrote the message zone on every turn, so
+ * `cache_read` never grew past the stable system prefix (pinned at exactly 80,865 live, across
+ * every variant tried). Advancing in one step every N turns instead of by one every turn keeps the
+ * prefix byte-identical for the turns in between, which is the whole precondition for a hit.
+ *
+ * The cost of holding is bounded: at most this many extra messages stay verbatim in the tail, and
+ * the per-turn token bound downstream still trims them.
+ */
+const ADVANCE_STEP = 8;
+
 interface FreshTailAnchor {
   /** Identity of the turn this anchor belongs to. */
   turnKey: string;
@@ -96,20 +110,26 @@ export function resolveAnchoredFreshTailStart(
     i >= 0 && i < messages.length ? digestOf(messages[i]!.content) : "oob";
 
   const prev = anchors.get(sessionKey);
-  // Hold only while the boundary message is STILL THE SAME MESSAGE. A turn key can repeat across
-  // genuinely different arrays, and an anchor that outlives the prefix it protects would pin a
-  // boundary into unrelated content — silently keeping messages verbatim that belong in history.
-  // Verifying the message at the held index is the direct check, not a proxy for it.
-  const stillTheSamePrefix = prev !== undefined
-    && prev.turnKey === turnKey
-    && digestAt(prev.tailStart) === prev.boundaryDigest;
+  // Hold only while the boundary message is STILL THE SAME MESSAGE. An anchor that outlives the
+  // prefix it protects would pin a boundary into unrelated content — silently keeping messages
+  // verbatim that belong in history. Verifying the message at the held index is the direct check,
+  // not a proxy for it, and it is what releases the anchor after a compaction replaces the head.
+  const boundaryIntact = prev !== undefined && digestAt(prev.tailStart) === prev.boundaryDigest;
 
-  if (stillTheSamePrefix) {
-    const held = Math.min(prev.tailStart, computedTailStart);
-    // Re-set so this session becomes the most recently used entry.
-    anchors.delete(sessionKey);
-    anchors.set(sessionKey, { turnKey, tailStart: held, boundaryDigest: digestAt(held) });
-    return held;
+  if (boundaryIntact) {
+    const sameTurn = prev.turnKey === turnKey;
+    // Within a turn the boundary never advances: the array grows on every tool cycle and moving
+    // with it drops already-sent messages off the head mid-turn. Across turns it advances only once
+    // the drift is worth paying for, so the prefix stays byte-identical for the turns in between.
+    const mustAdvance = !sameTurn && computedTailStart - prev.tailStart >= ADVANCE_STEP;
+    if (!mustAdvance) {
+      // Still allow the boundary to move EARLIER — the in-flight coverage clamp widens the tail to
+      // carry unpersisted messages, and suppressing that loses a turn's own originating request.
+      const held = Math.min(prev.tailStart, computedTailStart);
+      anchors.delete(sessionKey);
+      anchors.set(sessionKey, { turnKey, tailStart: held, boundaryDigest: digestAt(held) });
+      return held;
+    }
   }
 
   anchors.delete(sessionKey);
