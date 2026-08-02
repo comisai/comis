@@ -271,7 +271,7 @@ export function createRequestBodyInjector(
             // Strip thinking from EVERY replayed assistant message
             // (including the active/last one) so the cached prefix matches the durable (LCD)
             // no-thinking form and never mutates when an assistant transitions active→historical.
-            const thinkingStripped = stripReplayThinking(result.messages as Array<Record<string, unknown>>);
+            const thinkingStripped = stripReplayThinking(result.messages as Array<Record<string, unknown>>, fenceIndex);
             if (thinkingStripped > 0) {
               // Notify the cache-break detector: this is a DELIBERATE content modification
               // (matching the durable LCD form), so a one-time read-token change as a message's
