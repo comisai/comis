@@ -793,14 +793,22 @@ describe("executeAndDeliver", () => {
         kind: "silent",
         reason: "BACKGROUND_PENDING",
       });
+      // `filtered`, not `error`: the hand-off delivered no reply ON THIS TURN, but it did not fail.
+      // Reported as an error it inflated the delivery error count and made a successful backgrounded
+      // turn read as failed in obs_delivery. The named intent of this case — activity removed with NO
+      // success paint — still holds, because only `success` paints and selects the "agent" origin.
       expect(eventBus.emit).toHaveBeenCalledWith(
         "diagnostic:message_processed",
         expect.objectContaining({
-          status: "error",
+          status: "filtered",
           finishReason: "background_pending",
-          errorKind: "precondition",
         }),
       );
+      const processed = vi.mocked(eventBus.emit).mock.calls
+        .filter(([name]) => name === "diagnostic:message_processed")
+        .map(([, payload]) => payload as { status: string; errorKind?: string });
+      expect(processed.every(p => p.status !== "error")).toBe(true);
+      expect(processed.every(p => p.errorKind === undefined)).toBe(true);
     });
 
     it("emits message:sent event carrying the real lastChunkMessageId (not block-delivery)", async () => {

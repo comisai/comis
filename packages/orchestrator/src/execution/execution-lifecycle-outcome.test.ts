@@ -55,6 +55,11 @@ describe("execution lifecycle outcome classification", () => {
     ["prompt_timeout", { status: "timeout", failureStage: "execution", errorKind: "timeout" }],
     ["input_too_large", { status: "error", failureStage: "execution", errorKind: "validation" }],
     ["error", { status: "error", failureStage: "execution", errorKind: "dependency" }],
+    // A deliberate hand-off to background execution is NOT a delivery failure: the foreground turn
+    // completed as designed and the terminal user outcome belongs to the background completion,
+    // which emits its own delivery record. Recorded as an error it inflated the delivery error count
+    // and made a successful backgrounded turn (9 tool calls, $6.87 of real work) read as failed.
+    ["background_pending", { status: "filtered" }],
   ] as const)("classifies finish reason %s", (finishReason, expected) => {
     const result = finishReason === "error"
       ? makeExecutionResult({ finishReason, terminalErrorKind: "dependency" })
