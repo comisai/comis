@@ -16,14 +16,15 @@
  * silently re-arming the live incident.
  */
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function installedSource(subpath: string): string {
   return readFileSync(
-    require.resolve(`@earendil-works/pi-ai/${subpath}`),
+    resolve(REPO_ROOT, "node_modules", "@earendil-works", "pi-ai", subpath),
     "utf8",
   );
 }
