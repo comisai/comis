@@ -66,7 +66,20 @@ function messageStructSig(m: Record<string, unknown>): string {
       if (RECALL_RE.test(text)) hadRecall = 1;
     }
   }
-  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}`;
+  // The block-TYPE list, not just the count. Three separate root-cause attempts on a live
+  // block-count-changed churn failed because `b2 -> b1` says a block vanished but never WHICH, so each
+  // attempt had to infer the mechanism from `t`/`len` movement and each inference was wrong. Types are
+  // closed vocabulary (`text`, `thinking`, `tool_use`, `tool_result`, …) — no content, no tool names,
+  // no argument values — so they are safe to log and they name the dropped block outright.
+  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}|[${blockTypes(c)}]`;
+}
+
+/** Comma-joined content-block `type` discriminators — closed vocabulary only, never any value. */
+function blockTypes(content: unknown): string {
+  if (!Array.isArray(content)) return typeof content === "string" ? "raw-string" : "none";
+  return (content as Array<Record<string, unknown>>)
+    .map((b) => (typeof b?.type === "string" ? b.type : "unknown"))
+    .join(",");
 }
 
 /** Per-message structural sigs for the prefix [0..endIdx]. */
@@ -84,7 +97,10 @@ function parseSig(
   // churn cause, reported as "unknown" on 29 of 31 signals while the printed
   // signature already showed b1→b2 (comis-moshe 2026-07-26).
   const b = /\|b(\d+)\|/.exec(sig);
-  const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); const len = /\|len(\d+)$/.exec(sig);
+  const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); // NOT end-anchored: the signature now carries a trailing `|[block,types]` field, and an anchored
+  // `len` pattern silently stopped matching when that was added — every mutation then classified as
+  // "unknown", which is the same blindness this classifier was written to remove.
+  const len = /\|len(\d+)(?:\||$)/.exec(sig);
   return {
     b: b ? Number(b[1]) : 0,
     t: t ? Number(t[1]) : 0,
