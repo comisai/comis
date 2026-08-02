@@ -16,6 +16,7 @@ type ProjectionResult = {
       duplicateProvenanceEntries: number;
       invalidProvenanceEntries: number;
       incompleteProvenanceBatches: number;
+      strippedRecallMessages: number;
     };
   };
 };
@@ -192,5 +193,67 @@ describe("structured inbound conversation projection", () => {
       "second answer",
     ]);
     expect(result.value.diagnostics.omittedLocaleRepairTurns).toBe(1);
+  });
+
+  it("carves the transient inline-recall block from an unpaired user turn", () => {
+    const sessionManager = SessionManager.inMemory("/workspace");
+    // No provenance batch: an internally dispatched turn (cron, queue steer)
+    // has no physical inbound record, so the projection keeps the entry's own
+    // text — which must still lose the per-turn recall prefix, or the replayed
+    // prefix mutates once every time that message crosses the cache fence.
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{
+        type: "text",
+        text:
+          "[Relevant context from memory: remembered fact (recorded 2026-07-01)]\n"
+          + "[scheduler] cron-job (2026-09-10T00:26:40.001Z):\nrun the daily report",
+      }],
+      timestamp: FIRST.timestamp,
+    } as never);
+    appendAssistant(sessionManager, "report sent", FIRST.timestamp + 1);
+
+    const result = projectInboundConversation(sessionManager);
+
+    expect(result.ok).toBe(true);
+    const projected = result.value.messages;
+    expect(textOf(projected[0]!)).toBe(
+      "[scheduler] cron-job (2026-09-10T00:26:40.001Z):\nrun the daily report",
+    );
+    expect(textOf(projected[0]!)).not.toContain("Relevant context from memory");
+    // The append-only SDK JSONL keeps the rendered forensic form untouched.
+    expect(textOf(result.value.sourceMessages[0]!)).toContain(
+      "Relevant context from memory",
+    );
+    expect(result.value.diagnostics).toMatchObject({
+      strippedRecallMessages: 1,
+    });
+  });
+
+  it("keeps a user-typed recall-shaped line that arrives behind the channel header", () => {
+    const sessionManager = SessionManager.inMemory("/workspace");
+    const recallShapedUserText = {
+      ...FIRST,
+      text: "[Relevant context from memory: typed by the user (recorded 2026-07-01)]",
+    } satisfies NormalizedMessage;
+    appendProvenance(sessionManager, recallShapedUserText);
+    sessionManager.appendMessage({
+      role: "user",
+      content: "wrapped request",
+      timestamp: FIRST.timestamp,
+    });
+    appendAssistant(sessionManager, "answer", FIRST.timestamp + 1);
+
+    const result = projectInboundConversation(sessionManager);
+
+    expect(result.ok).toBe(true);
+    // The physical render prefixes the channel header, so the user's own text
+    // is not at the start of the message and the start-anchored carve must
+    // leave it intact.
+    expect(textOf(result.value.messages[0]!)).toBe(
+      "[telegram] sender-a (2026-09-10T00:26:40.001Z):\n"
+      + "[Relevant context from memory: typed by the user (recorded 2026-07-01)]",
+    );
+    expect(result.value.diagnostics.strippedRecallMessages).toBe(0);
   });
 });
