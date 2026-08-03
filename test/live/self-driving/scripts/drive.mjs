@@ -18,7 +18,7 @@
 //   - Use `-` or `@/absolute/file` for credential-bearing prompts so values never enter argv/process listings.
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { comisDist, rig } from './_rig.mjs';
@@ -102,6 +102,56 @@ if (process.env.INJECT_OPTS) {
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
 // pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
+// --- per-chat drive lock -----------------------------------------------------
+// A DM reply carries NO correlation field (the wire payload is only
+// {chat_id, parse_mode, text}), and `sharedConversation` correlation is enabled only for
+// GROUP chats (negative id). So two concurrent drives on the SAME chat both accept the first
+// non-progress message and BOTH report it — which manufactured a phantom "cross-turn answer
+// bleed" during a live campaign (one driver reported the other's reply verbatim). Since the wire
+// cannot disambiguate, serialize per chat instead of guessing.
+const LOCK_PATH = `/tmp/comis-drive-${String(chatId).replace(/[^0-9-]/g, '')}.lock`;
+let lockFd;
+const releaseLock = () => {
+  if (lockFd === undefined) return;
+  try { closeSync(lockFd); } catch { /* already closed */ }
+  try { unlinkSync(LOCK_PATH); } catch { /* already removed */ }
+  lockFd = undefined;
+};
+const holderAlive = () => {
+  try {
+    const pid = Number(readFileSync(LOCK_PATH, 'utf8').trim());
+    if (!Number.isFinite(pid) || pid <= 0) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch { return false; }
+};
+const acquireLock = async (waitMsMax = 900_000) => {
+  const started = Date.now();
+  let announced = false;
+  for (;;) {
+    try {
+      lockFd = openSync(LOCK_PATH, 'wx');
+      writeFileSync(LOCK_PATH, String(process.pid));
+      return;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      if (!holderAlive()) { try { unlinkSync(LOCK_PATH); } catch { /* raced */ } continue; }
+      if (Date.now() - started > waitMsMax) {
+        throw new Error(`another drive has held ${LOCK_PATH} for >${Math.round(waitMsMax / 1000)}s; refusing to run concurrently on one chat`);
+      }
+      if (!announced) {
+        process.stderr.write(`waiting for the drive lock on chat ${chatId} (another drive is in flight)\n`);
+        announced = true;
+      }
+      await new Promise((resolve) => { setTimeout(resolve, 1500); });
+    }
+  }
+};
+for (const signal of ['exit', 'SIGINT', 'SIGTERM']) {
+  process.on(signal, () => { releaseLock(); if (signal !== 'exit') process.exit(1); });
+}
+await acquireLock();
+
 const sharedConversation = Number(chatId) < 0;
 const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;

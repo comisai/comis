@@ -166,7 +166,16 @@ fi
 # Authoritative boot record = the structured Pino log (daemon.*.log), not the journal / console
 # capture. Wait for a 'Comis daemon started' line stamped AFTER the restart mark.
 booted=""
-for _ in $(seq 1 30); do
+# The budget covers supervisor spawn + node startup + the whole boot sequence, not boot alone.
+# A cold boot on a populated data root spends ~8s before the daemon writes its FIRST log line
+# (tmux/systemd spawn, node module graph) and the boot itself can then run 20s+ — wiring channels,
+# resolving operation models, reconciling cron/follow-up ownership, seeding skills. At 30s total
+# that left ~22s of real headroom and a 22.4s boot reported "NO fresh 'Comis daemon started'" 0.8s
+# before the line landed: a healthy daemon that reads as broken, which is the exact cycle-burner
+# this boot-verify exists to retire. The loop exits the moment the line appears, so a generous
+# ceiling costs a slow rig nothing and costs a fast one nothing at all.
+BOOT_WAIT_SECS="${BOOT_WAIT_SECS:-90}"
+for _ in $(seq 1 "$BOOT_WAIT_SECS"); do
   line="$(grep -ah 'Comis daemon started' "$DATA"/logs/daemon*.log 2>/dev/null | tail -1)"
   ts="$(printf '%s' "$line" | grep -oE '"time":"[^"]+"' | head -1 | cut -d'"' -f4)"
   if [ -n "$ts" ] && [ "$(rig_epoch "$ts")" -ge "$MARK" ]; then
@@ -177,7 +186,7 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [ -z "$booted" ]; then
-  echo "NO fresh 'Comis daemon started' within 30s — diagnostics:"
+  echo "NO fresh 'Comis daemon started' within ${BOOT_WAIT_SECS}s — diagnostics:"
   if rig_is_local; then
     tail -12 "$DATA/daemon.console.log" 2>/dev/null
   else
