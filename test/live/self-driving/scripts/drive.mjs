@@ -102,6 +102,34 @@ if (process.env.INJECT_OPTS) {
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
 // pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
+// Guard the #2 mis-invocation: a sender the daemon will REFUSE at ingress.
+// `channels.telegram.allowFrom` is an ingress allowlist, so a message from an unlisted sender is
+// dropped before any turn starts. The emulator still accepts the injection and returns an inboundId,
+// so the drive LOOKS healthy and then burns the whole `maxMs` before reporting "NO SUBSTANTIVE
+// ANSWER" — indistinguishable from a wedged daemon. That cost a full 240s timeout plus a poll-loop
+// investigation (ESTABLISHED long-poll, `state:"healthy"`, both correct) before the cause turned out
+// to be a caller's `?? <invented-id>` fallback. The daemon itself logs the refusal honestly at INFO
+// ("Sender blocked by allowFrom filter", errorKind:"auth", the failing senderId, content-free
+// previewLen) — so the product was never at fault and the fix belongs here: fail BEFORE injecting
+// rather than wait out a silence we can already predict.
+try {
+  const configText = readFileSync(`${DATA}/config.yaml`, 'utf8');
+  const allowFromBlock = /allowFrom:\s*\n((?:\s*-\s*.*\n)+)/.exec(configText);
+  if (allowFromBlock) {
+    const allowed = [...allowFromBlock[1].matchAll(/-\s*"?([^"\s]+)"?/g)].map((m) => m[1]);
+    // An empty allowFrom means allow-all; only a POPULATED list can refuse.
+    if (allowed.length > 0 && !allowed.includes(String(fromUser))) {
+      console.error(
+        `drive.mjs: sender "${String(fromUser)}" is NOT in ${DATA}/config.yaml ` +
+        `channels.telegram.allowFrom (${allowed.join(', ')}). The daemon will drop this inbound at ` +
+        `the ingress gate, so this drive would time out after ${String(maxMs)}ms with a FALSE ` +
+        `"no answer". Pass an allowed chatId, or set FROMUSER to an allowed sender.`);
+      process.exit(2);
+    }
+  }
+} catch {
+  // Config unreadable (different layout/permissions) — never block a drive on the guard itself.
+}
 // --- per-chat drive lock -----------------------------------------------------
 // A DM reply carries NO correlation field (the wire payload is only
 // {chat_id, parse_mode, text}), and `sharedConversation` correlation is enabled only for
@@ -137,7 +165,10 @@ const acquireLock = async (waitMsMax = 900_000) => {
       if (error?.code !== 'EEXIST') throw error;
       if (!holderAlive()) { try { unlinkSync(LOCK_PATH); } catch { /* raced */ } continue; }
       if (Date.now() - started > waitMsMax) {
-        throw new Error(`another drive has held ${LOCK_PATH} for >${Math.round(waitMsMax / 1000)}s; refusing to run concurrently on one chat`);
+        throw new Error(
+          `another drive has held ${LOCK_PATH} for >${Math.round(waitMsMax / 1000)}s; refusing to run concurrently on one chat`,
+          { cause: error },
+        );
       }
       if (!announced) {
         process.stderr.write(`waiting for the drive lock on chat ${chatId} (another drive is in flight)\n`);
