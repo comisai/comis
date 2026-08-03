@@ -88,3 +88,51 @@ describe("catalogFromLocalePacks", () => {
     expect(onUnknown).toEqual(["he:not_a_message_id"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Script-only response locales must be able to reach an operator pack.
+//
+// The runtime can resolve a response locale to a SCRIPT-only tag (`und-Hebr`),
+// for which `new Intl.Locale("und-Hebr").language` is `undefined` — so the plain
+// language-subtag fallback cannot match an operator's `he` pack, and every runtime
+// banner fell through to English. Live: a fully-Hebrew answer carried an
+// English-only "background task failed" notice, and another carried BOTH (the model
+// wrote Hebrew, the runtime appended English).
+//
+// The fallback uses ICU likely-subtags via `maximize()`, so it is generic — no
+// language is hardcoded — and it runs LAST, after exact and plain-language matches,
+// because maximize is a probabilistic guess (`und-Cyrl` maximizes to `ru`, not `uk`).
+// It can only select an operator-supplied pack; with no pack it still yields English.
+// ---------------------------------------------------------------------------
+
+describe("createLocaleCatalog — script-only locale fallback", () => {
+  it("resolves und-Hebr to an operator he pack", () => {
+    const catalog = createLocaleCatalog({ he: { output_starved: "תשובה בעברית" } });
+    expect(catalog.resolve("und-Hebr", "output_starved")).toBe("תשובה בעברית");
+  });
+
+  it("resolves und-Arab to an operator ar pack", () => {
+    const catalog = createLocaleCatalog({ ar: { output_starved: "arabic pack" } });
+    expect(catalog.resolve("und-Arab", "output_starved")).toBe("arabic pack");
+  });
+
+  it("prefers an EXACT script-tag pack over the maximize fallback", () => {
+    const catalog = createLocaleCatalog({
+      "und-Hebr": { output_starved: "exact script pack" },
+      he: { output_starved: "language pack" },
+    });
+    expect(catalog.resolve("und-Hebr", "output_starved")).toBe("exact script pack");
+  });
+
+  it("falls back to English when no pack matches the script", () => {
+    const catalog = createLocaleCatalog({ fr: { output_starved: "french" } });
+    const resolved = catalog.resolve("und-Hebr", "output_starved");
+    expect(resolved).not.toBe("french");
+    expect(typeof resolved).toBe("string");
+  });
+
+  it("still resolves a plain language tag exactly", () => {
+    const catalog = createLocaleCatalog({ he: { output_starved: "hebrew" } });
+    expect(catalog.resolve("he", "output_starved")).toBe("hebrew");
+  });
+});

@@ -133,6 +133,22 @@ export function createLocaleCatalog(
             const languageFallback = canonicalPacks.get(languageResult.value)?.[id];
             if (languageFallback !== undefined) return languageFallback;
           }
+          // A SCRIPT-only response locale (`und-Hebr`) has no language subtag at all —
+          // `new Intl.Locale("und-Hebr").language` is `undefined` — so the fallback above cannot
+          // reach an operator's `he` pack and every runtime notice fell through to English. Live:
+          // a fully-Hebrew answer carried an English-only "background task failed" banner, and
+          // another carried BOTH (the model wrote Hebrew, the runtime appended English).
+          //
+          // `maximize()` supplies the missing subtag from ICU likely-subtags data, so this stays
+          // generic — no language is named here, and it works for any script (`und-Arab`→`ar`,
+          // `und-Hans`→`zh`). It runs LAST, after exact and plain-language matches, because
+          // maximize is a probabilistic guess (`und-Cyrl` maximizes to `ru`, not `uk`); and it can
+          // only ever select an operator-supplied pack — with no pack, English still wins.
+          const maximized = tryCatch(() => new Intl.Locale(canonical).maximize().language);
+          if (maximized.ok) {
+            const scriptFallback = canonicalPacks.get(maximized.value)?.[id];
+            if (scriptFallback !== undefined) return scriptFallback;
+          }
         }
       }
       return ENGLISH_PACK[id];
