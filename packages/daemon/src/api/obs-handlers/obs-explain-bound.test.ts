@@ -203,6 +203,36 @@ describe("boundIncidentReport — report-level bounding pass", () => {
     expect(entry!.pointer).toMatch(/depth=full/);
   });
 
+  // A live report on a long-running session read `summary: "40 tool failures across 521
+  // turns"` and `toolStats` totalling FAILED=40, while `failures[]` was EMPTY at BOTH depths —
+  // so the one section an operator opens to answer "what failed?" was blank beside a headline of
+  // forty. Every OTHER omission in this report is declared (offloads "capped at 20 … had 44",
+  // toolStats "capped at 50 … had 66", coverage.trajectory records 5000 of 8001); only this one
+  // was silent. Declare it the same way rather than letting the report contradict itself.
+  it("records a truncation when toolStats counts failures but failures[] is empty", () => {
+    const report = makeReport({
+      failures: [],
+      toolStats: {
+        read: { ok: 26, failed: 5, topErrorKind: "validation" },
+        orchestrate: { ok: 1, failed: 4, topErrorKind: "dependency" },
+      },
+    });
+    const bounded = boundIncidentReport(report, "summary");
+    const entry = bounded.truncations.find((t) => t.field === "failures");
+    expect(entry).toBeDefined();
+    expect(entry!.reason).toMatch(/9/);              // 5 + 4 counted
+    expect(entry!.reason).toMatch(/no .*detail|0 with|unavailable/i);
+  });
+
+  it("does NOT record that truncation when toolStats reports no failures", () => {
+    const report = makeReport({
+      failures: [],
+      toolStats: { read: { ok: 3, failed: 0, topErrorKind: undefined } },
+    });
+    const bounded = boundIncidentReport(report, "summary");
+    expect(bounded.truncations.find((t) => t.field === "failures")).toBeUndefined();
+  });
+
   it("truncates a 5000-char errorPreview to ≤ 200 chars", () => {
     const report = makeReport({
       failures: [makeFailure({ errorPreview: "q".repeat(5000) })],

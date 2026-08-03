@@ -153,6 +153,27 @@ export function boundIncidentReport(
     });
   }
 
+  // 2a. The INVERSE gap: toolStats can count failures that failures[] cannot show — a
+  //     long-running session whose failing records fall outside the reader's bounded window
+  //     yields `summary: "40 tool failures"` with an EMPTY failures[]. Every other omission in
+  //     this report is declared (offloads "capped at 20 … had 44", toolStats "capped at 50 …
+  //     had 66", coverage.trajectory "records: 5000" of 8001), so an operator reasonably reads
+  //     an empty list as "nothing to see". Declare this one too rather than let the report
+  //     contradict its own headline.
+  const countedFailures = Object.values(report.toolStats).reduce(
+    (total, stat) => total + (stat.failed ?? 0),
+    0,
+  );
+  if (countedFailures > 0 && failures.length === 0) {
+    truncations.push({
+      field: "failures",
+      reason:
+        `${countedFailures} counted in toolStats, 0 with a normalized preview available in the `
+        + `reader's record window — per-failure detail unavailable for this session`,
+      pointer: "obs.explain depth=full",
+    });
+  }
+
   // 2b. Cap breakerTimeline[] and offloads[] newest-first. These
   //     arrays are exempt from the structural cap (REPORT_ARRAY_FIELDS), so
   //     without a length cap here a flapping breaker / heavily-offloading
