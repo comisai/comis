@@ -89,6 +89,7 @@ import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
 import { isToolResultCarrier } from "../executor/stream-wrappers/request-body/tool-use-cycle.js";
 import {
   classifySynthesizedPlaceholders,
+  describeAssemblyHead,
   freshTailTurnKey,
   resolveAnchoredFreshTailStart,
 } from "./lcd-fresh-tail-anchor.js";
@@ -701,6 +702,11 @@ export function createLcdContextEngine(
           // — live it did not, while transcript repair was proven count-neutral (every branch tally
           // zero). Reporting each step names the inserting stage instead of leaving it to be
           // guessed at, which was wrong four times.
+          // Index 0 is the history head and, on Bedrock, a cachePoint matches from the array start —
+          // so a rewrite here costs the WHOLE prefix. Same headId + changed headDigest is a
+          // rendering instability; a changed headId is genuine re-summarization. The churn log
+          // cannot tell them apart and they need opposite fixes.
+          ...(describeAssemblyHead(assembled[0] as unknown as Record<string, unknown>) ?? {}),
           preRepairCount: assembled.length,
           rehydratedCount: rehydrated.length,
           rehydrationInjected: rehydrationMessages.length,

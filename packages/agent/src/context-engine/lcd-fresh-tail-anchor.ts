@@ -188,3 +188,34 @@ export function classifySynthesizedPlaceholders(
   }
   return { inHistory, inFreshTail, indices };
 }
+
+/**
+ * Identity + body digest of the message sitting at index 0 of the assembled array.
+ *
+ * Index 0 is the history head — normally the single LCD summary — and on Bedrock it was rewritten
+ * at turn boundaries (`content-cleared,block-count-changed` at idx 0), costing the WHOLE prefix on
+ * ~30% of calls because a cachePoint matches from the array start. Two causes need opposite fixes
+ * and look identical in the churn log: the summary ROW was replaced (re-summarization), or the same
+ * row RENDERED differently. The header carries the row's own identity (depth, descendant_count,
+ * time range), so comparing it against a digest of the body separates them: same head + different
+ * digest is a rendering instability; a changed head is re-summarization.
+ */
+export function describeAssemblyHead(
+  head: Record<string, unknown> | undefined,
+): { headId: string; headDigest: string } | undefined {
+  if (!head) return undefined;
+  const content = head.content;
+  const text = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? (content as Array<Record<string, unknown>>)
+          .map(b => (typeof b.text === "string" ? b.text : ""))
+          .join("")
+      : "";
+  if (text === "") return undefined;
+  const newline = text.indexOf("\n");
+  // The bracketed header is a closed set of structural markers — no summary body, no user content.
+  const firstLine = newline === -1 ? text.slice(0, 200) : text.slice(0, Math.min(newline, 200));
+  const headId = firstLine.startsWith("[") ? firstLine : `${String(head.role)}:non-summary`;
+  return { headId, headDigest: digestOf(text) };
+}
