@@ -67,5 +67,29 @@ describe("ensureGatewayToken", () => {
       expect(msg).toContain("secrets.db");
       expect(msg).toContain("security.storage: encrypted");
     });
+
+    // Live friction, second round: the recovery command the hint printed was
+    // `comis --token "$(comis secrets get COMIS_GATEWAY_TOKEN)" <command>`.
+    // `--token` is registered per-SUBCOMMAND (`mcp list`, `mcp connect`, …), never
+    // on the root program, so following the hint verbatim fails with
+    // `error: unknown option '--token'` — the operator is handed a command that
+    // cannot work, in the exact failure path this message exists to resolve.
+    it("does not suggest --token as a ROOT-level option", () => {
+      const msg = missMessage();
+      if (msg === "") return;
+      expect(
+        msg,
+        "`comis --token …` is not a valid invocation — --token is a subcommand option",
+      ).not.toMatch(/comis\s+--token/);
+    });
+
+    it("keeps the resolved token out of argv, matching the --token flag's own warning", () => {
+      const msg = missMessage();
+      if (msg === "") return;
+      // The --token option description itself says a token on the command line is
+      // visible via ps/proc and shell history and prefers the env var. The hint
+      // must not recommend the very thing the flag warns against.
+      expect(msg).toMatch(/COMIS_GATEWAY_TOKEN="\$\(comis secrets get COMIS_GATEWAY_TOKEN\)"/);
+    });
   });
 });

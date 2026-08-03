@@ -486,11 +486,16 @@ token lives in the **encrypted `secrets.db`**, not in `~/.comis/.env` — that f
 only `SECRETS_MASTER_KEY`. The daemon resolves the token from the store at boot; the
 CLI's pre-connect check reads only the environment, so it misses.
 
-**Fix — read it from the store and pass it through:**
+**Fix — read it from the store and pass it through the environment:**
 
 ```bash
-comis --token "$(comis secrets get COMIS_GATEWAY_TOKEN)" mcp list
+COMIS_GATEWAY_TOKEN="$(comis secrets get COMIS_GATEWAY_TOKEN)" comis mcp list
 ```
+
+`--token` is a **subcommand** option, so it goes after the subcommand
+(`comis mcp list --token "<value>"`), never before it. Prefer the environment form
+above: a token passed in `argv` is visible through `ps`/`/proc` and lands in shell
+history.
 
 <Warning>
 Do **not** run `comis init` to "regenerate" the token on a box that is already

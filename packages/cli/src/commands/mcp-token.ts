@@ -65,7 +65,7 @@ export function ensureGatewayToken(flagToken: string | undefined): void {
     "Missing COMIS_GATEWAY_TOKEN in the environment.\n" +
       "If the daemon is running, a token already exists — it is just not in the environment:\n" +
       "  • encrypted storage (`security.storage: encrypted`): the token is in `secrets.db`, not `~/.comis/.env`.\n" +
-      "    Read it and pass it through:  comis --token \"$(comis secrets get COMIS_GATEWAY_TOKEN)\" <command>\n" +
+      '    Read it and pass it through:  COMIS_GATEWAY_TOKEN="$(comis secrets get COMIS_GATEWAY_TOKEN)" comis mcp list\n' +
       "  • file storage: export COMIS_GATEWAY_TOKEN, or add it to `~/.comis/.env`.\n" +
       "Only run `comis init` on a box with NO working install — it generates a NEW token and " +
       "will break a daemon that is already serving with the current one.",
