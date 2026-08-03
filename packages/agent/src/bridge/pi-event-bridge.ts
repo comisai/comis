@@ -1362,7 +1362,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // Name the bracketed `[error_code]` the errorText carries
                 // (permission_denied / invalid_value / …) instead of a generic
                 // "check errorText" — the hint must name the exact knob (AGENTS.md §2.7).
-                hint: toolFailureHint(errorText),
+                hint: toolFailureHint(errorText, toolErrorKind),
                 // Failure-classification provenance — assigned at the mutation points above.
                 // matchedToken is untrusted tool output → sanitize+bound it
                 // exactly like errorText; the rest are enum-like/digest/number.

@@ -38,12 +38,20 @@ const SPAWN_CEILING_BINDING =
 export const GENERIC_TOOL_FAILURE_HINT =
   "Tool execution failed; inspect the protected trajectory using the trace ID and result digest";
 
+/** Field-level advice for an argument rejection — the one hint that lets a caller self-correct. */
+const VALIDATION_FIELD_HINT =
+  "Tool arguments were rejected by validation; inspect argsPreview in the protected trajectory and correct the rejected fields before retrying";
+
 /**
  * Build the WARN-log hint for a failed tool call. When `errorText` carries a
  * recognizable `[snake_case]` code, name it (the actionable category); else
  * fall back to {@link GENERIC_TOOL_FAILURE_HINT}.
+ *
+ * @param errorText Raw tool error text.
+ * @param errorKind The kind the classifier ALREADY assigned to this failure. Passing it lets a
+ *   `validation` failure get field-level advice regardless of transport — see the branch below.
  */
-export function toolFailureHint(errorText?: string): string {
+export function toolFailureHint(errorText?: string, errorKind?: string): string {
   if (errorText) {
     if (errorText.toLowerCase().includes("deletion command had no observable effect")) {
       return (
@@ -84,6 +92,15 @@ export function toolFailureHint(errorText?: string): string {
             + `to finish or stop one, or raise ${configKey}`
           );
     }
+    // The CLASSIFIER already decided this was a validation failure — trust it rather than
+    // re-deriving the class from prose. `isMcpValidationError` below matches MCP transport shapes
+    // only, so a PLATFORM tool's argument rejection fell through to the generic bracketed-code
+    // branch and got `check the policy or configuration for "invalid_value"` — interpolating a
+    // failure-CLASS code into the slot where a config key or rejected field belongs. The
+    // runtime-guard branches above still win, because each names a specific knob.
+    if (errorKind === "validation") {
+      return VALIDATION_FIELD_HINT;
+    }
     const m = BRACKETED_ERROR_CODE.exec(errorText);
     if (m) {
       const code = m[1];
@@ -95,7 +112,7 @@ export function toolFailureHint(errorText?: string): string {
       return `Tool failed (${code}) — inspect the protected trajectory for the input path, then pass a file path or use a directory-listing tool`;
     }
     if (isMcpValidationError(errorText)) {
-      return "Tool arguments were rejected by validation; inspect argsPreview in the protected trajectory and correct the rejected fields before retrying";
+      return VALIDATION_FIELD_HINT;
     }
   }
   return GENERIC_TOOL_FAILURE_HINT;
