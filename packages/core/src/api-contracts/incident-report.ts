@@ -722,7 +722,11 @@ export const IncidentReportSchema = z.object({
   ),
   /**
    * READ-coverage breadcrumb (meta-observability): did the assembler actually
-   * locate + read each source, and did every offload pointer resolve? DISTINCT
+   * locate + read each source, and was a pointer captured for every offload?
+   * `offloads.pointersResolved` counts RECORDED pointer strings — NOT a
+   * retrievability check (this report is assembled purely, with no fs access),
+   * so it can read N/N while the artifacts sit under a different session
+   * directory than the reader resolves against. DISTINCT
    * from `truncations[]` (which records SIZE-drops from the bounding
    * pass): `coverage` records whether the INPUTS were read, so a silently-empty
    * report ("0 trajectory records / 0 of N pointers resolved") is self-evident
