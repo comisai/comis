@@ -232,6 +232,28 @@ function getForkDataDir(): string {
   return forkDataDir;
 }
 
+/**
+ * Resolve the data dir a test daemon will boot on, seeding the shared model cache into it.
+ *
+ * Single owner of that pairing, so no boot path can resolve a data dir without seeding it. The
+ * harness previously seeded only the fork dir it created; a test that pre-sets `COMIS_DATA_DIR`
+ * kept its own value and got none, so its daemon cold-downloaded the ~635 MB GGUF into that temp
+ * dir — the exact >60s `beforeAll` `model-cache.ts` exists to prevent. Measured in one integration
+ * run: two 634 MB downloads plus three 60s hook timeouts around them.
+ *
+ * @param presetDataDir A data dir the caller already owns (`COMIS_DATA_DIR`), or undefined.
+ */
+export function resolveBootDataDir(
+  presetDataDir: string | undefined,
+): { dataDir: string; presetOwned: boolean } {
+  if (presetDataDir !== undefined) {
+    seedModelCache(presetDataDir);
+    return { dataDir: presetDataDir, presetOwned: true };
+  }
+  // getForkDataDir seeds the dir it creates.
+  return { dataDir: getForkDataDir(), presetOwned: false };
+}
+
 // ---------------------------------------------------------------------------
 // Port availability helper
 // ---------------------------------------------------------------------------
@@ -409,9 +431,10 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     // (oauth-login et al. expect the child to resolve <tmpHome>/.comis).
     // Tests that pre-set COMIS_DATA_DIR themselves (credential-storage-modes,
     // daemon-lifecycle, …) keep their value — we only fill the default.
-    const hadDataDirEnv = process.env["COMIS_DATA_DIR"] !== undefined;
+    const boot = resolveBootDataDir(process.env["COMIS_DATA_DIR"]);
+    const hadDataDirEnv = boot.presetOwned;
     if (!hadDataDirEnv) {
-      process.env["COMIS_DATA_DIR"] = getForkDataDir();
+      process.env["COMIS_DATA_DIR"] = boot.dataDir;
     }
 
     // Restore real provider keys (captured at module load) before boot so this
