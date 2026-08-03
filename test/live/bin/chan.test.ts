@@ -10,9 +10,12 @@
  * Scope: the PURE, side-effect-free core plus the `runVerb` dispatch with
  * injected seams — NO subprocess, NO daemon boot.
  *
- * Run under the LIVE vitest config — the bare root config excludes `test/live`
- * (0 files → false green):
- *   pnpm vitest run -c test/live/vitest.config.ts test/live/bin/chan.test.ts
+ * Runs in the `live-harness` project (`test/live/bin/vitest.config.ts`), which the
+ * root config lists — so `pnpm test` / `pnpm validate` cover it. Alone:
+ *   pnpm vitest run --project live-harness
+ * A bare `pnpm vitest run <path>` still matches no project (the root config's own
+ * `include` is empty, so it reports 0 files rather than failing) — pass the
+ * project, or the live config, when running this file directly.
  */
 
 import { describe, it, expect, vi } from "vitest";
