@@ -113,6 +113,27 @@ export type FinalAssistantResponseSync =
   | "updated_memory_only"
   | "missing";
 
+/**
+ * Why a durable replacement could not be written.
+ *
+ * `leaf_precondition_mismatch` — the append-only leaf was not the assistant message being
+ * corrected (usually a benign race). `append_failed` — the branch/append itself threw, which is
+ * the genuine storage fault. These were previously indistinguishable at every surface: one
+ * `updated_memory_only` result, one audit reason, and one WARN hint pointing at disk health.
+ */
+export type DurableReplacementFailureReason =
+  | "leaf_precondition_mismatch"
+  | "append_failed";
+
+type DurablePersistOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: DurableReplacementFailureReason };
+
+/** Optional sink so callers can report WHICH durable failure occurred. */
+export interface FinalAssistantSyncDiagnostics {
+  durableFailureReason?: DurableReplacementFailureReason;
+}
+
 function matchingAssistantLeaf(persisted: any, live: any): boolean {
   if (persisted === live) return true;
   if (persisted?.role !== "assistant" || live?.role !== "assistant") return false;
@@ -138,14 +159,17 @@ function persistAssistantReplacement(
   sessionManager: SessionManager,
   current: any,
   replacement: any,
-): boolean {
+): DurablePersistOutcome {
   const leaf = sessionManager.getLeafEntry();
   if (
     leaf?.type !== "message"
     || leaf.message.role !== "assistant"
     || !matchingAssistantLeaf(leaf.message, current)
   ) {
-    return false;
+    // The append-only leaf is not the assistant message being corrected, so the replacement
+    // cannot be branched onto it. This is normally a benign race (the leaf moved on), NOT the
+    // disk fault an undifferentiated failure signal implies.
+    return { ok: false, reason: "leaf_precondition_mismatch" };
   }
 
   const persisted = tryCatch(() => {
@@ -158,7 +182,7 @@ function persistAssistantReplacement(
       replacement as Parameters<SessionManager["appendMessage"]>[0],
     );
   });
-  return persisted.ok;
+  return persisted.ok ? { ok: true } : { ok: false, reason: "append_failed" };
 }
 
 /**
@@ -175,6 +199,7 @@ export function synchronizeFinalAssistantResponse(
   session: any,
   response: string,
   sessionManager?: SessionManager,
+  diagnostics?: FinalAssistantSyncDiagnostics,
 ): FinalAssistantResponseSync {
   const messages: any[] | undefined = session?.messages;
   if (!Array.isArray(messages)) return "missing";
@@ -205,11 +230,13 @@ export function synchronizeFinalAssistantResponse(
       ...message,
       content: [...protocolBlocks, { type: "text", text: response }],
     };
-    const durable = sessionManager === undefined
-      ? true
+    const durable: DurablePersistOutcome = sessionManager === undefined
+      ? { ok: true }
       : persistAssistantReplacement(sessionManager, message, replacement);
     messages[index] = replacement; // eslint-disable-line security/detect-object-injection
-    return durable ? "updated" : "updated_memory_only";
+    if (durable.ok) return "updated";
+    if (diagnostics !== undefined) diagnostics.durableFailureReason = durable.reason;
+    return "updated_memory_only";
   }
 
   return "missing";

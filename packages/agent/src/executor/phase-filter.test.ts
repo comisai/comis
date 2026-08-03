@@ -506,6 +506,7 @@ describe("synchronize final assistant response", () => {
     session: unknown,
     response: string,
     sessionManager?: SessionManager,
+    diagnostics?: { durableFailureReason?: string },
   ): "unchanged" | "updated" | "updated_memory_only" | "missing" {
     const candidate = (phaseFilter as Record<string, unknown>)
       .synchronizeFinalAssistantResponse;
@@ -514,10 +515,12 @@ describe("synchronize final assistant response", () => {
       session: unknown,
       response: string,
       sessionManager?: SessionManager,
+      diagnostics?: { durableFailureReason?: string },
     ) => "unchanged" | "updated" | "updated_memory_only" | "missing")(
       session,
       response,
       sessionManager,
+      diagnostics,
     );
   }
 
@@ -618,6 +621,75 @@ describe("synchronize final assistant response", () => {
           (entry) => entry.type === "message" && entry.message.role === "assistant",
         ),
       ).toHaveLength(2);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  // A live rig logged 76 `response.persistence_projection_guard` audit rows, all carrying the
+  // single reason `durable_replacement_unavailable`, and a WARN telling the operator to "inspect
+  // the session JSONL leaf and disk health". Two unrelated causes collapse into that one signal:
+  // the leaf precondition simply not holding (a benign race — the leaf moved on), and an actual
+  // append/branch failure (the disk problem the hint describes). An operator chasing 76 rows was
+  // pointed at disk health for what is normally the benign case.
+  it("distinguishes a leaf-precondition mismatch from a real append failure", () => {
+    const scratch = mkdtempSync(resolve(tmpdir(), "final-assistant-sync-reason-"));
+    try {
+      const manager = SessionManager.create(scratch, scratch);
+      // The on-disk leaf is a USER message, so the assistant-leaf precondition cannot hold.
+      manager.appendMessage({ role: "user", content: "hello", timestamp: 1 } as never);
+
+      const liveSession = {
+        messages: [
+          { role: "user", content: "hello", timestamp: 1 },
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "unverified claim" }],
+            stopReason: "stop",
+            timestamp: 2,
+          },
+        ],
+      };
+      const diagnostics: { durableFailureReason?: string } = {};
+      expect(synchronize(liveSession, "corrected", manager, diagnostics))
+        .toBe("updated_memory_only");
+      expect(diagnostics.durableFailureReason).toBe("leaf_precondition_mismatch");
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("reports append_failed when the durable write itself throws", () => {
+    const scratch = mkdtempSync(resolve(tmpdir(), "final-assistant-sync-throw-"));
+    try {
+      const manager = SessionManager.create(scratch, scratch);
+      const user = { role: "user", content: "hi", timestamp: 1 };
+      const rejected = {
+        role: "assistant",
+        content: [{ type: "text", text: "unverified" }],
+        stopReason: "stop",
+        timestamp: 2,
+      };
+      manager.appendMessage(user as never);
+      manager.appendMessage(rejected as never);
+      // Precondition HOLDS (leaf is the matching assistant), but the write throws.
+      const boom = manager as unknown as { appendMessage: unknown };
+      const realAppend = boom.appendMessage;
+      let calls = 0;
+      void realAppend;
+      boom.appendMessage = (): never => {
+        calls += 1;
+        throw new Error("ENOSPC: simulated disk failure");
+      };
+
+      const liveSession = {
+        messages: [structuredClone(user), structuredClone(rejected)],
+      };
+      const diagnostics: { durableFailureReason?: string } = {};
+      expect(synchronize(liveSession, "corrected", manager, diagnostics))
+        .toBe("updated_memory_only");
+      expect(calls).toBeGreaterThan(0);
+      expect(diagnostics.durableFailureReason).toBe("append_failed");
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
