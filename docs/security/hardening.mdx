@@ -160,19 +160,33 @@ These items strengthen your security posture significantly. They are important f
   </Step>
 
   <Step title="Enable the approval workflow">
-    Require human approval for destructive agent actions:
+    Wire the operator-backed approval gate into the execution paths that implement it:
 
     ```yaml title="~/.comis/config.yaml"
     approvals:
       enabled: true
-      defaultMode: auto
+      defaultTimeoutMs: 300000
+      denialCacheTtlMs: 60000
+      batchApprovalTtlMs: 0
     ```
 
-    This pauses execution when an agent attempts a destructive action (like deleting a file) and waits for your approval before proceeding. If you do not respond within the timeout, the action is automatically denied.
+    Enabling the gate makes the paths that submit approval requests -- such as the
+    `orchestrate` pre-flight, which submits one request for a script's statically
+    extracted capability footprint -- pause for an operator decision, and deny the
+    action if nobody responds within the timeout. Setting `batchApprovalTtlMs: 0`
+    disables the approval cache so each request is decided on its own.
 
-    See [Approvals](/security/approvals) for the full configuration including custom rules and timeout settings.
+    Enabling approvals does **not**, by itself, gate every destructive operation:
+    there is no general rule evaluator that classifies arbitrary actions (such as a
+    file deletion) and forwards them to the gate, and the `approvals.rules` /
+    `approvals.defaultMode` fields are accepted by the schema without being
+    evaluated. After enabling, verify each path that matters to you -- a pending
+    request is the only proof that a path reached the gate. See
+    [Approvals](/security/approvals) for which fields take effect.
 
-    **Why:** Prevents agents from taking irreversible actions without your knowledge. This is especially important for agents with broad tool access.
+    **Why:** Prevents agents from taking irreversible actions without your knowledge
+    on the paths that implement the gate. For operations outside those paths, rely on
+    the tool-policy profile and the workspace/sandbox boundary instead.
   </Step>
 
   <Step title="Review tool policy profiles">
