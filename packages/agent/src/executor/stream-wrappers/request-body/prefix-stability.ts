@@ -292,6 +292,26 @@ export function runPrefixStabilityDiagnostic(
 
   // A divergence at/below the fence is a mutation of content we are trying to CACHE — a
   // wasted cache write. (A divergence ABOVE the fence is just new tail content = benign growth.)
+  // Per-CALL divergence probe, independent of the WARN threshold. The WARN needs 3 mutations in a
+  // window before it says anything, so a call that lost its whole cached prefix could produce no
+  // line at all — which is what made a read-0 call impossible to attribute. Content-free: the index
+  // plus the closed-vocabulary structural signature, never message text.
+  if (fd >= 0) {
+    logger.debug(
+      {
+        step: "prefix-divergence-probe",
+        firstDivergentIndex: fd,
+        withinFence: fd <= diagFenceIdx,
+        fenceIndex: diagFenceIdx,
+        prevSig: prev.fullSigs?.[fd],
+        currSig: fullSigs[fd],
+        messageCount: msgs.length,
+        sessionKey: config.sessionKey,
+      },
+      "Prefix divergence probe",
+    );
+  }
+
   if (fd >= 0 && fd <= diagFenceIdx) {
     const pSig = prev.fullSigs?.[fd];
     const cSig = fullSigs[fd];
