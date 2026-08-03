@@ -224,11 +224,20 @@ function stripSkillsContent(text: string): string {
 /**
  * Assemble result array with split injection.
  *
- * Layout: head + compaction + [position1] + prior history +
- *         [current-turn context] + latest user turn + current-turn continuation.
- * Position-1 message goes right after the compaction summary (stable KV-cache prefix).
- * Dynamic context goes immediately before the latest user turn so runtime
- * context cannot displace the current request as the model's final instruction.
+ * Layout: head + compaction + prior history +
+ *         [position1] + [current-turn context] + latest user turn + current-turn continuation.
+ *
+ * BOTH injections sit in the UNCACHED TAIL, immediately before the latest user turn. Injecting the
+ * position-1 message right after the compaction summary was intended as a stable KV-cache prefix,
+ * but it is rebuilt every turn from runtime state, so it re-wrote index 1 turn after turn and shifted
+ * every message behind it. Measured on comis-moshe 2026-08-02: exactly 2 messages injected on the
+ * FIRST assembly of every turn and none during the tool loop, with the churn classifier reporting
+ * `structural-shift` at index 1 — and `cache_read` pinned at exactly 80,865 because only the system
+ * prefix, which sits ahead of the insertion, ever survived.
+ *
+ * Both stay ahead of the latest user turn, so runtime context still cannot displace the current
+ * request as the model's final instruction. Same trade as `deferRecallToUncachedTail`: visible to
+ * the model, never part of the cached prefix.
  */
 function assembleResult(
   messages: AgentMessage[],
@@ -238,7 +247,6 @@ function assembleResult(
 ): AgentMessage[] {
   const result: AgentMessage[] = [];
   result.push(...messages.slice(0, compactionIdx + 1)); // head + compaction summary
-  if (position1Message) result.push(position1Message);
 
   const tail = messages.slice(compactionIdx + 1);
   let latestUserIdx = tail.length;
@@ -250,6 +258,7 @@ function assembleResult(
   }
 
   result.push(...tail.slice(0, latestUserIdx));
+  if (position1Message) result.push(position1Message);
   if (currentTurnMessage) result.push(currentTurnMessage);
   result.push(...tail.slice(latestUserIdx));
   return result;

@@ -84,8 +84,15 @@ import type { ContextEngineConfig } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
-import { sanitizeToolUseResultPairing } from "./transcript-repair.js";
+import { SYNTHESIZED_RESULT_MARKER, sanitizeToolUseResultPairing, type TranscriptRepairStats } from "./transcript-repair.js";
 import { resolveClampedFreshTailTurns } from "../model/fresh-tail-clamp.js";
+import { isToolResultCarrier } from "../executor/stream-wrappers/request-body/tool-use-cycle.js";
+import {
+  classifySynthesizedPlaceholders,
+  describeAssemblyHead,
+  freshTailTurnKey,
+  resolveAnchoredFreshTailStart,
+} from "./lcd-fresh-tail-anchor.js";
 import {
   measureRepresentedCoverage,
   resolveFreshTailStart,
@@ -273,7 +280,22 @@ export function createLcdContextEngine(
       // lcd-coverage.ts owns the invariant + why the clamp needs a readable scope.
       const scopeIsReadable = deps.agentId !== undefined && deps.tenantId !== undefined;
       const stepBoundary = freshTailBoundaryIndex(liveMessages, clampedFreshTailTurns);
-      const tailStart = resolveFreshTailStart(stepBoundary, persistedMsgCount, scopeIsReadable);
+      const computedTailStart = resolveFreshTailStart(stepBoundary, persistedMsgCount, scopeIsReadable);
+      // The boundary is derived from the array LENGTH, which grows on every tool cycle — so
+      // recomputing it per CALL marched it forward mid-turn and dropped already-sent messages off
+      // the head, rewriting the cached prefix on each call (0.0% hit ratio on Bedrock). Pick it once
+      // per turn and hold it for that turn's tool loop; it advances normally at the next turn, so
+      // history still folds into summaries at the same rate.
+      const turnKey = freshTailTurnKey(
+        liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
+        (m) => isToolResultCarrier(m),
+      );
+      const tailStart = resolveAnchoredFreshTailStart(
+        deps.sessionKey,
+        turnKey,
+        computedTailStart,
+        liveMessages as unknown as ReadonlyArray<Record<string, unknown>>,
+      );
       // The fresh tail is sliced VERBATIM from the live array (it bypasses the
       // store, so the ingest-time neutralization in executor/lcd-ingest.ts does not
       // reach it). Neutralize any forged context-boundary markers an assistant turn
@@ -296,6 +318,9 @@ export function createLcdContextEngine(
           // shape that used to lose the user's own request.
           stepBoundary,
           persistedMsgCount,
+          // `heldByTurnAnchor > 0` means the boundary was held still for this turn instead of
+          // marching with the array — the difference between a cached prefix and a rewritten one.
+          heldByTurnAnchor: Math.max(0, computedTailStart - tailStart),
           inFlightGapCovered: Math.max(0, stepBoundary - tailStart),
           agentId: deps.agentId,
           sessionKey: deps.sessionKey,
@@ -626,7 +651,11 @@ export function createLcdContextEngine(
       // 7. TRANSCRIPT REPAIR — the FINAL step. Provider-valid pairing on
       //    ANY input: out-of-order results re-placed, unpaired calls get a marked
       //    synthesized result, orphan/duplicate results dropped.
-      const repaired = sanitizeToolUseResultPairing(normalized, now());
+      const repairStats: TranscriptRepairStats = {
+        orphanResults: 0, duplicateResults: 0, synthesized: 0,
+        duplicateEmissions: 0, callIdsInMultipleTurns: 0,
+      };
+      const repaired = sanitizeToolUseResultPairing(normalized, now(), repairStats);
 
       // Pre-flight fit check — enforce assembledInputTokens ≤ effectiveWindow − outputHeadroom.
       // Security-pinned messages are filtered via isSecurityRelevantMessage and NEVER evicted.
@@ -668,6 +697,39 @@ export function createLcdContextEngine(
           historyCount: budgeted.length,
           freshTailCount: freshTail.length,
           assembledCount: repaired.length,
+          // The count at EVERY step between the concatenation and the logged total. `assembled` is
+          // `[...budgeted, ...freshTail]`, so preRepairCount MUST equal historyCount+freshTailCount
+          // — live it did not, while transcript repair was proven count-neutral (every branch tally
+          // zero). Reporting each step names the inserting stage instead of leaving it to be
+          // guessed at, which was wrong four times.
+          // Index 0 is the history head and, on Bedrock, a cachePoint matches from the array start —
+          // so a rewrite here costs the WHOLE prefix. Same headId + changed headDigest is a
+          // rendering instability; a changed headId is genuine re-summarization. The churn log
+          // cannot tell them apart and they need opposite fixes.
+          ...(describeAssemblyHead(assembled[0] as unknown as Record<string, unknown>) ?? {}),
+          preRepairCount: assembled.length,
+          rehydratedCount: rehydrated.length,
+          rehydrationInjected: rehydrationMessages.length,
+          normalizedCount: normalized.length,
+          // Which repair branch moved the count. Only synthesis and a duplicate EMISSION can raise
+          // it, and neither was named in any log — the gap between assembledCount and
+          // historyCount+freshTailCount had to be guessed at, wrongly, three times.
+          repair: repairStats,
+          // WHICH seam orphaned a tool call. `assembledCount` exceeding
+          // historyCount + freshTailCount means transcript repair synthesized placeholders, and an
+          // insertion shifts every index after it — re-writing the cached prefix. Naming the side
+          // is what separates the eviction boundary from the fresh-tail slice; inferring it from
+          // the code shape got it wrong once.
+          ...(() => {
+            const p = classifySynthesizedPlaceholders(
+              repaired as unknown as ReadonlyArray<Record<string, unknown>>,
+              budgeted.length,
+              SYNTHESIZED_RESULT_MARKER,
+            );
+            return p.inHistory + p.inFreshTail > 0
+              ? { synthesizedInHistory: p.inHistory, synthesizedInFreshTail: p.inFreshTail, synthesizedAt: p.indices }
+              : {};
+          })(),
           // The coverage reconciliation, inline: `liveCount` is what the
           // assembled array must account for, `coverageShortfall` is what it
           // failed to (0 on every healthy call).

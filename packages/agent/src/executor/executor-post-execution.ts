@@ -448,6 +448,36 @@ const PAIRED_MIN_COMBINED_CHARS = 80;
  * @param agentResponse - Agent response text
  * @returns true if the turn qualifies for memory storage
  */
+/**
+ * Finish reasons whose reply is genuine model output and may become durable
+ * paired memory. Every other reason means the user-visible text was
+ * SUBSTITUTED by the runtime (the silent-recovery fallback, the
+ * prepare/assemble failure replies, a context-exhausted or budget notice) or
+ * was truncated mid-thought — none of which is a thing the agent said.
+ *
+ * Persisting one is a durable falsehood rather than a lost memory: recall
+ * later injects it as `[agent] <runtime failure text>` past context, so the
+ * model reads a manufactured failure as its own history and repeats it. Live,
+ * that ratcheted into refusing benign owner requests as prompt injection.
+ *
+ * `completed_with_tool_errors` IS eligible — the turn produced real model text
+ * despite a failing tool. An absent reason predates the outcome plumbing and
+ * stays eligible so the common path is unchanged.
+ */
+const PAIRED_MEMORY_ELIGIBLE_FINISH_REASONS: ReadonlySet<string> = new Set([
+  "stop",
+  "completed_with_tool_errors",
+]);
+
+/**
+ * Whether a turn's outcome allows its reply to enter paired conversation
+ * memory. See {@link PAIRED_MEMORY_ELIGIBLE_FINISH_REASONS}.
+ */
+export function isPairedMemoryEligibleOutcome(finishReason: string | undefined): boolean {
+  if (finishReason === undefined) return true;
+  return PAIRED_MEMORY_ELIGIBLE_FINISH_REASONS.has(finishReason);
+}
+
 export function shouldStorePairedMemory(userText: string, agentResponse: string): boolean {
   const userLen = userText.trim().length;
   if (userLen < PAIRED_MIN_USER_CHARS) return false;
@@ -2229,6 +2259,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     deps.logger.debug(
       { agentId: effectiveAgentId, sessionKey: formattedKey, hint: "Silent-sentinel response (NO_REPLY / HEARTBEAT_OK / [SILENT]) skipped from paired memory" },
       "Paired memory skipped: silent-sentinel response",
+    );
+  } else if (!isPairedMemoryEligibleOutcome(result.finishReason)) {
+    // The reply the user saw was substituted by the runtime, not produced by
+    // the model. Storing it would recall as `[agent] <runtime failure text>`
+    // on later turns — the model reading a manufactured failure as its own
+    // history. WARN, not DEBUG: an operator should see that a turn degraded
+    // hard enough to be withheld from the agent's durable memory.
+    deps.logger.warn(
+      {
+        agentId: effectiveAgentId,
+        sessionKey: formattedKey,
+        finishReason: result.finishReason,
+        errorKind: "precondition" as ErrorKind,
+        hint: "the turn ended degraded, so its user-visible reply was runtime-generated rather than model output and was withheld from durable memory; investigate the finishReason if this recurs",
+      },
+      "Paired memory skipped: degraded turn outcome",
     );
   } else if (
     deps.memoryPort &&

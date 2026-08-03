@@ -145,3 +145,123 @@ describe("runPrefixStabilityDiagnostic — onPrefixUnstable system callback", ()
     expect((logger as unknown as { warn: ReturnType<typeof vi.fn> }).warn).not.toHaveBeenCalled();
   });
 });
+
+describe("runPrefixStabilityDiagnostic — a sliding history window is the costliest churn", () => {
+  const sessionKey = "tenant:user:slide";
+
+  beforeEach(() => {
+    sessionPrefixStability.delete(sessionKey);
+  });
+
+  /**
+   * LIVE INCIDENT (comis-moshe 2026-08-02). Across one turn's tool loop the assembled
+   * array stayed pinned at 17 messages while the content at every index shifted by two
+   * per call — the LCD fresh-tail slice (`freshTailSteps: 8`) is recomputed per CALL, so
+   * each tool cycle slid the window and dropped messages off the head. Measured effect:
+   * `cache_read_input_tokens` 0 on every call and ~101k cache CREATION re-paid each time
+   * — a 0.0% hit ratio.
+   *
+   * The diagnostic reported ZERO churn WARNs throughout. A fence that shrinks was read as
+   * "compaction — (re)baseline" and cleared the accumulated mutation window, and a sliding
+   * window makes the fence oscillate, so the counter was reset before it could ever reach
+   * its threshold. The single most expensive cache event the diagnostic exists to catch
+   * was the one shape that silenced it.
+   */
+  function slidingCall(offset: number) {
+    // A fixed-size window over a growing conversation: same length, contents shifted. The window
+    // advances by a user+assistant PAIR per tool cycle, exactly as measured live — which is why
+    // the role at any given index is unchanged while its content is not.
+    const messages = Array.from({ length: 7 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: [{ type: "text", text: `msg-${i + offset * 2}` }],
+    }));
+    return { messages } as Record<string, unknown>;
+  }
+
+  it("still counts cached-region mutations when the fence oscillates", () => {
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    // The fence oscillates exactly as it did live (16, 18, 16, 16 → here 4, 3, 4, 3 …).
+    let call = 0;
+    const fences = [6, 5, 6, 5, 6, 5];
+    const config = {
+      sessionKey,
+      getCacheFenceIndex: () => fences[Math.min(call, fences.length - 1)],
+      onPrefixUnstable,
+    } as unknown as RequestBodyInjectorConfig;
+
+    for (call = 0; call < 6; call++) {
+      runPrefixStabilityDiagnostic(slidingCall(call), config, logger);
+    }
+
+    // Every call rewrote the whole cached prefix. The diagnostic must say so — and must name
+    // the CAUSE (the window moved) rather than the per-message symptom at the divergence.
+    expect(onPrefixUnstable).toHaveBeenCalled();
+    const payload = onPrefixUnstable.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(String(payload.mutationClass)).toContain("history-window-slid");
+  });
+
+  it("counts a window that slides AND shrinks (a slide is not a compaction fold)", () => {
+    // Measured live at 15:27 on comis-moshe: the array went 19 -> 17 messages while the same
+    // messages were merely re-indexed, and the hit ratio stayed 0.0%. Reading any shortening as
+    // a compaction fold re-baselined the counter and reported nothing at all.
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    let call = 0;
+    // Fence dips on every other call, exactly as an oscillating fence does live.
+    const fences = [8, 6, 8, 6, 8, 6];
+    const config = {
+      sessionKey,
+      getCacheFenceIndex: () => fences[Math.min(call, fences.length - 1)],
+      onPrefixUnstable,
+    } as unknown as RequestBodyInjectorConfig;
+
+    // Each call slides by a pair AND drops two messages off the end.
+    const shrinkingSlide = (offset: number) =>
+      ({
+        messages: Array.from({ length: 11 - offset }, (_, i) => ({
+          role: i % 2 === 0 ? "user" : "assistant",
+          content: [{ type: "text", text: `msg-${i + offset * 2}` }],
+        })),
+      }) as Record<string, unknown>;
+
+    for (call = 0; call < 5; call++) {
+      runPrefixStabilityDiagnostic(shrinkingSlide(call), config, logger);
+    }
+
+    expect(onPrefixUnstable).toHaveBeenCalled();
+    const payload = onPrefixUnstable.mock.calls.at(-1)![0] as Record<string, unknown>;
+    expect(String(payload.mutationClass)).toContain("history-window-slid");
+  });
+
+  it("still treats a real compaction fold as a one-time rebuild, not churn", () => {
+    // The fold must stay silent: many messages collapse into a summary and NOTHING is re-indexed.
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    let fence = 8;
+    const config = {
+      sessionKey,
+      getCacheFenceIndex: () => fence,
+      onPrefixUnstable,
+    } as unknown as RequestBodyInjectorConfig;
+
+    const long = {
+      messages: Array.from({ length: 10 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: `original-${i}` }],
+      })),
+    } as Record<string, unknown>;
+    const folded = {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "SUMMARY of the conversation so far" }] },
+        { role: "assistant", content: [{ type: "text", text: "ack" }] },
+      ],
+    } as Record<string, unknown>;
+
+    runPrefixStabilityDiagnostic(long, config, logger);
+    fence = 1;
+    for (let i = 0; i < 4; i++) runPrefixStabilityDiagnostic(folded, config, logger);
+
+    expect(onPrefixUnstable).not.toHaveBeenCalled();
+  });
+});
