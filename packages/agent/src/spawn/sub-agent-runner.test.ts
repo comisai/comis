@@ -6583,7 +6583,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
 // `completed_with_tool_errors` — a first-class *completed* outcome that
 // system-health documents as degraded-but-finished — fell to the "Unexpected
 // finish reason" default and was logged `Sub-agent aborted` with a hardcoded
-// errorKind:"resource". Live consequence: a fully-grounded fleet report was
+// errorKind:"resource". Live consequence: a fully-grounded report was
 // delivered to the user under "⚠️ This background task failed", and the operator
 // saw a capacity-shaped errorKind for a turn with no resource problem. It hit 12
 // turns in one window; `background_pending` (a hand-off) has the same shape.
