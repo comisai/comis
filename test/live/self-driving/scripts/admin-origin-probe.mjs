@@ -39,7 +39,13 @@ const MANAGE_METHODS = {
   channels:  ["list", "get", "enable", "disable", "restart"],            // configure → config.* (covered separately)
   heartbeat: ["states", "get", "update", "trigger"],                     // status → heartbeat.states
   mcp:       ["list", "status", "connect", "disconnect", "reconnect"],
-  memory:    ["stats", "browse", "delete", "forget", "flush", "export", "pin", "unpin"],
+  // NOTE: a tool ACTION is not always an RPC of the same name. `memory_manage forget` is a COMPOSED
+  // action — "find and remove all scoped entries matching a natural-language query" — implemented as
+  // memory.search_files (read, correctly `rpc`-scoped) + memory.delete (destructive, admin-scoped).
+  // There is no `memory.forget` contract, so listing it here asserted a method that cannot exist and
+  // reported FAIL on a correctly-gated system. Its destructive half is covered by `delete` below; a
+  // security oracle that cries wolf is worse than no oracle, because it trains the runner to skip it.
+  memory:    ["stats", "browse", "delete", "flush", "export", "pin", "unpin", "change_visibility"],
   models:    ["list", "test", "list_providers"],
   providers: ["list", "get", "create", "update", "delete", "enable", "disable"],
   tokens:    ["list", "create", "revoke", "rotate"],

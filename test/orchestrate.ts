@@ -29,7 +29,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
 const RESULTS_FILE = resolve(__dirname, ".test-results.json");
 const VITEST_CONFIG = resolve(__dirname, "vitest.config.ts");
-const TEST_RUN_TIMEOUT_MS = 1_800_000;
+// Budget for the WHOLE integration+live run this driver shells out to, not for one file.
+// 30 minutes fit only while every daemon-booting `test/live/**` scenario ran in parallel forks —
+// the scheduling that produced 60s boot timeouts and `Another daemon instance is already running`
+// collisions. Those 143 files now run one daemon at a time (see the `live-scenarios` project in
+// test/vitest.config.ts), which is slower by design: the tier measured 2869s, so the old cap killed
+// a healthy run at 1802s and reported it as a failure with no test summary at all. 60 minutes keeps
+// ~25% headroom over the measured time while still failing a genuinely hung run.
+const TEST_RUN_TIMEOUT_MS = 3_600_000;
 
 // ---------------------------------------------------------------------------
 // Types (Vitest JSON reporter output)

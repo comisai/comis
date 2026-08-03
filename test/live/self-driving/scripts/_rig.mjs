@@ -72,7 +72,14 @@ const dataDir = pick(process.env.COMIS_DATA_DIR, process.env.DATA, fileVars.DATA
 
 // The Comis code root on this box — an installed comisai package dir OR a source checkout.
 const codeRoot = (() => {
-  const explicit = pick(process.env.COMIS_SRC, fileVars.PKG, fileVars.SRC);
+  // Explicit env wins over the rendered rig env — the same precedence rig_load_env enforces in the
+  // shell layer, and the one `scripts/README.md` documents ("All defaults are overridable inline:
+  // PKG=/usr/lib/node_modules/comisai ./deploy-dist.sh"). Reading PKG ONLY from the rig file made an
+  // explicit `PKG=<isolated install>` silently fall through to the candidate list below, whose first
+  // entry is the everyday `$COMIS_HOME/.npm-global/...` install — so a helper pointed at one build
+  // resolved its dist and third-party deps from another. That is the wrong-build false result the
+  // comment below exists to prevent, reached through the env instead of through a stale checkout.
+  const explicit = pick(process.env.COMIS_SRC, process.env.PKG, fileVars.PKG, fileVars.SRC);
   if (explicit) return explicit;
   // Local mode: the checkout this helper lives in IS the build under test — never an installed
   // package elsewhere on the machine. Resolving to a stale global `comisai` here would reproduce

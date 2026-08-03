@@ -46,6 +46,40 @@ function extractFn(name: string): string {
   return lines.slice(start, end + 1).join("\n");
 }
 
+/**
+ * Extract a function with its absolute HOST paths rewritten into a work dir.
+ *
+ * A sourced installer function probes and mutates real paths (`/etc/systemd/system/comis.service`,
+ * `/etc/apparmor.d/bwrap`, `/home/<user>/…`), so a harness that does not rewrite them inherits
+ * whatever the host happens to have. On a box with a real Comis install that is not a flake but two
+ * distinct hazards: the artifact probe correctly reports "artifacts present" and the no-op assertions
+ * below fail, and a `maybe_sudo() { "$@"; }` passthrough turns an uninstall step into a REAL
+ * `rm -f /etc/systemd/system/comis.service` — a test suite that deletes a live install's unit file
+ * as root. Rewriting the paths keeps each test's premise self-contained.
+ */
+function extractFnAtPaths(name: string, replacements: Record<string, string>): string {
+  let fn = extractFn(name);
+  for (const [original, replacement] of Object.entries(replacements)) {
+    fn = fn.replaceAll(original, replacement);
+  }
+  return fn;
+}
+
+/** Every absolute host path `full_uninstall_artifacts_present` probes, aimed at a missing work-dir path. */
+function absentArtifactPaths(work: string): Record<string, string> {
+  return {
+    "/etc/systemd/system/comis.service": join(work, "missing-comis-unit"),
+    "/etc/systemd/system/comis-xvfb.service": join(work, "missing-xvfb-unit"),
+    "/etc/tmpfiles.d/comis-x11.conf": join(work, "missing-tmpfiles"),
+    "/run/comis-x11": join(work, "missing-runtime"),
+    "/etc/sudoers.d/comis": join(work, "missing-sudoers"),
+    "/etc/comis": join(work, "missing-config"),
+    "/var/log/comis": join(work, "missing-logs"),
+    "/etc/apparmor.d/bwrap": join(work, "missing-apparmor"),
+    "/home/": `${join(work, "home")}/`,
+  };
+}
+
 function runHarness(body: string, env: Record<string, string> = {}): { code: number; out: string } {
   const work = makeWorkDir();
   const harnessPath = join(work, "harness.sh");
@@ -97,9 +131,14 @@ describe("install.sh full dedicated-user uninstall", () => {
 
   it("treats a repeated full removal as a no-op instead of targeting root", () => {
     const work = makeWorkDir();
+    // The probe reads absolute host paths, so without this rewrite the assertion below states
+    // "this host has no Comis artifacts" — true on a clean runner, false on any box with a real
+    // install, where the installer then CORRECTLY refuses and the test fails for the wrong reason.
+    const artifactsFn = extractFnAtPaths("full_uninstall_artifacts_present", absentArtifactPaths(work));
     const result = runHarness(
       sourcedHarness([
         'HOME="/root"',
+        artifactsFn,
         'OS="linux"',
         'DRY_RUN="0"',
         'PURGE="1"',
@@ -143,9 +182,13 @@ describe("install.sh full dedicated-user uninstall", () => {
 
   it("treats a preserved preexisting same-name group as a repeated-removal no-op", () => {
     const work = makeWorkDir();
+    // Same host-path rewrite as above: the subject here is the group-only no-op decision, not
+    // whatever artifacts the machine running the suite happens to carry.
+    const artifactsFn = extractFnAtPaths("full_uninstall_artifacts_present", absentArtifactPaths(work));
     const result = runHarness(
       sourcedHarness([
         'HOME="/root"',
+        artifactsFn,
         'OS="linux"',
         'DRY_RUN="0"',
         'PURGE="1"',
@@ -888,10 +931,19 @@ describe("install.sh full dedicated-user uninstall", () => {
   it("stops a loaded system service when its unit file was already removed", () => {
     const work = makeWorkDir();
     const callLog = join(work, "systemctl-calls");
+    // "already removed" must be TRUE for this test, and the only way to guarantee it is to aim the
+    // unit path at a missing work-dir file. Sourced as-is the function targets
+    // /etc/systemd/system/comis.service, and with `maybe_sudo() { "$@"; }` below the removal branch
+    // runs a REAL `rm -f` on it — on this repo's own VPS (tests run as root there) that deletes the
+    // live install's unit file. Permissions, not the suite, were what stopped it.
+    const uninstallFn = extractFnAtPaths("uninstall_systemd_unit", {
+      "/etc/systemd/system/comis.service": join(work, "missing-comis-unit"),
+    });
     const result = runHarness(
       sourcedHarness([
         'DRY_RUN="0"',
         'SERVICE_ACTIVE="1"',
+        uninstallFn,
         `systemctl() { echo "$*" >> "${callLog}"; case "$1" in is-active) [[ "$SERVICE_ACTIVE" == "1" ]] ;; is-enabled) return 1 ;; disable) SERVICE_ACTIVE="0" ;; show) case "$*" in *ActiveState*) echo inactive ;; *UnitFileState*) echo disabled ;; esac ;; *) return 0 ;; esac; }`,
         'maybe_sudo() { "$@"; }',
         'ui_error() { echo "ERROR:$*"; }',
@@ -1630,5 +1682,29 @@ describe("install.sh full dedicated-user uninstall", () => {
     expect(preflightArtifactsFn).toContain("/etc/apparmor.d/bwrap");
     expect(extractFn("preflight_full_uninstall")).toContain("remove_empty_install_receipt_dir");
     expect(extractFn("uninstall_install_receipt")).toContain("remove_empty_install_receipt_dir");
+  });
+
+  // Drift guard for the rewrite the harness depends on. A newly probed or removed host path in
+  // install.sh silently re-couples these tests to the machine running them: the no-op assertions
+  // then depend on whether THIS box has a Comis install, and a passthrough `maybe_sudo` can reach
+  // the real path. Both hazards are invisible on a clean runner, so assert the rewrite is total
+  // rather than waiting for a box that has the artifact.
+  it("rewrites every absolute host path the harness sources", () => {
+    // Anchored: only a path that STARTS a literal counts. Unanchored, the `/home/` inside a
+    // successfully rewritten `<work>/home/<user>` reads as an un-rewritten host path.
+    const hostPath = /(?<![A-Za-z0-9._$}/-])\/(?:etc|run|var|home|usr|opt)\/[A-Za-z0-9._${}/-]*/g;
+    const probeRoot = "/tmp/comis-probe-root";
+    const cases: ReadonlyArray<[string, Record<string, string>]> = [
+      ["full_uninstall_artifacts_present", absentArtifactPaths(probeRoot)],
+      [
+        "uninstall_systemd_unit",
+        { "/etc/systemd/system/comis.service": join(probeRoot, "missing-comis-unit") },
+      ],
+    ];
+    for (const [name, replacements] of cases) {
+      expect(extractFn(name), `${name} must be extractable`).not.toBe("");
+      const leftover = [...extractFnAtPaths(name, replacements).matchAll(hostPath)].map((m) => m[0]);
+      expect(leftover, `${name} still reads host paths after the harness rewrite`).toEqual([]);
+    }
   });
 });

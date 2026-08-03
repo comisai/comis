@@ -66,7 +66,13 @@ describe("ensureGatewayToken", () => {
     }
     expect(message).toContain("COMIS_GATEWAY_TOKEN");
     expect(message).not.toContain("flag-tok");
-    expect(message).not.toMatch(/token=\S/i);
+    // The invariant is that no token VALUE is interpolated. Match an assignment
+    // whose right-hand side is opaque material, and deliberately exempt a shell
+    // command substitution — the recovery hint tells the operator to run
+    // `COMIS_GATEWAY_TOKEN="$(comis secrets get COMIS_GATEWAY_TOKEN)" comis mcp list`,
+    // which provably carries no value (the shell resolves it at runtime). A bare
+    // /token=\S/ could not tell the two apart and rejected the correct hint.
+    expect(message).not.toMatch(/token=(?!"?\$\()["']?[\w./+-]{8,}/i);
   });
 });
 

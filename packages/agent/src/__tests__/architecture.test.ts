@@ -136,6 +136,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "tool-lifecycle.ts",      // demotion-skip identifier: `if (toolName === "discover_tools") continue`
       "tool-deferral.ts",       // names "discover_tools" as the ToolDefinition.name in createDiscoverTool
       "tool-parallelism.ts",    // discover_tools in the parallelism-allowed tool-name list
+      "auto-background-middleware.ts", // NEVER_AUTO_BACKGROUND_TOOLS membership: a promoted discovery returns the instant stub, so the deferred tools it exists to surface are absent from the turn that asked
       // Discovery-handoff identifiers — the public tool name is the stable
       // API the LLM calls; these references name the tool by its public
       // identifier, not provider-branched teaching.

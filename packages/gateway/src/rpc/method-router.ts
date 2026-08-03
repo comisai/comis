@@ -129,6 +129,20 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
     if (msg.includes("immutable")) return { errorKind: "config", hint: "This configuration path requires daemon restart; apply it through a restart-safe operator path" };
     if (msg.includes("Admin access") || msg.includes("Unauthorized")) return { errorKind: "auth", hint: "Use an authenticated client with the required scope and trust level" };
     if (msg.includes("not found") || msg.includes("Unknown") || msg.includes("Invalid")) return { errorKind: "validation", hint: "Check the request against the RPC method contract" };
+    // A missing required parameter is a CALLER error, never a server fault. Handlers whose contract
+    // declares no typed params validate by hand and raise `Missing required parameter: <name>`; with
+    // no case here that fell through to `internal`, so the caller got the opaque "Internal server
+    // error" and the operator got a hint telling them to inspect the handler — for a request they
+    // simply had to add a field to. It also logged at error(50), inflating the count a health sweep
+    // reads (see the note above: a refusal must not log error(50)). Echo the parameter name into the
+    // hint: it is a contract field name, not caller data, so it discloses nothing the schema doesn't.
+    const missingParam = /Missing required parameter:\s*([A-Za-z0-9_.]+)/.exec(msg);
+    if (missingParam) {
+      return {
+        errorKind: "validation",
+        hint: `Request is missing the required parameter \`${missingParam[1]}\` — check the RPC method contract`,
+      };
+    }
     return { errorKind: "internal", hint: "Inspect the RPC handler and correlate this failure by trace and client identifiers" };
   }
 

@@ -152,7 +152,10 @@ import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
 import type { BackgroundTaskManager } from "../background/background-task-manager.js";
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
-import { synchronizeFinalAssistantResponse } from "./phase-filter.js";
+import {
+  synchronizeFinalAssistantResponse,
+  type FinalAssistantSyncDiagnostics,
+} from "./phase-filter.js";
 import {
   buildSubagentTerminalToolFailureReply,
   classifySubagentTerminalToolFailure,
@@ -2093,10 +2096,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     if (cr.verdict !== "verified" && cr.verdict !== "skipped") { result.response = cr.response; }
   }
 
+  const syncDiagnostics: FinalAssistantSyncDiagnostics = {};
   const responseSync = synchronizeFinalAssistantResponse(
     session,
     result.response ?? "",
     sm,
+    syncDiagnostics,
   );
   if (responseSync === "updated") {
     deps.logger.info(
@@ -2104,13 +2109,23 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "Synchronized post-processed response with live session transcript",
     );
   } else if (responseSync === "updated_memory_only") {
+    // Branch by failure class: a moved leaf and a failed write need opposite investigations.
+    // Emitting one hint for both sent operators hunting disk faults for the benign case.
+    const leafMoved = syncDiagnostics.durableFailureReason === "leaf_precondition_mismatch";
     deps.logger.warn(
       {
         step: "response-persistence",
-        errorKind: "resource" as const,
-        hint:
-          "The corrected response reached delivery and live LCD ingest, but its append-only "
-          + "session replacement branch could not be written; inspect the session JSONL leaf and disk health.",
+        errorKind: leafMoved ? ("precondition" as const) : ("resource" as const),
+        durableFailureReason: syncDiagnostics.durableFailureReason ?? "unknown",
+        hint: leafMoved
+          ? "The corrected response reached delivery and live LCD ingest, but the append-only "
+            + "session leaf was no longer the assistant message being corrected, so the "
+            + "replacement could not be branched onto it. This is usually a benign race, NOT a "
+            + "storage fault — do not investigate disk health for this reason; compare the "
+            + "session JSONL leaf entry against the corrected turn."
+          : "The corrected response reached delivery and live LCD ingest, but the append-only "
+            + "session replacement branch THREW while writing; this is a genuine storage fault — "
+            + "inspect the session JSONL leaf and disk health.",
       },
       "Corrected response could not be made canonical in durable session history",
     );
@@ -2124,6 +2139,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       metadata: {
         claimKind: "assistant_response",
         reason: "durable_replacement_unavailable",
+        durableFailureReason: syncDiagnostics.durableFailureReason ?? "unknown",
       },
     });
   } else if (responseSync === "missing" && (result.response?.length ?? 0) > 0) {

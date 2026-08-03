@@ -470,9 +470,14 @@ export function assembleIncidentReport(
   // reader's READ count (records.length, threaded from the handler) — distinct
   // from "the trajectory yielded failures". `rollup.present` reflects the F1
   // PRIMARY sessionEnd rollup the report is built from. `pointersResolved`
-  // counts offloads whose pointer resolved (signals emit "<offloaded>" when it
-  // did not). A silently-empty read is now self-evident here instead of
-  // masquerading as a clean session.
+  // counts offloads for which the translator RECORDED a pointer string (signals
+  // emit "<offloaded>" when it did not). It does NOT stat the file: this
+  // assembler is pure, so it cannot assert the artifact is retrievable. Read it
+  // as "a pointer was captured", never "the body can be opened" — the pointer is
+  // relative to the session dir that WROTE it, which a bridged sub-agent offload
+  // does not carry, so an N/N count can still accompany pointers no consumer can
+  // open. A silently-empty read is self-evident here instead of masquerading as
+  // a clean session.
   const offloadsResolved = offloads.filter((o) => o.pointer !== "<offloaded>").length;
   // Reconcile the headline (whole-session trajectory) toolStats against the
   // persisted per-session rollup that obs.system.health reads (latest-execution).

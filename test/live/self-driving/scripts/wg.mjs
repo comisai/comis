@@ -80,37 +80,47 @@ try { await call("cron.remove", { jobName: name }); } catch { /* not found — o
 //    re-derives `_agentId` from the user `agentId` — but it forces payload_kind:agent_turn.
 //    So: default agent → flat shape (supports system_event); non-default agent → nested
 //    shape (agent_turn only; a system_event on a non-default agent is NOT operator-authorable).
-let addParams;
-if (isNonDefault) {
-  if (spec.payloadKind && spec.payloadKind !== "agent_turn") {
-    console.error(
-      `wg.mjs: WARN agentId=${agentId} → nested shape forces payload_kind:agent_turn ` +
-      `(only the web shape maps agentId); ignoring payloadKind=${spec.payloadKind}. ` +
-      `A non-default-agent system_event cron is not operator-authorable (F-CRON-1).`,
-    );
-  }
-  addParams = {
-    name,
-    agentId, // the WEB shape maps this -> _agentId in normalizeCronAddParams
-    schedule: { kind: "every", everyMs: 86_400_000 },
-    message: spec.payloadText || "respond with exactly: ACK",
-    wakeGate: { script, language: spec.language || "js" },
-    ...(spec.deliveryTarget ? { deliveryTarget: spec.deliveryTarget } : {}),
-  };
-} else {
-  addParams = {
-    name,
-    agentId,
-    schedule_kind: "every",
-    schedule_every_ms: 86_400_000,
-    payload_kind: spec.payloadKind || "agent_turn",
-    payload_text: spec.payloadText || "respond with exactly: ACK",
-    wake_gate_script: script,
-    wake_gate_language: spec.language || "js",
-    ...(spec.deliveryTarget ? { deliveryTarget: spec.deliveryTarget } : {}),
-    ...(spec.sessionTarget ? { session_target: spec.sessionTarget } : {}),
-  };
-}
+// BOTH shapes above predated the current `cron.add` contract and are now dead. The live
+// contract (`CronAddRequestSchema`, cron-handlers.ts:134) is a `strictObject` requiring nested
+// `schedule` AND `payload` objects — so the flat form (`schedule_kind`/`payload_kind`/
+// `wake_gate_script`) fails twice over (unknown keys + two missing required objects), and the
+// former nested form fails too because it sent `message` at the top level where the contract has
+// no such key. Observed live: `cron.add` rejected with
+//   [{path:["schedule"],message:"expected object, received undefined"},
+//    {path:["payload"], message:"expected object, received undefined"}]
+// which is an exemplary error — it named both offending paths — but it meant no wake-gate row
+// could be authored at all. One shape now serves both agent cases: the contract takes `agentId`
+// as a first-class optional field, so the flat/nested split that existed only to work around
+// agentId mapping (F-CRON-1) is obsolete.
+const payload =
+  (spec.payloadKind ?? "agent_turn") === "delivery"
+    ? { kind: "delivery", text: spec.payloadText || "respond with exactly: ACK" }
+    : (spec.payloadKind === "heartbeat_event"
+        ? {
+            kind: "heartbeat_event",
+            text: spec.payloadText || "respond with exactly: ACK",
+            wakeMode: spec.wakeMode || "now",
+          }
+        : {
+            kind: "agent_turn",
+            message: spec.payloadText || "respond with exactly: ACK",
+            ...(spec.model ? { model: spec.model } : {}),
+          });
+const addParams = {
+  name,
+  agentId,
+  // `everyMs` is spec-configurable because the wake gate is the SCHEDULER-initiated gate
+  // ("no human/model in the loop at fire time" — schema-scheduler.ts). A `cron.run` force-fire
+  // records `trigger:"manual"` and evaluates NO gate (observed: stored wakeGate present,
+  // `diag: null`, run completed as a plain agent_turn), so a 24h default made the gate
+  // unreachable by this harness. Pass a short `everyMs` to let the scheduler fire it itself.
+  schedule: { kind: "every", everyMs: spec.everyMs || 86_400_000 },
+  payload,
+  // `timeoutSeconds` is REQUIRED by CronWakeGateSchema (max 300) — omitting it is a
+  // validation failure, not a defaulted field.
+  wakeGate: { script, language: spec.language || "js", timeoutSeconds: spec.timeoutSeconds || 30 },
+  ...(spec.deliveryTarget ? { deliveryTarget: spec.deliveryTarget } : {}),
+};
 const added = await call("cron.add", addParams);
 
 if (spec.noFire) {

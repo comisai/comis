@@ -7,7 +7,17 @@ export default defineConfig({
     // `pnpm test:e2e` (it uses its own vitest.config.ts and imports
     // adapter SDKs that are not hoisted to the repo root, so it cannot
     // run from the default `pnpm test` invocation in a clean install).
-    projects: ["packages/*", "test/architecture", "scripts/contracts"],
+    //
+    // test/live/bin is the live-harness CORE unit project (pure parsing /
+    // validation / exit-code mapping — no daemon, no emulator, no `@comis/*`
+    // import, so it needs no build). It is listed here because the live tier's
+    // own config is reachable only by hand: `pnpm test:live` runs
+    // `test/live/runner.ts`, which selects SCENARIO files, so a harness unit
+    // test placed under test/live/** otherwise ran in no gate at all and could
+    // rot silently. Daemon-booting live scenarios stay OUT of this list —
+    // they belong to `test/live/vitest.config.ts` (dist aliases + sequential
+    // pool).
+    projects: ["packages/*", "test/architecture", "scripts/contracts", "test/live/bin"],
     // Coverage instrumentation transforms several large workspace graphs at
     // once. Deriving the worker count from every host CPU can saturate that
     // transform pipeline so thoroughly that otherwise millisecond-scale tests

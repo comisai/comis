@@ -26,6 +26,24 @@ const wrap = (code: string, msg = "x"): string =>
   JSON.stringify({ content: [{ type: "text", text: `[${code}] ${msg}` }], details: {} });
 
 describe("classifyToolError", () => {
+  // A live MCP call violating a DECLARED schema bound was classified
+  // errorKind:"dependency". Nothing external failed — the runtime's own pre-flight
+  // argument validator rejected the value before the call left the process, so the
+  // message has no bracketed `[code]` and fell through to the dependency default.
+  // `errorKind` feeds obs.system.health's "top errorKinds", so schema-violation
+  // noise inflates the dependency bucket and can mask a real outage.
+  it("classifies a pre-flight 'Invalid parameters' rejection as validation, not dependency", () => {
+    const errorText = "[mcp__synth--mutate_record] Invalid parameters:\n"
+      + "- `value` must not have more than 64 characters";
+    expect(classifyToolError("mcp__synth--mutate_record", errorText)).toBe("validation");
+  });
+
+  it("keeps a genuine transport/server failure on dependency", () => {
+    // No structured code AND no validation preamble ⇒ still an external failure.
+    expect(classifyToolError("mcp__synth--read_record", "connect ECONNREFUSED 127.0.0.1:9")).toBe("dependency");
+    expect(classifyToolError("mcp__synth--read_record", "socket hang up")).toBe("dependency");
+  });
+
   it("classifies the live incident — JSON-wrapped [text_not_found] from `edit` — as validation, not dependency", () => {
     const errorText = wrap(
       "text_not_found",

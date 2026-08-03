@@ -21,12 +21,28 @@ function fail(message) {
   process.exit(2);
 }
 
+// Resolve `yaml` the way every other .mjs helper does — through _rig.mjs's requireCodeRoot, which
+// knows BOTH layouts (an installed comisai package and a source checkout). The checkout-relative
+// anchor stays first so a plain in-repo run keeps working with no rig env at all; the fallback is
+// what lets the kit run from a DEPLOYED location, which is the normal case on a box (deploy-scripts
+// globs *.mjs into /root) and for any rig whose service user cannot traverse the checkout. Without
+// it, `repo` resolves to "/" outside the checkout and the initializer aborted claiming project
+// dependencies were missing when the dependency was in fact present in the installed package.
 let YAML;
-try {
-  YAML = createRequire(resolve(repo, "package.json"))("yaml");
-} catch {
+for (const load of [
+  () => createRequire(resolve(repo, "package.json"))("yaml"),
+  async () => (await import("./_rig.mjs")).requireCodeRoot("yaml"),
+]) {
+  try {
+    YAML = await load();
+    if (YAML) break;
+  } catch {
+    /* try the next resolution strategy */
+  }
+}
+if (!YAML) {
   fail(
-    "the project yaml dependency is unavailable; install project dependencies before initializing the rig",
+    "the yaml dependency is unavailable from either the checkout or the resolved code root; install project dependencies, or set PKG to an installed comisai package, before initializing the rig",
   );
 }
 

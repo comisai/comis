@@ -10,6 +10,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// `execFile` MUST be mocked, not spread through from `actual`.
+// The step binds `const exec = promisify(execFile)` and uses it for
+// `systemctl start|stop|restart` and `systemctl show --property=MainPID`.
+// Spreading the real implementation made this suite drive the REAL systemd
+// unit: a live `comis.service` was stopped, restarted and finally driven into
+// `Failed with result 'start-limit-hit'` — the operator's daemon went down for
+// hours because a unit test reached host lifecycle state. A test must never be
+// able to signal or restart a production daemon.
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return {
@@ -18,6 +26,19 @@ vi.mock("node:child_process", async (importOriginal) => {
       unref: vi.fn(),
       pid: 12345,
     })),
+    // Default: no-op success with empty stdout. Individual tests override.
+    execFile: vi.fn(
+      (
+        _file: string,
+        _args: readonly string[] | undefined,
+        _opts: unknown,
+        cb?: (e: Error | null, out: { stdout: string; stderr: string }) => void,
+      ) => {
+        const done = typeof _opts === "function" ? (_opts as typeof cb) : cb;
+        done?.(null, { stdout: "", stderr: "" });
+        return { pid: 12345 } as never;
+      },
+    ),
   };
 });
 

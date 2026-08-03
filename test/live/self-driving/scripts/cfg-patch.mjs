@@ -64,6 +64,55 @@ const validate = (obj) => {
   const r = AppConfigSchema.safeParse(obj);
   return r.success ? { ok: true, issues: [] } : { ok: false, issues: r.error.issues ?? [] };
 };
+/**
+ * Derive the refusal hint from the ACTUAL issues.
+ *
+ * This used to print one unconditional line — "autonomy.* is AGENT-scoped …" — on every
+ * validation refusal, whatever the cause. It cost real debugging time twice in one campaign:
+ * once when a correct refusal read as "this knob has no effect", and once when a `{section,
+ * value}` mistake was answered with irrelevant `autonomy` advice. A hint that does not follow
+ * from the error is worse than no hint, so every line below is now either derived from the
+ * issue text or proven by re-validating a candidate placement.
+ */
+function deriveHints(issues, patch, merged, validate) {
+  const hints = [];
+  const unrecognized = new Set();
+  for (const i of issues) {
+    if ((i.path?.length ?? 0) !== 0) continue;
+    for (const m of String(i.message).matchAll(/"([^"]+)"/g)) unrecognized.add(m[1]);
+  }
+  // The RPC envelope mistake: config.patch takes {section, value}; this script takes a RAW patch.
+  if (unrecognized.has('section') && unrecognized.has('value')) {
+    hints.push(
+      'cfg-patch takes a RAW config patch merged into config.yaml — e.g. ' +
+        '\'{"skills":{"terminal":{"allow":["curl"]}}}\'. The {section, value} envelope is the ' +
+        'config.patch RPC shape, not this script\'s.',
+    );
+    return hints;
+  }
+  // For every unrecognized top-level key, PROVE where it belongs by re-validating a candidate
+  // placement rather than asserting a remembered scope.
+  const agentIds = Object.keys(merged?.agents ?? {});
+  for (const key of unrecognized) {
+    if (!(key in (patch ?? {}))) continue;
+    if (agentIds.length > 0) {
+      const probe = structuredClone(merged);
+      delete probe[key];
+      probe.agents[agentIds[0]] = { ...(probe.agents[agentIds[0]] ?? {}), [key]: patch[key] };
+      const r = validate(probe);
+      if (r.ok === true) {
+        hints.push(`\`${key}\` is AGENT-scoped — nest it under \`agents.${agentIds[0]}.${key}\`, not top-level.`);
+        continue;
+      }
+    }
+    hints.push(`\`${key}\` is not a recognized config key at any scope this patch tried.`);
+  }
+  if (hints.length === 0) {
+    const paths = issues.map((i) => i.path.join('.') || '<root>').filter((p, n, a) => a.indexOf(p) === n);
+    hints.push(`the offending path(s): ${paths.join(', ')} — compare against AppConfigSchema.`);
+  }
+  return hints;
+}
 const keyOf = (i) => `${i.path.join('.')}|${i.message}`;
 const pre = validate(structuredClone(cfg));
 merge(cfg, patch);
@@ -78,7 +127,7 @@ if (post.ok === false) {
   if (introduced.length > 0) {
     console.error('cfg-patch REFUSED — the patch introduces config-validation errors (config.yaml NOT modified):');
     for (const i of introduced) console.error(`  • ${i.path.join('.') || '<root>'}: ${i.message}`);
-    console.error('  hint: autonomy.* is AGENT-scoped — nest under agents.<id>.autonomy, NOT top-level.');
+    for (const h of deriveHints(introduced, patch, cfg, validate)) console.error(`  hint: ${h}`);
     process.exit(1);
   }
 }

@@ -174,6 +174,14 @@ function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
  * matched. A built-in `edit` returning `[text_not_found]` therefore surfaced to
  * a chat channel as "❌ dependency" (live-UAT Telegram onboarding, 2026-06-21).
  */
+/**
+ * The runtime's own pre-flight argument-validation preamble, e.g.
+ * `[mcp__synth--mutate_record] Invalid parameters:\n- \`value\` must not have more than 64 characters`.
+ * Deliberately narrow: it matches only this generated form, so a server's own prose
+ * mentioning "invalid" is untouched and stays on the dependency fallback.
+ */
+const PREFLIGHT_INVALID_PARAMS = /(?:^|\])\s*Invalid parameters:/i;
+
 export function classifyToolError(_toolName: string, errorText: string | undefined): ErrorKind {
   const code = extractBracketedToolErrorCode(errorText);
   if (code !== undefined) {
@@ -184,6 +192,16 @@ export function classifyToolError(_toolName: string, errorText: string | undefin
   // A raw Node wrong-path-type errno (EISDIR/ENOTDIR) is the model's bad input,
   // not an external dependency — classify as validation (the bad-argument family).
   if (errorText !== undefined && NODE_PATH_TYPE_USAGE_ERRNO.test(errorText)) {
+    return "validation";
+  }
+  // The runtime's OWN pre-flight argument validator rejected the call before it left
+  // the process, so nothing external was reached. Its message carries no bracketed
+  // `[code]`, so it used to fall through to the dependency default — e.g. an MCP call
+  // violating a declared `maxLength` reported errorKind:"dependency" while the server
+  // was healthy and never contacted. `errorKind` feeds obs.system.health's "top
+  // errorKinds", so schema-violation noise inflated the dependency bucket and could
+  // mask a genuine outage.
+  if (errorText !== undefined && PREFLIGHT_INVALID_PARAMS.test(errorText)) {
     return "validation";
   }
   // No structured code → a genuinely external (MCP / transport / unknown) failure.

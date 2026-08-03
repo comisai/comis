@@ -287,6 +287,35 @@ describe("createDynamicMethodRouter trace logging", () => {
     expect(logged.hint).toMatch(/requires daemon restart/i);
   });
 
+  // Live incident: `mcp.status` called without its required `server_name` returned the opaque
+  // `Internal server error` to the caller, logged at ERROR(50) with `errorKind: "internal"` and the
+  // hint "Inspect the RPC handler and correlate this failure by trace and client identifiers" — i.e.
+  // a CALLER mistake presented as a server fault, pointing the operator at debugging the handler
+  // when the fix was "pass server_name". Handlers that hand-validate (their contract declares no
+  // typed params, so the typed path at the bottom of the wrapper cannot surface the real message)
+  // raise `Missing required parameter: <name>`, and the substring fallback had no case for it.
+  // Misclassifying it also inflates the ERROR(50) count a health sweep reads — the very thing the
+  // classifier comment warns about ("A refusal must NOT log error(50) — a health sweep counts it").
+  it("classifies a missing-required-parameter error as validation, not internal", async () => {
+    const { logger, calls } = makeLogger();
+    const router = createDynamicMethodRouter(undefined, logger);
+    router.registerMethod("mcp.needsparam", "rpc", () => {
+      throw new Error("Missing required parameter: server_name");
+    });
+    await router.server.receive(
+      { jsonrpc: "2.0", method: "mcp.needsparam", params: {}, id: 112 },
+      RPC_CTX,
+    );
+    // A caller error must not be logged as an ERROR-level server fault.
+    expect(calls.error.length, "a missing parameter is not a server fault").toBe(0);
+    expect(calls.warn.length).toBe(1);
+    const logged = calls.warn[0]![0] as { errorKind: string; hint: string };
+    expect(logged.errorKind).toBe("validation");
+    // The hint must point at the request/contract, not at debugging the handler.
+    expect(logged.hint).not.toMatch(/Inspect the RPC handler/i);
+    expect(logged.hint).toMatch(/parameter|contract|request/i);
+  });
+
   it("classifies Admin-access errors as auth errorKind and emits warn-level log entry", async () => {
     const { logger, calls } = makeLogger();
     const router = createDynamicMethodRouter(undefined, logger);

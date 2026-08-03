@@ -236,6 +236,25 @@ export interface MessagingEvents {
     memoriesWritten: number;
     trigger: "soft" | "hard" | "manual";
     success: boolean;
+    /**
+     * WHY the flush did not write, when `success` is false. The flush has four distinct failure
+     * causes and they demand opposite responses: `summary_rejected` is the anti-leak guard
+     * REFUSING to persist a summary that matched a blocked-secret pattern (correct, protective —
+     * do not "fix" it), while `summary_failed` is a real summarizer fault. `memory_unavailable`
+     * and `summarizer_unavailable` are configuration. Without this field every cause collapses to
+     * `success:false` on the trajectory, so a protective refusal is indistinguishable from an
+     * outage and the branch is recoverable only by grepping the daemon log — a live rig showed 18
+     * identical-looking failures that were in fact 12 faults and 6 correct refusals.
+     * `summary_failed` (the summarizer errored) and `memory_write_failed` (the store rejected the
+     * write) are separate causes that share `errorKind:"dependency"`, so the log alone cannot
+     * always separate them either. Absent when `success` is true.
+     */
+    failureReason?:
+      | "memory_unavailable"
+      | "summarizer_unavailable"
+      | "summary_failed"
+      | "summary_rejected"
+      | "memory_write_failed";
     timestamp: number;
   };
 

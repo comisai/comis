@@ -782,6 +782,14 @@ export function translatePayload(
         memoriesWritten: payload.memoriesWritten,
         trigger: payload.trigger,
         success: payload.success,
+        // WHY a flush wrote nothing. `success:false` alone collapses four causes that demand
+        // opposite responses — `summary_rejected` is the anti-leak guard correctly refusing to
+        // persist a summary matching a blocked-secret pattern, `summary_failed` is a real
+        // summarizer fault. Without it the branch is recoverable only from the daemon log, so
+        // `comis explain` cannot tell a protective refusal from an outage. Omitted on success.
+        ...(payload.failureReason !== undefined
+          ? { failureReason: payload.failureReason }
+          : {}),
       };
 
     case "compaction:recommended":
