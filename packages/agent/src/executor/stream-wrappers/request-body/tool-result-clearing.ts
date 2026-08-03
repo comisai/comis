@@ -211,7 +211,10 @@ export function reorderContentForStablePrefix(messages: Array<Record<string, unk
  *
  * Mutates messages in place. Returns the number of messages whose thinking was stripped.
  */
-export function stripReplayThinking(messages: Array<Record<string, unknown>>): number {
+export function stripReplayThinking(
+  messages: Array<Record<string, unknown>>,
+  fenceIndex: number = -1,
+): number {
   // Preserve thinking ONLY on a newest assistant turn still inside an unclosed tool-use cycle — the
   // one window where the provider forbids altering it (see ./tool-use-cycle.ts). Preserving it
   // unconditionally, as this did before, made every ordinary turn keep its thinking and lose it one
@@ -224,6 +227,14 @@ export function stripReplayThinking(messages: Array<Record<string, unknown>>): n
   let stripped = 0;
   for (let i = 0; i < messages.length; i++) {
     if (i === preserveIndex) continue;
+    // Never strip AT OR BELOW the cache fence. The preserved assistant is sent WITH thinking while
+    // its tool cycle is open, so it is cached in that form; stripping it once a newer assistant
+    // makes it historical mutates an already-cached message, one per tool cycle at a marching index
+    // (measured live as thinking-cleared,block-count-changed at idx 17 and 21). Leaving cached
+    // content exactly as it was sent costs a few thinking tokens that are re-READ at cache rates —
+    // far cheaper than re-writing the suffix. Above the fence, stripping still applies, so the
+    // durable no-thinking form is what gets cached going forward.
+    if (fenceIndex >= 0 && i <= fenceIndex) continue;
     const msg = messages[i]!;
     if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const content = msg.content as Array<Record<string, unknown>>;

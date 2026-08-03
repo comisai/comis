@@ -72,6 +72,37 @@ describe("getMinCacheableTokens", () => {
     expect(getMinCacheableTokens("gpt-4-turbo")).toBe(1024);
     expect(getMinCacheableTokens("unknown-model")).toBe(1024);
   });
+
+  it("resolves a provider-qualified model id, not just the bare form", () => {
+    // Bedrock and Vertex qualify the id with a region/provider prefix, so a
+    // start-anchored match against the bare table never fires and every such
+    // deployment silently takes the 1024 fallback. Below a model's true
+    // minimum the provider caches NOTHING and reports no error — the marker
+    // just burns one of the four per-request breakpoint slots.
+    // Measured live on this deployment: `minTokens=1024` on every placement
+    // while serving global.anthropic.claude-haiku-4-5, whose minimum is 4096.
+    expect(getMinCacheableTokens("global.anthropic.claude-haiku-4-5-20251001-v1:0")).toBe(4096);
+    expect(getMinCacheableTokens("us.anthropic.claude-haiku-4-5-20251001-v1:0")).toBe(4096);
+    expect(getMinCacheableTokens("eu.anthropic.claude-opus-4-6")).toBe(4096);
+    expect(getMinCacheableTokens("anthropic.claude-sonnet-4-6")).toBe(2048);
+  });
+
+  it("does not under-estimate a model whose minimum exceeds its family catch-all", () => {
+    // Opus 4.7 requires 2048; the `claude-opus-4-` catch-all would answer 1024.
+    // An under-estimate is the dangerous direction: the marker is placed and
+    // silently caches nothing. Over-estimating only forgoes an opportunity.
+    expect(getMinCacheableTokens("claude-opus-4-7")).toBe(2048);
+    expect(getMinCacheableTokens("global.anthropic.claude-opus-4-7")).toBe(2048);
+    // Opus 4.8 genuinely is 1024 — pinned so the catch-all cannot drift.
+    expect(getMinCacheableTokens("claude-opus-4-8")).toBe(1024);
+  });
+
+  it("resolves the 512-token tier so short prefixes are not needlessly skipped", () => {
+    expect(getMinCacheableTokens("claude-opus-5")).toBe(512);
+    expect(getMinCacheableTokens("global.anthropic.claude-opus-5")).toBe(512);
+    expect(getMinCacheableTokens("claude-fable-5")).toBe(512);
+    expect(getMinCacheableTokens("claude-mythos-5")).toBe(512);
+  });
 });
 
 describe("CACHEABLE_BLOCK_TYPES", () => {

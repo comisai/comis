@@ -120,6 +120,36 @@ function parseSig(
 }
 
 /**
+ * How far the history window SLID, or 0 if it did not.
+ *
+ * Returns the `k > 0` for which `curr[i] === prev[i + k]` over a run of consecutive indices
+ * starting at the divergence: the messages did not change, the window moved off their front.
+ * A run (rather than a single match) is required so an incidental hash collision between two
+ * unrelated messages cannot be read as a slide.
+ *
+ * Without this the per-message classifiers describe an EDIT — `block-count-changed` on a
+ * wholesale prefix rewrite — which is the misleading-label failure mode that has twice sent an
+ * investigation the wrong way.
+ */
+function detectWindowShift(
+  prevHashes: number[] | undefined,
+  currHashes: number[],
+  fd: number,
+): number {
+  const MAX_SHIFT = 8;
+  const REQUIRED_RUN = 3;
+  if (!prevHashes) return 0;
+  for (let k = 1; k <= MAX_SHIFT; k++) {
+    let run = 0;
+    for (let i = fd; i < currHashes.length && i + k < prevHashes.length; i++) {
+      if (currHashes[i] !== prevHashes[i + k]) break;
+      if (++run >= REQUIRED_RUN) return k;
+    }
+  }
+  return 0;
+}
+
+/**
  * Index of the first message whose hash diverges from the previous turn, or -1
  * if no per-message divergence is found (e.g. a length change only).
  */
@@ -224,27 +254,81 @@ export function runPrefixStabilityDiagnostic(
   const WINDOW = 10;
   const THRESHOLD = 3;
 
-  if (!prev || diagFenceIdx < prev.fenceIdx) {
-    // First observation, or fence shrank (compaction) — (re)baseline, empty mutation window.
+  // A COMPACTION fold legitimately replaces the prefix: many messages become one summary, so the
+  // array itself gets SHORTER. Re-baselining there keeps a one-time rebuild out of the churn count.
+  //
+  // A fence shrink ALONE is not that proof. When the LCD fresh-tail slice is recomputed per call, a
+  // turn's tool loop slides a fixed-size window forward — the array length does not change, but the
+  // content at every index does, and the cached prefix is rewritten in full. That makes the fence
+  // oscillate, and re-baselining on each dip cleared the accumulated window before it could ever
+  // reach the WARN threshold. Live (comis-moshe 2026-08-02): `cache_read` 0 with ~101k cache
+  // creation re-paid on EVERY call — a 0.0% hit ratio — and not one churn WARN. The costliest cache
+  // event there is was the one shape that silenced the diagnostic built to catch it.
+  if (!prev) {
+    // First observation — baseline, empty mutation window.
     sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
     return;
   }
 
   // First message that DIFFERS from the previous request across the FULL common prefix.
   const fd = firstDivergentMessage(prev.fullHashes, fullHashes);
+  const shift = fd >= 0 ? detectWindowShift(prev.fullHashes, fullHashes, fd) : 0;
+
+  // A compaction FOLD collapses history into a summary: the array gets shorter AND the surviving
+  // messages are genuinely replaced. A SLIDING window also shortens the array (the fresh-tail bound
+  // trims it) while merely re-indexing messages that are all still present — that is a full cache
+  // rewrite, not a one-time rebuild. A detected shift is direct evidence of the latter, so it
+  // disqualifies the fold; without that check a slide measured live (19 → 17 messages, 0.0% hit
+  // ratio) re-baselined silently and reported nothing.
+  const folded = diagFenceIdx < prev.fenceIdx
+    && fullHashes.length < (prev.fullHashes?.length ?? 0)
+    && shift === 0;
+  if (folded) {
+    sessionPrefixStability.set(config.sessionKey, { hash: 0, fenceIdx: diagFenceIdx, consecutiveChanges: 0, fullHashes, fullSigs, callCount, cacheMutations: [] });
+    return;
+  }
+
   let mutations = (prev.cacheMutations ?? []).filter(c => c > callCount - WINDOW);
 
   // A divergence at/below the fence is a mutation of content we are trying to CACHE — a
   // wasted cache write. (A divergence ABOVE the fence is just new tail content = benign growth.)
+  // Per-CALL divergence probe, independent of the WARN threshold. The WARN needs 3 mutations in a
+  // window before it says anything, so a call that lost its whole cached prefix could produce no
+  // line at all — which is what made a read-0 call impossible to attribute. Content-free: the index
+  // plus the closed-vocabulary structural signature, never message text.
+  if (fd >= 0) {
+    logger.debug(
+      {
+        step: "prefix-divergence-probe",
+        firstDivergentIndex: fd,
+        withinFence: fd <= diagFenceIdx,
+        fenceIndex: diagFenceIdx,
+        prevSig: prev.fullSigs?.[fd],
+        currSig: fullSigs[fd],
+        messageCount: msgs.length,
+        sessionKey: config.sessionKey,
+      },
+      "Prefix divergence probe",
+    );
+  }
+
   if (fd >= 0 && fd <= diagFenceIdx) {
     const pSig = prev.fullSigs?.[fd];
     const cSig = fullSigs[fd];
-    const mutationClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
+    // The messages themselves are intact — the window moved off their front, so the whole cached
+    // prefix is rewritten rather than one message edited in place. Name the CAUSE; the per-message
+    // classes below describe an edit and would report only the symptom at the divergence.
+    const perMessageClass = classifyPrefixMutation(msgs[fd], pSig, cSig);
+    const mutationClass = shift > 0
+      ? `history-window-slid-${shift},${perMessageClass}`
+      : perMessageClass;
     // inline-recall is transient BY DESIGN — the history strip removes it from a user message
     // the turn AFTER it carried the current turn's recall. That is a one-time transition per message,
     // not a recurring bug, so it must NOT accumulate toward the WARN — UNLESS it is also a
     // structural-shift (a role change is a real cache invalidation, never benign).
-    const benignInlineRecall = mutationClass.includes("inline-recall") && !mutationClass.includes("structural-shift");
+    const benignInlineRecall = mutationClass.includes("inline-recall")
+      && !mutationClass.includes("structural-shift")
+      && !mutationClass.includes("history-window-slid");
     if (!benignInlineRecall) {
       mutations = [...mutations, callCount];
       if (mutations.length >= THRESHOLD) {

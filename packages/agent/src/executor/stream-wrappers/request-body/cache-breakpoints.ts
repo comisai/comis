@@ -147,8 +147,15 @@ const SORTED_MIN_CACHEABLE_ENTRIES: Array<[string, number]> =
  */
 export function getMinCacheableTokens(modelId: string | undefined): number {
   if (!modelId) return DEFAULT_MIN_CACHEABLE_TOKENS;
+  // Bedrock and Vertex qualify the id with a region/provider prefix
+  // (`global.anthropic.claude-…`, `us.anthropic.…`, `anthropic.…`), so a
+  // start-anchored match against the bare table never fires there and every
+  // such deployment silently takes the fallback. Below a model's true minimum
+  // the provider caches NOTHING and reports no error — the marker just burns
+  // one of the four per-request breakpoint slots. Match on the bare id.
+  const bare = modelId.slice(modelId.lastIndexOf(".") + 1);
   for (const [prefix, threshold] of SORTED_MIN_CACHEABLE_ENTRIES) {
-    if (modelId.startsWith(prefix)) return threshold;
+    if (modelId.startsWith(prefix) || bare.startsWith(prefix)) return threshold;
   }
   return DEFAULT_MIN_CACHEABLE_TOKENS;
 }

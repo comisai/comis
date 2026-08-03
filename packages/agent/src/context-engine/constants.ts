@@ -197,6 +197,11 @@ export const BOOTSTRAP_BUDGET_WARN_PERCENT = 40;
  * Setting lower causes silent no-ops (breakpoints ignored, tokens not cached).
  */
 export const MIN_CACHEABLE_TOKENS: Record<string, number> = {
+  "claude-fable-5": 512,
+  "claude-mythos-5": 512,
+  "claude-opus-5": 512,
+  "claude-opus-4-8": 1024,
+  "claude-opus-4-7": 2048,
   "claude-opus-4-6": 4096,
   "claude-opus-4-5": 4096,
   "claude-opus-4-1": 1024,

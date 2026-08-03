@@ -37,7 +37,19 @@ echo "2) (Re)launch the emulator (anchored pkill + tmux)…"
 if rig_is_local; then
   EMU_DIR="$EMU_DIR" bash "$HERE/restart-emu.sh"
 else
-  remote_root "EMU_DIR='$EMU_DIR' bash /root/restart-emu.sh"
+  # Ship the launcher WITH the emulator subtree. It used to arrive only via deploy-scripts.sh, so a
+  # box that had never run that script (or had been cleaned) failed here with a bare
+  # `bash: /root/restart-emu.sh: No such file or directory` — a launcher-not-found error that reads
+  # like an emulator fault. The launcher belongs to the thing it launches.
+  COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - restart-emu.sh | remote_root "tar -xf - -C /root"
+  # EMU_GROUPS must cross the ssh boundary WITH the launch. restart-emu.sh reads it from its own
+  # environment, and only EMU_DIR used to be forwarded — so every remote launch came up with
+  # `groups:[]` and EVERY group arc was silently undrivable, which is exactly the failure the
+  # target's kit-prerequisite #1 warns about ("an empty array means every group arc is silently
+  # undrivable"). The kit was causing the condition it tells you to check for.
+  # Single quotes are escaped so the JSON array survives the remote shell intact.
+  emu_groups_q=$(printf "%s" "${EMU_GROUPS:-}" | sed "s/'/'\\\\''/g")
+  remote_root "EMU_DIR='$EMU_DIR' EMU_GROUPS='$emu_groups_q' bash /root/restart-emu.sh"
 fi
 
 if [ "${WIRE:-0}" = 1 ]; then
