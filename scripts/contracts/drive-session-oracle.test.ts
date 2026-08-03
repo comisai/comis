@@ -10,6 +10,7 @@ import {
   selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  trajectoryTurnEnded,
   wireQuiescenceFinished,
   wireContainsAssistantReply,
 } from "../../test/live/self-driving/scripts/drive-session-oracle.mjs";
@@ -219,5 +220,68 @@ describe("live driver session correlation", () => {
         suffix,
       ),
     ).toBe(parent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trajectoryTurnEnded — a terminal record alone is not turn-end when the turn
+// handed work off. Both hand-off paths were observed live on heavy questions and
+// each one caused an interim "I'm running it now" promise to be reported as the
+// substantive answer, 30-384s before the real answer existed.
+// ---------------------------------------------------------------------------
+describe("trajectoryTurnEnded", () => {
+  const summary = '{"type":"session.summary","data":{"endReason":"success"}}';
+  const bgPendingSummary =
+    '{"type":"session.summary","finishReason":"background_pending","data":{}}';
+  const aborted = '{"type":"execution.aborted","data":{}}';
+  const spawned = '{"type":"subagent.spawned","data":{}}';
+  const spawnCompleted = '{"type":"subagent.completed","data":{}}';
+  const spawnKilled = '{"type":"subagent.killed","data":{}}';
+
+  it("a clean summary with no hand-off ends the turn", () => {
+    expect(trajectoryTurnEnded([summary])).toBe(true);
+  });
+
+  it("an execution.aborted ends the turn", () => {
+    expect(trajectoryTurnEnded([aborted])).toBe(true);
+  });
+
+  it("no terminal record at all is not turn-end", () => {
+    expect(trajectoryTurnEnded(['{"type":"model.completed","data":{}}'])).toBe(false);
+  });
+
+  it("a background_pending summary is NOT turn-end (the turn is done, the work is not)", () => {
+    expect(trajectoryTurnEnded([bgPendingSummary])).toBe(false);
+  });
+
+  it("a background_pending summary followed by a clean one IS turn-end", () => {
+    expect(trajectoryTurnEnded([bgPendingSummary, summary])).toBe(true);
+  });
+
+  it("a spawned sub-agent with no completion is NOT turn-end even with a clean summary", () => {
+    expect(trajectoryTurnEnded([spawned, summary])).toBe(false);
+  });
+
+  it("a spawned sub-agent that completed IS turn-end", () => {
+    expect(trajectoryTurnEnded([spawned, summary, spawnCompleted])).toBe(true);
+  });
+
+  it("a killed sub-agent counts as settled", () => {
+    expect(trajectoryTurnEnded([spawned, summary, spawnKilled])).toBe(true);
+  });
+
+  it("two spawns with one completion is NOT turn-end", () => {
+    expect(trajectoryTurnEnded([spawned, spawned, spawnCompleted, summary])).toBe(false);
+  });
+
+  it("two spawns with two completions IS turn-end", () => {
+    expect(
+      trajectoryTurnEnded([spawned, spawned, spawnCompleted, spawnCompleted, summary]),
+    ).toBe(true);
+  });
+
+  it("is pure — same lines yield the same verdict", () => {
+    const lines = [spawned, summary, spawnCompleted];
+    expect(trajectoryTurnEnded(lines)).toBe(trajectoryTurnEnded(lines));
   });
 });

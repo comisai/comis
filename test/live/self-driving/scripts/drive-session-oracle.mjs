@@ -338,3 +338,42 @@ export function directConversationFinished({
   return typeof turnEndedAtMs === "number"
     && nowMs - turnEndedAtMs >= deliveryGraceMs;
 }
+
+/**
+ * Has the driven turn actually ENDED, given the trajectory lines appended since the drive began?
+ *
+ * A terminal record alone is not turn-end: a turn can hand work OFF and finish, and both hand-off
+ * paths were observed live on heavy questions.
+ *   1. **background task** — the parent's own `session.summary` record carries
+ *      `finishReason:"background_pending"` (same line; verified in live trajectories).
+ *   2. **sub-agent spawn** — the parent turn finishes cleanly (`endReason:"success"`) while a
+ *      spawned worker keeps running; the trajectory tracks `subagent.spawned` /
+ *      `subagent.completed`, so an unmatched spawn means the answer does not exist yet.
+ *
+ * Why it matters: the interim "I'm running it now, I'll report back" prose is NOT a progress card,
+ * so it satisfies `sawAnswer` and the post-turn grace exits immediately. Across a 15-question heavy
+ * run every real answer landed 30–384 s after that point, and the two best answers were reported as
+ * content-free. PURE: same lines → same verdict.
+ *
+ * @param lines Trajectory JSONL lines appended since the drive's baseline.
+ * @returns true only when a clean terminal record exists AND no spawned worker is outstanding.
+ */
+export function trajectoryTurnEnded(lines) {
+  let spawned = 0;
+  let completed = 0;
+  let terminal = false;
+  for (const line of lines) {
+    if (line.includes('"type":"subagent.spawned"')) spawned += 1;
+    else if (
+      line.includes('"type":"subagent.completed"')
+      || line.includes('"type":"subagent.killed"')
+    ) completed += 1;
+    else if (
+      line.includes('"type":"session.summary"')
+      || line.includes('"type":"execution.aborted"')
+    ) {
+      if (!line.includes('"finishReason":"background_pending"')) terminal = true;
+    }
+  }
+  return terminal && spawned <= completed;
+}
