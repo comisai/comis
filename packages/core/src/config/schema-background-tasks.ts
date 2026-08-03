@@ -25,9 +25,13 @@ export const BackgroundTasksConfigSchema = z.strictObject({
    *  operator list, a few tools are STRUCTURALLY never promoted regardless of
    *  config (see NEVER_AUTO_BACKGROUND_TOOLS in auto-background-middleware.ts):
    *  `exec` (owns its own escalation), `background_tasks` and `subagents`
-   *  (observer/wait tools whose promotion duplicates completion routing), and the
+   *  (observer/wait tools whose promotion duplicates completion routing), the
    *  self-delivering media tools `image_generate`/`video_generate` (they
-   *  deliver out-of-band, so a "backgrounded" placeholder is pure downside). */
+   *  deliver out-of-band, so a "backgrounded" placeholder is pure downside),
+   *  and the two tools whose promotion is self-defeating because the instant stub
+   *  destroys the very thing they exist to do — `sleep` (a promoted wait no longer
+   *  waits) and `discover_tools` (a promoted discovery cannot surface the deferred
+   *  tools into the turn that asked for them). */
   excludeTools: z.array(z.string()).default([]),
   /** Recursion bound for background-task completion re-trigger (maxBackgroundHops).
    *  Each completion re-enters the originating session as a fresh turn;

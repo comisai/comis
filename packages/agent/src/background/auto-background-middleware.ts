@@ -73,6 +73,16 @@ export interface ToolDefinition {
  *     'Background task "sleep" completed.' notice leaked to the user (live
  *     incident, 2026-07-08). Backgrounding a wait is self-defeating: the stub
  *     returns instantly (defeating the wait) and the completion is pure noise.
+ *   - `discover_tools` — the DISCOVERY tool. The cold long-tail of tools is
+ *     deferred behind it, so a deferred tool becomes callable only if discovery
+ *     returns within the turn. A discovery call measured 10101ms — 101ms over
+ *     the threshold — promoted, its result was replaced by the instant stub, and
+ *     the real result arrived as a notification after the turn had answered. The
+ *     turn told the user a scheduling tool was "not currently callable" while it
+ *     was enabled, capability-granted and registered. Backgrounding a discovery
+ *     is self-defeating exactly as backgrounding a wait is: the stub returns
+ *     instantly, so the tools it exists to surface are absent from the one turn
+ *     that needed them.
  *   - `image_generate` / `video_generate` — self-delivering media tools. They
  *     deliver out-of-band via the media pipeline (`image.delivered` fires
  *     independent of the wrapper — verified live), so the "backgrounded"
@@ -89,6 +99,7 @@ const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
   "sleep",
   "image_generate",
   "video_generate",
+  "discover_tools",
 ]);
 
 export function wrapToolForAutoBackground(

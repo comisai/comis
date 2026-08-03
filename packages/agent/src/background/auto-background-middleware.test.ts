@@ -645,12 +645,22 @@ describe("wrapToolForAutoBackground", () => {
     // notice leaked to the user. Backgrounding a WAIT is self-defeating — the
     // stub returns instantly (defeating the wait) and the completion notice is
     // pure noise.
+    // `discover_tools` joined for the SAME self-defeating reason as `sleep`, found live:
+    // the cold long-tail of tools is deferred behind `discover_tools`, so a deferred tool only
+    // becomes callable if discovery returns WITHIN the turn. A discovery call measured
+    // durationMs=10101 — 101ms over the 10000ms threshold — was promoted, its result replaced by
+    // the instant stub, and the real result arrived as a notification AFTER the turn had answered.
+    // The turn therefore told the user "the scheduler tool is not currently callable" while
+    // scheduling was enabled, capability-granted, and registered. Backgrounding a DISCOVERY is
+    // self-defeating exactly as backgrounding a wait is: the stub returns instantly, so the tools
+    // it existed to surface are absent from the one turn that needed them.
     for (const name of [
       "background_tasks",
       "subagents",
       "sleep",
       "image_generate",
       "video_generate",
+      "discover_tools",
     ]) {
       it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
         config.excludeTools = [];
