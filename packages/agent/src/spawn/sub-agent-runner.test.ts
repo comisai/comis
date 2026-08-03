@@ -36,6 +36,7 @@ import {
   buildAnnouncementMessage,
   validateOutputs,
   classifyAbortReason,
+  isSubAgentAbortFinishReason,
   persistFailureRecord,
   deliverFailureNotification,
   type ValidationResult,
@@ -6572,5 +6573,56 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     await new Promise((r) => setTimeout(r, 200));
 
     expect(closeTrajectory).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSubAgentAbortFinishReason — a COMPLETION must never be reported as an abort.
+//
+// The runner classified an abort whenever finishReason was not stop/end_turn, so
+// `completed_with_tool_errors` — a first-class *completed* outcome that
+// system-health documents as degraded-but-finished — fell to the "Unexpected
+// finish reason" default and was logged `Sub-agent aborted` with a hardcoded
+// errorKind:"resource". Live consequence: a fully-grounded fleet report was
+// delivered to the user under "⚠️ This background task failed", and the operator
+// saw a capacity-shaped errorKind for a turn with no resource problem. It hit 12
+// turns in one window; `background_pending` (a hand-off) has the same shape.
+// ---------------------------------------------------------------------------
+
+describe("isSubAgentAbortFinishReason", () => {
+  it("stop is not an abort", () => {
+    expect(isSubAgentAbortFinishReason("stop")).toBe(false);
+  });
+
+  it("end_turn is not an abort", () => {
+    expect(isSubAgentAbortFinishReason("end_turn")).toBe(false);
+  });
+
+  it("completed_with_tool_errors is a COMPLETION, not an abort", () => {
+    expect(isSubAgentAbortFinishReason("completed_with_tool_errors")).toBe(false);
+  });
+
+  it("background_pending is a hand-off, not an abort", () => {
+    expect(isSubAgentAbortFinishReason("background_pending")).toBe(false);
+  });
+
+  it("max_steps is a real abort", () => {
+    expect(isSubAgentAbortFinishReason("max_steps")).toBe(true);
+  });
+
+  it("prompt_timeout is a real abort", () => {
+    expect(isSubAgentAbortFinishReason("prompt_timeout")).toBe(true);
+  });
+
+  it("error is a real abort", () => {
+    expect(isSubAgentAbortFinishReason("error")).toBe(true);
+  });
+
+  it("spend_exceeded is a real abort", () => {
+    expect(isSubAgentAbortFinishReason("spend_exceeded")).toBe(true);
+  });
+
+  it("an unknown finish reason is treated as an abort (fail-closed)", () => {
+    expect(isSubAgentAbortFinishReason("something_new")).toBe(true);
   });
 });

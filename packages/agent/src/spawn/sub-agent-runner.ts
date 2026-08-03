@@ -71,6 +71,7 @@ import type {
 import type { DeliveryDedup } from "./announce-key.js";
 import {
   classifyAbortReason,
+  isSubAgentAbortFinishReason,
   buildAnnouncementMessage,
   deliverAnnouncement,
   deliverFailureNotification,
@@ -3258,7 +3259,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Classify abort if finishReason is abnormal (not stop/end_turn)
         let abortClassification: AbortClassification | undefined;
-        if (result.finishReason !== "stop" && result.finishReason !== "end_turn") {
+        if (isSubAgentAbortFinishReason(result.finishReason)) {
           try {
             abortClassification = classifyAbortReason(result.finishReason);
           } catch { /* classification must never block */ }
@@ -3271,7 +3272,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             abortReason: abortClassification.category,
             abortSeverity: abortClassification.severity,
             hint: abortClassification.hint,
-            errorKind: "resource" as const,
+            // Derive the kind from the AUTHORITATIVE classifier rather than hardcoding "resource"
+            // for every abort: a `prompt_timeout` is a `timeout`, a `circuit_open`/`provider_degraded`
+            // is a `dependency`, an `input_too_large` is `validation`. Labelling all of them
+            // "resource" points triage at capacity exhaustion — and this runner already consults the
+            // same classifier elsewhere, so the abort path was the outlier. `?? "resource"` preserves
+            // the previous label only for reasons the classifier has no opinion on.
+            errorKind: classifyAgentFinishErrorKind(result.finishReason) ?? ("resource" as const),
             finishReason: result.finishReason,
             // Include error context when available for root-cause investigation
             ...(result.errorContext?.errorType && { errorType: result.errorContext.errorType }),
