@@ -668,7 +668,7 @@ describe("session compaction thresholds", () => {
     appendHistory(store, 40, 25);
     const beforeItems = store.getContextItems(scope);
     const state = makeState();
-    const { bus } = makeEventBus();
+    const { bus, emissions } = makeEventBus();
     const memoryStore = vi.fn(async (entry: Record<string, unknown>) =>
       ok({
         ...entry,
@@ -740,5 +740,19 @@ describe("session compaction thresholds", () => {
     expect(memoryStore).not.toHaveBeenCalled();
     expect(store.getSummaries(scope)).toHaveLength(0);
     expect(store.getContextItems(scope)).toEqual(beforeItems);
+
+    // A live rig showed 18 `compaction.flush` records, every one `success:false` with
+    // `memoriesWritten:0` — which reads as "the flush never works". The daemon log revealed FOUR
+    // distinct causes (summary failed / summary rejected by the secret guard / memory unavailable /
+    // summarizer unavailable), 6 of which were the anti-leak guard correctly refusing to persist a
+    // summary of a conversation containing pasted credentials. The event collapses all four to
+    // `success:false`, so the trajectory cannot tell a protective refusal from a real fault and the
+    // cause is recoverable only by grepping the daemon log. Carry the branch on the event.
+    const flushEvents = emissions.filter((e) => e.event === "compaction:flush");
+    expect(flushEvents).toHaveLength(1);
+    expect(flushEvents[0]!.payload).toMatchObject({
+      success: false,
+      failureReason: "summary_failed",
+    });
   });
 });

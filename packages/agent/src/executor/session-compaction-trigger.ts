@@ -73,9 +73,25 @@ export interface RunSessionCompactionAfterTurnParams {
   embeddingEnqueue?: (entryId: string, content: string) => void;
 }
 
+/**
+ * WHY a pre-compaction flush wrote nothing. Threaded onto the `compaction:flush` event so the
+ * trajectory can tell a PROTECTIVE refusal (`summary_rejected` — the anti-leak guard blocked a
+ * summary matching a secret pattern) from a genuine fault. A live rig produced 18 flushes that all
+ * looked identical (`success:false`, `memoriesWritten:0`) but were in fact a mix of faults and
+ * correct refusals, recoverable only from the daemon log.
+ */
+type FlushFailureReason =
+  | "memory_unavailable"
+  | "summarizer_unavailable"
+  | "summary_failed"
+  | "summary_rejected"
+  | "memory_write_failed";
+
 interface FlushResult {
   memoriesWritten: number;
   success: boolean;
+  /** Set only when `success` is false. */
+  failureReason?: FlushFailureReason;
 }
 
 function determineTrigger(
@@ -287,7 +303,7 @@ async function flushToMemory(
       },
       "Session compaction memory flush unavailable",
     );
-    return { memoriesWritten: 0, success: false };
+    return { memoriesWritten: 0, success: false, failureReason: "memory_unavailable" };
   }
   const summarizerDeps = params.getFlushSummarizerDeps();
   if (summarizerDeps === undefined) {
@@ -303,7 +319,7 @@ async function flushToMemory(
       },
       "Session compaction flush summarizer unavailable",
     );
-    return { memoriesWritten: 0, success: false };
+    return { memoriesWritten: 0, success: false, failureReason: "summarizer_unavailable" };
   }
 
   const summarized = await summarizeHistory(
@@ -325,7 +341,7 @@ async function flushToMemory(
       },
       "Session compaction memory summary failed",
     );
-    return { memoriesWritten: 0, success: false };
+    return { memoriesWritten: 0, success: false, failureReason: "summary_failed" };
   }
 
   const verdict = validateMemoryWrite(summarized.value);
@@ -343,7 +359,7 @@ async function flushToMemory(
       },
       "Session compaction memory summary rejected",
     );
-    return { memoriesWritten: 0, success: false };
+    return { memoriesWritten: 0, success: false, failureReason: "summary_rejected" };
   }
 
   const entryId = randomUUID();
@@ -381,7 +397,7 @@ async function flushToMemory(
       },
       "Session compaction memory write failed",
     );
-    return { memoriesWritten: 0, success: false };
+    return { memoriesWritten: 0, success: false, failureReason: "memory_write_failed" };
   }
 
   params.embeddingEnqueue?.(entryId, summarized.value);
@@ -442,6 +458,11 @@ async function runTriggeredCompaction(
     memoriesWritten: flushed.memoriesWritten,
     trigger,
     success,
+    // Carry WHY, so a protective `summary_rejected` is distinguishable from a real
+    // fault on the trajectory instead of only in the daemon log.
+    ...(flushed.failureReason !== undefined
+      ? { failureReason: flushed.failureReason }
+      : {}),
     timestamp: params.now,
   });
   params.logger.info(

@@ -77,7 +77,7 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `announcement:dead_letter_delivered` | runId, channelType, attemptCount, timestamp |
 | `compaction:started` | agentId, sessionKey, timestamp |
 | `compaction:recommended` | agentId, sessionKey, contextPercent, contextTokens, contextWindow, timestamp |
-| `compaction:flush` | sessionKey, memoriesWritten, trigger, success, timestamp |
+| `compaction:flush` | sessionKey, memoriesWritten, trigger, success, failureReason?, timestamp |
 | `context:masked` | agentId, sessionKey, maskedCount, totalChars, persistedToDisk, timestamp |
 | `context:compacted` | agentId, sessionKey, fallbackLevel, attempts, originalMessages, keptMessages, timestamp |
 | `context:budget_computed` | agentId, sessionKey, windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict, freshTailSteps, freshTailStepsConfigured, originatingRequestRetained, freshTailTrimmedCount |

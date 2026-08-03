@@ -3782,6 +3782,49 @@ describe("security + compaction + context + approval bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  // The flush has four distinct failure causes that demand opposite responses —
+  // `summary_rejected` is the anti-leak guard correctly refusing to persist a summary that
+  // matched a blocked-secret pattern; `summary_failed` is a real summarizer fault. A live rig
+  // showed 18 flushes that all read `success:false, memoriesWritten:0`, which were in fact a mix
+  // of faults and protective refusals recoverable only by grepping the daemon log. The reason now
+  // rides the event, so it must reach the trajectory too — a field the translator drops is a field
+  // `comis explain` cannot show.
+  it("carries the flush failureReason onto compaction.flush so a refusal is not read as a fault", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:flush", {
+      sessionKey: "t1:u1:c1",
+      memoriesWritten: 0,
+      trigger: "soft",
+      success: false,
+      failureReason: "summary_rejected",
+      timestamp: Date.now(),
+    });
+
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect(data.success).toBe(false);
+    expect(data.failureReason).toBe("summary_rejected");
+  });
+
+  it("omits failureReason on a successful flush instead of emitting an empty key", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("compaction:flush", {
+      sessionKey: "t1:u1:c1",
+      memoriesWritten: 3,
+      trigger: "manual",
+      success: true,
+      timestamp: Date.now(),
+    });
+
+    const data = recorder.calls[0].data as Record<string, unknown>;
+    expect("failureReason" in data).toBe(false);
+  });
+
   it("compaction_recommended_maps_to_compaction.recommended with contextPercent/contextTokens/contextWindow; envelope stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
