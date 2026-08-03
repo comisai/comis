@@ -43,29 +43,38 @@ const startedAt = Date.now();
 // Start from the CURRENT tail: an already-resolved prompt from an earlier turn must not be
 // re-tapped (its token is disposed, so the tap would silently do nothing and we would report
 // success for a request that never existed).
-let after = await (async () => {
+const baseline = await (async () => {
   const response = await fetch(`${base}/control/chats/${chatId}/outbound?afterMessageId=0`);
   const body = await response.json();
   const messages = Array.isArray(body) ? body : (body.messages ?? []);
   return messages.reduce((max, m) => Math.max(max, Number(m.messageId) || 0), 0);
 })();
 
-process.stderr.write(`watching chat ${chatId} for an approval prompt after messageId=${after}\n`);
+process.stderr.write(`watching chat ${chatId} for an approval prompt (sendMessage OR editMessageText) after messageId=${baseline}\n`);
 
+// A background-task approval does NOT arrive as a fresh sendMessage: the prompt is folded into an
+// `editMessageText` of the EXISTING progress message (`🔧 run bash / 🔧 importing skill / approval
+// required: …`), buttons attached. Watching only ids ABOVE the watermark therefore misses it and
+// reports "no approval prompt appeared" while a real request sits pending until it times out —
+// observed on B7-3 (skills.import), where the edit carried working Approve/Deny buttons.
+// So: rescan the WHOLE tail each poll and de-duplicate on (messageId + verb) instead.
+const tapped = new Set();
 for (;;) {
   if (Date.now() - startedAt > timeoutMs) {
     process.stderr.write("no approval prompt appeared inside the window\n");
     process.exit(3);
   }
   const response = await fetch(
-    `${base}/control/chats/${chatId}/outbound?afterMessageId=${after}&waitMs=5000`,
+    `${base}/control/chats/${chatId}/outbound?afterMessageId=${baseline}&waitMs=5000`,
   );
   const body = await response.json();
   const messages = Array.isArray(body) ? body : (body.messages ?? []);
   for (const message of messages) {
-    after = Math.max(after, Number(message.messageId) || after);
     const text = String(message.text ?? "");
     if (!/approval required/i.test(text)) continue;
+    const key = `${message.messageId}:${verb}`;
+    if (tapped.has(key)) continue;
+    tapped.add(key);
     const buttons = approvalButtons(message);
     const wanted = buttons.find((b) => new RegExp(verb, "i").test(b.label));
     if (!wanted?.data) {
