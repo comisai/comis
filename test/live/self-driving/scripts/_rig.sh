@@ -184,7 +184,13 @@ rig_defaults() {
     : "${CHATID:=678314278}"
     # No rsync: the emulator runs straight out of the checkout.
     : "${EMU_DIR:=$REPO}"
-    : "${KIT_DIR:=$REPO/test/live/self-driving/scripts}"
+    # KIT_DIR is the directory THIS file lives in, by definition — never REPO + a hardcoded
+    # suffix. `REPO` above falls back to `pwd` when `git rev-parse` fails (a deployed kit, or a
+    # service user who cannot read the checkout), so appending the in-repo path produced a
+    # DOUBLED path like `<…>/self-driving/scripts/test/live/self-driving/scripts/.rig-env` and
+    # rig-doctor then reported a missing rig-env at a path that cannot exist. Deriving it from
+    # BASH_SOURCE is correct in both layouts: the checkout and a deployed copy.
+    : "${KIT_DIR:=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
     : "${RIG_ENV:=$KIT_DIR/.rig-env}"
     : "${LOCAL_SUPERVISOR:=auto}"
   else
