@@ -45,6 +45,71 @@ export function nextStandaloneMessageIdBase(
   return previous.messageIdBase + RESTART_MESSAGE_ID_BLOCK;
 }
 
+/** The emulator's own bot identity — a group's bot member MUST match it or mentions can never fire. */
+export const EMULATOR_BOT_ID = 12345;
+export const EMULATOR_BOT_USERNAME = "test_bot";
+
+const KNOWN_SPEC_KEYS = new Set([
+  "chatId",
+  "members",
+  "botId",
+  "botUsername",
+  "supergroup",
+  "forum",
+]);
+
+/**
+ * Validate one `EMU_GROUPS` entry, loudly.
+ *
+ * Two silent-acceptance shapes made every mention-gated group arc undrivable while the launch
+ * banner still looked healthy:
+ *   1. An unknown key — `{id: -100…}` instead of `{chatId: -100…}` — left `chatId` undefined, so
+ *      the emulator minted its own id and the driver addressed a chat the plan never referenced.
+ *   2. A `botId`/`botUsername` inconsistent with the emulator's own identity made the group's bot
+ *      member a DIFFERENT bot than the one the daemon authenticates as, so `isBotMentioned` was
+ *      permanently false and no @mention could ever activate.
+ * Both now throw with the expected shape rather than defaulting.
+ */
+export function assertValidGroupSpec(spec: unknown, index = 0): StandaloneGroupSpec {
+  const where = `EMU_GROUPS[${index}]`;
+  if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+    throw new TypeError(`${where} must be an object`);
+  }
+  const unknown = Object.keys(spec).filter((k) => !KNOWN_SPEC_KEYS.has(k));
+  if (unknown.length > 0) {
+    throw new TypeError(
+      `${where} has unknown key(s) [${unknown.join(", ")}]. Expected shape: ` +
+        `{chatId, members:[{id,firstName,username?}], botId?, botUsername?, supergroup?, forum?}. ` +
+        `Note the group id key is "chatId", not "id".`,
+    );
+  }
+  const s = spec as StandaloneGroupSpec;
+  if (!Array.isArray(s.members) || s.members.length === 0) {
+    throw new TypeError(`${where}.members must be a non-empty array of {id, firstName, username?}`);
+  }
+  if (s.chatId === undefined) {
+    throw new TypeError(
+      `${where}.chatId is required — omitting it lets the emulator mint an id the driver will not address`,
+    );
+  }
+  if (s.botId !== undefined && s.botId !== EMULATOR_BOT_ID) {
+    throw new TypeError(
+      `${where}.botId=${s.botId} does not match the emulator bot id ${EMULATOR_BOT_ID}; ` +
+        `the group's bot member would be a different bot than the daemon authenticates as, so ` +
+        `@mentions could never activate. Omit botId, or set it to ${EMULATOR_BOT_ID}.`,
+    );
+  }
+  if (s.botUsername !== undefined && s.botUsername !== EMULATOR_BOT_USERNAME) {
+    throw new TypeError(
+      `${where}.botUsername=${JSON.stringify(s.botUsername)} does not match the emulator bot ` +
+        `username ${JSON.stringify(EMULATOR_BOT_USERNAME)}; mention entities are built for the ` +
+        `emulator's handle, so activation could never match. Omit it, or use ` +
+        `${JSON.stringify(EMULATOR_BOT_USERNAME)}.`,
+    );
+  }
+  return s;
+}
+
 /** Convert the launcher JSON shape without dropping emulator group semantics. */
 export function toCreateGroupChatOptions(
   spec: StandaloneGroupSpec,

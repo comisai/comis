@@ -31,6 +31,7 @@ import { createTgEmulator } from "../emulators/telegram/tg-emulator.js";
 import { registerControlApi } from "../harness/control-api.js";
 import {
   nextStandaloneMessageIdBase,
+  assertValidGroupSpec,
   toCreateGroupChatOptions,
   type StandaloneGroupSpec,
 } from "./vps-emu-group-options.js";
@@ -57,12 +58,18 @@ const rawGroups = process.env["EMU_GROUPS"];
 if (rawGroups) {
   try {
     const specs = JSON.parse(rawGroups) as StandaloneGroupSpec[];
+    if (!Array.isArray(specs)) throw new TypeError("EMU_GROUPS must be a JSON array");
+    specs.forEach((s, i) => assertValidGroupSpec(s, i));
     for (const s of specs) {
       const ref = emu.createGroupChat(toCreateGroupChatOptions(s));
       groups.push({ chatId: (ref as { chatId: number }).chatId, ref });
     }
   } catch (e) {
-    console.error("EMU_GROUPS parse/create failed:", (e as Error).message);
+    // EXIT, never continue. Previously this only warned and the emulator came up with no (or a
+    // wrongly-identified) group, so the launch banner looked healthy while every mention-gated
+    // group arc was silently undrivable — the worst outcome for a test instrument.
+    console.error(`EMU_GROUPS invalid — refusing to start: ${(e as Error).message}`);
+    process.exit(1);
   }
 }
 
