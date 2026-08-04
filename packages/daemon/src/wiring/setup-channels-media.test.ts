@@ -315,6 +315,7 @@ describe("buildMediaPipeline", () => {
         },
       },
     });
+    container.config.integrations.media.vision.enabled = true;
     const result = await buildMediaPipeline(makeDeps({ container }));
     const preprocessed = await result.preprocessMessage({
       id: "m1",
@@ -345,6 +346,40 @@ describe("buildMediaPipeline", () => {
       path: "vision-direct",
       outcome: "ok",
     });
+  });
+
+  it("disables automatic image analysis when global vision is disabled", async () => {
+    vi.mocked(getModel).mockReturnValue({ id: "vision-model" } as never);
+    vi.mocked(isVisionCapable).mockReturnValue(true);
+    const imageAnalyzer = { analyze: vi.fn() } as any;
+    const container = makeContainer();
+    const result = await buildMediaPipeline(makeDeps({ container, imageAnalyzer }));
+
+    const preprocessed = await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "user_a",
+      text: "inspect this",
+      timestamp: Date.now(),
+      attachments: [{
+        type: "image",
+        url: "tg-file://image",
+        mimeType: "image/png",
+      }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visionAvailable: false,
+        imageAnalyzer: undefined,
+        sanitizeImage: undefined,
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(preprocessed.metadata.visionPreprocess).toBeUndefined();
   });
 
   it("persists an unprocessed image and exposes its durable tool path", async () => {
