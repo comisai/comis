@@ -252,6 +252,12 @@ export interface MemoryApiDeps {
  */
 export interface ChannelsApiDeps {
   adaptersByType: Map<string, ChannelPort>;
+  /** Resolves an agent-addressed chat only when ingress observed one unique complete endpoint. */
+  resolveMessageEndpoint?: (
+    agentId: string,
+    channelType: string,
+    conversationId: string,
+  ) => import("@comis/core").ChannelEndpoint | undefined;
   /** Resolves daemon NormalizedMessage.id UUIDs back to platform-native message
    *  ids for message.delete/edit/react. Optional when channel adapters are disabled. */
   inboundMessageIdResolver?: import("../wiring/inbound-message-id-resolver.js").InboundMessageIdResolver;

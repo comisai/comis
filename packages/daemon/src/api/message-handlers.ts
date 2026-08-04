@@ -105,16 +105,27 @@ function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean 
 }
 
 function requireEndpointAuthority(
+  deps: MessageHandlerDeps,
   rawParams: Record<string, unknown>,
   adapter: ChannelPort,
   channelId: string,
 ): ChannelEndpoint {
   const explicitEndpoint = rawParams.endpoint;
   const contextEndpoint = tryGetContext()?.turnScope?.endpoint;
-  const endpoint = ChannelEndpointSchema.safeParse(explicitEndpoint ?? contextEndpoint);
   const requestedChannelType = typeof rawParams.channel_type === "string"
     ? rawParams.channel_type
     : adapter.channelType;
+  const contextMatchesTarget = contextEndpoint?.channelType === requestedChannelType
+    && contextEndpoint.conversationId === channelId;
+  const agentId = typeof rawParams._agentId === "string" ? rawParams._agentId : undefined;
+  const observedEndpoint = explicitEndpoint === undefined
+    && !contextMatchesTarget
+    && agentId !== undefined
+    ? deps.resolveMessageEndpoint?.(agentId, requestedChannelType, channelId)
+    : undefined;
+  const endpoint = ChannelEndpointSchema.safeParse(
+    explicitEndpoint ?? (contextMatchesTarget ? contextEndpoint : observedEndpoint),
+  );
   if (
     !endpoint.success
     || requestedChannelType !== adapter.channelType
@@ -308,7 +319,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageSendContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
+      const endpoint = requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const extra: Record<string, unknown> = {
         ...(rawParams.buttons ? { buttons: rawParams.buttons as RichButton[][] } : {}),
         ...(rawParams.cards ? { cards: rawParams.cards as RichCard[] } : {}),
@@ -373,7 +384,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReplyContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
+      const endpoint = requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const extra: Record<string, unknown> = {
         ...(rawParams.buttons ? { buttons: rawParams.buttons as RichButton[][] } : {}),
         ...(rawParams.cards ? { cards: rawParams.cards as RichCard[] } : {}),
@@ -442,7 +453,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageReactContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      requireEndpointAuthority(rawParams, adapter, channelId);
+      requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const reactToMessage = requireMethod(adapter, "reactToMessage", adapter.reactToMessage);
       // Wrap the EXISTING reactToMessage with the ledger. A reaction sends an
       // emoji (not free text), so the emoji is the digest input. The real target
@@ -488,7 +499,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageEditContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
+      const endpoint = requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const editMessage = requireMethod(adapter, "editMessage", adapter.editMessage);
       const formatted = formatForChannel(text, channelType);
       const editResult = endpoint.threadId === undefined
@@ -513,7 +524,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageDeleteContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      requireEndpointAuthority(rawParams, adapter, channelId);
+      requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const deleteMessage = requireMethod(adapter, "deleteMessage", adapter.deleteMessage);
       const delResult = await deleteMessage(channelId, messageId);
       if (!delResult.ok) throw delResult.error;
@@ -534,7 +545,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageFetchContract.request.parse(userParams);
 
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
+      const endpoint = requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const fetchMessages = requireMethod(adapter, "fetchMessages", adapter.fetchMessages);
       const fetchResult = await fetchMessages(channelId, {
         limit,
@@ -687,7 +698,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
       // Non-gateway channel types use the adapter
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
-      const endpoint = requireEndpointAuthority(rawParams, adapter, channelId);
+      const endpoint = requireEndpointAuthority(deps, rawParams, adapter, channelId);
       const sendAttachment = requireMethod(adapter, "sendAttachment", adapter.sendAttachment);
       const attachment = {
         type: (rawParams.attachment_type as "image" | "file" | "audio" | "video") ?? "file",
@@ -717,7 +728,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       if (channelId === undefined) {
         throw new Error("Discord action requires a selected channel endpoint");
       }
-      requireEndpointAuthority(rawParams, adapter, channelId);
+      requireEndpointAuthority(deps, rawParams, adapter, channelId);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -744,7 +755,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       if (channelId === undefined) {
         throw new Error("Telegram action requires a selected channel endpoint");
       }
-      requireEndpointAuthority(rawParams, adapter, channelId);
+      requireEndpointAuthority(deps, rawParams, adapter, channelId);
       if (rawParams.chat_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -771,7 +782,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       if (channelId === undefined) {
         throw new Error("Slack action requires a selected channel endpoint");
       }
-      requireEndpointAuthority(rawParams, adapter, channelId);
+      requireEndpointAuthority(deps, rawParams, adapter, channelId);
       if (rawParams.channel_id) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
@@ -798,7 +809,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       if (channelId === undefined) {
         throw new Error("WhatsApp action requires a selected channel endpoint");
       }
-      requireEndpointAuthority(rawParams, adapter, channelId);
+      requireEndpointAuthority(deps, rawParams, adapter, channelId);
       if (rawParams.group_jid) {
         authorizeChannelAccess(
           rawParams._callerChannelId as string | undefined,
