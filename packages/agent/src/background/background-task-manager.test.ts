@@ -460,6 +460,51 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
+    it("fail() preserves typed MCP deadline diagnostics without retaining the error body", () => {
+      const origin = buildOrigin({ agentId: "agent-1" });
+      const r = manager.promote(
+        "mcp__reports--slow_lookup",
+        new Promise(() => {}),
+        new AbortController(),
+        origin,
+        undefined,
+        CORR,
+      );
+      if (!r.ok) throw new Error("promote failed");
+      const deadlineError = Object.assign(new Error("bounded timeout hint"), {
+        code: "mcp_call_deadline_exceeded" as const,
+        configKey: "integrations.mcp.callToolTimeoutMs" as const,
+        configuredMs: 120_000,
+        queueWaitedMs: 110_025,
+        requestBudgetMs: 9_975,
+      });
+
+      manager.fail(
+        r.value,
+        new Error("MCP tool error", { cause: deadlineError }),
+        "dependency",
+      );
+
+      const failureDiagnostic = {
+        kind: "mcp_call_deadline_exceeded",
+        configKey: "integrations.mcp.callToolTimeoutMs",
+        configuredMs: 120_000,
+        queueWaitedMs: 110_025,
+        requestBudgetMs: 9_975,
+      };
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({
+          failureCode: "mcp_call_deadline_exceeded",
+          failureDiagnostic,
+        }),
+      );
+      expect(loadTask(dataDir, "agent-1", r.value)).toMatchObject({
+        failureCode: "mcp_call_deadline_exceeded",
+        failureDiagnostic,
+      });
+    });
+
     it("a promote WITHOUT correlation emits terminals without the fields (pre-upgrade shape)", () => {
       const origin = buildOrigin({ agentId: "agent-1" });
       const r = manager.promote("report", new Promise(() => {}), new AbortController(), origin);
