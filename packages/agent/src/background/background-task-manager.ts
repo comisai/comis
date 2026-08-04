@@ -526,6 +526,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         agentId: task.origin.turnScope.conversation.agentId,
         taskId,
         toolName: task.toolName,
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        traceId: task.traceId ?? task.origin.traceId ?? null,
         timestamp: clock.now(),
       });
 

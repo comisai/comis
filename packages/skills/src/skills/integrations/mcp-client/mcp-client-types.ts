@@ -393,6 +393,7 @@ export interface McpClientManager {
   callTool(
     qualifiedName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<Result<McpToolCallResult, Error>>;
   reconnect(name: string, credentials?: McpReconnectCredentials): Promise<Result<McpConnection, Error>>;
 }
