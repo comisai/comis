@@ -58,10 +58,19 @@ export type TtsSelection =
 /** The exact config knob an explicit-no-key hint must name. */
 const PROVIDER_KNOB = "integrations.media.tts.provider";
 
+const KEYED_PROVIDER_SECRETS: Readonly<Record<string, string>> = {
+  openai: "OPENAI_API_KEY",
+  elevenlabs: "ELEVENLABS_API_KEY",
+};
+
 function keyHint(provider: string): string {
+  const secretName = KEYED_PROVIDER_SECRETS[provider];
+  const credentialAction = secretName === undefined
+    ? "Set the selected provider's API key"
+    : `Set ${secretName}`;
   return (
     `TTS provider "${provider}" is configured but its audio key is unavailable. ` +
-    `Set the provider's API key, choose a keyless provider (edge), or change ` +
+    `${credentialAction}, choose a keyless provider (edge), or change ` +
     `${PROVIDER_KNOB}.`
   );
 }
