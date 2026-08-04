@@ -117,9 +117,11 @@ export function toCreateGroupChatOptions(
   return {
     ...(spec.chatId !== undefined ? { chatId: spec.chatId } : {}),
     members: spec.members,
-    ...(spec.botId !== undefined
-      ? { bot: { id: spec.botId, firstName: "bot", username: spec.botUsername ?? "comis_bot" } }
-      : {}),
+    bot: {
+      id: spec.botId ?? EMULATOR_BOT_ID,
+      firstName: "bot",
+      username: spec.botUsername ?? EMULATOR_BOT_USERNAME,
+    },
     ...(spec.supergroup !== undefined ? { supergroup: spec.supergroup } : {}),
     ...(spec.forum !== undefined ? { forum: spec.forum } : {}),
   };
