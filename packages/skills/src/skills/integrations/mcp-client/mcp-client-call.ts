@@ -332,6 +332,13 @@ export async function callTool(
           openedAtMs: systemNowMs(),
           reason: "auth",
         });
+        emitMcpBreakerOpened(
+          deps,
+          qualifiedName,
+          (existing?.failureCount ?? 0) + 1,
+          "mcp_auth_rejected",
+          error,
+        );
         deps.logger.warn(
           {
             serverName,
@@ -401,13 +408,17 @@ export async function callTool(
           { serverName, toolName, failureCount: newCount, threshold: breakerThreshold, hint: "Circuit breaker tripped; tool calls will return [server_unavailable] for cooldown", errorKind: "dependency" as const },
           "MCP circuit breaker opened",
         );
+        emitMcpBreakerOpened(deps, qualifiedName, newCount, "mcp_failure_threshold", error);
       } else if (cur.status === "open") {
-        // Half-open probe failed -> reopen with refreshed openedAtMs.
+        // Half-open probe failed -> reopen with refreshed openedAtMs. A distinct reason:
+        // triage needs "the recovery probe failed again" to read differently from a first
+        // trip, since it means the cooldown did not help.
         state.circuitBreakers.set(serverName, {
           status: "open",
           failureCount: newCount,
           openedAtMs: systemNowMs(),
         });
+        emitMcpBreakerOpened(deps, qualifiedName, newCount, "mcp_half_open_probe_failed", error);
       } else {
         state.circuitBreakers.set(serverName, { status: cur.status, failureCount: newCount });
       }
@@ -477,6 +488,53 @@ const MIN_VIABLE_CALL_BUDGET_MS = 250;
  * noise rather than contention, and naming it would distract from the real cause.
  */
 const QUEUE_WAIT_DISCLOSURE_FLOOR_MS = 1000;
+
+/**
+ * Coarse, allowlisted classification of what tripped the breaker. Deliberately a fixed
+ * vocabulary rather than anything derived from the error body: this rides an event onto the
+ * trajectory, so it must never carry a server's raw message.
+ */
+function mcpBreakerErrorTag(error: unknown): string {
+  if (error instanceof UnauthorizedError) return "unauthorized";
+  if (!(error instanceof Error)) return "unknown";
+  if (error.message.includes("401")) return "unauthorized";
+  if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) return "timeout";
+  if (/timed out|timeout/i.test(error.message)) return "timeout";
+  if (/ECONN|ENOTFOUND|EPIPE|socket|closed/i.test(error.message)) return "transport";
+  return "server_error";
+}
+
+/**
+ * Publish an MCP per-server breaker open transition onto the event bus.
+ *
+ * There are two breakers, and only the agent-side tool-retry one was wired to observability.
+ * `tool:breaker_opened` is what feeds `bridgeResult.breakerTripCount` → the session-health
+ * rollup → the trajectory `tool.breaker_opened` record → the OTel `comis.breaker_trips`
+ * metric → `system-health`'s breaker trips and `explain`'s breaker timeline. This breaker
+ * emitted nothing: it flipped its own map, started returning `[server_unavailable]`, logged a
+ * WARN, and left every one of those counters at zero — so a session whose MCP server was
+ * circuit-broken still reported `breakerTripCount: 0`, which triage trusts and stops looking.
+ *
+ * `seq` is 0 because it is documented as execution-scoped and this manager is daemon-scoped
+ * (shared across sessions); the same convention the other out-of-executor emitter uses. The
+ * emit runs inside the caller's async context, so trace correlation comes from there.
+ */
+function emitMcpBreakerOpened(
+  deps: McpClientManagerDeps,
+  qualifiedName: string,
+  consecutiveFailures: number,
+  reason: string,
+  error: unknown,
+): void {
+  deps.eventBus?.emit("tool:breaker_opened", {
+    toolName: qualifiedName,
+    consecutiveFailures,
+    errorTag: mcpBreakerErrorTag(error),
+    reason,
+    seq: 0,
+    timestamp: systemNowMs(),
+  });
+}
 
 /**
  * The message for a call whose deadline was consumed by the per-server queue wait before

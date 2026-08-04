@@ -446,3 +446,85 @@ describe("call deadline covers the queue wait", () => {
     expect(calls.length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MCP breaker trips must reach the observability pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * There are TWO circuit breakers. The agent-side tool-retry breaker emits
+ * `tool:breaker_opened`, which is what feeds `bridgeResult.breakerTripCount` → the
+ * session-health rollup → the trajectory `tool.breaker_opened` record → the OTel
+ * `comis.breaker_trips` metric → `system-health`'s breaker trips and `explain`'s breaker
+ * timeline. The MCP per-server breaker emitted NOTHING: it flipped
+ * `state.circuitBreakers`, started returning `[server_unavailable]`, logged a WARN, and
+ * left every counter at zero.
+ *
+ * Live: an MCP server was circuit-broken — visible only as bracketed sentinel text inside
+ * tool results and one daemon.log WARN — while every session rollup reported
+ * `breakerTripCount: 0`. A number that reads as "no breaker ever tripped" when one had is
+ * worse than a missing field, because triage trusts it and stops looking.
+ */
+describe("MCP breaker trips are observable", () => {
+  function makeBus() {
+    return { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
+  }
+
+  // Repeated TIMEOUTS, which is how the threshold is actually reached in production: a
+  // non-timeout failure marks the connection "error", so the next call short-circuits at the
+  // status pre-check and the counter never climbs. A timeout deliberately preserves
+  // connection status, so successive heavy calls accumulate against the threshold — the live
+  // shape, where the same slow report expired its deadline until the breaker opened.
+  it("emits tool:breaker_opened when the failure threshold trips the breaker", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+    const bus = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    // Threshold is 3 (makeOptions) — the third failure opens it.
+    for (let i = 0; i < 3; i += 1) {
+      await callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    }
+
+    const trips = bus.emit.mock.calls.filter((c) => c[0] === "tool:breaker_opened");
+    expect(trips.length).toBe(1);
+    const payload = trips[0]![1] as Record<string, unknown>;
+    expect(payload.consecutiveFailures).toBe(3);
+    expect(String(payload.toolName)).toContain(serverName);
+    expect(typeof payload.reason).toBe("string");
+    expect(typeof payload.errorTag).toBe("string");
+    expect(typeof payload.timestamp).toBe("number");
+  });
+
+  it("emits tool:breaker_opened on the immediate 401 auth trip", async () => {
+    const serverName = "higgsfield";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new UnauthorizedError("401 Unauthorized")),
+    );
+    const bus = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await callTool(state, deps, `mcp:${serverName}/generate_video`, {});
+
+    const trips = bus.emit.mock.calls.filter((c) => c[0] === "tool:breaker_opened");
+    expect(trips.length).toBe(1);
+    // The auth trip must be distinguishable from a threshold trip — the remediation differs
+    // (re-authenticate vs wait out a cooldown).
+    expect(String((trips[0]![1] as Record<string, unknown>).reason)).toMatch(/auth/i);
+  });
+
+  it("does not emit while failures remain below the threshold", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+    const bus = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+
+    expect(bus.emit.mock.calls.filter((c) => c[0] === "tool:breaker_opened").length).toBe(0);
+  });
+});
