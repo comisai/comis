@@ -1264,10 +1264,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     recordLastResponseTs(formattedKey, capturedRetention.getRetention(), deps.clock);
   }
 
+  // Single authoritative read of the supplied locale, hoisted here because the pending-background
+  // notice (below) also replaces user-facing text and must speak the same language. A source-grep
+  // invariant asserts this file reads the supplied locale field EXACTLY ONCE so the resolved
+  // tag cannot drift between call sites — so consumers take `replyLanguage`, never a second read.
+  const replyLanguage = params.responseLocalePolicy.locale;
   const pendingBackground = reconcilePendingBackgroundTurn({
     response: result.response ?? "",
     executionId,
     tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
+    // The notice REPLACES the model's answer, so it must speak the same language. Without these two
+    // the reconcile falls back to the English pack and a Hebrew conversation gets a mixed reply —
+    // measured live at 0 Hebrew characters for every runtime card on sessions whose model output was
+    // 87-100% Hebrew. The unknown-id warning callback is deliberately omitted here: the catalog built
+    // later in this function already reports those, and warning twice per turn would be noise.
+    locale: replyLanguage,
+    localeCatalog: catalogFromLocalePacks(config.localePacks),
   });
   if (pendingBackground.finishReason !== undefined) {
     result.response = pendingBackground.response;
@@ -1556,7 +1568,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
   // see the recovered failure in logs/system.
-  const replyLanguage = params.responseLocalePolicy.locale;
   // Wire the locale seam to operator config. `createLocaleCatalog` had exactly
   // one production caller — the no-packs DEFAULT_LOCALE_CATALOG — so every
   // deterministic reply resolved English no matter what `language` was pinned,

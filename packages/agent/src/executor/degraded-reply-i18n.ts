@@ -32,7 +32,10 @@ export type LocaleMessageId =
   | "ongoing_work_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
-  | "response_locale_unavailable";
+  | "response_locale_unavailable"
+  | "background_pending_running"
+  | "background_pending_ready"
+  | "background_pending_updates";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -106,6 +109,16 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
       + "ask for a narrower slice (fewer items, a shorter date range) and I can do the "
       + "rest in follow-ups.",
+  // The pending-background notice. `{labels}` is substituted with the task list; a pack that
+  // omits the token still works (the labels are appended). A positional placeholder is used
+  // rather than caller-side concatenation because word order does not survive translation —
+  // Hebrew is RTL and "prose: list" is not a safe universal shape.
+  background_pending_running:
+    "⏳ Background work is still running: {labels}. I will continue this conversation when it finishes.",
+  background_pending_ready:
+    "⏳ A background result is ready: {labels}. I will continue this conversation with it.",
+  background_pending_updates:
+    "⏳ Background work has updates pending: {labels}. I will continue this conversation as they are ready.",
 };
 
 function canonicalLocale(raw: string): string | undefined {
