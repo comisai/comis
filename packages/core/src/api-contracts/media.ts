@@ -135,8 +135,8 @@ export const ImageAnalyzeContract = defineContract({
  * returns the file path + mimeType + size.
  *
  * Bespoke pre-Zod validation:
- *   - No TTS adapter configured → `"TTS not configured. Set
- *     media.tts.provider in config."`.
+ *   - No TTS adapter configured → the boot resolver's actionable provider
+ *     credential/configuration hint.
  *
  * Response: `{ filePath, mimeType, sizeBytes }`. The audio is delivered
  * via the file path (handler-side TTL cleanup deletes files older than

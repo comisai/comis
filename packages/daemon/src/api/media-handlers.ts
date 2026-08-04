@@ -285,7 +285,19 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
 
     [TtsSynthesizeContract.method]: async (rawParams) => {
       if (!deps.ttsAdapter) {
-        throw new Error("TTS not configured. Set media.tts.provider in config.");
+        const unavailable = deps.voiceSelection?.ttsUnavailable ?? {
+          errorKind: "dependency" as const,
+          hint: "TTS not configured. Set integrations.media.tts.provider in config.",
+        };
+        const voice = wireVoiceForHandler(rawParams, deps, "tts");
+        voice.failed({
+          sttErrorKind: unavailable.errorKind,
+          provider: voice.provider,
+          source: voice.source,
+          errMessage: unavailable.hint,
+          hint: unavailable.hint,
+        });
+        throw new Error(unavailable.hint);
       }
       const userParams = stripInternalFields(rawParams);
       const params = TtsSynthesizeContract.request.parse(userParams);

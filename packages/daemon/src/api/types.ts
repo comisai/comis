@@ -572,11 +572,12 @@ export interface ResolvedVoiceSelection {
   onSkip?: string[];
 }
 
-/** Honest-unavailable STT selection retained from the boot resolver. */
+/** Honest-unavailable voice selections retained from the boot resolver. */
 export interface ResolvedVoiceState {
   stt?: ResolvedVoiceSelection;
   tts?: ResolvedVoiceSelection;
   sttUnavailable?: { errorKind: SttErrorKind; hint: string };
+  ttsUnavailable?: { errorKind: SttErrorKind; hint: string };
 }
 
 // @optional-field-count: MediaApiDeps is the daemon media-RPC deps aggregate — every media handler family (vision, image-gen, video-gen+status, transcription/TTS, voice obs+selection) threads its deps through this one interface, and each is OPTIONAL because the corresponding handler is feature-gated (constructed only when its provider/registry is configured). Splitting would fragment the single dispatch-deps seam the RPC router resolves; the count grows with the media feature set, not with bloat.
