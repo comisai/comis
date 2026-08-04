@@ -408,6 +408,29 @@ describe("IncidentReportSchema spend? section", () => {
   });
 });
 
+describe("IncidentReportSchema perRootBudget section", () => {
+  it("preserves the rejected attempted amount needed to explain a pre-reserve breach", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      perRootBudget: {
+        limb: "tokens",
+        spent: 25293,
+        attempted: 26326,
+        cap: 30000,
+        unit: "tokens",
+      },
+    });
+
+    expect(parsed.perRootBudget).toEqual({
+      limb: "tokens",
+      spent: 25293,
+      attempted: 26326,
+      cap: 30000,
+      unit: "tokens",
+    });
+  });
+});
+
 describe("IncidentReportSchema orchestrate? section", () => {
   /** A valid non-zero-exit run with a denied in-jail call + savings. */
   const validRun = {

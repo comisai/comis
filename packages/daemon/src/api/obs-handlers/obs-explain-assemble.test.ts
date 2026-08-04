@@ -931,7 +931,7 @@ describe("assembleIncidentReport — per-root budget abort", () => {
         traceId: "t-abort",
         data: {
           reason: "spend_exceeded",
-          perRootBudget: { limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" },
+          perRootBudget: { limb: "tokens", spent: 139397, attempted: 24561, cap: 150000, unit: "tokens" },
         },
       },
     ];
@@ -946,7 +946,13 @@ describe("assembleIncidentReport — per-root budget abort", () => {
     );
     // The per-root abort is surfaced, not swallowed as endReason:"unknown".
     expect(report.outcome.endReason).toBe("spend_exceeded");
-    expect(report.perRootBudget).toEqual({ limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" });
+    expect(report.perRootBudget).toEqual({
+      limb: "tokens",
+      spent: 139397,
+      attempted: 24561,
+      cap: 150000,
+      unit: "tokens",
+    });
   });
 
   it("the spend-verdict names the tripped limb once endReason+perRootBudget are surfaced", () => {

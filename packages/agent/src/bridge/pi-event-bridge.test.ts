@@ -7453,7 +7453,17 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     expect(getResult().finishReason).toBe("spend_exceeded");
     expect(deps.onAbort).toHaveBeenCalled();
     const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
-    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({ reason: "spend_exceeded", agentId: "test-agent" }));
+    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({
+      reason: "spend_exceeded",
+      agentId: "test-agent",
+      perRootBudget: {
+        limb: "tokens",
+        spent: 150,
+        attempted: 150,
+        cap: 250,
+        unit: "tokens",
+      },
+    }));
   });
 
   it("a ZERO-PRICE native-provider loop trips the WALL-CLOCK limb via the bridge once the FakeClock advances past the deadline", () => {
