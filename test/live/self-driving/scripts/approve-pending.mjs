@@ -47,17 +47,21 @@ const baseline = await (async () => {
   const response = await fetch(`${base}/control/chats/${chatId}/outbound?afterMessageId=0`);
   const body = await response.json();
   const messages = Array.isArray(body) ? body : (body.messages ?? []);
-  return messages.reduce((max, m) => Math.max(max, Number(m.messageId) || 0), 0);
+  return {
+    eventCount: messages.length,
+    messageId: messages.reduce((max, m) => Math.max(max, Number(m.messageId) || 0), 0),
+  };
 })();
 
-process.stderr.write(`watching chat ${chatId} for an approval prompt (sendMessage OR editMessageText) after messageId=${baseline}\n`);
+process.stderr.write(`watching chat ${chatId} for an approval prompt (sendMessage OR editMessageText) after event=${baseline.eventCount}, messageId=${baseline.messageId}\n`);
 
 // A background-task approval does NOT arrive as a fresh sendMessage: the prompt is folded into an
 // `editMessageText` of the EXISTING progress message (`🔧 run bash / 🔧 importing skill / approval
 // required: …`), buttons attached. Watching only ids ABOVE the watermark therefore misses it and
 // reports "no approval prompt appeared" while a real request sits pending until it times out —
 // observed on B7-3 (skills.import), where the edit carried working Approve/Deny buttons.
-// So: rescan the WHOLE tail each poll and de-duplicate on (messageId + verb) instead.
+// So: rescan the WHOLE tail each poll and advance by outbound EVENT count. Message ids cannot be
+// the cursor because an edit reuses the existing progress message id.
 const tapped = new Set();
 for (;;) {
   if (Date.now() - startedAt > timeoutMs) {
@@ -65,11 +69,14 @@ for (;;) {
     process.exit(3);
   }
   const response = await fetch(
-    `${base}/control/chats/${chatId}/outbound?afterMessageId=${baseline}&waitMs=5000`,
+    `${base}/control/chats/${chatId}/outbound?afterMessageId=0&waitMs=5000`,
   );
   const body = await response.json();
   const messages = Array.isArray(body) ? body : (body.messages ?? []);
-  for (const message of messages) {
+  const newEvents = messages.length < baseline.eventCount
+    ? messages
+    : messages.slice(baseline.eventCount);
+  for (const message of newEvents) {
     const text = String(message.text ?? "");
     if (!/approval required/i.test(text)) continue;
     const key = `${message.messageId}:${verb}`;
