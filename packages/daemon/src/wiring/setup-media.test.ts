@@ -902,6 +902,28 @@ describe("setupMedia — construction follows the resolver's chosen provider", (
     });
   });
 
+  it("retains resolver TTS unavailability for downstream user-facing errors", async () => {
+    const setupMedia = await getSetupMedia();
+    const hint =
+      'TTS provider "elevenlabs" is configured but its audio key is unavailable. '
+      + "Set ELEVENLABS_API_KEY or change integrations.media.tts.provider.";
+    const result = await setupMedia({
+      container: createMinimalMediaConfig({
+        media: { tts: { provider: "elevenlabs", voice: "alloy", maxTextLength: 4096 } },
+      }),
+      skillsLogger: createMockLogger() as any,
+      audioSelector: fakeSelector(
+        { ok: true, provider: "local", keyless: true, model: "tiny", source: "keyless-local" },
+        { ok: false, errorKind: "auth_required", hint },
+      ),
+    });
+
+    expect((result.voiceSelection as any)?.ttsUnavailable).toEqual({
+      errorKind: "auth_required",
+      hint,
+    });
+  });
+
   it("constructs the TTS adapter from the resolved provider when edge is disabled and follow-main wins (config 'auto' → resolved 'openai')", async () => {
     const setupMedia = await getSetupMedia();
     const result = await setupMedia({
