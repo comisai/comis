@@ -170,6 +170,19 @@ export interface ActivityTurnCoordinatorDeps {
   activityStreamPort: ActivityStreamPort;
   renderer: ChannelActivityRenderer;
   projection: ActivityProjection;
+  /**
+   * Optional locale projection for a card's `defaultLabel`.
+   *
+   * `defaultLabel` is the event schema's declared ENGLISH advisory label, composed in
+   * `@comis/observability` — a package with no locale knowledge, and none to acquire. The shared
+   * render strategy every themable channel uses reads it verbatim, so under a configured
+   * non-English `language` an approval card the user has to act on rendered in English inside an
+   * otherwise non-English conversation. The coordinator is the one layer holding both a resolved
+   * locale and the renderer, so the projection the schema tells themable renderers to do happens
+   * here. Returning `undefined` leaves the event exactly as emitted; omitting the dep is today's
+   * behaviour.
+   */
+  localizeCardLabel?: (event: ActivityEvent) => string | undefined;
   timer: TimerPort;
   clock: ClockPort;
   logger: ComisLogger;
@@ -474,9 +487,25 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   function onEvent(e: ActivityEvent): void {
-    events.push(annotateSubAgentParent(e));
+    events.push(localizeCard(annotateSubAgentParent(e)));
     if (e.status === "failed") sawFailedEvent = true;
     scheduleApply();
+  }
+
+  /**
+   * Swap in a locale-projected card label.
+   *
+   * Applied on the way INTO the buffer, not at paint time, so coalescing and the frame diff both
+   * operate on the text that will actually be shown — localizing after projection would leave the
+   * changeSet comparing labels the user never saw.
+   */
+  function localizeCard(e: ActivityEvent): ActivityEvent {
+    if (deps.localizeCardLabel === undefined) return e;
+    const localized = deps.localizeCardLabel(e);
+    // Identical text is not worth a new object: the frame diff compares by value, and a copy per
+    // event would churn the buffer for every non-card event.
+    if (localized === undefined || localized === e.defaultLabel) return e;
+    return { ...e, defaultLabel: localized };
   }
 
   /**

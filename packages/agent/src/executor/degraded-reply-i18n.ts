@@ -35,7 +35,12 @@ export type LocaleMessageId =
   | "response_locale_unavailable"
   | "background_pending_running"
   | "background_pending_ready"
-  | "background_pending_updates";
+  | "background_pending_updates"
+  | "activity_card_approval_required"
+  | "activity_card_detail_server"
+  | "activity_card_detail_credential"
+  | "activity_card_detail_command"
+  | "activity_card_detail_secret";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -119,6 +124,17 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "⏳ A background result is ready: {labels}. I will continue this conversation with it.",
   background_pending_updates:
     "⏳ Background work has updates pending: {labels}. I will continue this conversation as they are ready.",
+  // The approval card a user must ACT on. `{operation}` is the tool call being authorized and
+  // `{details}` its redacted specifics; both are identifiers, substituted verbatim, so a pack can
+  // translate the surrounding words but never rename what is being approved. A template that
+  // omits `{details}` drops them — nothing is appended behind the author's back. These defaults
+  // are byte-identical to the English label they replace, so a deployment with no pack sees no
+  // change.
+  activity_card_approval_required: "approval required: {operation} — {details}",
+  activity_card_detail_server: "server",
+  activity_card_detail_credential: "credential",
+  activity_card_detail_command: "command",
+  activity_card_detail_secret: "secret",
 };
 
 function canonicalLocale(raw: string): string | undefined {

@@ -13,6 +13,7 @@ import { createPlanStream } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import { catalogFromLocalePacks, localizeApprovalCardLabel } from "@comis/agent";
 import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, createActivityTurnCoordinator, type CommandHandlerDeps, type CommandQueue, type ActivityTurnCoordinator, type ActivityBreakerGate } from "@comis/orchestrator";
 import { createLifecycleReactor, reactWithFallback, createTestSink, type LifecycleReactor, type ChannelRegistry } from "@comis/channels";
 import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup-channels-registry-builder.js";
@@ -203,10 +204,21 @@ export async function buildAndStartChannelManager(
             ...(ctx.threadId !== undefined ? { threadId: ctx.threadId } : {}),
           },
         ) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
+        // Card locale projection. `defaultLabel` is composed in `@comis/observability` as the
+        // schema's declared ENGLISH advisory label, and the shared render strategy every themable
+        // channel uses reads it verbatim — so an approval card the user has to act on stayed
+        // English inside an otherwise non-English conversation. Resolved from THIS agent's
+        // `language` + `localePacks`, per-turn for the same reason the theme is (per-agent objects
+        // are replaced wholesale on hot-reload). With no pack the catalog returns the English
+        // default, so a deployment that configures nothing is unchanged.
+        const turnAgent = agents[ctx.agentId];
+        const cardCatalog = catalogFromLocalePacks(turnAgent?.localePacks);
+        const cardLocale = turnAgent?.language;
         return createActivityTurnCoordinator({
           activityStreamPort: activityStream,
           renderer,
           projection: chatProjection,
+          localizeCardLabel: (event) => localizeApprovalCardLabel(event, cardLocale, cardCatalog),
           timer: deps.timers,
           clock: deps.clock,
           logger: channelsLogger,

@@ -1444,3 +1444,79 @@ describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", ()
     coord.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Card locale projection
+// ---------------------------------------------------------------------------
+
+/**
+ * `ActivityEvent.defaultLabel` is the schema's declared ENGLISH advisory label, composed in
+ * `@comis/observability`, and the shared render strategy every themable channel uses reads it
+ * verbatim. So under a configured non-English `language` the approval card a user must tap
+ * rendered in English inside an otherwise non-English conversation — observed live, where the
+ * model's own answers were correct but the prompt the user had to act on was unreadable to them.
+ *
+ * The coordinator is the only layer holding both a resolved locale and the renderer, so it does
+ * the projection the schema tells themable renderers to do. These tests pin that the localized
+ * text reaches the painted frame, and that a deployment without the dep is untouched.
+ */
+describe("createActivityTurnCoordinator — card locale projection", () => {
+  it("paints the localized label instead of the emitted English one", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      localizeCardLabel: (e) =>
+        e.kind === "approval" ? `נדרש אישור: ${e.toolName ?? ""}` : undefined,
+    });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({
+      kind: "approval",
+      toolName: "pipeline",
+      defaultLabel: "approval required: pipeline graph.execute",
+    }));
+    timer.advance(800);
+
+    const painted = renderer.applyFrames.at(-1)?.visibleEvents ?? [];
+    expect(painted.map((e) => e.defaultLabel)).toContain("נדרש אישור: pipeline");
+    // The English original must be gone, not merely accompanied.
+    expect(painted.map((e) => e.defaultLabel)).not.toContain(
+      "approval required: pipeline graph.execute",
+    );
+
+    coord.dispose();
+  });
+
+  it("leaves events untouched when the projection declines them", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      // A non-card event: the projection returns undefined and the label must survive intact.
+      localizeCardLabel: () => undefined,
+    });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ kind: "tool", defaultLabel: "web_fetch" }));
+    timer.advance(800);
+
+    expect((renderer.applyFrames.at(-1)?.visibleEvents ?? []).map((e) => e.defaultLabel))
+      .toContain("web_fetch");
+
+    coord.dispose();
+  });
+
+  it("is a no-op when no projection is wired", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ kind: "approval", defaultLabel: "approval required: pipeline" }));
+    timer.advance(800);
+
+    // Shipped default: with no operator pack and no dep, the card is byte-identical to today.
+    expect((renderer.applyFrames.at(-1)?.visibleEvents ?? []).map((e) => e.defaultLabel))
+      .toContain("approval required: pipeline");
+
+    coord.dispose();
+  });
+});
