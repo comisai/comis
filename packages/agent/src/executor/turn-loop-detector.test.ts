@@ -147,6 +147,36 @@ describe("createTurnLoopDetector", () => {
     expect(detector.shouldBreakLoop()).toBe(false);
   });
 
+  it("ignores a one-shot Comis tool guide when comparing successful results", () => {
+    const detector = createTurnLoopDetector();
+    detector.recordCall(
+      "mcp__fixture--check_condition",
+      {},
+      {
+        content: [
+          { type: "text", text: "WAITING" },
+          {
+            type: "text",
+            text: "\n---\n[Tool Guide - shown once per session]\nUse the fixture safely.\n---",
+          },
+        ],
+        details: { success: true },
+      },
+    );
+    for (let i = 0; i < 6; i++) {
+      detector.recordCall(
+        "mcp__fixture--check_condition",
+        {},
+        {
+          content: [{ type: "text", text: "WAITING" }],
+          details: { success: true },
+        },
+      );
+    }
+
+    expect(detector.shouldBreakLoop()).toBe(true);
+  });
+
   it("does not break on distinct successful mutations", () => {
     const detector = createTurnLoopDetector();
     for (let i = 0; i < 10; i++) {
