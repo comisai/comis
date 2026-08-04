@@ -310,8 +310,11 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
 
       // Vision gating: use native image content blocks when model supports vision,
       // fall back to text-description via imageAnalyzer when it does not.
-      // Also respect per-channel analyzeImages toggle.
-      const imagesEnabled = channelMediaConfig?.analyzeImages !== false;
+      // Automatic analysis requires both the global vision switch and the
+      // per-channel analyzeImages switch. On-demand vision tools are wired
+      // separately and remain available when automatic processing is off.
+      const imagesEnabled = visionConfig.enabled
+        && channelMediaConfig?.analyzeImages !== false;
       const agentConfig = agents[turnScope.conversation.agentId];
       let agentModelVisionCapable = false;
       if (agentConfig !== undefined) {
