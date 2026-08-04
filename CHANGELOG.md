@@ -4,6 +4,21 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [Unreleased]
 
+## [1.0.58] - 2026-08-04
+
+### Fixed
+
+- Prompt-cache reuse on the Anthropic path is restored: the conversation prefix stays byte-stable across a turn instead of being rewritten on every tool cycle, so cached tokens are reused rather than re-sent.
+- Sub-agent and MCP calls no longer collide over a shared deadline, and a hard runtime limit now reports the configuration key that set it, the value that expired, and the tool that was running, instead of a bare timeout message.
+- A background task that exceeds its limit reports the failure as its own cause rather than as a dependency error, and states that partial work was not returned so an empty result is not read as an empty answer.
+- Replies that arrived out of order, halted sub-agent accounts, and activity cards rendered in the wrong language are corrected; breaker and deadline events now reach the incident report instead of appearing only in logs.
+
+### Changed
+
+- Recall now resolves its tenant and agent partition from an explicit scope rather than inferring one from the session, so a caller that supplies no agent is rejected instead of silently searching an empty partition.
+
+## [1.0.57] - 2026-08-01
+
 ### Fixed
 
 - `comis init --config-dir` now isolates configuration detection, credential storage, generated files, and daemon startup instead of writing setup artifacts to the default home directory.
@@ -13,6 +28,16 @@ This file records user-visible changes to Comis. Detailed release history is ava
 - Fresh configurations use the private multilingual `bge-m3` embedder so semantic memory recall works across scripts without an external embedding service. The smaller English-centric nomic model remains an explicit setup choice.
 - Bounded, sanitized recall-ranking diagnostics are enabled from first boot so recall incidents can be explained without reproducing them after a configuration change.
 - Guided setup enables supported human-approval paths when it creates an administrator sender mapping, while configurations without an authorized responder keep the approval gate disabled.
+
+## [1.0.56] - 2026-07-26
+
+### Fixed
+
+- `npm install -g comisai` works again. A global install nests every dependency where npm treats it as part of the umbrella package's bundle, so it skipped unpacking those packages while still scheduling their lifecycle scripts, and the install failed with an opaque `spawn sh ENOENT`. Bundled copies now ship inert.
+
+### Changed
+
+- Dependency updates across the tree, including the pi SDK.
 
 ## [1.0.55] - 2026-07-25
 

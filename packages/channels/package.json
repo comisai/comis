@@ -1,7 +1,7 @@
 {
   "name": "@comis/channels",
   "private": true,
-  "version": "1.0.57",
+  "version": "1.0.58",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Messaging adapters for Comis, including Microsoft Teams, Email, Discord, Telegram, Slack, and more.",
