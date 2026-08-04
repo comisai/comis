@@ -1847,6 +1847,32 @@ describe("prompt_timeout terminal verdict", () => {
     );
   });
 
+  it("explains an MCP background deadline with the configured value and queue wait", () => {
+    const r = rootCause(
+      makeSignals({
+        failures: [
+          {
+            seq: 5,
+            toolName: "mcp__reports--slow_lookup",
+            classifiedFailureBy: "background_task",
+            transportOk: false,
+            errorKind: "dependency",
+            failureCode: "mcp_call_deadline_exceeded",
+            resultDigest: "deadline",
+            resultBytes: 88,
+            errorPreview:
+              "integrations.mcp.callToolTimeoutMs=120000ms; queueWaitedMs=110025; requestBudgetMs=9975",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("mcp_background_call_deadline_exceeded");
+    expect(r?.detail).toContain("integrations.mcp.callToolTimeoutMs=120000ms");
+    expect(r?.detail).toContain("queueWaitedMs=110025");
+    expect(r?.suggestedNextSteps.join(" ")).toContain("maxConcurrency");
+  });
+
   it("a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (no tool failure required)", () => {
     const r = rootCause(
       makeSignals({

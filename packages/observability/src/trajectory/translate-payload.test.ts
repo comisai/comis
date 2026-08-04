@@ -349,6 +349,40 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     expect(JSON.stringify(data)).not.toContain("sensitive context");
   });
 
+  it("failed: retains typed MCP deadline numbers without its error body", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "a1",
+      taskId: "t-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      error: "timeout body containing sensitive context",
+      errorKind: "dependency",
+      failureCode: "mcp_call_deadline_exceeded",
+      failureDiagnostic: {
+        kind: "mcp_call_deadline_exceeded",
+        configKey: "integrations.mcp.callToolTimeoutMs",
+        configuredMs: 120_000,
+        queueWaitedMs: 110_025,
+        requestBudgetMs: 9_975,
+      },
+      durationMs: 120_000,
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 302,
+    } as never);
+
+    expect(data).toEqual({
+      taskId: "t-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      durationMs: 120_000,
+      errorKind: "dependency",
+      failureCode: "mcp_call_deadline_exceeded",
+      failureConfigKey: "integrations.mcp.callToolTimeoutMs",
+      failureConfiguredMs: 120_000,
+      failureQueueWaitedMs: 110_025,
+      failureRequestBudgetMs: 9_975,
+    });
+    expect(JSON.stringify(data)).not.toContain("sensitive context");
+  });
+
   it("cancelled keeps only the task and tool identifiers", () => {
     const data = translatePayload("background_task:cancelled" as never, {
       agentId: "a1",

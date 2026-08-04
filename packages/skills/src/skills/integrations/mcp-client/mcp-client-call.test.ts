@@ -203,6 +203,13 @@ describe("call timeout names its knob", () => {
     // the ACTUAL configured value, so the operator does not have to go look it up
     expect(message).toContain(String(state.options.callToolTimeoutMs));
     expect(message).toContain(serverName);
+    expect(result.error).toMatchObject({
+      code: "mcp_call_deadline_exceeded",
+      configKey: "integrations.mcp.callToolTimeoutMs",
+      configuredMs: state.options.callToolTimeoutMs,
+      queueWaitedMs: expect.any(Number),
+      requestBudgetMs: expect.any(Number),
+    });
   });
 
   it("tells the caller NOT to retry unchanged (the retry storm is the failure mode)", async () => {

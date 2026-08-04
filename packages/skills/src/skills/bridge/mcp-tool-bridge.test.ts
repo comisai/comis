@@ -311,12 +311,14 @@ describe("mcpToolsToAgentTools", () => {
   });
 
   it("execute() handles callTool error gracefully", async () => {
-    const callTool = vi.fn().mockResolvedValue(err(new Error("Server unreachable")));
+    const upstreamError = new Error("Server unreachable");
+    const callTool = vi.fn().mockResolvedValue(err(upstreamError));
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
 
-    await expect(tools[0].execute("call-1", { query: "test" })).rejects.toThrow(
-      "MCP tool error: Server unreachable",
-    );
+    await expect(tools[0].execute("call-1", { query: "test" })).rejects.toMatchObject({
+      message: "MCP tool error: Server unreachable",
+      cause: upstreamError,
+    });
   });
 
   it("execute() handles MCP isError flag", async () => {

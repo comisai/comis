@@ -1760,6 +1760,35 @@ describe("toolStats fidelity", () => {
     ]);
   });
 
+  it("retains MCP background deadline diagnostics as a bounded failure preview", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-mcp-timeout",
+          toolName: "mcp__reports--slow_lookup",
+          errorKind: "dependency",
+          failureCode: "mcp_call_deadline_exceeded",
+          failureConfigKey: "integrations.mcp.callToolTimeoutMs",
+          failureConfiguredMs: 120_000,
+          failureQueueWaitedMs: 110_025,
+          failureRequestBudgetMs: 9_975,
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp__reports--slow_lookup",
+        failureCode: "mcp_call_deadline_exceeded",
+        errorPreview:
+          "integrations.mcp.callToolTimeoutMs=120000ms; queueWaitedMs=110025; requestBudgetMs=9975",
+      }),
+    ]);
+  });
+
   it("replaces a promoted success with a degraded runtime-only background completion", () => {
     const s = toIncidentSignals([
       {
