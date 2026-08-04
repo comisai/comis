@@ -474,6 +474,7 @@ export function createBackgroundCompletionRunner(
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
     const maxBackgroundHops = deps.resolveMaxBackgroundHops(agentId);
     if (nextHopCount >= maxBackgroundHops) {
+      const configKey = `agents.${agentId}.backgroundTasks.maxBackgroundHops`;
       log.info(
         {
           taskId,
@@ -489,7 +490,10 @@ export function createBackgroundCompletionRunner(
         task.id,
         agentId,
         task.toolName,
-        `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
+        `Background task "${task.toolName}" ${kind}, but follow-up was skipped because `
+        + `\`${configKey}=${String(maxBackgroundHops)}\` was reached. The task remains stored as `
+        + `${task.id}; ask me to check it. Retrying the same request unchanged reaches the same `
+        + `limit; an operator must raise \`${configKey}\` and restart the daemon.`,
       );
       return;
     }
