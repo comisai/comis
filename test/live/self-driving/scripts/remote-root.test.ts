@@ -660,6 +660,28 @@ describe("local rig mode", () => {
     }
   });
 
+  it("probes bubblewrap on a local Linux phase-zero gate", () => {
+    if (process.platform !== "linux") return;
+    const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
+    const result = spawnSync("bash", [PHASE_ZERO_CHECK], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RIG_MODE: "local",
+        DATA: directory,
+        COMIS_DATA_DIR: directory,
+        COMIS_CONFIG_PATHS: resolve(directory, "config.yaml"),
+        GW_PORT: "48991",
+        SERVICE: "comis-phase-zero-test",
+        COMIS_USER: process.env["USER"] ?? "user_a",
+      },
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(output).toMatch(/PASS.*jail-dep:bwrap/);
+    expect(output).not.toContain("NO-ACCESS on the local macOS rig");
+  });
+
   it("lets bare node helpers discover the rendered local rig mode", () => {
     const directory = mkdtempSync(resolve(tmpdir(), "comis-node-rig-mode-"));
     temporaryDirectories.push(directory);
