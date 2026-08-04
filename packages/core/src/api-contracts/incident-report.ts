@@ -677,6 +677,8 @@ export const IncidentReportSchema = z.object({
       promoted: z.number(),
       completed: z.number(),
       failed: z.number(),
+      cancelled: z.number(),
+      reentered: z.number(),
       accepted: z.number(),
       pending: z.number(),
     })

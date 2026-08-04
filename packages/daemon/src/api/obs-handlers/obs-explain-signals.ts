@@ -295,6 +295,8 @@ function handleEventRecord(
     case "background_task.promoted":
     case "background_task.completed":
     case "background_task.failed":
+    case "background_task.cancelled":
+    case "background_task.reentered":
     case "background_task.notified":
       accumulateBackgroundTaskRecord(acc, type, data, asNumber(rec.seq) ?? acc.seq++);
       return;
@@ -731,6 +733,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     backgroundTerminalTaskIds: new Set(),
     backgroundCompletedTaskIds: new Set(),
     backgroundFailedTaskIds: new Set(),
+    backgroundCancelledTaskIds: new Set(),
+    backgroundReenteredTaskIds: new Set(),
     backgroundAcceptedTaskIds: new Set(),
   };
 

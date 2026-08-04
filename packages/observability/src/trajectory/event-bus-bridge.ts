@@ -264,12 +264,14 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "learning:skill_demoted": "learning.skill_demoted",
 
   // ---- Background task lifecycle ----
-  // The promote/complete/fail transitions of a long-running tool detached past the
-  // execute() boundary. Content-free: closed ids (taskId/toolName) + durationMs ONLY —
-  // never a result/error body; agentId/origin are envelope correlation ids.
+  // The lifecycle transitions of a long-running tool detached past the execute()
+  // boundary. Content-free: closed ids (taskId/toolName), hop count, and durationMs
+  // only — never a result/error body; agentId/origin are envelope correlation ids.
   "background_task:promoted": "background_task.promoted",
   "background_task:completed": "background_task.completed",
   "background_task:failed": "background_task.failed",
+  "background_task:cancelled": "background_task.cancelled",
+  "background_task:reentered": "background_task.reentered",
 
   // ---- Inferred follow-up task lifecycle ----
   // These scheduler events carry ids, closed labels, counts, and durations
