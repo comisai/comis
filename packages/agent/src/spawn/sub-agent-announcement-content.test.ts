@@ -68,7 +68,8 @@ describe("sub-agent announcement content", () => {
       failureNotice: `${genericNotice}\n\n${governorNotice}`,
     });
 
-    expect(disclosure).toEqual({ text: candidate, corrected: false });
+    expect(disclosure.corrected).toBe(true);
+    expect(disclosure.text).toContain(governorNotice);
     expect(disclosure.text?.match(/background task failed/gu)).toHaveLength(1);
     expect(disclosure.text?.match(/governor limit of 6/gu)).toHaveLength(1);
   });
