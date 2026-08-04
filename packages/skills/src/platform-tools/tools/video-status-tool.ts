@@ -52,7 +52,10 @@ export function createVideoStatusTool(rpcCall: RpcCall) {
     name: "video_status",
     label: "Check Video Status",
     description:
-      "Check the status/progress of a video generation job by its job handle (returns state, progress, media path, cost).",
+      "Check the status/progress of a video generation job by its job handle "
+      + "(returns state, progress, media path, cost). Completed video is automatically delivered "
+      + "to the originating channel; mediaPath is diagnostic only. Do not call message.attach or "
+      + "otherwise resend the video.",
     parameters: VideoStatusToolParams,
     rpcMethod: "video.status",
   }, rpcCall);
