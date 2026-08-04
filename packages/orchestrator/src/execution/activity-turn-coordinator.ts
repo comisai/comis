@@ -604,6 +604,25 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       }
     }
 
+    // (1b) A turn is not DONE while work the card represents is still running. `✓ done` tracked
+    // the parent turn, so a turn that delivered while a sub-agent it spawned kept running painted
+    // the card done and deleted it — live, ~3 minutes before that sub-agent actually finished and
+    // delivered, leaving a watcher to conclude the task had ended with no answer. `subAgentStack`
+    // is pushed on a sub-agent's phase:"start" and popped on its phase:"end", and this coordinator
+    // is its single owner, so a non-empty stack here is exactly "spawned work never ended".
+    //
+    // Reclassified to the pending-background silent path: the card is cleaned up without claiming
+    // completion, which is what that reason already means elsewhere. Only the "done" claim is
+    // unsafe — failure and aborted outcomes keep their diagnostic trail untouched.
+    if (effective.kind === "success" && subAgentStack.length > 0) {
+      deps.logger.debug({
+        step: "activity-finalize",
+        outstandingSubAgents: subAgentStack.length,
+        hint: "turn delivered while spawned sub-agent work was still running; finalizing without a done claim so the card cannot report completion over live work",
+      }, "Suppressed a done claim while spawned work was outstanding");
+      effective = { kind: "silent", reason: "BACKGROUND_PENDING" };
+    }
+
     // The coordinator's stream is the authoritative activity timeline for the
     // turn. Preserve its failed events when an upstream failure arrives without
     // attached event evidence, while leaving explicit upstream evidence intact.

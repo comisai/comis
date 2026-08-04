@@ -1520,3 +1520,106 @@ describe("createActivityTurnCoordinator — card locale projection", () => {
     coord.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// A card must not claim done over work that is still running
+// ---------------------------------------------------------------------------
+
+/**
+ * `✓ done` tracked the PARENT TURN, not the work the card was created to represent. When a turn
+ * delivers successfully while a sub-agent it spawned is still running, the success outcome paints
+ * the card done and deletes it.
+ *
+ * Live: on one question the sub-agent card was edited to `✓ done` and deleted at 19:00:07, while
+ * that sub-agent actually ran until 19:02:34 and delivered at 19:03:03 — nearly three minutes
+ * later. A user watching the card would conclude the task had finished and produced nothing.
+ *
+ * The coordinator already holds the evidence: `subAgentStack` is pushed on a sub-agent's
+ * `phase:"start"` and popped on its `phase:"end"`, and the coordinator is its documented single
+ * owner. A non-empty stack at finalize means spawned work never ended, so the turn is not done —
+ * which is the same invariant the live harness needed ("do not call turn-end while work is
+ * outstanding"), applied to the product surface.
+ */
+describe("createActivityTurnCoordinator — done requires spawned work to have ended", () => {
+  function subAgentStart(): ActivityEvent {
+    return makeEvent({
+      kind: "subagent",
+      phase: "start",
+      status: "running",
+      activityId: "sub-1",
+      defaultLabel: "subagent",
+    });
+  }
+
+  it("does not finalize as success while a spawned sub-agent has not ended", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(subAgentStart());
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    const outcome = renderer.finalizeCalls.at(-1)?.outcome;
+    expect(outcome?.kind).not.toBe("success");
+    expect(outcome).toEqual({ kind: "silent", reason: "BACKGROUND_PENDING" });
+
+    coord.dispose();
+  });
+
+  it("finalizes as success once the spawned sub-agent has ended", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(subAgentStart());
+    stream.emit(makeEvent({
+      kind: "subagent",
+      phase: "end",
+      status: "completed",
+      activityId: "sub-1",
+      defaultLabel: "subagent",
+    }));
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    // The guard: the fix must not suppress `done` on a turn whose spawned work genuinely finished,
+    // or every card with a sub-agent would stop reporting completion.
+    expect(renderer.finalizeCalls.at(-1)?.outcome.kind).toBe("success");
+
+    coord.dispose();
+  });
+
+  it("leaves a turn with no spawned work reporting success", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ kind: "tool", defaultLabel: "web_fetch" }));
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    expect(renderer.finalizeCalls.at(-1)?.outcome.kind).toBe("success");
+
+    coord.dispose();
+  });
+
+  it("leaves an explicit failure outcome untouched even with spawned work outstanding", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(subAgentStart());
+    timer.advance(800);
+    await coord.finalize({ kind: "aborted", reason: "timeout" });
+
+    // Only the "done" claim is unsafe; a failure/abort must keep its diagnostic trail.
+    expect(renderer.finalizeCalls.at(-1)?.outcome.kind).toBe("aborted");
+
+    coord.dispose();
+  });
+});
