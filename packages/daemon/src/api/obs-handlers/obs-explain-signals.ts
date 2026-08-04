@@ -596,9 +596,16 @@ function handleEventRecord(
       if (prb && typeof prb === "object") {
         const limb = asString(prb.limb);
         const spent = asNumber(prb.spent);
+        const attempted = asNumber(prb.attempted);
         const cap = asNumber(prb.cap);
         if (limb !== undefined && spent !== undefined && cap !== undefined) {
-          acc.perRootBudget = { limb, spent, cap, unit: asString(prb.unit) ?? "usd" };
+          acc.perRootBudget = {
+            limb,
+            spent,
+            ...(attempted !== undefined ? { attempted } : {}),
+            cap,
+            unit: asString(prb.unit) ?? "usd",
+          };
         }
       }
       const step = (data as { stepLimit?: Record<string, unknown> }).stepLimit;

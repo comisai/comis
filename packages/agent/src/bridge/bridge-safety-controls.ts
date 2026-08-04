@@ -338,7 +338,7 @@ export function emitSpendAbort(
   /** The tripped per-root limb + its numbers (named units). Carried onto the
    *  `execution:aborted` event so `explain` answers "which limb, by how much" in one
    *  call instead of a daemon-log grep for the "Per-root … budget exceeded" line. */
-  perRootBudget?: { limb: string; spent: number; cap: number; unit: string },
+  perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string },
 ): void {
   deps.onAbort?.();
   deps.eventBus.emit("execution:aborted", {
@@ -355,7 +355,13 @@ export function emitSpendAbort(
       // content-free) — a raw-log reader should not need `comis explain`
       // to learn which limb tripped and by how much.
       ...(perRootBudget !== undefined
-        ? { limb: perRootBudget.limb, spent: perRootBudget.spent, cap: perRootBudget.cap, unit: perRootBudget.unit }
+        ? {
+            limb: perRootBudget.limb,
+            spent: perRootBudget.spent,
+            ...(perRootBudget.attempted !== undefined ? { attempted: perRootBudget.attempted } : {}),
+            cap: perRootBudget.cap,
+            unit: perRootBudget.unit,
+          }
         : {}),
       hint: perRoot
         ? "Per-root autonomy budget exhausted — raise this agent's autonomy.budget.{aggregateUsd|tokens|wallClockMs} (NOT observability.spend); run `comis explain <session>` for the exact limb + numbers (the spend-verdict names autonomy.budget.<limb>)"

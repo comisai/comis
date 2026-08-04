@@ -392,7 +392,7 @@ export interface IncidentSignals {
    * `autonomy.budget.<limb>`. Lets the spend verdict name the exact limb. Absent ⇒
    * not a per-root spend-abort.
    */
-  perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
   /** Exact configured step ceiling from a terminal max-steps abort. */
   stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   /**

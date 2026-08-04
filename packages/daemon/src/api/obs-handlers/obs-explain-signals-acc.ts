@@ -193,7 +193,7 @@ export interface Acc {
    *  priced observability.spend $-ceiling): the token / wall-clock limbs carry
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
-  perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
   /** Exact configured step ceiling from the terminal max-steps abort. */
   stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
