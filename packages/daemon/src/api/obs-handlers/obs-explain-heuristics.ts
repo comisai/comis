@@ -481,8 +481,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // outranks retained breaker noise from earlier turns.
   toolInvocationStallVerdict,
 
-  // The runtime hard limit is the cause of any breaker it trips, not a provider failure.
-  backgroundHardTimeoutVerdict,
+  backgroundHardTimeoutVerdict, // runtime hard limit causes any breaker it trips
 
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
