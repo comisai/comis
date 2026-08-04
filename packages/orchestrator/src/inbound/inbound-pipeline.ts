@@ -226,7 +226,7 @@ function enrichResolvedInboundContext(
   const deliveryOrigin = tryCatch(() => createDeliveryOrigin({
     channelType: adapter.channelType,
     channelId: processedMsg.channelId,
-    userId: sessionKey.userId,
+    userId: turnScope.principal.principalId,
     threadId: processedMsg.metadata?.threadId as string | undefined,
     tenantId: sessionKey.tenantId,
   }));
