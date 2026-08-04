@@ -3804,6 +3804,19 @@ describe("buildAnnouncementMessage with abort", () => {
     const result = buildAnnouncementMessage({ ...baseParams, finishReason: "circuit_open", abort });
     expect(result).toContain("Abort: external_timeout");
   });
+
+  it("labels a detected successful loop with its distinct governor bound", () => {
+    const abort = classifyAbortReason("loop_detected");
+    const result = buildAnnouncementMessage({
+      ...baseParams,
+      status: "failed",
+      finishReason: "loop_detected",
+      abort,
+    });
+    expect(result).toContain("Halted (no-progress loop limit reached)");
+    expect(result).toContain("Abort: loop_limit");
+    expect(result).toContain("6 consecutive");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3955,6 +3968,42 @@ describe("abort wiring in spawn", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith("default", "he");
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      expect.stringContaining(failureNotice),
+      undefined,
+    );
+  });
+
+  it("passes loop_detected to the failure renderer so a parent rewrite cannot hide the bound", async () => {
+    const failureNotice =
+      "⚠️ This background task failed. Governor limit: 6 consecutive no-progress tool results.";
+    deps.renderAnnouncementFailureNotice = vi.fn().mockReturnValue(failureNotice);
+    deps.announceToParent = vi.fn().mockResolvedValue("The checker stopped before it flipped.");
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "partial output",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "loop_detected",
+      stepsExecuted: 7,
+    });
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "check the condition",
+      agentId: "default",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith(
+      "default",
+      undefined,
+      "loop_detected",
+    );
     expect(deps.sendToChannel).toHaveBeenCalledWith(
       "telegram",
       "chat-1",
@@ -4276,6 +4325,15 @@ describe("classifyAbortReason", () => {
     expect(result.category).toBe("step_limit");
     expect(result.severity).toBe("actionable");
     expect(result.hint).toContain("max_steps");
+  });
+
+  it("maps loop_detected to a distinct no-progress governor category and bound", () => {
+    const result = classifyAbortReason("loop_detected");
+    expect(result.category).toBe("loop_limit");
+    expect(result.severity).toBe("actionable");
+    expect(result.hint).toContain("6 consecutive");
+    expect(result.hint).toMatch(/successful|unchanged/i);
+    expect(result.hint).not.toContain("daemon logs");
   });
 
   // budget_exceeded -> budget
