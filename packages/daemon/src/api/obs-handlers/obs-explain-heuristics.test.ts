@@ -500,7 +500,13 @@ describe("obs-explain-heuristics", () => {
     const r = rootCause(
       makeSignals({
         endReason: "spend_exceeded",
-        perRootBudget: { limb: "tokens", spent: 30640, cap: 60000, unit: "tokens" },
+        perRootBudget: {
+          limb: "tokens",
+          spent: 30640,
+          attempted: 35000,
+          cap: 60000,
+          unit: "tokens",
+        },
       }),
     );
     expect(r).not.toBeNull();
@@ -508,7 +514,10 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/autonomy\.budget/);
     expect(r!.detail).toContain("tokens");
     expect(r!.detail).toContain("30640");
+    expect(r!.detail).toContain("35000");
+    expect(r!.detail).toContain("65640");
     expect(r!.detail).toContain("60000");
+    expect(r!.detail).toMatch(/current.*attempted.*would total/is);
     expect(r!.suggestedNextSteps.some((s) => /autonomy\.budget\.tokens/.test(s))).toBe(true);
   });
 
