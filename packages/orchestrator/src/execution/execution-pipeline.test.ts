@@ -453,7 +453,14 @@ describe("executeAndDeliver", () => {
         "agent-1",
         undefined, // no directives
         undefined, // prevTimestamp
-        { operationType: "interactive", inboundProvenancePlans: [] }, // overrides
+        {
+          operationType: "interactive",
+          inboundProvenancePlans: [],
+          suppressFinalResponseAfterOutboundDelivery: {
+            channelType: "telegram",
+            channelId: "12345",
+          },
+        }, // overrides
       );
     });
 
