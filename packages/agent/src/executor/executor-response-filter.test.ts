@@ -1050,6 +1050,25 @@ describe("current-turn delegation evidence guard", () => {
       corrected: false,
     });
   });
+
+  it("preserves a successful direct result when a coordinated instruction forbids further delegation", () => {
+    const directResult =
+      "CATALOG CARD framework: price_usd=949; source_id=fixture-catalog/framework-13";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "Call the local fixture exactly once. Return the exact result only. Do not use web or delegate further.",
+      response: directResult,
+      toolExecResults: [
+        { toolName: "mcp__fixture--laptop_card", success: true },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: directResult,
+      corrected: false,
+    });
+  });
 });
 
 type TrustedBackgroundCompletionDetector = (message: {
