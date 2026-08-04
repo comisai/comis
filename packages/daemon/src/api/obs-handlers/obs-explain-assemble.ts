@@ -303,7 +303,7 @@ export function assembleIncidentReport(
     executionEndReason === "background_pending"
     && backgroundTasks !== undefined
     && backgroundTasks.promoted > 0
-    && backgroundTasks.completed === backgroundTasks.promoted
+    && backgroundTasks.completed + backgroundTasks.cancelled === backgroundTasks.promoted
     && backgroundTasks.failed === 0
     && backgroundTasks.accepted === backgroundTasks.completed;
   const backgroundCompletionFailed =
