@@ -363,6 +363,33 @@ ERROR above in the startup log.
 ## Runtime Issues
 
 <AccordionGroup>
+  <Accordion title="Every reply is a formatting/settings error and no answer arrives">
+    **What the user sees:** a canned reply such as `The AI model rejected a setting this deployment sent with the request.`
+
+    **What happened:** the provider refused the *request shape* for the resolved model, so the model never ran. The classic cause is a redundant provider entry: a `providers.entries.<name>` block whose `type` is a built-in provider (`anthropic`, `openai`, `google`, …) and which declares **no** `models:` list re-registers that provider's whole built-in catalog. Model capability metadata does not survive a hand-written entry, so the runtime can fall back to a request shape newer models no longer accept — for example the legacy extended-thinking parameter instead of adaptive thinking.
+
+    **Diagnose it:**
+
+    ```bash
+    comis explain "<sessionKey|traceId>" --format json
+    ```
+
+    Look for `modelErrors` and a `likelyRootCause.code` of `provider_rejected_request` naming `model_capability_unsupported`. `comis system-health --since 24` shows whether the rejection spans every session (it will — the failure is deterministic).
+
+    **Fix:** if you are not overriding a base URL, adding custom models, or pinning capabilities, the provider entry is redundant — delete it. Credentials are discovered from the named secret regardless (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), so removing the block keeps auth working and restores the built-in catalog:
+
+    ```yaml
+    # config.yaml -- redundant for a stock built-in provider
+    providers:
+      entries:
+        anthropic:
+          type: anthropic
+          apiKeyName: ANTHROPIC_API_KEY
+    ```
+
+    Keep the entry only when it carries a `baseUrl`, custom `models:`, `headers`, or `capabilities`. Restart the daemon after editing.
+  </Accordion>
+
   <Accordion title="Gateway token auto-generated (ephemeral)">
     **Warning message:**
 

@@ -345,6 +345,16 @@ export interface AgentEvents {
     /** Content-free provider protocol classification. The raw provider error
      *  stays out of durable observability records. */
     providerErrorCode?: "invalid_tool_identity";
+    /**
+     * The classified category of the provider error that ended this call
+     * (`ErrorCategory` from the agent's error classifier — a closed enum, so
+     * raw provider prose stays out of durable records). Present only when the
+     * call ended in an error. Without it a hard, repeated provider rejection
+     * left no trace on the IncidentReport beyond `stopReason:"error"`, so
+     * `likelyRootCause` ranked incidental evidence (a zero-hit recall) over the
+     * acute cause.
+     */
+    modelErrorCategory?: string;
     /** Execution-level finish disposition (e.g. "stop"|"loop_detected"|"budget_exceeded").
      *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end,
      *  so treat this as the init-default "stop"; the flight-recorder's

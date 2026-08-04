@@ -868,6 +868,83 @@ describe("registerCustomProviders", () => {
     expect(withCost.length).toBeGreaterThanOrEqual(10);
   });
 
+  // -------------------------------------------------------------------------
+  // Capability passthrough (`compat` / `thinkingLevelMap`)
+  //
+  // Re-registering a native catalog model must not drop the capability
+  // metadata pi-ai uses to pick a wire shape. Dropping `compat` made pi-ai
+  // fall back to the legacy `thinking:{type:"enabled",budget_tokens}` request
+  // for models that only accept `thinking:{type:"adaptive"}`, which the
+  // provider rejects with a hard 400 on every thinking-enabled turn.
+  // -------------------------------------------------------------------------
+
+  /** A native anthropic model that requires the adaptive thinking wire shape. */
+  function adaptiveThinkingModel() {
+    return getModels("anthropic").find((m) => m.compat?.forceAdaptiveThinking === true);
+  }
+
+  it("inherit branch preserves compat.forceAdaptiveThinking (no legacy thinking shape)", async () => {
+    const sample = adaptiveThinkingModel();
+    if (!sample) return; // catalog no longer ships such a model — nothing to assert
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "sk-ant-test" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const { registry } = await createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    // Exactly what `comis init` writes: built-in type, no models list, no
+    // baseUrl override → the inherit branch re-registers the whole catalog.
+    const { registered } = registerCustomProviders(
+      registry,
+      {
+        anthropic: {
+          type: "anthropic",
+          baseUrl: "",
+          apiKeyName: "ANTHROPIC_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [],
+        },
+      },
+      secretManager,
+      logger,
+    );
+    expect(registered).toBe(1);
+
+    const found = registry.find("anthropic", sample.id);
+    expect(found).toBeDefined();
+    expect(found!.compat?.forceAdaptiveThinking).toBe(true);
+    expect(found!.thinkingLevelMap).toEqual(sample.thinkingLevelMap);
+  });
+
+  it("inherit branch preserves the remaining compat flags", async () => {
+    const sample = getModels("anthropic").find((m) => m.compat?.supportsTemperature === false);
+    if (!sample) return;
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "sk-ant-test" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const { registry } = await createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    registerCustomProviders(
+      registry,
+      {
+        anthropic: {
+          type: "anthropic",
+          baseUrl: "",
+          apiKeyName: "ANTHROPIC_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    const found = registry.find("anthropic", sample.id);
+    expect(found!.compat?.supportsTemperature).toBe(false);
+    expect(found!.compat).toEqual(sample.compat);
+  });
+
   it("sparse list with native type enriches missing fields from catalog", async () => {
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });

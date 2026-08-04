@@ -238,6 +238,10 @@ export interface Acc {
   modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
   /** The LAST recognized content-free provider protocol error classification. */
   providerErrorCode?: "invalid_tool_identity";
+  /** Per-category tally of the LLM calls the provider rejected, keyed by the
+   *  closed `ErrorCategory` enum carried on `model.completed`. Absent ⇒ no
+   *  errored model call in the trajectory. */
+  modelErrorCounts?: Record<string, number>;
   /** The terminal
    *  `execution.aborted` record's `reason` (e.g. "spend_exceeded"). A HARD abort
    *  skips the clean `sessionEnd` rollup, so the assembler's metadata-derived

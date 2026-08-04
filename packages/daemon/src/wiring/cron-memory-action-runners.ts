@@ -385,6 +385,9 @@ function modelActionErrorKind(error: Error): CronActionServiceError["errorKind"]
     case "empty_response":
     case "model_not_available":
     case "provider_unreachable": return "dependency";
+    // A request parameter the model refuses is a deployment configuration
+    // mismatch — an operator has to change a setting, not wait out a fault.
+    case "model_capability_unsupported": return "config";
     case "unknown": return "internal";
     default: {
       const _exhaustive: never = category;

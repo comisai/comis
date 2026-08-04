@@ -52,6 +52,16 @@ export type ErrorCategory =
    * model-retry ladder must never burn fallback models on it.
    */
   | "tool_schema_unsupported"
+  /**
+   * Provider rejected a REQUEST PARAMETER as unsupported for the resolved
+   * model — the request shape is wrong for this model, not the conversation
+   * content (e.g. a thinking/reasoning parameter the model does not accept).
+   * Deterministic config mismatch: the identical request always fails, so it
+   * is not retryable and no scrub/strip self-heal can help. Distinct from
+   * `client_request` so the operator is told which knob to turn instead of
+   * being advised to reset the conversation.
+   */
+  | "model_capability_unsupported"
   | "client_request"
   | "prompt_timeout"
   /**
@@ -182,6 +192,22 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     userMessage:
       "The conversation has grown too long. Please start a new conversation.",
     retryable: false,
+  },
+  // Model-capability rejection: the provider refused a request PARAMETER as
+  // unsupported for the resolved model. Tested BEFORE the signed-replay entry
+  // because the rejected parameter's own name can supply a signature noun
+  // (`thinking.type.enabled`) while the generic `invalid_request_error`
+  // envelope supplies a rejection verb — that pairing mislabelled a
+  // deterministic config mismatch as a self-healable replay failure and told
+  // the user their request had a "formatting issue". Not retryable: the same
+  // request reproduces the same rejection.
+  {
+    test: /(?:is )?not supported for this model|unsupported parameter|(?:unrecognized|unknown) (?:parameter|field|argument|property)/i,
+    category: "model_capability_unsupported",
+    userMessage:
+      "The AI model rejected a setting this deployment sent with the request. Please notify the system administrator.",
+    retryable: false,
+    hint: "The resolved model does not accept a parameter in the request. Verify the model id configured under `agents.<id>.model` against the provider's supported parameters. A `providers.entries.*` entry that re-declares built-in catalog models can drop the capability metadata that selects the request shape — remove the redundant entry or list the model explicitly.",
   },
   // Provider-agnostic signed-replay rejection: must be tested BEFORE the
   // plain client_request pattern because every signed-replay error string
@@ -337,8 +363,13 @@ export function errorKindForCategory(category: ErrorCategory): ErrorKind {
     case "aws_auth_expired":
     case "aws_model_access":
       return "auth";
+    // `model_capability_unsupported` belongs here rather than on "dependency":
+    // a parameter the model does not accept is a deployment configuration
+    // mismatch, and "dependency" would send an operator looking for a provider
+    // outage that isn't happening.
     case "aws_region_or_model":
     case "model_not_available":
+    case "model_capability_unsupported":
       return "config";
     case "overloaded":
     case "empty_response":

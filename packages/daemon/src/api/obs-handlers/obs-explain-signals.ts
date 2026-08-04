@@ -35,6 +35,7 @@ import {
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 // ---------------------------------------------------------------------------
@@ -577,6 +578,11 @@ function handleEventRecord(
       if (data.providerErrorCode === "invalid_tool_identity") {
         acc.providerErrorCode = data.providerErrorCode;
       }
+      // Tally the calls the provider REJECTED (fold in the sibling module).
+      acc.modelErrorCounts = foldModelErrorCategory(
+        acc.modelErrorCounts,
+        asString(data.modelErrorCategory),
+      );
       return;
     }
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
@@ -903,6 +909,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.providerErrorCode !== undefined ? { providerErrorCode: acc.providerErrorCode } : {}),
+    ...modelErrorsField(acc.modelErrorCounts),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),

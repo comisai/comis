@@ -1009,6 +1009,33 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
   });
 
+  it("ranks a hard provider rejection above an incidental zero-hit recall", () => {
+    // The production shape: every LLM call rejected with the same deterministic
+    // category, on a fresh install whose empty memory store makes EVERY recall
+    // a zero-hit. recall_miss used to win because a provider-side rejection
+    // produced no `failures[]` entry (that array is tool-boundary-shaped).
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        recall: allMissRecall,
+        modelErrors: { total: 3, byCategory: { model_capability_unsupported: 3 } },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("provider_rejected_request");
+    // Names the category and how many calls it killed.
+    expect(r!.detail).toContain("model_capability_unsupported");
+    expect(r!.detail).toContain("3");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/model|provider/i);
+  });
+
+  it("recall_miss still fires when no model call was rejected", () => {
+    // Regression guard: the new gate must not swallow the genuine recall_miss.
+    const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
+    expect(r!.code).toBe("recall_miss");
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();

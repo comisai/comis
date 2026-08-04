@@ -140,6 +140,20 @@ function classifyProviderErrorCode(
   return rejectsInputName ? "invalid_tool_identity" : undefined;
 }
 
+/**
+ * Classify the provider error that ended an LLM call into the closed
+ * `ErrorCategory` enum. Returns undefined when there is no error text to
+ * classify, so a turn that merely lacks a captured body stays absent from the
+ * record rather than being labelled "unknown".
+ *
+ * Only the CATEGORY travels — the raw provider body can echo request content,
+ * so it stays in the logs and never reaches a durable trajectory record.
+ */
+function classifyModelErrorCategory(errorMessage: unknown): string | undefined {
+  if (typeof errorMessage !== "string" || errorMessage.length === 0) return undefined;
+  return classifyError(new Error(errorMessage)).category;
+}
+
 function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
   const resolvedLimb = limb ?? "aggregateUsd";
   switch (resolvedLimb) {
@@ -2297,6 +2311,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     (assistantMsg as { errorMessage?: unknown } | undefined)?.errorMessage,
                   )
                 : undefined;
+            // Closed-enum classification of the provider error that ended this
+            // call. The raw body never leaves the logs; the category is what
+            // lets `obs.explain` name a repeated provider rejection instead of
+            // falling through to incidental evidence.
+            const modelErrorCategory =
+              m.lastStopReason === "error"
+                ? classifyModelErrorCategory(
+                    (assistantMsg as { errorMessage?: unknown } | undefined)?.errorMessage
+                      ?? m.lastLlmErrorMessage,
+                  )
+                : undefined;
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
               traceId: tryGetContext()?.traceId ?? deps.executionId,
@@ -2340,6 +2365,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               // Raw provider prose can contain request content. Persist only
               // the closed protocol classification needed for diagnosis.
               ...(providerErrorCode !== undefined && { providerErrorCode }),
+              // Spread so a non-error turn keeps the payload byte-for-byte
+              // unchanged (same no-shim discipline as providerErrorCode).
+              ...(modelErrorCategory !== undefined && { modelErrorCategory }),
               // Execution-level finish disposition. m.finishReason settles
               // LATER than turn_end (the safety guards set it),
               // so on a normal turn it is still the

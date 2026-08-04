@@ -117,6 +117,18 @@ export interface IncidentSignals {
   /** The terminal provider rejected a persisted structured protocol identity
    *  before generation. Content-free; raw provider prose is never retained. */
   providerErrorCode?: "invalid_tool_identity";
+  /**
+   * Tally of the LLM calls the provider REJECTED this session, keyed by the
+   * closed `ErrorCategory` enum (dominant category first). Absent ⇒ no errored
+   * model call in the trajectory.
+   *
+   * Lets `likelyRootCause` name a hard, repeated provider rejection. Without it
+   * such a session carried no failure signal at all — `failures[]` is
+   * tool-boundary-shaped, so a provider-side rejection left only
+   * `stopReason:"error"` and the verdict fell through to incidental evidence
+   * (a zero-hit recall on a fresh install with an empty memory store).
+   */
+  modelErrors?: { total: number; byCategory: Record<string, number> };
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;

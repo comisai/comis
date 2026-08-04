@@ -347,7 +347,12 @@ async function detectSilentFailure(
       await handleToolSchemaUnsupported(params, messageText, promptImages, earlyBridgeResult, retryState, invokeRetry);
     } else if (earlyClassification.category === "rate_limited") {
       handleRateLimited(params, earlyBridgeResult, retryState);
-    } else if (earlyClassification.category === "client_request") {
+    } else if (
+      earlyClassification.category === "client_request"
+      // Same deterministic short-circuit: the model refused a request
+      // parameter, so replaying the identical request cannot succeed.
+      || earlyClassification.category === "model_capability_unsupported"
+    ) {
       handleClientRequest(params, earlyBridgeResult, retryState);
     } else {
       await handleSilentRetryDefault(params, messageText, promptImages, earlyBridgeResult, retryState, invokeRetry);

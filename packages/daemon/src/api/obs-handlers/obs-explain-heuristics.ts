@@ -85,6 +85,7 @@ import {
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
+import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
 import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -778,6 +779,15 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
+
+  // 9b-bis) provider_rejected_request. The provider refused the request itself,
+  //     so the model never ran and NO tool/recall evidence on this session can
+  //     be the cause — it is all downstream. Above recall_miss (and the
+  //     catch-all) for exactly that reason: a live incident reported
+  //     `recall_miss` for a session whose every LLM call was rejected, because a
+  //     provider-side rejection produces no tool-shaped `failures[]` entry.
+  //     Full rationale in the sibling obs-explain-provider-rejection-verdict.ts.
+  providerRejectedRequestVerdict,
 
   // 9c) background_pending. The foreground turn deliberately deferred its
   //     terminal outcome to promoted work, so incidental recall evidence must
