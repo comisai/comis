@@ -45,6 +45,7 @@ import {
 } from "./obs-explain-resolve.js";
 import {
   makeRealReader,
+  resolveTrajectoryFilePath,
   resolveSessionFilePath,
   type IncidentSourceReader,
   type MessageLifecycleDiagnosticEvidence,
@@ -592,12 +593,17 @@ export async function assembleIncidentReportFromSources(
   // relative/odd dataDir (e.g. the "." offline/CLI base); swallow to undefined so the pointer
   // is simply omitted rather than crashing the assembly (degrade, never error).
   let sessionSourcePath: string | undefined;
+  let trajectorySourcePath: string | undefined;
   if (sessionKey !== "" && taskCheck === null) {
     try {
       sessionSourcePath = reader.resolveSessionFilePath?.(sessionKey)
         ?? resolveSessionFilePath(dataDir, sessionKey);
+      trajectorySourcePath = sessionSourcePath === undefined
+        ? undefined
+        : resolveTrajectoryFilePath(sessionSourcePath);
     } catch {
       sessionSourcePath = undefined;
+      trajectorySourcePath = undefined;
     }
   }
   const report = assembleIncidentReport(
@@ -617,6 +623,7 @@ export async function assembleIncidentReportFromSources(
           toolResultsReturned: losslessEvidence.records.length,
           truncated: losslessEvidence.truncated,
         },
+    trajectorySourcePath,
   );
   if (executionDiagnostic !== null && selectedRecords.length === 0) {
     report.coverage = {

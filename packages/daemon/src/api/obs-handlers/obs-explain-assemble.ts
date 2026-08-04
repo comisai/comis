@@ -271,6 +271,11 @@ export function assembleIncidentReport(
    * content-free tool outcomes only; trajectory coverage remains unchanged.
    */
   losslessContext?: NonNullable<IncidentReport["coverage"]>["losslessContext"],
+  /**
+   * The resolved runtime trajectory path from the session pointer. When omitted,
+   * coverage retains the co-located convention for fixture readers.
+   */
+  trajectorySourcePath?: string,
 ): IncidentReport {
   const sessionEnd = sessionEndOf(metadata);
   const rollupPayload = rollupPayloadOf(rollup);
@@ -493,10 +498,16 @@ export function assembleIncidentReport(
     // found closer real keys (a lossy/partial key). Omitted otherwise.
     ...(candidateSessionKeys.length > 0 ? { candidateSessionKeys: [...candidateSessionKeys] } : {}),
     // Source PATHS (pointers, not bodies): the raw session `.jsonl` holds tool-result
-    // VALUES (reconcile numbers here); the co-located `.trajectory.jsonl` holds
+    // VALUES (reconcile numbers here); the pointer-resolved trajectory holds
     // PROVENANCE. Present only when the caller resolved real on-disk artifacts.
     ...(sessionSourcePath !== undefined
-      ? { sources: { session: sessionSourcePath, trajectory: `${sessionSourcePath}${TRAJECTORY_JSONL_SUFFIX}` } }
+      ? {
+          sources: {
+            session: sessionSourcePath,
+            trajectory: trajectorySourcePath
+              ?? `${sessionSourcePath}${TRAJECTORY_JSONL_SUFFIX}`,
+          },
+        }
       : {}),
     ...(losslessContext === undefined ? {} : { losslessContext }),
   };
