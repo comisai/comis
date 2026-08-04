@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
+import { hardTimeoutHint } from "./hard-timeout-hint.js";
 import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import {
   BackgroundTaskOriginSchema,
@@ -442,12 +443,20 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         },
       });
 
+      const hardLimitMs = resolveMaxBackgroundDurationMs(agentId);
       const timer = timers.setTimeout(() => {
         if (task.status === "running") {
           ac.abort();
-          manager.fail(taskId, new Error("Hard timeout exceeded"), "timeout");
+          // A bare "Hard timeout exceeded" named neither the knob, the value, nor the tool, so a
+          // reader had nothing to change. Name all three, per the same discipline the stall hint
+          // beside it already follows.
+          manager.fail(
+            taskId,
+            new Error(hardTimeoutHint({ toolName, agentId, limitMs: hardLimitMs })),
+            "timeout",
+          );
         }
-      }, resolveMaxBackgroundDurationMs(agentId));
+      }, hardLimitMs);
       timer.unref();
       task._hardTimeoutTimer = timer;
 
