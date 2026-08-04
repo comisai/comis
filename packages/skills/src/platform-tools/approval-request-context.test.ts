@@ -81,6 +81,44 @@ describe("resolveApprovalRequestContext", () => {
     });
   });
 
+  it("binds shared-conversation approvals to the authenticated principal", () => {
+    const sharedTurnScope: ResolvedTurnScope = {
+      conversation: {
+        tenantId: "default",
+        agentId: "resolved-agent",
+        partition: {
+          kind: "endpoint-conversation",
+          endpoint: { ...TURN_ENDPOINT, conversationKind: "shared" },
+        },
+      },
+      principal: { principalId: "principal-human-user" },
+      endpoint: { ...TURN_ENDPOINT, conversationKind: "shared" },
+    };
+    const result = runWithContext(
+      makeContext({
+        userId: "conversation",
+        sessionKey: "default:agent:resolved-agent:conversation:chat-1:thread:thread-1",
+        turnScope: sharedTurnScope,
+        deliveryOrigin: createDeliveryOrigin({
+          tenantId: "default",
+          userId: "principal-human-user",
+          channelType: "telegram",
+          channelId: "chat-1",
+          threadId: "thread-1",
+        }),
+      }),
+      resolveApprovalRequestContext,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        resolvingPrincipalId: "principal-human-user",
+        callbackOwner: { userId: "principal-human-user" },
+      },
+    });
+  });
+
   it("fails closed outside a resolved request scope", () => {
     const result = resolveApprovalRequestContext();
 
