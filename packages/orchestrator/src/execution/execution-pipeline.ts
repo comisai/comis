@@ -630,7 +630,15 @@ export async function executeAndDeliver(
       blockStreamCfg, activePacers, deliveryReplyTo,
       deliverySignal, typingLifecycle,
       undefined,
+      // A background hand-off is NOT a runtime failure. Deriving the origin from the lifecycle
+      // alone tagged the ordinary "work continues in the background" acknowledgement as
+      // `agent-runtime-failure` with nothing having failed — and that is not cosmetic: the delivery
+      // mirror skips runtime-failure deliveries, so those acknowledgements were silently excluded
+      // from it. The coordinator-outcome branch above already treats `background_pending` as
+      // non-terminal UI state rather than a failed activity; this makes the origin agree instead of
+      // two branches disagreeing about the same fact.
       readExecutionLifecycle().status === "success"
+        || execResult.finishReason === "background_pending"
         ? "agent"
         : RUNTIME_FAILURE_DELIVERY_ORIGIN,
     );

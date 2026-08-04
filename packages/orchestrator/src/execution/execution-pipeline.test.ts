@@ -2781,3 +2781,92 @@ describe("executeAndDeliver — out-of-order reply anchoring", () => {
     expect(anchored).not.toContain("43");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Delivery origin for a background hand-off
+// ---------------------------------------------------------------------------
+
+/**
+ * The delivery origin was derived from the execution lifecycle alone: `success` → "agent",
+ * everything else → the runtime-failure origin. A `background_pending` hand-off is not `success`,
+ * so the ordinary "work continues in the background" acknowledgement was dispatched as
+ * `agent-runtime-failure` — with nothing having failed.
+ *
+ * That is not cosmetic. The delivery mirror explicitly skips runtime-failure deliveries, so these
+ * acknowledgements were silently excluded from it.
+ *
+ * The pipeline already encodes the correct reading 140 lines earlier, where the coordinator outcome
+ * treats `background_pending` as "non-terminal UI state, not a failed activity". This makes the
+ * origin agree with that, rather than two branches disagreeing about the same fact.
+ */
+describe("executeAndDeliver — delivery origin", () => {
+  function backgroundPendingExecutor(): AgentExecutor {
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockResolvedValue({
+      response: "Work continues in the background.",
+      sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+      tokensUsed: { input: 10, output: 5, total: 15 },
+      cost: { total: 0.001 },
+      stepsExecuted: 1,
+      llmCalls: 1,
+      finishReason: "background_pending" as never,
+    } as never);
+    return executor;
+  }
+
+  /** Capture the `origin` each block is delivered with — the field the mirror actually reads. */
+  function capturingDelivery(): { service: DeliveryService; origins: () => unknown[] } {
+    const seen: unknown[] = [];
+    const service = {
+      deliverToChannel: vi.fn(async (_a: unknown, _c: unknown, _t: unknown, opts: unknown) => {
+        seen.push((opts as Record<string, unknown> | undefined)?.origin);
+        return {
+          platformDelivery: {
+            status: "accepted" as const, deliveredChunks: 1 as const, failedChunks: 0,
+            settledAtMs: 2_000, lastChunkMessageId: "m-1",
+          },
+          queueDisposition: "settled" as const,
+        };
+      }),
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+    } as unknown as DeliveryService;
+    return { service, origins: () => seen };
+  }
+
+  it("does not label a background hand-off as a runtime failure", async () => {
+    const delivery = capturingDelivery();
+    const deps = makeDeps({ deliveryService: delivery.service });
+
+    await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, makeAdapter(), makeMessage(), makeMessage(), backgroundPendingExecutor(),
+      makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+
+    expect(delivery.origins().length).toBeGreaterThan(0);
+    expect(delivery.origins()).not.toContain("agent-runtime-failure");
+  });
+
+  it("still labels a genuine runtime failure as one", async () => {
+    const delivery = capturingDelivery();
+    const failing = makeExecutor();
+    vi.mocked(failing.execute).mockResolvedValue({
+      response: "Something went wrong.",
+      sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+      tokensUsed: { input: 10, output: 5, total: 15 },
+      cost: { total: 0.001 },
+      stepsExecuted: 1,
+      llmCalls: 1,
+      finishReason: "error" as never,
+    } as never);
+    const deps = makeDeps({ deliveryService: delivery.service });
+
+    await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, makeAdapter(), makeMessage(), makeMessage(), failing,
+      makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+
+    // The guard that matters: narrowing the failure origin must not stop labelling REAL failures,
+    // or the delivery mirror would start carrying them.
+    expect(delivery.origins()).toContain("agent-runtime-failure");
+  });
+});
