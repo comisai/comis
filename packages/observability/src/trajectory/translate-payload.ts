@@ -559,6 +559,7 @@ export function translatePayload(
         // The per-root autonomy.budget limb + numbers (content-free: closed-enum
         // limb/unit strings + 2 numbers) so `explain` names the exact tripped knob.
         ...(payload.perRootBudget !== undefined ? { perRootBudget: payload.perRootBudget } : {}),
+        ...(payload.stepLimit !== undefined ? { stepLimit: payload.stepLimit } : {}),
       };
 
     case "execution:budget_warning":

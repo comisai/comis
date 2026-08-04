@@ -194,6 +194,8 @@ export interface Acc {
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /** Exact configured step ceiling from the terminal max-steps abort. */
+  stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
   turnFinalized?: {

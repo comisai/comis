@@ -250,15 +250,21 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         candidate.classifiedFailureBy === "runtime_guard" && candidate.matchedRule === "step_limit",
     );
     if (failure === undefined && s.endReason !== "max_steps") return null;
+    const stepLimit = s.stepLimit;
+    const bindingDetail = stepLimit === undefined
+      ? `endReason=${s.endReason ?? "max_steps"}`
+      : `${stepLimit.bindingKnob}=${String(stepLimit.cap)} stopped at `
+        + `${String(stepLimit.stepsExecuted)} tool-execution steps`;
     return {
       code: "execution_step_limit_reached",
       detail:
-        "the local execution step limit blocked additional tool calls (endReason=" +
-        (s.endReason ?? "max_steps") +
-        "); no provider request was attempted for the guarded calls",
+        `the local execution step limit (${bindingDetail}) blocked additional tool calls; `
+        + "no provider request was attempted for the guarded calls",
       suggestedNextSteps: [
         "simplify the workflow or use a composite tool that performs the bounded operation in one call",
-        "increase max_steps only when the task legitimately requires more independent calls",
+        stepLimit === undefined
+          ? "increase agents.<agentId>.maxSteps only when the task legitimately requires more independent calls"
+          : `increase ${stepLimit.bindingKnob} above ${String(stepLimit.cap)} only when the task legitimately requires more independent calls`,
         "obs.explain depth=full",
       ],
     };

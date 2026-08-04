@@ -216,7 +216,7 @@ import {
 } from "./bridge-metrics.js";
 import { recordToolInvocationSideEffects } from "./bridge-side-effect-accumulator.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, resolveStepLimitDetails, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
@@ -1705,7 +1705,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const stepCheck = checkStepLimit(deps.stepCounter, m.aborted);
             if (stepCheck.shouldAbort) {
               m.finishReason = stepCheck.finishReason!;
-              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+              m.abortResponse = buildAbortRedirectMessage(
+                deps.executionPlan?.current,
+                m.finishReason,
+                undefined,
+                { stepLimit: resolveStepLimitDetails(deps.stepCounter, deps.agentId) },
+              );
               m.aborted = true;
               emitStepLimitAbort(deps);
             }
