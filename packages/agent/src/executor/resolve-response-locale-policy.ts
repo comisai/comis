@@ -13,6 +13,17 @@ export interface ResolveResponseLocalePolicyInput {
   readonly requestLocale?: string;
   /** Exact current user-authored text used only for open script fallback. */
   readonly requestText?: string;
+  /**
+   * The turn's inbound user messages in arrival order, when a turn coalesced
+   * several. Takes precedence over {@link requestText}.
+   *
+   * Each message is qualified as a language signal INDEPENDENTLY. Concatenating
+   * them first would let several sub-threshold fragments sum into prose none of
+   * them contains — two consecutive install pastes, each correctly rejected on
+   * its own, once added up to an enforced Latin script on a Hebrew
+   * conversation, and the reply came back transliterated.
+   */
+  readonly requestTexts?: readonly string[];
   readonly translationTarget?: string;
 }
 
@@ -53,7 +64,9 @@ export function resolveResponseLocalePolicy(
   // signal than a client UI locale. The prose threshold excludes short
   // identifier-heavy fragments, so only a high-confidence script signal
   // enables bounded post-generation repair.
-  const requestScriptLocale = scriptLocaleFromRequest(input.requestText);
+  const requestScriptLocale = scriptLocaleFromRequestBatch(
+    input.requestTexts ?? (input.requestText === undefined ? [] : [input.requestText]),
+  );
   if (requestScriptLocale !== undefined) {
     return {
       locale: requestScriptLocale,
@@ -261,6 +274,25 @@ function scriptLocaleFromRequest(text: string | undefined): string | undefined {
   if (scriptClass === "other") return undefined;
   if (scriptClass === "latin" && latinProseWordCount(text) < LATIN_PROSE_MIN_WORDS) return undefined;
   return canonicalLocale(`und-${isoScriptByClass[scriptClass]}`);
+}
+
+/**
+ * Resolve the script locale from a turn's inbound messages, qualifying each one
+ * on its own and taking the most recent that carries a signal.
+ *
+ * Per-message qualification is the point: the prose threshold decides whether a
+ * message is natural language at all, and that question is only meaningful per
+ * message. Scoring the concatenation lets N identifier-heavy fragments sum past
+ * the threshold, and lets bulk Latin config text outweigh a short sentence of
+ * real prose in the same batch. Most-recent-wins preserves the documented
+ * precedence of the current request over earlier turns.
+ */
+function scriptLocaleFromRequestBatch(texts: readonly string[]): string | undefined {
+  for (let index = texts.length - 1; index >= 0; index -= 1) {
+    const locale = scriptLocaleFromRequest(texts[index]);
+    if (locale !== undefined) return locale;
+  }
+  return undefined;
 }
 
 export function evaluateResponseLocale(
