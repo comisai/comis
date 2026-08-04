@@ -350,11 +350,13 @@ export function createResolvedRequestContext(
   const deliveryOrigin = originResult?.ok && originResult.value.success
     ? originResult.value.data
     : undefined;
+  const deliveryPrincipalId = captured.value.turnScope?.principal.principalId
+    ?? captured.value.userId;
   if (
     deliveryOrigin !== undefined
     && (
       deliveryOrigin.tenantId !== captured.value.tenantId
-      || deliveryOrigin.userId !== captured.value.userId
+      || deliveryOrigin.userId !== deliveryPrincipalId
       || (
         captured.value.channelType !== undefined
         && captured.value.channelType !== deliveryOrigin.channelType
@@ -508,7 +510,7 @@ export function enrichCurrentContext(
   }
   if (
     deliveryOrigin.tenantId !== resolved.tenantId
-    || deliveryOrigin.userId !== resolved.userId
+    || deliveryOrigin.userId !== (resolved.turnScope?.principal.principalId ?? resolved.userId)
   ) {
     return err(new Error("Resolved request delivery identity is inconsistent"));
   }

@@ -47,7 +47,7 @@ function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
     channelType: "telegram",
     deliveryOrigin: createDeliveryOrigin({
       tenantId: "default",
-      userId: "human-user",
+      userId: "principal-human-user",
       channelType: "telegram",
       channelId: "chat-1",
       threadId: "thread-1",
@@ -72,7 +72,7 @@ describe("resolveApprovalRequestContext", () => {
         trustLevel: "admin",
         callbackOwner: {
           tenantId: "default",
-          userId: "human-user",
+          userId: "principal-human-user",
           channelType: "telegram",
           channelKey: "chat-1",
           threadId: "thread-1",
@@ -147,7 +147,7 @@ describe("resolveApprovalRequestContext", () => {
     const context = makeContext({
       deliveryOrigin: {
         tenantId: "default",
-        userId: "human-user",
+        userId: "principal-human-user",
         channelType: "telegram",
         channelId: "chat-1",
         threadId: "thread-1",

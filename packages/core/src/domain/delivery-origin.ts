@@ -17,7 +17,7 @@ export const DeliveryOriginSchema = z.strictObject({
     channelType: z.string().min(1),
     /** Channel or chat identifier within the platform */
     channelId: z.string().min(1),
-    /** Originating user identifier */
+    /** Canonical authenticated principal that originated the delivery */
     userId: z.string().min(1),
     /** Thread within the channel (platform-specific, e.g., Discord thread, Telegram topic) */
     threadId: z.string().optional(),
