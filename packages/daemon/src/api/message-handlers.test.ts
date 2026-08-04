@@ -189,6 +189,79 @@ describe("message endpoint authority", () => {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  it("uses a previously observed exact endpoint for a granted non-origin target", async () => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-endpoint-"));
+    try {
+      const deps = createMockDeps(workspaceDir);
+      const targetEndpoint = {
+        channelType: "telegram",
+        channelInstanceId: "test-ch",
+        conversationId: "chat-b",
+        conversationKind: "direct" as const,
+      };
+      const depsWithResolver = deps as MessageHandlerDeps & {
+        resolveMessageEndpoint?: (
+          agentId: string,
+          channelType: string,
+          conversationId: string,
+        ) => typeof targetEndpoint | undefined;
+      };
+      depsWithResolver.resolveMessageEndpoint = vi.fn(() => targetEndpoint);
+      const handlers = withHeldCapabilities(createMessageHandlersRaw(deps));
+      const originEndpoint = {
+        channelType: "telegram",
+        channelInstanceId: "test-ch",
+        conversationId: "chat-a",
+        conversationKind: "direct" as const,
+      };
+
+      const result = await runWithContext({
+        tenantId: "tenant-a",
+        userId: "user_a",
+        sessionKey: "tenant-a:agent:agent-1:user_a:telegram:peer:user_a",
+        agentId: "agent-1",
+        turnScope: {
+          conversation: {
+            tenantId: "tenant-a",
+            agentId: "agent-1",
+            partition: {
+              kind: "endpoint-conversation-principal",
+              endpoint: originEndpoint,
+              principalId: "user_a",
+            },
+          },
+          principal: { principalId: "user_a" },
+          endpoint: originEndpoint,
+        },
+        traceId: "550e8400-e29b-41d4-a716-446655440000",
+        startedAt: 1_700_000_000_000,
+        trustLevel: "admin",
+      }, () => handlers["message.send"]({
+        channel_type: "telegram",
+        channel_id: "chat-b",
+        text: "hello from the granted origin",
+        _agentId: "agent-1",
+        _callerChannelId: "chat-a",
+        _trustLevel: "admin",
+      }));
+
+      expect(result).toEqual({ messageId: "msg-1", channelId: "chat-b" });
+      expect(depsWithResolver.resolveMessageEndpoint).toHaveBeenCalledWith(
+        "agent-1",
+        "telegram",
+        "chat-b",
+      );
+      expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+        deps.adaptersByType.get("telegram"),
+        "chat-b",
+        "hello from the granted origin",
+        expect.objectContaining({ destinationEndpoint: targetEndpoint }),
+      );
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
