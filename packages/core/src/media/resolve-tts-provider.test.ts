@@ -42,11 +42,22 @@ describe("resolveTtsProvider", () => {
     expect(sel).toMatchObject({ ok: true, provider: "openai", keyless: false, source: "explicit" });
   });
 
-  it("returns auth_required for an explicit keyed provider with no key", () => {
+  it("returns auth_required with the exact credential name for a known keyed provider", () => {
     const sel = resolveTtsProvider({ provider: "openai" }, "ollama", EDGE_ON, NO_AUDIO_KEY);
     expect(sel.ok).toBe(false);
     if (!sel.ok) {
       expect(sel.errorKind).toBe("auth_required");
+      expect(sel.hint).toContain("OPENAI_API_KEY");
+      expect(sel.hint).toContain("integrations.media.tts.provider");
+    }
+  });
+
+  it("names the ElevenLabs credential without inventing a secret value", () => {
+    const sel = resolveTtsProvider({ provider: "elevenlabs" }, "openai-codex", EDGE_ON, NO_AUDIO_KEY);
+    expect(sel.ok).toBe(false);
+    if (!sel.ok) {
+      expect(sel.errorKind).toBe("auth_required");
+      expect(sel.hint).toContain("ELEVENLABS_API_KEY");
       expect(sel.hint).toContain("integrations.media.tts.provider");
     }
   });
