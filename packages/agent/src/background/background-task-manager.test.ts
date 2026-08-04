@@ -783,13 +783,24 @@ describe("BackgroundTaskManager", () => {
     });
 
     it("emits background_task:cancelled event", () => {
-      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
+      const result = manager.promote(
+        "tool",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1", traceId: "trace-origin" }),
+        undefined,
+        { sessionKey: "default:agent-1:echo:chat-a:user_a", traceId: "trace-origin" },
+      );
       if (!result.ok) return;
       manager.cancel(result.value);
 
       expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
         "background_task:cancelled",
-        expect.objectContaining({ agentId: "agent-1" }),
+        expect.objectContaining({
+          agentId: "agent-1",
+          sessionKey: "default:agent-1:echo:chat-a:user_a",
+          traceId: "trace-origin",
+        }),
       );
     });
   });
