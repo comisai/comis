@@ -867,6 +867,22 @@ export interface SpawnParams {
 // ---------------------------------------------------------------------------
 
 /**
+ * ErrorKind for a sub-agent ABORT, derived from the authoritative finish-reason classifier.
+ *
+ * Hardcoding "resource" for every abort pointed triage at capacity exhaustion regardless of cause —
+ * a `prompt_timeout` is a `timeout`, a `circuit_open`/`provider_degraded` is a `dependency`, an
+ * `input_too_large` is `validation`. `finishReason` arrives as a plain string, so narrow it through
+ * the schema first (the same safeParse idiom this file already uses for the terminal kind).
+ * "resource" stays the fallback only for reasons the classifier has no opinion on.
+ */
+function abortErrorKind(finishReason: string): ErrorKind {
+  const parsed = AgentExecutionFinishReasonSchema.safeParse(finishReason);
+  return parsed.success
+    ? classifyAgentFinishErrorKind(parsed.data) ?? "resource"
+    : "resource";
+}
+
+/**
  * Classify a single required tool as "outside_profile" or "denylist".
  * Uses toolReachableGroups from @comis/core — no @comis/skills import needed.
  */
@@ -3278,7 +3294,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             // "resource" points triage at capacity exhaustion — and this runner already consults the
             // same classifier elsewhere, so the abort path was the outlier. `?? "resource"` preserves
             // the previous label only for reasons the classifier has no opinion on.
-            errorKind: classifyAgentFinishErrorKind(result.finishReason) ?? ("resource" as const),
+            // `result.finishReason` is a plain string here, so narrow it through the schema before
+            // classifying — the same safeParse idiom this file already uses for the terminal kind.
+            errorKind: abortErrorKind(result.finishReason),
             finishReason: result.finishReason,
             // Include error context when available for root-cause investigation
             ...(result.errorContext?.errorType && { errorType: result.errorContext.errorType }),
