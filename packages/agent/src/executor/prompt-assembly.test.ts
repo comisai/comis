@@ -2632,6 +2632,23 @@ describe("assembleExecutionPrompt", () => {
       }));
     });
 
+    it("passes normalized reply context into the dynamic inbound section", async () => {
+      const replyContext = {
+        messageId: "platform-42",
+        senderKind: "agent" as const,
+        text: "the exact earlier answer",
+      };
+      const params = makeParams({
+        msg: makeMsg({ metadata: { replyContext } }),
+      });
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockBuildInboundMetadataSection.mock.calls.at(-1)?.[0]).toMatchObject({
+        replyContext,
+      });
+    });
+
     it("additionalSections is always empty (RAG relocated to preamble)", async () => {
       const mockSearchResult = {
         entry: { id: "m1", tenantId: "t", content: "Test memory", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },

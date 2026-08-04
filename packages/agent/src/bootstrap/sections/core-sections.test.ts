@@ -226,4 +226,28 @@ describe("buildInboundMetadataSection", () => {
     const joined = result.join("\n");
     expect(joined).not.toContain("sender_trust");
   });
+
+  it("renders replied-to message content as bounded channel history", () => {
+    const meta = {
+      messageId: "msg-2",
+      senderId: "user-1",
+      chatId: "chat-1",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isReply: true },
+      replyContext: {
+        messageId: "platform-42",
+        senderKind: "agent",
+        text: "the exact earlier answer",
+      },
+    } as InboundMetadata;
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toContain('"reply_to_message_id": "platform-42"');
+    expect(joined).toContain('"reply_to_sender_kind": "agent"');
+    expect(joined).toContain("## Replied-To Message");
+    expect(joined).toContain("Source: Channel history");
+    expect(joined).toContain("the exact earlier answer");
+  });
 });
