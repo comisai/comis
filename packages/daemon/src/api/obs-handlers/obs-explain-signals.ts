@@ -901,6 +901,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
+    ...(acc.summaryTopErrorKinds !== undefined
+      ? { summaryTopErrorKinds: acc.summaryTopErrorKinds }
+      : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.providerErrorCode !== undefined ? { providerErrorCode: acc.providerErrorCode } : {}),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),

@@ -232,6 +232,7 @@ export interface Acc {
    *  trajectory-derived turn total the assembler prefers over the
    *  last-write-wins rollup turnCount. Absent ⇒ no summary records. */
   summaryTurnCount?: number;
+  summaryTopErrorKinds?: IncidentSignals["summaryTopErrorKinds"];
   /** Σ of the session's `model.completed` token fields — the trajectory-derived
    *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no
    *  model.completed records. */

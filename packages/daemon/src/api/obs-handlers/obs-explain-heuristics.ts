@@ -84,7 +84,10 @@ import {
   backgroundPendingVerdict,
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
-import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
+import {
+  executionAuthFailureVerdict,
+  recallMissVerdict,
+} from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
 import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -791,6 +794,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     NO tool failures (mutually exclusive with the catch-all) + the
   //     authoritative `degraded` flag (full rationale in the sibling
   //     obs-explain-recall-verdict.ts module doc).
+  executionAuthFailureVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
