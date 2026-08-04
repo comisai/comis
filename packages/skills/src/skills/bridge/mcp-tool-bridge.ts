@@ -354,10 +354,13 @@ export function mcpToolsToAgentTools(
       async execute(
         _toolCallId: string,
         params: unknown,
+        signal?: AbortSignal,
       ): Promise<AgentToolResult<{ success: boolean }>> {
         let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
-          result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
+          result = signal === undefined
+            ? await callTool(tool.qualifiedName, params as Record<string, unknown>)
+            : await callTool(tool.qualifiedName, params as Record<string, unknown>, signal);
         } catch (error: unknown) {
           // Defense-in-depth: callTool returns Result and should never throw.
           // Throwing here is deliberate: pi-agent-core is the immediate boundary

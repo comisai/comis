@@ -787,6 +787,8 @@ export interface InfraEvents {
     agentId: string;
     taskId: string;
     toolName: string;
+    sessionKey?: string;
+    traceId: string | null;
     timestamp: number;
   };
 

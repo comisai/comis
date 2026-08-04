@@ -236,7 +236,9 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     getConnection: (name) => getConnection(state, name),
     getAllConnections: () => getAllConnections(state),
     getTools: (): McpToolDefinition[] => listAllTools(state),
-    callTool: (qualifiedName, args) => callTool(state, effectiveDeps, qualifiedName, args),
+    callTool: (qualifiedName, args, signal) => signal === undefined
+      ? callTool(state, effectiveDeps, qualifiedName, args)
+      : callTool(state, effectiveDeps, qualifiedName, args, signal),
     reconnect: (name, credentials) => reconnectServer(state, effectiveDeps, name, credentials),
   };
 }
