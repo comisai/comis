@@ -9,9 +9,9 @@ overrides:
   typebox: 1.3.7
   protobufjs: '>=8.6.6'
   '@protobufjs/utf8': '>=1.1.1'
-  undici: '>=8.5.0'
+  undici: 8.10.0
   form-data: '>=4.0.6'
-  hono: '>=4.12.25'
+  hono: 4.13.0
   flatted: '>=3.4.2'
   picomatch: '>=4.0.4'
   path-to-regexp: '>=8.4.0'
@@ -19,20 +19,20 @@ overrides:
   basic-ftp: '>=5.3.1'
   follow-redirects: '>=1.16.0'
   axios: '>=1.16.0'
-  brace-expansion: '>=5.0.8'
+  brace-expansion: '>=5.0.9'
   nodemailer: '>=9.0.1'
   music-metadata: '>=11.12.3'
   vite: '>=7.3.2'
   fast-xml-parser: '>=5.7.0'
   fast-xml-builder: '>=1.1.7'
-  fast-uri: '>=4.1.1'
+  fast-uri: '>=4.1.2'
   adm-zip: '>=0.6.0'
   linkify-it: 5.0.2
   '@hono/node-server': 2.0.11
   sharp: 0.35.3
   uuid: '>=14.0.0'
   '@anthropic-ai/sdk': '>=0.91.1'
-  ip-address: '>=10.1.1'
+  ip-address: '>=10.3.1'
   qs: '>=6.15.2'
 
 patchedDependencies:
@@ -105,8 +105,8 @@ importers:
         specifier: 1.43.0
         version: 1.43.0
       hono:
-        specifier: '>=4.12.25'
-        version: 4.12.27
+        specifier: 4.13.0
+        version: 4.13.0
       jose:
         specifier: 6.2.4
         version: 6.2.4
@@ -457,10 +457,10 @@ importers:
         version: 1.3.10
       '@hono/node-server':
         specifier: 2.0.11
-        version: 2.0.11(hono@4.12.27)
+        version: 2.0.11(hono@4.13.0)
       '@hono/node-ws':
         specifier: 1.3.1
-        version: 1.3.1(@hono/node-server@2.0.11(hono@4.12.27))(hono@4.12.27)
+        version: 1.3.1(@hono/node-server@2.0.11(hono@4.13.0))(hono@4.13.0)
       '@huggingface/transformers':
         specifier: 4.2.0
         version: 4.2.0(@types/node@22.20.1)
@@ -600,11 +600,11 @@ importers:
         specifier: 1.43.0
         version: 1.43.0
       hono:
-        specifier: '>=4.12.25'
-        version: 4.12.27
+        specifier: 4.13.0
+        version: 4.13.0
       hono-rate-limiter:
         specifier: 0.5.3
-        version: 0.5.3(hono@4.12.27)
+        version: 0.5.3(hono@4.13.0)
       http-proxy-agent:
         specifier: 7.0.2
         version: 7.0.2
@@ -708,8 +708,8 @@ importers:
         specifier: 1.3.7
         version: 1.3.7
       undici:
-        specifier: '>=8.5.0'
-        version: 8.5.0
+        specifier: 8.10.0
+        version: 8.10.0
       ws:
         specifier: 8.21.1
         version: 8.21.1
@@ -813,8 +813,8 @@ importers:
         specifier: 12.10.0
         version: 12.10.0
       hono:
-        specifier: '>=4.12.25'
-        version: 4.12.27
+        specifier: 4.13.0
+        version: 4.13.0
       openai:
         specifier: 6.39.1
         version: 6.39.1(ws@8.21.1)(zod@4.4.3)
@@ -828,8 +828,8 @@ importers:
         specifier: 0.2.2
         version: 0.2.2
       undici:
-        specifier: '>=8.5.0'
-        version: 8.5.0
+        specifier: 8.10.0
+        version: 8.10.0
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -869,19 +869,19 @@ importers:
         version: 1.3.10
       '@hono/node-server':
         specifier: 2.0.11
-        version: 2.0.11(hono@4.12.27)
+        version: 2.0.11(hono@4.13.0)
       '@hono/node-ws':
         specifier: 1.3.1
-        version: 1.3.1(@hono/node-server@2.0.11(hono@4.12.27))(hono@4.12.27)
+        version: 1.3.1(@hono/node-server@2.0.11(hono@4.13.0))(hono@4.13.0)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
       hono:
-        specifier: '>=4.12.25'
-        version: 4.12.27
+        specifier: 4.13.0
+        version: 4.13.0
       hono-rate-limiter:
         specifier: 0.5.3
-        version: 0.5.3(hono@4.12.27)
+        version: 0.5.3(hono@4.13.0)
       json-rpc-2.0:
         specifier: 1.7.1
         version: 1.7.1
@@ -1238,8 +1238,8 @@ importers:
         specifier: 1.3.7
         version: 1.3.7
       undici:
-        specifier: '>=8.5.0'
-        version: 8.5.0
+        specifier: 8.10.0
+        version: 8.10.0
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -1775,14 +1775,14 @@ packages:
     resolution: {integrity: sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: '>=4.12.25'
+      hono: 4.13.0
 
   '@hono/node-ws@1.3.1':
     resolution: {integrity: sha512-vo/MwCnpJAVHBkGzWjCJ28wF45fYHAfbPZcH2rodZODHtch2GHA94KtMfusmVycTUtsLAsaNsHhtY6P8X3RQsA==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
       '@hono/node-server': 2.0.11
-      hono: '>=4.12.25'
+      hono: 4.13.0
 
   '@huggingface/jinja@0.5.9':
     resolution: {integrity: sha512-uWTG+l3VJRsl7EXxYizuL3P+cCPoc3cRqbWWRcQN0FhejRfbdq0RNhCmbY/YDtnTcz9icdLYuLDjsnz4d8JMuw==}
@@ -3151,8 +3151,8 @@ packages:
   bowser@2.14.1:
     resolution: {integrity: sha512-tzPjzCxygAKWFOJP011oxFHs57HzIhOEracIgAePE4pqB3LikALKnSzUyU4MGs9/iCEUuHlAJTjTc5M+u7YEGg==}
 
-  brace-expansion@5.0.8:
-    resolution: {integrity: sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==}
+  brace-expansion@5.0.9:
+    resolution: {integrity: sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==}
     engines: {node: 20 || >=22}
 
   buffer-equal-constant-time@1.0.1:
@@ -3791,8 +3791,8 @@ packages:
   fast-text-encoding@1.0.6:
     resolution: {integrity: sha512-VhXlQgj9ioXCqGstD37E/HBeqEGV/qOD/kmbVG8h5xKBYvM1L3lR1Zn4555cQ8GkYbJa8aJSipLPndE1k6zK2w==}
 
-  fast-uri@4.1.1:
-    resolution: {integrity: sha512-YPOs1zD5TG2+EZt+r88LwF6mclA7TPkpwMP7ZN3TO2HiHS8TXvq7QA/17iJsV9dubcLo/f8eEYqMBruyQV21hQ==}
+  fast-uri@4.1.2:
+    resolution: {integrity: sha512-TyGmBcbDTZXcb2cj5MV89DrF42DKvb3y5DDUNh95iO+IMeAzMkVSxK1PZRrRIpc9yg8U2GhGdbofNa0LS/a4Bw==}
 
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
@@ -4045,14 +4045,14 @@ packages:
   hono-rate-limiter@0.5.3:
     resolution: {integrity: sha512-M0DxbVMpPELEzLi0AJg1XyBHLGJXz7GySjsPoK+gc5YeeBsdGDGe+2RvVuCAv8ydINiwlbxqYMNxUEyYfRji/A==}
     peerDependencies:
-      hono: '>=4.12.25'
+      hono: 4.13.0
       unstorage: ^1.17.3
     peerDependenciesMeta:
       unstorage:
         optional: true
 
-  hono@4.12.27:
-    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
+  hono@4.13.0:
+    resolution: {integrity: sha512-jhunvfHWxd7J5EFfSgH4xsYJzSe/lfqbUCxiyyeaQasUsXeEHXtzVid+7EOGByc5JnFa23SSFL3Y2RV/z1T+eQ==}
     engines: {node: '>=16.9.0'}
 
   hookified@1.15.1:
@@ -4193,8 +4193,8 @@ packages:
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
 
-  ip-address@10.2.0:
-    resolution: {integrity: sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==}
+  ip-address@10.4.0:
+    resolution: {integrity: sha512-oSK96Grm3aP6OrS263xVxbNDGVL7rzBtYdpGqlDG8iQdoenDoTs/nkki+DflYbAEE8Xl6o5YxhxlrKvI3nqKXQ==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -5800,8 +5800,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  undici@8.5.0:
-    resolution: {integrity: sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==}
+  undici@8.10.0:
+    resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
 
   unified@11.0.5:
@@ -6386,7 +6386,7 @@ snapshots:
       discord-api-types: 0.38.49
       magic-bytes.js: 1.13.0
       tslib: 2.8.1
-      undici: 8.5.0
+      undici: 8.10.0
 
   '@discordjs/util@1.2.0':
     dependencies:
@@ -6463,7 +6463,7 @@ snapshots:
       proper-lockfile: 4.1.2
       semver: 7.8.0
       typebox: 1.3.7
-      undici: 8.5.0
+      undici: 8.10.0
       yaml: 2.9.0
     optionalDependencies:
       '@mariozechner/clipboard': 0.3.9
@@ -6671,14 +6671,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@hono/node-server@2.0.11(hono@4.12.27)':
+  '@hono/node-server@2.0.11(hono@4.13.0)':
     dependencies:
-      hono: 4.12.27
+      hono: 4.13.0
 
-  '@hono/node-ws@1.3.1(@hono/node-server@2.0.11(hono@4.12.27))(hono@4.12.27)':
+  '@hono/node-ws@1.3.1(@hono/node-server@2.0.11(hono@4.13.0))(hono@4.13.0)':
     dependencies:
-      '@hono/node-server': 2.0.11(hono@4.12.27)
-      hono: 4.12.27
+      '@hono/node-server': 2.0.11(hono@4.13.0)
+      hono: 4.13.0
       ws: 8.21.1
     transitivePeerDependencies:
       - bufferutil
@@ -6974,7 +6974,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 2.0.11(hono@4.12.27)
+      '@hono/node-server': 2.0.11(hono@4.13.0)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -6984,7 +6984,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.27
+      hono: 4.13.0
       jose: 6.2.4
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -8042,7 +8042,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 4.1.1
+      fast-uri: 4.1.2
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -8149,7 +8149,7 @@ snapshots:
 
   bowser@2.14.1: {}
 
-  brace-expansion@5.0.8:
+  brace-expansion@5.0.9:
     dependencies:
       balanced-match: 4.0.4
 
@@ -8493,7 +8493,7 @@ snapshots:
       lodash.snakecase: 4.1.1
       magic-bytes.js: 1.13.0
       tslib: 2.8.1
-      undici: 8.5.0
+      undici: 8.10.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -8795,7 +8795,7 @@ snapshots:
   express-rate-limit@8.5.2(express@5.2.1):
     dependencies:
       express: 5.2.1
-      ip-address: 10.2.0
+      ip-address: 10.4.0
 
   express@5.2.1:
     dependencies:
@@ -8852,7 +8852,7 @@ snapshots:
 
   fast-text-encoding@1.0.6: {}
 
-  fast-uri@4.1.1: {}
+  fast-uri@4.1.2: {}
 
   fast-wrap-ansi@0.2.2:
     dependencies:
@@ -9164,11 +9164,11 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
-  hono-rate-limiter@0.5.3(hono@4.12.27):
+  hono-rate-limiter@0.5.3(hono@4.13.0):
     dependencies:
-      hono: 4.12.27
+      hono: 4.13.0
 
-  hono@4.12.27: {}
+  hono@4.13.0: {}
 
   hookified@1.15.1: {}
 
@@ -9301,7 +9301,7 @@ snapshots:
 
   inline-style-parser@0.2.7: {}
 
-  ip-address@10.2.0: {}
+  ip-address@10.4.0: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -10093,7 +10093,7 @@ snapshots:
 
   minimatch@10.2.5:
     dependencies:
-      brace-expansion: 5.0.8
+      brace-expansion: 5.0.9
 
   minimist@1.2.8: {}
 
@@ -10995,7 +10995,7 @@ snapshots:
 
   socks@2.8.9:
     dependencies:
-      ip-address: 10.2.0
+      ip-address: 10.4.0
       smart-buffer: 4.2.0
 
   sonic-boom@4.2.1:
@@ -11279,7 +11279,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici@8.5.0: {}
+  undici@8.10.0: {}
 
   unified@11.0.5:
     dependencies:

@@ -57,7 +57,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 // GATED test-only imports (the agent->memory cut excludes *.test.ts).
-import { SqliteMemoryAdapter, createSqliteTripleStore } from "@comis/memory";
+import { createSqliteTripleStore } from "@comis/memory";
 // BARE production orchestrator (the live recall pipeline this harness drives).
 import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } from "@comis/agent";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
@@ -70,11 +70,14 @@ import { V28_ABLATION_FACTORS, applyFactor, sweepCells, REASON_WRITE_SIDE_FACTOR
 import { createMem0Adapter, skipWithDisclosure, type AdapterResult } from "./competitor-adapter.js";
 import { createLettaFsBaselineAdapter, LETTA_FS_BASELINE_CONTROL_LABEL } from "./letta-fs-baseline-adapter.js";
 // Determinism helpers (test/support -- 5 segments up).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 // Core types (type-only).
-import type { MemoryConfig, MemorySearchResult, SessionKey } from "@comis/core";
+import type { MemoryConfig, MemoryRecallScope, MemorySearchResult, SessionKey } from "@comis/core";
 import { MemoryConfigSchema } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
@@ -113,6 +116,20 @@ const BENCH_SESSION_KEY: SessionKey = {
 
 /** The agent partition memories are ingested under AND recall is called with (load-bearing scope). */
 const BENCH_AGENT_ID = "bench";
+
+/**
+ * The resolved recall scope. `recall()` reads its tenant and agent partition from
+ * HERE, not from the session key -- the session key carries no agent, so a scope
+ * built from it would search the wrong partition and rank nothing, which is
+ * indistinguishable from a dormant pipeline.
+ */
+const BENCH_MEMORY_SCOPE: MemoryRecallScope = {
+  tenantId: "default",
+  agentId: BENCH_AGENT_ID,
+  conversationRef: `cv_${"r".repeat(43)}` as MemoryRecallScope["conversationRef"],
+  principalId: "user_a",
+  includeAgentShared: true,
+};
 
 /**
  * Base recall config with the lanes ON (the lanes-ON wiring proof).
@@ -186,6 +203,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
   let absentResult: AdapterResult = skipWithDisclosure("placeholder", "unset", "unset");
   let controlResult: AdapterResult = skipWithDisclosure("placeholder", "unset", "unset");
   let comisRanked: MemorySearchResult[] = [];
+  let comisRecallError: string | undefined;
   let ledgerFirstOk = false;
   let ledgerSecondSamePathRejected = false;
   let ledgerFirstBytesUnchanged = false;
@@ -217,7 +235,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
 
     // 2. REAL COMIS CELL: drive the production recall pipeline with the lanes ON
     //    over a fresh adapter + a structurally-linked triple edge (the lanes-ON proof).
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "prove.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "prove.db")), undefined);
     const seedId = randomUUID();
     const linkedId = randomUUID();
     const seedContent = "Quarterly revenue planning meeting: the team finalized the Q3 forecast and budget.";
@@ -271,10 +289,14 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
     );
     const r = await recall.recall(
       "What did the quarterly revenue planning meeting decide?",
+      BENCH_MEMORY_SCOPE,
       BENCH_SESSION_KEY,
-      BENCH_AGENT_ID,
     );
     comisRanked = r.ok ? r.value : [];
+    // A failed recall and a recall that ranked nothing are different defects, and
+    // collapsing both into `[]` is what made this read as "the lanes are dormant"
+    // when the call had actually been passed the wrong scope. Keep the error.
+    comisRecallError = r.ok ? undefined : r.error.message;
     adapter.close();
 
     // 3. LEDGER NEVER-OVERWRITE PROOF: a fresh tmp history dir (NOT the committed
@@ -353,6 +375,7 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
     // The lanes-ON wiring proof: the real production pipeline runs and
     // returns ranked results. We assert it ran (not a number) -- the lanes are wired,
     // not dormant. The seed doc (FTS-matched) must be present.
+    expect(comisRecallError, "the real recall pipeline ran without erroring").toBeUndefined();
     expect(comisRanked.length, "the real recall pipeline returned ranked results").toBeGreaterThan(0);
     const contents = comisRanked.map((m) => m.entry.content);
     expect(
