@@ -1009,6 +1009,20 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
   });
 
+  it("ranks a terminal authentication failure above an incidental recall miss", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+    }) as IncidentSignals & { summaryTopErrorKinds?: Record<string, number> };
+    signals.summaryTopErrorKinds = { auth: 1 };
+
+    const result = rootCause(signals);
+
+    expect(result?.code).toBe("execution_auth_failure");
+    expect(result?.suggestedNextSteps.join(" ")).toMatch(/credential|provider/iu);
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
