@@ -279,15 +279,13 @@ mid-flight `hows that going` reads the real task state via `background_tasks lis
 cancels. The 6th concurrent ask is refused or queued honestly, never silently dropped. A failing
 background tool's breaker is recorded against the **originating** tool, not against the poller.
 
-**Oracle.** ⚠ Only FOUR background events reach the trajectory. `event-bus-bridge.ts` maps
-`background_task:promoted|completed|failed|notified`; the emitted `background_task:cancelled` and
-`background_task:reentered` are **NOT bridged**, so a cancel and the fresh-turn re-entry are invisible to
-`comis explain`. Verified at HEAD — do not read their absence as "it didn't happen". So: use the four
-bridged events for promote/finish; read the CANCEL from the `background_tasks` tool receipt plus the task's
-terminal state; read the RE-ENTRY from the new turn's own record in the session (a turn with no inbound
-message initiating it). Then `delivery_mirror` for the unprompted send (exactly one row) and `explain`
-per-tool `{ok,failed}`. **The bridge gap is itself an obs-loop finding** — two emitted events that
-`explain` cannot see, on the default-ON path that produces unprompted user-visible messages.
+**Oracle.** All six background lifecycle events reach the trajectory: `event-bus-bridge.ts` maps
+`background_task:promoted|completed|failed|cancelled|reentered|notified`. Use the promoted task IDs to
+join later terminal, re-entry, and notification records onto the originating trace; `comis explain` folds
+those records into promoted/completed/failed/cancelled/reentered/accepted/pending counts. Corroborate a
+cancel with the `background_tasks` tool receipt and the task's terminal state, and corroborate re-entry with
+the new turn's own session record (a turn with no inbound message initiating it). Then check
+`delivery_mirror` for the unprompted send (exactly one row) and `explain` per-tool `{ok,failed}`.
 
 **HARD.** The unprompted completion is bound to the ORIGINATING conversation only (a completion must
 never land in another chat). No false "done" — a failed background task reports as failed. `exec`,
