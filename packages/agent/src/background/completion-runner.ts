@@ -493,7 +493,7 @@ export function createBackgroundCompletionRunner(
         `Background task "${task.toolName}" ${kind}, but follow-up was skipped because `
         + `\`${configKey}=${String(maxBackgroundHops)}\` was reached. The task remains stored as `
         + `${task.id}; ask me to check it. Retrying the same request unchanged reaches the same `
-        + `limit; an operator must raise \`${configKey}\` and restart the daemon.`,
+        + "limit; an operator must increase that key and restart the daemon.",
       );
       return;
     }
