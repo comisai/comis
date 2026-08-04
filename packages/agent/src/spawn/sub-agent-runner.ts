@@ -61,7 +61,10 @@ import {
   type CoordinatorProgressForkHandle,
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
-import { buildBackgroundTaskFailedNotice } from "../executor/degraded-reply.js";
+import {
+  buildBackgroundTaskFailedNotice,
+  buildLoopDetectedReply,
+} from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnnouncementBatcher,
@@ -484,6 +487,7 @@ export interface SubAgentRunnerDeps {
   renderAnnouncementFailureNotice?: (
     agentId: string,
     resolvedLanguage?: string,
+    finishReason?: string,
   ) => string;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
@@ -3508,7 +3512,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                     failureNotice: deps.renderAnnouncementFailureNotice?.(
                       params.callerAgentId ?? params.agentId,
                       params.resolvedLanguage,
-                    ) ?? buildBackgroundTaskFailedNotice(params.resolvedLanguage),
+                      result.finishReason,
+                    ) ?? (
+                      result.finishReason === "loop_detected"
+                        ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
+                        : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
+                    ),
                     ...(result.errorContext?.errorType === "UpstreamToolFailure"
                       && result.errorContext.configKey !== undefined
                       ? { requiredConfigKey: result.errorContext.configKey }

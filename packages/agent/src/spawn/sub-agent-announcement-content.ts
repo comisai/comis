@@ -5,7 +5,7 @@ import { safePath, systemSleep } from "@comis/core";
 import { stat } from "node:fs/promises";
 
 export interface AbortClassification {
-  category: "step_limit" | "budget" | "context_full" | "external_timeout" | "provider_degraded" | "unknown";
+  category: "step_limit" | "loop_limit" | "budget" | "context_full" | "external_timeout" | "provider_degraded" | "unknown";
   hint: string;
   severity: "expected" | "actionable" | "investigate";
 }
@@ -88,6 +88,7 @@ export function buildAnnouncementMessage(params: {
 }): string {
   const finishReasonMap: Record<string, { label: string; verb: string }> = {
     max_steps: { label: "Halted (max steps reached)", verb: "halted (max steps reached)" },
+    loop_detected: { label: "Halted (no-progress loop limit reached)", verb: "halted (no-progress loop limit reached)" },
     context_loop: { label: "Halted (context loop)", verb: "halted (context loop)" },
     context_exhausted: { label: "Halted (context exhausted)", verb: "halted (context exhausted)" },
     budget_exceeded: { label: "Halted (budget exceeded)", verb: "halted (budget exceeded)" },
