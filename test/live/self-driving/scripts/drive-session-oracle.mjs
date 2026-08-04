@@ -332,11 +332,24 @@ export function directConversationFinished({
   turnEndedAtMs,
   nowMs,
   deliveryGraceMs,
+  lastOutboundAtMs,
 }) {
   if (!turnEnded) return false;
   if (sawAnswer) return true;
-  return typeof turnEndedAtMs === "number"
-    && nowMs - turnEndedAtMs >= deliveryGraceMs;
+  if (typeof turnEndedAtMs !== "number") return false;
+  // The grace measures SILENCE, not an absolute span from turn-end. A background completion's
+  // DELIVERY can trail its terminal record: measured live, a turn ended correctly (its spawned
+  // workers balanced) and the substantive answer landed after the fixed window, so the drive
+  // reported the interim acknowledgement as the answer. Raising the fixed bound only trades against
+  // answerless-turn latency; anchoring on the last outbound keeps the window open exactly while the
+  // runtime is still emitting and closes promptly on real silence.
+  //
+  // An outbound that PREDATES turn-end must not extend anything (no retro-extension), so the anchor
+  // is the later of the two. Omitting `lastOutboundAtMs` preserves the original behaviour.
+  const anchorMs = typeof lastOutboundAtMs === "number" && lastOutboundAtMs > turnEndedAtMs
+    ? lastOutboundAtMs
+    : turnEndedAtMs;
+  return nowMs - anchorMs >= deliveryGraceMs;
 }
 
 /**

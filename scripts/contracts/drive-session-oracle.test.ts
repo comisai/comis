@@ -285,3 +285,72 @@ describe("trajectoryTurnEnded", () => {
     expect(trajectoryTurnEnded(lines)).toBe(trajectoryTurnEnded(lines));
   });
 });
+
+// ---------------------------------------------------------------------------
+// directConversationFinished — the post-turn grace must measure SILENCE, not an
+// absolute clock from turn-end.
+//
+// A background completion's DELIVERY can trail its terminal record: measured live,
+// a turn ended correctly (spawned workers balanced) and the substantive answer
+// arrived after the fixed 120s window, so the drive reported the interim
+// acknowledgement as the answer. Raising the fixed bound trades against
+// answerless-turn latency; measuring from the last outbound instead keeps the
+// window open exactly while the runtime is still emitting, and closes promptly on
+// real silence.
+// ---------------------------------------------------------------------------
+
+describe("directConversationFinished — silence-based grace", () => {
+  it("still returns immediately once an answer is seen", () => {
+    expect(directConversationFinished({
+      sawAnswer: true, turnEnded: true, turnEndedAtMs: 0, nowMs: 1, deliveryGraceMs: 1000,
+    })).toBe(true);
+  });
+
+  it("is not finished before the grace elapses", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 500, deliveryGraceMs: 1000,
+    })).toBe(false);
+  });
+
+  it("finishes after the grace when nothing more arrives", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1000, deliveryGraceMs: 1000,
+    })).toBe(true);
+  });
+
+  it("EXTENDS the window when an outbound arrived after turn-end", () => {
+    // Turn ended at 0, grace 1000, now 1200 — the old absolute rule would finish.
+    // A card arrived at 900, so the runtime is still emitting: keep waiting.
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1200,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 900,
+    })).toBe(false);
+  });
+
+  it("finishes once the silence since the last outbound exceeds the grace", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1901,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 900,
+    })).toBe(true);
+  });
+
+  it("ignores an outbound that predates turn-end (no retro-extension)", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 1000, nowMs: 2000,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 200,
+    })).toBe(true);
+  });
+
+  it("is unchanged when lastOutboundAtMs is omitted (backward compatible)", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1000, deliveryGraceMs: 1000,
+    })).toBe(true);
+  });
+
+  it("never finishes while the turn has not ended", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: false, turnEndedAtMs: undefined, nowMs: 99999,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 1,
+    })).toBe(false);
+  });
+});

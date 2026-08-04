@@ -495,6 +495,12 @@ while (Date.now() - start < maxMs) {
     turnEndedAtMs,
     nowMs: Date.now(),
     deliveryGraceMs: POST_TURN_DELIVERY_GRACE_MS,
+    // `lastNew` is stamped whenever a batch arrives, so the grace measures SILENCE rather than an
+    // absolute span from turn-end. A background completion's delivery can trail its terminal record
+    // — observed ~200s past turn-end against a 120s window — so a stream of progress cards followed
+    // by the real answer now holds the window open instead of closing mid-delivery. An outbound that
+    // predates turn-end does not extend it.
+    lastOutboundAtMs: lastNew,
   })) {
     // Drain any just-delivered final message, then stop. A turn with no answer
     // reaches this branch only after the bounded post-turn delivery grace.
