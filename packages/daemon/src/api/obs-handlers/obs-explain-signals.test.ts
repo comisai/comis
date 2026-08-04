@@ -1789,6 +1789,33 @@ describe("toolStats fidelity", () => {
     ]);
   });
 
+  it("retains background hard-duration diagnostics as a bounded failure preview", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-hard-timeout",
+          toolName: "mcp__reports--slow_lookup",
+          errorKind: "timeout",
+          failureCode: "background_hard_timeout_exceeded",
+          failureConfigKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+          failureConfiguredMs: 12_000,
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp__reports--slow_lookup",
+        failureCode: "background_hard_timeout_exceeded",
+        errorPreview:
+          "agents.agent-1.backgroundTasks.maxBackgroundDurationMs=12000ms",
+      }),
+    ]);
+  });
+
   it("replaces a promoted success with a degraded runtime-only background completion", () => {
     const s = toIncidentSignals([
       {

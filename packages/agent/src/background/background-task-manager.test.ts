@@ -879,6 +879,25 @@ describe("BackgroundTaskManager", () => {
         expect(task!.status).toBe("failed");
         expect(task!.error).toContain("maxBackgroundDurationMs");
         expect(task!.errorKind).toBe("timeout");
+        expect(task).toMatchObject({
+          failureCode: "background_hard_timeout_exceeded",
+          failureDiagnostic: {
+            kind: "background_hard_timeout_exceeded",
+            configKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+            configuredMs: 100,
+          },
+        });
+        expect(eventBus.emit).toHaveBeenCalledWith(
+          "background_task:failed",
+          expect.objectContaining({
+            failureCode: "background_hard_timeout_exceeded",
+            failureDiagnostic: {
+              kind: "background_hard_timeout_exceeded",
+              configKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+              configuredMs: 100,
+            },
+          }),
+        );
         expect(ac.signal.aborted).toBe(true);
       } finally {
         vi.useRealTimers();

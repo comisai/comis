@@ -407,6 +407,35 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/operator/i);
   });
 
+  it("background hard timeout names its own limit instead of the MCP deadline", () => {
+    const r = rootCause(
+      makeSignals({
+        failures: [
+          {
+            seq: 0,
+            toolName: "mcp__vendor--report",
+            classifiedFailureBy: "background_task",
+            transportOk: false,
+            errorKind: "timeout",
+            failureCode: "background_hard_timeout_exceeded",
+            resultDigest: "abc",
+            resultBytes: 73,
+            errorPreview:
+              "agents.agent-1.backgroundTasks.maxBackgroundDurationMs=12000ms",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("background_hard_timeout");
+    expect(`${r?.detail} ${r?.suggestedNextSteps.join(" ")}`).toContain(
+      "agents.agent-1.backgroundTasks.maxBackgroundDurationMs=12000ms",
+    );
+    expect(`${r?.detail} ${r?.suggestedNextSteps.join(" ")}`).not.toContain(
+      "integrations.mcp.callToolTimeoutMs",
+    );
+  });
+
   it("insurance: a zero-argument MCP timeout does not invent request scope controls", () => {
     const r = rootCause(
       makeSignals({
