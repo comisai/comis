@@ -228,6 +228,18 @@ export async function evaluateInboundGate(
     const decision = evaluateAutoReply(msg, arConfig, isGroup);
 
     if (decision.action === "activate") {
+      if (isGroup) {
+        msg = {
+          ...msg,
+          metadata: {
+            ...msg.metadata,
+            autoReplyPolicyContext: {
+              groupActivation: arConfig.groupActivation,
+              historyInjection: arConfig.historyInjection,
+            },
+          },
+        };
+      }
       emitObservationalEventSafely(deps, "autoreply:activated", {
         channelId: msg.channelId,
         senderId: msg.senderId,

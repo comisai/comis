@@ -142,6 +142,8 @@ export { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "../provider/ke
 export type {
   Attachment,
   GroupHistoryContextEntry,
+  AutoReplyPolicyContext,
+  ReplyContext,
   LinkPrefetchReceipt,
   SttPreprocessReceipt,
   SttPreprocessSelection,

@@ -381,6 +381,7 @@ export async function resolveAndPreprocess(
   delete ingressMetadata.sttPreprocess;
   delete ingressMetadata.visionPreprocess;
   delete ingressMetadata.groupHistoryContext;
+  delete ingressMetadata.autoReplyPolicyContext;
   let processedMsg: NormalizedMessage = {
     ...effectiveMsg,
     metadata: ingressMetadata,
