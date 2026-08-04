@@ -457,6 +457,30 @@ describe("executeAndDeliver", () => {
       );
     });
 
+    it("binds redundant-final suppression to the authenticated inbound route", async () => {
+      const adapter = makeAdapter();
+      const executor = makeExecutor();
+      const deps = makeDeps();
+      const msg = makeMessage({
+        channelId: "-1001234567890",
+        channelType: "telegram",
+        chatType: "group",
+      });
+
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+        deps, adapter, msg, msg, executor, makeSessionKey(), "agent-1",
+        makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      ));
+
+      expect(vi.mocked(executor.execute).mock.calls[0]?.[7]).toMatchObject({
+        operationType: "interactive",
+        suppressFinalResponseAfterOutboundDelivery: {
+          channelType: "telegram",
+          channelId: "-1001234567890",
+        },
+      });
+    });
+
     it("delivers response via adapter.sendMessage", async () => {
       const adapter = makeAdapter();
       const executor = makeExecutor();
