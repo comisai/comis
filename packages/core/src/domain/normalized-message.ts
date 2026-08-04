@@ -24,6 +24,15 @@ export const GroupHistoryContextEntrySchema = z.strictObject({
 
 export type GroupHistoryContextEntry = z.infer<typeof GroupHistoryContextEntrySchema>;
 
+/** One platform message explicitly referenced by the current inbound reply. */
+export const ReplyContextSchema = z.strictObject({
+  messageId: z.string().min(1),
+  senderKind: z.enum(["agent", "user", "unknown"]),
+  text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS).optional(),
+});
+
+export type ReplyContext = z.infer<typeof ReplyContextSchema>;
+
 /**
  * Voice-specific metadata for voice notes and audio messages.
  */
@@ -251,6 +260,8 @@ export const NormalizedMessageSchema = z.strictObject({
         .array(GroupHistoryContextEntrySchema)
         .max(MAX_GROUP_HISTORY_CONTEXT_MESSAGES)
         .optional(),
+      /** Bounded content and attribution for the platform message explicitly replied to. */
+      replyContext: ReplyContextSchema.optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),
