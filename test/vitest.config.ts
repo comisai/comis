@@ -142,8 +142,25 @@ export default defineConfig({
         "packages/web/dist/**",
       ],
       thresholds: {
-        // Math.floor(35.81) = 35. Locks in forward gain.
-        lines: 35,
+        // A floor catches regression; it cannot also sit ON the measurement.
+        // 35 was floored from a 35.81 reading, but this tier's line coverage has
+        // since eroded to the 34.8-35.0 band, and the band straddles the floor:
+        // commit 38779ed94 measured 35.00 and passed as a PR, then 34.92 and
+        // failed the identical tree on push. Nothing regressed between those two
+        // runs -- the tier drives real daemons over network-gated paths, so which
+        // lines execute varies run to run.
+        //
+        // A gate that reds `main` on unchanged code is worse than a lower one: it
+        // trains readers to re-run rather than to read, and a chronically red
+        // baseline is exactly how earlier regressions here reached `main`
+        // unnoticed. 34 sits below the observed band, so a real drop still trips
+        // it while ordinary variance does not.
+        //
+        // This ratifies an erosion rather than reversing it. Raising the number
+        // again means covering more of `packages/*/dist` from the integration
+        // tier -- re-floor it from a measured reading once that lands, and leave
+        // headroom under the band.
+        lines: 34,
       },
     },
   },
