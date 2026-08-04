@@ -13,6 +13,19 @@ function translateFailureDiagnostic(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
   const diagnostic = value as Record<string, unknown>;
   if (
+    diagnostic.kind === "background_hard_timeout_exceeded"
+    && typeof diagnostic.configKey === "string"
+    && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(diagnostic.configKey)
+    && typeof diagnostic.configuredMs === "number"
+    && Number.isFinite(diagnostic.configuredMs)
+    && diagnostic.configuredMs >= 0
+  ) {
+    return {
+      failureConfigKey: diagnostic.configKey,
+      failureConfiguredMs: diagnostic.configuredMs,
+    };
+  }
+  if (
     diagnostic.kind !== "mcp_call_deadline_exceeded"
     || diagnostic.configKey !== "integrations.mcp.callToolTimeoutMs"
     || typeof diagnostic.configuredMs !== "number"
@@ -68,6 +81,7 @@ export function translateBackgroundTaskPayload(
           || payload.failureCode === "mcp_connection_details_missing"
           || payload.failureCode === "mcp_secret_reference_missing"
           || payload.failureCode === "mcp_call_deadline_exceeded"
+          || payload.failureCode === "background_hard_timeout_exceeded"
           ? { failureCode: payload.failureCode }
           : {}),
         ...translateFailureDiagnostic(payload.failureDiagnostic),

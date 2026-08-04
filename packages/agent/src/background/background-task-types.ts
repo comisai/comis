@@ -24,15 +24,26 @@ export const BackgroundTaskFailureCodeSchema = z.enum([
   "mcp_connection_details_missing",
   "mcp_secret_reference_missing",
   "mcp_call_deadline_exceeded",
+  "background_hard_timeout_exceeded",
   "mutation_not_persisted",
 ]) satisfies z.ZodType<BackgroundTaskFailureCode>;
-export const BackgroundTaskFailureDiagnosticSchema = z.strictObject({
-  kind: z.literal("mcp_call_deadline_exceeded"),
-  configKey: z.literal("integrations.mcp.callToolTimeoutMs"),
-  configuredMs: z.number().finite().nonnegative(),
-  queueWaitedMs: z.number().finite().nonnegative(),
-  requestBudgetMs: z.number().finite().nonnegative(),
-}) satisfies z.ZodType<BackgroundTaskFailureDiagnostic>;
+export const BackgroundTaskFailureDiagnosticSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("mcp_call_deadline_exceeded"),
+    configKey: z.literal("integrations.mcp.callToolTimeoutMs"),
+    configuredMs: z.number().finite().nonnegative(),
+    queueWaitedMs: z.number().finite().nonnegative(),
+    requestBudgetMs: z.number().finite().nonnegative(),
+  }),
+  z.strictObject({
+    kind: z.literal("background_hard_timeout_exceeded"),
+    configKey: z.custom<`agents.${string}.backgroundTasks.maxBackgroundDurationMs`>(
+      (value) => typeof value === "string"
+        && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(value),
+    ),
+    configuredMs: z.number().finite().nonnegative(),
+  }),
+]) satisfies z.ZodType<BackgroundTaskFailureDiagnostic>;
 
 /**
  * Notification policy for a background task. Typed enum (NOT a boolean):

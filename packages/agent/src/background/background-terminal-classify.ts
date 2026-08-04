@@ -19,7 +19,7 @@ const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
 const MCP_CONNECT_MISSING_PARAM_PREFIX = '[missing_param] mcp_manage(action="connect")';
 const MCP_SECRET_REFERENCE_MISSING_PREFIX = '[invalid_value] enabled MCP server "';
 
-function deadlineDiagnostic(error: unknown): BackgroundTaskFailureDiagnostic | undefined {
+function failureDiagnostic(error: unknown): BackgroundTaskFailureDiagnostic | undefined {
   const seen = new Set<object>();
   let current = error;
   for (let depth = 0; depth < 8 && current !== null && typeof current === "object"; depth++) {
@@ -33,6 +33,20 @@ function deadlineDiagnostic(error: unknown): BackgroundTaskFailureDiagnostic | u
       requestBudgetMs?: unknown;
       cause?: unknown;
     };
+    if (
+      candidate.code === "background_hard_timeout_exceeded"
+      && typeof candidate.configKey === "string"
+      && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(candidate.configKey)
+      && typeof candidate.configuredMs === "number"
+      && Number.isFinite(candidate.configuredMs)
+      && candidate.configuredMs >= 0
+    ) {
+      return {
+        kind: candidate.code,
+        configKey: candidate.configKey as `agents.${string}.backgroundTasks.maxBackgroundDurationMs`,
+        configuredMs: candidate.configuredMs,
+      };
+    }
     if (
       candidate.code === "mcp_call_deadline_exceeded"
       && candidate.configKey === "integrations.mcp.callToolTimeoutMs"
@@ -92,7 +106,7 @@ export function projectBackgroundTaskFailure(
   failureCode?: BackgroundTaskFailureCode;
   failureDiagnostic?: BackgroundTaskFailureDiagnostic;
 } {
-  const diagnostic = toolName.startsWith("mcp__") ? deadlineDiagnostic(error) : undefined;
+  const diagnostic = failureDiagnostic(error);
   if (diagnostic !== undefined) {
     return { failureCode: diagnostic.kind, failureDiagnostic: diagnostic };
   }

@@ -254,6 +254,7 @@ export function accumulateBackgroundTaskRecord(
         "mcp_connection_details_missing",
         "mcp_secret_reference_missing",
         "mcp_call_deadline_exceeded",
+        "background_hard_timeout_exceeded",
       ] as const,
       data.failureCode,
     );
@@ -261,7 +262,7 @@ export function accumulateBackgroundTaskRecord(
     const configuredMs = nonnegativeInteger(data.failureConfiguredMs);
     const queueWaitedMs = nonnegativeInteger(data.failureQueueWaitedMs);
     const requestBudgetMs = nonnegativeInteger(data.failureRequestBudgetMs);
-    const diagnosticPreview =
+    const mcpDiagnosticPreview =
       failureCode === "mcp_call_deadline_exceeded"
       && configKey === "integrations.mcp.callToolTimeoutMs"
       && configuredMs !== undefined
@@ -270,6 +271,13 @@ export function accumulateBackgroundTaskRecord(
         ? `${configKey}=${String(configuredMs)}ms; queueWaitedMs=${String(queueWaitedMs)}; `
           + `requestBudgetMs=${String(requestBudgetMs)}`
         : "";
+    const diagnosticPreview =
+      failureCode === "background_hard_timeout_exceeded"
+      && configKey !== undefined
+      && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(configKey)
+      && configuredMs !== undefined
+        ? `${configKey}=${String(configuredMs)}ms`
+        : mcpDiagnosticPreview;
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
     acc.failures.push({
       seq,

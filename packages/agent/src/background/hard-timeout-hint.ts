@@ -51,3 +51,17 @@ export function hardTimeoutHint(input: HardTimeoutHintInput): string {
     ? hint.slice(0, HARD_TIMEOUT_HINT_MAX_CHARS).trimEnd()
     : hint;
 }
+
+/** Typed, content-free diagnostic retained alongside the human-readable hard-timeout hint. */
+export class BackgroundHardTimeoutError extends Error {
+  readonly code = "background_hard_timeout_exceeded" as const;
+  readonly configKey: `agents.${string}.backgroundTasks.maxBackgroundDurationMs`;
+  readonly configuredMs: number;
+
+  constructor(input: HardTimeoutHintInput) {
+    super(hardTimeoutHint(input));
+    this.name = "BackgroundHardTimeoutError";
+    this.configKey = `agents.${input.agentId}.backgroundTasks.maxBackgroundDurationMs`;
+    this.configuredMs = input.limitMs;
+  }
+}
