@@ -59,11 +59,17 @@ describe("the exporter emits no secret/content even with genaiSemconv:true", () 
   let emitTurnSpan: EmitTurnSpan;
   let makeSpanFixture: MakeSpanFixture;
 
+  // These three dynamic imports transform real production modules, so the hook's cost is dominated
+  // by the bundler, not by anything this test does. The default 10s hook budget assumes an idle
+  // machine: running the full suite on a small box pushed it past 10s repeatedly, and the resulting
+  // "Hook timed out" is indistinguishable from a genuine regression in a content-free exporter
+  // gate. Budget raised rather than the imports mocked — mocking the modules under test would gut
+  // what this file verifies.
   beforeAll(async () => {
     redactAttributes = ((await import(redactUrl)) as { redactAttributes: RedactAttributes }).redactAttributes;
     emitTurnSpan = ((await import(tracesUrl)) as { emitTurnSpan: EmitTurnSpan }).emitTurnSpan;
     makeSpanFixture = ((await import(harnessUrl)) as { makeSpanFixture: MakeSpanFixture }).makeSpanFixture;
-  });
+  }, 120_000);
 
   it("a planted secret at >=2 nesting levels never survives redactAttributes (the metric-label boundary)", () => {
     const planted = {
