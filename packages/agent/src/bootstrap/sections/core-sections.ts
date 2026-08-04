@@ -97,6 +97,20 @@ export function buildInboundMetadataSection(
     );
   }
 
+  if (meta.autoReplyPolicyContext !== undefined) {
+    lines.push(
+      "",
+      "## Current Group Auto-Reply Policy",
+      "```json",
+      JSON.stringify({
+        "autoReplyEngine.groupActivation": meta.autoReplyPolicyContext.groupActivation,
+        "autoReplyEngine.historyInjection": meta.autoReplyPolicyContext.historyInjection,
+      }, null, 2),
+      "```",
+      "This runtime-owned policy is authoritative for the current group turn.",
+    );
+  }
+
   if (meta.flags.isCronAgentTurn) {
     lines.push(
       "",

@@ -24,6 +24,14 @@ export const GroupHistoryContextEntrySchema = z.strictObject({
 
 export type GroupHistoryContextEntry = z.infer<typeof GroupHistoryContextEntrySchema>;
 
+/** Runtime-owned auto-reply policy applied to the current activated group turn. */
+export const AutoReplyPolicyContextSchema = z.strictObject({
+  groupActivation: z.enum(["always", "mention-gated", "custom"]),
+  historyInjection: z.boolean(),
+});
+
+export type AutoReplyPolicyContext = z.infer<typeof AutoReplyPolicyContextSchema>;
+
 /** One platform message explicitly referenced by the current inbound reply. */
 export const ReplyContextSchema = z.strictObject({
   messageId: z.string().min(1),
@@ -260,6 +268,8 @@ export const NormalizedMessageSchema = z.strictObject({
         .array(GroupHistoryContextEntrySchema)
         .max(MAX_GROUP_HISTORY_CONTEXT_MESSAGES)
         .optional(),
+      /** Runtime-owned group activation policy used for this turn. */
+      autoReplyPolicyContext: AutoReplyPolicyContextSchema.optional(),
       /** Bounded content and attribution for the platform message explicitly replied to. */
       replyContext: ReplyContextSchema.optional(),
     }).default({}),

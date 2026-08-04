@@ -2649,6 +2649,22 @@ describe("assembleExecutionPrompt", () => {
       });
     });
 
+    it("passes runtime-owned group policy into the dynamic inbound section", async () => {
+      const autoReplyPolicyContext = {
+        groupActivation: "mention-gated" as const,
+        historyInjection: true,
+      };
+      const params = makeParams({
+        msg: makeMsg({ metadata: { autoReplyPolicyContext } }),
+      });
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockBuildInboundMetadataSection.mock.calls.at(-1)?.[0]).toMatchObject({
+        autoReplyPolicyContext,
+      });
+    });
+
     it("additionalSections is always empty (RAG relocated to preamble)", async () => {
       const mockSearchResult = {
         entry: { id: "m1", tenantId: "t", content: "Test memory", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
