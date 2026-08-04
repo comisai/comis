@@ -162,14 +162,20 @@ export function selectTelegramConversationTrajectoryPath(
   const channelInstance = `telegram:telegram-${botAccountId}:${chatId}`;
   const directory =
     `${root}/${encodeSessionPathComponent(tenantId)}/${encodeSessionPathComponent(channelInstance)}/`;
-  const filename =
-    threadId === undefined
-      ? "conversation.jsonl.trajectory.jsonl"
-      : `conversation~thread~${threadId}.jsonl.trajectory.jsonl`;
-  const expected = `${directory}${filename}`;
-  return candidates
-    .filter(({ path }) => path === expected)
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)[0]?.path ?? null;
+  const filenames = threadId === undefined
+    ? [
+        "conversation.jsonl.trajectory.jsonl",
+        "conversation~thread~1.jsonl.trajectory.jsonl",
+      ]
+    : [`conversation~thread~${threadId}.jsonl.trajectory.jsonl`];
+  for (const filename of filenames) {
+    const expected = `${directory}${filename}`;
+    const match = candidates
+      .filter(({ path }) => path === expected)
+      .sort((left, right) => right.mtimeMs - left.mtimeMs)[0]?.path;
+    if (match !== undefined) return match;
+  }
+  return null;
 }
 
 /** Mirror the Telegram adapter's bot-account-scoped normalized message identity. */
