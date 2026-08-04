@@ -192,6 +192,8 @@ export interface IncidentSignals {
     promoted: number;
     completed: number;
     failed: number;
+    cancelled: number;
+    reentered: number;
     accepted: number;
     pending: number;
   };

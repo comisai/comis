@@ -383,6 +383,10 @@ export function translatePayload(
             : {}
         ),
       };
+    case "background_task:cancelled":
+      return { taskId: payload.taskId, toolName: payload.toolName };
+    case "background_task:reentered":
+      return { taskId: payload.taskId, hopCount: payload.hopCount };
     case "background_task:notified":
       // The fallback-notice decision — taskId + tool NAME + the notified bool +
       // closed-union reason ONLY. agentId/sessionKey/traceId/timestamp are

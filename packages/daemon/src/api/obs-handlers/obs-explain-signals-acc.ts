@@ -316,6 +316,8 @@ export interface Acc {
   backgroundTerminalTaskIds: Set<string>;
   backgroundCompletedTaskIds: Set<string>;
   backgroundFailedTaskIds: Set<string>;
+  backgroundCancelledTaskIds: Set<string>;
+  backgroundReenteredTaskIds: Set<string>;
   backgroundAcceptedTaskIds: Set<string>;
   /** Session aggregate of direct `link.prefetch` counts-only receipts. */
   linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;

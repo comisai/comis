@@ -1210,6 +1210,8 @@ describe("assembleIncidentReportFromSources", () => {
       promoted: 1,
       completed: 1,
       failed: 0,
+      cancelled: 0,
+      reentered: 0,
       accepted: 1,
       pending: 0,
     });

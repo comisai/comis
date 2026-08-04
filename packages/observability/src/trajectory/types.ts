@@ -201,6 +201,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   "background_task.promoted",
   "background_task.completed",
   "background_task.failed",
+  "background_task.cancelled",
+  "background_task.reentered",
   // The fallback-notice decision — whether a raw completion notice fired and
   // whether it was correct (content-free: tool NAME + notified bool + reason enum).
   // `notified:true` while the origin turn remains live identifies a duplicate

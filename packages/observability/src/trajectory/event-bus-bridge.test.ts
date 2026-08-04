@@ -1323,6 +1323,20 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       origin: { agentId: "default", sessionKey: "k" },
       timestamp: 1000,
     },
+    "background_task:cancelled": {
+      agentId: "default",
+      taskId: "t-cancelled",
+      toolName: "slow_report",
+      timestamp: 1000,
+    },
+    "background_task:reentered": {
+      agentId: "default",
+      taskId: "t-reentered",
+      sessionKey: "k",
+      hopCount: 1,
+      traceId: null,
+      timestamp: 1000,
+    },
     "background_task:notified": {
       agentId: "default",
       taskId: "t-1",
@@ -4410,7 +4424,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(139);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(141);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

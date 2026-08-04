@@ -199,6 +199,16 @@ export function accumulateBackgroundTaskRecord(
     if (toolName !== undefined) acc.backgroundPromotionsByTask.set(taskId, toolName);
     return;
   }
+  if (type === "background_task.reentered") {
+    acc.backgroundReenteredTaskIds.add(taskId);
+    return;
+  }
+  if (type === "background_task.cancelled") {
+    if (acc.backgroundTerminalTaskIds.has(taskId)) return;
+    acc.backgroundTerminalTaskIds.add(taskId);
+    acc.backgroundCancelledTaskIds.add(taskId);
+    return;
+  }
   if (type === "background_task.completed") {
     if (acc.backgroundTerminalTaskIds.has(taskId)) return;
     acc.backgroundTerminalTaskIds.add(taskId);
@@ -313,12 +323,15 @@ export function buildBackgroundTasksSignal(
     [...ids].filter((taskId) => promotedIds.has(taskId)).length;
   const completed = countPromoted(acc.backgroundCompletedTaskIds);
   const failed = countPromoted(acc.backgroundFailedTaskIds);
+  const cancelled = countPromoted(acc.backgroundCancelledTaskIds);
   return {
     promoted: promotedIds.size,
     completed,
     failed,
+    cancelled,
+    reentered: countPromoted(acc.backgroundReenteredTaskIds),
     accepted: countPromoted(acc.backgroundAcceptedTaskIds),
-    pending: Math.max(0, promotedIds.size - completed - failed),
+    pending: Math.max(0, promotedIds.size - completed - failed - cancelled),
   };
 }
 
