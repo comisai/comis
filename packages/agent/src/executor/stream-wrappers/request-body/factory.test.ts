@@ -715,6 +715,39 @@ describe("createRequestBodyInjector", () => {
     expect(result.store).toBe(true);
   });
 
+  it("drops Responses tool outputs whose calls were removed during aborted-turn conversion", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      { getCacheRetention: () => undefined },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+
+    const model = {
+      id: "gpt-5.6-luna",
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+    } as any;
+    wrappedFn(model, makeContext([]), {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
+    const result = await onPayload({
+      input: [
+        { role: "user", content: [{ type: "input_text", text: "cancel that" }] },
+        { type: "function_call_output", call_id: "call_aborted", output: "No result provided" },
+        { type: "function_call", call_id: "call_valid", name: "read", arguments: "{}" },
+        { type: "function_call_output", call_id: "call_valid", output: "ok" },
+      ],
+    }, model);
+
+    expect(result.input).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "cancel that" }] },
+      { type: "function_call", call_id: "call_valid", name: "read", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_valid", output: "ok" },
+    ]);
+  });
+
   it("does NOT inject store for non-Responses API provider", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
