@@ -11,7 +11,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SessionKey, TypedEventBus, ComisLogger } from "@comis/core";
 
-import { checkLoopLimit, emitLoopAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
+import { checkLoopLimit, emitLoopAbort, emitStepLimitAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { SpendGateOutcome } from "../budget/budget-guard.js";
 import { SpendError, type SpendWarn } from "../budget/spend-accumulator.js";
@@ -148,6 +148,26 @@ describe("buildAbortRedirectMessage — in-bridge abort sites (plan available)",
 });
 
 describe("buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.text fallback)", () => {
+  it("max_steps names the exact configured agent knob and observed bound", () => {
+    const buildWithDetails = buildAbortRedirectMessage as unknown as (
+      plan: undefined,
+      finishReason: string,
+      fallback: string,
+      details: Record<string, unknown>,
+    ) => string;
+    const response = buildWithDetails(undefined, "max_steps", "", {
+      stepLimit: {
+        bindingKnob: "agents.default.maxSteps",
+        stepsExecuted: 4,
+        cap: 4,
+      },
+    });
+
+    expect(response).toContain("agents.default.maxSteps");
+    expect(response).toContain("4");
+    expect(response).toMatch(/simplify|increase/i);
+  });
+
   it("pre-lock provider_degraded (no plan) → response contains msg.text fragment", () => {
     const msgText = "Please run the security scan on the codebase".slice(0, 200);
     const response = buildAbortRedirectMessage(undefined, "provider_degraded", msgText);
@@ -183,6 +203,39 @@ describe("buildAbortRedirectMessage — pre-lock abort sites (no plan, msg.text 
   it("no plan but a NON-empty fallback still echoes the request (unchanged)", () => {
     const response = buildAbortRedirectMessage(undefined, "budget_exceeded", "generate a nice image");
     expect(response).toContain("Your request was: 'generate a nice image'");
+  });
+});
+
+describe("emitStepLimitAbort", () => {
+  it("emits the configured cap and exact agent config path", () => {
+    const eventBus = { emit: vi.fn() };
+    const stepCounter = {
+      increment: vi.fn(),
+      shouldHalt: vi.fn().mockReturnValue(true),
+      reset: vi.fn(),
+      getCount: vi.fn().mockReturnValue(4),
+      getLimit: vi.fn().mockReturnValue(4),
+    };
+
+    emitStepLimitAbort({
+      eventBus: eventBus as never,
+      sessionKey: { tenantId: "default", agentId: "default", userId: "user_a", channelId: "chat_a" },
+      agentId: "default",
+      logger: { warn: vi.fn() } as never,
+      stepCounter,
+    });
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "execution:aborted",
+      expect.objectContaining({
+        reason: "max_steps",
+        stepLimit: {
+          bindingKnob: "agents.default.maxSteps",
+          stepsExecuted: 4,
+          cap: 4,
+        },
+      }),
+    );
   });
 });
 

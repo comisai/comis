@@ -892,6 +892,32 @@ describe("assembleIncidentReport — per-root budget abort", () => {
     expect(report.outcome.endReason).toBe("max_steps");
   });
 
+  it("folds exact step-limit values from the terminal abort", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.aborted",
+        seq: 20,
+        agentId: "default",
+        traceId: "t-step-limit",
+        data: {
+          reason: "max_steps",
+          stepLimit: {
+            bindingKnob: "agents.default.maxSteps",
+            stepsExecuted: 4,
+            cap: 4,
+          },
+        },
+      },
+    ]);
+
+    expect((signals as unknown as { stepLimit?: unknown }).stepLimit).toEqual({
+      bindingKnob: "agents.default.maxSteps",
+      stepsExecuted: 4,
+      cap: 4,
+    });
+  });
+
   it("derives endReason + perRootBudget from a terminal execution.aborted when the rollup lacks a spend endReason", () => {
     const records: Array<Record<string, unknown>> = [
       // an EARLIER non-spend turn in the same (multi-turn) session

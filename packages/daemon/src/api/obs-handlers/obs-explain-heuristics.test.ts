@@ -263,6 +263,23 @@ describe("obs-explain-heuristics", () => {
     expect(result?.detail).toContain("max_steps");
   });
 
+  it("names the exact max-steps binding knob and values", () => {
+    const result = rootCause(makeSignals({
+      endReason: "max_steps",
+      stepLimit: {
+        bindingKnob: "agents.default.maxSteps",
+        stepsExecuted: 4,
+        cap: 4,
+      },
+    } as unknown as Partial<IncidentSignals>));
+
+    expect(result?.code).toBe("execution_step_limit_reached");
+    expect(result?.detail).toContain("agents.default.maxSteps=4");
+    expect(result?.detail).toContain("4 tool");
+    expect(result?.suggestedNextSteps.join(" ")).toContain("agents.default.maxSteps");
+    expect(result?.suggestedNextSteps.join(" ")).not.toContain("max_steps");
+  });
+
   it("background capacity guards name the exact saturated config knob and occupancy", () => {
     const r = rootCause(
       makeSignals({
