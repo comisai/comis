@@ -311,6 +311,9 @@ export function bindInboundHandlers(
 
     // Extract thread metadata from callback query source message
     const cbMsg = ctx.callbackQuery.message;
+    if (cbMsg !== undefined) {
+      normalized.metadata.telegramChatType = cbMsg.chat.type;
+    }
     if (cbMsg && "message_thread_id" in cbMsg) {
       const cbChat = cbMsg.chat;
       const cbIsForum = "is_forum" in cbChat && cbChat.is_forum === true;
