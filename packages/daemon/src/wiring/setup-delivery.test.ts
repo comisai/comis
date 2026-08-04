@@ -1384,7 +1384,7 @@ describe("setupDeliveryMirror", () => {
     result.shutdown();
   });
 
-  it("does not mirror runtime failure replies as conversational history", async () => {
+  it("mirrors delivered runtime failure replies for exact conversation continuity", async () => {
     const registry = createMockPluginRegistry();
     const result = await setupDeliveryMirror({
       db: {} as any,
@@ -1412,7 +1412,12 @@ describe("setupDeliveryMirror", () => {
       },
     });
 
-    expect(mockSqliteMirror.record).not.toHaveBeenCalled();
+    expect(mockSqliteMirror.record).toHaveBeenCalledOnce();
+    expect(mockSqliteMirror.recordCalls[0]).toMatchObject({
+      conversationRef,
+      text: "The request could not be completed.",
+      origin: "agent-runtime-failure",
+    });
     result.shutdown();
   });
 
