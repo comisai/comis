@@ -3967,7 +3967,11 @@ describe("abort wiring in spawn", () => {
 
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith("default", "he");
+    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith(
+      "default",
+      "he",
+      "max_steps",
+    );
     expect(deps.sendToChannel).toHaveBeenCalledWith(
       "telegram",
       "chat-1",

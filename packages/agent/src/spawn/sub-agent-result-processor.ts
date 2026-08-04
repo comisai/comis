@@ -44,6 +44,7 @@ import {
   type AbortClassification,
   type AnnouncementTerminalOutcome,
 } from "./sub-agent-announcement-content.js";
+import { NO_PROGRESS_LOOP_THRESHOLD } from "../executor/turn-loop-detector.js";
 export {
   buildAnnouncementMessage,
   validateOutputs,
@@ -91,7 +92,7 @@ export function isSubAgentAbortFinishReason(finishReason: string): boolean {
 
 /**
  * Classify a sub-agent abort reason from finishReason and optional error context.
- * Maps 7 possible finishReason values to 5 abort categories with remediation
+ * Maps supported finish reasons to specific abort categories with remediation
  * hints and severity levels. Normal completions (stop, end_turn) are not
  * expected inputs but are handled gracefully as "unknown".
  * @param finishReason - The finishReason from ExecutionResult or error context
@@ -108,6 +109,15 @@ export function classifyAbortReason(
       return {
         category: "step_limit",
         hint: "Increase max_steps in sessions_spawn or simplify the task",
+        severity: "actionable",
+      };
+    case "loop_detected":
+      return {
+        category: "loop_limit",
+        hint:
+          `The governor stopped after ${NO_PROGRESS_LOOP_THRESHOLD} consecutive no-progress `
+          + "tool results, including successful calls whose result stayed unchanged; change "
+          + "the condition or approach before retrying",
         severity: "actionable",
       };
     case "budget_exceeded":
