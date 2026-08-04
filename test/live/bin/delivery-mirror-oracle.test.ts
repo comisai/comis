@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { selectLatestTelegramDeliveryMirror } from "./delivery-mirror-oracle.mjs";
+import { selectLatestTelegramDeliveryMirror } from "../self-driving/scripts/delivery-mirror-oracle.mjs";
 
 describe("live Telegram delivery mirror oracle", () => {
   it("selects the mirror for the requested chat when another chat is newer", () => {
