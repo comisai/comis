@@ -4057,7 +4057,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       errorKind: killedBy === "health_monitor" ? "timeout" : "precondition",
       summary: errorMessage,
     });
-    forceTerminalCleanup(run);
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -4089,6 +4088,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
       timestamp: killedAt,
     });
+    // Keep the child recorder subscribed through the kill event. Closing it
+    // first silently drops the event that explains why this run terminalized.
+    forceTerminalCleanup(run);
 
     // Abort the in-flight SDK session via composite-key resolver
     // (best-effort).
