@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { comisDist, requireCodeRoot, rig } from "./_rig.mjs";
+import { selectLatestTelegramDeliveryMirror } from "./delivery-mirror-oracle.mjs";
 
 const core = await import(pathToFileURL(comisDist("core", "dist/index.js")).href);
 const agent = await import(pathToFileURL(comisDist("agent", "dist/index.js")).href);
@@ -178,10 +179,7 @@ async function deliveryProbe() {
   );
   const Database = requireCodeRoot("better-sqlite3");
   const db = new Database(`${rig.dataDir}/memory.db`, { readonly: true, fileMustExist: true });
-  const mirror = db.prepare(
-    "SELECT tenant_id, agent_id, conversation_ref, destination_endpoint, text, status, created_at "
-    + "FROM delivery_mirror ORDER BY created_at DESC LIMIT 1",
-  ).get();
+  const mirror = selectLatestTelegramDeliveryMirror(db, rig.chatId);
   db.close();
   const wireText = wire?.text ?? "";
   const mirrorText = mirror?.text ?? "";
