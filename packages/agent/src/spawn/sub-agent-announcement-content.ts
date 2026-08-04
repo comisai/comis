@@ -35,6 +35,11 @@ export interface AnnouncementDisclosureResult {
   corrected: boolean;
 }
 
+function firstSentenceAnchor(paragraph: string): string {
+  const sentenceEnd = paragraph.search(/[.!?。！？](?:\s|$)/u);
+  return sentenceEnd < 0 ? paragraph : paragraph.slice(0, sentenceEnd + 1);
+}
+
 /**
  * Add the localized runtime-owned terminal-state sentence when a parent
  * rewrite omitted it. A failed completion can never become NO_REPLY.
@@ -53,10 +58,27 @@ export function enforceAnnouncementTerminalOutcome(
     corrected = true;
   }
   if (text.includes(notice)) return { text, corrected };
-  return {
-    text: text ? `${text}\n\n${notice}` : notice,
-    corrected: true,
-  };
+
+  let candidateParagraphs = text.length > 0 ? text.split(/\n{2,}/u) : [];
+  for (const requiredParagraph of notice.split(/\n{2,}/u)) {
+    if (candidateParagraphs.some((paragraph) => paragraph.includes(requiredParagraph))) {
+      continue;
+    }
+    const anchor = firstSentenceAnchor(requiredParagraph);
+    let replaced = false;
+    if (anchor.length >= 24) {
+      candidateParagraphs = candidateParagraphs.map((paragraph) => {
+        if (replaced || !paragraph.includes(anchor)) return paragraph;
+        replaced = true;
+        return requiredParagraph;
+      });
+    }
+    if (!replaced) {
+      candidateParagraphs.push(requiredParagraph);
+    }
+    corrected = true;
+  }
+  return { text: candidateParagraphs.join("\n\n"), corrected };
 }
 
 /** Tell the parent rewrite to preserve the deterministic failure disclosure. */
