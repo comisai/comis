@@ -6532,6 +6532,26 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     expect("reason" in payload).toBe(false);
   });
 
+  it("emits killed telemetry before closing the child trajectory recorder", async () => {
+    const localDeps = runningDeps();
+    const closeTrajectory = vi.fn().mockResolvedValue(undefined);
+    localDeps.closeTrajectory = closeTrajectory;
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    runner.killRun(runId);
+
+    const emit = vi.mocked(localDeps.eventBus.emit);
+    const killedCallIndex = emit.mock.calls.findIndex(
+      (call) => call[0] === "subagent:killed",
+    );
+    expect(killedCallIndex).toBeGreaterThanOrEqual(0);
+    expect(emit.mock.invocationCallOrder[killedCallIndex]).toBeLessThan(
+      closeTrajectory.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("parent kill emits killedBy parent and delivers NO notification", async () => {
     const localDeps = runningDeps();
     const runner = createSubAgentRunner(localDeps);
