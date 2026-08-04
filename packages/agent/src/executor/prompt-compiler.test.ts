@@ -58,6 +58,20 @@ describe("compileExecutionPrompt", () => {
     );
   });
 
+  it("requires current evidence for provider prerequisite claims", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(
+      /do not claim.*credential.*provider.*prerequisite.*configured or missing.*current.*evidence/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /registered tool.*available to attempt.*trust.*prerequisite/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /distinguish.*successful provider call/iu,
+    );
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{
