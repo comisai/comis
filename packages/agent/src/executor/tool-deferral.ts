@@ -220,6 +220,18 @@ export const CORE_TOOLS = new Set([
  */
 export const SMALL_CLASS_ORCHESTRATION_TOOLS = new Set(["pipeline"]);
 
+function normalizedToolReference(value: string): string {
+  return value.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
+}
+
+function requestExplicitlyNamesTool(requestText: string, toolName: string): boolean {
+  const request = normalizedToolReference(requestText);
+  const name = normalizedToolReference(toolName);
+  return request.length > 0
+    && name.length > 0
+    && ` ${request} `.includes(` ${name} `);
+}
+
 /**
  * Anthropic models that support server-side tool-search via defer_loading.
  * Sonnet 4.x+, Opus 4.x+; NOT Haiku.
@@ -467,6 +479,38 @@ export function applyToolDeferral(
   }
   const policyDeferredSet = new Set(deferredSet);
 
+  // An explicitly named privileged tool must reach its own runtime trust
+  // guard. Leaving it behind discovery can strand the turn before that guard:
+  // the model sees the schema, never invokes the tool, and may reuse an older
+  // successful result from session history. Keeping only the named tool active
+  // does not grant authority; its existing handler remains the authoritative
+  // denial boundary for the current request context.
+  if (
+    deferralContext.trustLevel !== "admin"
+    && deferralContext.requestText?.trim()
+  ) {
+    const namedPrivilegedTools = PRIVILEGED_TOOL_NAMES.filter(
+      (name) =>
+        deferredSet.has(name)
+        && requestExplicitlyNamesTool(deferralContext.requestText ?? "", name),
+    );
+    for (const name of namedPrivilegedTools) {
+      deferredSet.delete(name);
+    }
+    if (namedPrivilegedTools.length > 0) {
+      requestRelevantToolNames.push(...namedPrivilegedTools);
+      logger.info(
+        {
+          step: "request-relevant-tool-selection",
+          selectedCount: namedPrivilegedTools.length,
+          selectedNames: namedPrivilegedTools,
+          selectionSource: "explicit_privileged_tool_name",
+        },
+        "Request-relevant tools selected",
+      );
+    }
+  }
+
   // MCP tools are ACTIVE BY DEFAULT. Empirically, the model rarely invokes
   // the server-side discovery tool (`tool_search_tool_regex`) and falls back
   // to `exec`/`web_fetch` -- deferral here paid a 0-discovery cost for no
@@ -608,6 +652,7 @@ export function applyToolDeferral(
         // still deferred for nano.
         if (deferralContext.capabilityClass === "small" && SMALL_CLASS_ORCHESTRATION_TOOLS.has(t.name)) continue;
         if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
+        if (requestRelevantToolNames.includes(t.name)) continue;
         deferredSet.add(t.name);
         remaining--;
       }
