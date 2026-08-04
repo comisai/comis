@@ -454,6 +454,44 @@ export function stripReplayReasoningFromResponsesInput(input: Array<Record<strin
 }
 
 /**
+ * Drop Responses tool-output items that have no matching call in the final API input.
+ *
+ * The provider converter can remove an aborted assistant turn while retaining the
+ * synthesized tool result that followed it. At that point the canonical transcript
+ * was paired, but the provider-ready input is not: OpenAI rejects the unmatched
+ * `function_call_output` or `custom_tool_call_output`. Enforce the invariant after
+ * conversion, while preserving every output whose matching call is still present.
+ *
+ * Mutates in place and returns the number of removed output items.
+ */
+export function dropOrphanedResponsesToolOutputs(
+  input: Array<Record<string, unknown>>,
+): number {
+  const functionCallIds = new Set<string>();
+  const customCallIds = new Set<string>();
+
+  for (const item of input) {
+    if (typeof item.call_id !== "string") continue;
+    if (item.type === "function_call") functionCallIds.add(item.call_id);
+    if (item.type === "custom_tool_call") customCallIds.add(item.call_id);
+  }
+
+  let removed = 0;
+  for (let index = input.length - 1; index >= 0; index--) {
+    const item = input[index]!;
+    const isOrphan =
+      (item.type === "function_call_output"
+        && (typeof item.call_id !== "string" || !functionCallIds.has(item.call_id)))
+      || (item.type === "custom_tool_call_output"
+        && (typeof item.call_id !== "string" || !customCallIds.has(item.call_id)));
+    if (!isOrphan) continue;
+    input.splice(index, 1);
+    removed++;
+  }
+  return removed;
+}
+
+/**
  * Defer the inline-recall block on the CURRENT (latest) user item of an OpenAI Responses
  * `input` array off the cacheable prefix and onto the UNCACHED tail.
  *

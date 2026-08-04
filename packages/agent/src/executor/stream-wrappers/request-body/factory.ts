@@ -42,7 +42,16 @@ import {
 } from "./context-window.js";
 import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
+import {
+  deferRecallToTrailingResponsesItem,
+  deferRecallToUncachedTail,
+  dropOrphanedResponsesToolOutputs,
+  reorderContentForStablePrefix,
+  stripReplayReasoningFromResponsesInput,
+  stripReplayThinking,
+  stripTransientRecallFromHistory,
+  stripTransientRecallFromResponsesInput,
+} from "./tool-result-clearing.js";
 import { findInlineRecallIndices } from "./recall-diagnostics.js";
 import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
 import { describePayloadTail, findCachePointPositions } from "./keyed-cache-marker.js";
@@ -548,14 +557,18 @@ export function createRequestBodyInjector(
           if (needsResponsesInputStabilizer && Array.isArray((result as Record<string, unknown>).input)) {
             result.input = structuredClone((result as Record<string, unknown>).input);
             const inputItems = result.input as Array<Record<string, unknown>>;
-            // 1. Defensive: strip recall from any HISTORICAL user item (no-op when history is
+            // 1. Enforce tool call/output pairing on the provider-ready shape. The upstream
+            //    converter drops aborted assistant turns, so a synthesized result that was paired
+            //    in canonical context can become orphaned only after conversion.
+            const orphanedToolOutputsDropped = dropOrphanedResponsesToolOutputs(inputItems);
+            // 2. Defensive: strip recall from any HISTORICAL user item (no-op when history is
             //    already clean, which it is when recall is transient).
             const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
-            // 2. Recall deferral: defer recall on the LATEST user item to a trailing (uncached,
+            // 3. Recall deferral: defer recall on the LATEST user item to a trailing (uncached,
             //    never persisted) item, so the latest item is byte-identical to its future
             //    historical clean form and the auto-cached prefix never mutates at the turn boundary.
             const deferred = deferRecallToTrailingResponsesItem(inputItems);
-            // 3. Reasoning strip: strip ALL replayed reasoning items — ONLY on the native
+            // 4. Reasoning strip: strip ALL replayed reasoning items — ONLY on the native
             //    openai / Azure Responses path (needsResponsesApiInjection). With `store:false`
             //    the SDK keeps reasoning for recent turns but drops it from aging turns -> an
             //    early-index prefix mutation -> floor-collapse. Removing them consistently every
@@ -565,6 +578,16 @@ export function createRequestBodyInjector(
             const reasoningStripped = needsResponsesApiInjection
               ? stripReplayReasoningFromResponsesInput(inputItems)
               : 0;
+            if (orphanedToolOutputsDropped > 0) {
+              logger.debug(
+                {
+                  sessionKey: config.sessionKey,
+                  orphanedResponsesToolOutputsDropped: orphanedToolOutputsDropped,
+                  step: "responses-input-repair",
+                },
+                "Removed unmatched tool outputs from OpenAI Responses input",
+              );
+            }
             if (strippedCount > 0 || deferred > 0 || reasoningStripped > 0) {
               logger.debug(
                 { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred, reasoningStrippedOai: reasoningStripped },
