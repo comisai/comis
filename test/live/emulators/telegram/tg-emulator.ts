@@ -1751,10 +1751,24 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         firstName: from.firstName,
         ...(from.username !== undefined ? { username: from.username } : {}),
       });
+      const group = groupChats.get(chat.chatId);
+      const originalOutbound = chats.get(chat.chatId)?.outbound.find(
+        (outbound) => outbound.method === "sendMessage" && outbound.messageId === botMessageId,
+      );
+      const botIdentity = group?.bot;
       const botMessage = makeBotMessage({
         messageId: botMessageId,
         chatId: chat.chatId,
-        botUser: makeBotUser({ id: 12345, firstName: "TestBot", username: "test_bot" }),
+        ...(group === undefined ? {} : { chat: group.chat }),
+        botUser: makeBotUser({
+          id: botIdentity?.id ?? 12345,
+          firstName: botIdentity?.firstName ?? "TestBot",
+          ...(botIdentity?.username === undefined ? {} : { username: botIdentity.username }),
+        }),
+        ...(originalOutbound?.text === undefined ? {} : { text: originalOutbound.text }),
+        ...(originalOutbound?.messageThreadId === undefined
+          ? {}
+          : { messageThreadId: originalOutbound.messageThreadId }),
       });
       const update = makeCallbackUpdate({
         updateId: nextUpdateId(),

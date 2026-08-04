@@ -646,12 +646,16 @@ export function makeReactionUpdate(opts: MakeReactionUpdateOptions): Update {
 export interface MakeBotMessageOptions {
   /** The message's id inside the chat (the EXISTING bot reply id a callback taps). */
   readonly messageId: number;
-  /** The private-chat id the bot reply lives in. */
+  /** The chat id the bot reply lives in. */
   readonly chatId: number;
+  /** Recorded group/forum shape; absent keeps the private-chat fixture default. */
+  readonly chat?: Message["chat"];
   /** The bot sender — built via {@link makeBotUser} (`is_bot: true`). */
   readonly botUser: User;
   /** Optional reply text (the bot's message body). Omitted when absent (exactOptional). */
   readonly text?: string;
+  /** Forum topic carried by the original bot message. */
+  readonly messageThreadId?: number;
 }
 
 /**
@@ -666,9 +670,12 @@ export function makeBotMessage(opts: MakeBotMessageOptions): Message {
     message_id: opts.messageId,
     from: opts.botUser,
     // PrivateChat requires first_name; in a DM the chat mirrors the other party.
-    chat: { id: opts.chatId, type: "private", first_name: opts.botUser.first_name },
+    chat: opts.chat ?? { id: opts.chatId, type: "private", first_name: opts.botUser.first_name },
     date: Math.floor(Date.now() / 1000),
     ...(opts.text !== undefined ? { text: opts.text } : {}),
+    ...(opts.messageThreadId !== undefined
+      ? { message_thread_id: opts.messageThreadId }
+      : {}),
   };
 }
 
