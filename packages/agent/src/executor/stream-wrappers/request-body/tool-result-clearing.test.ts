@@ -512,6 +512,30 @@ describe("deferRecallToTrailingResponsesItem (pure) — latest-item recall defer
     expect(input[1]!.type).toBe("function_call");
   });
 
+  it("keeps the current request and tool result newer than detached recall", () => {
+    const input: Array<Record<string, unknown>> = [
+      {
+        role: "user",
+        content: [{
+          type: "input_text",
+          text: recallStr("an unrelated completed task") + "delete the requested folder",
+        }],
+      },
+      { type: "function_call", name: "exec", arguments: "{}" },
+      { type: "function_call_output", output: "folder removed" },
+    ];
+
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(1);
+
+    const recallIndex = input.findIndex((item) =>
+      JSON.stringify(item).includes("unrelated completed task"));
+    const requestIndex = input.findIndex((item) =>
+      JSON.stringify(item).includes("delete the requested folder"));
+    const resultIndex = input.findIndex((item) => item.type === "function_call_output");
+    expect(recallIndex).toBeLessThan(requestIndex);
+    expect(requestIndex).toBeLessThan(resultIndex);
+  });
+
   it("handles string content", () => {
     const input: Array<Record<string, unknown>> = [
       { type: "message", role: "user", content: "old" },
