@@ -383,6 +383,36 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     expect(JSON.stringify(data)).not.toContain("sensitive context");
   });
 
+  it("failed: retains the background hard-duration key and configured limit", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "agent-1",
+      taskId: "t-hard-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      error: "timeout body containing sensitive context",
+      errorKind: "timeout",
+      failureCode: "background_hard_timeout_exceeded",
+      failureDiagnostic: {
+        kind: "background_hard_timeout_exceeded",
+        configKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+        configuredMs: 12_000,
+      },
+      durationMs: 12_007,
+      origin: { agentId: "agent-1", sessionKey: "k" },
+      timestamp: 303,
+    } as never);
+
+    expect(data).toEqual({
+      taskId: "t-hard-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      durationMs: 12_007,
+      errorKind: "timeout",
+      failureCode: "background_hard_timeout_exceeded",
+      failureConfigKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+      failureConfiguredMs: 12_000,
+    });
+    expect(JSON.stringify(data)).not.toContain("sensitive context");
+  });
+
   it("cancelled keeps only the task and tool identifiers", () => {
     const data = translatePayload("background_task:cancelled" as never, {
       agentId: "a1",
