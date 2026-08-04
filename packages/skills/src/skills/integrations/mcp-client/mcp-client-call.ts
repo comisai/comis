@@ -33,6 +33,7 @@ import type {
 import { parseQualifiedName } from "./mcp-client-types.js";
 import {
   MIN_VIABLE_CALL_BUDGET_MS,
+  McpCallDeadlineError,
   emitMcpBreakerOpened,
   mcpCallQueueExhaustedHint,
   mcpCallTimeoutHint,
@@ -470,7 +471,7 @@ export async function callTool(
           },
           "MCP tool call timed out at the configured call deadline",
         );
-        return err(new Error(timeoutHint));
+        return err(new McpCallDeadlineError(timeoutHint, timeoutMs, waitedMs));
       }
 
       return err(error instanceof Error ? error : new Error(message));

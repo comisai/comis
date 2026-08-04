@@ -5,9 +5,8 @@ import type { InjectionRule } from "../security/provider-catalog/index.js";
 import type { DeliveryFailureStage, DeliveryStatus } from "../domain/delivery-status.js";
 import type { ErrorKind } from "../logging/log-fields.js";
 import type { ModelResolutionSource } from "../domain/agent-execution-outcome.js";
-/** Content-free reason for a failed outbound webhook delivery. */
-export type WebhookFailureReason = "handler_error" | "task_not_delivered";
-export type BackgroundTaskFailureCode = "skill_import_incomplete" | "mcp_connection_details_missing" | "mcp_secret_reference_missing" | "mutation_not_persisted";
+import type { BackgroundTaskFailureCode, BackgroundTaskFailureDiagnostic } from "./background-task-failure.js";
+export type WebhookFailureReason = "handler_error" | "task_not_delivered"; // Content-free outbound failure.
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
  * media, scheduler, system, and metrics events.
@@ -674,9 +673,7 @@ export interface InfraEvents {
     /** Degraded completion classification and closed cause. */
     errorKind?: ErrorKind; failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
   };
-  /** Background task failed (timeout, error, or daemon restart).
-   *  `origin` is populated for in-process failures and for restart-recovery
-   *  failures (recoverOnStartup re-emits with origin from the persisted JSON). */
+  /** Background task failure with origin retained across restart recovery. */
   "background_task:failed": {
     agentId: string;
     taskId: string;
@@ -685,6 +682,7 @@ export interface InfraEvents {
     errorKind: ErrorKind;
     /** Closed, content-free cause retained after the error body is scrubbed. */
     failureCode?: BackgroundTaskFailureCode;
+    failureDiagnostic?: BackgroundTaskFailureDiagnostic;
     /**
      * The TASK's whole lifespan — promote-time to terminal commit. NOT the
      * duration of the underlying tool call.

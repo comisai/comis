@@ -28,6 +28,27 @@ export const MIN_VIABLE_CALL_BUDGET_MS = 250;
 const QUEUE_WAIT_DISCLOSURE_FLOOR_MS = 1000;
 
 /**
+ * Typed form of a deterministic MCP call deadline. The bridge keeps this error
+ * as a cause so the background runtime can retain the safe knob and timing
+ * numbers while omitting the external error body from trajectories.
+ */
+export class McpCallDeadlineError extends Error {
+  readonly code = "mcp_call_deadline_exceeded" as const;
+  readonly configKey = "integrations.mcp.callToolTimeoutMs" as const;
+  readonly requestBudgetMs: number;
+
+  constructor(
+    message: string,
+    readonly configuredMs: number,
+    readonly queueWaitedMs: number,
+  ) {
+    super(message);
+    this.name = "McpCallDeadlineError";
+    this.requestBudgetMs = Math.max(0, configuredMs - queueWaitedMs);
+  }
+}
+
+/**
  * Coarse, allowlisted classification of what tripped the breaker. Deliberately a fixed
  * vocabulary rather than anything derived from the error body: this rides an event onto the
  * trajectory, so it must never carry a server's raw message.

@@ -382,7 +382,7 @@ export function mcpToolsToAgentTools(
             details: { success: false },
           };
           logResult(errorResult, _toolCallId, sanitizedName, true);
-          throw new Error(errorText);
+          throw new Error(errorText, { cause: result.error });
         }
 
         const value: McpToolCallResult = result.value;

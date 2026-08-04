@@ -9,11 +9,55 @@
  */
 
 import { tryCatch } from "@comis/shared";
-import type { BackgroundTaskFailureCode, ErrorKind } from "@comis/core";
+import type {
+  BackgroundTaskFailureCode,
+  BackgroundTaskFailureDiagnostic,
+  ErrorKind,
+} from "@comis/core";
 
 const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
 const MCP_CONNECT_MISSING_PARAM_PREFIX = '[missing_param] mcp_manage(action="connect")';
 const MCP_SECRET_REFERENCE_MISSING_PREFIX = '[invalid_value] enabled MCP server "';
+
+function deadlineDiagnostic(error: unknown): BackgroundTaskFailureDiagnostic | undefined {
+  const seen = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 8 && current !== null && typeof current === "object"; depth++) {
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    const candidate = current as {
+      code?: unknown;
+      configKey?: unknown;
+      configuredMs?: unknown;
+      queueWaitedMs?: unknown;
+      requestBudgetMs?: unknown;
+      cause?: unknown;
+    };
+    if (
+      candidate.code === "mcp_call_deadline_exceeded"
+      && candidate.configKey === "integrations.mcp.callToolTimeoutMs"
+      && typeof candidate.configuredMs === "number"
+      && Number.isFinite(candidate.configuredMs)
+      && candidate.configuredMs >= 0
+      && typeof candidate.queueWaitedMs === "number"
+      && Number.isFinite(candidate.queueWaitedMs)
+      && candidate.queueWaitedMs >= 0
+      && typeof candidate.requestBudgetMs === "number"
+      && Number.isFinite(candidate.requestBudgetMs)
+      && candidate.requestBudgetMs >= 0
+    ) {
+      return {
+        kind: candidate.code,
+        configKey: candidate.configKey,
+        configuredMs: candidate.configuredMs,
+        queueWaitedMs: candidate.queueWaitedMs,
+        requestBudgetMs: candidate.requestBudgetMs,
+      };
+    }
+    current = candidate.cause;
+  }
+  return undefined;
+}
 
 export function classifyBackgroundTaskFailure(
   toolName: string,
@@ -39,6 +83,21 @@ export function classifyBackgroundTaskFailure(
     return "mcp_secret_reference_missing";
   }
   return undefined;
+}
+
+export function projectBackgroundTaskFailure(
+  toolName: string,
+  error: unknown,
+): {
+  failureCode?: BackgroundTaskFailureCode;
+  failureDiagnostic?: BackgroundTaskFailureDiagnostic;
+} {
+  const diagnostic = toolName.startsWith("mcp__") ? deadlineDiagnostic(error) : undefined;
+  if (diagnostic !== undefined) {
+    return { failureCode: diagnostic.kind, failureDiagnostic: diagnostic };
+  }
+  const failureCode = classifyBackgroundTaskFailure(toolName, error);
+  return failureCode === undefined ? {} : { failureCode };
 }
 
 export function projectBackgroundCompletionResult(
