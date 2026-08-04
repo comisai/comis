@@ -56,6 +56,46 @@ describe("trajectory event type filtering", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus background cancellation and reentry", () => {
+  it("records cancelled and reentered lifecycle events on the owning trajectory", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:telegram:chat-a:user_a",
+    });
+
+    bus.emit("background_task:cancelled", {
+      agentId: "agent-a",
+      taskId: "task-cancelled",
+      toolName: "slow_report",
+      timestamp: 10,
+    });
+    bus.emit("background_task:reentered", {
+      agentId: "agent-a",
+      taskId: "task-reentered",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      hopCount: 1,
+      traceId: "trace-a",
+      timestamp: 20,
+    });
+
+    expect(recorder.calls).toEqual([
+      {
+        type: "background_task.cancelled",
+        data: { taskId: "task-cancelled", toolName: "slow_report" },
+        parentEntryId: undefined,
+      },
+      {
+        type: "background_task.reentered",
+        data: { taskId: "task-reentered", hopCount: 1 },
+        parentEntryId: undefined,
+      },
+    ]);
+  });
+});
+
 function createCaptureRecorder(filePath = "/tmp/x.jsonl"): TrajectoryRecorder & { calls: CapturedCall[] } {
   const calls: CapturedCall[] = [];
   return {
