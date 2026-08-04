@@ -131,14 +131,19 @@ try {
 } catch {
   // Config unreadable (different layout/permissions) — never block a drive on the guard itself.
 }
-// --- per-chat drive lock -----------------------------------------------------
+// --- per-conversation drive lock --------------------------------------------
 // A DM reply carries NO correlation field (the wire payload is only
 // {chat_id, parse_mode, text}), and `sharedConversation` correlation is enabled only for
 // GROUP chats (negative id). So two concurrent drives on the SAME chat both accept the first
 // non-progress message and BOTH report it — which manufactured a phantom "cross-turn answer
 // bleed" during a live campaign (one driver reported the other's reply verbatim). Since the wire
-// cannot disambiguate, serialize per chat instead of guessing.
-const LOCK_PATH = `/tmp/comis-drive-${String(chatId).replace(/[^0-9-]/g, '')}.lock`;
+// cannot disambiguate, serialize DMs and unthreaded chats instead of guessing. Telegram forum
+// topics carry a thread id on every correlated outbound, so distinct topics may run concurrently;
+// the lock still serializes two drives inside the same topic.
+const lockIdentity = Number(chatId) < 0 && injectOpts?.thread !== undefined
+  ? `${chatId}-thread-${String(injectOpts.thread)}`
+  : chatId;
+const LOCK_PATH = `/tmp/comis-drive-${String(lockIdentity).replace(/[^0-9A-Za-z-]/g, '')}.lock`;
 let lockFd;
 const releaseLock = () => {
   if (lockFd === undefined) return;
@@ -167,7 +172,7 @@ const acquireLock = async (waitMsMax = 900_000) => {
       if (!holderAlive()) { try { unlinkSync(LOCK_PATH); } catch { /* raced */ } continue; }
       if (Date.now() - started > waitMsMax) {
         throw new Error(
-          `another drive has held ${LOCK_PATH} for >${Math.round(waitMsMax / 1000)}s; refusing to run concurrently on one chat`,
+          `another drive has held ${LOCK_PATH} for >${Math.round(waitMsMax / 1000)}s; refusing to run concurrently in one conversation`,
           { cause: error },
         );
       }
