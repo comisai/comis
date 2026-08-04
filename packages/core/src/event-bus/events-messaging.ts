@@ -660,6 +660,8 @@ export interface MessagingEvents {
      *  operator grepping the "Per-root … budget exceeded" daemon-log line. Absent
      *  for non-spend aborts and for the priced $-ceiling path. */
     perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+    /** Exact agent step ceiling that stopped this execution. */
+    stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   };
 
   /** Budget trajectory warning: approaching token budget exhaustion */

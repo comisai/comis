@@ -601,6 +601,15 @@ function handleEventRecord(
           acc.perRootBudget = { limb, spent, cap, unit: asString(prb.unit) ?? "usd" };
         }
       }
+      const step = (data as { stepLimit?: Record<string, unknown> }).stepLimit;
+      if (step && typeof step === "object") {
+        const bindingKnob = asString(step.bindingKnob);
+        const stepsExecuted = asNumber(step.stepsExecuted);
+        const cap = asNumber(step.cap);
+        if (bindingKnob !== undefined && stepsExecuted !== undefined && cap !== undefined) {
+          acc.stepLimit = { bindingKnob, stepsExecuted, cap };
+        }
+      }
       return;
     }
     // Fold learning-family records → the learning block —
@@ -899,6 +908,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // The per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
+    ...(acc.stepLimit !== undefined ? { stepLimit: acc.stepLimit } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
     ...(acc.summaryTopErrorKinds !== undefined

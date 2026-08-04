@@ -9,6 +9,8 @@ export interface StepCounter {
   reset(): void;
   /** Return the current step count */
   getCount(): number;
+  /** Return the configured step ceiling. */
+  getLimit?(): number;
 }
 
 /** Default maximum steps if not specified */
@@ -42,6 +44,10 @@ export function createStepCounter(maxSteps: number = DEFAULT_MAX_STEPS): StepCou
 
     getCount(): number {
       return count;
+    },
+
+    getLimit(): number {
+      return maxSteps;
     },
   };
 }

@@ -393,6 +393,8 @@ export interface IncidentSignals {
    * not a per-root spend-abort.
    */
   perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  /** Exact configured step ceiling from a terminal max-steps abort. */
+  stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   /**
    * The LAST `activity.turn_finalized` record — the terminal user-surface
    * state the renderer painted (closed outcome kind + closed ErrorKind + a
