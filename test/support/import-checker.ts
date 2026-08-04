@@ -116,6 +116,28 @@ const DEFAULT_EXCLUDE_DIRS: readonly string[] = [
 const DEFAULT_EXCLUDE_FILE_SUFFIXES: readonly string[] = [".test.ts"];
 
 /**
+ * Vitest timeout an `it()` should declare when it scans a whole package
+ * tree with `findForbiddenImports`.
+ *
+ * The helper re-reads and re-parses every `.ts` file under `rootDir`
+ * through `ts.createSourceFile`, so its cost scales with package size, not
+ * with the rule being checked. On the largest package that is ~440 files /
+ * ~5 MB — a few hundred ms on an idle machine, but the coverage-instrumented
+ * CI shards run four at a time on a shared runner and the same walk has been
+ * measured at over 5 s there. The 5 s Vitest default therefore fails as a
+ * timeout rather than as a violation, which reads like the invariant broke
+ * when nothing did: `agent -> memory cut` failed at 5100 ms while the
+ * identical `@comis/infra` scan beside it passed at 6571 ms purely because
+ * that one carried an explicit budget.
+ *
+ * These scans are I/O- and CPU-bound, never blocking, so a generous budget
+ * costs nothing when the tree is clean. Declare it on every full-tree scan
+ * instead of restating a literal — a per-call-site number is how the
+ * guarded and unguarded copies drifted apart in the first place.
+ */
+export const FULL_TREE_SCAN_TIMEOUT_MS = 15_000;
+
+/**
  * Walk `rootDir` and report every `ImportDeclaration` whose module
  * specifier exactly matches `forbiddenPackage`.
  *

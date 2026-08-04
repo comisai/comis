@@ -554,12 +554,19 @@ describe("background-task durable timeout integration", () => {
 
       const task = manager.getTask(promoted.value);
       expect(task?.status).toBe("failed");
-      expect(task?.error).toBe("Hard timeout exceeded");
+      // The knob and the tool, not a literal: the hint text is owned by
+      // hard-timeout-hint.ts, and a copy of it here is what let this test keep
+      // asserting a bare "Hard timeout exceeded" after the manager had already
+      // stopped emitting one. What this test guards is durability, so it
+      // checks the message names what a reader must change and then compares
+      // the persisted copy against the live one.
+      expect(task?.error).toContain("maxBackgroundDurationMs");
+      expect(task?.error).toContain("test_timeout");
       expect(abortController.signal.aborted).toBe(true);
       expect(loadTask(dataDir, TEST_AGENT_ID, promoted.value)).toMatchObject({
         id: promoted.value,
         status: "failed",
-        error: "Hard timeout exceeded",
+        error: task?.error,
         completedAt: 1_500,
       });
     } finally {

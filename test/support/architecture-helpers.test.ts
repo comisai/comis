@@ -56,4 +56,19 @@ describe("formatViolations -- verbose failure rendering", () => {
     });
     expect(out).not.toContain("Allowlist reference");
   });
+
+  it("omits the See line entirely when no designRef is supplied", () => {
+    // Most callers pass no designRef; the rule reads for itself out of
+    // `description` + `suggestedFix`. Interpolating a missing one rendered the
+    // literal "See: undefined" at the end of every such failure, which reads
+    // like a citation the reader failed to load rather than one that was never
+    // offered. Omit the line instead.
+    const out = formatViolations({
+      description: "x",
+      violations: [{ file: "f.ts", line: 1 }],
+      suggestedFix: "y",
+    });
+    expect(out).not.toContain("undefined");
+    expect(out).not.toContain("See:");
+  });
 });

@@ -30,14 +30,22 @@ export interface ViolationCitation {
 /**
  * Inputs for `formatViolations()`. `description` states the broken
  * invariant in one sentence. `suggestedFix` is operator-actionable.
- * `designRef` cites the design-doc anchor for the invariant.
- * `allowlistRef` is omitted when no allowlist exception is applicable.
+ * `designRef` names the rule the invariant enforces, for the failures whose
+ * `description` alone does not place it; most callers state the rule inline
+ * and pass nothing. `allowlistRef` is omitted when no allowlist exception is
+ * applicable.
+ *
+ * Both refs are optional, and the renderer drops the line each one feeds
+ * rather than interpolating a missing value. `designRef` was declared
+ * required while the majority of call sites omitted it -- these files sit
+ * outside the `packages/*` compile, so nothing rejected the omission and the
+ * failures rendered a literal `See: undefined`.
  */
 export interface ArchitectureFailureContext {
   readonly description: string;
   readonly violations: readonly ViolationCitation[];
   readonly suggestedFix: string;
-  readonly designRef: string;
+  readonly designRef?: string;
   readonly allowlistRef?: string;
 }
 
@@ -48,7 +56,8 @@ export interface ArchitectureFailureContext {
  *
  * Non-empty violations: multi-line block with description, violation
  * count, per-violation `file:line[:column]` + indented snippet lines,
- * suggested fix, optional allowlist reference, and design citation.
+ * suggested fix, and -- each only when supplied -- an allowlist reference
+ * and a `See:` rule citation.
  */
 export function formatViolations(ctx: ArchitectureFailureContext): string {
   if (ctx.violations.length === 0) {
@@ -79,6 +88,8 @@ export function formatViolations(ctx: ArchitectureFailureContext): string {
     lines.push(`Allowlist reference: ${ctx.allowlistRef}`);
     lines.push("");
   }
-  lines.push(`See: ${ctx.designRef}`);
-  return lines.join("\n");
+  if (ctx.designRef) {
+    lines.push(`See: ${ctx.designRef}`);
+  }
+  return lines.join("\n").trimEnd();
 }

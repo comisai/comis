@@ -44,7 +44,10 @@ import { resolve, dirname } from "node:path";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import * as ts from "typescript";
 import { findInSourceFiles } from "../../../../test/support/source-grep.js";
-import { findForbiddenImports } from "../../../../test/support/import-checker.js";
+import {
+  findForbiddenImports,
+  FULL_TREE_SCAN_TIMEOUT_MS,
+} from "../../../../test/support/import-checker.js";
 import { formatViolations } from "../../../../test/support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -347,7 +350,7 @@ describe("@comis/agent -- architecture invariants", () => {
       checkedFiles,
       "sanity: findForbiddenImports walked at least one agent/src file",
     ).toBeGreaterThan(0);
-  }, 15_000);
+  }, FULL_TREE_SCAN_TIMEOUT_MS);
 
   it("agent/tsconfig.json and agent/package.json do not reference @comis/infra", () => {
     const tsconfigPath = resolve(PKG_ROOT, "tsconfig.json");
@@ -454,7 +457,7 @@ describe("@comis/agent -- architecture invariants", () => {
         checkedFiles,
         "sanity: findForbiddenImports walked at least one agent/src file",
       ).toBeGreaterThan(0);
-    });
+    }, FULL_TREE_SCAN_TIMEOUT_MS);
 
     it("agent/tsconfig.json and agent/package.json dependencies do NOT reference @comis/memory", () => {
       const tsconfigPath = resolve(PKG_ROOT, "tsconfig.json");
@@ -661,7 +664,7 @@ describe("@comis/agent -- architecture invariants", () => {
         checkedFiles,
         "sanity: findForbiddenImports walked at least one agent/src file",
       ).toBeGreaterThan(0);
-    });
+    }, FULL_TREE_SCAN_TIMEOUT_MS);
   }
 
   // ---------------------------------------------------------------------------

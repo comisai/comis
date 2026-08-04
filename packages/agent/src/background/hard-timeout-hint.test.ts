@@ -47,7 +47,7 @@ describe("hard runtime limit hint", () => {
     expect(hint.toLowerCase()).toContain("not returned");
   });
 
-  it("stays bounded", () => {
+  it("caps the hint length when the tool and agent names are pathologically long", () => {
     const hint = hardTimeoutHint({
       toolName: "t".repeat(2000),
       agentId: "a".repeat(2000),
