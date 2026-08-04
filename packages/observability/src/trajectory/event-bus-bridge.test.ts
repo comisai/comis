@@ -2885,6 +2885,31 @@ describe("queue + execution + sender bridge", () => {
     expect(data.perRootBudget).toEqual({ limb: "aggregateUsd", spent: 2.04, cap: 2, unit: "usd" });
   });
 
+  it("execution_aborted forwards exact step-limit values for explain", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1" as any,
+      reason: "max_steps",
+      agentId: "default",
+      timestamp: Date.now(),
+      stepLimit: {
+        bindingKnob: "agents.default.maxSteps",
+        stepsExecuted: 4,
+        cap: 4,
+      },
+    } as any);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect((recorder.calls[0].data as Record<string, unknown>).stepLimit).toEqual({
+      bindingKnob: "agents.default.maxSteps",
+      stepsExecuted: 4,
+      cap: 4,
+    });
+  });
+
   it("activity_turn_finalized maps to activity.turn_finalized carrying the terminal user-surface state", () => {
     // The pill's terminal state (kept ❌ label vs deleted scaffold) is derived
     // from this outcome + strategy — without the record, explaining what the
