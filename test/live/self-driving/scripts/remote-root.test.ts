@@ -201,6 +201,14 @@ describe("local rig mode", () => {
     expect(guard).toBeLessThan(memoryWipe);
   });
 
+  it("clears prior diagnostic trajectories during a clean restart", () => {
+    const source = readFileSync(CLEAN_RESTART, "utf8");
+    const guard = source.indexOf('rig_refuse_continuity_wipe "$DATA"');
+    const trajectoryWipe = source.indexOf("rm -rf '$DATA'/trajectories/*");
+
+    expect(trajectoryWipe).toBeGreaterThan(guard);
+  });
+
   it("limits clean-restart worker cleanup to the selected data root", () => {
     const source = readFileSync(CLEAN_RESTART, "utf8");
 
