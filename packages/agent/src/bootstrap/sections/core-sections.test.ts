@@ -250,4 +250,32 @@ describe("buildInboundMetadataSection", () => {
     expect(joined).toContain("Source: Channel history");
     expect(joined).toContain("the exact earlier answer");
   });
+
+  it("renders authoritative group auto-reply configuration keys", () => {
+    const meta = {
+      messageId: "msg-3",
+      senderId: "user-1",
+      chatId: "group-1",
+      channel: "telegram",
+      chatType: "group",
+      flags: { isGroup: true },
+      autoReplyPolicyContext: {
+        groupActivation: "mention-gated",
+        historyInjection: true,
+      },
+    } as InboundMetadata & {
+      autoReplyPolicyContext: {
+        groupActivation: "mention-gated";
+        historyInjection: true;
+      };
+    };
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toContain("autoReplyEngine.groupActivation");
+    expect(joined).toContain('"mention-gated"');
+    expect(joined).toContain("autoReplyEngine.historyInjection");
+    expect(joined).toContain("true");
+    expect(joined).toContain("authoritative for the current group turn");
+  });
 });
