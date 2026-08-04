@@ -634,4 +634,59 @@ describe("inbound preprocessing trust boundary", () => {
       },
     });
   });
+
+  it("keeps shared-session routing separate from the authenticated delivery principal", async () => {
+    let observedContext: RequestContext | undefined;
+    const deps: InboundPipelineDeps = {
+      ...makeDeps({ autoReplyEngineConfig: mentionGatedConfig }),
+      deliveryService: {} as never,
+      getElevatedReplyConfig: () => ({
+        enabled: true,
+        senderTrustMap: { "ordinary-user": "admin" },
+        defaultTrustLevel: "guest",
+        trustModelRoutes: {},
+        trustPromptOverrides: {},
+      }),
+      handleSlashCommand: vi.fn(async () => {
+        observedContext = tryGetContext();
+        return { handled: true };
+      }),
+    };
+    const ingressContext = {
+      tenantId: "default",
+      traceId: "00000000-0000-4000-8000-000000000012",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user" as const,
+      channelType: "telegram",
+    };
+    const message = makeMessage({
+      text: "/inspect-context",
+      chatType: "group",
+      metadata: {
+        ...makeMessage().metadata,
+        telegramChatType: "supergroup",
+        isBotMentioned: true,
+      },
+    });
+
+    await runWithContext(ingressContext, () => processInboundMessage(
+      deps,
+      makeAdapter(),
+      message,
+      new Set(),
+      new Map(),
+    ));
+
+    const principalId = observedContext?.turnScope?.principal.principalId;
+    expect(principalId).toBeDefined();
+    expect(observedContext).toMatchObject({
+      userId: "conversation",
+      deliveryOrigin: {
+        userId: principalId,
+        channelType: "telegram",
+        channelId: "trusted-chat",
+        threadId: "trusted-thread",
+      },
+    });
+  });
 });
