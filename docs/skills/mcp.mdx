@@ -174,7 +174,10 @@ progress notification refreshes the idle portion of the SDK timeout and does
 not close the connection, but it never extends the call past the absolute
 `integrations.mcp.callToolTimeoutMs` ceiling. The default is 120,000 ms. A
 timeout error names the resolved value and tells the agent to narrow the request
-instead of retrying the same call. The timeout is runtime-immutable; an operator
+instead of retrying the same call. The ceiling is measured from when the call is
+made, so the per-server concurrency-slot wait counts against it; a call whose wait
+exhausts the deadline is failed before it is sent, naming contention and the
+server's `maxConcurrency` rather than blaming the request's scope. The timeout is runtime-immutable; an operator
 must edit `config.yaml` and restart the daemon to change it. See the
 [`callToolTimeoutMs` config contract](/reference/config-yaml#integrations).
 
