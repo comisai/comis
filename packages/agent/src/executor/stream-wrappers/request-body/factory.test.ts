@@ -738,6 +738,9 @@ describe("createRequestBodyInjector", () => {
         { type: "function_call_output", call_id: "call_aborted", output: "No result provided" },
         { type: "function_call", call_id: "call_valid", name: "read", arguments: "{}" },
         { type: "function_call_output", call_id: "call_valid", output: "ok" },
+        { type: "custom_tool_call_output", call_id: "custom_aborted", output: "No result provided" },
+        { type: "custom_tool_call", call_id: "custom_valid", name: "patch", input: "noop" },
+        { type: "custom_tool_call_output", call_id: "custom_valid", output: "ok" },
       ],
     }, model);
 
@@ -745,6 +748,8 @@ describe("createRequestBodyInjector", () => {
       { role: "user", content: [{ type: "input_text", text: "cancel that" }] },
       { type: "function_call", call_id: "call_valid", name: "read", arguments: "{}" },
       { type: "function_call_output", call_id: "call_valid", output: "ok" },
+      { type: "custom_tool_call", call_id: "custom_valid", name: "patch", input: "noop" },
+      { type: "custom_tool_call_output", call_id: "custom_valid", output: "ok" },
     ]);
   });
 
