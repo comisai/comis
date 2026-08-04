@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { hardTimeoutHint } from "./hard-timeout-hint.js";
 import { backgroundFailureCause } from "./background-failure-cause.js";
 import {
-  classifyBackgroundTaskFailure,
   projectBackgroundCompletionResult,
+  projectBackgroundTaskFailure,
 } from "./background-terminal-classify.js";
 import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import {
@@ -263,6 +263,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       ...(terminal.error === undefined ? {} : { error: terminal.error }),
       ...(terminal.errorKind === undefined ? {} : { errorKind: terminal.errorKind }),
       ...(terminal.failureCode === undefined ? {} : { failureCode: terminal.failureCode }),
+      ...(terminal.failureDiagnostic === undefined
+        ? {}
+        : { failureDiagnostic: terminal.failureDiagnostic }),
     };
     const persisted = persistTaskAtomically(dataDir, candidate, persistenceOps);
     if (!persisted.ok) {
@@ -285,6 +288,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     if (terminal.error !== undefined) task.error = terminal.error;
     if (terminal.errorKind !== undefined) task.errorKind = terminal.errorKind;
     if (terminal.failureCode !== undefined) task.failureCode = terminal.failureCode;
+    if (terminal.failureDiagnostic !== undefined) {
+      task.failureDiagnostic = terminal.failureDiagnostic;
+    }
     task._pendingTerminal = undefined;
     terminalRetryTimers.get(task.id)?.cancel();
     terminalRetryTimers.delete(task.id);
@@ -465,7 +471,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             completedAt: clock.now(),
             error: error instanceof Error ? error.message : String(error),
             errorKind,
-            failureCode: classifyBackgroundTaskFailure(task.toolName, error),
+            ...projectBackgroundTaskFailure(task.toolName, error),
           };
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
@@ -497,6 +503,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         error: terminal.error ?? "Background task failed",
         errorKind: terminal.errorKind ?? errorKind,
         ...(terminal.failureCode !== undefined ? { failureCode: terminal.failureCode } : {}),
+        ...(terminal.failureDiagnostic !== undefined
+          ? { failureDiagnostic: terminal.failureDiagnostic }
+          : {}),
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
@@ -680,6 +689,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
             ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
             ...(task.failureCode !== undefined ? { failureCode: task.failureCode } : {}),
+            ...(task.failureDiagnostic !== undefined
+              ? { failureDiagnostic: task.failureDiagnostic }
+              : {}),
           });
         }
       }
@@ -880,6 +892,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             error: current.error ?? "Background task failed",
             errorKind: current.errorKind ?? "dependency",
             ...(current.failureCode !== undefined ? { failureCode: current.failureCode } : {}),
+            ...(current.failureDiagnostic !== undefined
+              ? { failureDiagnostic: current.failureDiagnostic }
+              : {}),
           });
         }
       }, delayMs);

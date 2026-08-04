@@ -8,6 +8,7 @@
 import {
   BackgroundTaskOriginSchema,
   type BackgroundTaskOrigin,
+  type BackgroundTaskFailureDiagnostic,
   type BackgroundTaskFailureCode,
   type ErrorKind,
   type SessionKey,
@@ -21,7 +22,17 @@ export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
 export const BackgroundTaskFailureCodeSchema = z.enum([
   "skill_import_incomplete",
   "mcp_connection_details_missing",
+  "mcp_secret_reference_missing",
+  "mcp_call_deadline_exceeded",
+  "mutation_not_persisted",
 ]) satisfies z.ZodType<BackgroundTaskFailureCode>;
+export const BackgroundTaskFailureDiagnosticSchema = z.strictObject({
+  kind: z.literal("mcp_call_deadline_exceeded"),
+  configKey: z.literal("integrations.mcp.callToolTimeoutMs"),
+  configuredMs: z.number().finite().nonnegative(),
+  queueWaitedMs: z.number().finite().nonnegative(),
+  requestBudgetMs: z.number().finite().nonnegative(),
+}) satisfies z.ZodType<BackgroundTaskFailureDiagnostic>;
 
 /**
  * Notification policy for a background task. Typed enum (NOT a boolean):
@@ -147,6 +158,7 @@ export const PersistedTaskStateSchema = z.strictObject({
     "resource", "dependency", "internal", "platform", "sandbox_unavailable",
   ]).optional(),
   failureCode: BackgroundTaskFailureCodeSchema.optional(),
+  failureDiagnostic: BackgroundTaskFailureDiagnosticSchema.optional(),
 });
 
 // @optional-field-count: Lifecycle fields are conditional by task state; underscored fields exist only while execution or terminal persistence is in flight.
@@ -174,6 +186,7 @@ export interface BackgroundTask {
   traceId?: string;
   errorKind?: ErrorKind;
   failureCode?: BackgroundTaskFailureCode;
+  failureDiagnostic?: BackgroundTaskFailureDiagnostic;
   /** Durable completion lifecycle. */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;
@@ -193,11 +206,13 @@ export interface BackgroundTask {
     error?: string;
     errorKind?: ErrorKind;
     failureCode?: BackgroundTaskFailureCode;
+    failureDiagnostic?: BackgroundTaskFailureDiagnostic;
   };
   _ownsCounterSlot?: boolean;
 }
 
 /** Serializable subset of BackgroundTask for file persistence. */
+// @optional-field-count: Terminal, delivery, correlation, and diagnostic fields are conditional on the persisted lifecycle state.
 export interface PersistedTaskState {
   id: string;
   toolName: string;
@@ -227,6 +242,7 @@ export interface PersistedTaskState {
   traceId?: string;
   errorKind?: ErrorKind;
   failureCode?: BackgroundTaskFailureCode;
+  failureDiagnostic?: BackgroundTaskFailureDiagnostic;
 }
 
 export function isClosedBackgroundTask(task: Pick<BackgroundTask, "status" | "dispatchState">): boolean {

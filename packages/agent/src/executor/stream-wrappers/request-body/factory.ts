@@ -24,15 +24,12 @@
  *
  * @module
  */
-
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
-
 import type { StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
 import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
-
 import type { RequestBodyInjectorConfig } from "./types.js";
 import { getMinCacheableTokens } from "./cache-breakpoints.js";
 import {
@@ -73,7 +70,6 @@ import { applyKillSwitch } from "./kill-switch.js";
 import { estimateTtlSplit } from "./ttl-split-estimation.js";
 import { stripBedrockToolHistory } from "./bedrock-tool-history.js";
 import { translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
-
 /**
  * Create a stream wrapper that mutates the outgoing request body via the
  * onPayload hook. Consolidates four concerns:
@@ -101,7 +97,6 @@ export function createRequestBodyInjector(
       const needsCacheBreakpoints = config.modelProfile?.supportsPromptCache
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
-
       // ALL OpenAI Responses-family providers drive the same `input` item array and need the
       // auto-cached prefix stabilised: native openai (`openai-responses`),
       // Azure (`azure-openai-responses`), and codex (`openai-codex-responses` /

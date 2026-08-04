@@ -270,6 +270,29 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // A background MCP call may spend most of its fixed deadline waiting for a
+  // per-server concurrency slot. The terminal event retains only the trusted
+  // config key and timing numbers, so this verdict can name the binding value
+  // without persisting the external error body.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) => candidate.failureCode === "mcp_call_deadline_exceeded",
+    );
+    if (failure === undefined) return null;
+    const detail = failure.errorPreview.length > 0
+      ? failure.errorPreview
+      : "integrations.mcp.callToolTimeoutMs expired; timing details were unavailable";
+    return {
+      code: "mcp_background_call_deadline_exceeded",
+      detail: `${failure.toolName} exceeded its background MCP call deadline (${detail})`,
+      suggestedNextSteps: [
+        "reduce per-server queue contention; raise maxConcurrency only when the MCP server supports parallel tool calls",
+        "otherwise narrow or split the MCP request so it finishes within integrations.mcp.callToolTimeoutMs",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
   // A background-task admission guard is a local capacity decision, not an
   // MCP/provider failure. Name the exact saturated knob and observed occupancy
   // from the already-bounded failure preview so one explain call tells the

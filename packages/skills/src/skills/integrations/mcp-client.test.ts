@@ -749,8 +749,9 @@ describe("McpClientManager", () => {
       expect(mgr.getConnection("test-server")?.status).toBe("error");
     });
 
-    it("passes callToolTimeoutMs to SDK options", async () => {
-      const mgr = createMcpClientManager({ ...makeDeps(), callToolTimeoutMs: 120_000 });
+    it("caps SDK timeout options by the caller-visible call deadline", async () => {
+      const configuredTimeoutMs = 120_000;
+      const mgr = createMcpClientManager({ ...makeDeps(), callToolTimeoutMs: configuredTimeoutMs });
       await mgr.connect(makeStdioConfig());
 
       await mgr.callTool("mcp:test-server/search", { query: "test" });
@@ -761,16 +762,21 @@ describe("McpClientManager", () => {
       expect(mockCallTool).toHaveBeenCalledWith(
         { name: "search", arguments: { query: "test" } },
         undefined,
-        {
-          timeout: 120_000,
-          maxTotalTimeout: 120_000,
+        expect.objectContaining({
           // Registered on EVERY path: without a handler the SDK rejects an
           // incoming progress notification as an unknown token and closes the
           // connection.
           onprogress: expect.any(Function),
           resetTimeoutOnProgress: true,
-        },
+        }),
       );
+      const options = mockCallTool.mock.calls[0]?.[2] as {
+        timeout: number;
+        maxTotalTimeout: number;
+      };
+      expect(options.timeout).toBeLessThanOrEqual(configuredTimeoutMs);
+      expect(options.timeout).toBeGreaterThan(configuredTimeoutMs - 1_000);
+      expect(options.maxTotalTimeout).toBe(options.timeout);
     });
 
     it("uses default timeouts when not specified", async () => {

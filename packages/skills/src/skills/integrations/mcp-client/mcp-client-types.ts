@@ -10,7 +10,6 @@
  *
  * @module
  */
-
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";

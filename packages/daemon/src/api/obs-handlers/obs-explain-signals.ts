@@ -40,18 +40,13 @@ import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 // ---------------------------------------------------------------------------
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
-/** Minimum same-tool failures for a breaker/repeated-failure signal. Used by
- * the heuristic registry; surfaced here for one source of truth. */
+/** Minimum same-tool failures for a breaker/repeated-failure signal; shared with the heuristic registry. */
 export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
 const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
-
-function ensureTool(
-  acc: Acc,
-  tool: string,
-): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
+function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
   let entry = acc.toolStats.get(tool);
   if (entry === undefined) {
     entry = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map() };
@@ -66,13 +61,11 @@ function nonnegativeInteger(value: unknown): number {
 // ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
-
 function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
   const msg = asString(rec.msg) ?? "";
   const tool = asString(rec.toolName);
   const sessionKey = asString(rec.sessionKey);
   if (sessionKey && !acc.sessionKey) acc.sessionKey = sessionKey;
-
   // Offload (log shape).
   if (msg === "Tool result offloaded to disk" && tool) {
     acc.offloads.push({
@@ -83,7 +76,6 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     });
     return;
   }
-
   // Failure (log shape) — keyed on the "Tool execution failed" message.
   if (msg === "Tool execution failed" && tool) {
     const entry = ensureTool(acc, tool);
@@ -126,7 +118,6 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     });
     return;
   }
-
   // Success (log shape): either an explicit success:true with a toolName, or a
   // "Tool audit: <tool> succeeded" audit line.
   if (tool && (rec.success === true || /succeeded/.test(msg))) {
@@ -678,11 +669,9 @@ function handleEventRecord(
       return;
   }
 }
-
 // ---------------------------------------------------------------------------
 // Public normalizer.
 // ---------------------------------------------------------------------------
-
 /**
  * Normalize a heterogeneous record stream (raw log lines AND/OR structured
  * trajectory events) into one `IncidentSignals` view.
@@ -737,7 +726,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     backgroundReenteredTaskIds: new Set(),
     backgroundAcceptedTaskIds: new Set(),
   };
-
   for (const rec of records) {
     // Envelope agentId (first seen) — the metadata rollup often lacks it.
     if (acc.agentId === undefined) {
@@ -767,7 +755,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       handleLogRecord(acc, rec);
     }
   }
-
   // Newest-first failures (highest seq first).
   acc.failures.sort((a, b) => b.seq - a.seq);
   const currentTurnFailures = latestPromptSeq === undefined
@@ -776,9 +763,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   const currentTurnNodeBudgetBreaches = latestPromptSeq === undefined
     ? acc.nodeBudgetBreaches
     : acc.nodeBudgetBreaches.filter((breach) => breach.seq > latestPromptSeq);
-
   const { toolStats, repeatedFailureCount, mostFailedTool } = summarizeToolStats(acc);
-
   // Misclassification derivation (log-evidence only): a tool with BOTH a
   // success and ≥MISCLASS_N failures AND a status/200/403 token in a body.
   let hasMisclassificationSignal = false;
@@ -793,7 +778,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       break;
     }
   }
-
   const learning = buildLearningSignal(acc.learning); // undefined ⇒ omitted below
   const backgroundTasks = buildBackgroundTasksSignal(acc);
   const turnTraceCount = acc.promptTraceIds.size > 0
@@ -837,7 +821,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               ? { lastFailedRunId: acc.subagentLastFailedRunId }
               : {}),
           },
-        }
+  }
       : {}),
     // Materialize run skeletons and join tool calls through each child lease id.
     ...(acc.orchestrateRunsByRunId.size > 0
@@ -849,7 +833,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
                 ? [...(acc.orchestrateToolCallsByLease.get(run.leaseId)?.values() ?? [])]
                 : [],
           })),
-        }
+  }
       : {}),
     ...(breakerOpenedTool !== undefined
       ? { breakerOpenedTool }
@@ -892,10 +876,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
                   degraded: acc.recallDegraded.count,
                   lastDegradedScope: acc.recallDegraded.lastScope,
                   lastDegradedErrorKind: acc.recallDegraded.lastErrorKind,
-                }
+  }
               : {}),
           },
-        }
+  }
       : {}),
     // Collapse the per-reason cache-break fold → a bounded,
     // deterministically-ordered array (count desc, then reason asc — the system
@@ -912,7 +896,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               tokenDrop: v.tokenDrop,
             }))
             .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
-        }
+  }
       : {}),
     // The terminal spend-kill breach (undefined when not spend-killed — never {}); the verdict stays amount-free, this carries the numbers.
     ...(acc.spend !== undefined ? { spend: acc.spend } : {}),
@@ -947,7 +931,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             reason: acc.terminalDrivePromotedReason ?? "unknown",
             count: acc.terminalDrivePromotedCount,
           },
-        }
+  }
       : {}),
     // Surface a reaper eviction ONLY when one fired (undefined, never {}, when
     // no drive was evicted). `wasProducing` is DERIVED from the already-folded
@@ -962,7 +946,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             idleMs: acc.terminalDriveEvictedMs ?? 0,
             wasProducing: acc.terminalDrivePromotedReason === "producing",
           },
-        }
+  }
       : {}),
     // Surface an attributed sub-agent kill ONLY when one fired (undefined,
     // never {}). Idle/threshold ride only when present (health-monitor kills).

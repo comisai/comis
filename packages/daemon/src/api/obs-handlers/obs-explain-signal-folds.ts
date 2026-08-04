@@ -253,9 +253,23 @@ export function accumulateBackgroundTaskRecord(
         "skill_import_incomplete",
         "mcp_connection_details_missing",
         "mcp_secret_reference_missing",
+        "mcp_call_deadline_exceeded",
       ] as const,
       data.failureCode,
     );
+    const configKey = asString(data.failureConfigKey);
+    const configuredMs = nonnegativeInteger(data.failureConfiguredMs);
+    const queueWaitedMs = nonnegativeInteger(data.failureQueueWaitedMs);
+    const requestBudgetMs = nonnegativeInteger(data.failureRequestBudgetMs);
+    const diagnosticPreview =
+      failureCode === "mcp_call_deadline_exceeded"
+      && configKey === "integrations.mcp.callToolTimeoutMs"
+      && configuredMs !== undefined
+      && queueWaitedMs !== undefined
+      && requestBudgetMs !== undefined
+        ? `${configKey}=${String(configuredMs)}ms; queueWaitedMs=${String(queueWaitedMs)}; `
+          + `requestBudgetMs=${String(requestBudgetMs)}`
+        : "";
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
     acc.failures.push({
       seq,
@@ -265,8 +279,8 @@ export function accumulateBackgroundTaskRecord(
       errorKind,
       ...(failureCode !== undefined ? { failureCode } : {}),
       resultDigest: fingerprint(`${taskId}:${toolName}:${errorKind}`),
-      resultBytes: 0,
-      errorPreview: "",
+      resultBytes: diagnosticPreview.length,
+      errorPreview: diagnosticPreview,
     });
     return;
   }

@@ -32,6 +32,7 @@ import { translateVisionPayload } from "./translate-vision-payload.js";
 import { translateVoicePayload } from "./translate-voice-payload.js";
 import { translateSessionSummaryPayload } from "./translate-session-summary.js";
 import { translatePromptPayload } from "./translate-prompt-payload.js";
+import { translateBackgroundTaskPayload } from "./translate-background-task-payload.js";
 
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
@@ -347,52 +348,13 @@ export function translatePayload(
       };
     case "reflect:funnel": // The reflection FUNNEL COUNTS + the acute admissionOutcome verdict — never a procedure body/script. Answers "why 0 admitted" from the trajectory in ONE field. The funnel MAGNITUDES (untrustedDrops / source counts / singleOwnerCorroborated) ride too — all counts, never bodies.
       return { synthesized: payload.synthesized, validated: payload.validated, admitted: payload.admitted, maxClusterCardinality: payload.maxClusterCardinality, singleOwnerCorroborated: payload.singleOwnerCorroborated, distinctTopicKeys: payload.distinctTopicKeys, untrustedDrops: payload.untrustedDrops, nameLengthRejections: payload.nameLengthRejections, skipped: payload.skipped, sourceTrajectoryCount: payload.sourceTrajectoryCount, totalSourceChars: payload.totalSourceChars, admissionOutcome: payload.admissionOutcome };
-    // Background task lifecycle: closed ids + durationMs ONLY — agentId/origin are envelope ids; no result/
-    // error body crosses the bus; the record TYPE conveys promoted/completed/failed.
     case "background_task:promoted":
-      return { taskId: payload.taskId, toolName: payload.toolName };
     case "background_task:completed":
-      return {
-        taskId: payload.taskId,
-        toolName: payload.toolName,
-        durationMs: payload.durationMs,
-        ...(payload.resultOutcome === "success" || payload.resultOutcome === "degraded"
-          ? { resultOutcome: payload.resultOutcome }
-          : {}),
-        ...(payload.persistence === "persisted"
-          || payload.persistence === "runtime_only"
-          || payload.persistence === "skipped"
-          ? { persistence: payload.persistence }
-          : {}),
-        ...(payload.errorKind === "config" ? { errorKind: payload.errorKind } : {}),
-        ...(payload.failureCode === "mutation_not_persisted"
-          ? { failureCode: payload.failureCode }
-          : {}),
-      };
     case "background_task:failed":
-      return {
-        taskId: payload.taskId,
-        toolName: payload.toolName,
-        durationMs: payload.durationMs,
-        errorKind: payload.errorKind,
-        ...(
-          payload.failureCode === "skill_import_incomplete"
-          || payload.failureCode === "mcp_connection_details_missing"
-          || payload.failureCode === "mcp_secret_reference_missing"
-            ? { failureCode: payload.failureCode }
-            : {}
-        ),
-      };
     case "background_task:cancelled":
-      return { taskId: payload.taskId, toolName: payload.toolName };
     case "background_task:reentered":
-      return { taskId: payload.taskId, hopCount: payload.hopCount };
     case "background_task:notified":
-      // The fallback-notice decision — taskId + tool NAME + the notified bool +
-      // closed-union reason ONLY. agentId/sessionKey/traceId/timestamp are
-      // envelope/correlation ids (sessionKey routes the record, then is stripped);
-      // the notice BODY never crosses the bus.
-      return { taskId: payload.taskId, toolName: payload.toolName, notified: payload.notified, reason: payload.reason };
+      return translateBackgroundTaskPayload(eventName, payload);
 
     case "scheduler:task_extraction_completed":
     case "scheduler:task_extraction_failed":
