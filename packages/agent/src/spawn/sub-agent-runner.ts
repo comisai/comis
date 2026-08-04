@@ -82,6 +82,7 @@ import {
   type AbortClassification,
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
+import { buildHaltedAccount } from "./halted-account.js";
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
@@ -3108,6 +3109,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }, "Sub-agent produced empty output");
         }
 
+        // Classified here (not only at the WARN further down) so the halt account can name the
+        // category and its hint. Classification must never block a completion path.
+        let abortClassification: AbortClassification | undefined;
+        if (isSubAgentAbortFinishReason(result.finishReason)) {
+          try {
+            abortClassification = classifyAbortReason(result.finishReason);
+          } catch { /* classification must never block */ }
+        }
+
         const runtimeMs = providerCompletedAt - run.startedAt;
         const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
           runId,
@@ -3235,7 +3245,36 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        const completionSummary = condensedResult?.result.summary ?? result.response;
+        // A halted child returns only its final assistant text, so one killed before composing
+        // one hands the parent an empty string — indistinguishable from a sub-task that ran and
+        // found nothing. Live: a child completed a full ranking, a sibling call timed out, the
+        // retries were cut off, and the parent reported "no valid results" over that silence.
+        // Replace it with an account of the halt, built from facts already in hand.
+        const usableSummary = condensedResult?.result.summary ?? result.response;
+        const haltedWithoutOutput =
+          isSubAgentAbortFinishReason(result.finishReason)
+          && usableSummary.trim().length === 0;
+        const completionSummary = haltedWithoutOutput
+          ? buildHaltedAccount({
+            finishReason: result.finishReason,
+            stepsExecuted: result.stepsExecuted,
+            ...(abortClassification?.category === undefined
+              ? {}
+              : { category: abortClassification.category }),
+            ...(abortClassification?.hint === undefined
+              ? {}
+              : { hint: abortClassification.hint }),
+          })
+          : usableSummary;
+        if (haltedWithoutOutput) {
+          deps.logger?.warn({
+            runId, agentId: params.agentId,
+            finishReason: result.finishReason,
+            stepsExecuted: result.stepsExecuted,
+            errorKind: abortErrorKind(result.finishReason),
+            hint: "Sub-agent was halted before writing a result; the parent receives an explicit halt account instead of an empty summary it would read as 'found nothing'",
+          }, "Sub-agent halted with no output; substituting a halt account");
+        }
         const telemetry: SubAgentRunTelemetry = {
           tokensUsedTotal: result.tokensUsed.total,
           costTotal: result.cost.total,
@@ -3273,13 +3312,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        // Classify abort if finishReason is abnormal (not stop/end_turn)
-        let abortClassification: AbortClassification | undefined;
-        if (isSubAgentAbortFinishReason(result.finishReason)) {
-          try {
-            abortClassification = classifyAbortReason(result.finishReason);
-          } catch { /* classification must never block */ }
-        }
+        // Classified once, above, where the halt account also needs it — never recomputed, so the
+        // WARN and the parent-facing account cannot disagree about why a run was halted.
 
         // WARN log for abort events
         if (abortClassification) {
