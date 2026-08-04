@@ -917,7 +917,36 @@ describe("createBackgroundCompletionRunner", () => {
     expect(resolveMaxBackgroundHops).toHaveBeenCalledWith("worker");
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
     const opts = fallbackNotifyFn.mock.calls[0]![0]!;
-    expect(opts.message).toContain("recursion limit reached");
+    expect(opts.message).toContain("agents.worker.backgroundTasks.maxBackgroundHops=3");
+    expect(opts.message).toContain(task.id);
+    expect(opts.message).toMatch(/retrying.*unchanged.*same limit/i);
+    expect(opts.message).not.toContain("Run again");
+    await runner.shutdown();
+  });
+
+  it("failed task at the hop cap never claims that the task completed", async () => {
+    const task = buildTask({
+      status: "failed",
+      error: "fixture failure",
+      origin: buildOrigin({ agentId: "worker", backgroundHopCount: 2 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = build(3, undefined, undefined, undefined, () => 3);
+    eventBus.emit("background_task:failed", {
+      agentId: "worker",
+      taskId: task.id,
+      toolName: task.toolName,
+      error: "fixture failure",
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const opts = fallbackNotifyFn.mock.calls[0]![0]!;
+    expect(opts.message).toContain("failed");
+    expect(opts.message).not.toContain("task \"exec\" completed");
     await runner.shutdown();
   });
 
