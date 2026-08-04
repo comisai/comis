@@ -1099,11 +1099,17 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
 
     it("a replyTo opt → the served update carries a reply_to_message authored by the bot (replyToBot source)", async () => {
       const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], bot: { id: 12345, firstName: "TestBot", username: "test_bot" }, supergroup: true });
-      emu.injectMessage(group, { id: 111, firstName: "a" }, "thanks", { replyTo: 40 });
+      const sent = await callMethod(apiRoot, "sendMessage", {
+        chat_id: group.chatId,
+        text: "the exact earlier answer",
+      });
+      const sentMessageId = (sent.result as Record<string, unknown>)["message_id"] as number;
+      emu.injectMessage(group, { id: 111, firstName: "a" }, "thanks", { replyTo: sentMessageId });
       const updates = await pollUpdates();
       const msg = updates[0]!["message"] as Record<string, unknown>;
       const replyTo = msg["reply_to_message"] as Record<string, unknown> | undefined;
-      expect(replyTo?.["message_id"]).toBe(40);
+      expect(replyTo?.["message_id"]).toBe(sentMessageId);
+      expect(replyTo?.["text"]).toBe("the exact earlier answer");
       // The replied-to message is authored by the bot (so detectBotAddressing flips replyToBot).
       expect((replyTo?.["from"] as Record<string, unknown>)?.["is_bot"]).toBe(true);
     });
