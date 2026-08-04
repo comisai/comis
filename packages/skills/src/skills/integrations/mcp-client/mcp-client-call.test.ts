@@ -445,6 +445,44 @@ describe("call deadline covers the queue wait", () => {
       .mock.calls;
     expect(calls.length).toBe(1);
   });
+
+  it("removes a cancelled queued call before it consumes the server slot", async () => {
+    const serverName = "inventory";
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let callIndex = 0;
+    const state = makeConnectedState(serverName, () => {
+      callIndex += 1;
+      return callIndex === 1
+        ? gate.then(() => ({ content: [{ type: "text", text: "first" }] }))
+        : Promise.resolve({ content: [{ type: "text", text: "cancelled call ran" }] });
+    });
+    const ac = new AbortController();
+    const abortableCallTool = callTool as unknown as (
+      state: McpClientManagerState,
+      deps: McpClientManagerDeps,
+      qualifiedName: string,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+    ) => ReturnType<typeof callTool>;
+
+    const first = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    const second = abortableCallTool(
+      state,
+      deps,
+      `mcp:${serverName}/slow_report`,
+      {},
+      ac.signal,
+    );
+    ac.abort();
+    release?.();
+    const [, secondResult] = await Promise.all([first, second]);
+
+    expect(secondResult.ok).toBe(false);
+    expect(state.connections.get(serverName)?.client.callTool).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

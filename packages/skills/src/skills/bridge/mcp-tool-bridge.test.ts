@@ -296,6 +296,20 @@ describe("mcpToolsToAgentTools", () => {
     expect(result.details).toEqual({ success: true });
   });
 
+  it("execute forwards cancellation to the MCP client call", async () => {
+    const callTool = makeCallTool();
+    const tools = mcpToolsToAgentTools([makeTool()], callTool);
+    const ac = new AbortController();
+
+    await tools[0].execute("call-abort", { query: "test" }, ac.signal);
+
+    expect(callTool).toHaveBeenCalledWith(
+      "mcp:db-server/search",
+      { query: "test" },
+      ac.signal,
+    );
+  });
+
   it("execute() handles callTool error gracefully", async () => {
     const callTool = vi.fn().mockResolvedValue(err(new Error("Server unreachable")));
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
