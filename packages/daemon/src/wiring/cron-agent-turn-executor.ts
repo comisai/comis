@@ -415,13 +415,27 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
   }, CronRuntimeError>> {
     if (input.job.wakeGate === undefined) return ok({ wakeGate: { status: "not_configured" } });
     const capability = deps.resolveWakeGateCapability(input.job.agentId);
+    // `disabled` means the OPERATOR turned the scheduler-initiated gate off. The schema documents
+    // that state as "never run a scheduler-initiated gate (a gated job runs EXACTLY AS IT WOULD WITH
+    // NO GATE)", so it must fall through to the ungated path — identical to the `undefined` line
+    // above. It previously returned a terminal pre-model skip, which meant disabling a gate silently
+    // decommissioned every gated job: no error, no WARN, and `status:"skipped"` indistinguishable
+    // from an ordinary scheduler decision like staggering or dedupe. Disabling a gate is a routine
+    // operator action — cut cost, neutralise a misbehaving script — and must not stop the work the
+    // gate was only filtering.
+    if (capability === "disabled") {
+      return ok({ wakeGate: { status: "not_configured" } });
+    }
+    // `unbound` is the opposite case: a gate WAS requested and the runner is not wired, so it cannot
+    // be evaluated at all. Skipping stays fail-closed — running ungated here would silently ignore an
+    // operator's explicit gate.
     if (capability !== "enabled") {
       return ok({
         wakeGate: { status: "not_configured" },
         terminal: {
           kind: "agent_turn_pre_model_skip",
           rootRunId: input.rootRunId,
-          reason: capability === "disabled" ? "wake_gate_disabled" : "wake_gate_unbound",
+          reason: "wake_gate_unbound",
           errorKind: "precondition",
           continuation: { mode: "none", status: "not_requested" },
         },

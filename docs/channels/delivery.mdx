@@ -629,6 +629,23 @@ System message threading is not configurable. It is a safety measure to keep
 operational messages visually connected to the conversation they belong to.
 </Warning>
 
+### Out-of-order replies
+
+A 1:1 chat normally gets no reply anchor: with one conversation partner, a reply obviously answers
+the message before it, and quoting would be noise. That reasoning holds only while replies arrive
+in request order — and a turn waiting on an approval can sit for the whole
+`approvals.defaultTimeoutMs` before it resumes. By then a later turn may already have answered, so
+its outcome lands beneath a newer reply and reads as a statement about the newer request.
+
+When a reply is delivered after another turn in the same session has already answered, Comis
+anchors it to the message it actually answers, in a DM as well as a group, on any channel that can
+thread (`replyToMetaKey`). Replies that arrive in order are unchanged, so this adds no quoting to
+ordinary traffic. Ordering is tracked in memory per session; a restart has no in-flight waiting
+turns to reason about, so there is nothing to restore.
+
+This is not configurable: an unanchored out-of-order reply is not a preference, it is a message
+that contradicts its neighbour.
+
 ### Chat types
 
 The following normalized chat types can be used as keys in `replyModeByChatType`.

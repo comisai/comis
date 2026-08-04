@@ -376,6 +376,7 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "tolerate","tolerates","tolerated","tolerating",
   "transform","transforms","transformed","transforming",
   "translate","translates","translated","translating",
+  "localize","localizes","localized","localizing",
   "unblock","unblocks","unblocked","unblocking",
   "upgrade","upgrades","upgraded","upgrading",
   "wait","waits","waited","waiting",

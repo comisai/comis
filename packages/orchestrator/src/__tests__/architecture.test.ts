@@ -148,7 +148,12 @@ describe("@comis/orchestrator -- architecture invariants", () => {
     // ChannelManager + processInboundMessage are types, not runtime values — the
     // type-presence check is enforced at compile time by tsc consuming this file.
     // The `createOrchestrator` runtime check above is the falsifiable signal.
-  }, 30_000); // extend timeout for runtime import under v8 coverage instrumentation
+    // Budget: importing the barrel pulls the ENTIRE orchestrator dependency graph through the
+    // transformer, so this test's cost is bundler time, not its own work. The prior 30s extension
+    // (added for v8 coverage instrumentation) still timed out once the full suite saturated a small
+    // box, while passing in isolation — which reads as a broken export surface rather than as load.
+    // Raised rather than narrowed: a real barrel import is exactly what this asserts.
+  }, 120_000);
 
   // Audit-coverage architecture test: the audit doc at
   // packages/orchestrator/AUDIT.md must align row-for-row with ChannelManagerDeps.

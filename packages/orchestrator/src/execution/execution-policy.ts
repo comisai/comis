@@ -67,6 +67,27 @@ export type ExecutionPolicyResult =
       result: Awaited<ReturnType<AgentExecutor["execute"]>>;
     });
 
+/**
+ * The platform message id this reply would be anchored to, if anchoring is wanted.
+ *
+ * Resolution is separated from the DECISION to anchor so both callers share one implementation:
+ * the normal group/threaded-DM rule here, and the out-of-order case in the delivery path, where a
+ * turn released by an expired approval gate delivers after a later turn has already answered. A
+ * duplicated metadata lookup is how the two would drift.
+ *
+ * @param originalMsg - the inbound message being answered.
+ * @param metaKey - the channel's `replyToMetaKey` capability, absent when it cannot thread.
+ * @returns the platform message id, or `undefined` when this channel or message cannot supply one.
+ */
+export function resolveReplyAnchor(
+  originalMsg: NormalizedMessage,
+  metaKey: string | undefined,
+): string | undefined {
+  if (metaKey === undefined) return undefined;
+  const raw = originalMsg.metadata?.[metaKey];
+  return raw === undefined || raw === null ? undefined : String(raw);
+}
+
 /** Resolve the authorization level attached to a sender's execution context. */
 export function resolveExecutionTrustLevel(
   config: ElevatedReplyConfig | undefined,
@@ -98,11 +119,11 @@ export async function runExecutionPolicy(
   let effectiveMsg = input.effectiveMsg;
   const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
   const metaKey = caps?.replyToMetaKey;
-  const replyTo =
-    (isGroupMessage(originalMsg) || caps?.threadReplyInDm) &&
-      metaKey && originalMsg.metadata?.[metaKey]
-      ? String(originalMsg.metadata[metaKey])
-      : undefined;
+  // The anchor is resolved unconditionally and gated separately, so the delivery path can reuse
+  // the SAME resolution for an out-of-order reply without duplicating the metadata lookup.
+  const replyTo = (isGroupMessage(originalMsg) || caps?.threadReplyInDm)
+    ? resolveReplyAnchor(originalMsg, metaKey)
+    : undefined;
 
   const elevatedConfig = deps.getElevatedReplyConfig?.(agentId);
   const formattedSessionKey = formatSessionKey(sessionKey);

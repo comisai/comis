@@ -193,6 +193,41 @@ function latinProseWordCount(text: string): number {
 }
 
 /**
+ * Find a token that welds the expected script to a DIFFERENT non-Latin script.
+ *
+ * The share/unit thresholds below exist to protect legitimate mixed-script prose, and they are
+ * right for bulk foreign text — but they are structurally blind to a few characters fused into one
+ * token: three foreign letters in a long reply clear neither floor. Live: under enforcement for a
+ * Hebrew response locale, a reply opened with one Hebrew letter welded to an Arabic word, and
+ * enforcement reported nothing while claiming to enforce.
+ *
+ * A fused token is not prose. Quoting a foreign name puts it in its own word; it does not weld two
+ * scripts inside a single token, so this needs no share threshold — which is precisely why the
+ * thresholds could not catch it. Latin is excluded: it mixes into non-Latin prose constantly
+ * (identifiers, units, URLs) and is already covered by the prose-share rule.
+ */
+function fusedForeignScript(
+  response: string,
+  expectedClass: ScriptClass,
+): ScriptClass | undefined {
+  const proseCandidate = withoutProtectedResponseSpans(response);
+  for (const token of proseCandidate.split(/[\s\p{P}\p{S}]+/u)) {
+    if (token.length === 0) continue;
+    let sawExpected = false;
+    let foreign: ScriptClass | undefined;
+    for (const character of token) {
+      const cls = classifyCodepoint(character.codePointAt(0) ?? 0);
+      if (cls === null || cls === "latin" || cls === "other") continue;
+      if (cls === expectedClass) sawExpected = true;
+      else foreign ??= cls;
+    }
+    if (sawExpected && foreign !== undefined) return foreign;
+  }
+  return undefined;
+}
+
+
+/**
  * Find substantial wrong-script prose hidden behind a longer matching-script
  * tail. Protected code, links, URLs, acronyms, and short identifier clusters
  * remain valid mixed-script content.
@@ -243,8 +278,11 @@ export function evaluateResponseLocale(
   if (expectedClass === undefined || actualClass === "other") {
     return undefined;
   }
+  // Fusion is checked FIRST and independently of the share thresholds: a welded token is never
+  // legitimate prose, and by construction it cannot clear a share floor.
   const mismatchedClass = expectedClass === actualClass
-    ? substantialForeignScript(response, expectedClass)
+    ? fusedForeignScript(response, expectedClass)
+      ?? substantialForeignScript(response, expectedClass)
     : actualClass;
   if (mismatchedClass === undefined) return undefined;
   return {

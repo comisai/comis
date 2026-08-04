@@ -10,6 +10,7 @@ import {
   selectMainTrajectoryPath,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  trajectoryTurnEnded,
   wireQuiescenceFinished,
   wireContainsAssistantReply,
 } from "../../test/live/self-driving/scripts/drive-session-oracle.mjs";
@@ -219,5 +220,137 @@ describe("live driver session correlation", () => {
         suffix,
       ),
     ).toBe(parent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// trajectoryTurnEnded — a terminal record alone is not turn-end when the turn
+// handed work off. Both hand-off paths were observed live on heavy questions and
+// each one caused an interim "I'm running it now" promise to be reported as the
+// substantive answer, 30-384s before the real answer existed.
+// ---------------------------------------------------------------------------
+describe("trajectoryTurnEnded", () => {
+  const summary = '{"type":"session.summary","data":{"endReason":"success"}}';
+  const bgPendingSummary =
+    '{"type":"session.summary","finishReason":"background_pending","data":{}}';
+  const aborted = '{"type":"execution.aborted","data":{}}';
+  const spawned = '{"type":"subagent.spawned","data":{}}';
+  const spawnCompleted = '{"type":"subagent.completed","data":{}}';
+  const spawnKilled = '{"type":"subagent.killed","data":{}}';
+
+  it("a clean summary with no hand-off ends the turn", () => {
+    expect(trajectoryTurnEnded([summary])).toBe(true);
+  });
+
+  it("an execution.aborted ends the turn", () => {
+    expect(trajectoryTurnEnded([aborted])).toBe(true);
+  });
+
+  it("no terminal record at all is not turn-end", () => {
+    expect(trajectoryTurnEnded(['{"type":"model.completed","data":{}}'])).toBe(false);
+  });
+
+  it("a background_pending summary is NOT turn-end (the turn is done, the work is not)", () => {
+    expect(trajectoryTurnEnded([bgPendingSummary])).toBe(false);
+  });
+
+  it("a background_pending summary followed by a clean one IS turn-end", () => {
+    expect(trajectoryTurnEnded([bgPendingSummary, summary])).toBe(true);
+  });
+
+  it("a spawned sub-agent with no completion is NOT turn-end even with a clean summary", () => {
+    expect(trajectoryTurnEnded([spawned, summary])).toBe(false);
+  });
+
+  it("a spawned sub-agent that completed IS turn-end", () => {
+    expect(trajectoryTurnEnded([spawned, summary, spawnCompleted])).toBe(true);
+  });
+
+  it("a killed sub-agent counts as settled", () => {
+    expect(trajectoryTurnEnded([spawned, summary, spawnKilled])).toBe(true);
+  });
+
+  it("two spawns with one completion is NOT turn-end", () => {
+    expect(trajectoryTurnEnded([spawned, spawned, spawnCompleted, summary])).toBe(false);
+  });
+
+  it("two spawns with two completions IS turn-end", () => {
+    expect(
+      trajectoryTurnEnded([spawned, spawned, spawnCompleted, spawnCompleted, summary]),
+    ).toBe(true);
+  });
+
+  it("is pure — same lines yield the same verdict", () => {
+    const lines = [spawned, summary, spawnCompleted];
+    expect(trajectoryTurnEnded(lines)).toBe(trajectoryTurnEnded(lines));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// directConversationFinished — the post-turn grace must measure SILENCE, not an
+// absolute clock from turn-end.
+//
+// A background completion's DELIVERY can trail its terminal record: measured live,
+// a turn ended correctly (spawned workers balanced) and the substantive answer
+// arrived after the fixed 120s window, so the drive reported the interim
+// acknowledgement as the answer. Raising the fixed bound trades against
+// answerless-turn latency; measuring from the last outbound instead keeps the
+// window open exactly while the runtime is still emitting, and closes promptly on
+// real silence.
+// ---------------------------------------------------------------------------
+
+describe("directConversationFinished — silence-based grace", () => {
+  it("still returns immediately once an answer is seen", () => {
+    expect(directConversationFinished({
+      sawAnswer: true, turnEnded: true, turnEndedAtMs: 0, nowMs: 1, deliveryGraceMs: 1000,
+    })).toBe(true);
+  });
+
+  it("is not finished before the grace elapses", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 500, deliveryGraceMs: 1000,
+    })).toBe(false);
+  });
+
+  it("finishes after the grace when nothing more arrives", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1000, deliveryGraceMs: 1000,
+    })).toBe(true);
+  });
+
+  it("EXTENDS the window when an outbound arrived after turn-end", () => {
+    // Turn ended at 0, grace 1000, now 1200 — the old absolute rule would finish.
+    // A card arrived at 900, so the runtime is still emitting: keep waiting.
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1200,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 900,
+    })).toBe(false);
+  });
+
+  it("finishes once the silence since the last outbound exceeds the grace", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1901,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 900,
+    })).toBe(true);
+  });
+
+  it("ignores an outbound that predates turn-end (no retro-extension)", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 1000, nowMs: 2000,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 200,
+    })).toBe(true);
+  });
+
+  it("is unchanged when lastOutboundAtMs is omitted (backward compatible)", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: true, turnEndedAtMs: 0, nowMs: 1000, deliveryGraceMs: 1000,
+    })).toBe(true);
+  });
+
+  it("never finishes while the turn has not ended", () => {
+    expect(directConversationFinished({
+      sawAnswer: false, turnEnded: false, turnEndedAtMs: undefined, nowMs: 99999,
+      deliveryGraceMs: 1000, lastOutboundAtMs: 1,
+    })).toBe(false);
   });
 });

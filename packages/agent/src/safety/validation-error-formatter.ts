@@ -32,6 +32,16 @@ const ERROR_LINE_RE = /^\s+-\s+(.+?):\s+(.+)$/;
 /** Matches AJV "must have required property 'NAME'" */
 const REQUIRED_RE = /^must have required property '([^']+)'$/;
 
+/**
+ * Matches the PLURAL, unquoted required-properties form (TypeBox), e.g.
+ * `must have required properties body` or `must have required properties from, to`.
+ *
+ * Unmatched, such a line passed through verbatim and rendered as the path followed by its own
+ * message — "`body` must have required properties body" — which names the missing field as its own
+ * requirement. Live: a model read exactly that and burned four calls guessing at the shape.
+ */
+const REQUIRED_PLURAL_RE = /^must have required propert(?:y|ies)\s+(.+)$/;
+
 /** Matches AJV type constraint: "must be string", "must be number", etc. */
 const TYPE_RE = /^must be (string|number|boolean|array|object|integer)$/;
 
@@ -98,6 +108,29 @@ function rewriteErrorMessage(
         ? displayPath
         : `${displayPath}.${propName}`;
     return `Required parameter \`${fullPath}\` is missing`;
+  }
+
+  // The plural/unquoted form. Handled AFTER the singular quoted rule so AJV's shape keeps its
+  // existing path arithmetic untouched.
+  const pluralMatch = REQUIRED_PLURAL_RE.exec(message);
+  if (pluralMatch) {
+    const names = pluralMatch[1]!
+      .split(",")
+      .map((n) => n.trim().replace(/^['"`]|['"`]$/g, ""))
+      .filter((n) => n.length > 0);
+    if (names.length > 0) {
+      // A container path qualifies the field so the caller knows WHERE it belongs; but when the
+      // path is already that field (or is the document root) qualifying it would produce
+      // "body.body", which is the tautology this rule exists to remove.
+      const container = displayPath === "root" || displayPath === "" ? "" : displayPath;
+      const qualified = names.map((name) => {
+        const full = container === "" || container === name ? name : `${container}.${name}`;
+        return `\`${full}\``;
+      });
+      return names.length === 1
+        ? `Required parameter ${qualified[0]!} is missing`
+        : `Required parameters ${qualified.join(", ")} are missing`;
+    }
   }
 
   // "must be {type}" -> "`path` expected {type}"

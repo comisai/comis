@@ -71,6 +71,7 @@ import type {
 import type { DeliveryDedup } from "./announce-key.js";
 import {
   classifyAbortReason,
+  isSubAgentAbortFinishReason,
   buildAnnouncementMessage,
   deliverAnnouncement,
   deliverFailureNotification,
@@ -81,6 +82,7 @@ import {
   type AbortClassification,
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
+import { buildHaltedAccount } from "./halted-account.js";
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
@@ -864,6 +866,22 @@ export interface SpawnParams {
 // ---------------------------------------------------------------------------
 // Spawn-time required_tools gate helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * ErrorKind for a sub-agent ABORT, derived from the authoritative finish-reason classifier.
+ *
+ * Hardcoding "resource" for every abort pointed triage at capacity exhaustion regardless of cause —
+ * a `prompt_timeout` is a `timeout`, a `circuit_open`/`provider_degraded` is a `dependency`, an
+ * `input_too_large` is `validation`. `finishReason` arrives as a plain string, so narrow it through
+ * the schema first (the same safeParse idiom this file already uses for the terminal kind).
+ * "resource" stays the fallback only for reasons the classifier has no opinion on.
+ */
+function abortErrorKind(finishReason: string): ErrorKind {
+  const parsed = AgentExecutionFinishReasonSchema.safeParse(finishReason);
+  return parsed.success
+    ? classifyAgentFinishErrorKind(parsed.data) ?? "resource"
+    : "resource";
+}
 
 /**
  * Classify a single required tool as "outside_profile" or "denylist".
@@ -3091,6 +3109,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }, "Sub-agent produced empty output");
         }
 
+        // Classified here (not only at the WARN further down) so the halt account can name the
+        // category and its hint. Classification must never block a completion path.
+        let abortClassification: AbortClassification | undefined;
+        if (isSubAgentAbortFinishReason(result.finishReason)) {
+          try {
+            abortClassification = classifyAbortReason(result.finishReason);
+          } catch { /* classification must never block */ }
+        }
+
         const runtimeMs = providerCompletedAt - run.startedAt;
         const completionClaimedByWait = activeWaitOwnsCompletionAnnouncement(
           runId,
@@ -3218,7 +3245,36 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        const completionSummary = condensedResult?.result.summary ?? result.response;
+        // A halted child returns only its final assistant text, so one killed before composing
+        // one hands the parent an empty string — indistinguishable from a sub-task that ran and
+        // found nothing. Live: a child completed a full ranking, a sibling call timed out, the
+        // retries were cut off, and the parent reported "no valid results" over that silence.
+        // Replace it with an account of the halt, built from facts already in hand.
+        const usableSummary = condensedResult?.result.summary ?? result.response;
+        const haltedWithoutOutput =
+          isSubAgentAbortFinishReason(result.finishReason)
+          && usableSummary.trim().length === 0;
+        const completionSummary = haltedWithoutOutput
+          ? buildHaltedAccount({
+            finishReason: result.finishReason,
+            stepsExecuted: result.stepsExecuted,
+            ...(abortClassification?.category === undefined
+              ? {}
+              : { category: abortClassification.category }),
+            ...(abortClassification?.hint === undefined
+              ? {}
+              : { hint: abortClassification.hint }),
+          })
+          : usableSummary;
+        if (haltedWithoutOutput) {
+          deps.logger?.warn({
+            runId, agentId: params.agentId,
+            finishReason: result.finishReason,
+            stepsExecuted: result.stepsExecuted,
+            errorKind: abortErrorKind(result.finishReason),
+            hint: "Sub-agent was halted before writing a result; the parent receives an explicit halt account instead of an empty summary it would read as 'found nothing'",
+          }, "Sub-agent halted with no output; substituting a halt account");
+        }
         const telemetry: SubAgentRunTelemetry = {
           tokensUsedTotal: result.tokensUsed.total,
           costTotal: result.cost.total,
@@ -3256,13 +3312,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
-        // Classify abort if finishReason is abnormal (not stop/end_turn)
-        let abortClassification: AbortClassification | undefined;
-        if (result.finishReason !== "stop" && result.finishReason !== "end_turn") {
-          try {
-            abortClassification = classifyAbortReason(result.finishReason);
-          } catch { /* classification must never block */ }
-        }
+        // Classified once, above, where the halt account also needs it — never recomputed, so the
+        // WARN and the parent-facing account cannot disagree about why a run was halted.
 
         // WARN log for abort events
         if (abortClassification) {
@@ -3271,7 +3322,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             abortReason: abortClassification.category,
             abortSeverity: abortClassification.severity,
             hint: abortClassification.hint,
-            errorKind: "resource" as const,
+            // Derive the kind from the AUTHORITATIVE classifier rather than hardcoding "resource"
+            // for every abort: a `prompt_timeout` is a `timeout`, a `circuit_open`/`provider_degraded`
+            // is a `dependency`, an `input_too_large` is `validation`. Labelling all of them
+            // "resource" points triage at capacity exhaustion — and this runner already consults the
+            // same classifier elsewhere, so the abort path was the outlier. `?? "resource"` preserves
+            // the previous label only for reasons the classifier has no opinion on.
+            // `result.finishReason` is a plain string here, so narrow it through the schema before
+            // classifying — the same safeParse idiom this file already uses for the terminal kind.
+            errorKind: abortErrorKind(result.finishReason),
             finishReason: result.finishReason,
             // Include error context when available for root-cause investigation
             ...(result.errorContext?.errorType && { errorType: result.errorContext.errorType }),

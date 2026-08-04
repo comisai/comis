@@ -610,9 +610,13 @@ describe("McpClientManager", () => {
         { name: "search", arguments: { query: "test" } },
         undefined,
         {
-          timeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
-          maxTotalTimeout: MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT,
-                  onprogress: expect.any(Function),
+          // Both budgets are the deadline MINUS the reconnect + queue wait already spent
+          // (a millisecond or two here), so they are asserted as a tight band rather than
+          // the literal. The band still catches the drift this test exists for: a client
+          // falling back to 60_000 lands far outside it.
+          timeout: expect.closeTo(MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT, -3),
+          maxTotalTimeout: expect.closeTo(MCP_CALL_TOOL_TIMEOUT_MS_DEFAULT, -3),
+          onprogress: expect.any(Function),
           resetTimeoutOnProgress: true,
         },
       );

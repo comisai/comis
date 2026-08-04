@@ -95,3 +95,44 @@ describe("toolFailureHint", () => {
     expect(hint.toLowerCase()).not.toContain("wait for a running sub-agent");
   });
 });
+
+// ---------------------------------------------------------------------------
+// errorKind-aware validation hint.
+//
+// The validation advice ("inspect argsPreview ... correct the rejected fields")
+// sat behind `isMcpValidationError`, an MCP-TRANSPORT-specific matcher. A platform
+// tool whose arguments were rejected therefore fell through to the generic
+// bracketed-code branch and got "check the policy or configuration for
+// \"invalid_value\"" — which interpolates a failure-CLASS code into the slot where
+// a config key or rejected field belongs. There is no "policy or configuration for
+// invalid_value" to check.
+//
+// The classifier already knows: the same failure carried errorKind "validation" on
+// the very log line beside the hint. The hint builder took only the error text and
+// re-derived the class from prose. Same root shape as the MCP pre-flight
+// misclassification fixed earlier: the class is known, the consumer recomputes it.
+// ---------------------------------------------------------------------------
+
+describe("toolFailureHint — errorKind-aware validation", () => {
+  it("a validation errorKind selects the field-level advice even for a non-MCP tool", () => {
+    const hint = toolFailureHint("[invalid_value] gateway rejected the request", "validation");
+    expect(hint).toContain("argsPreview");
+    expect(hint).not.toContain("policy or configuration for");
+  });
+
+  it("without an errorKind the generic bracketed-code hint is unchanged", () => {
+    const hint = toolFailureHint("[invalid_value] gateway rejected the request");
+    expect(hint).toContain("invalid_value");
+  });
+
+  it("a non-validation errorKind does not hijack the specific branches", () => {
+    const hint = toolFailureHint("[tool_denied] blocked by policy", "precondition");
+    expect(hint).toContain("tool_denied");
+    expect(hint).not.toContain("argsPreview");
+  });
+
+  it("a runtime-guard hint still wins over the errorKind branch", () => {
+    const hint = toolFailureHint("step limit reached, blocking tool execution", "validation");
+    expect(hint).toMatch(/max_steps|step budget/i);
+  });
+});

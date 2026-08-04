@@ -174,6 +174,16 @@ The tool is conversation-scoped rather than admin-gated. Every action requires
 an active request context matching both the owning agent and the exact
 originating conversation; tasks owned by another conversation are not exposed.
 
+**Pending approvals are reported beside status.** A task whose tool call is waiting at an approval
+gate is genuinely `running` — its execution is alive, holding on the gate — so status alone cannot
+separate "working" from "waiting for a human", and those need opposite actions from the user
+("wait" versus "approve, or nothing happens"). When this conversation has pending approvals,
+`list`, `get`, and `read_output` report them alongside the task, naming each short id and what it
+authorizes. `read_output` returns that immediately instead of waiting out its heartbeat, since the
+work cannot progress until someone acts. The approvals are read from the gate at query time and
+scoped by conversation, so the answer cannot go stale and never leaks another conversation's
+requests. With approvals disabled there are none by construction and reporting is unchanged.
+
 ## mcp_manage -- MCP Server Lifecycle
 
 The `mcp_manage` tool controls connections to external Model Context Protocol (MCP) servers. It is also referenced in the [Supervisor](#supervisor-tools) section below; conceptually it sits in both buckets because MCP servers are infrastructure (the daemon's external tool surface) but management is admin-trust gated.

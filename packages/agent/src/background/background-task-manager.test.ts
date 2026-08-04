@@ -694,7 +694,11 @@ describe("BackgroundTaskManager", () => {
       const waiting = controlledManager.waitForTask(promoted.value, vi.fn(), 100);
       hardTimeout?.();
       const result = await waiting;
-      expect(result).toMatchObject({ ok: true, value: { status: "failed", error: "Hard timeout exceeded" } });
+      expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
+      // The message must name the knob that expired and the tool that was running: a bare
+      // "Hard timeout exceeded" left a reader with nothing to change (see hard-timeout-hint.ts).
+      const failure = result.ok ? result.value.error ?? "" : "";
+      expect(failure).toContain("maxBackgroundDurationMs");
       expect(cancelHeartbeat).toHaveBeenCalledOnce();
     });
   });
@@ -817,7 +821,7 @@ describe("BackgroundTaskManager", () => {
 
         const task = manager.getTask(result.value);
         expect(task!.status).toBe("failed");
-        expect(task!.error).toContain("Hard timeout exceeded");
+        expect(task!.error).toContain("maxBackgroundDurationMs");
         expect(task!.errorKind).toBe("timeout");
         expect(ac.signal.aborted).toBe(true);
       } finally {

@@ -332,9 +332,61 @@ export function directConversationFinished({
   turnEndedAtMs,
   nowMs,
   deliveryGraceMs,
+  lastOutboundAtMs,
 }) {
   if (!turnEnded) return false;
   if (sawAnswer) return true;
-  return typeof turnEndedAtMs === "number"
-    && nowMs - turnEndedAtMs >= deliveryGraceMs;
+  if (typeof turnEndedAtMs !== "number") return false;
+  // The grace measures SILENCE, not an absolute span from turn-end. A background completion's
+  // DELIVERY can trail its terminal record: measured live, a turn ended correctly (its spawned
+  // workers balanced) and the substantive answer landed after the fixed window, so the drive
+  // reported the interim acknowledgement as the answer. Raising the fixed bound only trades against
+  // answerless-turn latency; anchoring on the last outbound keeps the window open exactly while the
+  // runtime is still emitting and closes promptly on real silence.
+  //
+  // An outbound that PREDATES turn-end must not extend anything (no retro-extension), so the anchor
+  // is the later of the two. Omitting `lastOutboundAtMs` preserves the original behaviour.
+  const anchorMs = typeof lastOutboundAtMs === "number" && lastOutboundAtMs > turnEndedAtMs
+    ? lastOutboundAtMs
+    : turnEndedAtMs;
+  return nowMs - anchorMs >= deliveryGraceMs;
+}
+
+/**
+ * Has the driven turn actually ENDED, given the trajectory lines appended since the drive began?
+ *
+ * A terminal record alone is not turn-end: a turn can hand work OFF and finish, and both hand-off
+ * paths were observed live on heavy questions.
+ *   1. **background task** — the parent's own `session.summary` record carries
+ *      `finishReason:"background_pending"` (same line; verified in live trajectories).
+ *   2. **sub-agent spawn** — the parent turn finishes cleanly (`endReason:"success"`) while a
+ *      spawned worker keeps running; the trajectory tracks `subagent.spawned` /
+ *      `subagent.completed`, so an unmatched spawn means the answer does not exist yet.
+ *
+ * Why it matters: the interim "I'm running it now, I'll report back" prose is NOT a progress card,
+ * so it satisfies `sawAnswer` and the post-turn grace exits immediately. Across a 15-question heavy
+ * run every real answer landed 30–384 s after that point, and the two best answers were reported as
+ * content-free. PURE: same lines → same verdict.
+ *
+ * @param lines Trajectory JSONL lines appended since the drive's baseline.
+ * @returns true only when a clean terminal record exists AND no spawned worker is outstanding.
+ */
+export function trajectoryTurnEnded(lines) {
+  let spawned = 0;
+  let completed = 0;
+  let terminal = false;
+  for (const line of lines) {
+    if (line.includes('"type":"subagent.spawned"')) spawned += 1;
+    else if (
+      line.includes('"type":"subagent.completed"')
+      || line.includes('"type":"subagent.killed"')
+    ) completed += 1;
+    else if (
+      line.includes('"type":"session.summary"')
+      || line.includes('"type":"execution.aborted"')
+    ) {
+      if (!line.includes('"finishReason":"background_pending"')) terminal = true;
+    }
+  }
+  return terminal && spawned <= completed;
 }

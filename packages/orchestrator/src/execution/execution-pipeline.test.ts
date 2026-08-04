@@ -2696,3 +2696,177 @@ describe("queue abort and rejection classification truthfulness", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Out-of-order reply anchoring
+// ---------------------------------------------------------------------------
+
+/**
+ * A DM reply is normally unanchored because it obviously answers the last message — true only
+ * while replies arrive in request order. A turn held at an approval gate breaks exactly that: it
+ * can sit for the whole approval timeout, then deliver its outcome AFTER a later turn has already
+ * answered. Live: one DM received "the pipeline is running" → "the pipeline did NOT run, the
+ * approval expired" → a full report with real per-node results. The middle line was true of an
+ * earlier attempt; ground truth confirms the pipeline being reported on had completed. Read in
+ * order, the user is told the work both did and did not happen.
+ */
+describe("executeAndDeliver — out-of-order reply anchoring", () => {
+  function telegramRegistry() {
+    return {
+      getCapabilities: vi.fn(() => ({
+        features: { reactions: false, editMessages: false, deleteMessages: false, fetchHistory: false, attachments: true, typing: false, threads: false, buttons: "none" as const },
+        limits: { maxMessageChars: 4096 },
+        replyToMetaKey: "telegramMessageId",
+      })),
+    } as unknown as ExecutionPipelineDeps["channelRegistry"];
+  }
+
+  it("leaves an in-order DM reply unanchored", async () => {
+    const adapter = makeAdapter();
+    const deps = makeDeps({ channelRegistry: telegramRegistry() });
+    const msg = makeMessage({ chatType: "dm" });
+
+    await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, adapter, msg, msg, makeExecutor(), makeSessionKey(), "agent-1",
+      makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+
+    const calls = vi.mocked(adapter.sendMessage).mock.calls;
+    expect((calls[0]?.[2] as Record<string, unknown> | undefined)?.replyTo).toBeUndefined();
+  });
+
+  it("anchors a DM reply that a later turn in the same session has overtaken", async () => {
+    const adapter = makeAdapter();
+    const deps = makeDeps({ channelRegistry: telegramRegistry() });
+    const sessionKey = makeSessionKey();
+    const first = makeMessage({ chatType: "dm", metadata: { telegramMessageId: 42 } });
+    const second = makeMessage({ chatType: "dm", metadata: { telegramMessageId: 43 } });
+
+    // The first turn stalls (as one held at an approval gate does) until the second has run.
+    let releaseFirst: (() => void) | undefined;
+    const gate = new Promise<void>((r) => { releaseFirst = r; });
+    const stalling = makeExecutor();
+    let executions = 0;
+    vi.mocked(stalling.execute).mockImplementation(async () => {
+      executions += 1;
+      if (executions === 1) await gate;
+      return {
+        response: "Agent response text",
+        sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.001 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop" as const,
+      };
+    });
+
+    const firstTurn = runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, adapter, first, first, stalling, sessionKey, "agent-1",
+      makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+    await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, adapter, second, second, stalling, sessionKey, "agent-1",
+      makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+    releaseFirst?.();
+    await firstTurn;
+
+    // The overtaken turn's reply must quote message 42 — the request it actually answers — so the
+    // two statements cannot be read as describing the same attempt.
+    const anchored = vi.mocked(adapter.sendMessage).mock.calls
+      .map((c) => (c[2] as Record<string, unknown> | undefined)?.replyTo)
+      .filter((v) => v !== undefined);
+    expect(anchored).toContain("42");
+    expect(anchored).not.toContain("43");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Delivery origin for a background hand-off
+// ---------------------------------------------------------------------------
+
+/**
+ * The delivery origin was derived from the execution lifecycle alone: `success` → "agent",
+ * everything else → the runtime-failure origin. A `background_pending` hand-off is not `success`,
+ * so the ordinary "work continues in the background" acknowledgement was dispatched as
+ * `agent-runtime-failure` — with nothing having failed.
+ *
+ * That is not cosmetic. The delivery mirror explicitly skips runtime-failure deliveries, so these
+ * acknowledgements were silently excluded from it.
+ *
+ * The pipeline already encodes the correct reading 140 lines earlier, where the coordinator outcome
+ * treats `background_pending` as "non-terminal UI state, not a failed activity". This makes the
+ * origin agree with that, rather than two branches disagreeing about the same fact.
+ */
+describe("executeAndDeliver — delivery origin", () => {
+  function backgroundPendingExecutor(): AgentExecutor {
+    const executor = makeExecutor();
+    vi.mocked(executor.execute).mockResolvedValue({
+      response: "Work continues in the background.",
+      sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+      tokensUsed: { input: 10, output: 5, total: 15 },
+      cost: { total: 0.001 },
+      stepsExecuted: 1,
+      llmCalls: 1,
+      finishReason: "background_pending" as never,
+    } as never);
+    return executor;
+  }
+
+  /** Capture the `origin` each block is delivered with — the field the mirror actually reads. */
+  function capturingDelivery(): { service: DeliveryService; origins: () => unknown[] } {
+    const seen: unknown[] = [];
+    const service = {
+      deliverToChannel: vi.fn(async (_a: unknown, _c: unknown, _t: unknown, opts: unknown) => {
+        seen.push((opts as Record<string, unknown> | undefined)?.origin);
+        return {
+          platformDelivery: {
+            status: "accepted" as const, deliveredChunks: 1 as const, failedChunks: 0,
+            settledAtMs: 2_000, lastChunkMessageId: "m-1",
+          },
+          queueDisposition: "settled" as const,
+        };
+      }),
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+    } as unknown as DeliveryService;
+    return { service, origins: () => seen };
+  }
+
+  it("does not label a background hand-off as a runtime failure", async () => {
+    const delivery = capturingDelivery();
+    const deps = makeDeps({ deliveryService: delivery.service });
+
+    await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, makeAdapter(), makeMessage(), makeMessage(), backgroundPendingExecutor(),
+      makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+
+    expect(delivery.origins().length).toBeGreaterThan(0);
+    expect(delivery.origins()).not.toContain("agent-runtime-failure");
+  });
+
+  it("still labels a genuine runtime failure as one", async () => {
+    const delivery = capturingDelivery();
+    const failing = makeExecutor();
+    vi.mocked(failing.execute).mockResolvedValue({
+      response: "Something went wrong.",
+      sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+      tokensUsed: { input: 10, output: 5, total: 15 },
+      cost: { total: 0.001 },
+      stepsExecuted: 1,
+      llmCalls: 1,
+      finishReason: "error" as never,
+    } as never);
+    const deps = makeDeps({ deliveryService: delivery.service });
+
+    await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+      deps, makeAdapter(), makeMessage(), makeMessage(), failing,
+      makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+    ));
+
+    // The guard that matters: narrowing the failure origin must not stop labelling REAL failures,
+    // or the delivery mirror would start carrying them.
+    expect(delivery.origins()).toContain("agent-runtime-failure");
+  });
+});

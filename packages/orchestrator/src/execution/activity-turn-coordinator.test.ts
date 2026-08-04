@@ -1444,3 +1444,182 @@ describe("a delivered answer never renders a failure pill (F-ACT-1 layer 4)", ()
     coord.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Card locale projection
+// ---------------------------------------------------------------------------
+
+/**
+ * `ActivityEvent.defaultLabel` is the schema's declared ENGLISH advisory label, composed in
+ * `@comis/observability`, and the shared render strategy every themable channel uses reads it
+ * verbatim. So under a configured non-English `language` the approval card a user must tap
+ * rendered in English inside an otherwise non-English conversation — observed live, where the
+ * model's own answers were correct but the prompt the user had to act on was unreadable to them.
+ *
+ * The coordinator is the only layer holding both a resolved locale and the renderer, so it does
+ * the projection the schema tells themable renderers to do. These tests pin that the localized
+ * text reaches the painted frame, and that a deployment without the dep is untouched.
+ */
+describe("createActivityTurnCoordinator — card locale projection", () => {
+  it("paints the localized label instead of the emitted English one", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      localizeCardLabel: (e) =>
+        e.kind === "approval" ? `נדרש אישור: ${e.toolName ?? ""}` : undefined,
+    });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({
+      kind: "approval",
+      toolName: "pipeline",
+      defaultLabel: "approval required: pipeline graph.execute",
+    }));
+    timer.advance(800);
+
+    const painted = renderer.applyFrames.at(-1)?.visibleEvents ?? [];
+    expect(painted.map((e) => e.defaultLabel)).toContain("נדרש אישור: pipeline");
+    // The English original must be gone, not merely accompanied.
+    expect(painted.map((e) => e.defaultLabel)).not.toContain(
+      "approval required: pipeline graph.execute",
+    );
+
+    coord.dispose();
+  });
+
+  it("leaves events untouched when the projection declines them", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      // A non-card event: the projection returns undefined and the label must survive intact.
+      localizeCardLabel: () => undefined,
+    });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ kind: "tool", defaultLabel: "web_fetch" }));
+    timer.advance(800);
+
+    expect((renderer.applyFrames.at(-1)?.visibleEvents ?? []).map((e) => e.defaultLabel))
+      .toContain("web_fetch");
+
+    coord.dispose();
+  });
+
+  it("is a no-op when no projection is wired", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ kind: "approval", defaultLabel: "approval required: pipeline" }));
+    timer.advance(800);
+
+    // Shipped default: with no operator pack and no dep, the card is byte-identical to today.
+    expect((renderer.applyFrames.at(-1)?.visibleEvents ?? []).map((e) => e.defaultLabel))
+      .toContain("approval required: pipeline");
+
+    coord.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A card must not claim done over work that is still running
+// ---------------------------------------------------------------------------
+
+/**
+ * `✓ done` tracked the PARENT TURN, not the work the card was created to represent. When a turn
+ * delivers successfully while a sub-agent it spawned is still running, the success outcome paints
+ * the card done and deletes it.
+ *
+ * Live: on one question the sub-agent card was edited to `✓ done` and deleted at 19:00:07, while
+ * that sub-agent actually ran until 19:02:34 and delivered at 19:03:03 — nearly three minutes
+ * later. A user watching the card would conclude the task had finished and produced nothing.
+ *
+ * The coordinator already holds the evidence: `subAgentStack` is pushed on a sub-agent's
+ * `phase:"start"` and popped on its `phase:"end"`, and the coordinator is its documented single
+ * owner. A non-empty stack at finalize means spawned work never ended, so the turn is not done —
+ * which is the same invariant the live harness needed ("do not call turn-end while work is
+ * outstanding"), applied to the product surface.
+ */
+describe("createActivityTurnCoordinator — done requires spawned work to have ended", () => {
+  function subAgentStart(): ActivityEvent {
+    return makeEvent({
+      kind: "subagent",
+      phase: "start",
+      status: "running",
+      activityId: "sub-1",
+      defaultLabel: "subagent",
+    });
+  }
+
+  it("does not finalize as success while a spawned sub-agent has not ended", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(subAgentStart());
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    const outcome = renderer.finalizeCalls.at(-1)?.outcome;
+    expect(outcome?.kind).not.toBe("success");
+    expect(outcome).toEqual({ kind: "silent", reason: "BACKGROUND_PENDING" });
+
+    coord.dispose();
+  });
+
+  it("finalizes as success once the spawned sub-agent has ended", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(subAgentStart());
+    stream.emit(makeEvent({
+      kind: "subagent",
+      phase: "end",
+      status: "completed",
+      activityId: "sub-1",
+      defaultLabel: "subagent",
+    }));
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    // The guard: the fix must not suppress `done` on a turn whose spawned work genuinely finished,
+    // or every card with a sub-agent would stop reporting completion.
+    expect(renderer.finalizeCalls.at(-1)?.outcome.kind).toBe("success");
+
+    coord.dispose();
+  });
+
+  it("leaves a turn with no spawned work reporting success", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent({ kind: "tool", defaultLabel: "web_fetch" }));
+    timer.advance(800);
+    await coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_000) });
+
+    expect(renderer.finalizeCalls.at(-1)?.outcome.kind).toBe("success");
+
+    coord.dispose();
+  });
+
+  it("leaves an explicit failure outcome untouched even with spawned work outstanding", async () => {
+    const clock = createFakeClock(2_000);
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(subAgentStart());
+    timer.advance(800);
+    await coord.finalize({ kind: "aborted", reason: "timeout" });
+
+    // Only the "done" claim is unsafe; a failure/abort must keep its diagnostic trail.
+    expect(renderer.finalizeCalls.at(-1)?.outcome.kind).toBe("aborted");
+
+    coord.dispose();
+  });
+});

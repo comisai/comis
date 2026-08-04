@@ -49,7 +49,8 @@ import {
 } from "./execution-deliver.js";
 import { emitObservationalEvent } from "./execution-event-emitter.js";
 import { createMediaDeliveryFailureReceipt } from "./execution-media-receipt.js";
-import { runExecutionPolicy } from "./execution-policy.js";
+import { runExecutionPolicy, resolveReplyAnchor } from "./execution-policy.js";
+import { turnOrderTracker } from "./turn-order-tracker.js";
 import { mapAbortToTurnOutcome, withDeliveredEvidence } from "./turn-outcome-mapper.js";
 import {
   classifyExecutionAbortReason,
@@ -167,6 +168,10 @@ export async function executeAndDeliver(
 ): Promise<void> {
   // Track lifecycle timing for diagnostic:message_processed event
   const executionEnteredAt = systemNowMs();
+  // Claim this turn's place in its session's order. Read back at delivery: a turn released by an
+  // expired approval gate can deliver AFTER a later turn has already answered, and an unanchored
+  // reply then reads as though it described the work the user is currently looking at.
+  const turnSeq = turnOrderTracker.noteTurnStarted(formatSessionKey(sessionKey));
   const receivedAt =
     ingressReceivedAt !== undefined &&
     Number.isSafeInteger(ingressReceivedAt) &&
@@ -606,12 +611,34 @@ export async function executeAndDeliver(
     const deliverySignal = queueSignal === undefined
       ? execResult.deliverySignal
       : AbortSignal.any([execResult.deliverySignal, queueSignal]);
+    // Anchor an OUT-OF-ORDER reply to the message it answers, even in a DM. The usual rule skips
+    // anchoring in a 1:1 chat because a reply there obviously answers the last message — true only
+    // while replies arrive in request order. A turn held at an approval gate breaks exactly that:
+    // it delivers its outcome after a newer turn has answered, and the user reads a terminal
+    // notice about an earlier attempt as a statement about the current one. Live: "running" →
+    // "did NOT run, approval expired" → a full report, in one DM, describing two different
+    // attempts. Anchoring only in this case keeps ordinary DM replies unquoted.
+    const deliveryReplyTo = replyTo
+      ?? (turnOrderTracker.isSuperseded(formatSessionKey(sessionKey), turnSeq)
+        ? resolveReplyAnchor(
+          originalMsg,
+          deps.channelRegistry?.getCapabilities(adapter.channelType)?.replyToMetaKey,
+        )
+        : undefined);
     const strictDeliveryOutcome = await deliverExecutionResponse(
       deps, adapter, effectiveMsg, filterResult.text,
-      blockStreamCfg, activePacers, replyTo,
+      blockStreamCfg, activePacers, deliveryReplyTo,
       deliverySignal, typingLifecycle,
       undefined,
+      // A background hand-off is NOT a runtime failure. Deriving the origin from the lifecycle
+      // alone tagged the ordinary "work continues in the background" acknowledgement as
+      // `agent-runtime-failure` with nothing having failed — and that is not cosmetic: the delivery
+      // mirror skips runtime-failure deliveries, so those acknowledgements were silently excluded
+      // from it. The coordinator-outcome branch above already treats `background_pending` as
+      // non-terminal UI state rather than a failed activity; this makes the origin agree instead of
+      // two branches disagreeing about the same fact.
       readExecutionLifecycle().status === "success"
+        || execResult.finishReason === "background_pending"
         ? "agent"
         : RUNTIME_FAILURE_DELIVERY_ORIGIN,
     );

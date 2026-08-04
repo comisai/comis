@@ -55,6 +55,41 @@ export type { AbortClassification, ValidationResult } from "./sub-agent-announce
 // ---------------------------------------------------------------------------
 
 /**
+ * Is this finish reason an ABORT, or a completion/hand-off that merely isn't `stop`?
+ *
+ * The runner previously classified an abort whenever `finishReason` was neither `stop` nor
+ * `end_turn`. Two legitimate outcomes fail that test and were therefore reported as aborts:
+ *
+ * - `completed_with_tool_errors` — a first-class **completed** outcome. `SystemHealthReport`
+ *   documents it as *degraded-but-finished* ("Of `degraded`, how many finished
+ *   `completed_with_tool_errors`"), and `classifyAgentFinishErrorKind` maps it to
+ *   `undefined` — i.e. no error at all.
+ * - `background_pending` — the turn handed work off and finished; the work continues.
+ *
+ * Live consequence of getting this wrong: a fully-grounded report reached the user stamped
+ * `⚠️ This background task failed`, while the operator saw `errorKind: "resource"` — a
+ * capacity-shaped verdict — for a turn that had no resource problem. It affected 12 turns in a
+ * single window.
+ *
+ * Unknown reasons are treated as aborts (fail-closed): a new terminal state should surface for
+ * investigation rather than pass silently as a success.
+ *
+ * @param finishReason The `finishReason` from the execution result.
+ * @returns true when the reason represents an actual abort worth classifying.
+ */
+export function isSubAgentAbortFinishReason(finishReason: string): boolean {
+  switch (finishReason) {
+    case "stop":
+    case "end_turn":
+    case "completed_with_tool_errors":
+    case "background_pending":
+      return false;
+    default:
+      return true;
+  }
+}
+
+/**
  * Classify a sub-agent abort reason from finishReason and optional error context.
  * Maps 7 possible finishReason values to 5 abort categories with remediation
  * hints and severity levels. Normal completions (stop, end_turn) are not

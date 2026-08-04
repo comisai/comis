@@ -170,6 +170,19 @@ export interface ActivityTurnCoordinatorDeps {
   activityStreamPort: ActivityStreamPort;
   renderer: ChannelActivityRenderer;
   projection: ActivityProjection;
+  /**
+   * Optional locale projection for a card's `defaultLabel`.
+   *
+   * `defaultLabel` is the event schema's declared ENGLISH advisory label, composed in
+   * `@comis/observability` — a package with no locale knowledge, and none to acquire. The shared
+   * render strategy every themable channel uses reads it verbatim, so under a configured
+   * non-English `language` an approval card the user has to act on rendered in English inside an
+   * otherwise non-English conversation. The coordinator is the one layer holding both a resolved
+   * locale and the renderer, so the projection the schema tells themable renderers to do happens
+   * here. Returning `undefined` leaves the event exactly as emitted; omitting the dep is today's
+   * behaviour.
+   */
+  localizeCardLabel?: (event: ActivityEvent) => string | undefined;
   timer: TimerPort;
   clock: ClockPort;
   logger: ComisLogger;
@@ -474,9 +487,25 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   function onEvent(e: ActivityEvent): void {
-    events.push(annotateSubAgentParent(e));
+    events.push(localizeCard(annotateSubAgentParent(e)));
     if (e.status === "failed") sawFailedEvent = true;
     scheduleApply();
+  }
+
+  /**
+   * Swap in a locale-projected card label.
+   *
+   * Applied on the way INTO the buffer, not at paint time, so coalescing and the frame diff both
+   * operate on the text that will actually be shown — localizing after projection would leave the
+   * changeSet comparing labels the user never saw.
+   */
+  function localizeCard(e: ActivityEvent): ActivityEvent {
+    if (deps.localizeCardLabel === undefined) return e;
+    const localized = deps.localizeCardLabel(e);
+    // Identical text is not worth a new object: the frame diff compares by value, and a copy per
+    // event would churn the buffer for every non-card event.
+    if (localized === undefined || localized === e.defaultLabel) return e;
+    return { ...e, defaultLabel: localized };
   }
 
   /**
@@ -573,6 +602,25 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
           recoveredFailures: failedEvents,
         };
       }
+    }
+
+    // (1b) A turn is not DONE while work the card represents is still running. `✓ done` tracked
+    // the parent turn, so a turn that delivered while a sub-agent it spawned kept running painted
+    // the card done and deleted it — live, ~3 minutes before that sub-agent actually finished and
+    // delivered, leaving a watcher to conclude the task had ended with no answer. `subAgentStack`
+    // is pushed on a sub-agent's phase:"start" and popped on its phase:"end", and this coordinator
+    // is its single owner, so a non-empty stack here is exactly "spawned work never ended".
+    //
+    // Reclassified to the pending-background silent path: the card is cleaned up without claiming
+    // completion, which is what that reason already means elsewhere. Only the "done" claim is
+    // unsafe — failure and aborted outcomes keep their diagnostic trail untouched.
+    if (effective.kind === "success" && subAgentStack.length > 0) {
+      deps.logger.debug({
+        step: "activity-finalize",
+        outstandingSubAgents: subAgentStack.length,
+        hint: "turn delivered while spawned sub-agent work was still running; finalizing without a done claim so the card cannot report completion over live work",
+      }, "Suppressed a done claim while spawned work was outstanding");
+      effective = { kind: "silent", reason: "BACKGROUND_PENDING" };
     }
 
     // The coordinator's stream is the authoritative activity timeline for the

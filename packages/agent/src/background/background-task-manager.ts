@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
+import { hardTimeoutHint } from "./hard-timeout-hint.js";
+import { backgroundFailureCause } from "./background-failure-cause.js";
+import {
+  classifyBackgroundTaskFailure,
+  projectBackgroundCompletionResult,
+} from "./background-terminal-classify.js";
 import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import {
   BackgroundTaskOriginSchema,
@@ -12,7 +18,6 @@ import {
   type TimerHandle,
   type TimerPort,
   type ErrorKind,
-  type BackgroundTaskFailureCode,
 } from "@comis/core";
 import {
   persistTaskAtomically,
@@ -130,63 +135,6 @@ export interface BackgroundTaskManager {
 }
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
-const SKILL_IMPORT_INCOMPLETE_PREFIX = "Skill import is incomplete:";
-const MCP_CONNECT_MISSING_PARAM_PREFIX = '[missing_param] mcp_manage(action="connect")';
-const MCP_SECRET_REFERENCE_MISSING_PREFIX = '[invalid_value] enabled MCP server "';
-
-function classifyBackgroundTaskFailure(
-  toolName: string,
-  error: unknown,
-): BackgroundTaskFailureCode | undefined {
-  const message = error instanceof Error ? error.message : String(error);
-  if (toolName === "skills_manage" && message.startsWith(SKILL_IMPORT_INCOMPLETE_PREFIX)) {
-    return "skill_import_incomplete";
-  }
-  if (
-    toolName === "mcp_manage"
-    && message.startsWith(MCP_CONNECT_MISSING_PARAM_PREFIX)
-    && message.includes("command or url")
-  ) {
-    return "mcp_connection_details_missing";
-  }
-  if (
-    toolName === "mcp_manage"
-    && message.startsWith(MCP_SECRET_REFERENCE_MISSING_PREFIX)
-    && message.includes(" references ")
-    && message.includes(" which is not in the secrets store")
-  ) {
-    return "mcp_secret_reference_missing";
-  }
-  return undefined;
-}
-
-function projectBackgroundCompletionResult(
-  serializedResult: string | undefined,
-): {
-  resultOutcome?: "success" | "degraded";
-  persistence?: "persisted" | "runtime_only" | "skipped";
-  errorKind?: ErrorKind;
-  failureCode?: Extract<BackgroundTaskFailureCode, "mutation_not_persisted">;
-} {
-  if (serializedResult === undefined) return {};
-  const parsed = tryCatch(() => JSON.parse(serializedResult) as unknown);
-  if (!parsed.ok || parsed.value === null || typeof parsed.value !== "object") return {};
-  const details = (parsed.value as Record<string, unknown>).details;
-  if (details === null || typeof details !== "object" || Array.isArray(details)) return {};
-  const persistence = (details as Record<string, unknown>).persistence;
-  if (persistence === "persisted") {
-    return { resultOutcome: "success", persistence };
-  }
-  if (persistence === "runtime_only" || persistence === "skipped") {
-    return {
-      resultOutcome: "degraded",
-      persistence,
-      errorKind: "config",
-      failureCode: "mutation_not_persisted",
-    };
-  }
-  return {};
-}
 
 export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): BackgroundTaskManager {
   const {
@@ -442,12 +390,20 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         },
       });
 
+      const hardLimitMs = resolveMaxBackgroundDurationMs(agentId);
       const timer = timers.setTimeout(() => {
         if (task.status === "running") {
           ac.abort();
-          manager.fail(taskId, new Error("Hard timeout exceeded"), "timeout");
+          // A bare "Hard timeout exceeded" named neither the knob, the value, nor the tool, so a
+          // reader had nothing to change. Name all three, per the same discipline the stall hint
+          // beside it already follows.
+          manager.fail(
+            taskId,
+            new Error(hardTimeoutHint({ toolName, agentId, limitMs: hardLimitMs })),
+            "timeout",
+          );
         }
-      }, resolveMaxBackgroundDurationMs(agentId));
+      }, hardLimitMs);
       timer.unref();
       task._hardTimeoutTimer = timer;
 
@@ -514,6 +470,26 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
       const durationMs = terminal.completedAt - task.startedAt;
+      // WHY it failed, greppable. The event carries the raw error, but the trajectory record is
+      // typed-fields-only by design and this path logged nothing at all — so the actual upstream
+      // cause survived solely inside the persisted task JSON, behind the external-content banner.
+      // Live: `PageSize must be between 1 and 1000. You entered 2000` returned ZERO hits when
+      // grepped over the daemon log. The excerpt is banner-stripped, single-lined, secret-scrubbed
+      // and capped, because the text is untrusted tool output.
+      const cause = backgroundFailureCause(error);
+      logger.warn(
+        {
+          taskId,
+          toolName: task.toolName,
+          agentId: task.origin.turnScope.conversation.agentId,
+          errorKind: terminal.errorKind ?? errorKind,
+          durationMs,
+          ...(terminal.failureCode === undefined ? {} : { failureCode: terminal.failureCode }),
+          ...(cause === undefined ? {} : { cause }),
+          hint: "background task failed; `cause` is a bounded, sanitized excerpt of the upstream error (untrusted tool output) so the reason is greppable without opening the persisted task JSON",
+        },
+        "Background task failed",
+      );
       emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
         agentId: task.origin.turnScope.conversation.agentId,
         taskId,

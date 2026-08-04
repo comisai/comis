@@ -267,3 +267,64 @@ describe("transport-tier locale is advisory, never enforced", () => {
     })).toEqual({ locale: "und-Hebr", source: "request", enforceLocale: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Script fused INSIDE a word
+// ---------------------------------------------------------------------------
+
+/**
+ * The foreign-script check requires a minimum SHARE (15%) and a minimum unit COUNT (8). Both are
+ * right for bulk foreign text, and both are structurally blind to a few characters fused into a
+ * single token: three foreign letters inside a long reply clear neither threshold.
+ *
+ * Live: under `enforce="true"` for a Hebrew response locale, a reply opened with `אبدأ` — one
+ * Hebrew letter followed by the Arabic أبدأ — and enforcement reported no mismatch while claiming
+ * to enforce. A fused token is not prose: legitimately quoting a foreign name puts it in its own
+ * word, it does not weld two scripts inside one. So intra-word fusion is a signal that needs no
+ * share threshold at all, which is exactly why the thresholds could not see it.
+ */
+describe("evaluateResponseLocale — intra-word script fusion", () => {
+  it("reports a mismatch for a token welding two non-Latin scripts, whatever its share", () => {
+    const finding = evaluateResponseLocale(
+      { locale: "he-IL", source: "explicit", enforceLocale: true },
+      // One fused token in an otherwise wholly Hebrew reply: ~3 foreign chars, far under both
+      // the 15% share and the 8-unit floor.
+      "אبدأ בבדיקת הנתונים ואחזור עם סיכום מסודר על כל הרכבים במערכת הזאת בהקדם האפשרי",
+    );
+
+    expect(finding).toEqual(expect.objectContaining({
+      kind: "locale_script_mismatch",
+      expectedScript: "Hebr",
+      actualScript: "Arab",
+    }));
+  });
+
+  it("leaves a legitimately quoted foreign word alone", () => {
+    // Its own token, not fused — this is real prose and must not be flagged, which is what the
+    // share/unit thresholds exist to protect.
+    expect(evaluateResponseLocale(
+      { locale: "he-IL", source: "explicit", enforceLocale: true },
+      "הדוח מזכיר את השם أحمد ואת שאר הנתונים שנאספו במהלך הבדיקה הזאת על הרכבים",
+    )).toBeUndefined();
+  });
+
+  it("does not flag a word mixing a non-Latin script with Latin characters", () => {
+    // Latin mixes into non-Latin prose constantly (identifiers, units, URLs) and is already
+    // handled by the prose-share rule; treating it as fusion would flag ordinary text.
+    expect(evaluateResponseLocale(
+      { locale: "he-IL", source: "explicit", enforceLocale: true },
+      "הבדיקה הסתיימה בהצלחה ומספר הרכבים הוא 162 לפי הדוח שהופק במערכת הזאת כולה",
+    )).toBeUndefined();
+  });
+
+  it("does not report the offending text itself in the finding", () => {
+    const finding = evaluateResponseLocale(
+      { locale: "he-IL", source: "explicit", enforceLocale: true },
+      "אبدأ בבדיקת הנתונים ואחזור עם סיכום מסודר על כל הרכבים במערכת הזאת בהקדם האפשרי",
+    );
+
+    // The finding is a quality signal that rides telemetry; it carries counts and scripts, never
+    // the response body.
+    expect(JSON.stringify(finding)).not.toContain("אبدأ");
+  });
+});

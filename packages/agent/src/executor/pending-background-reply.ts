@@ -4,11 +4,30 @@ import {
   type BackgroundTask,
 } from "../background/background-task-types.js";
 import { backgroundToolLabel } from "../background/background-tool-label.js";
+import { DEFAULT_LOCALE_CATALOG, type LocaleCatalog } from "./degraded-reply-i18n.js";
 
 export interface PendingBackgroundTurnInput {
   response: string;
   executionId: string | undefined;
   tasks: ReadonlyArray<BackgroundTask>;
+  /** Resolved response locale, so the notice matches the language of the answer it replaces. */
+  locale?: string;
+  /** Operator locale packs; defaults to the English platform pack. */
+  localeCatalog?: LocaleCatalog;
+}
+
+/**
+ * Substitute the task list into a localized notice.
+ *
+ * `{labels}` is the positional token — a placeholder rather than caller-side concatenation because
+ * word order does not survive translation (Hebrew is RTL, so "prose: list" is not a safe universal
+ * shape). A pack that omits the token is not an error: the labels are appended so an incomplete
+ * operator pack degrades to a readable sentence instead of dropping the task ids the user needs.
+ */
+function withLabels(template: string, labels: string): string {
+  return template.includes("{labels}")
+    ? template.replaceAll("{labels}", labels)
+    : `${template} ${labels}`;
 }
 
 export interface PendingBackgroundTurnResult {
@@ -45,11 +64,17 @@ export function reconcilePendingBackgroundTurn(
     .map((task) => `${backgroundToolLabel(task.toolName)} (${task.id})`)
     .join(", ");
   const runningCount = pending.filter((task) => task.status === "running").length;
-  const response = runningCount === pending.length
-    ? `⏳ Background work is still running: ${labels}. I will continue this conversation when it finishes.`
+  // This notice is the AGENT'S OWN user-facing sentence, so it must speak the language of the answer
+  // it replaces. Under an enforced non-Latin response locale it previously stayed English and a
+  // Hebrew conversation received a mixed reply — measured live at 0 Hebrew characters across every
+  // runtime card, on sessions whose model output was 87-100% Hebrew.
+  const catalog = input.localeCatalog ?? DEFAULT_LOCALE_CATALOG;
+  const messageId = runningCount === pending.length
+    ? "background_pending_running" as const
     : runningCount === 0
-      ? `⏳ A background result is ready: ${labels}. I will continue this conversation with it.`
-      : `⏳ Background work has updates pending: ${labels}. I will continue this conversation as they are ready.`;
+      ? "background_pending_ready" as const
+      : "background_pending_updates" as const;
+  const response = withLabels(catalog.resolve(input.locale, messageId), labels);
   return {
     response,
     finishReason: "background_pending",

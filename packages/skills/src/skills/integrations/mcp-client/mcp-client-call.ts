@@ -31,6 +31,12 @@ import type {
   McpToolCallResult,
 } from "./mcp-client-types.js";
 import { parseQualifiedName } from "./mcp-client-types.js";
+import {
+  MIN_VIABLE_CALL_BUDGET_MS,
+  emitMcpBreakerOpened,
+  mcpCallQueueExhaustedHint,
+  mcpCallTimeoutHint,
+} from "./mcp-client-call-diagnostics.js";
 import { handleDisconnection } from "./mcp-client-reconnect.js";
 import { reconnectServer } from "./mcp-client-connect.js";
 import { resetIdleActivity } from "./mcp-client-idle-eviction.js";
@@ -108,6 +114,15 @@ export async function callTool(
   args: Record<string, unknown>,
 ): Promise<Result<McpToolCallResult, Error>> {
   const { logger } = deps;
+  // The deadline clock starts HERE, not at the SDK request. `callToolTimeoutMs` is
+  // documented as the call deadline and is reconciled against the enclosing sub-agent
+  // stall budget, but the interval a caller (and that budget) experiences also covers
+  // lazy reconnect and the per-server PQueue wait — concurrency 1 for stdio. Budgeting
+  // only the request let N sub-agents fanning out onto one server serialize into
+  // N x deadline of caller-visible latency: a 120000ms deadline produced a 186570ms
+  // observed call, 55% over, which is precisely the overrun the collision check exists
+  // to prevent. Measuring from entry makes the configured number mean what it says.
+  const callStartedAtMs = systemNowMs();
   const requestTraceId = tryGetContext()?.traceId;
   const parsed = parseQualifiedName(qualifiedName);
   if (!parsed) {
@@ -193,6 +208,39 @@ export async function callTool(
     // Capture generation before call for stale-connection detection
     const callGeneration = currentConn.generation;
 
+    // Charge the reconnect + queue wait against the deadline before issuing the
+    // request, so the SDK budget is what is LEFT of the caller's deadline.
+    const waitedMs = systemNowMs() - callStartedAtMs;
+    const remainingMs = state.options.callToolTimeoutMs - waitedMs;
+    // Clamp the viability floor by the configured deadline: an operator who sets a
+    // deadline below the floor has chosen that, and must not have every call refused
+    // before it is issued.
+    const viableFloorMs = Math.min(MIN_VIABLE_CALL_BUDGET_MS, state.options.callToolTimeoutMs);
+    if (remainingMs < viableFloorMs) {
+      // Issuing here would burn a slot on a request that cannot finish in time and would
+      // then surface as a plain deadline expiry — telling the agent to narrow a request
+      // scope that was never the problem. Blame contention explicitly instead.
+      const queueHint = mcpCallQueueExhaustedHint(
+        serverName,
+        toolName,
+        state.options.callToolTimeoutMs,
+        waitedMs,
+      );
+      logger.warn(
+        {
+          serverName,
+          toolName,
+          waitedMs,
+          timeoutMs: state.options.callToolTimeoutMs,
+          hint: queueHint,
+          errorKind: "resource" as const,
+          step: "mcp_call_queue_wait",
+        },
+        "MCP call deadline consumed by the per-server queue wait before the request was issued",
+      );
+      return err(new Error(queueHint));
+    }
+
     try {
       const result = await currentConn.client.callTool(
         {
@@ -208,7 +256,9 @@ export async function callTool(
         },
         undefined,
         {
-          timeout: state.options.callToolTimeoutMs,
+          // What is LEFT of the caller's deadline, not the whole of it — the reconnect
+          // and queue wait already consumed `waitedMs` of the same budget.
+          timeout: remainingMs,
           // The absolute ceiling is UNCONDITIONAL — it is not part of the
           // tracing branch. `resetTimeoutOnProgress` restarts `timeout` on every
           // progress notification and the SDK applies no ceiling of its own
@@ -222,7 +272,7 @@ export async function callTool(
           // exist — so the paths WITHOUT one, which is exactly where a
           // long-running background call runs, kept no ceiling at all. A
           // deadline that applies only when tracing is on is not a deadline.
-          maxTotalTimeout: state.options.callToolTimeoutMs,
+          maxTotalTimeout: remainingMs,
           // UNCONDITIONAL, for the same reason as the ceiling above. The SDK only
           // accepts a progress notification when the request registered a handler
           // for it; gating this on a trace context meant that on any UNTRACED
@@ -288,6 +338,13 @@ export async function callTool(
           openedAtMs: systemNowMs(),
           reason: "auth",
         });
+        emitMcpBreakerOpened(
+          deps,
+          qualifiedName,
+          (existing?.failureCount ?? 0) + 1,
+          "mcp_auth_rejected",
+          error,
+        );
         deps.logger.warn(
           {
             serverName,
@@ -357,13 +414,17 @@ export async function callTool(
           { serverName, toolName, failureCount: newCount, threshold: breakerThreshold, hint: "Circuit breaker tripped; tool calls will return [server_unavailable] for cooldown", errorKind: "dependency" as const },
           "MCP circuit breaker opened",
         );
+        emitMcpBreakerOpened(deps, qualifiedName, newCount, "mcp_failure_threshold", error);
       } else if (cur.status === "open") {
-        // Half-open probe failed -> reopen with refreshed openedAtMs.
+        // Half-open probe failed -> reopen with refreshed openedAtMs. A distinct reason:
+        // triage needs "the recovery probe failed again" to read differently from a first
+        // trip, since it means the cooldown did not help.
         state.circuitBreakers.set(serverName, {
           status: "open",
           failureCount: newCount,
           openedAtMs: systemNowMs(),
         });
+        emitMcpBreakerOpened(deps, qualifiedName, newCount, "mcp_half_open_probe_failed", error);
       } else {
         state.circuitBreakers.set(serverName, { status: cur.status, failureCount: newCount });
       }
@@ -387,6 +448,7 @@ export async function callTool(
           toolName,
           timeoutMs,
           Object.keys(args).length > 0,
+          waitedMs,
         );
         logger.warn(
           {
@@ -404,39 +466,4 @@ export async function callTool(
       return err(error instanceof Error ? error : new Error(message));
     }
   }) as Promise<Result<McpToolCallResult, Error>>;
-}
-
-/**
- * The operator/agent-facing message for an MCP call that hit its configured
- * deadline.
- *
- * Exported so the log site, the returned `Error`, and the test all read the SAME
- * text — a duplicated literal is how "No action needed."-class hints drift.
- *
- * @param serverName - the MCP server whose call expired.
- * @param toolName - the qualified tool name that expired.
- * @param timeoutMs - the ACTUAL resolved `integrations.mcp.callToolTimeoutMs`.
- * @param hasInputArguments - whether this invocation supplied arguments whose
- *   scope can potentially be reduced or split.
- * @returns the hint text (also used verbatim as the Error message).
- */
-export function mcpCallTimeoutHint(
-  serverName: string,
-  toolName: string,
-  timeoutMs: number,
-  hasInputArguments: boolean,
-): string {
-  const callerRemediation = hasInputArguments
-    ? `Narrow the request scope or split it into smaller calls using this tool's input arguments ` +
-      `so each call completes inside ${timeoutMs}ms. `
-    : "This call supplied no input arguments. Check the MCP server's health and latency before " +
-      "retrying; an unchanged retry will re-expire the same deadline. ";
-  return (
-    `MCP tool "${toolName}" on server "${serverName}" timed out — it exceeded the call ` +
-    `deadline of ${timeoutMs}ms (\`integrations.mcp.callToolTimeoutMs\`, currently ${timeoutMs}). ` +
-    "This deadline is deterministic — do not retry it unchanged, the same call re-expires it. " +
-    callerRemediation +
-    "The deadline itself cannot be changed from here — it is an immutable config path, so only an " +
-    "operator can adjust it by editing the config file and restarting the daemon."
-  );
 }

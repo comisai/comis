@@ -36,6 +36,7 @@ import {
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  trajectoryTurnEnded,
   wireContainsAssistantReply,
   wireQuiescenceFinished,
 } from './drive-session-oracle.mjs';
@@ -188,7 +189,12 @@ const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 const tenantId = process.env.TENANT_ID || 'default';
 const agentId = process.env.AGENT_ID || 'default';
-const POST_TURN_DELIVERY_GRACE_MS = 30000;
+// Bounded wait for a final message AFTER turn-end. Costs nothing on a turn that produces an answer
+// — `directConversationFinished` returns as soon as `sawAnswer` is set — so this cap only applies to
+// answerless turns. 30 s was too tight once the turn-end signal became background-aware: a
+// background completion's delivery can trail its terminal record, and observed sub-agent runtimes
+// in this campaign ran 67–384 s.
+const POST_TURN_DELIVERY_GRACE_MS = 120000;
 
 // A parallel drive must watch only its own canonical-principal trajectory. Selecting the globally
 // newest file lets one conversation stop on another conversation's session.summary and fabricates
@@ -253,19 +259,47 @@ const resolveTraj = () => {
   try {
     const dir = `${DATA}/workspace/sessions`;
     const files = [];
+    // Trajectories are resolved through the co-located `<file>.jsonl.trajectory-path.json`
+    // POINTER (its `runtimeFile`), never a hand-built path — a runtime that stores them outside
+    // the session dir is exactly the bug class the read-order guidance calls out.
+    //
+    // Why this matters here: on a rig whose `dataDir` relocates trajectories (they land flat in
+    // `$DATA/trajectories/` while `workspace/sessions` keeps only the pointers), the legacy
+    // `*.jsonl.trajectory.jsonl` walk matches ZERO files. `resolveTraj()` then returned null, the
+    // authoritative turn-end watch was silently never armed, and wire-quiescence became the only
+    // stop signal — so a drive stopped at the model's "I'm running it now" acknowledgement and
+    // reported that promise as the substantive answer. Measured across 15 heavy questions: every
+    // real answer landed 30–384 s AFTER the driver had already exited, and the two best answers
+    // of the run would have been scored content-free by anyone reading the driver's output alone.
+    // The selectors match a candidate by its EXACT session-dir path
+    // (`<sessionsRoot>/<tenant>/<channel>/<expectedFilename>`), so a relocated trajectory can
+    // never be matched on its real path. Each candidate therefore carries BOTH: `path` is the
+    // session-dir identity the selector matches on, and `real` is where the bytes actually live.
     const visit = (current) => {
       for (const entry of readdirSync(current, { withFileTypes: true })) {
-        const path = `${current}/${entry.name}`;
-        if (entry.isDirectory()) visit(path);
-        else if (entry.name.endsWith('.jsonl.trajectory.jsonl')) files.push(path);
+        const full = `${current}/${entry.name}`;
+        if (entry.isDirectory()) { visit(full); continue; }
+        if (entry.name.endsWith('.jsonl.trajectory-path.json')) {
+          try {
+            const runtimeFile = JSON.parse(readFileSync(full, 'utf8')).runtimeFile;
+            if (typeof runtimeFile !== 'string' || runtimeFile === '') continue;
+            // The legacy in-session-dir name this pointer stands in for — the selector's key.
+            const asIfLocal = full.replace(/\.trajectory-path\.json$/, '.trajectory.jsonl');
+            files.push({ path: asIfLocal, real: runtimeFile });
+          } catch { /* unreadable/!json pointer — ignore, the legacy branch may still match */ }
+        } else if (entry.name.endsWith('.jsonl.trajectory.jsonl')) {
+          files.push({ path: full, real: full });
+        }
       }
     };
     visit(dir);
-    const candidates = files.map((path) => ({
-      path,
-      mtimeMs: statSync(path).mtimeMs,
-    }));
-    return sharedConversation
+    const candidates = [];
+    for (const { path, real } of files) {
+      let mtimeMs;
+      try { mtimeMs = statSync(real).mtimeMs; } catch { continue; } // pointer written before the file
+      candidates.push({ path, real, mtimeMs });
+    }
+    const chosen = sharedConversation
       ? selectTelegramConversationTrajectoryPath(
           candidates,
           dir,
@@ -281,19 +315,32 @@ const resolveTraj = () => {
           "telegram",
           expectedTrajectorySuffix,
         );
+    // Map the selector's session-dir identity back to the file that holds the bytes.
+    return chosen === null
+      ? null
+      : (candidates.find((c) => c.path === chosen)?.real ?? chosen);
   } catch { return null; }
 };
 const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };
+// A PARENT turn that dispatched background work emits its own `session.summary` and finishes with
+// `finishReason:"background_pending"` while the sub-agent keeps running — so treating the first
+// summary as turn-end stops the drive before the answer exists. Measured across 15 heavy questions:
+// the real answer arrived 30–384 s after that first summary, and because the interim
+// "I'm running it now, I'll report back" prose is not a progress card, `sawAnswer` was already set
+// and the post-turn grace exited immediately. The promise got reported as the answer.
+//
+// So: when the tail shows `background_pending`, require a LATER terminal record (the background
+// completion's own summary/abort) before calling the turn ended.
+// Turn-end is decided by `trajectoryTurnEnded` in drive-session-oracle.mjs — a PURE predicate
+// with contract tests, so the hand-off cases (background task / sub-agent spawn) are verified
+// deterministically rather than only against a live rig that may or may not spawn.
 const turnEndedSince = (p, baseLines) => {
   try {
-    const lines = readFileSync(p, 'utf8').split('\n').slice(baseLines);
-    for (const l of lines) {
-      if (l.includes('"type":"session.summary"') || l.includes('"type":"execution.aborted"')) return true;
-    }
+    return trajectoryTurnEnded(readFileSync(p, 'utf8').split('\n').slice(baseLines));
   } catch {
     /* best-effort: missing or mid-write trajectory file → treat as not ended */
+    return false;
   }
-  return false;
 };
 
 // `let` (not const): on a FRESH session the trajectory file does not exist until the turn
@@ -448,6 +495,12 @@ while (Date.now() - start < maxMs) {
     turnEndedAtMs,
     nowMs: Date.now(),
     deliveryGraceMs: POST_TURN_DELIVERY_GRACE_MS,
+    // `lastNew` is stamped whenever a batch arrives, so the grace measures SILENCE rather than an
+    // absolute span from turn-end. A background completion's delivery can trail its terminal record
+    // — observed ~200s past turn-end against a 120s window — so a stream of progress cards followed
+    // by the real answer now holds the window open instead of closing mid-delivery. An outbound that
+    // predates turn-end does not extend it.
+    lastOutboundAtMs: lastNew,
   })) {
     // Drain any just-delivered final message, then stop. A turn with no answer
     // reaches this branch only after the bounded post-turn delivery grace.

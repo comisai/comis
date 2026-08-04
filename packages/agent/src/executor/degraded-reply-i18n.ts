@@ -32,7 +32,15 @@ export type LocaleMessageId =
   | "ongoing_work_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
-  | "response_locale_unavailable";
+  | "response_locale_unavailable"
+  | "background_pending_running"
+  | "background_pending_ready"
+  | "background_pending_updates"
+  | "activity_card_approval_required"
+  | "activity_card_detail_server"
+  | "activity_card_detail_credential"
+  | "activity_card_detail_command"
+  | "activity_card_detail_secret";
 
 export type LocalePack = Readonly<Partial<Record<LocaleMessageId, string>>>;
 
@@ -106,6 +114,27 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + "for a single turn. Nothing was left half-applied. If it needs many lookups, "
       + "ask for a narrower slice (fewer items, a shorter date range) and I can do the "
       + "rest in follow-ups.",
+  // The pending-background notice. `{labels}` is substituted with the task list; a pack that
+  // omits the token still works (the labels are appended). A positional placeholder is used
+  // rather than caller-side concatenation because word order does not survive translation —
+  // Hebrew is RTL and "prose: list" is not a safe universal shape.
+  background_pending_running:
+    "⏳ Background work is still running: {labels}. I will continue this conversation when it finishes.",
+  background_pending_ready:
+    "⏳ A background result is ready: {labels}. I will continue this conversation with it.",
+  background_pending_updates:
+    "⏳ Background work has updates pending: {labels}. I will continue this conversation as they are ready.",
+  // The approval card a user must ACT on. `{operation}` is the tool call being authorized and
+  // `{details}` its redacted specifics; both are identifiers, substituted verbatim, so a pack can
+  // translate the surrounding words but never rename what is being approved. A template that
+  // omits `{details}` drops them — nothing is appended behind the author's back. These defaults
+  // are byte-identical to the English label they replace, so a deployment with no pack sees no
+  // change.
+  activity_card_approval_required: "approval required: {operation} — {details}",
+  activity_card_detail_server: "server",
+  activity_card_detail_credential: "credential",
+  activity_card_detail_command: "command",
+  activity_card_detail_secret: "secret",
 };
 
 function canonicalLocale(raw: string): string | undefined {
@@ -132,6 +161,22 @@ export function createLocaleCatalog(
           if (languageResult.ok) {
             const languageFallback = canonicalPacks.get(languageResult.value)?.[id];
             if (languageFallback !== undefined) return languageFallback;
+          }
+          // A SCRIPT-only response locale (`und-Hebr`) has no language subtag at all —
+          // `new Intl.Locale("und-Hebr").language` is `undefined` — so the fallback above cannot
+          // reach an operator's `he` pack and every runtime notice fell through to English. Live:
+          // a fully-Hebrew answer carried an English-only "background task failed" banner, and
+          // another carried BOTH (the model wrote Hebrew, the runtime appended English).
+          //
+          // `maximize()` supplies the missing subtag from ICU likely-subtags data, so this stays
+          // generic — no language is named here, and it works for any script (`und-Arab`→`ar`,
+          // `und-Hans`→`zh`). It runs LAST, after exact and plain-language matches, because
+          // maximize is a probabilistic guess (`und-Cyrl` maximizes to `ru`, not `uk`); and it can
+          // only ever select an operator-supplied pack — with no pack, English still wins.
+          const maximized = tryCatch(() => new Intl.Locale(canonical).maximize().language);
+          if (maximized.ok) {
+            const scriptFallback = canonicalPacks.get(maximized.value)?.[id];
+            if (scriptFallback !== undefined) return scriptFallback;
           }
         }
       }

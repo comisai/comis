@@ -378,3 +378,63 @@ describe("formatValidationError — enum allowed values", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plural / unquoted required-property form
+// ---------------------------------------------------------------------------
+
+/**
+ * The rewriter recognized AJV's singular quoted form, `must have required property 'X'`. TypeBox
+ * emits a plural, UNQUOTED form — `must have required properties body` — which matched nothing, so
+ * the line passed through verbatim and rendered as the path followed by its own message:
+ *
+ *   `body` must have required properties body
+ *
+ * which names the missing field as its own requirement and teaches a caller nothing. Live: a model
+ * received exactly that and burned four consecutive calls guessing at the shape (`body:{}`), each
+ * of which also failed.
+ */
+describe("formatValidationError — plural required-properties form", () => {
+  it("rewrites the unquoted plural form into a missing-parameter statement", () => {
+    const out = formatValidationError(
+      'Validation failed for tool "vendor_call":\n  - body: must have required properties body',
+    );
+
+    expect(out).toContain("Required parameter `body` is missing");
+    // The tautology must be gone, not merely accompanied.
+    expect(out).not.toContain("must have required properties");
+  });
+
+  it("does not double the field name when the path already is that field", () => {
+    const out = formatValidationError(
+      'Validation failed for tool "vendor_call":\n  - body: must have required properties body',
+    );
+
+    expect(out).not.toContain("body.body");
+  });
+
+  it("names every missing property when several are listed", () => {
+    const out = formatValidationError(
+      'Validation failed for tool "vendor_call":\n  - root: must have required properties from, to',
+    );
+
+    expect(out).toContain("`from`");
+    expect(out).toContain("`to`");
+  });
+
+  it("qualifies a nested path so the caller knows where the field belongs", () => {
+    const out = formatValidationError(
+      'Validation failed for tool "vendor_call":\n  - /filters/0: must have required properties field',
+    );
+
+    expect(out).toContain("filters[0].field");
+  });
+
+  it("still handles the singular quoted AJV form unchanged", () => {
+    const out = formatValidationError(
+      'Validation failed for tool "vendor_call":\n  - root: must have required property \'query\'',
+    );
+
+    expect(out).toContain("Required parameter `query` is missing");
+  });
+});

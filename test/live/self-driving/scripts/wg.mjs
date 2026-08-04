@@ -65,8 +65,6 @@ const name = spec.name;
 const agentId = spec.agentId || "default";
 const script = spec.scriptFile ? readFileSync(spec.scriptFile, "utf8") : spec.script;
 
-const isNonDefault = agentId !== "default";
-
 // 1. Replace any same-name job so cron.run resolves unambiguously + the store is fresh.
 //    NOTE: cron.remove has no agentId param (the operator gateway strips _agentId), so it
 //    only removes from the DEFAULT agent — a non-default job cannot be replaced this way

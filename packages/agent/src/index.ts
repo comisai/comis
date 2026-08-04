@@ -553,6 +553,9 @@ export {
   buildBackgroundTaskFailedNotice,
   catalogFromLocalePacks,
 } from "./executor/degraded-reply.js";
+// Card locale projection — consumed by the orchestrator's activity-turn coordinator, the one
+// layer holding both a resolved locale and the channel renderer.
+export { localizeApprovalCardLabel } from "./executor/activity-card-i18n.js";
 export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-filter/thinking-tag-filter.js";
 
 // Operation model resolver

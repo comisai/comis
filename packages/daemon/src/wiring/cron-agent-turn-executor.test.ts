@@ -285,9 +285,35 @@ describe("cron governed agent-turn executor", () => {
     }));
   });
 
-  it("consumes a configured gate as a closed pre-model skip when capability is disabled", async () => {
+  // `scheduler.cron.wakeGate: false` is documented as "never run a scheduler-initiated gate
+  // (a gated job runs EXACTLY AS IT WOULD WITH NO GATE)". It previously produced a terminal
+  // pre-model skip instead, so turning a gate OFF silently stopped every gated job — no error, no
+  // WARN, and `status:"skipped"` reads like an ordinary scheduler decision (staggering, dedupe).
+  // Disabling a gate is a routine operator action — cut cost, neutralise a misbehaving script — and
+  // it must not decommission the work the gate was merely filtering.
+  it("runs the turn as if ungated when the wake-gate capability is disabled", async () => {
     const deps = makeDeps();
     deps.resolveWakeGateCapability.mockReturnValue("disabled");
+    const execute = createCronAgentTurnExecutor(deps);
+
+    const result = await execute(input({
+      wakeGate: { script: "console.log('{\"wake\":true}')", language: "js", timeoutSeconds: 2 },
+    }), new AbortController().signal);
+
+    // The gate is simply not consulted, and the turn proceeds like any ungated job.
+    expect(deps.runWakeGate).not.toHaveBeenCalled();
+    expect(deps._executor.execute).toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).not.toMatchObject({ kind: "agent_turn_pre_model_skip" });
+    }
+  });
+
+  // `unbound` is a DIFFERENT decision: the operator asked for a gate and the runner is not wired,
+  // so the gate cannot be evaluated at all. Skipping there stays fail-closed.
+  it("still skips when the wake-gate runner is unbound", async () => {
+    const deps = makeDeps();
+    deps.resolveWakeGateCapability.mockReturnValue("unbound");
     const execute = createCronAgentTurnExecutor(deps);
 
     const result = await execute(input({
@@ -297,11 +323,10 @@ describe("cron governed agent-turn executor", () => {
     expect(result).toEqual(ok({
       kind: "agent_turn_pre_model_skip",
       rootRunId: `root-cron-${EXECUTION_ID}`,
-      reason: "wake_gate_disabled",
+      reason: "wake_gate_unbound",
       errorKind: "precondition",
       continuation: { mode: "none", status: "not_requested" },
     }));
-    expect(deps.sessionPolicy.before).not.toHaveBeenCalled();
     expect(deps._executor.execute).not.toHaveBeenCalled();
   });
 

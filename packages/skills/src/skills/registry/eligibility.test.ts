@@ -159,13 +159,13 @@ describe("evaluateSkillEligibility", () => {
   it("returns eligible when skill has no constraints", () => {
     const ctx = createMockEligibilityContext({});
     const result = evaluateSkillEligibility({}, ctx);
-    expect(result).toEqual({ eligible: true });
+    expect(result).toEqual({ eligible: true, requirementsDeclared: false });
   });
 
   it("returns eligible when os matches current platform", () => {
     const ctx = createMockEligibilityContext({ platform: "linux" });
     const result = evaluateSkillEligibility({ os: ["linux"] }, ctx);
-    expect(result).toEqual({ eligible: true });
+    expect(result).toEqual({ eligible: true, requirementsDeclared: false });
   });
 
   it("returns ineligible with os mismatch reason when platform not in os array", () => {
@@ -178,13 +178,13 @@ describe("evaluateSkillEligibility", () => {
   it("returns eligible when os array is empty (no restriction)", () => {
     const ctx = createMockEligibilityContext({ platform: "linux" });
     const result = evaluateSkillEligibility({ os: [] }, ctx);
-    expect(result).toEqual({ eligible: true });
+    expect(result).toEqual({ eligible: true, requirementsDeclared: false });
   });
 
   it("returns eligible when all required binaries are available", () => {
     const ctx = createMockEligibilityContext({ availableBins: new Set(["ffmpeg", "curl"]) });
     const result = evaluateSkillEligibility({ requires: { bins: ["ffmpeg", "curl"], env: [] } }, ctx);
-    expect(result).toEqual({ eligible: true });
+    expect(result).toEqual({ eligible: true, requirementsDeclared: true });
   });
 
   it("returns ineligible with missing binary reason", () => {
@@ -204,7 +204,7 @@ describe("evaluateSkillEligibility", () => {
   it("returns eligible when all required env vars are set", () => {
     const ctx = createMockEligibilityContext({ availableEnvVars: new Set(["OPENAI_KEY"]) });
     const result = evaluateSkillEligibility({ requires: { bins: [], env: ["OPENAI_KEY"] } }, ctx);
-    expect(result).toEqual({ eligible: true });
+    expect(result).toEqual({ eligible: true, requirementsDeclared: true });
   });
 
   it("returns ineligible with missing env var reason", () => {
@@ -249,7 +249,7 @@ describe("evaluateSkillEligibility", () => {
       { os: ["linux", "darwin"], requires: { bins: ["ffmpeg", "curl"], env: ["OPENAI_KEY", "ANTHROPIC_KEY"] } },
       ctx,
     );
-    expect(result).toEqual({ eligible: true });
+    expect(result).toEqual({ eligible: true, requirementsDeclared: true });
   });
 });
 
@@ -508,5 +508,61 @@ describe("registry integration", () => {
     const descriptions = registry.getPromptSkillDescriptions();
     // With enabled: false, os-restricted skill is included
     expect(descriptions.map((d) => d.name)).toContain("os-restricted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Undeclared requirements must be distinguishable from "declared none".
+//
+// The gate returns eligible:true when a skill declares no constraints, which is
+// correct for a genuinely dependency-free skill but indistinguishable from a
+// THIRD-PARTY skill that needs plenty and simply never declared. Live: importing
+// an upstream skill with no `comis:` block surfaced it as available while the
+// python module its scripts import was absent from the host — the eligibility
+// gate, which correctly excludes a Comis-shaped skill for a missing env var, had
+// nothing to check and stayed silent.
+//
+// The distinction already exists in the metadata: a Comis-shaped skill carries
+// `requires` (possibly with empty arrays); a skill with no `comis:` block has
+// `requires === undefined`. Marking that lets the honesty layer disclose
+// "requirements undeclared, cannot pre-flight" instead of implying verified-ready.
+// It must NOT exclude the skill — that would break every legitimate no-deps skill.
+// ---------------------------------------------------------------------------
+
+describe("evaluateSkillEligibility — requirementsDeclared", () => {
+  const ctx = { platform: "linux", hasBin: () => true, hasEnv: () => true };
+
+  it("marks a skill with NO requires block as undeclared, still eligible", () => {
+    const r = evaluateSkillEligibility({}, ctx);
+    expect(r.eligible).toBe(true);
+    expect(r.requirementsDeclared).toBe(false);
+  });
+
+  it("marks an explicit empty declaration as DECLARED", () => {
+    const r = evaluateSkillEligibility({ requires: { bins: [], env: [] } }, ctx);
+    expect(r.eligible).toBe(true);
+    expect(r.requirementsDeclared).toBe(true);
+  });
+
+  it("marks a populated declaration as declared", () => {
+    const r = evaluateSkillEligibility({ requires: { bins: ["python3"], env: ["X"] } }, ctx);
+    expect(r.eligible).toBe(true);
+    expect(r.requirementsDeclared).toBe(true);
+  });
+
+  it("still excludes a declared-but-unmet requirement, and reports it declared", () => {
+    const r = evaluateSkillEligibility(
+      { requires: { bins: [], env: ["MISSING_KEY"] } },
+      { ...ctx, hasEnv: () => false },
+    );
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toContain("missing env var");
+    expect(r.requirementsDeclared).toBe(true);
+  });
+
+  it("an os mismatch still fails closed regardless of declaration state", () => {
+    const r = evaluateSkillEligibility({ os: ["darwin"] }, ctx);
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toContain("os mismatch");
   });
 });

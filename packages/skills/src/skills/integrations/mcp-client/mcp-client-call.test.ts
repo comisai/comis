@@ -305,10 +305,11 @@ describe("request correlation", () => {
       },
       undefined,
       {
-        timeout: 5000,
+        // Remaining budget, not the raw configured deadline (see the queue-wait tests).
+        timeout: expect.any(Number),
         onprogress: expect.any(Function),
         resetTimeoutOnProgress: true,
-        maxTotalTimeout: 5000,
+        maxTotalTimeout: expect.any(Number),
       },
     );
   });
@@ -334,7 +335,11 @@ describe("request correlation", () => {
     const opts = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
       .mock.calls[0]![2] as Record<string, unknown>;
     expect(opts.resetTimeoutOnProgress).toBe(true);
-    expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
+    // A ceiling derived from the deadline, less whatever the queue wait already spent
+    // (~0 here). Banded rather than exact so it asserts the ceiling exists and derives
+    // from the configured deadline, without re-breaking on scheduling jitter.
+    expect(opts.maxTotalTimeout).toBeGreaterThan(state.options.callToolTimeoutMs / 2);
+    expect(opts.maxTotalTimeout).toBeLessThanOrEqual(state.options.callToolTimeoutMs);
   });
 
   // The ceiling must not be scoped to the tracing branch. Tying it to
@@ -352,7 +357,174 @@ describe("request correlation", () => {
     await callTool(state, deps, `mcp:${serverName}/inventory_items_list`, {});
 
     const opts = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
-      .mock.calls[0]![2] as Record<string, unknown>;
-    expect(opts.maxTotalTimeout).toBe(state.options.callToolTimeoutMs);
+      .mock.calls[0]![2] as Record<string, number>;
+    expect(opts.maxTotalTimeout).toBeGreaterThan(state.options.callToolTimeoutMs / 2);
+    expect(opts.maxTotalTimeout).toBeLessThanOrEqual(state.options.callToolTimeoutMs);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Caller-visible deadline: queue wait counts against the budget
+// ---------------------------------------------------------------------------
+
+/**
+ * `callToolTimeoutMs` is documented, surfaced, and reconciled against the enclosing
+ * sub-agent stall budget as THE call deadline. But it was handed to the SDK as the
+ * budget for the request alone, while the interval a caller (and any enclosing budget)
+ * actually experiences also covers the per-server PQueue wait — concurrency 1 for stdio.
+ * So N sub-agents fanning out onto one server serialize, and the (N+1)-th call's
+ * caller-visible latency is N x deadline + its own.
+ *
+ * Live: a 120000ms deadline produced a 186570ms caller-visible call (55% over) while the
+ * expiry hint told the agent the deadline was deterministic and to narrow its request
+ * scope — misdirecting it, since the call had spent most of that time queued behind a
+ * sibling, not being slow. It also makes the `config_posture:tool_deadline_collision`
+ * check unsound: "lower callToolTimeoutMs below subagent.timeout" cannot hold when the
+ * deadline bounds only part of the interval the sub-agent budget encloses.
+ */
+describe("call deadline covers the queue wait", () => {
+  const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
+
+  it("deducts the queue wait from the deadline handed to the SDK", async () => {
+    const serverName = "inventory";
+    // First call holds the concurrency-1 slot long enough to be measurable.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let callIndex = 0;
+    const state = makeConnectedState(serverName, () => {
+      callIndex += 1;
+      return callIndex === 1
+        ? gate.then(() => ({ content: [{ type: "text", text: "{}" }] }))
+        : Promise.resolve({ content: [{ type: "text", text: "{}" }] });
+    });
+
+    const first = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    const second = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    await new Promise((r) => setTimeout(r, 250));
+    release?.();
+    await Promise.all([first, second]);
+
+    const calls = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    const secondOpts = calls[1]![2] as Record<string, number>;
+    // The queued call must not receive the FULL deadline — it already spent ~250ms of it.
+    expect(secondOpts.maxTotalTimeout).toBeLessThan(state.options.callToolTimeoutMs);
+    expect(secondOpts.timeout).toBe(secondOpts.maxTotalTimeout);
+  });
+
+  it("fails fast naming queue contention when the wait alone exhausts the deadline", async () => {
+    const serverName = "inventory";
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let callIndex = 0;
+    const state = makeConnectedState(serverName, () => {
+      callIndex += 1;
+      return callIndex === 1
+        ? gate.then(() => ({ content: [{ type: "text", text: "{}" }] }))
+        : Promise.resolve({ content: [{ type: "text", text: "{}" }] });
+    });
+    state.options = { ...state.options, callToolTimeoutMs: 200 };
+
+    const first = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    const second = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    await new Promise((r) => setTimeout(r, 400));
+    release?.();
+    const [, secondResult] = await Promise.all([first, second]);
+
+    expect(secondResult.ok).toBe(false);
+    const message = secondResult.ok ? "" : secondResult.error.message;
+    // Must blame contention, not the server's speed, and name the knob that fixes it.
+    expect(message).toMatch(/queue|contention|concurren/i);
+    expect(message).toContain("maxConcurrency");
+    // And it must NOT have issued a doomed request against an already-blown budget.
+    const calls = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    expect(calls.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MCP breaker trips must reach the observability pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * There are TWO circuit breakers. The agent-side tool-retry breaker emits
+ * `tool:breaker_opened`, which is what feeds `bridgeResult.breakerTripCount` → the
+ * session-health rollup → the trajectory `tool.breaker_opened` record → the OTel
+ * `comis.breaker_trips` metric → `system-health`'s breaker trips and `explain`'s breaker
+ * timeline. The MCP per-server breaker emitted NOTHING: it flipped
+ * `state.circuitBreakers`, started returning `[server_unavailable]`, logged a WARN, and
+ * left every counter at zero.
+ *
+ * Live: an MCP server was circuit-broken — visible only as bracketed sentinel text inside
+ * tool results and one daemon.log WARN — while every session rollup reported
+ * `breakerTripCount: 0`. A number that reads as "no breaker ever tripped" when one had is
+ * worse than a missing field, because triage trusts it and stops looking.
+ */
+describe("MCP breaker trips are observable", () => {
+  function makeBus() {
+    return { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
+  }
+
+  // Repeated TIMEOUTS, which is how the threshold is actually reached in production: a
+  // non-timeout failure marks the connection "error", so the next call short-circuits at the
+  // status pre-check and the counter never climbs. A timeout deliberately preserves
+  // connection status, so successive heavy calls accumulate against the threshold — the live
+  // shape, where the same slow report expired its deadline until the breaker opened.
+  it("emits tool:breaker_opened when the failure threshold trips the breaker", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+    const bus = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    // Threshold is 3 (makeOptions) — the third failure opens it.
+    for (let i = 0; i < 3; i += 1) {
+      await callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    }
+
+    const trips = bus.emit.mock.calls.filter((c) => c[0] === "tool:breaker_opened");
+    expect(trips.length).toBe(1);
+    const payload = trips[0]![1] as Record<string, unknown>;
+    expect(payload.consecutiveFailures).toBe(3);
+    expect(String(payload.toolName)).toContain(serverName);
+    expect(typeof payload.reason).toBe("string");
+    expect(typeof payload.errorTag).toBe("string");
+    expect(typeof payload.timestamp).toBe("number");
+  });
+
+  it("emits tool:breaker_opened on the immediate 401 auth trip", async () => {
+    const serverName = "higgsfield";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new UnauthorizedError("401 Unauthorized")),
+    );
+    const bus = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await callTool(state, deps, `mcp:${serverName}/generate_video`, {});
+
+    const trips = bus.emit.mock.calls.filter((c) => c[0] === "tool:breaker_opened");
+    expect(trips.length).toBe(1);
+    // The auth trip must be distinguishable from a threshold trip — the remediation differs
+    // (re-authenticate vs wait out a cooldown).
+    expect(String((trips[0]![1] as Record<string, unknown>).reason)).toMatch(/auth/i);
+  });
+
+  it("does not emit while failures remain below the threshold", async () => {
+    const serverName = "inventory";
+    const state = makeConnectedState(serverName, () =>
+      Promise.reject(new McpError(ErrorCode.RequestTimeout, "Request timed out")),
+    );
+    const bus = makeBus();
+    const deps = { logger: makeLogger(), eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+
+    expect(bus.emit.mock.calls.filter((c) => c[0] === "tool:breaker_opened").length).toBe(0);
   });
 });
