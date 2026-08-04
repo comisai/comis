@@ -548,7 +548,7 @@ function scanCandidateSessionKeys(workspaceDir: string, requested: string): stri
  * Mirrors `bundle-exporter.ts:readRuntimeTrajectory`'s pointer resolution.
  * Soft-fail: a missing/corrupt pointer falls through to the co-located path.
  */
-function resolveTrajectoryFile(sessionFile: string): string {
+export function resolveTrajectoryFilePath(sessionFile: string): string {
   const pointerPath = resolveTrajectoryPointerFilePath(sessionFile);
   try {
     const pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
@@ -749,7 +749,7 @@ export function makeRealReader(
     async readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
       const sessionFile = resolveSessionFileAcrossWorkspaces(base, sessionKey, workspaceDirs);
       if (sessionFile !== undefined) {
-        return readJsonlBounded(resolveTrajectoryFile(sessionFile));
+        return readJsonlBounded(resolveTrajectoryFilePath(sessionFile));
       }
       // Task-check model sessions are intentionally ephemeral: there is no raw
       // transcript, metadata companion, or pointer. Their trajectory recorder
