@@ -660,6 +660,20 @@ describe("local rig mode", () => {
     }
   });
 
+  it("keeps a selected rig env isolated while rendering credentials", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    expect(source).toContain(
+      'SELECTED_RIG_ENV="${RIG_ENV:-$HERE/.rig-env}"',
+    );
+    expect(source).toContain(
+      'rig_load_env "$HERE/.live-env" "$SELECTED_RIG_ENV"',
+    );
+    expect(source).not.toContain(
+      'rig_load_env "$HERE/.live-env" "$HERE/.rig-env"',
+    );
+  });
+
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
     if (process.platform !== "linux") return;
     const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
