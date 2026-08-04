@@ -173,6 +173,10 @@ export async function runExecutionPolicy(
           {
             operationType: "interactive" as const,
             inboundProvenancePlans: input.inboundProvenancePlans,
+            suppressFinalResponseAfterOutboundDelivery: {
+              channelType: effectiveMsg.channelType,
+              channelId: effectiveMsg.channelId,
+            },
           },
         );
         return { kind: "denied", effectiveMsg, replyTo, trustLevel, result };
