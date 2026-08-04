@@ -62,7 +62,7 @@ import { createMcpManageTool } from "./tools/mcp-manage-tool.js";
 import { createMcpLoginTool } from "./tools/mcp-login-tool.js";
 import { createHeartbeatManageTool } from "./tools/heartbeat-manage-tool.js";
 import { createNotifyTool } from "./tools/notify-tool.js";
-import { createBackgroundTasksTool } from "./tools/background-tasks-tool.js";
+import { createBackgroundTasksTool, readPendingApprovals } from "./tools/background-tasks-tool.js";
 import { createImageGenerateTool } from "./tools/image-generate-tool.js";
 import { createVideoGenerateTool } from "./tools/video-generate-tool.js";
 import { createVideoStatusTool } from "./tools/video-status-tool.js";
@@ -282,6 +282,11 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
           manager: ctx.backgroundTaskManager as never,
           agentId: ctx.agentId,
           waitHeartbeatMs: ctx.backgroundTaskWaitHeartbeatMs,
+          // A gate-blocked task is genuinely `running`, so status alone cannot separate "working"
+          // from "waiting for a human" — and the two need opposite actions from the user. Read
+          // from the gate at query time so the answer cannot go stale.
+          pendingApprovals: (conversationRef) =>
+            readPendingApprovals(ctx.approvalGate, conversationRef),
         }),
     },
 

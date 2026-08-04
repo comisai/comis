@@ -128,11 +128,84 @@ const VALID_ACTIONS = ["list", "get", "cancel", "read_output"] as const;
  * @param deps - Dependencies: BackgroundTaskManager and agentId
  * @returns AgentTool implementing the background tasks management interface
  */
+/**
+ * A pending approval in the current conversation, as reported by the approval gate.
+ *
+ * Structural so this package need not reach into the gate's types (skills cannot import
+ * `@comis/agent`).
+ */
+export interface PendingApprovalLike {
+  /** The short id a user quotes to approve or deny. */
+  readonly shortId: string;
+  /** The tool call awaiting authorization. */
+  readonly toolName: string;
+}
+
+/**
+ * Describe pending approvals so a caller is not told that gate-blocked work is in flight.
+ *
+ * A task whose tool call is sitting at an approval gate is genuinely `running` — its thread is
+ * alive, awaiting the gate's promise — so status alone cannot distinguish "working" from "waiting
+ * for a human". The two need opposite actions from the user, and reporting only the first is how a
+ * gated pipeline was described as "already running in parallel" and then expired unapproved.
+ *
+ * Derived at read time rather than persisted as a new task status: the gate already holds this
+ * durably (and restores it across restart), so a derived answer cannot go stale and needs no enum
+ * migration. Scoped to the conversation, not to a specific task — `TaskInfo` carries no trace id,
+ * so an exact task-to-approval link does not exist here, and manufacturing one from tool names
+ * would replace one over-claim with another.
+ */
+function describePendingApprovals(pending: readonly PendingApprovalLike[]): string {
+  const ids = pending.map((a) => `${a.shortId} (${a.toolName})`).join(", ");
+  return (
+    `${pending.length} approval(s) are pending in this conversation: ${ids}. `
+    + "Work shown as running may be waiting on one of them and will make no progress until it is "
+    + "approved or denied, then fail when the approval times out. Tell the user an approval is "
+    + "waiting and what it authorizes; do not describe gated work as already in progress."
+  );
+}
+
+/**
+ * Read the approval gate's pending requests for one conversation.
+ *
+ * Structural and defensive: the registry holds the gate as an opaque value, and this must never be
+ * the reason a status query fails. Any shape it does not recognize yields an empty list, which
+ * leaves reporting exactly as it was.
+ *
+ * Filtered on `conversationRef` — the gate stamps it on every request, and it is already this
+ * tool's own authority unit, so the match is exact rather than heuristic.
+ */
+export function readPendingApprovals(
+  gate: unknown,
+  conversationRef: string,
+): readonly PendingApprovalLike[] {
+  const pendingFn = (gate as { pending?: unknown } | undefined)?.pending;
+  if (typeof pendingFn !== "function") return [];
+  try {
+    const raw = (pendingFn as () => unknown).call(gate);
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry): PendingApprovalLike[] => {
+      const r = entry as { shortId?: unknown; toolName?: unknown; conversationRef?: unknown };
+      if (r.conversationRef !== conversationRef) return [];
+      if (typeof r.shortId !== "string" || typeof r.toolName !== "string") return [];
+      return [{ shortId: r.shortId, toolName: r.toolName }];
+    });
+  } catch {
+    // A gate mid-teardown must not turn a status query into a tool failure.
+    return [];
+  }
+}
+
 export function createBackgroundTasksTool(deps: {
   manager: BackgroundTaskManagerLike;
   agentId: string;
   /** Derived from the owning agent's prompt stall budget. */
   waitHeartbeatMs?: number;
+  /**
+   * Pending approvals for the current conversation. Omitted (or empty) leaves every status report
+   * exactly as it was — a deployment with approvals disabled has none by construction.
+   */
+  pendingApprovals?: (conversationRef: string) => readonly PendingApprovalLike[];
 }): AgentTool<typeof BackgroundTasksToolParams> {
   return {
     name: "background_tasks",
@@ -152,6 +225,10 @@ export function createBackgroundTasksTool(deps: {
       const p = params as unknown as Record<string, unknown>;
       const action = readEnumParam(p, "action", VALID_ACTIONS);
       const authority = resolveTaskAuthority(deps.agentId);
+      const pendingApprovals = deps.pendingApprovals?.(authority.conversationRef) ?? [];
+      const approvalNotice = pendingApprovals.length > 0
+        ? describePendingApprovals(pendingApprovals)
+        : undefined;
 
       switch (action) {
         case "list": {
@@ -167,8 +244,13 @@ export function createBackgroundTasksTool(deps: {
                 : undefined,
             }));
           return {
-            content: [{ type: "text", text: JSON.stringify(tasks) }],
-            details: tasks,
+            content: [{
+              type: "text",
+              text: approvalNotice === undefined
+                ? JSON.stringify(tasks)
+                : `${JSON.stringify(tasks)}\n\n${approvalNotice}`,
+            }],
+            details: approvalNotice === undefined ? tasks : { tasks, pendingApprovals },
           };
         }
 
@@ -191,8 +273,13 @@ export function createBackgroundTasksTool(deps: {
             error: task.error,
           };
           return {
-            content: [{ type: "text", text: JSON.stringify(details) }],
-            details,
+            content: [{
+              type: "text",
+              text: approvalNotice === undefined
+                ? JSON.stringify(details)
+                : `${JSON.stringify(details)}\n\n${approvalNotice}`,
+            }],
+            details: approvalNotice === undefined ? details : { ...details, pendingApprovals },
           };
         }
 
@@ -221,6 +308,14 @@ export function createBackgroundTasksTool(deps: {
             throwToolError("not_found", `Background task not found: ${taskId}`, {
               hint: "Call background_tasks with action=list to obtain a task ID owned by this conversation",
             });
+          }
+          // Waiting here would burn the turn's budget on work that cannot progress until a human
+          // acts, and would then report "still running" when the heartbeat gave up.
+          if (task.status === "running" && approvalNotice !== undefined) {
+            return {
+              content: [{ type: "text", text: approvalNotice }],
+              details: { taskId, status: task.status, pendingApprovals },
+            };
           }
           if (task.status === "running") {
             const waited = await deps.manager.waitForTask(

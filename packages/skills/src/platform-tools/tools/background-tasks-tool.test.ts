@@ -444,3 +444,97 @@ describe("background_tasks tool", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gate-blocked work must not be reported as in flight
+// ---------------------------------------------------------------------------
+
+/**
+ * A task whose tool call is sitting at an approval gate is genuinely recorded `running` — its
+ * thread is alive, awaiting the gate's promise. So the tool reported "still running", the model
+ * relayed "the checks are already running in parallel", and the approval then expired
+ * unapproved. Live: exactly that pair, and neither message told the user an approval was pending
+ * and actionable.
+ *
+ * The distinction matters because the two states need OPPOSITE actions from the user: "wait"
+ * versus "approve, or nothing will happen". The pending-approval fact is already durable and
+ * queryable on the approval gate (`pending()`, and it survives restart via `serializePending`),
+ * so this is derived at read time rather than persisted as a new task status — a derived value
+ * cannot go stale, and needs no enum migration or restart-rehydrate policy.
+ *
+ * The tool deliberately does NOT claim a SPECIFIC task is blocked: `TaskInfo` carries no trace id,
+ * so no exact task-to-approval link exists at this seam, and inventing one by matching tool names
+ * would trade one over-claim for another. It reports the pending approval at conversation scope,
+ * which is enough for the user to take the right action.
+ */
+describe("background_tasks tool — pending approvals", () => {
+  const runningTask = {
+    id: "task-1",
+    toolName: "pipeline",
+    status: "running" as const,
+    startedAt: 1,
+    origin: origin(),
+  };
+
+  it("flags a pending approval alongside a running task in list", async () => {
+    const manager = createMockManager({ getTasks: vi.fn(() => [runningTask]) });
+    const tool = createBackgroundTasksTool({
+      manager,
+      agentId: AGENT_ID,
+      pendingApprovals: () => [{ shortId: "A1", toolName: "pipeline" }],
+    });
+
+    const result = await tool.execute("call-1", { action: "list" });
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+
+    expect(text).toContain("A1");
+    expect(text.toLowerCase()).toContain("approval");
+  });
+
+  it("returns the pending approval immediately from read_output instead of waiting", async () => {
+    const waitForTask = vi.fn(async () => ok(runningTask));
+    const manager = createMockManager({
+      getTask: vi.fn(() => runningTask),
+      waitForTask,
+    });
+    const tool = createBackgroundTasksTool({
+      manager,
+      agentId: AGENT_ID,
+      pendingApprovals: () => [{ shortId: "A1", toolName: "pipeline" }],
+    });
+
+    const result = await tool.execute("call-1", { action: "read_output", taskId: "task-1" });
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+
+    // Blocking out the heartbeat here burns the turn's budget on work that cannot progress until
+    // a human acts, and reports "still running" when it finally gives up.
+    expect(waitForTask).not.toHaveBeenCalled();
+    expect(text.toLowerCase()).toContain("approval");
+    expect(text).toContain("A1");
+  });
+
+  it("leaves reporting unchanged when no approval is pending", async () => {
+    const manager = createMockManager({ getTasks: vi.fn(() => [runningTask]) });
+    const tool = createBackgroundTasksTool({
+      manager,
+      agentId: AGENT_ID,
+      pendingApprovals: () => [],
+    });
+
+    const result = await tool.execute("call-1", { action: "list" });
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+
+    expect(text.toLowerCase()).not.toContain("approval");
+  });
+
+  it("leaves reporting unchanged when no approval probe is wired", async () => {
+    const manager = createMockManager({ getTasks: vi.fn(() => [runningTask]) });
+    const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+    const result = await tool.execute("call-1", { action: "list" });
+    const text = (result as { content: Array<{ text: string }> }).content[0].text;
+
+    expect(text).toContain("task-1");
+    expect(text.toLowerCase()).not.toContain("approval");
+  });
+});
