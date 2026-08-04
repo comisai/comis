@@ -94,6 +94,9 @@ import { parseJudgeVerdict } from "./qa-judge-parse.js";
 import { aggregateAccuracy, type CategorizedVerdict } from "./qa-accuracy.js";
 import { buildBenchmarkReport } from "./qa-report.js";
 // Determinism helpers (test/support -- 5 segments up from packages/agent/src/memory/benchmark/).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -163,6 +166,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The pi-ai content-block walk. DUPLICATED VERBATIM from memory-review-job.ts
@@ -385,7 +391,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       docs: Array<{ content: string; createdAt: number }>,
     ): Promise<SqliteMemoryAdapter> => {
       docCount += docs.length;
-      const adapter = new SqliteMemoryAdapter(
+      const adapter = new ScopedMemoryTestAdapter(
         makeBenchConfig(join(dir, `qa-${storeIdx++}.db`), dims),
         embed?.ok ? embed.value : undefined,
       );
@@ -417,7 +423,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         // LATENCY (recall segment) -- real wall-clock around the LLM-free recall call
         // (performance.now(), NOT the fake clock).
         const recallStart = performance.now();
-        const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+        const r = await recall.recall(q.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
         const recallMs = performance.now() - recallStart;
         const ranked: MemorySearchResult[] = r.ok ? r.value : [];
         answerables.push({
@@ -446,7 +452,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       const controlContext = formatFilesystemContext(locomo.docs);
       for (const qa of locomo.qa) {
         const recallStart = performance.now();
-        const r = await recall.recall(qa.query, BENCH_SESSION_KEY);
+        const r = await recall.recall(qa.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
         const recallMs = performance.now() - recallStart;
         const ranked: MemorySearchResult[] = r.ok ? r.value : [];
         answerables.push({

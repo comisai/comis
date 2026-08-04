@@ -83,6 +83,9 @@ import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } fr
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // Determinism helpers (test/support -- 5 segments up).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -130,6 +133,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The agent partition the memories are ingested under -- AND the agentId recall is called
@@ -267,7 +273,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: MMR diversity contribution (claim 1, k
     const dir = mkdtempSync(join(tmpdir(), "comis-iq-mmr-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "iq-mmr.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "iq-mmr.db")), undefined);
     const embeddingStore = createSqliteMemoryEmbeddingStore({ db: adapter.getDb() });
 
     DUP_A.id = randomUUID();
@@ -290,7 +296,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: MMR diversity contribution (claim 1, k
       ...baseRecallConfig(),
       mmr: { enabled: false, lambda: 0.7 },
     });
-    const rOff = await recallOff.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recallOff.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     offOrder = rOff.ok ? rOff.value.map((r) => r.entry.id) : [];
 
     // ON across the lambda-sweep.
@@ -299,7 +305,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: MMR diversity contribution (claim 1, k
         ...baseRecallConfig(),
         mmr: { enabled: true, lambda },
       });
-      const rOn = await recallOn.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+      const rOn = await recallOn.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
       diverseRankByLambda[String(lambda)] = rankOf(rOn.ok ? rOn.value : [], DIVERSE.id);
     }
 
@@ -390,7 +396,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: intent reweight contribution (claim 2,
     const dir = mkdtempSync(join(tmpdir(), "comis-iq-intent-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "iq-intent.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "iq-intent.db")), undefined);
     const embeddingStore = createSqliteMemoryEmbeddingStore({ db: adapter.getDb() });
 
     SEED.id = randomUUID();
@@ -419,11 +425,11 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: intent reweight contribution (claim 2,
     });
 
     const recallOff = createMemoryRecall(makeRecallDeps(adapter, embeddingStore), cfgFor(false));
-    const rOff = await recallOff.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recallOff.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     rankOff = rankOf(rOff.ok ? rOff.value : [], NEAR_SEED.id);
 
     const recallOn = createMemoryRecall(makeRecallDeps(adapter, embeddingStore), cfgFor(true));
-    const rOn = await recallOn.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOn = await recallOn.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     rankOn = rankOf(rOn.ok ? rOn.value : [], NEAR_SEED.id);
 
     adapter.close();
@@ -484,7 +490,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: NL temporal-range filter (claim 3, key
     const dir = mkdtempSync(join(tmpdir(), "comis-iq-range-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "iq-range.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "iq-range.db")), undefined);
     const embeddingStore = createSqliteMemoryEmbeddingStore({ db: adapter.getDb() });
 
     IN_WINDOW.id = randomUUID();
@@ -499,24 +505,24 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: NL temporal-range filter (claim 3, key
 
     // Dated query, parse OFF -> no range -> both survive.
     const recallOff = createMemoryRecall(makeRecallDeps(adapter, embeddingStore), cfgFor(false));
-    const rOff = await recallOff.recall(DATED_QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recallOff.recall(DATED_QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     const offIds = new Set((rOff.ok ? rOff.value : []).map((r) => r.entry.id));
     inWindowSurvivesOff = offIds.has(IN_WINDOW.id);
     outWindowSurvivesOff = offIds.has(OUT_WINDOW.id);
 
     // Dated query, parse ON -> range ANDed -> only the in-window doc survives.
     const recallOn = createMemoryRecall(makeRecallDeps(adapter, embeddingStore), cfgFor(true));
-    const rOn = await recallOn.recall(DATED_QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOn = await recallOn.recall(DATED_QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     const onIds = new Set((rOn.ok ? rOn.value : []).map((r) => r.entry.id));
     inWindowSurvivesOn = onIds.has(IN_WINDOW.id);
     outWindowSurvivesOn = onIds.has(OUT_WINDOW.id);
 
     // UNPARSEABLE query: parse ON must yield NO range -> recall unchanged vs parse OFF.
     const recallUnpOn = createMemoryRecall(makeRecallDeps(adapter, embeddingStore), cfgFor(true));
-    const rUnpOn = await recallUnpOn.recall(UNPARSEABLE_QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rUnpOn = await recallUnpOn.recall(UNPARSEABLE_QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     unparseableCountOn = rUnpOn.ok ? rUnpOn.value.length : -1;
     const recallUnpOff = createMemoryRecall(makeRecallDeps(adapter, embeddingStore), cfgFor(false));
-    const rUnpOff = await recallUnpOff.recall(UNPARSEABLE_QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rUnpOff = await recallUnpOff.recall(UNPARSEABLE_QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     unparseableCountOff = rUnpOff.ok ? rUnpOff.value.length : -2;
 
     adapter.close();
@@ -576,7 +582,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: DEFAULT-OFF byte-identity (claim 4, ke
     const dir = mkdtempSync(join(tmpdir(), "comis-iq-default-off-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "iq-default-off.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "iq-default-off.db")), undefined);
     M1.id = randomUUID();
     M2.id = randomUUID();
     M3.id = randomUUID();
@@ -604,7 +610,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: DEFAULT-OFF byte-identity (claim 4, ke
       } as MemoryRecallDeps,
       baseRecallConfig(),
     );
-    const rAbsent = await recallAbsent.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rAbsent = await recallAbsent.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     absentOrder = rAbsent.ok ? rAbsent.value.map((r) => r.entry.id) : [];
 
     // (b) The SHIPPING config: the stores ARE injected (the daemon always does) but every IQ
@@ -624,7 +630,7 @@ describe.skipIf(!COMIS_BENCH)("recall-IQ: DEFAULT-OFF byte-identity (claim 4, ke
         queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: false },
       },
     );
-    const rShipping = await recallShipping.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rShipping = await recallShipping.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     shippingOrder = rShipping.ok ? rShipping.value.map((r) => r.entry.id) : [];
 
     adapter.close();

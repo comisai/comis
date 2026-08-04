@@ -64,6 +64,9 @@ import { writeRegularFile } from "@comis/observability";
 // consumes; reused here to drive the KG write-path invalidation.
 import { buildContradictionPairs } from "./suite-scenario.js";
 // Determinism helpers (test/support -- 5 segments up).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -104,6 +107,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The agent partition the memories + triples are ingested under -- AND the agentId
@@ -193,7 +199,7 @@ describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (keyless gated)", 
     }
 
     // 1. INGEST the two memories into a real SqliteMemoryAdapter (FTS-only base, dims=4).
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "kg-contrib.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "kg-contrib.db")), undefined);
     seedDocId = randomUUID();
     linkedDocId = randomUUID();
 
@@ -278,7 +284,7 @@ describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (keyless gated)", 
       baseRecallConfig(false),
     );
     // Recall WITH the explicit agentId (the load-bearing spread scope; see BENCH_AGENT_ID).
-    const rOff = await recallOff.recall(SCENARIO.query, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recallOff.recall(SCENARIO.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     rankedOff = rOff.ok ? rOff.value : [];
 
     // 4. RECALL with the lane ON (M_linked must now be surfaced purely by the graph edge).
@@ -292,7 +298,7 @@ describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (keyless gated)", 
       } as MemoryRecallDeps,
       baseRecallConfig(true),
     );
-    const rOn = await recallOn.recall(SCENARIO.query, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOn = await recallOn.recall(SCENARIO.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     rankedOn = rOn.ok ? rOn.value : [];
 
     adapter.close();
@@ -412,7 +418,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first KG write-path invalidation (keyless g
     perPairResults = [];
     for (const [index, pair] of pairs.entries()) {
       // Each pair gets its OWN store (the standard per-item isolation the siblings use).
-      const adapter = new SqliteMemoryAdapter(
+      const adapter = new ScopedMemoryTestAdapter(
         makeBenchConfig(join(dir, `kg-inval-${index}.db`)),
         undefined,
       );

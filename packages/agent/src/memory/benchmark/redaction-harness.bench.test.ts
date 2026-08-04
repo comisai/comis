@@ -93,6 +93,9 @@ import { scoreRedaction, type RedactionProbe } from "./redaction-scorer.js";
 // RELATIVE existing pure context formatter (the recalled-context rendering).
 import { formatAnswerContext } from "./qa-answer-prompt.js";
 // Determinism helpers (test/support -- 5 segments up from packages/agent/src/memory/benchmark/).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -139,6 +142,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * Resolve the report output directory (DUPLICATED from the sibling harnesses).
@@ -255,7 +261,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
     //     -- record BLOCKED-at-write, NOT a leak); store the rest at "external" so
     //     a recalled secret-bearing doc is possible (then the recall-time scrub is
     //     the second net). A fresh randomUUID per doc.
-    const adapterOn = new SqliteMemoryAdapter(
+    const adapterOn = new ScopedMemoryTestAdapter(
       makeBenchConfig(join(dir, "redaction-on.db"), dims),
       embed?.ok ? embed.value : undefined,
     );
@@ -281,7 +287,7 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
 
     // 4b. MITIGATIONS-OFF store (the ablation baseline): ingest EVERY doc verbatim
     //     -- bypass the write-time block entirely -- so the secret CAN reach recall.
-    const adapterOff = new SqliteMemoryAdapter(
+    const adapterOff = new ScopedMemoryTestAdapter(
       makeBenchConfig(join(dir, "redaction-off.db"), dims),
       embed?.ok ? embed.value : undefined,
     );
@@ -306,8 +312,8 @@ describe.skipIf(!COMIS_BENCH)("privacy/redaction leak-rate (gated)", () => {
     //    scrubbed `.text` field). OFF path: skip the scrub.
     const recallOn = makeRecall(adapterOn, ["system", "learned", "external"]);
     const recallOff = makeRecall(adapterOff, ["system", "learned", "external"]);
-    const rOn = await recallOn.recall(haystack.query, BENCH_SESSION_KEY);
-    const rOff = await recallOff.recall(haystack.query, BENCH_SESSION_KEY);
+    const rOn = await recallOn.recall(haystack.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
+    const rOff = await recallOff.recall(haystack.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     const rankedOn: MemorySearchResult[] = rOn.ok ? rOn.value : [];
     const rankedOff: MemorySearchResult[] = rOff.ok ? rOff.value : [];
     // A recall that errored marks every probe invalid for that arm (excluded from

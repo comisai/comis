@@ -98,6 +98,9 @@ import { buildJudgePrompt } from "./qa-judge-prompt.js";
 import { parseJudgeVerdict } from "./qa-judge-parse.js";
 import { aggregateAccuracy, type CategorizedVerdict } from "./qa-accuracy.js";
 // Determinism helpers (test/support -- 5 segments up from packages/agent/src/memory/benchmark/).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -151,6 +154,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The pi-ai content-block walk. DUPLICATED VERBATIM from
@@ -277,7 +283,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
     //    high-trust fact on top despite the newer claim.) The correct answer rides
     //    the prepared channel only -- never a recall input.
     for (const [index, pair] of pairs.entries()) {
-      const adapter = new SqliteMemoryAdapter(
+      const adapter = new ScopedMemoryTestAdapter(
         makeBenchConfig(join(dir, `contra-${index}.db`), dims),
         embed?.ok ? embed.value : undefined,
       );
@@ -313,7 +319,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
       // ONLY (the trust-first property is measured via ranking + filter; the guidance
       // block is unit-tested in rag/temporal-guidance.test.ts).
       const recall = makeRecall(adapter, ["system", "learned"]);
-      const r = await recall.recall(pair.query, BENCH_SESSION_KEY);
+      const r = await recall.recall(pair.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
       const ranked: MemorySearchResult[] = r.ok ? r.value : [];
 
       prepared.push({

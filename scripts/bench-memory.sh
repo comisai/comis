@@ -16,7 +16,7 @@
 #   suite <tier>  run one suite tier by name and write a committed, secret-free
 #              report under benchmarks/results/<tier>/. Tiers:
 #                poisoning            (answer+judge env) — adversarial ASR (security flagship)
-#                recall-learning      KEYLESS              — FEED-loop gold-rank lift
+#                recall-learning      KEYLESS              — usefulness-bucket claims (NOT a rank lift)
 #                trust-contradiction  (answer+judge env) — older-high-trust-wins rate
 #                redaction            KEYLESS              — privacy/redaction leak-rate
 #                beam                 KEYLESS              — long-context scale probe (COMIS_BENCH_BEAM_10M lights the 10M tier)
@@ -68,7 +68,11 @@ RET="$BENCH_DIR/retrieval-harness.bench.test.ts"
 
 # Suite tier harnesses routed by `suite <tier>` below.
 POISONING_HARNESS="$BENCH_DIR/poisoning-harness.bench.test.ts"
-LEARNING_HARNESS="$BENCH_DIR/learning-lift-harness.bench.test.ts"
+# The rank-LIFT harness this tier originally ran was deleted when the learning
+# subsystem collapsed into one reflection engine; learning-iq is the surviving
+# keyless learning harness. It deliberately produces NO lift number -- see the
+# tier note below before restoring any lift claim to this tier's output.
+LEARNING_HARNESS="$BENCH_DIR/learning-iq.bench.test.ts"
 CONTRADICTION_HARNESS="$BENCH_DIR/contradiction-harness.bench.test.ts"
 REDACTION_HARNESS="$BENCH_DIR/redaction-harness.bench.test.ts"
 BEAM_HARNESS="$BENCH_DIR/beam-harness.bench.test.ts"
@@ -179,7 +183,11 @@ run_suite_tier() {
       run "$POISONING_HARNESS"
       ;;
     recall-learning)
-      run "$LEARNING_HARNESS"   # KEYLESS — FEED-loop gold-rank lift
+      # KEYLESS — the four mechanical usefulness-bucket claims (per-intent ordering,
+      # default-off byte-identity + read-spy=0, citation->FEED accrual, tenant/agent/
+      # intent isolation). NOT a gold-rank lift: that measurement's harness is gone,
+      # and a number reported here under that name would be fabricated.
+      run "$LEARNING_HARNESS"
       ;;
     trust-contradiction)
       require_answer_judge_env "$TIER"
