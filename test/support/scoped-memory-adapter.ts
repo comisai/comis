@@ -53,6 +53,25 @@ function fixtureWriteScope(entry: Partial<MemoryEntry>): MemoryWriteScope {
   };
 }
 
+/**
+ * Build a resolved recall scope for a fixture.
+ *
+ * `recall()` reads its tenant and agent partition from the scope, not from the
+ * session key. Fixture session keys routinely carry no agent, so a scope derived
+ * from one searches an empty partition and ranks nothing -- which is
+ * indistinguishable from a pipeline that never ran. Callers that ingest under a
+ * named agent must pass that same agent here.
+ */
+export function testRecallScope(
+  tenantId: string,
+  agentId: string,
+  principalId = "user_a",
+): MemoryRecallScope {
+  const resolved = createMemoryRecallScope(turnScope(tenantId, agentId, principalId), true);
+  if (!resolved.ok) throw resolved.error;
+  return resolved.value;
+}
+
 function fixtureRecallScope(scope: MemoryRecallScope | SessionKey, options?: LegacySearchOptions): MemoryRecallScope {
   if ("conversationRef" in scope) return scope;
   const tenantId = scope.tenantId;

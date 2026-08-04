@@ -68,7 +68,7 @@ RET="$BENCH_DIR/retrieval-harness.bench.test.ts"
 
 # Suite tier harnesses routed by `suite <tier>` below.
 POISONING_HARNESS="$BENCH_DIR/poisoning-harness.bench.test.ts"
-LEARNING_HARNESS="$BENCH_DIR/learning-lift-harness.bench.test.ts"
+LEARNING_HARNESS="$BENCH_DIR/learning-iq.bench.test.ts"
 CONTRADICTION_HARNESS="$BENCH_DIR/contradiction-harness.bench.test.ts"
 REDACTION_HARNESS="$BENCH_DIR/redaction-harness.bench.test.ts"
 BEAM_HARNESS="$BENCH_DIR/beam-harness.bench.test.ts"

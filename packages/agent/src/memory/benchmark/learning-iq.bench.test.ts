@@ -83,6 +83,9 @@ import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } fr
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // Determinism helpers (test/support -- 5 segments up).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -134,6 +137,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The agent partition the memories are ingested under -- AND the agentId recall is
@@ -275,7 +281,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (clai
     const dir = mkdtempSync(join(tmpdir(), "comis-learn-intent-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "learn-intent.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "learn-intent.db")), undefined);
     const usefulnessStore = createSqliteMemoryUsefulnessStore({ db: adapter.getDb() });
 
     M.id = randomUUID();
@@ -307,10 +313,10 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (clai
 
     const recall = createMemoryRecall(makeRecallDeps(adapter, usefulnessStore), cfg);
 
-    const rTemporal = await recall.recall(TEMPORAL_QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rTemporal = await recall.recall(TEMPORAL_QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     mRankTemporalQuery = rankOf(rTemporal.ok ? rTemporal.value : [], M.id);
 
-    const rPreference = await recall.recall(PREFERENCE_QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rPreference = await recall.recall(PREFERENCE_QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     mRankPreferenceQuery = rankOf(rPreference.ok ? rPreference.value : [], M.id);
 
     adapter.close();
@@ -369,7 +375,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: default-OFF byte-identity + read-spy
     const dir = mkdtempSync(join(tmpdir(), "comis-learn-default-off-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "learn-default-off.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "learn-default-off.db")), undefined);
     A.id = randomUUID();
     B.id = randomUUID();
     C.id = randomUUID();
@@ -408,7 +414,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: default-OFF byte-identity + read-spy
       feedback: { enabled: false },
       queryUnderstanding: { intentReweight: true, synonyms: false, temporalParse: false },
     });
-    const rNoStore = await recallNoStore.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rNoStore = await recallNoStore.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     noStoreOrder = rNoStore.ok ? rNoStore.value.map((r) => r.entry.id) : [];
 
     // (b) The SHIPPING config: the store IS injected (the daemon always does) but feedback
@@ -418,7 +424,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: default-OFF byte-identity + read-spy
       feedback: { enabled: false },
       queryUnderstanding: { intentReweight: true, synonyms: false, temporalParse: false },
     });
-    const rShipping = await recallShipping.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rShipping = await recallShipping.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     shippingOrder = rShipping.ok ? rShipping.value.map((r) => r.entry.id) : [];
 
     adapter.close();
@@ -474,7 +480,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: citation->FEED accrual (claim 3, key
     const dir = mkdtempSync(join(tmpdir(), "comis-learn-citation-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "learn-citation.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "learn-citation.db")), undefined);
     const usefulnessStore = createSqliteMemoryUsefulnessStore({ db: adapter.getDb() });
 
     CITED.id = randomUUID();
@@ -571,7 +577,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: tenant/agent/intent isolation (claim
     const dir = mkdtempSync(join(tmpdir(), "comis-learn-isolation-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "learn-isolation.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "learn-isolation.db")), undefined);
     const usefulnessStore = createSqliteMemoryUsefulnessStore({ db: adapter.getDb() });
 
     M.id = randomUUID();

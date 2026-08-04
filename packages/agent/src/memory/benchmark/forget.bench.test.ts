@@ -85,6 +85,9 @@ import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } fr
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // Determinism helpers (test/support -- 5 segments up).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -132,6 +135,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The agent partition the memories are ingested under AND the agentId recall is called
@@ -281,7 +287,7 @@ describe.skipIf(!COMIS_BENCH)("forget: byte-identity at neutral importance (clai
     const dir = mkdtempSync(join(tmpdir(), "comis-forget-byte-identity-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "forget-byte-identity.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "forget-byte-identity.db")), undefined);
     NEUTRAL.id = randomUUID();
     OTHER.id = randomUUID();
     // Event-age 0: createdAt = occurredAt = BENCH_NOW (the neutral-in-time byte-identity point).
@@ -289,18 +295,18 @@ describe.skipIf(!COMIS_BENCH)("forget: byte-identity at neutral importance (clai
     await storeFixture(adapter, { id: OTHER.id, content: OTHER.content, createdAt: BENCH_NOW, occurredAt: BENCH_NOW });
 
     const recall = createMemoryRecall(makeRecallDeps(adapter), { ...baseRecallConfig(), forget: { enabled: false } });
-    const rOff = await recall.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recall.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     scoreForgetOff = scoreOf(rOff.ok ? rOff.value : [], NEUTRAL.id) ?? -1;
     rankForgetOff = rankOf(rOff.ok ? rOff.value : [], NEUTRAL.id);
 
     const recallOn = createMemoryRecall(makeRecallDeps(adapter), { ...baseRecallConfig(), forget: { enabled: true } });
-    const rOn = await recallOn.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOn = await recallOn.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     scoreForgetOnNeutral = scoreOf(rOn.ok ? rOn.value : [], NEUTRAL.id) ?? -1;
     rankForgetOnNeutral = rankOf(rOn.ok ? rOn.value : [], NEUTRAL.id);
 
     // Pre-forget reference: the `forget` field ABSENT entirely (a caller predating the knob).
     const recallAbsent = createMemoryRecall(makeRecallDeps(adapter), baseRecallConfig());
-    const rAbsent = await recallAbsent.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rAbsent = await recallAbsent.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     scoreForgetAbsent = scoreOf(rAbsent.ok ? rAbsent.value : [], NEUTRAL.id) ?? -1;
     rankForgetAbsent = rankOf(rAbsent.ok ? rAbsent.value : [], NEUTRAL.id);
 
@@ -366,7 +372,7 @@ describe.skipIf(!COMIS_BENCH)("forget: deterministic decay effect (claim 2, keyl
     const dir = mkdtempSync(join(tmpdir(), "comis-forget-decay-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "forget-decay.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "forget-decay.db")), undefined);
     OLD_EPHEMERAL.id = randomUUID();
     FRESH_DURABLE.id = randomUUID();
     // OLD ephemeral: 90-day event-age, episodic (β=1.2). FRESH durable: 1-day, semantic (β=0.8).
@@ -387,14 +393,14 @@ describe.skipIf(!COMIS_BENCH)("forget: deterministic decay effect (claim 2, keyl
 
     // forget OFF -> the no-decay baseline score for each memory (forgetFactor === 1.0).
     const recallOff = createMemoryRecall(makeRecallDeps(adapter), { ...baseRecallConfig(), forget: { enabled: false } });
-    const rOff = await recallOff.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recallOff.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     const oldOff = scoreOf(rOff.ok ? rOff.value : [], OLD_EPHEMERAL.id) ?? -1;
     const freshOff = scoreOf(rOff.ok ? rOff.value : [], FRESH_DURABLE.id) ?? -1;
 
     // forget ON -> the decayed score. The recovered factor is on/off (forget is a pure
     // multiplicand; every other alpha is 0 so no other factor differs between the runs).
     const recallOn = createMemoryRecall(makeRecallDeps(adapter), { ...baseRecallConfig(), forget: { enabled: true } });
-    const rOn = await recallOn.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOn = await recallOn.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     const oldOn = scoreOf(rOn.ok ? rOn.value : [], OLD_EPHEMERAL.id) ?? -1;
     const freshOn = scoreOf(rOn.ok ? rOn.value : [], FRESH_DURABLE.id) ?? -1;
 
@@ -460,7 +466,7 @@ describe.skipIf(!COMIS_BENCH)("forget: footprint unchanged when dormant (claim 3
     const dir = mkdtempSync(join(tmpdir(), "comis-forget-footprint-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "forget-footprint.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "forget-footprint.db")), undefined);
     // 4 ordinary fresh rows + 1 deliberately STALE low-importance ephemeral row (an
     // eviction CANDIDATE a live policy would mark; the DORMANT scaffold marks it NOT).
     for (let i = 0; i < SEED_COUNT - 1; i += 1) {
@@ -577,7 +583,7 @@ describe.skipIf(!COMIS_BENCH)("forget: zero category regression (claim 4, keyles
     const dir = mkdtempSync(join(tmpdir(), "comis-forget-regression-bench-"));
     reportDir = resolveReportDir(dir);
 
-    const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "forget-regression.db")), undefined);
+    const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "forget-regression.db")), undefined);
     for (const f of FIXTURES) {
       f.id = randomUUID();
       const eventMs = BENCH_NOW - f.ageDays * DAY_MS;
@@ -592,12 +598,12 @@ describe.skipIf(!COMIS_BENCH)("forget: zero category regression (claim 4, keyles
 
     // (a) The baseline: the `forget` field ABSENT (a caller predating the forget knob).
     const recallAbsent = createMemoryRecall(makeRecallDeps(adapter), baseRecallConfig());
-    const rAbsent = await recallAbsent.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rAbsent = await recallAbsent.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     baselineAbsentOrder = rAbsent.ok ? rAbsent.value.map((r) => r.entry.id) : [];
 
     // (b) forget present but OFF (the shipping default).
     const recallOff = createMemoryRecall(makeRecallDeps(adapter), { ...baseRecallConfig(), forget: { enabled: false } });
-    const rOff = await recallOff.recall(QUERY, BENCH_SESSION_KEY, BENCH_AGENT_ID);
+    const rOff = await recallOff.recall(QUERY, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     forgetOffOrder = rOff.ok ? rOff.value.map((r) => r.entry.id) : [];
 
     adapter.close();

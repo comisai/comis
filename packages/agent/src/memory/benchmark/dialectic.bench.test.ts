@@ -30,7 +30,7 @@
  *      chain (ids only -- never the memory body).
  *
  * THIS IS THE PRODUCTION CODE PATH, NOT A MOCK:
- *   - the adapter = `new SqliteMemoryAdapter(...)` (bare @comis/memory) on a fresh mkdtempSync db,
+ *   - the adapter = `new ScopedMemoryTestAdapter(...)` (bare @comis/memory) on a fresh mkdtempSync db,
  *   - recall = the LIVE `createMemoryRecall({ memoryPort: adapter, ... })` (bare @comis/agent),
  *   - synthesis = the PURE `orderByTrust` / `assembleSynthesis` / `citationChains` (bare @comis/agent)
  *     with an INJECTED STUB seam (a pure fn -- no model; the seam is the daemon's job, here it
@@ -77,6 +77,9 @@ import { writeRegularFile } from "@comis/observability";
 // this bench documents the SAME default-OFF byte-identity property mechanically at $0 without
 // crossing the tier (the gate is `(ctx) => ctx.dialecticEnabled === true` — replicated here).
 // Determinism helpers (test/support — 5 segments up).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -115,6 +118,9 @@ const BENCH_USER = "user_a";
  *  adapter reads sessionKey.tenantId); a string would zero every recall. Neutral placeholders,
  *  isolated from any live session (mirrors retrieval-harness.bench.test.ts). */
 const BENCH_SESSION_KEY = { tenantId: BENCH_TENANT, userId: BENCH_USER, channelId: "default" } as never;
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope(BENCH_TENANT, BENCH_AGENT, BENCH_USER);
 
 /** The bench store config (mirrors the sibling harnesses; tiny local embedding dims). */
 function makeBenchConfig(dbPath: string): MemoryConfig {
@@ -157,7 +163,7 @@ function writeReport(reportDir: string, name: string, report: unknown): string {
 /** A fresh adapter on a fresh tmp DB (the SOLE @comis/memory escape via the .test.ts suffix). */
 function makeAdapter(dirName: string): { adapter: SqliteMemoryAdapter; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), `comis-dialectic-bench-${dirName}-`));
-  const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, "dialectic.db")), undefined);
+  const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, "dialectic.db")), undefined);
   return { adapter, dir };
 }
 
@@ -281,7 +287,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: recall stays LLM-free (claim 2, keyles
     await seed(adapter, "22222222-2222-4222-8222-222222222222", "the project uses ISO timestamps", "learned", ["s2"]);
 
     const recall = makeRecall(adapter, ["learned", "system"]);
-    const recalled = await recall.recall("what timezone does the project use", BENCH_SESSION_KEY);
+    const recalled = await recall.recall("what timezone does the project use", BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     expect(recalled.ok, "recall ok").toBe(true);
 
     const modelCalls = completeSimpleSpy.mock.calls.length + getModelSpy.mock.calls.length;
@@ -311,7 +317,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: citations are real recalled ids (claim
     await seed(adapter, realId, "the deploy region is us-east-1", "learned", ["src-a"]);
 
     const recall = makeRecall(adapter, ["learned", "system"]);
-    const recalled = await recall.recall("what deploy region", BENCH_SESSION_KEY);
+    const recalled = await recall.recall("what deploy region", BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     expect(recalled.ok && recalled.value.length > 0, "recall returned the seeded memory").toBe(true);
     const recalledResults = recalled.ok ? recalled.value : [];
 
@@ -352,7 +358,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: mandatory abstention (claim 4, keyless
     const reportDir = resolveReportDir(dir);
     // No seeds => the recall set is empty (irrelevant question / nothing stored).
     const recall = makeRecall(adapter, ["learned", "system"]);
-    const recalled = await recall.recall("a question with no grounding", BENCH_SESSION_KEY);
+    const recalled = await recall.recall("a question with no grounding", BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     expect(recalled.ok, "recall ok").toBe(true);
     const recalledResults = recalled.ok ? recalled.value : [];
 
@@ -400,7 +406,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: trust-first contradiction (claim 5, ke
     await seed(adapter, sysId, "UTC-SYSTEM-CLAIM about the timezone", "system", ["sys-src"]);
 
     const recall = makeRecall(adapter, ["system", "learned", "external"]);
-    const recalled = await recall.recall("what timezone (contradiction)", BENCH_SESSION_KEY);
+    const recalled = await recall.recall("what timezone (contradiction)", BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     expect(recalled.ok, "recall ok").toBe(true);
     const recalledResults = recalled.ok ? recalled.value : [];
 
@@ -445,7 +451,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: sourceIds in the recall-trace (claim 6
     await seed(adapter, id, BODY, "learned", SOURCE_IDS);
 
     const recall = makeRecall(adapter, ["learned", "system"]);
-    const recalled = await recall.recall("where does the build run", BENCH_SESSION_KEY);
+    const recalled = await recall.recall("where does the build run", BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
     const recalledResults = recalled.ok ? recalled.value : [];
     expect(recalledResults.length, "recall returned the seeded memory").toBeGreaterThan(0);
 

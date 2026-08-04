@@ -66,6 +66,9 @@ import type { RankingMetrics } from "../recall-eval.js";
 // VALUE obs import (fine in a .test.ts) — the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // Determinism helpers (test/support — 5 segments up from packages/agent/src/memory/benchmark/).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -116,6 +119,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * Resolve the report output directory (DUPLICATED from the retrieval harness). The
@@ -209,7 +215,7 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
     // Generate the haystack HERE at run time (deterministic; never from disk).
     const haystack = generateBeamHaystack({ approxTokens, seed: BEAM_SEED, abilities: 4 });
 
-    const adapter = new SqliteMemoryAdapter(
+    const adapter = new ScopedMemoryTestAdapter(
       makeBenchConfig(join(reportDir, `beam-${approxTokens}.db`), dims),
       embed?.ok ? embed.value : undefined,
     );
@@ -260,7 +266,7 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
     const rankedByNeedle = new Map<string, MemorySearchResult[]>();
     const resolvedNeedles: BeamNeedle[] = [];
     for (const n of haystack.needles) {
-      const r = await recall.recall(n.query, BENCH_SESSION_KEY);
+      const r = await recall.recall(n.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
       rankedByNeedle.set(n.query, r.ok ? r.value : []);
       const goldUuid = ingestedIdByRef.get(n.goldDocId);
       expect(goldUuid, "needle gold doc was ingested").toBeDefined();

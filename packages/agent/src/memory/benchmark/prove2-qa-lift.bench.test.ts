@@ -71,6 +71,9 @@ import { parseJudgeVerdict } from "./qa-judge-parse.js";
 import { aggregateAccuracy, type CategorizedVerdict, type AccuracyResult } from "./qa-accuracy.js";
 import { computeSpreadFromResults } from "./cross-judge-spread.js";
 import { wilsonInterval, twoProportionTest } from "./significance.js";
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -128,6 +131,9 @@ const CONTROL_LABEL = "filesystem-baseline-full-context-control";
 const BASELINE_LABEL = "comis-baseline";
 
 const BENCH_SESSION_KEY: SessionKey = { tenantId: "default", userId: "user_a", channelId: "default" };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * The as-shipped recall defaults. usefulnessAlpha/forgetAlpha are set to their
@@ -359,7 +365,7 @@ describe.skipIf(!COMIS_BENCH)("PROVE2 — costed per-capability QA-lift + head-t
 
     // Per-item ingest + per-system recall (all LLM-free, in beforeAll).
     const ingestDocs = async (docs: Array<{ content: string; createdAt: number }>, idx: number): Promise<SqliteMemoryAdapter> => {
-      const adapter = new SqliteMemoryAdapter(makeBenchConfig(join(dir, `p2-${idx}.db`), dims), embed?.ok ? embed.value : undefined);
+      const adapter = new ScopedMemoryTestAdapter(makeBenchConfig(join(dir, `p2-${idx}.db`), dims), embed?.ok ? embed.value : undefined);
       for (const doc of docs) {
         const stored = await adapter.store({
           id: randomUUID(),
@@ -393,7 +399,7 @@ describe.skipIf(!COMIS_BENCH)("PROVE2 — costed per-capability QA-lift + head-t
         let ranked: MemorySearchResult[] = [];
         try {
           const recall = makeRecall(adapter, sys.overlay(baseCfg));
-          const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+          const r = await recall.recall(q.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
           if (!r.ok) {
             recallErrors.set(sys.label, (recallErrors.get(sys.label) ?? 0) + 1);
             if (!recallErrorMsg.has(sys.label)) recallErrorMsg.set(sys.label, r.error.message);

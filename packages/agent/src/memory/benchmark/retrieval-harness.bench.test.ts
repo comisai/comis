@@ -67,6 +67,9 @@ import { analyzeRecallTrace } from "./recall-trace-analyzer.js";
 // the confined report writer (O_NOFOLLOW + EXCL + confinement) for retrieval-metrics.json.
 import { createRecallTrace, writeRegularFile } from "@comis/observability";
 // Determinism helpers (test/support — 5 segments up from packages/agent/src/memory/benchmark/).
+// `store()` and the search lanes take an explicit authority scope; this bridge derives
+// one from the fixture entry so the harness keeps its single-argument writes.
+import { ScopedMemoryTestAdapter, testRecallScope } from "../../../../../test/support/scoped-memory-adapter.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
@@ -113,6 +116,9 @@ const BENCH_SESSION_KEY: SessionKey = {
   userId: "user_a",
   channelId: "default",
 };
+
+/** The partition the fixtures are ingested under; recall must search the SAME one. */
+const BENCH_MEMORY_SCOPE = testRecallScope("default", "bench");
 
 /**
  * Read a vendored fixture (default) or an operator-placed dataset file under
@@ -260,7 +266,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
       const recall = makeRecall(port);
       const goldByQuestion = buildGoldMap(goldRefsByQuestion, ingestedIdByRef);
       for (const q of questions) {
-        const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+        const r = await recall.recall(q.query, BENCH_MEMORY_SCOPE, BENCH_SESSION_KEY);
         rankedByQuestion.set(q.questionId, r.ok ? r.value : []);
         queries.push({
           group: "reranking",
@@ -277,7 +283,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     // haystack, key the side-map on doc.sessionId = the answer_session_ids gold form).
     // A fresh randomUUID per doc (NEVER the dataset ref — z.guid() rejects "session_0002").
     for (const lme of lmeItems) {
-      const adapter = new SqliteMemoryAdapter(
+      const adapter = new ScopedMemoryTestAdapter(
         makeBenchConfig(join(dir, `lme-${storeIdx++}.db`), dims),
         embed?.ok ? embed.value : undefined,
       );
@@ -310,7 +316,7 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     // session-qualified dia ref ("D2:3") verbatim — the SAME form the loader emits for
     // qa[].goldDiaIds, so buildGoldMap resolves.
     for (const locomo of locomoItems) {
-      const adapter = new SqliteMemoryAdapter(
+      const adapter = new ScopedMemoryTestAdapter(
         makeBenchConfig(join(dir, `locomo-${storeIdx++}.db`), dims),
         embed?.ok ? embed.value : undefined,
       );
