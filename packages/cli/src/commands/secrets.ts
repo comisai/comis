@@ -41,6 +41,7 @@ import { withClient, callTyped } from "../client/rpc-client.js";
 import { requireDaemonOrExit, DAEMON_PROBE_TIMEOUT_MS } from "../util/daemon-required.js";
 import { isDaemonRunning } from "../sync-tooling/daemon-guard.js";
 import { offlineSecretSet, offlineSecretsList, offlineSecretGet } from "../util/offline-secrets-store.js";
+import { resolveOfflineDataDir } from "../util/offline-obs.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeTime } from "./sessions.js";
@@ -269,7 +270,7 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("get <name>")
     .description(
-      "Decrypt and display a secret. Requires the comis daemon to be running, or pass --offline to read the local store directly (needs SECRETS_MASTER_KEY in ~/.comis/.env).",
+      "Decrypt and display a secret. Requires the comis daemon to be running, or pass --offline to read the selected local store directly.",
     )
     .option("--yes", "Skip confirmation prompt")
     .option(
@@ -296,7 +297,7 @@ export function registerSecretsCommand(program: Command): void {
       // default (RPC reads are audit-logged daemon-side); --offline is the
       // operator's deliberate, local, master-key-gated escape hatch.
       if (options.offline === true) {
-        const dataDir = safePath(os.homedir(), ".comis");
+        const dataDir = resolveOfflineDataDir();
         const result = offlineSecretGet({
           name,
           dataDir,
