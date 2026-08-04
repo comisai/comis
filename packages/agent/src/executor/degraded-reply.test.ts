@@ -34,6 +34,7 @@ import {
   selectContextExhaustedReply,
   selectLoopDetectedReply,
 } from "./degraded-reply-i18n.js";
+import { NO_PROGRESS_LOOP_THRESHOLD } from "./turn-loop-detector.js";
 
 describe("buildDegradedReply — deterministic per endReason", () => {
   it("output_starved → returns the annotation string (non-empty)", () => {
@@ -282,6 +283,8 @@ describe("buildContextExhaustedReply — recovery guidance + incident ref", () =
       expect(reply).toBeDefined();
       expect(reply!.length).toBeGreaterThan(0);
       expect(reply!.toLowerCase()).toMatch(/repeat|loop|progress/);
+      expect(reply).toContain(`${NO_PROGRESS_LOOP_THRESHOLD} consecutive`);
+      expect(reply).toMatch(/successful|unchanged/i);
     });
 
     it("appends the incident traceId when provided", () => {
