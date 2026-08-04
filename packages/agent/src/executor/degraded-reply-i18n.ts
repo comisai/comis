@@ -2,6 +2,7 @@
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
 import type { ErrorKind } from "@comis/core";
 import { tryCatch } from "@comis/shared";
+import { NO_PROGRESS_LOOP_THRESHOLD } from "./turn-loop-detector.js";
 
 export const CAP_KNOB_BY_CLASS: Readonly<Record<string, string>> = {
   small: "contextEngine.budget.effectiveContextCapSmall",
@@ -65,9 +66,10 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   output_starved:
     "\n\n⚠️ My response was cut short by the model's output limit. Try a more focused request or choose a model with a larger output limit.",
   loop_detected:
-    "I stopped because I kept repeating an action that wasn't making progress "
-      + "(usually a tool that failed or was blocked) and didn't want to loop. The "
-      + "request may need a different approach, or that capability isn't available here.",
+    `I stopped at the governor limit of ${NO_PROGRESS_LOOP_THRESHOLD} consecutive `
+      + "no-progress tool results. This includes successful calls when the tool and "
+      + "its result stay unchanged, as well as failed or blocked calls. Try a different "
+      + "approach or change the condition before retrying.",
   tool_failure_notice:
     "\n\nNote: one of the tools I used reported an error, so part of this may be"
       + " incomplete — ",
