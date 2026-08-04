@@ -105,6 +105,22 @@ function cacheKey(toolName: string, args: unknown): string {
   return `${toolName}::${canonicalize(args)}`;
 }
 
+const ONE_SHOT_TOOL_GUIDE_PREFIX =
+  "\n---\n[Tool Guide - shown once per session]\n";
+
+/** Remove runtime-added one-shot guidance before comparing tool semantics. */
+function semanticToolResult(result: unknown): unknown {
+  if (result === null || typeof result !== "object") return result;
+  const record = result as Record<string, unknown>;
+  if (!Array.isArray(record.content)) return result;
+  const content = record.content.filter((block) => {
+    if (block === null || typeof block !== "object") return true;
+    const text = (block as { text?: unknown }).text;
+    return typeof text !== "string" || !text.startsWith(ONE_SHOT_TOOL_GUIDE_PREFIX);
+  });
+  return content.length === record.content.length ? result : { ...record, content };
+}
+
 /**
  * True when a tool result represents a FAILURE / blocked call. The canonical
  * signal is `isError: true`; we also catch content-gate / sandbox rejections that
@@ -164,7 +180,8 @@ export function createTurnLoopDetector(): TurnLoopDetector {
         if (isFailureResult(result)) {
           noProgressCount++;
         } else {
-          const fingerprint = `${cacheKey(toolName, args)}::${canonicalize(result)}`;
+          const fingerprint =
+            `${cacheKey(toolName, args)}::${canonicalize(semanticToolResult(result))}`;
           if (fingerprint === lastSuccessfulMutationFingerprint) {
             noProgressCount++;
           } else {
