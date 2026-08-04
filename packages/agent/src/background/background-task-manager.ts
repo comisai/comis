@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
-import { hardTimeoutHint } from "./hard-timeout-hint.js";
+import { BackgroundHardTimeoutError } from "./hard-timeout-hint.js";
 import { backgroundFailureCause } from "./background-failure-cause.js";
 import {
   projectBackgroundCompletionResult,
@@ -405,7 +405,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           // beside it already follows.
           manager.fail(
             taskId,
-            new Error(hardTimeoutHint({ toolName, agentId, limitMs: hardLimitMs })),
+            new BackgroundHardTimeoutError({ toolName, agentId, limitMs: hardLimitMs }),
             "timeout",
           );
         }

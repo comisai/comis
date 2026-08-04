@@ -84,6 +84,7 @@ import {
   backgroundPendingVerdict,
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
+import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
 import {
   executionAuthFailureVerdict,
   recallMissVerdict,
@@ -584,7 +585,9 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 6) provider_timeout (insurance — any timeout-kind failure).
+  backgroundHardTimeoutVerdict,
+
+  // 6) provider_timeout (insurance — any remaining timeout-kind failure).
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");
     if (failure === undefined) return null;
