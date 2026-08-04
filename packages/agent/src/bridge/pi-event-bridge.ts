@@ -2596,6 +2596,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     ? {
                         limb: rootGate.error.limb,
                         spent: rootGate.error.currentUsd,
+                        attempted: rootGate.error.estUsd,
                         cap: rootGate.error.capUsd,
                         unit: rootGate.error.unit ?? "usd",
                       }

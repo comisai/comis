@@ -608,6 +608,8 @@ export const IncidentReportSchema = z.object({
       limb: z.string(),
       /** The limb's spent amount, in `unit` (tokens / ms / USD). */
       spent: z.number(),
+      /** Rejected next reservation, in `unit`; current + attempted would exceed cap. */
+      attempted: z.number().optional(),
       /** The limb's configured cap, in `unit`. */
       cap: z.number(),
       /** The unit of `spent`/`cap`: `tokens` | `ms` | `usd`. */
