@@ -161,7 +161,7 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   },
   // Auth / API key errors
   {
-    test: /invalid.?api.?key|authentication|unauthorized|401|403|invalid x-api-key|permission.?denied/i,
+    test: /invalid.?api.?key|no api key found|authentication|unauthorized|401|403|invalid x-api-key|permission.?denied/i,
     category: "auth_invalid",
     userMessage:
       "The AI service could not authenticate. Please notify the system administrator.",

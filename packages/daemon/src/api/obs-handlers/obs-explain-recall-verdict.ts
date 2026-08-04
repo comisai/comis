@@ -28,6 +28,24 @@ import type { IncidentSignals } from "@comis/core";
 /** Structural twin of `obs-explain-heuristics.RootCause` (kept local — no import cycle). */
 type RecallVerdict = { code: string; detail: string; suggestedNextSteps: string[] };
 
+/** A terminal authentication failure is upstream of any incidental zero-hit recall. */
+export const executionAuthFailureVerdict = (s: IncidentSignals): RecallVerdict | null => {
+  if (s.endReason !== "error" || s.failures.length > 0) return null;
+  const authFailures = s.summaryTopErrorKinds?.auth ?? 0;
+  if (authFailures <= 0) return null;
+  return {
+    code: "execution_auth_failure",
+    detail:
+      `the execution ended with ${authFailures} authentication failure(s) before a usable `
+      + "model response or tool result was produced",
+    suggestedNextSteps: [
+      "verify the configured provider profile has a valid credential in the selected Comis data root",
+      "confirm the configured provider and model match that credential, then retry the request",
+      "use comis secrets list to verify credential metadata without displaying secret values",
+    ],
+  };
+};
+
 /** `recall_miss` — fires only on an all-missed, degraded, no-tool-failure session. */
 export const recallMissVerdict = (s: IncidentSignals): RecallVerdict | null => {
   if (s.recall === undefined) return null;

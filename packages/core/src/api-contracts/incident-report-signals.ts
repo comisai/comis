@@ -21,6 +21,7 @@ import type {
   OrchestrateRun,
 } from "./incident-report-sections.js";
 import type { ResponseLocaleRepairSkipped } from "../domain/response-locale-policy.js";
+import type { ErrorKind } from "../logging/log-fields.js";
 
 /**
  * A single normalized failure entry the assembler emits (and the bounding
@@ -62,7 +63,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 27 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 28 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -450,6 +451,9 @@ export interface IncidentSignals {
    * last-write-wins rollup turnCount. Absent ⇒ no summary records.
    */
   summaryTurnCount?: number;
+  /** Closed operational failure kinds accumulated from `session.summary`.
+   * This covers terminal model/envelope failures that have no tool-result row. */
+  summaryTopErrorKinds?: Partial<Record<ErrorKind, number>>;
   /**
    * Σ of the session's `session.summary` records' `costUsd` — the
    * trajectory-derived session cost. Each summary record carries ONE
