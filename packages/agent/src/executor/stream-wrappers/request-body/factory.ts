@@ -43,7 +43,7 @@ import {
 import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
 import {
-  deferRecallToTrailingResponsesItem,
+  separateRecallBeforeCurrentResponsesItem,
   deferRecallToUncachedTail,
   dropOrphanedResponsesToolOutputs,
   reorderContentForStablePrefix,
@@ -107,9 +107,8 @@ export function createRequestBodyInjector(
       // Azure (`azure-openai-responses`), and codex (`openai-codex-responses` /
       // provider:"openai-codex"). The cache-breakpoint machinery is correctly skipped for them
       // (running cache_control on a Responses body strips type:"function" tools -> backend 400);
-      // we install onPayload only to defer the per-turn inline-recall block off the user turns
-      // onto an uncached trailing item so the prefix does not collapse to the instructions+tools
-      // floor every time the recalled memory rotates (see the deferral block below). NOTE: the
+      // we install onPayload only to separate per-turn inline recall from the current user item
+      // while keeping it before the authoritative request (see the separation block below). NOTE: the
       // gate must cover the whole Responses family — gating on `provider === "openai-codex"`
       // alone leaves the native `openai` provider (gpt-5.5 -> openai-responses) unstabilised
       // (5 floor-collapses observed live).
@@ -547,11 +546,10 @@ export function createRequestBodyInjector(
           // WITHOUT recall -> the auto-cached prefix diverges at that item -> cached_tokens
           // collapses to the instructions+tools floor (~21.5k) once per turn (confirmed live:
           // a clean A/B showed 4 floor-collapses with this OFF, 0 with it ON).
-          // Fix (OpenAI analog of the Anthropic deferRecallToUncachedTail): strip recall off the
-          // user items and re-attach the current-turn recall as a SEPARATE trailing item, so the
-          // user turns are byte-identical to their future historical clean form and the prefix
-          // is stable. The model still sees recall (trailing = freshest position); the trailing
-          // item is transient (never persisted) so it never enters the cached prefix.
+          // Fix: strip recall off the current user item and re-attach it as a SEPARATE item
+          // immediately before that request. The model sees the original memory-then-request
+          // order, and tool continuations repeat the same stable pair instead of moving recalled
+          // content after the newest tool result.
           // Tool-safe: matches role:"user" only (never function_call/reasoning items).
           // Unconditional (mirrors the always-on Anthropic deferRecallToUncachedTail).
           if (needsResponsesInputStabilizer && Array.isArray((result as Record<string, unknown>).input)) {
@@ -564,10 +562,10 @@ export function createRequestBodyInjector(
             // 2. Defensive: strip recall from any HISTORICAL user item (no-op when history is
             //    already clean, which it is when recall is transient).
             const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
-            // 3. Recall deferral: defer recall on the LATEST user item to a trailing (uncached,
-            //    never persisted) item, so the latest item is byte-identical to its future
-            //    historical clean form and the auto-cached prefix never mutates at the turn boundary.
-            const deferred = deferRecallToTrailingResponsesItem(inputItems);
+            // 3. Recall separation: preserve recall immediately before the current request. It is
+            //    transient and never persisted, while the authoritative request and any later tool
+            //    result remain newer in provider attention order.
+            const deferred = separateRecallBeforeCurrentResponsesItem(inputItems);
             // 4. Reasoning strip: strip ALL replayed reasoning items — ONLY on the native
             //    openai / Azure Responses path (needsResponsesApiInjection). With `store:false`
             //    the SDK keeps reasoning for recent turns but drops it from aging turns -> an
@@ -590,8 +588,8 @@ export function createRequestBodyInjector(
             }
             if (strippedCount > 0 || deferred > 0 || reasoningStripped > 0) {
               logger.debug(
-                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred, reasoningStrippedOai: reasoningStripped },
-                "Stabilised OpenAI Responses prefix: deferred recall + stripped replayed reasoning",
+                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallSeparatedOai: deferred, reasoningStrippedOai: reasoningStripped },
+                "Stabilised OpenAI Responses prefix: separated recall + stripped replayed reasoning",
               );
             }
           }

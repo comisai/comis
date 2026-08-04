@@ -492,30 +492,21 @@ export function dropOrphanedResponsesToolOutputs(
 }
 
 /**
- * Defer the inline-recall block on the CURRENT (latest) user item of an OpenAI Responses
- * `input` array off the cacheable prefix and onto the UNCACHED tail.
+ * Separate inline recall from the current OpenAI Responses user item while preserving attention
+ * order: recalled context first, then the authoritative current request, then any tool cycle.
  *
- * Why: stripping recall from HISTORICAL items alone
- * (`stripTransientRecallFromResponsesInput`) is INSUFFICIENT — the LATEST user item still
- * carries recall, so this turn's auto-cache WRITE includes "U_latest + recall". Next turn that
- * item goes historical and the LCD rebuild emits it CLEAN (recall is transient, never
- * persisted) → the cached prefix MUTATES at that item → automatic prefix-cache collapse to the
- * instructions+tools floor. Confirmed live: every cached_tokens drop coincided with a user
- * item going r1→none one turn AFTER it was the current turn. Stripping historical items cannot
- * undo a cache WRITE that already happened with recall embedded.
+ * The current request is rebuilt without transient recall when it becomes history. Keeping recall
+ * embedded therefore destabilizes the automatic-cache prefix. Moving it to the end of the whole
+ * input is unsafe, though: on a tool continuation that makes unrelated recalled content newer than
+ * the live function result. A separate item immediately before the current request keeps the clean
+ * request reusable and preserves the original memory-before-request semantics on every step.
  *
- * Fix (mirrors the Anthropic `deferRecallToUncachedTail`): strip recall from the latest user
- * item — so it is byte-identical to its future historical/clean form — and re-attach the recall
- * as a SEPARATE trailing user item. The model still sees the recall this turn (last item =
- * freshest position), but recall never embeds in a user item that gets cached-then-rebuilt-clean.
- * The trailing item is transient (onPayload only, never persisted), so next turn it is simply
- * absent and the prefix up to the clean latest user item is byte-stable → the auto-cache holds.
- *
- * TOOL-SAFE: only reads/writes type:"message",role:"user" items and appends one trailing user
- * item — never touches function/function_call/reasoning items. Mutates in place. Returns 1 if it
- * deferred a recall block, else 0.
+ * Only user items are read or changed. Function calls, outputs, and reasoning items retain their
+ * order. Mutates in place and returns 1 when recall was separated.
  */
-export function deferRecallToTrailingResponsesItem(input: Array<Record<string, unknown>>): number {
+export function separateRecallBeforeCurrentResponsesItem(
+  input: Array<Record<string, unknown>>,
+): number {
   let lastUserIdx = -1;
   for (let i = input.length - 1; i >= 0; i--) {
     // Match by ROLE only — pi-ai user items have no item-level `type` (see
@@ -549,10 +540,11 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
     return 0;
   }
 
-  // Append the recall as a SEPARATE trailing user item (uncached tail), mirroring the latest
-  // item's shape: same content form (raw string vs input_text-block array) and the same
-  // item-level `type` presence (pi-ai user items have none; assistant items use "message").
-  const trailing: Record<string, unknown> = {
+  // Keep recall in a separate item immediately BEFORE the current request. That preserves the
+  // original attention order (memory, then authoritative request) and repeats the same pair on
+  // every tool continuation. Appending recall to the whole input made it newer than function-call
+  // outputs, so a completed task recalled from another session could replace the live tool result.
+  const recalled: Record<string, unknown> = {
     role: "user",
     content: wasString
       ? recall
@@ -560,7 +552,7 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
           { type: "input_text", text: recall },
         ],
   };
-  if (typeof msg.type !== "undefined") trailing.type = msg.type;
-  input.push(trailing);
+  if (typeof msg.type !== "undefined") recalled.type = msg.type;
+  input.splice(lastUserIdx, 0, recalled);
   return 1;
 }
