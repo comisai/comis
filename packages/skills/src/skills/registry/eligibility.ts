@@ -40,6 +40,22 @@ export interface EligibilityResult {
   readonly eligible: boolean;
   /** Human-readable reason for ineligibility (only set when eligible is false). */
   readonly reason?: string;
+  /**
+   * Did the skill DECLARE its requirements at all?
+   *
+   * `eligible: true` alone conflates two very different states: a skill that genuinely needs
+   * nothing, and a third-party skill that needs plenty and simply never declared. An imported
+   * upstream skill with no `comis:` block was surfaced as available while a python module its
+   * scripts import was absent from the host — the gate that correctly excludes a Comis-shaped
+   * skill for a missing env var had nothing to check and stayed silent.
+   *
+   * The distinction is already in the metadata: a Comis-shaped skill carries `requires` (possibly
+   * with empty arrays), while a skill with no `comis:` block has `requires === undefined`. Callers
+   * use this to disclose "requirements undeclared — cannot pre-flight" instead of implying
+   * verified-ready. It deliberately does NOT affect `eligible`: excluding undeclared skills would
+   * break every legitimate dependency-free skill.
+   */
+  readonly requirementsDeclared: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -131,12 +147,16 @@ export function evaluateSkillEligibility(
   metadata: { os?: string[]; requires?: { bins: string[]; env: string[] } },
   ctx: RuntimeEligibilityContext,
 ): EligibilityResult {
+  // Present (even with empty arrays) means the author declared; absent means a skill with no
+  // `comis:` block, whose real needs are unknown to the runtime.
+  const requirementsDeclared = metadata.requires !== undefined;
   // OS check: platform must be in the skill's os array (if specified)
   if (metadata.os && metadata.os.length > 0) {
     if (!metadata.os.includes(ctx.platform)) {
       return {
         eligible: false,
         reason: `os mismatch: platform "${ctx.platform}" not in [${metadata.os.join(", ")}]`,
+        requirementsDeclared,
       };
     }
   }
@@ -148,6 +168,7 @@ export function evaluateSkillEligibility(
       return {
         eligible: false,
         reason: `missing binary: ${missing.join(", ")}`,
+        requirementsDeclared,
       };
     }
   }
@@ -159,9 +180,10 @@ export function evaluateSkillEligibility(
       return {
         eligible: false,
         reason: `missing env var: ${missing.join(", ")}`,
+        requirementsDeclared,
       };
     }
   }
 
-  return { eligible: true };
+  return { eligible: true, requirementsDeclared };
 }

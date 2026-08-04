@@ -93,6 +93,23 @@ export function createSkillRegistry(
       logger?.debug({ skillName: metadata.name, reason: result.reason }, "Skill excluded by runtime eligibility");
       return false;
     }
+    // An eligible skill that declared NOTHING is not the same as one verified to need nothing.
+    // A third-party import with no `comis:` block reaches here indistinguishable from a
+    // dependency-free first-party skill: the gate had nothing to check, so its real prerequisites
+    // were never pre-flighted. Observed live — an imported skill was surfaced as available while a
+    // python module its scripts import was absent from the host. Surfaced at WARN (not debug)
+    // because it is the only signal that a skill's prerequisites are unverifiable, and the failure
+    // it precedes happens mid-task with no earlier warning.
+    if (!result.requirementsDeclared) {
+      logger?.warn(
+        {
+          skillName: metadata.name,
+          errorKind: "precondition" as const,
+          hint: "This skill declares no `comis.requires` block, so its binaries and env vars cannot be pre-flighted; a missing prerequisite will surface only when the skill runs. Add a `comis: requires: { bins: [...], env: [...] }` block to the skill's SKILL.md to make it checkable.",
+        },
+        "Skill requirements are undeclared and cannot be verified",
+      );
+    }
     return true;
   }
 
