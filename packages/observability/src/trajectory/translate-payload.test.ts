@@ -348,6 +348,30 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     expect(data.failureCode).toBe("mcp_connection_details_missing");
     expect(JSON.stringify(data)).not.toContain("sensitive context");
   });
+
+  it("cancelled keeps only the task and tool identifiers", () => {
+    const data = translatePayload("background_task:cancelled" as never, {
+      agentId: "a1",
+      taskId: "t-cancelled",
+      toolName: "slow_report",
+      timestamp: 400,
+    });
+
+    expect(data).toEqual({ taskId: "t-cancelled", toolName: "slow_report" });
+  });
+
+  it("reentered keeps the task identifier and hop count", () => {
+    const data = translatePayload("background_task:reentered" as never, {
+      agentId: "a1",
+      taskId: "t-reentered",
+      sessionKey: "default:a1:telegram:chat-a:user_a",
+      hopCount: 2,
+      traceId: "trace-a",
+      timestamp: 500,
+    });
+
+    expect(data).toEqual({ taskId: "t-reentered", hopCount: 2 });
+  });
 });
 
 // The vision translators forward ONLY content-free
