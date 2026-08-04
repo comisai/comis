@@ -298,6 +298,16 @@ describe("toIncidentSignals — response locale decision", () => {
     });
   });
 
+  it("retains closed terminal error kinds from the session summary", () => {
+    const signals = toIncidentSignals([
+      event("session.summary", 1, {
+        topErrorKinds: { auth: 1, dependency: 2, invented_kind: 99 },
+      }),
+    ]) as IncidentSignals & { summaryTopErrorKinds?: Record<string, number> };
+
+    expect(signals.summaryTopErrorKinds).toEqual({ auth: 1, dependency: 2 });
+  });
+
   it("retains the latest normalized inbound kind", () => {
     const signals = toIncidentSignals([
       event("prompt.submitted", 1, { inboundKind: "message" }),
