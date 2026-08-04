@@ -14,6 +14,7 @@ import {
   formatSessionKey,
   RequestContextSchema,
   runWithContext,
+  scrubSecretsFromText,
   TypedEventBus,
   type BackgroundTaskOrigin,
   type RequestContext,
@@ -921,6 +922,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(opts.message).toContain(task.id);
     expect(opts.message).toMatch(/retrying.*unchanged.*same limit/i);
     expect(opts.message).not.toContain("Run again");
+    expect(scrubSecretsFromText(opts.message)).toEqual({ text: opts.message, redactions: 0 });
     await runner.shutdown();
   });
 
