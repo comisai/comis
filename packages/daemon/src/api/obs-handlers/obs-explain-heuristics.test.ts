@@ -410,6 +410,9 @@ describe("obs-explain-heuristics", () => {
   it("background hard timeout names its own limit instead of the MCP deadline", () => {
     const r = rootCause(
       makeSignals({
+        breakerOpenedTool: "mcp__vendor--report",
+        hasDoNotRetrySignal: true,
+        repeatedFailureCount: { "mcp__vendor--report": 2 },
         failures: [
           {
             seq: 0,
