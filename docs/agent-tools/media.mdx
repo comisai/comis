@@ -130,7 +130,7 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     2. The raw video buffer is sent to a **video-capable** vision provider for analysis.
     3. The provider returns a description of the video content.
 
-    **Raw video is Gemini-only.** Unlike `image_analyze`, `describe_video` does **not** route through an arbitrary main model -- only Gemini accepts the raw video buffer (there is no frame extraction in this release). So `describe_video` goes straight to the **gemini-video** tier (via the vision registry's Google provider); if no video-capable provider is configured, the tool reports an honest "unavailable" result with a hint to configure Gemini, never a crash. A non-Gemini main model does not change this -- the main-provider vision path applies to `image_analyze`, not raw video.
+    **Raw video is Gemini-only.** Unlike `image_analyze`, `describe_video` does **not** route through an arbitrary main model -- only Gemini accepts the raw video buffer (there is no frame extraction in this release). So `describe_video` goes straight to the **gemini-video** tier (via the vision registry's Google provider); if no video-capable provider is configured -- or `integrations.media.vision.defaultProvider` pins a provider that cannot serve video -- the tool reports an honest "unavailable" result with a hint to configure Gemini, never a crash. A non-Gemini main model does not change this -- the main-provider vision path applies to `image_analyze`, not raw video.
 
     **Example usage:**
     When a user shares a video clip, the agent can describe what is happening:

@@ -9,13 +9,19 @@ icon: "paper-plane"
 **Who it's for:** Agents handling native message operations in their current conversation. For proactive delivery that must choose among previously observed endpoints, use `notify_user`.
 
 <Warning>
-**Endpoint authority (security).** Every `message` call must match the complete
-endpoint already attached to the current turn: channel type, configured channel
-instance, conversation ID, optional thread, and direct/shared kind. The tool's
-`channel_type` and `channel_id` fields select within that authority; they do not
-discover or mint a different endpoint. Missing or conflicting authority fails
-closed before the adapter runs. This prevents a prompt-injected agent from
-crossing account, thread, or conversation boundaries.
+**Endpoint authority (security).** Every `message` call resolves to one complete
+endpoint -- channel type, configured channel instance, conversation ID, optional
+thread, and direct/shared kind -- before the adapter runs. The turn's own
+endpoint is used whenever it matches the requested `channel_type` /
+`channel_id`. When it does not, the daemon may substitute a complete endpoint
+that ingress **already observed** for this agent, and only when that
+`(agent, channel type, conversation)` triple resolves to exactly one such
+endpoint; zero matches or an ambiguous set fails closed. The tool's
+`channel_type` and `channel_id` fields still only select among endpoints the
+runtime has authority for -- they never mint one from raw coordinates, and an
+explicit `endpoint` that conflicts with the authenticated turn is rejected.
+Cross-channel operations additionally require admin trust. This prevents a
+prompt-injected agent from crossing account, thread, or conversation boundaries.
 </Warning>
 
 ## message -- Endpoint-Scoped Messaging
@@ -47,7 +53,7 @@ All actions require the `channel_type` parameter to specify which platform adapt
 
 <AccordionGroup>
   <Accordion title="send -- Send a new message">
-    Sends a new message to the endpoint authorized for the current turn. An inbound turn uses its source endpoint; a scheduled or heartbeat turn can send only after the run is bound to an exact endpoint.
+    Sends a new message to an endpoint the runtime holds authority for. An inbound turn uses its source endpoint; a scheduled or heartbeat turn sends once the run is bound to an exact endpoint, or to a uniquely observed endpoint resolved under the authority rules above.
 
     **Parameters:**
 
@@ -275,13 +281,15 @@ The reaction-capable platforms need a one-time setup so the platform actually de
 ## Endpoint-Scoped Routing
 
 `channel_type` and `channel_id` are necessary coordinates, but they are not
-sufficient authority. The current turn must also carry the same complete
-endpoint. This keeps separate accounts, threads, and direct/shared
+sufficient authority — the **Endpoint authority** warning at the top of this
+page states the exact resolution rule. Keeping the complete endpoint (channel instance, thread,
+direct/shared kind) authoritative is what keeps separate accounts, threads, and
 conversations distinct even when a platform reuses the same visible ID.
 
-To contact a different known endpoint, bind the scheduled run to that endpoint
-or use `notify_user`. Notification resolution accepts only complete endpoints
-recorded from authoritative session activity and fails closed when none exists.
+Use `notify_user` when delivery should resolve a configured or tracked endpoint
+rather than one this turn already has authority for. Notification resolution
+accepts only complete endpoints recorded from authoritative session activity and
+fails closed when none exists.
 
 ## notify_user -- Proactive Notifications
 

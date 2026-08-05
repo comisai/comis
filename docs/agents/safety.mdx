@@ -165,7 +165,7 @@ Combined with the response filter (see below), it forms one of the
 
 ## Action classifier and broken follow-through
 
-After the model finishes a reply, Comis runs two safety checks before the
+After the model finishes a reply, Comis runs safety checks before the
 response leaves the agent:
 
 - **Broken follow-through detection**
@@ -173,6 +173,15 @@ response leaves the agent:
   `packages/agent/src/safety/response-safety-checks.ts`) — flags responses
   where the agent claims to have done something it never actually did
   (e.g. "I have sent the email" when no `message` tool was called).
+- **Evidence-grounded claim correction** — a claim that needs a receipt is
+  checked against the turn's actual tool evidence. A "done / complete" claim over
+  a tool step that failed and was never recovered, or a "your reminder is set"
+  claim with no scheduler receipt, is replaced by an honest notice drawn from the
+  operator-translatable [`localePacks`](/reference/config-yaml#locale-packs)
+  strings. A cited URL with no successful `web_fetch` in the run is dropped from
+  the reply rather than presented as a source. The completion and citation checks
+  also run *before* a user-visible send, so a `message` tool call cannot ship the
+  unverified claim ahead of the correction.
 - **Post-compaction safety reinject** — when context compaction has just
   fired, a short reminder of the agent's current task is re-injected so the
   model does not silently lose the thread.
