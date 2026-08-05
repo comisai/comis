@@ -56,6 +56,7 @@ import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
 import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
+import { completionEvidenceGuardVerdict } from "./obs-explain-completion-evidence-verdict.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
@@ -727,6 +728,13 @@ export async function assembleIncidentReportFromSources(
     // A proven same-source fallback explains the user-visible outcome more
     // accurately than chronic breaker noise from the failed primary tool.
     report.likelyRootCause = visionFallbackVerdict;
+  }
+  const completionEvidenceVerdict = completionEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (completionEvidenceVerdict !== null) {
+    report.likelyRootCause = completionEvidenceVerdict;
   }
   const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
     auditRows,

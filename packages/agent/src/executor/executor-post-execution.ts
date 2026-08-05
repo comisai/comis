@@ -131,13 +131,14 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
@@ -1844,6 +1845,49 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
+  const completionEvidenceGrounding = enforceCompletionEvidence({
+    response: result.response ?? "",
+    unrecoveredToolFailures,
+    honestResponse: buildCompletionEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (completionEvidenceGrounding.corrected) {
+    result.response = completionEvidenceGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        unrecoveredToolFailureCount: unrecoveredToolFailures.length,
+        errorKind: "precondition" as const,
+        hint:
+          "Inspect the failed tool records in comis explain, correct the failing step, "
+          + "and retry verification before treating the request as complete.",
+      },
+      "Unverified completion claim replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.completion_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "completion",
+        reason: completionEvidenceGrounding.reason,
+        unrecoveredToolFailureCount: unrecoveredToolFailures.length,
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "unrecovered_tool_failure_completion_claim",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
   const unrecoveredFailed = unrecoveredToolFailures;
   const subagentTerminalToolFailureReply = buildSubagentTerminalToolFailureReply({
     operationType: params.executionOverrides?.operationType,
@@ -1948,6 +1992,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     !unavailableVision &&
     !providerModelFailureGrounding.corrected &&
     !ongoingWorkGrounding.corrected &&
+    !completionEvidenceGrounding.corrected &&
     userVisibleFailed.length > 0 &&
     isStopTurn &&
     !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&

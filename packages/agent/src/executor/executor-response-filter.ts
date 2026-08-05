@@ -260,6 +260,7 @@ export function enforceDestructiveEffectEvidence(params: {
 export {
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
@@ -267,6 +268,7 @@ export {
 export type {
   ProviderModelFailureGroundingGuardResult,
   AgentUpdateNoOpGroundingGuardResult,
+  CompletionEvidenceGuardResult,
   OngoingWorkEvidenceGuardResult,
   SenderAuthorityGroundingGuardResult,
   ActiveModelSelfStatusGuardResult,
