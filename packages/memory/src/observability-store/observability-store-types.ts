@@ -102,6 +102,13 @@ export const systemPromptReportMapper = createRowMapper(SystemPromptReportDbRowS
 // ---------------------------------------------------------------------------
 
 /** A token usage row (insert or query result). */
+// @optional-field-count: One row spans providers that report wildly different
+// facts about the same call. Cache, per-TTL split, cost-correction and tool-tag
+// fields exist only where the provider reports them, and a row persisted before a
+// column existed reads back without it — every one of these is genuinely absent
+// rather than defaulted, and writing 0 would assert a measurement nobody made.
+// Splitting the interface would split the single INSERT that must stay in lockstep
+// with the table.
 export interface TokenUsageRow {
   id?: number;
   timestamp: number;
@@ -136,6 +143,18 @@ export interface TokenUsageRow {
   pendingCacheInvestmentUsd?: number;
   /** The honest three-state pricing signal for this provider/model. */
   pricingState?: "priced" | "free" | "unknown";
+  /**
+   * Cache-WRITE tokens billed at the short (5m) TTL for this call.
+   * Undefined persists as NULL — a row from before the split was stored, or a
+   * provider with no per-TTL pricing.
+   */
+  cacheWrite5mTokens?: number;
+  /**
+   * Cache-WRITE tokens billed at the extended (1h) TTL for this call. The
+   * expensive half: 1h writes cost 2x base where a read costs 0.1x, so on a
+   * cached workload this is the number that moves the bill.
+   */
+  cacheWrite1hTokens?: number;
   /**
    * The DISTINCT tool names (content-free ids — never args/output) that fired
    * during this usage row's turn. Persisted JSON-stringified on the `tool_tag` column;

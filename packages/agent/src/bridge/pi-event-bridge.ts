@@ -2377,6 +2377,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               latencyMs: llmLatencyMs,
               cacheReadTokens,
               cacheWriteTokens,
+              // Already normalized above to sum EXACTLY to cacheWriteTokens, and
+              // already spent on the 1h cost correction — persisting it is what lets
+              // `comis cache stats` show the split without the provider's console.
+              ...(deps.ttlSplit && (deps.ttlSplit.cacheWrite5mTokens > 0 || deps.ttlSplit.cacheWrite1hTokens > 0)
+                ? { cacheWriteTtlSplit: {
+                    fiveMinuteTokens: deps.ttlSplit.cacheWrite5mTokens,
+                    oneHourTokens: deps.ttlSplit.cacheWrite1hTokens,
+                  } }
+                : {}),
               sessionKey: formatSessionKey(deps.sessionKey),
               savedVsUncached,
               cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,

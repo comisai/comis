@@ -73,6 +73,14 @@ export const CacheStatsWindowSchema = z.object({
   untilMs: z.number().int().nonnegative(),
   cacheReadTokens: z.number().int().nonnegative(),
   cacheCreationTokens: z.number().int().nonnegative(),
+  /** Cache-WRITE tokens billed at the short (5m) TTL across the window. */
+  cacheWrite5mTokens: z.number().int().nonnegative().default(0),
+  /** Cache-WRITE tokens billed at the extended (1h) TTL across the window — the
+   *  expensive half, and usually the largest single line on a cached bill. Both
+   *  are 0 when no row in the window recorded a split (rows written before it was
+   *  stored, or a provider with a single write rate) — never a claim that no
+   *  writes happened; `cacheCreationTokens` remains the authoritative total. */
+  cacheWrite1hTokens: z.number().int().nonnegative().default(0),
   nonCachedInputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   turns: z.number().int().nonnegative(),
@@ -107,6 +115,10 @@ export interface CacheStatsStore {
   }): {
     cache_read_tokens: number;
     cache_write_tokens: number;
+    /** Per-TTL write split. Optional: a store predating these columns omits them,
+     *  and rows with no recorded split contribute nothing to the SUM. */
+    cache_write_5m_tokens?: number;
+    cache_write_1h_tokens?: number;
     non_cached_input_tokens: number;
     output_tokens: number;
     turns: number;

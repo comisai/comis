@@ -314,6 +314,16 @@ export interface AgentEvents {
     cacheReadTokens: number;
     /** Tokens written to provider cache. 0 if not applicable. */
     cacheWriteTokens: number;
+    /**
+     * How `cacheWriteTokens` split across the provider's write TTLs, normalized to
+     * sum EXACTLY to it. Absent where the provider prices writes at one rate, or
+     * where no split could be estimated.
+     *
+     * A write is billed by its TTL (Anthropic: 1h at 2x base, 5m at 1.25x, against
+     * 0.1x to read), so on a cached workload this split is what actually drives the
+     * bill — and without it the only place to read it is the provider's console.
+     */
+    cacheWriteTtlSplit?: { fiveMinuteTokens: number; oneHourTokens: number };
     /** Session key for per-session aggregation. Forwarded from execution context. */
     sessionKey: string;
     /** Net $ saved vs if all cached tokens were charged at regular input rate.

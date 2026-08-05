@@ -45,6 +45,9 @@ interface BreakdownBase {
   cacheWriteRate: number;
 }
 interface CacheStatsWindowDisplay extends BreakdownBase {
+  /** Per-TTL write split; 0/0 when no row in the window recorded one. */
+  cacheWrite5mTokens: number;
+  cacheWrite1hTokens: number;
   sinceMs: number;
   untilMs: number;
   byProvider: Array<BreakdownBase & { provider: string }>;
@@ -77,6 +80,13 @@ function renderMarkdown(window: CacheStatsWindowDisplay): void {
   lines.push(`| cacheWriteRate | ${pct(window.cacheWriteRate)} |`);
   lines.push(`| cacheReadTokens | ${num(window.cacheReadTokens)} |`);
   lines.push(`| cacheCreationTokens | ${num(window.cacheCreationTokens)} |`);
+  // A write is billed by its TTL, so the split is the line that actually moves the
+  // bill. Printed only when some row recorded one — a flat 0/0 on a provider with a
+  // single write rate would read as "no writes", which is a different claim.
+  if (window.cacheWrite5mTokens > 0 || window.cacheWrite1hTokens > 0) {
+    lines.push(`| cacheWrite1hTokens | ${num(window.cacheWrite1hTokens)} |`);
+    lines.push(`| cacheWrite5mTokens | ${num(window.cacheWrite5mTokens)} |`);
+  }
   lines.push(`| nonCachedInputTokens | ${num(window.nonCachedInputTokens)} |`);
   lines.push(`| outputTokens | ${num(window.outputTokens)} |`);
   lines.push(`| turns | ${num(window.turns)} |`);
@@ -129,6 +139,13 @@ function renderTableFormat(window: CacheStatsWindowDisplay): void {
     ["cacheWriteRate", pct(window.cacheWriteRate)],
     ["cacheReadTokens", num(window.cacheReadTokens)],
     ["cacheCreationTokens", num(window.cacheCreationTokens)],
+    // Same rule as the markdown renderer: show the split only when one was recorded.
+    ...(window.cacheWrite5mTokens > 0 || window.cacheWrite1hTokens > 0
+      ? [
+          ["cacheWrite1hTokens", num(window.cacheWrite1hTokens)] as [string, string],
+          ["cacheWrite5mTokens", num(window.cacheWrite5mTokens)] as [string, string],
+        ]
+      : []),
     ["nonCachedInputTokens", num(window.nonCachedInputTokens)],
     ["outputTokens", num(window.outputTokens)],
     ["turns", num(window.turns)],

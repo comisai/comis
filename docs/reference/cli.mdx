@@ -276,6 +276,22 @@ comis cache stats --since 7d --provider anthropic
 comis cache stats --format json
 ```
 
+A cache **write** is billed by its TTL -- on Anthropic a 1-hour write costs 2x base
+input and a 5-minute write 1.25x, against 0.1x to read a cache hit. On a cached
+workload writes therefore dominate the bill, and *which* TTL they used is the number
+that moves it. When the window contains rows that recorded a split, the report adds:
+
+| Field | Meaning |
+|-------|---------|
+| `cacheWrite1hTokens` | Write tokens billed at the extended (1h) TTL -- the expensive half |
+| `cacheWrite5mTokens` | Write tokens billed at the short (5m) TTL |
+
+Both lines are omitted when no row in the window recorded a split -- rows written
+before the split was stored, or a provider that prices every write the same. They are
+omitted rather than shown as zero because a flat `0` would read as "no writes
+happened", which is a different claim: `cacheCreationTokens` remains the authoritative
+write total, and the split never has to add up to it.
+
 ---
 
 ### `comis cron`

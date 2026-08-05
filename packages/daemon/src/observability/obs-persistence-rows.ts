@@ -62,6 +62,12 @@ export function tokenUsageEventToRow(
     // Already deduped at the emit (Array.from(new Set(m.toolCallHistory))); the
     // write-path JSON-stringifies it onto the tool_tag column (NULL when absent).
     toolTag: payload.toolTag,
+    // The per-TTL write split, carried straight through: the bridge already
+    // normalized it to sum exactly to cacheWriteTokens.
+    ...(payload.cacheWriteTtlSplit === undefined ? {} : {
+      cacheWrite5mTokens: payload.cacheWriteTtlSplit.fiveMinuteTokens,
+      cacheWrite1hTokens: payload.cacheWriteTtlSplit.oneHourTokens,
+    }),
   };
 }
 

@@ -112,6 +112,19 @@ export function ensureObsTokenColumns(db: Database.Database): void {
   if (!cols2.has("pending_cache_investment_usd"))
     db.exec(`ALTER TABLE obs_token_usage ADD COLUMN pending_cache_investment_usd REAL`);
   if (!cols2.has("pricing_state")) db.exec(`ALTER TABLE obs_token_usage ADD COLUMN pricing_state TEXT`);
+  // The per-TTL write split — the SAME additive, forward-only, nullable ALTER.
+  // A cache WRITE is billed by its TTL (Anthropic: 1h at 2x base, 5m at 1.25x),
+  // and writes dominate a cached workload's bill, so "how many tokens at which
+  // TTL" is the single most load-bearing cost fact. The runtime already computes
+  // it (TtlSplitEstimate, normalized to the reported write total) and already
+  // spends it on `cost_correction` — but it was never stored, so `comis cache
+  // stats` could not show the split and the only place to read it was the
+  // provider's own console. NULL on a row written before these columns existed
+  // and on any provider with no per-TTL pricing.
+  if (!cols2.has("cache_write_5m_tokens"))
+    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_write_5m_tokens INTEGER`);
+  if (!cols2.has("cache_write_1h_tokens"))
+    db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_write_1h_tokens INTEGER`);
   // The per-turn tool tag — the IDENTICAL 6th additive,
   // forward-only, nullable ALTER (no migration framework, no dual-read shim).
   // Stores the JSON-stringified DISTINCT tool array (content-free names only);

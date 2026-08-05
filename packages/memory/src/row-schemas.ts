@@ -659,6 +659,9 @@ export const SystemPromptReportDbRowSchema = z.strictObject({
 export const CacheStatsWindowRawDbRowSchema = z.strictObject({
   cache_read_tokens: z.number(),
   cache_write_tokens: z.number(),
+  /** Per-TTL write split. COALESCEd to 0 by the SQL, so always a number. */
+  cache_write_5m_tokens: z.number(),
+  cache_write_1h_tokens: z.number(),
   prompt_tokens: z.number(),
   output_tokens: z.number(),
   turns: z.number(),

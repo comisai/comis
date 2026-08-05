@@ -47,6 +47,10 @@ const cacheStatsByAgentMapper = createRowMapper(CacheStatsByAgentRawDbRowSchema)
 export interface CacheStatsWindowResult {
   cache_read_tokens: number;
   cache_write_tokens: number;
+  /** Cache-WRITE tokens billed at the short (5m) TTL. */
+  cache_write_5m_tokens: number;
+  /** Cache-WRITE tokens billed at the extended (1h) TTL — the expensive half. */
+  cache_write_1h_tokens: number;
   non_cached_input_tokens: number;
   output_tokens: number;
   turns: number;
@@ -116,10 +120,16 @@ export function buildCacheStatsQueries(db: Database.Database) {
       whereParts.push("provider = ?");
       args.push(params.provider);
     }
+    // The per-TTL write columns are NULL on rows written before they existed and on
+    // providers with a single write rate, so SUM skips them: the two need not add up
+    // to cache_write_tokens, and a partial window reports what it knows rather than
+    // inventing a split for rows that never had one.
     const sql = `
       SELECT
         COALESCE(SUM(cache_read_tokens), 0)  AS cache_read_tokens,
         COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+        COALESCE(SUM(cache_write_5m_tokens), 0) AS cache_write_5m_tokens,
+        COALESCE(SUM(cache_write_1h_tokens), 0) AS cache_write_1h_tokens,
         COALESCE(SUM(prompt_tokens), 0)      AS prompt_tokens,
         COALESCE(SUM(completion_tokens), 0)  AS output_tokens,
         COUNT(*)                             AS turns
@@ -139,6 +149,8 @@ export function buildCacheStatsQueries(db: Database.Database) {
       return {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
+        cache_write_5m_tokens: 0,
+        cache_write_1h_tokens: 0,
         non_cached_input_tokens: 0,
         output_tokens: 0,
         turns: 0,
@@ -147,6 +159,8 @@ export function buildCacheStatsQueries(db: Database.Database) {
     return {
       cache_read_tokens: row.cache_read_tokens,
       cache_write_tokens: row.cache_write_tokens,
+      cache_write_5m_tokens: row.cache_write_5m_tokens,
+      cache_write_1h_tokens: row.cache_write_1h_tokens,
       non_cached_input_tokens: clamp(
         row.prompt_tokens - row.cache_read_tokens - row.cache_write_tokens,
       ),
