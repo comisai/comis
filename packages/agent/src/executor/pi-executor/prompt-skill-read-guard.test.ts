@@ -9,12 +9,14 @@ describe("prompt skill read guard", () => {
     const onBlocked = vi.fn();
 
     expect(promptSkillReadVerdict(
-      "use operator-procedure-fixture again and give me its marker",
-      { toolCall: { name: "read" }, args: { path: inactivePath } },
       {
-        activeLocations: new Set(["/workspace/skills/active-skill/SKILL.md"]),
-        onBlocked,
+        sourceText: "use operator-procedure-fixture again and give me its marker",
+        policy: {
+          activeLocations: new Set(["/workspace/skills/active-skill/SKILL.md"]),
+          onBlocked,
+        },
       },
+      { toolCall: { name: "read" }, args: { path: inactivePath } },
     )).toEqual({
       block: true,
       reason: expect.stringMatching(
@@ -28,17 +30,21 @@ describe("prompt skill read guard", () => {
     const activePath = "/workspace/skills/active-skill/SKILL.md";
 
     expect(promptSkillReadVerdict(
-      "load active-skill and follow its procedure",
+      {
+        sourceText: "load active-skill and follow its procedure",
+        policy: { activeLocations: new Set([activePath]) },
+      },
       { toolCall: { name: "read" }, args: { path: activePath } },
-      { activeLocations: new Set([activePath]) },
     )).toBeUndefined();
   });
 
   it("allows ordinary inspection outside the current registry", () => {
     expect(promptSkillReadVerdict(
-      "inspect operator-procedure-fixture SKILL.md as a file",
+      {
+        sourceText: "inspect operator-procedure-fixture SKILL.md as a file",
+        policy: { activeLocations: new Set() },
+      },
       { toolCall: { name: "read" }, args: { path: inactivePath } },
-      { activeLocations: new Set() },
     )).toBeUndefined();
   });
 });
