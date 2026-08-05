@@ -321,13 +321,6 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
     const hasExactRepo =
       toplevelResult.ok &&
       resolvePath(toplevelResult.value.trim()) === resolvePath(configDir);
-    if (hasExactRepo) {
-      const headResult = await execGit(["rev-parse", "--verify", "HEAD"], configDir);
-      if (headResult.ok) {
-        initialized = true;
-        return ok(undefined);
-      }
-    }
 
     // Initialize a new repo when needed. An exact-root repo without HEAD is
     // already initialized but still needs the seed snapshot below.
@@ -335,6 +328,32 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       const gitInitResult = await execGit(["init"], configDir);
       if (!gitInitResult.ok) {
         return err(`git init failed: ${gitInitResult.error}`);
+      }
+    }
+
+    // Config history is an application-owned repository and must not depend
+    // on an operator's global Git identity. Keep the identity local to this
+    // repo so both the seed snapshot and later runtime commits are portable.
+    const nameResult = await execGit(
+      ["config", "user.name", "Comis Config"],
+      configDir,
+    );
+    if (!nameResult.ok) {
+      return err(`Failed to configure config-history author name: ${nameResult.error}`);
+    }
+    const emailResult = await execGit(
+      ["config", "user.email", "config@comis.local"],
+      configDir,
+    );
+    if (!emailResult.ok) {
+      return err(`Failed to configure config-history author email: ${emailResult.error}`);
+    }
+
+    if (hasExactRepo) {
+      const headResult = await execGit(["rev-parse", "--verify", "HEAD"], configDir);
+      if (headResult.ok) {
+        initialized = true;
+        return ok(undefined);
       }
     }
 
