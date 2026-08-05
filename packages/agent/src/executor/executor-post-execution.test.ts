@@ -1075,6 +1075,20 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/response\.citation_evidence_persistence/);
   });
 
+  it("source-grep — source questions without a durable receipt fail closed", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(
+      /const citationSourceRequest\s*=\s*isCitationSourceRequest\(msg\.text\s*\?\?\s*""\)/,
+    );
+    expect(stripped).toMatch(
+      /const historicalDigests\s*=\s*citationSourceRequest\s*\?\s*historicalCitationDigests\(sm\)/,
+    );
+    expect(stripped).toMatch(
+      /enabled:[\s\S]{0,300}?\|\|\s*citationSourceRequest/,
+    );
+  });
+
   it("source-grep — a successful unchanged agent update is grounded before delivery", () => {
     const stripped = readPostExecStripped();
 
