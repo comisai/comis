@@ -153,6 +153,7 @@ export function captureTaskExtractionTurn(
     conversationRef: conversationRef.value,
     deliveryOrigin,
     traceId: context.traceId ?? null,
+    trustLevel: context.trustLevel,
     responseLocalePolicy: input.result.responseLocalePolicy,
     backgroundHopCount,
   });
