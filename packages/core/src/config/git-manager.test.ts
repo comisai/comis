@@ -361,6 +361,22 @@ describe("config/git-manager", () => {
       expect(commands).not.toContain("init");
     });
 
+    it("seeds an initial snapshot when an exact-root repo has no commits", async () => {
+      const { deps, calls, repo } = createMockDeps({ preInitialized: true });
+      repo.commits.length = 0;
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.init();
+
+      expect(result.ok).toBe(true);
+      expect(repo.commits).toHaveLength(1);
+      expect(repo.commits[0]?.message).toBe("Initial config snapshot");
+      expect(calls.some(
+        (call) => call.args[0] === "commit" && call.args.includes("--allow-empty"),
+      )).toBe(true);
+      expect(calls.some((call) => call.args[0] === "init")).toBe(false);
+    });
+
     it("creates its own nested repo when configDir lives inside an unrelated parent repo", async () => {
       // Probing with `git status` would walk ancestors and silently treat
       // the parent project's .git as ours — agents.create / agents.delete
