@@ -2210,6 +2210,30 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("names an unverified completion claim as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.completion_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "unverified_completion_claim",
+      detail:
+        "the response honesty guard replaced a completion claim because one or more "
+        + "tool steps still had an unrecovered failure",
+      suggestedNextSteps: [
+        "inspect the failed tool records in this report and correct the failing step",
+        "retry verification before treating the requested result as complete",
+      ],
+    });
+  });
+
   it("keeps an acute spawn ceiling refusal above its downstream delegation correction", async () => {
     const reader: IncidentSourceReader = {
       ...makeAuditReader([

@@ -22,6 +22,7 @@ describe("MessagingEvents payload structure", () => {
 
     expect(source).toContain('| "agent_update_noop_grounding"');
     expect(source).toContain('| "missing_ongoing_work_evidence"');
+    expect(source).toContain('| "unrecovered_tool_failure_completion_claim"');
   });
 
   it("execution recovery can identify a sender-authority grounding correction", () => {

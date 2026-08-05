@@ -443,6 +443,20 @@ describe("buildOngoingWorkEvidenceMissingReply", () => {
   });
 });
 
+describe("completion evidence missing reply", () => {
+  it("states that failed tool evidence makes the result partial", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildCompletionEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/could not verify.*complete/iu);
+    expect(reply).toMatch(/tool steps? still failed/iu);
+    expect(reply).toMatch(/partial/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("completion_evidence_missing");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Nameless tool-failure notice
 // ---------------------------------------------------------------------------
