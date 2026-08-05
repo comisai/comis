@@ -25,7 +25,7 @@ export function translateTaskPayload(
     case "scheduler:task_extraction_failed":
       return pick(payload, [
         "rootRunId", "itemCount", "sourceExecutionIds", "stage", "errorKind",
-        "releaseErrorKind", "durationMs",
+        "outputErrorCode", "releaseErrorKind", "durationMs",
       ]);
     case "scheduler:task_check_started":
       return pick(payload, [
