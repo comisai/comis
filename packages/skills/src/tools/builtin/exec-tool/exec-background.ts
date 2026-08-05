@@ -56,6 +56,7 @@ export function escalateToBackground(ctx: EscalationContext): void {
     maxOutputChars: BACKGROUND_MAX_OUTPUT_CHARS,
     sandboxed: !!ctx.sandboxConfig,
     autoBackgrounded: true,
+    ...(ctx.ownerSessionKey && { ownerSessionKey: ctx.ownerSessionKey }),
     ...(ctx.description && { description: ctx.description }),
     // Spawn-time decision capture (advise+overlap only).
     // observe-mode runs unchanged with no retroactive hint; soft-stop refused calls
@@ -145,6 +146,7 @@ export function executeBackground(
   pty?: boolean,
   installDetourDecision?: InstallDetourDecision,
   installDetourMode?: "observe" | "advise" | "soft-stop",
+  ownerSessionKey?: string,
 ): AgentToolResult<unknown> {
   const sessionId = generateSessionId();
   const { bin, args, cwd: spawnCwd } = buildSpawnCommand(
@@ -169,6 +171,7 @@ export function executeBackground(
     child,
     maxOutputChars: BACKGROUND_MAX_OUTPUT_CHARS,
     sandboxed: !!sandboxConfig,
+    ...(ownerSessionKey && { ownerSessionKey }),
     ...(description && { description }),
     // Spawn-time decision capture (advise+overlap only).
     ...(installDetourDecision !== undefined
