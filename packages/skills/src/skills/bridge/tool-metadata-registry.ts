@@ -33,6 +33,10 @@ const FILE_MUTATION_REQUEST_PREFIXES = [
   "it's broken",
   "it is broken",
   "this is broken",
+  "the tests are failing",
+  "tests are failing",
+  "the test is failing",
+  "test is failing",
 ] as const;
 
 export function registerAllToolMetadata(): void {
