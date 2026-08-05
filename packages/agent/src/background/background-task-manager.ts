@@ -27,6 +27,7 @@ import {
   type TaskRecoveryOps,
 } from "./background-task-persistence.js";
 import { createBackgroundTaskRecoveryController } from "./background-task-recovery-controller.js";
+import { projectSessionValueForPersistence } from "../session/sanitize-session-secrets.js";
 import type {
   BackgroundTask,
   BackgroundContinuationOutbox,
@@ -225,10 +226,15 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
   function truncateResult(value: unknown): string {
     try {
-      const json = JSON.stringify(value);
+      // A promoted tool has no live caller waiting for its raw result. Project
+      // credentials out before the result reaches either the durable task file
+      // or the synthetic completion turn; the continuation still receives the
+      // full non-sensitive shape needed to summarize the outcome.
+      const projected = projectSessionValueForPersistence(value);
+      const json = JSON.stringify(projected.value);
       return json.length > MAX_RESULT_CHARS ? json.slice(0, MAX_RESULT_CHARS) : json;
     } catch {
-      return String(value).slice(0, MAX_RESULT_CHARS);
+      return String(projectSessionValueForPersistence(String(value)).value).slice(0, MAX_RESULT_CHARS);
     }
   }
 
