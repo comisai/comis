@@ -331,6 +331,17 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
             const paused = readBooleanParam(p, "paused", false);
             const scheduleKind = readStringParam(p, "schedule_kind", false);
             const payloadKind = readStringParam(p, "payload_kind", false);
+            const payloadText = readStringParam(p, "payload_text", false);
+            if (payloadKind === undefined && payloadText !== undefined) {
+              throwToolError(
+                "missing_param",
+                "payload_kind is required when payload_text is supplied for update",
+                {
+                  param: "payload_kind",
+                  hint: "Set payload_kind to heartbeat_event, delivery, or agent_turn so the text is applied",
+                },
+              );
+            }
             const wakeGate = buildWakeGate(p);
             const result = await rpcCall("cron.update", {
               jobName,
