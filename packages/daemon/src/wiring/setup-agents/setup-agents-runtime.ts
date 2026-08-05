@@ -454,7 +454,13 @@ export async function setupSingleAgent(
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
-    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, provenanceStore: deps.provenanceStore, mentalModelStore: deps.learnedSkillStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + provenance down-weighting (provenanceStore is the LcdProvenanceReadStore from buildProvenanceReadStore) + mentalModelStore is the kind:"profile" read source for the <user_profile> block (the SAME MentalModelStorePort already wired for the learned-skill surface).
+    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, provenanceStore: deps.provenanceStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + provenance down-weighting (provenanceStore is the LcdProvenanceReadStore from buildProvenanceReadStore).
+    // The kind:"profile" read belongs to the learned prompt surface. Keep the
+    // store out of executor construction when the memory master switch disables
+    // learning, so a disabled deployment performs no learned-profile reads.
+    ...(container.config.memory?.enabled !== false && deps.learnedSkillStore !== undefined
+      ? { mentalModelStore: deps.learnedSkillStore }
+      : {}),
     contextStore: deps.lcdStore,  // canonical store; executor sees only the core port type
     summarizerSpendBreaker: deps.summarizerSpendBreaker,  // the daemon-owned per-tenant summarizer spend+breaker -> PiExecutorDeps.summarizerSpendBreaker -> setupContextEngine (getSummarizerDeps wraps the leaf seam with gate(tenantId, inner) → truncation-only degrade on open-breaker/over-cap). ONE daemon instance, partitions by tenantId.
     secretManager: scopedManager,
