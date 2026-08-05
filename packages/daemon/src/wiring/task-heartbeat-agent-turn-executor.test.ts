@@ -212,6 +212,28 @@ function makeDeps(response = "A concise check-in") {
 }
 
 describe("task heartbeat agent turn executor", () => {
+  it("keeps inferred checks distinct from scheduled reminder delivery", async () => {
+    const data = makeDeps("HEARTBEAT_OK");
+    let captured: { readonly metadata: Record<string, unknown>; readonly text: string } | undefined;
+    data.execute.mockImplementationOnce(async (message) => {
+      captured = { metadata: message.metadata, text: message.text };
+      return execution("HEARTBEAT_OK");
+    });
+
+    await createTaskHeartbeatAgentTurnExecutor(data.deps)(runInput());
+
+    expect(captured).toEqual(expect.objectContaining({
+      metadata: {
+        trigger: "task_check",
+        correlationId: CORRELATION_ID,
+      },
+    }));
+    expect(captured?.text).toContain(
+      "Reply with HEARTBEAT_OK only when no safe, useful check-in can be formed from any task.",
+    );
+    expect(captured?.text).not.toContain("Decline by replying with HEARTBEAT_OK.");
+  });
+
   it("runs separately wrapped tasks under an attempt-scoped zero-capability ephemeral context", async () => {
     const data = makeDeps("HEARTBEAT_OK");
     data.execute.mockImplementationOnce(async (message, _sessionKey, tools, _onDelta, _agentId, _directives, _previous, overrides) => {
