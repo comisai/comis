@@ -2,12 +2,21 @@
 /** Exact fetched-URL grounding for model-authored citations. */
 
 import { createHash } from "node:crypto";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import { z } from "zod";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
 const MARKDOWN_LINK = /(!?)\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/giu;
 const AUTOLINK = /<(https?:\/\/[^>\s]+)>/giu;
 const BARE_URL = /https?:\/\/[^\s<>\])]+/giu;
 const CODE_SPAN = /```[\s\S]*?```|`[^`\n]*`/gu;
+export const CITATION_EVIDENCE_CUSTOM_TYPE = "citation_evidence";
+
+const CitationEvidenceRecordSchema = z.strictObject({
+  sourceMessageId: z.string().min(1).max(256),
+  urlDigests: z.array(z.string().regex(SHA256_HEX)).min(1).max(100),
+});
 
 interface TextRange {
   start: number;
@@ -157,33 +166,66 @@ export function enforceCitationEvidence(params: {
   };
 }
 
-/** Runtime-attached citation evidence from assistant turns before this request. */
-export function historicalCitationDigests(session: unknown): string[] {
-  const messages = (session as { messages?: unknown[] } | undefined)?.messages;
-  if (!Array.isArray(messages)) return [];
-  const lastUserIndex = messages.findLastIndex(
-    (message) => (message as { role?: unknown } | undefined)?.role === "user",
+/** Runtime citation receipts from completed earlier turns in this session. */
+export function historicalCitationDigests(
+  sessionManager: Pick<SessionManager, "getEntries"> | unknown,
+): string[] {
+  const getEntries = (sessionManager as { getEntries?: unknown } | undefined)?.getEntries;
+  if (typeof getEntries !== "function") return [];
+  const entriesResult = tryCatch(
+    () => (getEntries as () => unknown[]).call(sessionManager),
   );
-  const priorMessages = messages.slice(
-    0,
-    lastUserIndex < 0 ? messages.length : lastUserIndex,
-  );
+  if (!entriesResult.ok || !Array.isArray(entriesResult.value)) return [];
   const digests: string[] = [];
   const seen = new Set<string>();
-  for (const rawMessage of priorMessages) {
-    const message = rawMessage as {
-      role?: unknown;
-      citationEvidenceDigests?: unknown;
+  for (const rawEntry of entriesResult.value) {
+    const entry = rawEntry as {
+      type?: unknown;
+      customType?: unknown;
+      data?: unknown;
     } | undefined;
-    if (message?.role !== "assistant" || !Array.isArray(message.citationEvidenceDigests)) continue;
-    for (const digest of message.citationEvidenceDigests) {
-      if (typeof digest !== "string" || !SHA256_HEX.test(digest) || seen.has(digest)) continue;
+    if (entry?.type !== "custom" || entry.customType !== CITATION_EVIDENCE_CUSTOM_TYPE) continue;
+    const parsed = CitationEvidenceRecordSchema.safeParse(entry.data);
+    if (!parsed.success) continue;
+    for (const digest of parsed.data.urlDigests) {
+      if (seen.has(digest)) continue;
       seen.add(digest);
       digests.push(digest);
       if (digests.length >= 500) return digests;
     }
   }
   return digests;
+}
+
+/** Append one idempotent, bounded receipt after citation guarding completes. */
+export function appendCitationEvidenceRecord(params: {
+  sessionManager: Pick<SessionManager, "getEntries" | "appendCustomEntry">;
+  sourceMessageId: string;
+  urlDigests: readonly string[];
+}): Result<void, Error> {
+  const candidate = CitationEvidenceRecordSchema.safeParse({
+    sourceMessageId: params.sourceMessageId,
+    urlDigests: [...new Set(params.urlDigests)],
+  });
+  if (!candidate.success) return err(new Error("Citation evidence record validation failed"));
+  const entriesResult = tryCatch(() => params.sessionManager.getEntries());
+  if (!entriesResult.ok) return entriesResult;
+  for (const entry of entriesResult.value) {
+    if (entry.type !== "custom" || entry.customType !== CITATION_EVIDENCE_CUSTOM_TYPE) continue;
+    const stored = CitationEvidenceRecordSchema.safeParse(entry.data);
+    if (!stored.success || stored.data.sourceMessageId !== candidate.data.sourceMessageId) continue;
+    return stored.data.urlDigests.length === candidate.data.urlDigests.length
+      && stored.data.urlDigests.every(
+        (digest, index) => digest === candidate.data.urlDigests.at(index),
+      )
+      ? ok(undefined)
+      : err(new Error("Citation evidence record identity conflict"));
+  }
+  const appended = tryCatch(() => params.sessionManager.appendCustomEntry(
+    CITATION_EVIDENCE_CUSTOM_TYPE,
+    candidate.data,
+  ));
+  return appended.ok ? ok(undefined) : err(appended.error);
 }
 
 /** Narrow trigger for a later request asking the agent to identify its sources. */

@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
+  appendCitationEvidenceRecord,
   enforceCitationEvidence,
   historicalCitationDigests,
 } from "./citation-evidence.js";
 import * as citationEvidenceModule from "./citation-evidence.js";
+import { sanitizeSessionSecrets } from "../session/sanitize-session-secrets.js";
 
 function urlDigest(url: string): string {
   return createHash("sha256").update(url, "utf8").digest("hex");
@@ -64,15 +70,24 @@ describe("exact citation evidence grounding", () => {
     });
   });
 
-  it("reads only assistant evidence from before the current request", () => {
+  it("reads only valid runtime journal receipts", () => {
     const trusted = "a".repeat(64);
-    const current = "b".repeat(64);
     expect(historicalCitationDigests({
-      messages: [
-        { role: "user", content: "research this" },
-        { role: "assistant", citationEvidenceDigests: [trusted] },
-        { role: "user", content: "where is that from" },
-        { role: "assistant", citationEvidenceDigests: [current] },
+      getEntries: () => [
+        {
+          type: "message",
+          message: { role: "assistant", citationEvidenceDigests: ["b".repeat(64)] },
+        },
+        {
+          type: "custom",
+          customType: "citation_evidence",
+          data: { sourceMessageId: "message_a", urlDigests: [trusted] },
+        },
+        {
+          type: "custom",
+          customType: "citation_evidence",
+          data: { urlDigests: ["c".repeat(64)] },
+        },
       ],
     })).toEqual([trusted]);
   });
@@ -127,5 +142,44 @@ describe("exact citation evidence grounding", () => {
         urlDigests: [digest],
       },
     }]);
+  });
+
+  it("survives durable repair and session reopen without losing citation evidence", () => {
+    const scratch = mkdtempSync(resolve(tmpdir(), "citation-evidence-journal-"));
+    try {
+      const manager = SessionManager.create(scratch, scratch);
+      manager.appendMessage({ role: "user", content: "research this", timestamp: 1 });
+      manager.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "[Source](https://example.com/durable-source)" }],
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-5.6-luna",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 2,
+      });
+      const digest = urlDigest("https://example.com/durable-source");
+      expect(appendCitationEvidenceRecord({
+        sessionManager: manager,
+        sourceMessageId: "message_a",
+        urlDigests: [digest],
+      }).ok).toBe(true);
+      const sessionFile = manager.getSessionFile();
+      expect(sessionFile).toBeDefined();
+      expect(sanitizeSessionSecrets(sessionFile!)).toBe(0);
+
+      const reopened = SessionManager.open(sessionFile!, scratch, scratch);
+      expect(historicalCitationDigests(reopened)).toEqual([digest]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });

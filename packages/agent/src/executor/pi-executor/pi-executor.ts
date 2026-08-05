@@ -1921,7 +1921,7 @@ async function runSessionLocked(
   let currentWebResearchObserved = (): boolean => false;
   let currentCitationDigests = (): readonly string[] => [];
   const inheritedCitationDigests = isCitationSourceRequest(msg.text)
-    ? historicalCitationDigests(session)
+    ? historicalCitationDigests(sm)
     : [];
   const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
     ? msg.metadata.citationEvidence
