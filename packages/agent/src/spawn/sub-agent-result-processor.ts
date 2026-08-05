@@ -13,6 +13,7 @@
  * @module
  */
 
+import type { RootRunIdResolver } from "@comis/core";
 import {
   conversationScopeToSessionKey,
   safePath,
@@ -492,6 +493,10 @@ export async function deliverAnnouncement(params: {
    * SAME instance the batcher uses.
    */
   deliveryDedup?: DeliveryDedup;
+  /** Resolves the outward-ledger tree root for a caller turn. Stamped onto the
+   *  parked decision reservation so a drain can later ask the ledger whether the
+   *  announcement was ever actually sent, instead of parking it forever. */
+  resolveRootRunId?: RootRunIdResolver;
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
@@ -591,6 +596,19 @@ export async function deliverAnnouncement(params: {
         }, "Sub-agent parent decision cannot be reserved");
         return;
       }
+      // Stamp the ledger tree root. Without it a parked reservation can never be
+      // adjudicated — `allocateStep(rootRunId, idempotencyKey)` is what recovers
+      // the step the send WOULD have used, so the drain can ask whether it ever
+      // happened rather than leaving a finished job's result parked forever.
+      const reservationRoot = (() => {
+        if (!deps.resolveRootRunId || !params.callerConversation) return undefined;
+        const projected = conversationScopeToSessionKey(
+          params.callerConversation.conversationScope,
+        );
+        if (!projected.ok) return undefined;
+        const resolved = deps.resolveRootRunId(callerAgentId, projected.value);
+        return resolved.ok && resolved.value.length > 0 ? resolved.value : undefined;
+      })();
       const reservationBoundary = await fromPromise(deps.deadLetterQueue.reserveDecision({
         idempotencyKey: announceKey,
         agentId: callerAgentId,
@@ -599,6 +617,7 @@ export async function deliverAnnouncement(params: {
         channelType: announceChannelType,
         channelId: announceChannelId,
         failedAt: systemNowMs(),
+        ...(reservationRoot ? { rootRunId: reservationRoot } : {}),
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {

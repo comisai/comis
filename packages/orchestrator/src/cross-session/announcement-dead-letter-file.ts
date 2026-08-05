@@ -75,6 +75,12 @@ export interface ParentDecisionReservation {
   channelId: string;
   failedAt: number;
   threadId?: string;
+  /** Outward-ledger tree root for this announcement. Present, it makes a parked
+   *  reservation ADJUDICABLE: `allocateStep(rootRunId, idempotencyKey)` is
+   *  idempotent by that pair, so the drain can recover the exact step the send
+   *  would have used and ask the ledger whether it ever happened. Absent (a
+   *  record written before this field existed) the reservation stays parked. */
+  rootRunId?: string;
 }
 
 export interface ParentDecisionReservationRecord extends ParentDecisionReservation {
@@ -296,7 +302,8 @@ function isParentDecisionReservationRecord(
     && typeof record.channelId === "string"
     && typeof record.failedAt === "number"
     && Number.isFinite(record.failedAt)
-    && isOptionalString(record.threadId);
+    && isOptionalString(record.threadId)
+    && isOptionalString(record.rootRunId);
 }
 
 function isDeadLetterEntry(

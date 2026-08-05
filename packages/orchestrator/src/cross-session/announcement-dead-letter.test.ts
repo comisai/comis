@@ -845,6 +845,65 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect((await readFile(filePath, "utf8")).trim().split("\n")).toHaveLength(1);
   });
 
+  it("delivers a parked reservation the ledger shows was never sent", async () => {
+    // A sub-agent completed and produced real work; the parent turn that should
+    // have adjudicated delivery died first, so the completion parked as a
+    // reservation. drain() only ever walked normal entries, so nothing drained
+    // it and the user was never told — they had to ask. The ledger can settle
+    // this: allocateStep is idempotent by (rootRunId, operationId), and a lookup
+    // that returns undefined means no send was ever attempted at that step.
+    const { ledger } = makeStubLedger(); // lookup -> ok(undefined) = never sent
+    const sendToChannel = vi.fn(async () => true);
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel: vi.fn(async () => ok({ delivered: true, platformMessageId: "m-1" })),
+    });
+    await queue.reserveDecision(decisionInput({ rootRunId: "root-parent-1" }));
+    expect(queue.size()).toBe(1);
+
+    await queue.drain(sendToChannel);
+
+    // The reservation is adjudicated and no longer parked.
+    expect(queue.size()).toBe(0);
+    expect(ledger.allocateStep).toHaveBeenCalled();
+  });
+
+  it("leaves a reservation parked when the ledger cannot answer", async () => {
+    // Fail-SAFE: a ledger read that errors must never be read as "not sent".
+    const { ledger } = makeStubLedger();
+    (ledger.allocateStep as unknown as { mockResolvedValue(v: unknown): void })
+      .mockResolvedValue(err(new Error("ledger unavailable")));
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await queue.reserveDecision(decisionInput({ rootRunId: "root-parent-1" }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    expect(queue.size()).toBe(1);
+  });
+
+  it("leaves a legacy reservation without a rootRunId parked", async () => {
+    // Records written before the identity was carried cannot be looked up, so
+    // they keep the old behaviour rather than being delivered on a guess.
+    const { ledger } = makeStubLedger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+    });
+    await queue.reserveDecision(decisionInput());
+
+    await queue.drain(vi.fn(async () => true));
+
+    expect(queue.size()).toBe(1);
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+  });
+
   it("upserts a pending decision into one governed delivery row", async () => {
     const { ledger } = makeStubLedger();
     const queue = createAnnouncementDeadLetterQueue({

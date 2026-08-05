@@ -547,7 +547,7 @@ export function setupCrossSession(deps: {
     materializeFullOutput,
     lifecycleHooks,
     deadLetterQueue,
-    deliveryDedup,
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}), deliveryDedup,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
     clock: deps.clock,
     timers: deps.timers,

@@ -11,6 +11,7 @@
  * @module
  */
 
+import type { RootRunIdResolver } from "@comis/core";
 import {
   formatSessionKey,
   conversationScopeToSessionKey,
@@ -548,6 +549,10 @@ export interface SubAgentRunnerDeps {
    * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
    */
   deliveryDedup?: DeliveryDedup;
+  /** Resolves the outward-ledger tree root for a caller turn. Forwarded to
+   *  deliverAnnouncement, which stamps it onto a parked decision reservation so
+   *  the dead-letter drain can later adjudicate it against the ledger. */
+  resolveRootRunId?: RootRunIdResolver;
   /** Optional live-run resolver for aborting in-flight SDK sessions on kill. */
   sessionResolver?: {
     resolveActiveSession(conversationRef: ConversationRef): { abort(): Promise<void> } | undefined;
