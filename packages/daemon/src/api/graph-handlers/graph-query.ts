@@ -25,6 +25,7 @@ import {
   systemDateFrom,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
+import { PreconditionError } from "../errors.js";
 import { IS_DEV, type GraphHandlerDeps } from "./graph-helpers.js";
 import {
   readTerminalGraphMetadata,
@@ -104,7 +105,7 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       if (graphId) {
         const snapshot = deps.graphCoordinator.getStatus(graphId as string);
         if (!snapshot) {
-          throw new Error("Graph not found");
+          throw new PreconditionError("Graph not found");
         }
 
         // Convert Map<string, NodeExecutionState> to Record for JSON serialization
