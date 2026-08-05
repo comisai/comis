@@ -236,6 +236,8 @@ describe("task heartbeat agent turn executor", () => {
 
   it("runs separately wrapped tasks under an attempt-scoped zero-capability ephemeral context", async () => {
     const data = makeDeps("HEARTBEAT_OK");
+    const terminal = vi.fn();
+    data.eventBus.on("scheduler:task_check_terminal", terminal);
     data.execute.mockImplementationOnce(async (message, _sessionKey, tools, _onDelta, _agentId, _directives, _previous, overrides) => {
       expect(getContext()).toMatchObject({
         tenantId: "tenant-a",
@@ -292,6 +294,10 @@ describe("task heartbeat agent turn executor", () => {
       }),
     }));
     expect(data.prepare).not.toHaveBeenCalled();
+    expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "dismissed",
+      suppressionReason: "heartbeat_token",
+    }));
   });
 
   it("fsyncs the send boundary before exact-origin delivery and settles accepted receipt history", async () => {

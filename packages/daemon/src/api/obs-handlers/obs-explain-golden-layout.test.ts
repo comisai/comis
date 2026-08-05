@@ -1001,6 +1001,41 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     db.close();
   });
 
+  it("preserves the content-free task-check suppression reason", async () => {
+    const dataDir = tmpDataDir();
+    const db = new Database(":memory:");
+    initSchema(db, 1_536);
+    const store = createObservabilityStore(db);
+    const terminalRow = taskEventToRow("scheduler:task_check_terminal", {
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      attemptId: "attempt-task-a",
+      rootRunId: TASK_ROOT_RUN_ID,
+      correlationId: TASK_CORRELATION_ID,
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-1"],
+      outcome: "dismissed",
+      recovery: "live",
+      durationMs: 21,
+      timestamp: 3_021,
+    });
+    terminalRow.details = JSON.stringify({
+      ...JSON.parse(terminalRow.details ?? "{}") as Record<string, unknown>,
+      suppressionReason: "heartbeat_token",
+    });
+    store.insertDiagnostic(terminalRow);
+
+    const evidence = await makeRealReader(dataDir, store)
+      .readTaskCheckLifecycle?.(TASK_ROOT_RUN_ID);
+
+    expect(evidence).toMatchObject({
+      outcome: "dismissed",
+      suppressionReason: "heartbeat_token",
+    });
+    db.close();
+  });
+
   it("resolves a graph identifier through terminal metadata and the real nested session layout", async () => {
     const dataDir = tmpDataDir();
     const sessionFile = buildRealSessionFile(dataDir);
