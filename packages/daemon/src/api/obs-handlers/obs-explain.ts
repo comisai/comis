@@ -56,7 +56,10 @@ import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
 import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
-import { completionEvidenceGuardVerdict } from "./obs-explain-completion-evidence-verdict.js";
+import {
+  completionEvidenceGuardVerdict,
+  outboundCompletionEvidenceGuardVerdict,
+} from "./obs-explain-completion-evidence-verdict.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
@@ -735,6 +738,13 @@ export async function assembleIncidentReportFromSources(
   );
   if (completionEvidenceVerdict !== null) {
     report.likelyRootCause = completionEvidenceVerdict;
+  }
+  const outboundCompletionEvidenceVerdict = outboundCompletionEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (outboundCompletionEvidenceVerdict !== null) {
+    report.likelyRootCause = outboundCompletionEvidenceVerdict;
   }
   const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
     auditRows,

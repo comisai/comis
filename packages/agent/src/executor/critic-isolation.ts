@@ -47,12 +47,14 @@ const COMPLETION_CLAIM_PATTERNS = [
   /\bI found and fixed\b/i,
   /\bI(?:'ve| have) fixed\b/i,
   /\bI fixed\b/i,
+  /\b(?:here is|here's) (?:the )?(?:fixed|repaired|corrected)\b/i,
+  /\b(?:is|are|was|were) (?:now )?(?:fixed|repaired|corrected)\b/i,
   /\bnow\s+(?:works?|is working|has working)\b/i,
 ];
 
 const NEGATED_COMPLETION_CLAIM_PATTERNS = [
   /\b(?:could not|couldn't|cannot|can't|unable to|failed to)\b[^.!?\n]{0,80}\b(?:verify|confirm|complete|finish|fix|work)\b/iu,
-  /\b(?:not|never)\b[^.!?\n]{0,80}\b(?:done|finished|complete[d]?|ready|fixed|working)\b/iu,
+  /\b(?:not|never)\b[^.!?\n]{0,80}\b(?:done|finished|complete[d]?|ready|fixed|repaired|corrected|working)\b/iu,
   /\b(?:test|tests|check|checks|validation|verification)\b[^.!?\n]{0,40}\b(?:fail|fails|failed|failing)\b/iu,
 ];
 
@@ -70,7 +72,6 @@ export function isCompletionClaim(response: string): boolean {
         && COMPLETION_CLAIM_PATTERNS.some((pattern) => pattern.test(sentence)),
     );
 }
-
 // ---------------------------------------------------------------------------
 // Detect implied tool calls in verdict text (scope-widening prevention)
 // ---------------------------------------------------------------------------
