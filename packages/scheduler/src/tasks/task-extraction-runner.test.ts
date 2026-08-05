@@ -349,6 +349,7 @@ describe("governed task extraction runner", () => {
       retireAgent(agentId: string): { readonly activeCount: number };
     }).retireAgent;
 
+    expect(retireAgent("agent-missing")).toEqual({ activeCount: 0 });
     expect(retireAgent("agent-a")).toEqual({ activeCount: 1 });
     expect(data.withModelSession.mock.calls[0]![0].signal.aborted).toBe(true);
     expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 1 });
@@ -362,6 +363,27 @@ describe("governed task extraction runner", () => {
       errorKind: "precondition",
     }));
     expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 0 });
+  });
+
+  it("closes the persistence fence while root registration is pending", async () => {
+    let resolveRegistration: ((value: ReturnType<typeof ok<void>>) => void) | undefined;
+    const data = setup({
+      registerRoot: () => new Promise((resolve) => { resolveRegistration = resolve; }),
+    });
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await vi.waitFor(() => expect(resolveRegistration).toBeTypeOf("function"));
+
+    expect(data.runner.retireAgent("agent-a")).toEqual({ activeCount: 1 });
+    resolveRegistration?.(ok(undefined));
+    await data.runner.waitForIdle();
+
+    expect(data.withModelSession).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "persistence_fence",
+      errorKind: "precondition",
+    }));
   });
 
   it("reports rejected and explicit root registration failures without model access", async () => {

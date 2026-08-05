@@ -376,6 +376,27 @@ describe("strict cron execution tracker", () => {
     expect(await readFile(data.logPath)).toEqual(before);
   });
 
+  it("preserves every complete group protected from retention pruning", async () => {
+    const data = await fixture({ retainedExecutions: 1 });
+    const rows = [
+      start("execution-a"),
+      terminal("execution-a", { terminalAtMs: 20_000 }),
+      start("execution-b"),
+      terminal("execution-b", { terminalAtMs: 30_000 }),
+    ];
+    await writeFile(data.logPath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, { mode: 0o600 });
+    await data.tracker.initialize();
+
+    expect(await data.tracker.prune(["execution-a", "execution-b"])).toEqual(ok(undefined));
+    expect(await data.tracker.listHistory({ limit: 10 })).toMatchObject({
+      ok: true,
+      value: [
+        { start: { executionId: "execution-b" } },
+        { start: { executionId: "execution-a" } },
+      ],
+    });
+  });
+
   it("rewrites pre-existing retained history only when explicit pruning changes rows", async () => {
     const data = await fixture({ retainedExecutions: 1 });
     const rows = [
