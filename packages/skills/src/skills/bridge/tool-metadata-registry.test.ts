@@ -1735,6 +1735,12 @@ describe("tool-metadata-registry -- failure alternatives", () => {
 });
 
 describe("tool-metadata-registry -- co-discovery metadata", () => {
+  it("file mutation tools recognize a broken-artifact continuation", () => {
+    for (const toolName of ["edit", "write", "apply_patch"]) {
+      expect(matchesToolMutationRequest(toolName, "its broken")).toBe(true);
+    }
+  });
+
   it("models_manage has coDiscoverWith pointing to agents_manage", () => {
     const meta = getToolMetadata("models_manage");
     expect(meta).toBeDefined();

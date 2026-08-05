@@ -6,7 +6,7 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@comis/shared";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
@@ -55,6 +55,94 @@ describe("createBeforeToolCallGuard", () => {
     const result = await guard({});
 
     expect(result).toBeUndefined();
+  });
+
+  it("blocks an outbound repaired-file claim without matched mutation evidence", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const onBlocked = vi.fn();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "its broken",
+      undefined,
+      {
+        requestMutationToolNames: new Set(["edit", "write"]),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked,
+      },
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "message" },
+      args: {
+        action: "attach",
+        caption: "Here is the repaired run tracker file.",
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(/successful current-turn mutation/iu),
+    });
+    expect(onBlocked).toHaveBeenCalledOnce();
+  });
+
+  it("allows an outbound repair claim after a matched mutation succeeds", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "its broken",
+      undefined,
+      {
+        requestMutationToolNames: new Set(["edit", "write"]),
+        currentSuccessfulMutationCount: () => 1,
+        onBlocked: vi.fn(),
+      },
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "message" },
+      args: {
+        action: "attach",
+        caption: "Here is the repaired run tracker file.",
+      },
+    })).resolves.toBeUndefined();
+  });
+
+  it("allows a neutral attachment caption without mutation evidence", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "its broken",
+      undefined,
+      {
+        requestMutationToolNames: new Set(["edit"]),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked: vi.fn(),
+      },
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "message" },
+      args: { action: "attach", caption: "Here is the current file for inspection." },
+    })).resolves.toBeUndefined();
   });
 
   it("checks step counter first (priority order)", async () => {

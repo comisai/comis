@@ -355,4 +355,16 @@ describe("isCompletionClaim", () => {
       ),
     ).toBe(false);
   });
+
+  it("detects a repaired-file claim delivered as an attachment caption", () => {
+    expect(
+      isCompletionClaim(
+        "Here is the repaired run tracker file. Open it in a browser.",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat an explicitly unrepaired file as complete", () => {
+    expect(isCompletionClaim("The file is not repaired yet.")).toBe(false);
+  });
 });
