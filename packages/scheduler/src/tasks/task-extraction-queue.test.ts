@@ -66,6 +66,22 @@ function turn(overrides: Partial<TaskExtractionTurn> = {}): TaskExtractionTurn {
   };
 }
 
+function turnForAgent(agentId: string, sourceExecutionId: string): TaskExtractionTurn {
+  const base = turn({ sourceExecutionId });
+  const conversation = { ...base.origin.turnScope.conversation, agentId };
+  const conversationRef = createConversationRef(conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
+  return {
+    ...base,
+    origin: {
+      ...base.origin,
+      turnScope: { ...base.origin.turnScope, conversation },
+      conversationRef: conversationRef.value,
+    },
+    workspacePolicySnapshot: { ...base.workspacePolicySnapshot, agentId },
+  };
+}
+
 function setup(overrides: Record<string, unknown> = {}) {
   const timers = createFakeTimers();
   const batches: unknown[][] = [];
@@ -221,6 +237,36 @@ describe("task extraction queue", () => {
     expect(timers.unrefRecord()[0]).toMatchObject({ cancelled: true });
     timers.advance(2_000);
     expect(batches).toHaveLength(0);
+  });
+
+  it("isolates mixed-agent draining retirement and orphaned timers", () => {
+    const mixed = setup();
+    mixed.queue.activate();
+    mixed.queue.enqueue(turnForAgent("agent-a", "execution-a"));
+    mixed.queue.enqueue(turnForAgent("agent-b", "execution-b"));
+    mixed.timers.advance(1_000);
+    expect(mixed.batches).toEqual([
+      [expect.objectContaining({ sourceExecutionId: "execution-a" })],
+      [expect.objectContaining({ sourceExecutionId: "execution-b" })],
+    ]);
+
+    const retired = setup();
+    retired.queue.activate();
+    retired.queue.enqueue(turnForAgent("agent-a", "execution-a"));
+    retired.queue.enqueue(turnForAgent("agent-b", "execution-b"));
+    expect(retired.queue.retireAgent("agent-a")).toEqual({ droppedCount: 1 });
+    expect(retired.queue.getStatus()).toMatchObject({ itemCount: 1, droppedCount: 1 });
+
+    const full = setup({
+      getConfig: () => ({ debounceMs: 100_000, batchMax: 8, heartbeatIntervalMs: 60_000 }),
+    });
+    full.queue.activate();
+    full.queue.enqueue(turnForAgent("agent-a", "execution-a"));
+    for (let index = 0; index < 63; index += 1) {
+      full.queue.enqueue(turnForAgent("agent-b", `execution-b-${index}`));
+    }
+    expect(full.queue.enqueue(turnForAgent("agent-b", "execution-b-new"))).toEqual(ok("oldest_dropped"));
+    expect(full.timers.unrefRecord()[0]).toMatchObject({ cancelled: true });
   });
 
   it("counts and reports failed batch ownership transfer", () => {

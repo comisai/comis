@@ -944,6 +944,7 @@ describe("durable cron scheduler lifecycle", () => {
     await built.scheduler.initialize();
     expect(await built.scheduler.runMissedJobs()).toMatchObject({ ok: false, error: { code: "not_active" } });
     expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "not_active" } });
+    expect(await built.scheduler.triggerJob("job_a")).toMatchObject({ ok: false, error: { code: "not_active" } });
     built.scheduler.activate();
 
     vi.spyOn(built.store, "getSnapshot").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
@@ -953,6 +954,26 @@ describe("durable cron scheduler lifecycle", () => {
     expect(await built.scheduler.runJob("missing")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
     vi.spyOn(built.store, "claim").mockResolvedValueOnce(err({ code: "conflict", errorKind: "precondition", message: "expected" }));
     expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+  });
+
+  it("maps a rejected occurrence boundary to an internal scheduler failure", async () => {
+    const built = await fixture({ seedJob: job() });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    vi.spyOn(built.store, "listJobs").mockImplementationOnce(() => {
+      throw new Error("store adapter rejected");
+    });
+
+    expect(await built.scheduler.runJob("job_a")).toMatchObject({
+      ok: false,
+      error: { code: "operation_failed", errorKind: "internal" },
+    });
+    expect(built.logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: "execution_1",
+      jobId: "job_a",
+      step: "execution_boundary",
+      errorKind: "internal",
+    }), "Cron execution rejected outside its Result contract");
   });
 
   it("rejects duplicate active execution identifiers without invoking a second runtime", async () => {

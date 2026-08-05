@@ -187,6 +187,31 @@ describe("follow-up task quarantine file inspection", () => {
       quarantinePath,
       quarantinedAtMs: 1,
     })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await quarantineMalformedTerminalTaskGroups({
+      raw: rawRoot({ status: "delivered", text: "", terminalAttemptId: undefined }),
+      quarantinePath,
+      quarantinedAtMs: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("refuses malformed terminal groups with missing attempt or policy authority", async () => {
+    const quarantinePath = join(await directory(), "tasks-quarantine.jsonl");
+    expect(await quarantineMalformedTerminalTaskGroups({
+      raw: rawRoot({ status: "delivered", text: "", terminalAttemptId: "attempt-missing" }),
+      quarantinePath,
+      quarantinedAtMs: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    const missingPolicy = rawRoot({ text: "" });
+    expect(await quarantineMalformedTerminalTaskGroups({
+      raw: {
+        ...missingPolicy,
+        tasks: [{ ...missingPolicy.tasks[0]!, workspacePolicyHash: "e".repeat(64) }],
+        policySnapshots: [],
+      },
+      quarantinePath,
+      quarantinedAtMs: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
   });
 
   it("reports malformed JSON forged hashes duplicate entries and oversized files as invalid", async () => {
