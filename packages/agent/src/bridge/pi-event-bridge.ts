@@ -2711,9 +2711,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
-          // Record successful LLM call in circuit breaker + provider health
-          deps.circuitBreaker.recordSuccess();
-          deps.providerHealth?.recordSuccess(deps.provider, deps.agentId);
+          // A `turn_end` event is not necessarily a successful provider call:
+          // pi-ai emits the same event with stopReason "error" for dependency
+          // failures and local pre-flight failures. Recording success here for
+          // an error turn resets the consecutive-failure count immediately
+          // before the error path records its failure, so a dead provider can
+          // retry forever without opening the circuit.
+          const turnEndedWithError = assistantMsg?.stopReason === "error";
+          if (!turnEndedWithError) {
+            deps.circuitBreaker.recordSuccess();
+            deps.providerHealth?.recordSuccess(deps.provider, deps.agentId);
+          }
 
           // SEP: Advance step status on turn completion
           m.turnCount++;
@@ -2972,7 +2980,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // so it is a resource condition, not a dependency error. The wire-diff
           // diagnostic below is a no-op for this message (its regex needs
           // thinking-block-replay tokens), so we let it fall through.
-          if (isContextExhaustionErrorMessage(m.lastLlmErrorMessage)) {
+          const localContextExhaustion = isContextExhaustionErrorMessage(m.lastLlmErrorMessage);
+          if (localContextExhaustion) {
             m.finishReason = "context_exhausted";
             deps.logger.warn(
               {
@@ -3130,17 +3139,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               });
             }
           }
-          deps.circuitBreaker.recordFailure();
-          deps.providerHealth?.recordFailure(deps.provider, deps.agentId);
-          // If circuit breaker just opened, abort mid-execution
-          // Delegated to bridge-safety-controls
-          {
-            const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
-            if (cbCheck.shouldAbort) {
-              m.finishReason = cbCheck.finishReason!;
-              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
-              m.aborted = true;
-              emitCircuitBreakerAbort(deps);
+          // Only a provider/dependency error contributes to provider health.
+          // A local context-fit failure is already classified as a resource
+          // abort above; counting it here would poison an otherwise healthy
+          // provider's breaker.
+          if (!localContextExhaustion) {
+            deps.circuitBreaker.recordFailure();
+            deps.providerHealth?.recordFailure(deps.provider, deps.agentId);
+            // If circuit breaker just opened, abort mid-execution
+            // Delegated to bridge-safety-controls
+            {
+              const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
+              if (cbCheck.shouldAbort) {
+                m.finishReason = cbCheck.finishReason!;
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                m.aborted = true;
+                emitCircuitBreakerAbort(deps);
+              }
             }
           }
         }
