@@ -4383,6 +4383,14 @@ describe("classifyAbortReason", () => {
     expect(result.severity).toBe("investigate");
   });
 
+  it("maps prompt_timeout to its subagent operation timeout knob", () => {
+    const result = classifyAbortReason("prompt_timeout");
+    expect(result.category).toBe("prompt_timeout");
+    expect(result.severity).toBe("actionable");
+    expect(result.hint).toContain("agents.<id>.operationModels.subagent.timeout");
+    expect(result.hint).not.toContain("daemon logs");
+  });
+
   // error + "Request was aborted" -> external_timeout
   it("maps error with 'Request was aborted' to external_timeout", () => {
     const result = classifyAbortReason("error", "Request was aborted");
