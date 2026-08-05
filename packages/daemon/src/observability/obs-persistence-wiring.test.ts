@@ -54,6 +54,7 @@ import * as nodePath from "node:path";
 import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
 import * as orchestrationRows from "./obs-orchestration-rows.js";
+import * as persistenceWiring from "./obs-persistence-wiring.js";
 
 function deliveryAuthorityEventFields(channelType: string, conversationId: string) {
   return {
@@ -1825,6 +1826,44 @@ describe("backgroundRecoveryEventToRow", () => {
         taskId: "task-1",
         toolName: "report",
       }),
+    });
+  });
+});
+
+describe("background recovery scan diagnostics", () => {
+  it("maps protected scan state without persisting error bodies or absolute paths", () => {
+    const mapper = (persistenceWiring as unknown as Record<string, unknown>)[
+      "backgroundRecoveryScanEventToRow"
+    ];
+    if (typeof mapper !== "function") {
+      expect(mapper).toBeTypeOf("function");
+      return;
+    }
+
+    const row = (mapper as (payload: Record<string, unknown>) => {
+      category: string;
+      severity: string;
+      message: string;
+      details?: string;
+    })({
+      status: "failed",
+      failureCount: 1,
+      failureKinds: ["task_validation"],
+      recordRefs: ["default/task-a.json"],
+      timestamp: 10_003,
+    });
+
+    expect(row).toMatchObject({
+      category: "health_signal",
+      severity: "warning",
+      message: "background_task_recovery_scan",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "background_task_recovery_scan",
+      status: "failed",
+      failureCount: 1,
+      failureKinds: ["task_validation"],
+      recordRefs: ["default/task-a.json"],
     });
   });
 });

@@ -300,8 +300,12 @@ describe("background task recovery controller", () => {
     const eventBus = new TypedEventBus();
     const systemErrors = vi.fn();
     const notified = vi.fn();
+    const recoveryScans = vi.fn();
     eventBus.on("system:error", systemErrors);
     eventBus.on("background_task:notified", notified);
+    (eventBus as unknown as {
+      on(event: string, handler: (payload: unknown) => void): void;
+    }).on("background_task:recovery_scan", recoveryScans);
     const scheduled: Array<{ callback: () => void; delayMs: number }> = [];
     let now = 0;
     const logger = { warn: vi.fn() };
@@ -329,21 +333,40 @@ describe("background task recovery controller", () => {
       toolName: "report",
       origin: makeOrigin(),
     };
+    const scanFailure = {
+      kind: "task_validation" as const,
+      identity,
+      recordRef: "agent-a/task-scan.json",
+    };
     const retry = vi.fn();
 
     controller.reportScanFailures(
-      [{ kind: "task_validation", identity }],
+      [scanFailure],
       [],
       retry,
     );
     expect(scheduled[0]?.delayMs).toBe(1_000);
     expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(systemErrors).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recordRefs: ["agent-a/task-scan.json"],
+        hint: expect.stringContaining("background-tasks/agent-a/task-scan.json"),
+      }),
+      "Background task recovery scan incomplete",
+    );
+    expect(recoveryScans).toHaveBeenLastCalledWith({
+      status: "failed",
+      failureCount: 1,
+      failureKinds: ["task_validation"],
+      recordRefs: ["agent-a/task-scan.json"],
+      timestamp: 0,
+    });
 
     scheduled[0]?.callback();
     now = 1_000;
     controller.reportScanFailures(
-      [{ kind: "task_validation", identity }],
+      [scanFailure],
       [],
       retry,
     );
@@ -354,6 +377,14 @@ describe("background task recovery controller", () => {
     scheduled[1]?.callback();
     now = 3_000;
     controller.reportScanFailures([], [], retry);
+
+    expect(recoveryScans).toHaveBeenLastCalledWith({
+      status: "healthy",
+      failureCount: 0,
+      failureKinds: [],
+      recordRefs: [],
+      timestamp: 3_000,
+    });
 
     expect(recorder).toHaveBeenLastCalledWith(expect.objectContaining({
       taskId: "task-scan",

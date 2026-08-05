@@ -526,7 +526,10 @@ describe("background-task-persistence", () => {
 
       expect(recoverTasks(dataDir, ops)).toEqual({
         tasks: [],
-        failures: [{ kind: "task_read" }],
+        failures: [{
+          kind: "task_read",
+          recordRef: "a1/transient-read.json",
+        }],
       });
       expect(recoverTasks(dataDir, ops).tasks).toEqual([
         expect.objectContaining({ id: "transient-read" }),
@@ -559,7 +562,10 @@ describe("background-task-persistence", () => {
 
       const recovered = recoverTasks(dataDir);
       expect(recovered.tasks).toEqual([]);
-      expect(recovered.failures).toEqual([{ kind: "task_validation" }]);
+      expect(recovered.failures).toEqual([{
+        kind: "task_validation",
+        recordRef: "bad-agent/malformed.json",
+      }]);
     });
 
     it("reports tasks whose origin lacks canonical turn authority", () => {
@@ -584,7 +590,10 @@ describe("background-task-persistence", () => {
 
       expect(recoverTasks(dataDir)).toEqual({
         tasks: [],
-        failures: [{ kind: "task_validation" }],
+        failures: [{
+          kind: "task_validation",
+          recordRef: "default/stale-origin.json",
+        }],
       });
     });
 
