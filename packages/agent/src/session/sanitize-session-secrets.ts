@@ -153,6 +153,7 @@ function isSafePersistencePlaceholder(value: string): boolean {
  * the shape without importing the schema into the persistence hot path.
  */
 const CONVERSATION_REF_SHAPE = /^cv_[A-Za-z0-9_-]{43}$/u;
+const CITATION_URL_DIGEST_SHAPE = /^[a-f0-9]{64}$/u;
 
 /**
  * Whether a field carries a structural identifier the projector must leave alone.
@@ -193,6 +194,26 @@ function isToolProtocolIdentity(
         && container.status === "backgrounded"
         && typeof container.taskId === "string"
       )
+    );
+}
+
+/**
+ * Preserve only the bounded receipt list attached by the runtime to an
+ * assistant turn. A digest-shaped string in user or tool-controlled data still
+ * follows the normal secret projection, so the field name cannot launder an
+ * unrelated high-entropy value.
+ */
+function isRuntimeCitationDigestList(
+  container: Record<string, unknown>,
+  fieldName: string,
+  value: unknown,
+): value is string[] {
+  return container.role === "assistant"
+    && fieldName === "citationEvidenceDigests"
+    && Array.isArray(value)
+    && value.length <= 500
+    && value.every(
+      (digest) => typeof digest === "string" && CITATION_URL_DIGEST_SHAPE.test(digest),
     );
 }
 
@@ -261,7 +282,9 @@ function projectPersistenceValue(
     // Redacting an entropy-shaped identity corrupts durable replay and can make
     // the provider reject the next request before it consumes the tool result.
     // Tool arguments and result content still traverse the secret scrubber.
-    const next = isToolProtocolIdentity(value as Record<string, unknown>, key, item)
+    const container = value as Record<string, unknown>;
+    const next = isToolProtocolIdentity(container, key, item)
+      || isRuntimeCitationDigestList(container, key, item)
       ? { value: item, redactions: 0 }
       : projectPersistenceValue(item, key, seen);
     projected[key] = next.value;
