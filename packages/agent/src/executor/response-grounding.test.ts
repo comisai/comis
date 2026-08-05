@@ -11,12 +11,14 @@ interface CompletionEvidenceGuardResult {
   response: string;
   corrected: boolean;
   reason?: "unrecovered_tool_failure_completion_claim";
+  correction?: "replaced" | "prefixed_partial";
 }
 
 function completionEvidenceGuard(): (params: {
   response: string;
   unrecoveredToolFailures?: readonly string[];
   honestResponse: string;
+  preservePartialResponse?: boolean;
 }) => CompletionEvidenceGuardResult {
   const candidate = (responseGrounding as Record<string, unknown>)
     .enforceCompletionEvidence;
@@ -116,6 +118,7 @@ describe("response grounding module", () => {
       response: honestResponse,
       corrected: true,
       reason: "unrecovered_tool_failure_completion_claim",
+      correction: "replaced",
     });
   });
 
@@ -138,6 +141,26 @@ describe("response grounding module", () => {
       unrecoveredToolFailures: ["exec"],
       honestResponse: "The result is partial.",
     })).toEqual({ response, corrected: false });
+  });
+
+  it("keeps useful research beneath a runtime partial-result warning", () => {
+    const response =
+      "Research complete. The retrieved standards agree that storage is origin-scoped.";
+    const honestResponse =
+      "I could not verify the request as complete because one or more tool steps still failed. "
+      + "Treat the result below as partial.";
+
+    expect(completionEvidenceGuard()({
+      response,
+      unrecoveredToolFailures: ["web_fetch"],
+      honestResponse,
+      preservePartialResponse: true,
+    })).toEqual({
+      response: `${honestResponse}\n\n${response}`,
+      corrected: true,
+      reason: "unrecovered_tool_failure_completion_claim",
+      correction: "prefixed_partial",
+    });
   });
 
 });

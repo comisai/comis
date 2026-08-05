@@ -453,6 +453,7 @@ describe("completion evidence missing reply", () => {
     expect(reply).toMatch(/could not verify.*complete/iu);
     expect(reply).toMatch(/tool steps? still failed/iu);
     expect(reply).toMatch(/partial/iu);
+    expect(reply).not.toMatch(/made changes/iu);
     expect(LOCALE_MESSAGE_IDS).toContain("completion_evidence_missing");
   });
 });
