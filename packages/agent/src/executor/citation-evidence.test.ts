@@ -5,6 +5,7 @@ import {
   enforceCitationEvidence,
   historicalCitationDigests,
 } from "./citation-evidence.js";
+import * as citationEvidenceModule from "./citation-evidence.js";
 
 function urlDigest(url: string): string {
   return createHash("sha256").update(url, "utf8").digest("hex");
@@ -74,5 +75,57 @@ describe("exact citation evidence grounding", () => {
         { role: "assistant", citationEvidenceDigests: [current] },
       ],
     })).toEqual([trusted]);
+  });
+
+  it("reads runtime citation receipts from append-only session entries", () => {
+    const digest = urlDigest("https://example.com/durable-source");
+    expect(historicalCitationDigests({
+      getEntries: () => [
+        { type: "message", message: { role: "user", content: "research this" } },
+        {
+          type: "custom",
+          customType: "citation_evidence",
+          data: {
+            sourceMessageId: "message_a",
+            urlDigests: [digest],
+          },
+        },
+      ],
+    })).toEqual([digest]);
+  });
+
+  it("appends a bounded runtime citation receipt to the session journal", () => {
+    const candidate = (citationEvidenceModule as Record<string, unknown>)
+      .appendCitationEvidenceRecord;
+    expect(candidate).toBeTypeOf("function");
+    const entries: unknown[] = [];
+    const manager = {
+      getEntries: () => entries,
+      appendCustomEntry: (customType: string, data: unknown) => {
+        entries.push({ type: "custom", customType, data });
+        return "entry_a";
+      },
+    };
+    const digest = urlDigest("https://example.com/durable-source");
+
+    const result = (candidate as (params: {
+      sessionManager: typeof manager;
+      sourceMessageId: string;
+      urlDigests: readonly string[];
+    }) => { ok: boolean })({
+      sessionManager: manager,
+      sourceMessageId: "message_a",
+      urlDigests: [digest],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(entries).toEqual([{
+      type: "custom",
+      customType: "citation_evidence",
+      data: {
+        sourceMessageId: "message_a",
+        urlDigests: [digest],
+      },
+    }]);
   });
 });

@@ -858,4 +858,20 @@ describe("projectSessionValueForPersistence — runtime citation receipts", () =
       (out.value as { citationEvidenceDigests: string[] }).citationEvidenceDigests,
     ).toEqual(["[REDACTED]"]);
   });
+
+  it("keeps a validated append-only runtime citation receipt", () => {
+    const out = projectSessionValueForPersistence({
+      type: "custom",
+      customType: "citation_evidence",
+      data: {
+        sourceMessageId: "message_a",
+        urlDigests: [DIGEST],
+      },
+    });
+
+    expect(out.redactions).toBe(0);
+    expect(
+      (out.value as { data: { urlDigests: string[] } }).data.urlDigests,
+    ).toEqual([DIGEST]);
+  });
 });
