@@ -13,7 +13,9 @@ export type {
   ChannelEvents,
   BackgroundTaskFailureDiagnostic,
   BackgroundTaskFailureCode,
+  BackgroundRecoveryEvents,
   InfraEvents,
+  BackgroundTaskRecoveryScanFailureKind,
   WebhookFailureReason,
   // SpendScopeKind — the closed wire enum (agent|tenant|global) for the spend
   // kill-switch events. Consumed by the @comis/agent spend-accumulator.

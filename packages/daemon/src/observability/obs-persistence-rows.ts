@@ -258,6 +258,25 @@ export function backgroundRecoveryEventToRow(
   };
 }
 
+/** Map protected recovery-scan standing state to a content-free health row. */
+export function backgroundRecoveryScanEventToRow(
+  payload: EventMap["background_task:recovery_scan"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: payload.status === "failed" ? "warning" : "info",
+    message: "background_task_recovery_scan",
+    details: JSON.stringify({
+      signal: "background_task_recovery_scan",
+      status: payload.status,
+      failureCount: payload.failureCount,
+      failureKinds: payload.failureKinds,
+      recordRefs: payload.recordRefs,
+    }),
+  };
+}
+
 /**
  * The `context:dag_degraded` reasons that are NOT genuine degrades:
  *  - `serialized_wait`: the bounded-wait back-pressure signal (an

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
-import { buildFindings, pipelineAuthoringAggregateFromRows } from "./system-findings.js";
-import * as systemFindings from "./system-findings.js";
+import {
+  activeHealthSignalWarningCount,
+  buildFindings,
+  pipelineAuthoringAggregateFromRows,
+} from "./system-findings.js";
 import { orchestrateEfficiencyFromRow, pricingGapFromRow } from "./system-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
@@ -984,14 +987,40 @@ describe("buildFindings — health_signal rollup counts only degraded (warning) 
       (candidate) => candidate.code === "background_task_recovery_scan_failed",
     )).toBe(false);
 
-    const activeWarningCount = (systemFindings as unknown as Record<string, unknown>)[
-      "activeHealthSignalWarningCount"
+    expect(activeHealthSignalWarningCount(rows)).toBe(0);
+  });
+
+  it("keeps unrelated warnings active after a healthy background recovery scan", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "info",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "healthy",
+          failureCount: 0,
+          failureKinds: [],
+          recordRefs: [],
+        }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "mcp_reconnect_failed",
+        details: JSON.stringify({
+          signal: "mcp_reconnect_failed",
+          reason: "transport_error",
+        }),
+      },
     ];
-    if (typeof activeWarningCount !== "function") {
-      expect(activeWarningCount).toBeTypeOf("function");
-      return;
-    }
-    expect((activeWarningCount as (input: DiagnosticRow[]) => number)(rows)).toBe(0);
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(1);
+    expect(buildFindings(rows, [], []).some(
+      (candidate) => candidate.code === "health_signal:mcp_reconnect_failed",
+    )).toBe(true);
   });
 
   it("makes pre-session inbound persistence failures actionable without explain", () => {

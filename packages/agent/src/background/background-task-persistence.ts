@@ -24,7 +24,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { safePath } from "@comis/core";
+import {
+  safePath,
+  type BackgroundTaskRecoveryScanFailureKind,
+} from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -86,18 +89,12 @@ export interface TaskRecoveryOps {
   read(path: string): string;
 }
 
-export type TaskRecoveryFailureKind =
-  | "root_read"
-  | "agent_path"
-  | "agent_stat"
-  | "agent_read"
-  | "task_path"
-  | "task_read"
-  | "task_parse"
-  | "task_validation";
+export type TaskRecoveryFailureKind = BackgroundTaskRecoveryScanFailureKind;
 
 export interface TaskRecoveryFailure {
   readonly kind: TaskRecoveryFailureKind;
+  /** Data-root-relative protected record identifier, when safely representable. */
+  readonly recordRef?: string;
   readonly identity?: {
     readonly id: string;
     readonly toolName: string;
@@ -108,6 +105,19 @@ export interface TaskRecoveryFailure {
 export interface TaskRecoveryScan {
   readonly tasks: PersistedTaskState[];
   readonly failures: TaskRecoveryFailure[];
+}
+
+const RECOVERY_RECORD_COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const RECOVERY_RECORD_COMPONENT_MAX_CHARS = 256;
+
+function toRecoveryRecordRef(agentId: string, fileName: string): string | undefined {
+  if (
+    agentId.length > RECOVERY_RECORD_COMPONENT_MAX_CHARS
+    || fileName.length > RECOVERY_RECORD_COMPONENT_MAX_CHARS
+    || !RECOVERY_RECORD_COMPONENT.test(agentId)
+    || !RECOVERY_RECORD_COMPONENT.test(fileName)
+  ) return undefined;
+  return `${agentId}/${fileName}`;
 }
 
 export type AtomicTaskPersistenceOutcome =
@@ -368,14 +378,21 @@ export function recoverTasks(
         failures.push({ kind: "task_path" });
         continue;
       }
+      const recordRef = toRecoveryRecordRef(agentId, file);
       const raw = tryCatch(() => ops.read(resolvedFile.value));
       if (!raw.ok) {
-        failures.push({ kind: "task_read" });
+        failures.push({
+          kind: "task_read",
+          ...(recordRef === undefined ? {} : { recordRef }),
+        });
         continue;
       }
       const decoded = tryCatch(() => JSON.parse(raw.value) as unknown);
       if (!decoded.ok) {
-        failures.push({ kind: "task_parse" });
+        failures.push({
+          kind: "task_parse",
+          ...(recordRef === undefined ? {} : { recordRef }),
+        });
         continue;
       }
       const parsed = PersistedTaskStateSchema.safeParse(decoded.value);
@@ -389,6 +406,7 @@ export function recoverTasks(
           : undefined;
         failures.push({
           kind: "task_validation",
+          ...(recordRef === undefined ? {} : { recordRef }),
           ...(identity?.success
             ? {
                 identity: {
