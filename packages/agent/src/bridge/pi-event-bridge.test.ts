@@ -810,6 +810,47 @@ describe("createPiEventBridge", () => {
       ]);
     });
 
+    it("correlates an exec auto-background handoff with a later process terminal observation", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tc-exec",
+        args: { cmd: "long command" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("exec", "tc-exec", false, {
+        content: [{ type: "text", text: "moved to background" }],
+        details: { status: "backgrounded", sessionId: "proc-1" },
+      }) as any);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "process",
+        toolCallId: "tc-status",
+        args: { action: "status", sessionId: "proc-1" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("process", "tc-status", false, {
+        content: [{ type: "text", text: "completed" }],
+        details: { sessionId: "proc-1", status: "completed" },
+      }) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls
+        .filter((call) => call[0] === "tool:executed")
+        .map((call) => call[1]);
+      expect(calls).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: "tc-exec",
+          backgrounded: true,
+          processSessionId: "proc-1",
+          processSessionStatus: "running",
+        }),
+        expect.objectContaining({
+          toolCallId: "tc-status",
+          processSessionId: "proc-1",
+          processSessionStatus: "completed",
+        }),
+      ]));
+    });
+
     it("emits tool:executed with success=false when isError", () => {
       const { listener } = createPiEventBridge(deps);
 

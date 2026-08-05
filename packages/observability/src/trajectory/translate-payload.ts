@@ -318,6 +318,7 @@ export function translatePayload(
     case "session:sub_agent_wait_completed":
     case "subagent:steered":
     case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
+    case "subagent:background_processes_abandoned":
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
     case "subagent:delivery_retried": // The self-healing transient retry (sibling of delivery_deadlettered) — content-free {runId, channelType, attempt, transient}

@@ -2040,6 +2040,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       thresholdMs: 180_000,
       timestamp: 0,
     },
+    "subagent:background_processes_abandoned": {
+      runId: "run-background",
+      agentId: "agent-1",
+      sessionKey: "default:sub-agent-background:sub-agent:background",
+      count: 2,
+      timestamp: 0,
+    },
     // Sub-agent-lifecycle events — the correlation invariant
     // must hold (agent ids / timestamp never leak into data).
     "security:sandbox_downgrade_refused": {
@@ -4424,7 +4431,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(141);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(142);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

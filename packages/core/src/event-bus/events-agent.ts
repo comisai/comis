@@ -106,6 +106,17 @@ export interface AgentEvents {
      * `background_task:{completed,failed}` terminal event instead.
      */
     backgrounded?: boolean;
+    /**
+     * Process-registry session identity for an exec auto-background handoff or
+     * a later process-tool observation. Content-free opaque id only.
+     */
+    processSessionId?: string;
+    /**
+     * Closed process-registry state paired with `processSessionId`. An exec
+     * auto-background handoff is reported as `running`; process.status/kill
+     * supplies the later terminal observation.
+     */
+    processSessionStatus?: "running" | "completed" | "failed" | "killed";
     userId?: string;
     traceId?: string;
     agentId?: string;
