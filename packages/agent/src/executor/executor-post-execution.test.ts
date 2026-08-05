@@ -1135,6 +1135,19 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/preservePartialResponse:/);
   });
 
+  it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceSchedulerStateEvidence\(/);
+    expect(stripped).toMatch(/buildSchedulerStateEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.scheduler_state_evidence_guard/);
+    expect(stripped).toMatch(
+      /schedulerStateGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_scheduler_state_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceSchedulerStateEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
     const stripped = readPostExecStripped();
     const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");
