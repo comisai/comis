@@ -1252,7 +1252,7 @@ describe("createGraphCoordinator", () => {
 
       // Cancel the graph
       const cancelled = coordinator.cancel(result.value);
-      expect(cancelled).toBe(true);
+      expect(cancelled).toEqual({ cancelled: true, killed: 1 });
 
       // Verify killRun called
       expect(runner.killRun).toHaveBeenCalledWith(runIdA);
@@ -1338,7 +1338,7 @@ describe("createGraphCoordinator", () => {
 
       // Try to cancel
       const cancelled = coordinator.cancel(result.value);
-      expect(cancelled).toBe(false);
+      expect(cancelled).toEqual({ cancelled: false, killed: 0 });
 
       await coordinator.shutdown();
     });
@@ -1513,7 +1513,7 @@ describe("createGraphCoordinator", () => {
       const { deps } = createTestDeps();
       const coordinator = createGraphCoordinator(deps);
 
-      expect(coordinator.cancel("nonexistent")).toBe(false);
+      expect(coordinator.cancel("nonexistent")).toEqual({ cancelled: false, killed: 0 });
 
       await coordinator.shutdown();
     });

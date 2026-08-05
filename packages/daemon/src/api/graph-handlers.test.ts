@@ -37,6 +37,7 @@ function createDeps(overrides?: Partial<GraphHandlerDeps>): GraphHandlerDeps {
   return {
     graphCoordinator: createMockCoordinator(),
     defaultAgentId: "default-agent",
+    schedulerNowMs: vi.fn().mockReturnValue(123),
     securityConfig: { agentToAgent: { enabled: true } },
     logger: {
       info: vi.fn(),
