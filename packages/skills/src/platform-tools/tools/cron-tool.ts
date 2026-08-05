@@ -247,17 +247,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function boundedPreview(value: unknown): string | undefined {
+  return typeof value === "string" ? value.slice(0, 128) : undefined;
+}
+
 /** Keep model-facing schedule inventory bounded and exclude message, script, and route bodies. */
 function compactCronListResult(result: unknown): unknown {
   if (!isRecord(result) || !Array.isArray(result.jobs)) return result;
   const jobs = result.jobs.map((value) => {
     if (!isRecord(value)) return { invalid: true };
     const payload = isRecord(value.payload) ? value.payload : undefined;
+    const messagePreview = boundedPreview(payload?.message);
+    const textPreview = boundedPreview(payload?.text);
     const payloadSummary = payload === undefined
       ? undefined
       : {
           ...(typeof payload.kind === "string" ? { kind: payload.kind } : {}),
           ...(typeof payload.action === "string" ? { action: payload.action } : {}),
+          ...(messagePreview === undefined ? {} : { messagePreview }),
+          ...(textPreview === undefined ? {} : { textPreview }),
           ...(typeof payload.model === "string" ? { model: payload.model } : {}),
           ...(typeof payload.timeoutSeconds === "number"
             ? { timeoutSeconds: payload.timeoutSeconds }
@@ -365,7 +373,11 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
 
           case "list": {
             const result = await rpcCall("cron.list", {});
-            return jsonResult(compactCronListResult(result));
+            const compact = compactCronListResult(result);
+            return {
+              content: [{ type: "text", text: JSON.stringify(compact) }],
+              details: compact,
+            };
           }
 
           case "update": {

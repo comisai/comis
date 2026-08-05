@@ -82,7 +82,7 @@ describe("cron tool", () => {
       lifecycle: { status: "scheduled", nextRunAtMs: 1_900_000_000_000 },
       payload: {
         kind: "agent_turn",
-        messagePreview: "PRIVATE-PAYLOAD-0-" + "x".repeat(238),
+        messagePreview: "PRIVATE-PAYLOAD-0-" + "x".repeat(110),
         model: "small-model",
         timeoutSeconds: 30,
       },
