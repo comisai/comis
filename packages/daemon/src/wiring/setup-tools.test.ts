@@ -48,7 +48,7 @@ const mockCreateProcessRegistry = vi.hoisted(() => vi.fn(() => ({
   add: vi.fn(),
   get: vi.fn(),
   list: vi.fn(() => []),
-  killOwned: vi.fn(async () => 0),
+  killOwned: vi.fn(async () => ({ ok: true, value: 0 })),
   cleanup: vi.fn(async () => 0),
 })));
 const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({

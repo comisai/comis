@@ -4,7 +4,6 @@ import {
   createProcessRegistry,
   generateSessionId,
   appendOutput,
-  type ProcessRegistry,
   type ProcessSession,
 } from "./process-registry.js";
 import type { InstallDetourDecision } from "./install-detour.js";
@@ -47,6 +46,7 @@ describe("createProcessRegistry", () => {
     expect(typeof registry.status).toBe("function");
     expect(typeof registry.getLog).toBe("function");
     expect(typeof registry.cleanup).toBe("function");
+    expect(typeof registry.killOwned).toBe("function");
     expect(typeof registry.size).toBe("function");
   });
 
@@ -137,11 +137,9 @@ describe("createProcessRegistry", () => {
       exitCode: 0,
     } as Partial<ProcessSession>));
 
-    const killed = await (registry as ProcessRegistry & {
-      killOwned(ownerSessionKey: string): Promise<number>;
-    }).killOwned("child-session");
+    const killed = await registry.killOwned("child-session");
 
-    expect(killed).toBe(1);
+    expect(killed).toEqual({ ok: true, value: 1 });
     expect(registry.get("owned-running")?.status).toBe("killed");
     expect(registry.get("other-running")?.status).toBe("running");
     expect(registry.get("owned-completed")?.status).toBe("completed");

@@ -80,6 +80,7 @@ import { setupToolAuditLogging } from "./setup-tool-audit.js";
 // Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
+import { suppressError } from "@comis/shared";
 
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
@@ -350,6 +351,48 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     }
     return registry;
   }
+
+  eventBus.on("subagent:killed", (payload) => {
+    const registry = processRegistries.get(payload.agentId);
+    if (!registry) return;
+    const startedAt = systemNowMs();
+    const cleanup = registry.killOwned(payload.sessionKey).then((result) => {
+      if (!result.ok) {
+        skillsLogger.error(
+          {
+            agentId: payload.agentId,
+            runId: payload.runId,
+            hint: "Inspect the child process registry and stop any remaining process sessions manually",
+            errorKind: "internal" as const,
+          },
+          "Child-owned background process cleanup failed",
+        );
+        return;
+      }
+      skillsLogger.info(
+        {
+          agentId: payload.agentId,
+          runId: payload.runId,
+          killed: result.value,
+          durationMs: Math.max(0, systemNowMs() - startedAt),
+        },
+        "Killed child-owned background processes",
+      );
+    });
+    suppressError(
+      cleanup,
+      "sub-agent child-owned background process cleanup",
+      (message) => skillsLogger.error(
+        {
+          agentId: payload.agentId,
+          runId: payload.runId,
+          hint: "Inspect the child process registry and stop any remaining process sessions manually",
+          errorKind: "internal" as const,
+        },
+        message,
+      ),
+    );
+  });
 
   /** Per-agent MediaPersistenceService for browser screenshot persistence. */
   const screenshotPersistenceServices = new Map<string, MediaPersistenceService>();
