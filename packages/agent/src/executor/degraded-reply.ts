@@ -36,6 +36,7 @@ import {
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
   selectOngoingWorkEvidenceMissingReply,
+  selectSchedulerStateEvidenceMissingReply,
   selectCompletionEvidenceMissingReply,
   selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
@@ -250,6 +251,14 @@ export function buildOngoingWorkEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectOngoingWorkEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when no current scheduler receipt supports a state claim. */
+export function buildSchedulerStateEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectSchedulerStateEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when unrecovered tool evidence contradicts a completion claim. */
