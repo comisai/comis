@@ -316,6 +316,28 @@ describe("governed task extraction runner", () => {
     }));
   });
 
+  it("maps an unexpected operation rejection to one internal dropped outcome", async () => {
+    const data = setup({
+      timers: {
+        setTimeout: () => ({
+          unref() {},
+          cancel() { throw new Error("timer cancellation unavailable"); },
+        }),
+      },
+    });
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await data.runner.waitForIdle();
+
+    expect(data.persistCandidates).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "internal",
+      errorKind: "internal",
+      sourceExecutionIds: ["execution-a"],
+    }));
+  });
+
   it("retires one agent without closing admission for the remaining runtime", async () => {
     let resolveModel: ((value: ReturnType<typeof ok<{ raw: string }>>) => void) | undefined;
     const data = setup();
