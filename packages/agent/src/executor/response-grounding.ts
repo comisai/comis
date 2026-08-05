@@ -124,18 +124,21 @@ export interface CompletionEvidenceGuardResult {
   response: string;
   corrected: boolean;
   reason?: "unrecovered_tool_failure_completion_claim";
+  correction?: "replaced" | "prefixed_partial";
 }
 
 /**
- * Replace affirmative completion prose when the recovery-aware terminal tool
- * inventory still contains a failure. A later matching success removes the
- * tool from this input before the guard runs, so recovered attempts remain
- * eligible for ordinary completion replies.
+ * Ground affirmative completion prose when the recovery-aware terminal tool
+ * inventory still contains a failure. Read-only partial results can remain
+ * beneath an explicit runtime warning; all other responses are replaced. A
+ * later matching success removes the tool from this input before the guard
+ * runs, so recovered attempts remain eligible for ordinary completion replies.
  */
 export function enforceCompletionEvidence(params: {
   response: string;
   unrecoveredToolFailures?: readonly string[];
   honestResponse: string;
+  preservePartialResponse?: boolean;
 }): CompletionEvidenceGuardResult {
   if (
     (params.unrecoveredToolFailures?.length ?? 0) === 0
@@ -143,10 +146,19 @@ export function enforceCompletionEvidence(params: {
   ) {
     return { response: params.response, corrected: false };
   }
+  if (params.preservePartialResponse === true) {
+    return {
+      response: `${params.honestResponse}\n\n${params.response}`,
+      corrected: true,
+      reason: "unrecovered_tool_failure_completion_claim",
+      correction: "prefixed_partial",
+    };
+  }
   return {
     response: params.honestResponse,
     corrected: true,
     reason: "unrecovered_tool_failure_completion_claim",
+    correction: "replaced",
   };
 }
 
