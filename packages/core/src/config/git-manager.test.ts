@@ -355,6 +355,25 @@ describe("config/git-manager", () => {
       expect(commitCall!.args).toContain("Initial config snapshot");
     });
 
+    it("configures a repository-local author before creating snapshots", async () => {
+      const { deps, calls } = createMockDeps();
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.init();
+
+      expect(result.ok).toBe(true);
+      expect(calls.some((call) => (
+        call.args[0] === "config"
+        && call.args[1] === "user.name"
+        && call.args[2] === "Comis Config"
+      ))).toBe(true);
+      expect(calls.some((call) => (
+        call.args[0] === "config"
+        && call.args[1] === "user.email"
+        && call.args[2] === "config@comis.local"
+      ))).toBe(true);
+    });
+
     it("returns ok() early if repo already exists", async () => {
       const { deps, calls } = createMockDeps({ preInitialized: true });
 
