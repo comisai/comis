@@ -45,6 +45,11 @@ const LABELED_SECRET_ASSIGNMENT_RE = new RegExp(
     `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|(\\$\\{[^}\\r\\n]+\\}|\\[REDACTED\\]|[^\\s,;}\\r\\n]+))`,
   "gim",
 );
+const ESCAPED_LABELED_SECRET_ASSIGNMENT_RE = new RegExp(
+  `((?:^|[\\s,{])\\\\["'][A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}\\\\["']\\s*[:=]\\s*\\\\")` +
+    `([^"\\r\\n]*)(\\\\")`,
+  "gim",
+);
 
 const SECRET_STORAGE_ACTION_FRAGMENT =
   "(?:confirm(?:ed|ation)?|stor(?:e|ing)|sav(?:e|ing)|set(?:ting)?)";
@@ -111,7 +116,7 @@ function isSafeSecretPlaceholder(value: string): boolean {
 
 function scrubLabeledAssignments(text: string): ScrubResult {
   let redactions = 0;
-  const scrubbed = text.replace(
+  const direct = text.replace(
     LABELED_SECRET_ASSIGNMENT_RE,
     (_match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
       const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
@@ -120,6 +125,14 @@ function scrubLabeledAssignments(text: string): ScrubResult {
       if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
       if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
       return `${prefix}${REDACTED}`;
+    },
+  );
+  const scrubbed = direct.replace(
+    ESCAPED_LABELED_SECRET_ASSIGNMENT_RE,
+    (match, prefix: string, value: string, suffix: string) => {
+      if (value.length === 0 || isSafeSecretPlaceholder(value)) return match;
+      redactions++;
+      return `${prefix}${REDACTED}${suffix}`;
     },
   );
   return { text: scrubbed, redactions };
