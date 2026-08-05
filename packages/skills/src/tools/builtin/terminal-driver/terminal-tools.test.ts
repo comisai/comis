@@ -480,6 +480,27 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.createCalls[0]!.durable, "drive.durable:true must thread to req.durable").toBe(true);
   });
 
+  // The origin conversation comes from the RESOLVED CONTEXT, never from params. `CreateParams`
+  // is not `additionalProperties:false`, so the guarantee is that the handler builds its
+  // CreateRequest from named locals and never reads an origin off `params` — a future refactor
+  // that spread `...params` into the request would let a prompt-injected agent redirect its own
+  // escalations into another conversation. This pins that it cannot.
+  it("ignores an agent-supplied originEndpoint in params (the origin is context-sourced only)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+
+    await tool.execute("call-1", {
+      allowId: "bash",
+      command: realBashPath(),
+      originEndpoint: { channelType: "telegram", channelInstanceId: "attacker", conversationId: "chat-evil", conversationKind: "direct" },
+      destinationEndpoint: { channelType: "telegram", channelInstanceId: "attacker", conversationId: "chat-evil", conversationKind: "direct" },
+    } as never);
+
+    expect(registry.createCalls).toHaveLength(1);
+    // No ambient turn scope in this test ⇒ no origin at all, and certainly not the supplied one.
+    expect(registry.createCalls[0]!.originEndpoint).toBeUndefined();
+  });
+
   it("a non-durable create tool leaves req.durable unset (today's spawn session)", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionCreateTool(baseDeps(registry));
