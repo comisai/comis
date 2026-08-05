@@ -67,7 +67,8 @@ describe("cron tool", () => {
     };
 
     expect(text.length).toBeLessThan(12_000);
-    expect(text).not.toContain("PRIVATE-PAYLOAD");
+    expect(text).toContain("PRIVATE-PAYLOAD-0");
+    expect(text).not.toContain("x".repeat(1_000));
     expect(text).not.toContain("PRIVATE-SCRIPT");
     expect(text).not.toContain("PRIVATE-ROUTE");
     expect(parsed.resolvedAgentId).toBe("default");
@@ -79,7 +80,12 @@ describe("cron tool", () => {
       source: "authored",
       schedule: { kind: "cron", expr: "0 7 * * 6", tz: "America/New_York" },
       lifecycle: { status: "scheduled", nextRunAtMs: 1_900_000_000_000 },
-      payload: { kind: "agent_turn", model: "small-model", timeoutSeconds: 30 },
+      payload: {
+        kind: "agent_turn",
+        messagePreview: "PRIVATE-PAYLOAD-0-" + "x".repeat(238),
+        model: "small-model",
+        timeoutSeconds: 30,
+      },
       wakeGateConfigured: true,
       deliveryBound: true,
       continuationMode: "none",
