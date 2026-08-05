@@ -207,6 +207,12 @@ function createMockDeps(opts?: {
           }
           return ok(repo.commits[repo.commits.length - 1]!.sha);
         }
+        if (args[1] === "--verify" && args[2] === "HEAD") {
+          if (repo.commits.length === 0) {
+            return err("fatal: Needed a single revision");
+          }
+          return ok(repo.commits[repo.commits.length - 1]!.sha);
+        }
         if (args[1] === "--verify" && args[2] === "HEAD~1") {
           if (repo.commits.length < 2) {
             return err("fatal: ambiguous argument 'HEAD~1'");

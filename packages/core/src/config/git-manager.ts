@@ -318,18 +318,24 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       ["rev-parse", "--show-toplevel"],
       configDir,
     );
-    if (
+    const hasExactRepo =
       toplevelResult.ok &&
-      resolvePath(toplevelResult.value.trim()) === resolvePath(configDir)
-    ) {
-      initialized = true;
-      return ok(undefined);
+      resolvePath(toplevelResult.value.trim()) === resolvePath(configDir);
+    if (hasExactRepo) {
+      const headResult = await execGit(["rev-parse", "--verify", "HEAD"], configDir);
+      if (headResult.ok) {
+        initialized = true;
+        return ok(undefined);
+      }
     }
 
-    // Initialize new repo
-    const gitInitResult = await execGit(["init"], configDir);
-    if (!gitInitResult.ok) {
-      return err(`git init failed: ${gitInitResult.error}`);
+    // Initialize a new repo when needed. An exact-root repo without HEAD is
+    // already initialized but still needs the seed snapshot below.
+    if (!hasExactRepo) {
+      const gitInitResult = await execGit(["init"], configDir);
+      if (!gitInitResult.ok) {
+        return err(`git init failed: ${gitInitResult.error}`);
+      }
     }
 
     // Write .gitignore with strict YAML whitelist
