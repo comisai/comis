@@ -105,6 +105,9 @@ const MAX_TASK_IDENTIFIER_BYTES = 512;
 
 type TaskCheckOutcome = EventMap["scheduler:task_check_terminal"]["outcome"];
 type TaskCheckRecovery = EventMap["scheduler:task_check_terminal"]["recovery"];
+type TaskCheckSuppressionReason = NonNullable<
+  EventMap["scheduler:task_check_terminal"]["suppressionReason"]
+>;
 
 const TASK_CHECK_OUTCOMES: ReadonlySet<TaskCheckOutcome> = new Set([
   "dismissed",
@@ -123,6 +126,13 @@ const TASK_CHECK_RECOVERIES: ReadonlySet<TaskCheckRecovery> = new Set([
   "ownership_recovery",
 ]);
 
+const TASK_CHECK_SUPPRESSION_REASONS: ReadonlySet<TaskCheckSuppressionReason> = new Set([
+  "heartbeat_token",
+  "ack_under_threshold",
+  "empty_reply",
+  "visibility_filter",
+]);
+
 /** Content-free durable evidence used both for root resolution and reporting. */
 export interface TaskCheckLifecycleEvidence {
   readonly sessionKey: string;
@@ -133,6 +143,7 @@ export interface TaskCheckLifecycleEvidence {
   readonly lifecycle: "started" | "terminal";
   readonly outcome?: TaskCheckOutcome;
   readonly recovery?: TaskCheckRecovery;
+  readonly suppressionReason?: TaskCheckSuppressionReason;
   readonly deliveredChunks?: number | null;
   readonly failedChunks?: number | null;
   readonly ambiguousChunks?: number | null;
@@ -619,6 +630,13 @@ function taskCheckRecovery(value: unknown): TaskCheckRecovery | undefined {
     : undefined;
 }
 
+function taskCheckSuppressionReason(value: unknown): TaskCheckSuppressionReason | undefined {
+  return typeof value === "string"
+    && TASK_CHECK_SUPPRESSION_REASONS.has(value as TaskCheckSuppressionReason)
+    ? value as TaskCheckSuppressionReason
+    : undefined;
+}
+
 function optionalChunkCount(value: unknown): number | null | undefined {
   if (value === null) return null;
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -673,6 +691,7 @@ function parseTaskCheckRow(
   const deliveredChunks = optionalChunkCount(details.deliveredChunks);
   const failedChunks = optionalChunkCount(details.failedChunks);
   const ambiguousChunks = optionalChunkCount(details.ambiguousChunks);
+  const suppressionReason = taskCheckSuppressionReason(details.suppressionReason);
   return {
     sessionKey,
     ...(agentId === undefined ? {} : { agentId }),
@@ -682,6 +701,7 @@ function parseTaskCheckRow(
     lifecycle: "terminal",
     outcome,
     recovery,
+    ...(suppressionReason === undefined ? {} : { suppressionReason }),
     ...(deliveredChunks === undefined ? {} : { deliveredChunks }),
     ...(failedChunks === undefined ? {} : { failedChunks }),
     ...(ambiguousChunks === undefined ? {} : { ambiguousChunks }),

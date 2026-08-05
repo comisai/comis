@@ -301,21 +301,25 @@ export function createTaskHeartbeatAgentTurnExecutor(deps: TaskHeartbeatAgentTur
         || response.kind === "acknowledged_ok"
         || (response.level === "alert" && !config.showAlerts)
       ) {
+        const suppressionReason = response.kind === "acknowledged_ok"
+          ? response.reason
+          : response.kind === "empty"
+            ? "empty_reply" as const
+            : "visibility_filter" as const;
         const dismissed = await store.dismissAttempt({ attemptId, check: projected.evidence });
         if (!dismissed.ok) {
           emitTaskStoreDegraded(deps, input, attemptId, "dismiss", dismissed.error, startedAtMs);
           return ok(unsettled(input, agentExecutionId, dismissed.error.errorKind, false, elapsed(deps.clock, startedAtMs)));
         }
         if (dismissed.value === "settled") {
-          emitTaskTerminal(deps, input, batch.tasks, attemptId, { outcome: "dismissed" }, startedAtMs);
+          emitTaskTerminal(deps, input, batch.tasks, attemptId, {
+            outcome: "dismissed",
+            suppressionReason,
+          }, startedAtMs);
         }
         return settle(deps, input, agentExecutionId, resolution.value, projected.outcome, projected.metrics, {
           status: "suppressed",
-          reason: response.kind === "acknowledged_ok"
-            ? response.reason
-            : response.kind === "empty"
-              ? "empty_reply"
-              : "visibility_filter",
+          reason: suppressionReason,
         }, elapsed(deps.clock, startedAtMs));
       }
 
@@ -381,7 +385,7 @@ export function createTaskHeartbeatAgentTurnExecutor(deps: TaskHeartbeatAgentTur
 
 type TaskTerminalEventEvidence = Pick<
   EventMap["scheduler:task_check_terminal"],
-  "outcome" | "errorKind" | "deliveredChunks" | "failedChunks" | "ambiguousChunks"
+  "outcome" | "suppressionReason" | "errorKind" | "deliveredChunks" | "failedChunks" | "ambiguousChunks"
 >;
 
 function emitTaskStarted(

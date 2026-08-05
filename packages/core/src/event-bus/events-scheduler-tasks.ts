@@ -44,6 +44,12 @@ type TaskCheckTerminalOutcome =
   | "delivery_window_closed"
   | "failed";
 
+type TaskCheckSuppressionReason =
+  | "heartbeat_token"
+  | "ack_under_threshold"
+  | "empty_reply"
+  | "visibility_filter";
+
 type TaskStoreOperation =
   | "claim"
   | "begin_delivery"
@@ -127,6 +133,7 @@ export interface SchedulerTaskEvents {
     originTraceIds: readonly string[];
     outcome: TaskCheckTerminalOutcome;
     recovery: "live" | "ownership_recovery";
+    suppressionReason?: TaskCheckSuppressionReason;
     errorKind?: ErrorKind;
     deliveredChunks?: number | null;
     failedChunks?: number | null;
