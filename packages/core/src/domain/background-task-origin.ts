@@ -30,8 +30,11 @@ export const BackgroundTaskOriginSchema = z.strictObject({
   deliveryOrigin: DeliveryOriginSchema,
   /** Per-execution trace identifier; null when no trace was active. */
   traceId: z.string().nullable(),
-  /** Immutable authorization snapshot resolved for the originating turn. */
-  trustLevel: UserTrustLevelSchema,
+  /** Immutable authorization snapshot resolved for the originating turn.
+   *  Defaults to the least-privileged level so a record persisted before this
+   *  field existed still validates on recovery instead of being dropped, and
+   *  recovers with no more authority than its re-entry previously assumed. */
+  trustLevel: UserTrustLevelSchema.default("guest"),
   /** Exact locale decision captured before promotion. Delayed re-entry must
    *  not infer a locale from the internal completion envelope. */
   responseLocalePolicy: ResponseLocalePolicySchema,

@@ -2779,11 +2779,15 @@ async function runSessionLocked(
         }
       : undefined,
   });
+  // The request-matched tool names decide whether the guard ARMS; the receipt that
+  // satisfies it is any successful mutation of the right CLASS. A fix delivered
+  // through cron, exec, or a channel action is still a completed change, and only
+  // the outbound delivery tool under evaluation cannot vouch for itself.
   currentSuccessfulMutationCount = () =>
     (bridge.getResult().toolExecResults ?? []).filter(
       (record) =>
         record.success
-        && requestMutationToolNames.has(record.toolName)
+        && record.toolName !== "message"
         && classifyToolInvocationMutation(
           record.toolName,
           record.action === undefined ? {} : { action: record.action },

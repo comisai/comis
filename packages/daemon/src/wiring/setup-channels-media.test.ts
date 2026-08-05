@@ -246,6 +246,59 @@ describe("buildMediaPipeline", () => {
     );
   });
 
+  it("keeps in-range rejection receipts when a coalesced turn produces an out-of-range one", async () => {
+    const maxBytes = 26_214_400;
+    const inRangeReceipt = {
+      attachmentIndex: 2,
+      outcome: "rejected" as const,
+      reason: "size_exceeded" as const,
+      sizeBytes: 57_671_680,
+      maxBytes,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes" as const,
+    };
+    vi.mocked(preprocessMessage).mockImplementationOnce(async (_mediaDeps, msg) => ({
+      message: msg,
+      transcriptions: [],
+      sttReceipts: [],
+      analyses: [],
+      imageContents: [],
+      videoDescriptions: [],
+      fileExtractions: [],
+      attachmentReceipts: [
+        inRangeReceipt,
+        { ...inRangeReceipt, attachmentIndex: 18 },
+      ],
+    }));
+    const deps = makeDeps({ maxMediaBytes: maxBytes });
+    const pipeline = await buildMediaPipeline(deps);
+
+    const preprocessed = await pipeline.preprocessMessage({
+      id: "00000000-0000-0000-0000-000000000002",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "here are all the files",
+      timestamp: 1,
+      attachments: [{
+        type: "file",
+        url: "tg-file://coalesced-document",
+        mimeType: "text/plain",
+        fileName: "archive.txt",
+      }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(preprocessed.metadata.mediaAttachmentPreprocess).toEqual([inRangeReceipt]);
+    expect(deps.channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        droppedAttachmentReceiptCount: 1,
+        trustedAttachmentReceiptCount: 1,
+        errorKind: "validation",
+      }),
+      "Attachment rejection receipts dropped before turn metadata",
+    );
+  });
+
   it("preprocessMessage calls linkRunner.processMessage when text present", async () => {
     const receipt = {
       detected: 1,

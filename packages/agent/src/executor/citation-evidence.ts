@@ -228,8 +228,28 @@ export function appendCitationEvidenceRecord(params: {
   return appended.ok ? ok(undefined) : err(appended.error);
 }
 
+/** Attribution vocabulary that never names anything other than evidence. */
+const CITATION_VERB = /\b(?:cite|cited|cites|citing|citation|citations)\b/iu;
+
+/** Casual attribution question: "where's that from", "where is this from". */
+const PROVENANCE_QUESTION = /\bwhere(?:'?s| is| are)\b[^.!?\n]{0,40}\bfrom\b/iu;
+
+/**
+ * "source"/"reference" head plenty of noun phrases that name something other
+ * than an attribution ("the source of truth", "source code", "reference
+ * implementation"). Those uses are erased before the attribution nouns are
+ * matched so an ordinary engineering question does not arm the citation guard
+ * with zero receipts and strip every URL out of the answer.
+ */
+const NON_ATTRIBUTION_USE =
+  /\bopen[-\s]sourc(?:e|ed|ing)\b|\bsources?[-\s](?:code|file|files|tree|control|map|maps|directory|repo|repository)\b|\bsources?\s+of\s+truth\b|\breferences?[-\s](?:implementation|implementations|architecture|manual|manuals|design|designs|guide|guides|doc|docs|documentation)\b|\bfor\s+references?\b|\bcross[-\s]references?\b/giu;
+
+/** Attribution nouns, valid only outside the noun phrases erased above. */
+const ATTRIBUTION_NOUN = /\b(?:references?|sources?)\b/iu;
+
 /** Narrow trigger for a later request asking the agent to identify its sources. */
 export function isCitationSourceRequest(request: string): boolean {
-  return /\b(?:cite|cites|citation|citations|reference|references|source|sources)\b/iu.test(request)
-    || /\bwhere(?:'?s| is| are)\b[^.!?\n]{0,40}\bfrom\b/iu.test(request);
+  if (CITATION_VERB.test(request) || PROVENANCE_QUESTION.test(request)) return true;
+  NON_ATTRIBUTION_USE.lastIndex = 0;
+  return ATTRIBUTION_NOUN.test(request.replace(NON_ATTRIBUTION_USE, " "));
 }

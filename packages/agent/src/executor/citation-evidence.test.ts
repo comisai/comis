@@ -187,4 +187,41 @@ describe("exact citation evidence grounding", () => {
   it("recognizes a casual source question without an apostrophe", () => {
     expect(isCitationSourceRequest("wheres that from")).toBe(true);
   });
+
+  it("still recognizes explicit attribution requests", () => {
+    for (const request of [
+      "cite your sources",
+      "what's your source for that?",
+      "any sources?",
+      "can you add references",
+      "where is this from",
+    ]) {
+      expect(isCitationSourceRequest(request)).toBe(true);
+    }
+  });
+
+  it("does not treat non-attribution uses of source/reference as citation requests", () => {
+    for (const request of [
+      "which config file is the source of truth for the gateway port?",
+      "where does the source code for the gateway live",
+      "is this project open source",
+      "point me at the reference implementation",
+      "keep the source tree tidy",
+    ]) {
+      expect(isCitationSourceRequest(request)).toBe(false);
+    }
+  });
+
+  it("leaves a bare URL alone when a non-attribution question mentions the source of truth", () => {
+    const request = "which config file is the source of truth for the gateway port?";
+    const response = "config.yaml decides it; the daemon then listens on http://localhost:4766";
+    const guarded = enforceCitationEvidence({
+      response,
+      allowedUrlDigests: [],
+      enabled: isCitationSourceRequest(request),
+    });
+
+    expect(guarded.corrected).toBe(false);
+    expect(guarded.response).toBe(response);
+  });
 });

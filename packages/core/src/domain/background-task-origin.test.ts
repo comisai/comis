@@ -56,6 +56,14 @@ describe("BackgroundTaskOriginSchema", () => {
     expect(BackgroundTaskOriginSchema.parse(makeOrigin()).trustLevel).toBe("admin");
   });
 
+  it("recovers a record persisted before the trust snapshot existed at the least privilege", () => {
+    const { trustLevel: _trustLevel, ...legacyOrigin } = makeOrigin();
+    const parsed = BackgroundTaskOriginSchema.safeParse(legacyOrigin);
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.trustLevel).toBe("guest");
+  });
+
   it("defaults the background hop count to zero", () => {
     const { backgroundHopCount: _backgroundHopCount, ...origin } = makeOrigin();
     expect(BackgroundTaskOriginSchema.parse(origin).backgroundHopCount).toBe(0);

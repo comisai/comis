@@ -1342,7 +1342,7 @@ Agent callers receive only `endReason`, `completedAtMs`, and failure `errorKind`
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ tenant_id: string, agent_id: string, query?: string, scope?: "all" \| "user" \| "assistant" \| "tool", summarize?: boolean, limit?: number }` |
+| **Parameters** | `{ tenant_id?: string, agent_id?: string, query?: string, scope?: "all" \| "user" \| "assistant" \| "tool", summarize?: boolean, limit?: number }` -- `tenant_id` / `agent_id` default to the authenticated caller's scope and only need to be sent when the caller cannot be resolved from the connection |
 | **Returns** | With no query: `{ mode: "recent", sessions, total }`. With a query: `{ mode: "search", results: Array<{ conversationRef, agentId, channelType, snippet, rawSnippet?, summary?, score, timestamp }>, total }`. |
 
 <CodeGroup>
@@ -3059,13 +3059,13 @@ Retrieve node output values from a completed or running graph. Uses memory-first
 
 ### `graph.cancel`
 
-Cancel a running graph execution. Nodes that are already in-flight are allowed to finish, but no new nodes will be dispatched after the cancellation is processed.
+Cancel a running graph execution. No new nodes are dispatched after the cancellation is processed, and the graph's in-flight children are terminated -- `killed` reports exactly how many.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ graphId: string }` |
-| **Returns** | `{ graphId: string, cancelled: true }` |
+| **Returns** | `{ graphId: string, cancelled: true, killed: number }` -- `killed` counts the in-flight node executions terminated by the cancellation |
 
 ### `graph.save`
 

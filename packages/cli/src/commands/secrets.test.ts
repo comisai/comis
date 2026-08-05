@@ -209,6 +209,35 @@ describe("secrets get", () => {
   });
 });
 
+describe("offline secret store root", () => {
+  it("writes and lists against the same selected root that get reads", async () => {
+    mockedIsDaemonRunning.mockResolvedValue(false);
+    mockedOfflineSecretSet.mockReturnValue(ok(undefined));
+    mockedOfflineSecretsList.mockReturnValue(ok([]));
+    mockedOfflineSecretGet.mockReturnValue(ok("test-key"));
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await parseArgs(makeProgram(), ["secrets", "set", "FOO", "--value", "bar"]);
+      await parseArgs(makeProgram(), ["secrets", "list"]);
+      await parseArgs(makeProgram(), ["secrets", "get", "FOO", "--offline", "--yes"]);
+    } catch {
+      // process.exit may throw via the spy; the call assertions below are what matter
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    for (const mocked of [mockedOfflineSecretSet, mockedOfflineSecretsList, mockedOfflineSecretGet]) {
+      expect(mocked).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dataDir: "/isolated/comis-data",
+          envFilePath: "/isolated/comis-data/.env",
+        }),
+      );
+    }
+  });
+});
+
 describe("secrets import", () => {
   let processExitSpy: ReturnType<typeof vi.spyOn>;
   const createdFiles: string[] = [];

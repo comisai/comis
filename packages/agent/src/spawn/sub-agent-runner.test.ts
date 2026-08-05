@@ -396,6 +396,130 @@ describe("createSubAgentRunner", () => {
     );
   });
 
+  it("keeps the child's answer when it observed its background process exit non-zero", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "run the test suite and report failures",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const running = runner.getRunStatus(runId);
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "exec",
+      toolCallId: "call-backgrounded",
+      durationMs: 1_000,
+      success: true,
+      backgrounded: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "running",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    deps.eventBus.emit("tool:executed", {
+      toolName: "process",
+      toolCallId: "call-status",
+      durationMs: 5,
+      success: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "failed",
+      timestamp: 124,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    resolveExecution({
+      response: "3 tests failed in auth.test.ts",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+      completion: expect.objectContaining({
+        endReason: "completed",
+        summary: "3 tests failed in auth.test.ts",
+      }),
+    });
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({
+        runId,
+        success: true,
+        failedBackgroundProcesses: 1,
+      }),
+    );
+  });
+
+  it("keeps the child's answer when it deliberately killed its background process", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "start the dev server, probe it, then clean up",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const running = runner.getRunStatus(runId);
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "exec",
+      toolCallId: "call-backgrounded",
+      durationMs: 1_000,
+      success: true,
+      backgrounded: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "running",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    deps.eventBus.emit("tool:executed", {
+      toolName: "process",
+      toolCallId: "call-kill",
+      durationMs: 5,
+      success: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "killed",
+      timestamp: 124,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    resolveExecution({
+      response: "the dev server answered on /health and was shut down",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 3,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "completed",
+      completion: expect.objectContaining({
+        endReason: "completed",
+        summary: "the dev server answered on /health and was shut down",
+      }),
+    });
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({ runId, success: true }),
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Run completes and updates status
   // -----------------------------------------------------------------------

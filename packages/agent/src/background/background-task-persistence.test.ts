@@ -469,6 +469,24 @@ describe("background-task-persistence", () => {
       expect(t2?.status).toBe("completed");
     });
 
+    it("recovers a record persisted before the origin carried a trust snapshot", () => {
+      const { trustLevel: _trustLevel, ...legacyOrigin } = buildOrigin({ agentId: "a1" });
+      persistTaskSync(dataDir, {
+        id: "legacy-trust",
+        toolName: "web_fetch",
+        status: "running",
+        startedAt: 1000,
+        origin: legacyOrigin as BackgroundTaskOrigin,
+        continuationExecutionId: "legacy-trust",
+        dispatchAttempts: 0,
+      });
+
+      const recovered = recoverTasks(dataDir);
+
+      expect(recovered.failures).toEqual([]);
+      expect(recovered.tasks.find((t) => t.id === "legacy-trust")?.origin.trustLevel).toBe("guest");
+    });
+
     it("handles multiple agent directories", () => {
       persistTaskSync(dataDir, {
         id: "t1",

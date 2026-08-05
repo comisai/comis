@@ -1301,7 +1301,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--write` | `boolean` | `false` | Append key to `~/.comis/.env` instead of printing to stdout |
+| `--write` | `boolean` | `false` | Append key to the `.env` of the selected data directory (`dataDir` from config, else `COMIS_DATA_DIR`, else `~/.comis`) instead of printing to stdout |
 
 #### `secrets set <name>`
 
@@ -1316,7 +1316,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
-| `--offline` | `boolean` | `false` | Read the local encrypted store directly (no daemon RPC). Needs `SECRETS_MASTER_KEY` in `~/.comis/.env`. Use when the daemon is down or the gateway token itself is the secret you need (`comis secrets get COMIS_GATEWAY_TOKEN --offline`) — daemon-side reads are audit-logged, so the RPC path stays the default |
+| `--offline` | `boolean` | `false` | Read the local encrypted store directly (no daemon RPC). Needs `SECRETS_MASTER_KEY` in the `.env` of the selected data directory (`dataDir` from config, else `COMIS_DATA_DIR`, else `~/.comis`). Use when the daemon is down or the gateway token itself is the secret you need (`comis secrets get COMIS_GATEWAY_TOKEN --offline`) — daemon-side reads are audit-logged, so the RPC path stays the default |
 
 #### `secrets list`
 
@@ -1334,7 +1334,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--file <path>` | `string` | `~/.comis/.env` | Source `.env` file path |
+| `--file <path>` | `string` | The selected data directory's `.env` | Source `.env` file path |
 
 #### `secrets audit`
 
