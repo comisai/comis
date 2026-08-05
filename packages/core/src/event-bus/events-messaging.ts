@@ -755,7 +755,9 @@ export interface MessagingEvents {
    *  they could authorize admin-only changes), or
    *  `agent_update_noop_grounding` (an unchanged successful agent update was
    *  contradicted by the final prose), or `missing_ongoing_work_evidence`
-   *  (terminal prose promised continued work without a background receipt).
+   *  (terminal prose promised continued work without a background receipt), or
+   *  `unrecovered_tool_failure_completion_claim` (affirmative completion prose
+   *  contradicted the recovery-aware failed-tool inventory).
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -771,7 +773,8 @@ export interface MessagingEvents {
       | "locale_fidelity"
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
-      | "missing_ongoing_work_evidence";
+      | "missing_ongoing_work_evidence"
+      | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;
   };

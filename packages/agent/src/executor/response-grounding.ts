@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Deterministic grounding for agent configuration and self-authority replies. */
 
+import { isCompletionClaim } from "./critic-isolation.js";
+
 function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }
@@ -113,6 +115,36 @@ export interface OngoingWorkEvidenceGuardResult {
   response: string;
   corrected: boolean;
   reason?: "missing_ongoing_work_evidence";
+}
+
+export interface CompletionEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "unrecovered_tool_failure_completion_claim";
+}
+
+/**
+ * Replace affirmative completion prose when the recovery-aware terminal tool
+ * inventory still contains a failure. A later matching success removes the
+ * tool from this input before the guard runs, so recovered attempts remain
+ * eligible for ordinary completion replies.
+ */
+export function enforceCompletionEvidence(params: {
+  response: string;
+  unrecoveredToolFailures?: readonly string[];
+  honestResponse: string;
+}): CompletionEvidenceGuardResult {
+  if (
+    (params.unrecoveredToolFailures?.length ?? 0) === 0
+    || !isCompletionClaim(params.response)
+  ) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "unrecovered_tool_failure_completion_claim",
+  };
 }
 
 const ONGOING_WORK_CLAIM_PATTERNS = [

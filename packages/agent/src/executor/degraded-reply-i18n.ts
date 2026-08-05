@@ -31,6 +31,7 @@ export type LocaleMessageId =
   | "provider_requires_model"
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
+  | "completion_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
   | "response_locale_unavailable"
@@ -97,6 +98,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   ongoing_work_evidence_missing:
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
+  completion_evidence_missing:
+    "I made changes, but I could not verify the request as complete because one or more "
+      + "tool steps still failed. Treat the result as partial and retry or inspect the failed step.",
   sender_authority_overclaim:
     "Your current trust does not authorize admin-only changes. I can use tools available at "
       + "your current trust level, but your approval cannot grant admin access. Installing "
@@ -390,6 +394,14 @@ export function selectOngoingWorkEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "ongoing_work_evidence_missing");
+}
+
+/** Honest replacement when affirmative completion prose contradicts failed tool evidence. */
+export function selectCompletionEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "completion_evidence_missing");
 }
 
 /** Honest replacement when a below-admin sender is described as the authority grantor. */

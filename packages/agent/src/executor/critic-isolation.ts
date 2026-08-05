@@ -44,6 +44,16 @@ const COMPLETION_CLAIM_PATTERNS = [
   /\b(done|finished|complete[d]?|ready|accomplished)\b/i,
   /\bI('ve| have) (completed?|finished|implemented|built|created|written)\b/i,
   /\ball (requirements?|tasks?|steps?) (are )?(met|done|completed?)\b/i,
+  /\bI found and fixed\b/i,
+  /\bI(?:'ve| have) fixed\b/i,
+  /\bI fixed\b/i,
+  /\bnow\s+(?:works?|is working|has working)\b/i,
+];
+
+const NEGATED_COMPLETION_CLAIM_PATTERNS = [
+  /\b(?:could not|couldn't|cannot|can't|unable to|failed to)\b[^.!?\n]{0,80}\b(?:verify|confirm|complete|finish|fix|work)\b/iu,
+  /\b(?:not|never)\b[^.!?\n]{0,80}\b(?:done|finished|complete[d]?|ready|fixed|working)\b/iu,
+  /\b(?:test|tests|check|checks|validation|verification)\b[^.!?\n]{0,40}\b(?:fail|fails|failed|failing)\b/iu,
 ];
 
 /**
@@ -52,7 +62,13 @@ const COMPLETION_CLAIM_PATTERNS = [
  * updates, short replies should never invoke the critic model).
  */
 export function isCompletionClaim(response: string): boolean {
-  return COMPLETION_CLAIM_PATTERNS.some((p) => p.test(response));
+  return response
+    .split(/(?<=[.!?])\s+|\n+/u)
+    .some(
+      (sentence) =>
+        !NEGATED_COMPLETION_CLAIM_PATTERNS.some((pattern) => pattern.test(sentence))
+        && COMPLETION_CLAIM_PATTERNS.some((pattern) => pattern.test(sentence)),
+    );
 }
 
 // ---------------------------------------------------------------------------

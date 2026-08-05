@@ -36,6 +36,7 @@ import {
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
   selectOngoingWorkEvidenceMissingReply,
+  selectCompletionEvidenceMissingReply,
   selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
   selectResponseLocaleUnavailableReply,
@@ -249,6 +250,14 @@ export function buildOngoingWorkEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectOngoingWorkEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when unrecovered tool evidence contradicts a completion claim. */
+export function buildCompletionEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectCompletionEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when the model assigns admin authority to a below-admin sender. */
