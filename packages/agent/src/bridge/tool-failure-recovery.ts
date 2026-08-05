@@ -44,6 +44,8 @@ export interface ExecRecoveryIdentity {
 
 export type ToolRecoveryIdentity = MessageRecoveryIdentity | ExecRecoveryIdentity;
 
+export type SchedulerPolicyEvidence = "holiday" | "weekday" | "weekend";
+
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
   /** Bounded structured action discriminator from the tool arguments. */
@@ -64,6 +66,8 @@ export interface ToolExecutionResultRecord {
   readonly recoveryIdentity?: ToolRecoveryIdentity;
   /** SHA-256 of the exact final URL for a successful web_fetch. */
   readonly citationUrlDigest?: string;
+  /** Closed, content-free policy classifications from a current cron-list receipt. */
+  readonly schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
 }
 
 export interface ToolFailureRecoveryClassification {

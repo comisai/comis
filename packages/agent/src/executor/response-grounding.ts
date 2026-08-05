@@ -178,6 +178,17 @@ const SCHEDULER_STATE_EVIDENCE_ACTIONS = new Set([
   "run",
 ]);
 
+type SchedulerPolicyEvidence = "holiday" | "weekday" | "weekend";
+
+function schedulerPolicyClaims(text: string): readonly SchedulerPolicyEvidence[] {
+  if (!SCHEDULER_FUTURE_BEHAVIOR.test(text)) return [];
+  const claims: SchedulerPolicyEvidence[] = [];
+  if (/\bholidays?\b/u.test(text)) claims.push("holiday");
+  if (/\bweekdays?\b/u.test(text)) claims.push("weekday");
+  if (/\bweekends?\b/u.test(text)) claims.push("weekend");
+  return claims;
+}
+
 /**
  * Require a current-turn scheduler receipt before preserving affirmative prose
  * about an existing reminder or scheduled job. Conversation history records
@@ -189,6 +200,7 @@ export function enforceSchedulerStateEvidence(params: {
     toolName: string;
     action?: string;
     success: boolean;
+    schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
   }>;
   honestResponse: string;
 }): SchedulerStateEvidenceGuardResult {
@@ -207,18 +219,33 @@ export function enforceSchedulerStateEvidence(params: {
   const temporalPolicyConfirmation =
     SCHEDULER_DIRECT_CONFIRMATION.test(normalizedResponse)
     && SCHEDULER_TEMPORAL_CONTEXT.test(normalizedResponse);
+  const policyClaims = schedulerPolicyClaims(normalizedResponse);
   const claimsCurrentSchedulerState =
-    explicitStateClaim || futureBehaviorClaim || temporalPolicyConfirmation;
+    explicitStateClaim
+    || futureBehaviorClaim
+    || temporalPolicyConfirmation
+    || policyClaims.length > 0;
   if (!claimsCurrentSchedulerState) {
     return { response: params.response, corrected: false };
   }
-  const hasEvidence = (params.toolExecResults ?? []).some(
+  const stateReceipts = (params.toolExecResults ?? []).filter(
     (result) =>
       result.toolName === "cron"
       && result.success
       && result.action !== undefined
       && SCHEDULER_STATE_EVIDENCE_ACTIONS.has(result.action),
   );
+  const policyReceipt = stateReceipts.findLast(
+    (result) => result.action === "add" || result.action === "update" || result.action === "list",
+  );
+  const hasPolicyEvidence = policyClaims.length === 0
+    || policyReceipt?.action === "add"
+    || policyReceipt?.action === "update"
+    || (
+      policyReceipt?.action === "list"
+      && policyClaims.every((claim) => policyReceipt.schedulerPolicyEvidence?.includes(claim) === true)
+    );
+  const hasEvidence = stateReceipts.length > 0 && hasPolicyEvidence;
   return hasEvidence
     ? { response: params.response, corrected: false }
     : {

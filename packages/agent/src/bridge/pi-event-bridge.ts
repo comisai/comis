@@ -228,6 +228,7 @@ import {
 import {
   buildToolRecoveryIdentity,
   normalizeToolFailureDisclosure,
+  type SchedulerPolicyEvidence,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
 import { extractProcessSessionObservation } from "./process-session-observation.js";
@@ -292,6 +293,31 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
     `Tool '${toolName}' is outside this sub-agent's profile. ` +
     `Re-spawn with tool_groups:['${suggestion}'].`
   );
+}
+
+function extractSchedulerPolicyEvidence(
+  toolName: string,
+  action: string | undefined,
+  details: Record<string, unknown> | undefined,
+): readonly SchedulerPolicyEvidence[] | undefined {
+  if (toolName !== "cron" || action !== "list" || !Array.isArray(details?.jobs)) {
+    return undefined;
+  }
+  let combined = "";
+  for (const value of details.jobs) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const payload = (value as { payload?: unknown }).payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+    const record = payload as { messagePreview?: unknown; textPreview?: unknown };
+    if (typeof record.messagePreview === "string") combined += ` ${record.messagePreview}`;
+    if (typeof record.textPreview === "string") combined += ` ${record.textPreview}`;
+  }
+  const normalized = combined.toLocaleLowerCase();
+  const evidence: SchedulerPolicyEvidence[] = [];
+  if (/\bholidays?\b/u.test(normalized)) evidence.push("holiday");
+  if (/\bweekdays?\b/u.test(normalized)) evidence.push("weekday");
+  if (/\bweekends?\b/u.test(normalized)) evidence.push("weekend");
+  return evidence;
 }
 
 /**
@@ -1489,6 +1515,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const webResultMeta = toolSuccess
             ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
             : undefined;
+          const schedulerPolicyEvidence = toolSuccess
+            ? extractSchedulerPolicyEvidence(endEvent.toolName, toolAction, resultDetails)
+            : undefined;
           const processSessionObservation = extractProcessSessionObservation({
             toolName: endEvent.toolName,
             resultBackgrounded,
@@ -1516,6 +1545,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(webResultMeta?.citationUrlDigest !== undefined && {
               citationUrlDigest: webResultMeta.citationUrlDigest,
             }),
+            ...(schedulerPolicyEvidence === undefined ? {} : { schedulerPolicyEvidence }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel
