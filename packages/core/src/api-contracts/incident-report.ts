@@ -16,6 +16,7 @@
 import { z } from "zod";
 import { defineContract } from "./types.js";
 import { ResponseLocaleRepairSkippedSchema } from "../domain/response-locale-policy.js";
+import { MediaAttachmentPreprocessReceiptSchema } from "../domain/normalized-message.js";
 // The section sub-schemas live in a sibling module (file-size cap). Imported
 // locally for use in IncidentReportSchema AND re-exported below so the public
 // barrel surface is unchanged.
@@ -340,6 +341,11 @@ export const IncidentReportSchema = z.object({
       durationMs: z.number().int().nonnegative(),
     })
     .optional(),
+  /** Current-turn attachments rejected before download or persistence. */
+  mediaAttachmentRejections: z
+    .array(MediaAttachmentPreprocessReceiptSchema.omit({ outcome: true }))
+    .max(16)
+    .optional(),
   /** The image-generation turn reconstructed from the
    *  session's `image.*` trajectory records (the terminal image record wins).
    *  The image cost (`costUsd`) rides HERE — `comis explain` shows it from the
@@ -608,6 +614,8 @@ export const IncidentReportSchema = z.object({
       limb: z.string(),
       /** The limb's spent amount, in `unit` (tokens / ms / USD). */
       spent: z.number(),
+      /** Rejected next reservation, in `unit`; current + attempted would exceed cap. */
+      attempted: z.number().optional(),
       /** The limb's configured cap, in `unit`. */
       cap: z.number(),
       /** The unit of `spent`/`cap`: `tokens` | `ms` | `usd`. */
@@ -675,6 +683,8 @@ export const IncidentReportSchema = z.object({
       promoted: z.number(),
       completed: z.number(),
       failed: z.number(),
+      cancelled: z.number(),
+      reentered: z.number(),
       accepted: z.number(),
       pending: z.number(),
     })

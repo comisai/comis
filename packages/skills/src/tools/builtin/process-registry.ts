@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import type { InstallDetourDecision } from "./install-detour.js";
 import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
+import { fromPromise, ok, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,6 +37,8 @@ export interface ProcessSession {
   child: ChildProcess | undefined;
   readonly maxOutputChars: number;
   readonly sandboxed: boolean;  // true when process runs inside bwrap/sandbox-exec
+  /** Formatted request session that launched this process, when one exists. */
+  readonly ownerSessionKey?: string;
   readonly autoBackgrounded?: boolean; // true when session created by auto-background escalation
   readonly description?: string; // human-readable activity label (e.g. "Installing dependencies")
   /**
@@ -66,6 +69,8 @@ export interface ProcessRegistry {
     tail: string;
   }>;
   kill(id: string): Promise<{ exitCode: number | null; killed: boolean }>;
+  /** Kill every running process launched by one request session. */
+  killOwned(ownerSessionKey: string): Promise<Result<number, Error>>;
   status(id: string):
     | {
         sessionId: string;
@@ -245,6 +250,17 @@ export function createProcessRegistry(
     return killProcessGroup(session);
   }
 
+  async function killOwned(ownerSessionKey: string): Promise<Result<number, Error>> {
+    const owned = Array.from(sessions.values()).filter(
+      (session) => session.status === "running" && session.ownerSessionKey === ownerSessionKey,
+    );
+    const killed = await fromPromise(
+      Promise.all(owned.map((session) => killProcessGroup(session))),
+    );
+    if (!killed.ok) return killed;
+    return ok(owned.length);
+  }
+
   function status(id: string) {
     const session = sessions.get(id);
     if (!session) return undefined;
@@ -305,7 +321,7 @@ export function createProcessRegistry(
     return sessions.size;
   }
 
-  return { add, get, list, kill, status, getLog, cleanup, size };
+  return { add, get, list, kill, killOwned, status, getLog, cleanup, size };
 }
 
 // ---------------------------------------------------------------------------

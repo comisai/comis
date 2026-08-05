@@ -1060,6 +1060,37 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
       expect(topic.threadId).toBeGreaterThan(0);
     });
 
+    it("a forum callback preserves the tapped message chat and topic", async () => {
+      const member = { id: 111, firstName: "a" };
+      const group = emu.createGroupChat({
+        members: [member],
+        supergroup: true,
+        forum: true,
+      });
+      const topic = emu.createForumTopic(group, "approval-topic");
+      const sent = (await callMethod(apiRoot, "sendMessage", {
+        chat_id: group.chatId,
+        text: "approval required",
+        message_thread_id: topic.threadId,
+      })).result as Record<string, unknown>;
+
+      emu.injectCallback(
+        group,
+        member,
+        sent["message_id"] as number,
+        "APPROVE",
+      );
+
+      const updates = await pollUpdates();
+      const callback = updates[0]!["callback_query"] as Record<string, unknown>;
+      const message = callback["message"] as Record<string, unknown>;
+      const chat = message["chat"] as Record<string, unknown>;
+      expect(chat["id"]).toBe(group.chatId);
+      expect(chat["type"]).toBe("supergroup");
+      expect(chat["is_forum"]).toBe(true);
+      expect(message["message_thread_id"]).toBe(topic.threadId);
+    });
+
     it("group media preserves the recorded shared-chat shape", async () => {
       const group = emu.createGroupChat({
         members: [{ id: 111, firstName: "a" }],
@@ -1099,11 +1130,17 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
 
     it("a replyTo opt → the served update carries a reply_to_message authored by the bot (replyToBot source)", async () => {
       const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], bot: { id: 12345, firstName: "TestBot", username: "test_bot" }, supergroup: true });
-      emu.injectMessage(group, { id: 111, firstName: "a" }, "thanks", { replyTo: 40 });
+      const sent = await callMethod(apiRoot, "sendMessage", {
+        chat_id: group.chatId,
+        text: "the exact earlier answer",
+      });
+      const sentMessageId = (sent.result as Record<string, unknown>)["message_id"] as number;
+      emu.injectMessage(group, { id: 111, firstName: "a" }, "thanks", { replyTo: sentMessageId });
       const updates = await pollUpdates();
       const msg = updates[0]!["message"] as Record<string, unknown>;
       const replyTo = msg["reply_to_message"] as Record<string, unknown> | undefined;
-      expect(replyTo?.["message_id"]).toBe(40);
+      expect(replyTo?.["message_id"]).toBe(sentMessageId);
+      expect(replyTo?.["text"]).toBe("the exact earlier answer");
       // The replied-to message is authored by the bot (so detectBotAddressing flips replyToBot).
       expect((replyTo?.["from"] as Record<string, unknown>)?.["is_bot"]).toBe(true);
     });

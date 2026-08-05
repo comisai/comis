@@ -19,16 +19,27 @@ function createMockRpcCall(response?: unknown) {
 }
 
 describe("session_search tool", () => {
-  const authority = { tenant_id: "tenant-a", agent_id: "agent-a" } as const;
+  it("uses authenticated RPC authority without model-supplied scope identifiers", async () => {
+    const rpcCall = createMockRpcCall();
+    const tool = createSessionSearchTool(rpcCall);
+
+    await tool.execute("call-authenticated-scope", { query: "test" } as never);
+
+    expect(rpcCall).toHaveBeenCalledWith("session.search", {
+      query: "test",
+      scope: "all",
+      limit: 10,
+      summarize: true,
+    });
+  });
 
   it("calls rpcCall with query and defaults (scope=all, limit=10)", async () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    const result = await tool.execute("call-1", { ...authority, query: "test" });
+    const result = await tool.execute("call-1", { query: "test" });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "test",
       scope: "all",
       limit: 10,
@@ -43,10 +54,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-2", { ...authority, query: "file content" });
+    await tool.execute("call-2", { query: "file content" });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "file content",
       scope: "all",
       limit: 10,
@@ -58,10 +68,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-3", { ...authority, query: "test", scope: "tool" });
+    await tool.execute("call-3", { query: "test", scope: "tool" });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "test",
       scope: "tool",
       limit: 10,
@@ -73,10 +82,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-4", { ...authority, query: "test", limit: 5 });
+    await tool.execute("call-4", { query: "test", limit: 5 });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "test",
       scope: "all",
       limit: 5,
@@ -88,7 +96,7 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall({ results: [], total: 0 });
     const tool = createSessionSearchTool(rpcCall);
 
-    const result = await tool.execute("call-5", { ...authority, query: "nonexistent" });
+    const result = await tool.execute("call-5", { query: "nonexistent" });
 
     expect(result.details).toEqual({ results: [], total: 0 });
     // No error prefix in content
@@ -104,11 +112,10 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-6", { ...authority, query: "import { Type } from" });
+    await tool.execute("call-6", { query: "import { Type } from" });
 
     // FTS5 sanitizer strips braces
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "import Type from",
       scope: "all",
       limit: 10,
@@ -122,7 +129,7 @@ describe("session_search tool", () => {
     });
     const tool = createSessionSearchTool(rpcCall);
 
-    await expect(tool.execute("call-7", { ...authority, query: "test" })).rejects.toThrow("Session not found");
+    await expect(tool.execute("call-7", { query: "test" })).rejects.toThrow("Session not found");
   });
 
   it("preserves an RPC authorization denial as a structured permission error", async () => {
@@ -134,7 +141,7 @@ describe("session_search tool", () => {
     const tool = createSessionSearchTool(rpcCall);
 
     await expect(
-      tool.execute("call-auth", { ...authority, query: "harbor code" }),
+      tool.execute("call-auth", { query: "harbor code" }),
     ).rejects.toThrow(
       /\[permission_denied\].*Session query tenant does not match.*Hint:.*caller conversation/s,
     );
@@ -144,10 +151,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall({ mode: "recent", sessions: [], total: 0 });
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-8", authority);
+    await tool.execute("call-8", {});
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       scope: "all",
       limit: 10,
       summarize: false,
@@ -158,10 +164,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-9", { ...authority, query: 'hello + "exact" world' });
+    await tool.execute("call-9", { query: 'hello + "exact" world' });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: 'hello "exact" world',
       scope: "all",
       limit: 10,
@@ -173,10 +178,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-10", { ...authority, query: "test", summarize: false });
+    await tool.execute("call-10", { query: "test", summarize: false });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "test",
       scope: "all",
       limit: 10,
@@ -188,10 +192,9 @@ describe("session_search tool", () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
 
-    await tool.execute("call-11", { ...authority, query: "test" });
+    await tool.execute("call-11", { query: "test" });
 
     expect(rpcCall).toHaveBeenCalledWith("session.search", {
-      ...authority,
       query: "test",
       scope: "all",
       limit: 10,

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { comisDist, requireCodeRoot, rig } from "./_rig.mjs";
+import { selectLatestTelegramDeliveryMirror } from "./delivery-mirror-oracle.mjs";
 
 const core = await import(pathToFileURL(comisDist("core", "dist/index.js")).href);
 const agent = await import(pathToFileURL(comisDist("agent", "dist/index.js")).href);
@@ -178,10 +179,7 @@ async function deliveryProbe() {
   );
   const Database = requireCodeRoot("better-sqlite3");
   const db = new Database(`${rig.dataDir}/memory.db`, { readonly: true, fileMustExist: true });
-  const mirror = db.prepare(
-    "SELECT tenant_id, agent_id, conversation_ref, destination_endpoint, text, status, created_at "
-    + "FROM delivery_mirror ORDER BY created_at DESC LIMIT 1",
-  ).get();
+  const mirror = selectLatestTelegramDeliveryMirror(db, rig.chatId);
   db.close();
   const wireText = wire?.text ?? "";
   const mirrorText = mirror?.text ?? "";
@@ -259,17 +257,31 @@ async function approvalProbe() {
 
 function receiptsProbe() {
   const sessionsDir = `${rig.dataDir}/workspace/sessions`;
-  const trajectoryFiles = [];
+  const trajectoryFiles = new Set();
   const visit = (directory) => {
     if (!existsSync(directory)) return;
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = `${directory}/${entry.name}`;
       if (entry.isDirectory()) visit(path);
-      else if (entry.name.endsWith(".jsonl.trajectory.jsonl")) trajectoryFiles.push(path);
+      else if (entry.name.endsWith(".jsonl.trajectory.jsonl")) trajectoryFiles.add(path);
+      else if (entry.name.endsWith(".jsonl.trajectory-path.json")) {
+        try {
+          const pointer = JSON.parse(readFileSync(path, "utf8"));
+          if (
+            pointer.traceSchema === "comis-trajectory-pointer"
+            && pointer.schemaVersion === 1
+            && typeof pointer.runtimeFile === "string"
+            && pointer.runtimeFile.startsWith(`${rig.dataDir}/`)
+            && existsSync(pointer.runtimeFile)
+          ) trajectoryFiles.add(pointer.runtimeFile);
+        } catch {
+          // A corrupt pointer is not trajectory evidence; continue to other sessions.
+        }
+      }
     }
   };
   visit(sessionsDir);
-  const latest = trajectoryFiles
+  const latest = [...trajectoryFiles]
     .map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }))
     .sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
   if (!latest) return { trajectoryFound: false, receipts: [] };
@@ -284,7 +296,9 @@ function receiptsProbe() {
   const turn = events.slice(start);
   return {
     trajectoryFound: true,
-    trajectoryFile: latest.path.slice(`${sessionsDir}/`.length),
+    trajectoryFile: latest.path.startsWith(`${rig.dataDir}/`)
+      ? latest.path.slice(`${rig.dataDir}/`.length)
+      : latest.path,
     receipts: turn
       .filter((event) => event.type === "tool.call" || event.type === "tool.result")
       .map((event) => ({

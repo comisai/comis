@@ -36,6 +36,27 @@ export interface SafetyCheckResult {
   eventReason?: string;
 }
 
+export interface StepLimitDetails {
+  bindingKnob: string;
+  stepsExecuted: number;
+  cap: number;
+}
+
+export interface AbortRedirectDetails {
+  stepLimit?: StepLimitDetails;
+}
+
+export function resolveStepLimitDetails(
+  stepCounter: StepCounter,
+  agentId: string,
+): StepLimitDetails {
+  return {
+    bindingKnob: `agents.${agentId}.maxSteps`,
+    stepsExecuted: stepCounter.getCount(),
+    cap: stepCounter.getLimit?.() ?? stepCounter.getCount(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Step counter check
 // ---------------------------------------------------------------------------
@@ -71,17 +92,21 @@ export function emitStepLimitAbort(
     stepCounter: StepCounter;
   },
 ): void {
+  const stepLimit = resolveStepLimitDetails(deps.stepCounter, deps.agentId);
   deps.onAbort?.();
   deps.eventBus.emit("execution:aborted", {
     sessionKey: deps.sessionKey,
     reason: "max_steps",
     agentId: deps.agentId,
     timestamp: systemNowMs(),
+    stepLimit,
   });
   deps.logger.warn(
     {
-      stepsExecuted: deps.stepCounter.getCount(),
-      hint: "Agent reached maximum tool execution steps; increase maxSteps in agent config if this is expected",
+      stepsExecuted: stepLimit.stepsExecuted,
+      maxSteps: stepLimit.cap,
+      bindingKnob: stepLimit.bindingKnob,
+      hint: `Agent reached ${stepLimit.bindingKnob}=${String(stepLimit.cap)}; simplify the workflow or increase that exact agent setting`,
       errorKind: "resource" as const,
     },
     "Step limit reached, aborting execution",
@@ -313,7 +338,7 @@ export function emitSpendAbort(
   /** The tripped per-root limb + its numbers (named units). Carried onto the
    *  `execution:aborted` event so `explain` answers "which limb, by how much" in one
    *  call instead of a daemon-log grep for the "Per-root … budget exceeded" line. */
-  perRootBudget?: { limb: string; spent: number; cap: number; unit: string },
+  perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string },
 ): void {
   deps.onAbort?.();
   deps.eventBus.emit("execution:aborted", {
@@ -330,7 +355,13 @@ export function emitSpendAbort(
       // content-free) — a raw-log reader should not need `comis explain`
       // to learn which limb tripped and by how much.
       ...(perRootBudget !== undefined
-        ? { limb: perRootBudget.limb, spent: perRootBudget.spent, cap: perRootBudget.cap, unit: perRootBudget.unit }
+        ? {
+            limb: perRootBudget.limb,
+            spent: perRootBudget.spent,
+            ...(perRootBudget.attempted !== undefined ? { attempted: perRootBudget.attempted } : {}),
+            cap: perRootBudget.cap,
+            unit: perRootBudget.unit,
+          }
         : {}),
       hint: perRoot
         ? "Per-root autonomy budget exhausted — raise this agent's autonomy.budget.{aggregateUsd|tokens|wallClockMs} (NOT observability.spend); run `comis explain <session>` for the exact limb + numbers (the spend-verdict names autonomy.budget.<limb>)"
@@ -491,16 +522,23 @@ export function buildAbortRedirectMessage(
   plan: ExecutionPlan | undefined,
   finishReason: string,
   msgTextFallback?: string,
+  details: AbortRedirectDetails = {},
 ): string {
+  const stepLimit = finishReason === "max_steps" ? details.stepLimit : undefined;
+  const stepLimitGuidance = stepLimit === undefined
+    ? ""
+    : `\n\nI stopped after ${String(stepLimit.stepsExecuted)} tool-execution steps because `
+      + `${stepLimit.bindingKnob}=${String(stepLimit.cap)}. Simplify the workflow or increase `
+      + `${stepLimit.bindingKnob} before retrying.`;
   if (plan === undefined) {
     const fallback = msgTextFallback ?? "";
     // Omit the request echo entirely when there is no text to show — a
     // background-continuation re-entry turn carries no user message, so
     // echoing `Your request was: ''` is pure noise (live incident 2026-07-08).
     if (fallback.length === 0) {
-      return `[Stopped: ${finishReason}] Please try again.`;
+      return `[Stopped: ${finishReason}] Please try again.${stepLimitGuidance}`;
     }
-    return `[Stopped: ${finishReason}] Your request was: '${fallback}'. Please try again.`;
+    return `[Stopped: ${finishReason}] Your request was: '${fallback}'. Please try again.${stepLimitGuidance}`;
   }
 
   const unmetSteps = plan.steps.filter(
@@ -510,11 +548,11 @@ export function buildAbortRedirectMessage(
   const header = `[Stopped: ${finishReason}]\n\nYour request was: "${plan.request}"`;
 
   if (unmetSteps.length === 0) {
-    return `${header}\n\nPlease continue from where I stopped.`;
+    return `${header}${stepLimitGuidance}\n\nPlease continue from where I stopped.`;
   }
 
   const stepLines = unmetSteps.map((s) => `- ${s.description}`).join("\n");
-  return `${header}\n\nUnmet requirements:\n${stepLines}\n\nPlease continue from where I stopped.`;
+  return `${header}\n\nUnmet requirements:\n${stepLines}${stepLimitGuidance}\n\nPlease continue from where I stopped.`;
 }
 
 /**

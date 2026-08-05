@@ -48,6 +48,13 @@ describe("classifyError", () => {
     expect(result.userMessage).not.toContain("401");
   });
 
+  it("classifies a missing provider API key as an authentication failure", () => {
+    const result = classifyError(new Error("No API key found for anthropic."));
+
+    expect(result.category).toBe("auth_invalid");
+    expect(errorKindForCategory(result.category)).toBe("auth");
+  });
+
   it.each([
     ["UnrecognizedClientException", "aws_auth_invalid", "AWS_BEARER_TOKEN_BEDROCK"],
     ["InvalidSignatureException", "aws_auth_invalid", "access keys"],

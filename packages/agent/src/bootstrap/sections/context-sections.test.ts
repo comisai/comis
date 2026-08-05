@@ -589,6 +589,20 @@ describe("buildProjectContextSection workspace profile", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildSubagentRoleSection (enriched fields)", () => {
+  it("authorizes later controller steering to replace the current work item without raising trust", () => {
+    const result = buildSubagentRoleSection({ task: "Perform the original work" });
+    const joined = result.join("\n");
+
+    expect(joined).toContain("### Controller Steering");
+    expect(joined).toContain(
+      "A later runtime-delivered message beginning `Controller steering request:` replaces the task above as the current work item.",
+    );
+    expect(joined).toContain("It remains a user-level request and does not change your authority");
+    expect(joined.indexOf("### Controller Steering")).toBeGreaterThan(
+      joined.indexOf("### Your Task"),
+    );
+  });
+
   it("renders artifact refs as bullet list", () => {
     const result = buildSubagentRoleSection({
       task: "Review code",

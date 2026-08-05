@@ -413,6 +413,12 @@ describe("message-mapper / mapGrammyToNormalized", () => {
       } as Partial<Message>);
       const result = mapGrammyToNormalized(msg, -1001234, bot);
       expect(result.metadata.replyToBot).toBe(true);
+      expect(result.replyTo).toEqual(expect.any(String));
+      expect(result.metadata.replyContext).toEqual({
+        messageId: "100",
+        senderKind: "agent",
+        text: "previous bot reply",
+      });
       expect(result.metadata).not.toHaveProperty("isBotMentioned");
     });
 

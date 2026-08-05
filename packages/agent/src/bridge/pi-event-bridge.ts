@@ -230,7 +230,7 @@ import {
 } from "./bridge-metrics.js";
 import { recordToolInvocationSideEffects } from "./bridge-side-effect-accumulator.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, resolveStepLimitDetails, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
@@ -244,7 +244,9 @@ import {
   normalizeToolFailureDisclosure,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
+import { extractProcessSessionObservation } from "./process-session-observation.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
+import { citationUrlDigest } from "../executor/citation-evidence.js";
 
 // ---------------------------------------------------------------------------
 // Module-level one-shot latches
@@ -308,8 +310,9 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
 
 /**
  * A CONTENT-FREE grounding summary of a web_search / web_fetch result for the
- * trajectory `tool.result` — result count + source HOSTS only. NEVER titles,
- * snippets, full URLs (path/query), or bodies. Lets a "grounded in fetched
+ * trajectory `tool.result` — result count, source HOSTS, and (for web_fetch)
+ * a one-way SHA-256 digest of the exact final URL. NEVER titles, snippets,
+ * full URLs (path/query), or bodies. Lets a "grounded in fetched
  * results" predicate be verified from `comis explain` / trajectory without a
  * DEBUG daemon-log grep (load-bearing evidence must not be visible only at
  * DEBUG level). Returns `undefined` for any other tool or an
@@ -317,13 +320,13 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
  *
  * The tool return is an `AgentToolResult`; the structured payload rides `.details`
  * (the same field the success classifier reads at the call site), with a direct-
- * shape fallback. Only `host` is taken from each URL (`new URL(...).host`), never
- * the path or query — so no fetched-content identifiers leak onto the trajectory.
+ * shape fallback. Only `host` and the one-way digest leave this boundary, never
+ * the URL path, query, or fetched content.
  */
 export function extractWebResultMetadata(
   toolName: string,
   result: unknown,
-): { resultCount?: number; domains?: string[] } | undefined {
+): { resultCount?: number; domains?: string[]; citationUrlDigest?: string } | undefined {
   if (toolName !== "web_search" && toolName !== "web_fetch") return undefined;
   if (typeof result !== "object" || result === null) return undefined;
   const top = result as Record<string, unknown>;
@@ -349,9 +352,19 @@ export function extractWebResultMetadata(
     return { resultCount: results.length, domains: [...domains].sort() };
   }
   // web_fetch: a single page → resultCount 1 + the fetched host (final wins).
-  const host = hostOf(payload.finalUrl) ?? hostOf(payload.url);
+  const exactUrl = typeof payload.finalUrl === "string"
+    ? payload.finalUrl
+    : typeof payload.url === "string"
+      ? payload.url
+      : undefined;
+  if (exactUrl === undefined) return undefined;
+  const host = hostOf(exactUrl);
   if (host === undefined) return undefined;
-  return { resultCount: 1, domains: [host] };
+  return {
+    resultCount: 1,
+    domains: [host],
+    citationUrlDigest: citationUrlDigest(exactUrl),
+  };
 }
 
 /** Per-call TTL split estimate, populated by requestBodyInjector's onPayload.
@@ -1487,6 +1500,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             typeof resultDetails?.changed === "boolean"
               ? resultDetails.changed
               : undefined;
+          const webResultMeta = toolSuccess
+            ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
+            : undefined;
+          const processSessionObservation = extractProcessSessionObservation({
+            toolName: endEvent.toolName,
+            resultBackgrounded,
+            resultDetails,
+            toolArgs: rawArgsForParams !== null && typeof rawArgsForParams === "object"
+              ? rawArgsForParams as Record<string, unknown>
+              : undefined,
+          });
           // Track all tool execution results
           m.toolExecResults.push({
             toolName: endEvent.toolName,
@@ -1503,6 +1527,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(failureCode !== undefined && { failureCode }),
             ...(failureDisclosure !== undefined && { failureDisclosure }),
+            ...(webResultMeta?.citationUrlDigest !== undefined && {
+              citationUrlDigest: webResultMeta.citationUrlDigest,
+            }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel
@@ -1606,13 +1633,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ? buildFailureArgsPreview(rawArgsForParams, deps.homeDir)
             : undefined;
 
-          // Content-free web_search/web_fetch grounding summary (count +
-          // source hosts only) — computed on the SUCCESS path so the trajectory
+          // Content-free web_search/web_fetch grounding summary (count,
+          // source hosts, and one-way exact-URL digest) — computed on the SUCCESS path so the trajectory
           // tool.result reconstructs grounding without a DEBUG daemon-log grep.
-          const webResultMeta = toolSuccess
-            ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
-            : undefined;
-
           // A background HAND-OFF is not an outcome: the middleware returns a
           // non-error placeholder carrying details.status:"backgrounded", so
           // toolSuccess is true while the tool is still running. Mark it so
@@ -1625,6 +1648,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
+            ...processSessionObservation,
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
@@ -1666,6 +1690,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(resultDigest !== undefined && { resultDigest }),
             ...(webResultMeta?.resultCount !== undefined && { resultCount: webResultMeta.resultCount }),
             ...(webResultMeta?.domains !== undefined && { domains: webResultMeta.domains }),
+            ...(webResultMeta?.citationUrlDigest !== undefined && {
+              citationUrlDigest: webResultMeta.citationUrlDigest,
+            }),
           });
 
           // Skill-use attribution. A `read` whose path equals a frozen
@@ -1719,7 +1746,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const stepCheck = checkStepLimit(deps.stepCounter, m.aborted);
             if (stepCheck.shouldAbort) {
               m.finishReason = stepCheck.finishReason!;
-              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+              m.abortResponse = buildAbortRedirectMessage(
+                deps.executionPlan?.current,
+                m.finishReason,
+                undefined,
+                { stepLimit: resolveStepLimitDetails(deps.stepCounter, deps.agentId) },
+              );
               m.aborted = true;
               emitStepLimitAbort(deps);
             }
@@ -2619,6 +2651,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     ? {
                         limb: rootGate.error.limb,
                         spent: rootGate.error.currentUsd,
+                        attempted: rootGate.error.estUsd,
                         cap: rootGate.error.capUsd,
                         unit: rootGate.error.unit ?? "usd",
                       }

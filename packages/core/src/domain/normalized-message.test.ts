@@ -3,6 +3,7 @@ import { describe, expect, it, expectTypeOf } from "vitest";
 import {
   AttachmentSchema,
   getOriginalInboundMessages,
+  NormalizedMessageSchema,
   parseInboundMessageProvenanceBatch,
   parseMessage,
   type NormalizedMessage,
@@ -210,7 +211,7 @@ describe("NormalizedMessage", () => {
       }
     });
 
-    it("validates the internal link-prefetch receipt as a strict counts-only shape", () => {
+  it("validates the internal link-prefetch receipt as a strict counts-only shape", () => {
       const receipt = {
         detected: 2,
         attempted: 2,
@@ -360,6 +361,39 @@ describe("NormalizedMessage", () => {
 
       expect(result.ok).toBe(true);
     });
+  });
+
+  it("validates runtime web-fetch citation evidence as bounded SHA-256 digests", () => {
+    const base = {
+      id: "9d21fca1-e56e-4f88-8b68-1ab9b686a32b",
+      channelId: "channel_a",
+      channelType: "cross-session",
+      senderId: "cross-session-relay",
+      text: "background research complete",
+      timestamp: 1,
+      attachments: [],
+    };
+    const valid = NormalizedMessageSchema.safeParse({
+      ...base,
+      metadata: {
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["a".repeat(64)],
+        },
+      },
+    });
+    expect(valid.success).toBe(true);
+
+    const malformed = NormalizedMessageSchema.safeParse({
+      ...base,
+      metadata: {
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["not-a-digest"],
+        },
+      },
+    });
+    expect(malformed.success).toBe(false);
   });
 
   describe("invalid data", () => {

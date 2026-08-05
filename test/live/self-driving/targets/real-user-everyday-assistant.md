@@ -52,7 +52,7 @@ a row the code contradicts is itself a finding.
 | S3 | Sender trust is `channels.telegram.allowFrom` (ingress) + `agents.<id>.elevatedReply.senderTrustMap` (per-message trust; admin inherits the control plane) | channel + agent schemas |
 | S4 | `queue.defaultMode` has FOUR values — `followup`, `collect`, `steer`, `steer+followup` — and the default is **`steer+followup`**, which already does progress-preserving mid-turn injection. Abort-and-restart `steer` is the non-default opt-in | `packages/core/src/config/schema-queue.ts` |
 | S5 | Auto-backgrounding is **default-ON**: `backgroundTasks.enabled` true, `autoBackgroundMs` 10000, `maxPerAgent` 5, `maxTotal` 20, `maxBackgroundDurationMs` 300000, `maxBackgroundHops` 3. A completion **re-enters the originating session as a fresh turn** — that is an unprompted message to the user | `packages/core/src/config/schema-background-tasks.ts` |
-| S6 | Structurally never auto-backgrounded regardless of config: `exec`, `background_tasks`, `image_generate`, `video_generate` | `packages/agent/src/background/auto-background-middleware.ts` |
+| S6 | Structurally never auto-backgrounded regardless of config: `exec`, `background_tasks`, `subagents`, `sleep`, `discover_tools`, `image_generate`, `video_generate` | `packages/agent/src/background/auto-background-middleware.ts` |
 | S7 | Heartbeat is **default-ON**: `scheduler.heartbeat.enabled` true, `intervalMs` 300000, `showOk` false, `alertThreshold` 2, `staleMs` 120000. The empty-`HEARTBEAT.md` gate short-circuits with no LLM call, so **silence on an idle daemon is CORRECT** | `packages/core/src/config/schema-scheduler.ts`, `packages/scheduler/src/heartbeat/` |
 | S8 | `scheduler.tasks` (model-inferred follow-up tasks) is **implemented and wired**, explicit opt-in `enabled:false`; `confidenceThreshold` 0.8, `debounceMs` 15000, `batchMax` 8, `maxPerCheck` 3, `maxPerDayPerConversation` 3, `defaultWindowMs` 12h. It is no longer dead config | `packages/daemon/src/wiring/setup-followup-task-extraction.ts`, `packages/daemon/src/daemon.ts` |
 | S9 | Autonomy is default-ON via `profile: "standard"` (names: `assistant`, `standard`, `unattended`, `max`). Tree bounds default `aggregateUsd` 200, `tokens` 200000000, `wallClockMs` 48h; spawn bounds `maxConcurrentSelfAgents` 4, `maxSpawnDepth` 3, `maxChildrenPerAgent` 5; message posture `originOnly` true, `volumeCap` 4000 | `packages/core/src/config/schema-agent/schema-agent-autonomy*.ts` |
@@ -279,19 +279,18 @@ mid-flight `hows that going` reads the real task state via `background_tasks lis
 cancels. The 6th concurrent ask is refused or queued honestly, never silently dropped. A failing
 background tool's breaker is recorded against the **originating** tool, not against the poller.
 
-**Oracle.** ⚠ Only FOUR background events reach the trajectory. `event-bus-bridge.ts` maps
-`background_task:promoted|completed|failed|notified`; the emitted `background_task:cancelled` and
-`background_task:reentered` are **NOT bridged**, so a cancel and the fresh-turn re-entry are invisible to
-`comis explain`. Verified at HEAD — do not read their absence as "it didn't happen". So: use the four
-bridged events for promote/finish; read the CANCEL from the `background_tasks` tool receipt plus the task's
-terminal state; read the RE-ENTRY from the new turn's own record in the session (a turn with no inbound
-message initiating it). Then `delivery_mirror` for the unprompted send (exactly one row) and `explain`
-per-tool `{ok,failed}`. **The bridge gap is itself an obs-loop finding** — two emitted events that
-`explain` cannot see, on the default-ON path that produces unprompted user-visible messages.
+**Oracle.** All six background lifecycle events reach the trajectory: `event-bus-bridge.ts` maps
+`background_task:promoted|completed|failed|cancelled|reentered|notified`. Use the promoted task IDs to
+join later terminal, re-entry, and notification records onto the originating trace; `comis explain` folds
+those records into promoted/completed/failed/cancelled/reentered/accepted/pending counts. Corroborate a
+cancel with the `background_tasks` tool receipt and the task's terminal state, and corroborate re-entry with
+the new turn's own session record (a turn with no inbound message initiating it). Then check
+`delivery_mirror` for the unprompted send (exactly one row) and `explain` per-tool `{ok,failed}`.
 
 **HARD.** The unprompted completion is bound to the ORIGINATING conversation only (a completion must
 never land in another chat). No false "done" — a failed background task reports as failed. `exec`,
-`image_generate`, `video_generate` are NOT promoted (S6), so their turns must not ack-and-vanish.
+`background_tasks`, `subagents`, `sleep`, `discover_tools`, `image_generate`, and `video_generate` are
+NOT promoted (S6), so their turns must not ack-and-vanish.
 
 **Config polarity.** `backgroundTasks.enabled` false → the same ask blocks in-turn or times out honestly,
 with no ack-and-continue; `autoBackgroundMs` raised → a medium task stays in-turn.

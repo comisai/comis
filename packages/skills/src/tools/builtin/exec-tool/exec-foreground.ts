@@ -61,6 +61,7 @@ export function executeForeground(
   getToolResultsDir?: () => string | undefined,
   installDetourDecision?: InstallDetourDecision,
   installDetourMode?: "observe" | "advise" | "soft-stop",
+  ownerSessionKey?: string,
 ): Promise<AgentToolResult<unknown>> {
   const startTime = performance.now();
   const startTimeMs = systemNowMs();
@@ -208,6 +209,7 @@ export function executeForeground(
           escalateToBackground({
             command, child, startTime, startTimeMs, stdoutBuf, stderrBuf,
             registry, sandboxConfig, logger, spillStream,
+            ownerSessionKey,
             signal, onAbort, timeoutTimer, resolve,
             setResolved: () => { resolved = true; },
             description,

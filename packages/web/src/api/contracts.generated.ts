@@ -5859,11 +5859,17 @@ export const CONTRACTS = {
         },
         "graphId": {
           "type": "string"
+        },
+        "killed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
         "cancelled",
-        "graphId"
+        "graphId",
+        "killed"
       ],
       "additionalProperties": false
     },
@@ -12547,6 +12553,46 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "mediaAttachmentRejections": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attachmentIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 15
+              },
+              "reason": {
+                "type": "string",
+                "const": "size_exceeded"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "configKey": {
+                "type": "string",
+                "const": "integrations.media.infrastructure.maxRemoteFetchBytes"
+              }
+            },
+            "required": [
+              "attachmentIndex",
+              "reason",
+              "sizeBytes",
+              "maxBytes",
+              "configKey"
+            ],
+            "additionalProperties": false
+          }
+        },
         "image": {
           "type": "object",
           "properties": {
@@ -12880,6 +12926,9 @@ export const CONTRACTS = {
             "spent": {
               "type": "number"
             },
+            "attempted": {
+              "type": "number"
+            },
             "cap": {
               "type": "number"
             },
@@ -12993,6 +13042,12 @@ export const CONTRACTS = {
             "failed": {
               "type": "number"
             },
+            "cancelled": {
+              "type": "number"
+            },
+            "reentered": {
+              "type": "number"
+            },
             "accepted": {
               "type": "number"
             },
@@ -13004,6 +13059,8 @@ export const CONTRACTS = {
             "promoted",
             "completed",
             "failed",
+            "cancelled",
+            "reentered",
             "accepted",
             "pending"
           ],

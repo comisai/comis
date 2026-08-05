@@ -14,6 +14,7 @@ import {
   formatSessionKey,
   RequestContextSchema,
   runWithContext,
+  scrubSecretsFromText,
   TypedEventBus,
   type BackgroundTaskOrigin,
   type RequestContext,
@@ -50,6 +51,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; s
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
@@ -688,17 +690,21 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("re-entry ignores a mismatched ambient admin context and uses the persisted physical route at guest trust", async () => {
+  it("re-entry ignores ambient admin authority and uses the persisted user trust snapshot", async () => {
     const originTraceId = randomUUID();
-    const task = buildTask({
-      result: "ok",
-      origin: buildOrigin({
+    const persistedOrigin = {
+      ...buildOrigin({
         agentId: "agent_a",
         sessionKey: "tenant_a:user_a:session-channel:thread:thread_a",
         channelType: "telegram",
         channelId: "chat_a",
         traceId: originTraceId,
       }),
+      trustLevel: "user" as const,
+    };
+    const task = buildTask({
+      result: "ok",
+      origin: persistedOrigin,
     });
     taskManager.getTask.mockReturnValue(task);
 
@@ -755,7 +761,7 @@ describe("createBackgroundCompletionRunner", () => {
       sessionKey: originSessionKey(task.origin),
       agentId: "agent_a",
       traceId: originTraceId,
-      trustLevel: "guest",
+      trustLevel: "user",
       learningEligible: false,
       channelType: "telegram",
       deliveryOrigin: {
@@ -769,6 +775,40 @@ describe("createBackgroundCompletionRunner", () => {
     expect(Object.isFrozen(executorContext?.deliveryOrigin)).toBe(true);
     expect(Reflect.set(executorContext!, "trustLevel", "admin")).toBe(false);
     expect(Reflect.set(executorContext!, "agentId", "admin_agent")).toBe(false);
+  });
+
+  it("re-entry preserves persisted admin trust without ambient authority", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: {
+        ...buildOrigin(),
+        trustLevel: "admin" as const,
+      },
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    let executorContext: RequestContext | undefined;
+    executor.execute.mockImplementation(async (...args) => {
+      executorContext = getContext();
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-admin-context",
+        finishReason: "stop",
+      })(...args);
+    });
+
+    const runner = build();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executorContext?.trustLevel).toBe("admin");
   });
 
   it("invalid persisted physical route is contained and falls back without executor re-entry", async () => {
@@ -799,7 +839,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
   });
 
-  it("restart re-entry without ambient context creates one valid guest scope for the event and executor", async () => {
+  it("restart re-entry without ambient context restores the persisted user scope", async () => {
     const task = buildTask({
       status: "failed",
       error: "Daemon restarted while task was running",
@@ -850,7 +890,7 @@ describe("createBackgroundCompletionRunner", () => {
       userId: "user_restart",
       sessionKey: originSessionKey(task.origin),
       agentId: "agent_restart",
-      trustLevel: "guest",
+      trustLevel: "user",
       channelType: "telegram",
       deliveryOrigin: {
         channelType: "telegram",
@@ -917,7 +957,37 @@ describe("createBackgroundCompletionRunner", () => {
     expect(resolveMaxBackgroundHops).toHaveBeenCalledWith("worker");
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
     const opts = fallbackNotifyFn.mock.calls[0]![0]!;
-    expect(opts.message).toContain("recursion limit reached");
+    expect(opts.message).toContain("agents.worker.backgroundTasks.maxBackgroundHops=3");
+    expect(opts.message).toContain(task.id);
+    expect(opts.message).toMatch(/retrying.*unchanged.*same limit/i);
+    expect(opts.message).not.toContain("Run again");
+    expect(scrubSecretsFromText(opts.message)).toEqual({ text: opts.message, redactions: 0 });
+    await runner.shutdown();
+  });
+
+  it("failed task at the hop cap never claims that the task completed", async () => {
+    const task = buildTask({
+      status: "failed",
+      error: "fixture failure",
+      origin: buildOrigin({ agentId: "worker", backgroundHopCount: 2 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = build(3, undefined, undefined, undefined, () => 3);
+    eventBus.emit("background_task:failed", {
+      agentId: "worker",
+      taskId: task.id,
+      toolName: task.toolName,
+      error: "fixture failure",
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const opts = fallbackNotifyFn.mock.calls[0]![0]!;
+    expect(opts.message).toContain("failed");
+    expect(opts.message).not.toContain("task \"exec\" completed");
     await runner.shutdown();
   });
 

@@ -32,6 +32,7 @@ export type OrchestrationBridgedEventName =
   // and the idle/threshold numbers. Content-free: runId + closed killedBy +
   // numbers ONLY (the free-text reason never crosses the bus).
   | "subagent:killed"
+  | "subagent:background_processes_abandoned"
   // Three sub-agent-lifecycle
   // events bridged for per-session `comis explain` visibility (the subagent:steered
   // daemon-side precedent). Content-free: closed labels/ids/numbers ONLY.
@@ -94,6 +95,8 @@ export function translateOrchestrationPayload(
         runtimeMs: payload.runtimeMs,
         tokensUsed: payload.tokensUsed,
         costUsd: payload.cost,
+        unresolvedBackgroundProcesses: payload.unresolvedBackgroundProcesses,
+        failedBackgroundProcesses: payload.failedBackgroundProcesses,
       };
 
     case "session:sub_agent_wait_completed":
@@ -118,6 +121,9 @@ export function translateOrchestrationPayload(
         idleMs: payload.idleMs,
         thresholdMs: payload.thresholdMs,
       };
+
+    case "subagent:background_processes_abandoned":
+      return { runId: payload.runId, count: payload.count };
 
     case "security:sandbox_downgrade_refused":
       // The violated sandbox DIMENSION labels ONLY (exec/filesystem/

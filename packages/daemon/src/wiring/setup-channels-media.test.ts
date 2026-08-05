@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AppContainer, ChannelPort, Attachment, NormalizedMessage, ResolvedTurnScope } from "@comis/core";
+import { MediaResolutionError, type AppContainer, type ChannelPort, type Attachment, type NormalizedMessage, type ResolvedTurnScope } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
@@ -176,6 +176,76 @@ describe("buildMediaPipeline", () => {
     );
   });
 
+  it("preserves an authoritative oversized-resolution failure in the current model turn", async () => {
+    const sizeBytes = 57_671_680;
+    const maxBytes = 26_214_400;
+    mockCompositeResolver.resolve.mockResolvedValueOnce({
+      ok: false,
+      error: new MediaResolutionError({
+        kind: "size_exceeded",
+        sizeBytes,
+        maxBytes,
+      }),
+    });
+    vi.mocked(preprocessMessage).mockImplementationOnce(async (mediaDeps, msg) => {
+      await mediaDeps.resolveAttachment?.(msg.attachments[0]!);
+      return {
+        message: msg,
+        transcriptions: [],
+        sttReceipts: [],
+        analyses: [],
+        imageContents: [],
+        videoDescriptions: [],
+        fileExtractions: [],
+        attachmentReceipts: [],
+      };
+    });
+    const deps = makeDeps({ maxMediaBytes: maxBytes });
+    const pipeline = await buildMediaPipeline(deps);
+
+    const preprocessed = await pipeline.preprocessMessage({
+      id: "00000000-0000-0000-0000-000000000001",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "u1",
+      text: "can you read this whole document?",
+      timestamp: 1,
+      attachments: [{
+        type: "file",
+        url: "tg-file://oversized-current-document",
+        mimeType: "text/plain",
+        fileName: "archive.txt",
+      }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(preprocessed.text).toContain('reason="size_exceeded"');
+    expect(preprocessed.text).toContain(`size-bytes="${sizeBytes}"`);
+    expect(preprocessed.text).toContain(`max-bytes="${maxBytes}"`);
+    expect(preprocessed.text).toContain(
+      'config-key="integrations.media.infrastructure.maxRemoteFetchBytes"',
+    );
+    expect(preprocessed.text).toContain("Do not substitute an earlier attachment");
+    expect(preprocessed.metadata.mediaAttachmentPreprocess).toEqual([{
+      attachmentIndex: 0,
+      outcome: "rejected",
+      reason: "size_exceeded",
+      sizeBytes,
+      maxBytes,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+    }]);
+    expect(deps.channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "precondition",
+        sizeBytes,
+        maxBytes,
+        configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+        hint: expect.stringContaining("integrations.media.infrastructure.maxRemoteFetchBytes"),
+      }),
+      "Media attachment rejected by size limit",
+    );
+  });
+
   it("preprocessMessage calls linkRunner.processMessage when text present", async () => {
     const receipt = {
       detected: 1,
@@ -315,6 +385,7 @@ describe("buildMediaPipeline", () => {
         },
       },
     });
+    container.config.integrations.media.vision.enabled = true;
     const result = await buildMediaPipeline(makeDeps({ container }));
     const preprocessed = await result.preprocessMessage({
       id: "m1",
@@ -345,6 +416,40 @@ describe("buildMediaPipeline", () => {
       path: "vision-direct",
       outcome: "ok",
     });
+  });
+
+  it("disables automatic image analysis when global vision is disabled", async () => {
+    vi.mocked(getModel).mockReturnValue({ id: "vision-model" } as never);
+    vi.mocked(isVisionCapable).mockReturnValue(true);
+    const imageAnalyzer = { analyze: vi.fn() } as any;
+    const container = makeContainer();
+    const result = await buildMediaPipeline(makeDeps({ container, imageAnalyzer }));
+
+    const preprocessed = await result.preprocessMessage({
+      id: "m1",
+      channelId: "c1",
+      channelType: "telegram",
+      senderId: "user_a",
+      text: "inspect this",
+      timestamp: Date.now(),
+      attachments: [{
+        type: "image",
+        url: "tg-file://image",
+        mimeType: "image/png",
+      }],
+      metadata: {},
+    }, TEST_TURN_SCOPE);
+
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visionAvailable: false,
+        imageAnalyzer: undefined,
+        sanitizeImage: undefined,
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(preprocessed.metadata.visionPreprocess).toBeUndefined();
   });
 
   it("persists an unprocessed image and exposes its durable tool path", async () => {

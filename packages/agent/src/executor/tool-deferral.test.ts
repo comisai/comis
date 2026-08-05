@@ -93,6 +93,27 @@ describe("applyToolDeferral - rule-based deferral", () => {
     expect(result.deferredNames).not.toContain("read");
   });
 
+  it("keeps an explicitly named privileged tool callable for its runtime trust denial", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("agents_manage"),
+      makeTool("obs_query"),
+    ];
+    const ctx = makeContext({
+      trustLevel: "user",
+      requestText: "use agents manage to list them",
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    expect(result.activeTools.map((tool) => tool.name)).toContain("agents_manage");
+    expect(result.deferredNames).not.toContain("agents_manage");
+    expect(result.deferredNames).toContain("obs_query");
+    expect(result.requestRelevantToolNames).toContain("agents_manage");
+  });
+
   it("keeps privileged tools active when trustLevel is admin", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [

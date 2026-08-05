@@ -1,8 +1,8 @@
 {
-  "totalMinified": 195852,
-  "totalGzipped": 20443,
+  "totalMinified": 196517,
+  "totalGzipped": 20588,
   "budget": {
-    "minified": 196000,
+    "minified": 197000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -73,7 +73,7 @@
     "env.set": 539,
     "gateway.restart": 375,
     "gateway.status": 639,
-    "graph.cancel": 387,
+    "graph.cancel": 463,
     "graph.define": 1317,
     "graph.delete": 357,
     "graph.deleteRun": 383,
@@ -157,7 +157,7 @@
     "obs.delivery.recent": 2223,
     "obs.delivery.stats": 629,
     "obs.diagnostics": 596,
-    "obs.explain": 22323,
+    "obs.explain": 22987,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
     "obs.reset.table": 483,

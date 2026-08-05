@@ -38,6 +38,7 @@ import {
   type AgentCapability,
   type ResultRef,
   type ErrorKind,
+  type CitationEvidence,
   type EventMap,
   AgentExecutionFinishReasonSchema,
   classifyAgentFinishErrorKind,
@@ -62,7 +63,10 @@ import {
   type CoordinatorProgressForkHandle,
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
-import { buildBackgroundTaskFailedNotice } from "../executor/degraded-reply.js";
+import {
+  buildBackgroundTaskFailedNotice,
+  buildLoopDetectedReply,
+} from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnnouncementBatcher,
@@ -480,12 +484,17 @@ export interface SubAgentRunnerDeps {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: {
+      threadId?: string;
+      resolvedLanguage?: string;
+      citationEvidence?: CitationEvidence;
+    },
   ) => Promise<string | undefined>;
   /** Render the deterministic failed-completion disclosure for the parent agent. */
   renderAnnouncementFailureNotice?: (
     agentId: string,
     resolvedLanguage?: string,
+    finishReason?: string,
   ) => string;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
@@ -934,6 +943,16 @@ function classifyRequiredTool(
 export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
+  interface ChildBackgroundProcessState {
+    pending: Set<string>;
+    failed: Set<string>;
+  }
+  const childBackgroundProcesses = new Map<string, ChildBackgroundProcessState>();
+  const childCitationEvidence = new Map<string, {
+    observedWebResearch: boolean;
+    urlDigests: Set<string>;
+  }>();
+  const backgroundCleanupRequestedRunIds = new Set<string>();
   const createRunProgress = (updatedAt: number): SubAgentRunProgress => ({
     health: "healthy",
     toolCalls: 0,
@@ -941,7 +960,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     updatedAt,
   });
   const observeChildToolOutcome = (event: EventMap["tool:executed"]): void => {
-    if (event.backgrounded || event.agentId === undefined || event.sessionKey === undefined) {
+    if (event.agentId === undefined || event.sessionKey === undefined) {
       return;
     }
     for (const run of runs.values()) {
@@ -951,6 +970,47 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         || run.sessionKey !== event.sessionKey
       ) {
         continue;
+      }
+      if (event.toolName === "web_search" || event.toolName === "web_fetch") {
+        const evidence = childCitationEvidence.get(run.runId) ?? {
+          observedWebResearch: false,
+          urlDigests: new Set<string>(),
+        };
+        evidence.observedWebResearch = true;
+        if (
+          event.toolName === "web_fetch"
+          && event.success
+          && event.citationUrlDigest !== undefined
+          && evidence.urlDigests.size < 100
+        ) {
+          evidence.urlDigests.add(event.citationUrlDigest);
+        }
+        childCitationEvidence.set(run.runId, evidence);
+      }
+      if (event.backgrounded) {
+        if (event.toolName === "exec") {
+          const state = childBackgroundProcesses.get(run.runId) ?? {
+            pending: new Set<string>(),
+            failed: new Set<string>(),
+          };
+          state.pending.add(event.processSessionId ?? `tool-call:${event.toolCallId}`);
+          childBackgroundProcesses.set(run.runId, state);
+        }
+        run.progress.updatedAt = event.timestamp;
+        continue;
+      }
+      if (
+        event.toolName === "process"
+        && event.processSessionId !== undefined
+        && event.processSessionStatus !== undefined
+      ) {
+        const state = childBackgroundProcesses.get(run.runId);
+        const terminal = event.processSessionStatus !== "running";
+        if (state !== undefined && terminal && state.pending.delete(event.processSessionId)) {
+          if (event.processSessionStatus === "failed" || event.processSessionStatus === "killed") {
+            state.failed.add(event.processSessionId);
+          }
+        }
       }
       run.progress.toolCalls++;
       run.progress.updatedAt = event.timestamp;
@@ -965,6 +1025,27 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
   };
   deps.eventBus.on("tool:executed", observeChildToolOutcome);
+
+  function backgroundProcessCounts(runId: string): { unresolved: number; failed: number } {
+    const state = childBackgroundProcesses.get(runId);
+    return {
+      unresolved: state?.pending.size ?? 0,
+      failed: state?.failed.size ?? 0,
+    };
+  }
+
+  function requestAbandonedBackgroundCleanup(run: SubAgentRun): void {
+    const { unresolved } = backgroundProcessCounts(run.runId);
+    if (unresolved === 0 || backgroundCleanupRequestedRunIds.has(run.runId)) return;
+    backgroundCleanupRequestedRunIds.add(run.runId);
+    deps.eventBus.emit("subagent:background_processes_abandoned", {
+      runId: run.runId,
+      agentId: run.agentId,
+      sessionKey: run.sessionKey,
+      count: unresolved,
+      timestamp: clock.now(),
+    });
+  }
   interface CompletionDeferred {
     promise: Promise<SubAgentCompletion>;
     resolve(completion: SubAgentCompletion): void;
@@ -3150,11 +3231,34 @@ function classifyCompletionErrorKind(
           }
         }
 
+        const backgroundProcesses = backgroundProcessCounts(runId);
+        const backgroundProcessFailure = backgroundProcesses.unresolved > 0
+          ? `Sub-agent returned while ${backgroundProcesses.unresolved} auto-backgrounded process${backgroundProcesses.unresolved === 1 ? " was" : "es were"} still running.`
+          : backgroundProcesses.failed > 0
+            ? `Sub-agent returned after ${backgroundProcesses.failed} auto-backgrounded process${backgroundProcesses.failed === 1 ? " failed or was killed" : "es failed or were killed"}.`
+            : undefined;
+        requestAbandonedBackgroundCleanup(run);
+        if (backgroundProcessFailure !== undefined) {
+          deps.logger?.warn({
+            runId,
+            agentId: params.agentId,
+            unresolvedBackgroundProcesses: backgroundProcesses.unresolved,
+            failedBackgroundProcesses: backgroundProcesses.failed,
+            hint: "Poll each auto-backgrounded exec session with process.status until it reaches a terminal state before returning from the sub-agent",
+            errorKind: "precondition" as const,
+          }, "Sub-agent returned before auto-backgrounded process work was complete");
+        }
+
         const subAgentOutcome = resolveSubAgentOutcome({
           modelStoppedCleanly,
           missingContractedOutputs,
         });
-        const isSuccess = subAgentOutcome.success;
+        // Two INDEPENDENT reasons a run is not a success, and a run can hit
+        // either: it stopped without writing the outputs it declared, or it
+        // returned while work it had launched was still unfinished. Neither
+        // subsumes the other — a child can write every contracted file and still
+        // abandon a running process — so both gate the outcome.
+        const isSuccess = subAgentOutcome.success && backgroundProcessFailure === undefined;
 
         // Warn on empty response — may indicate prompt or context issues
         if (!result.response || result.response.trim().length === 0) {
@@ -3310,18 +3414,20 @@ function classifyCompletionErrorKind(
         const haltedWithoutOutput =
           isSubAgentAbortFinishReason(result.finishReason)
           && usableSummary.trim().length === 0;
-        const completionSummary = haltedWithoutOutput
-          ? buildHaltedAccount({
-            finishReason: result.finishReason,
-            stepsExecuted: result.stepsExecuted,
-            ...(abortClassification?.category === undefined
-              ? {}
-              : { category: abortClassification.category }),
-            ...(abortClassification?.hint === undefined
-              ? {}
-              : { hint: abortClassification.hint }),
-          })
-          : usableSummary;
+        const completionSummary = backgroundProcessFailure ?? (
+          haltedWithoutOutput
+            ? buildHaltedAccount({
+                finishReason: result.finishReason,
+                stepsExecuted: result.stepsExecuted,
+                ...(abortClassification?.category === undefined
+                  ? {}
+                  : { category: abortClassification.category }),
+                ...(abortClassification?.hint === undefined
+                  ? {}
+                  : { hint: abortClassification.hint }),
+              })
+            : usableSummary
+        );
         if (haltedWithoutOutput) {
           deps.logger?.warn({
             runId, agentId: params.agentId,
@@ -3385,7 +3491,9 @@ function classifyCompletionErrorKind(
         if (deps.memoryAdapter) {
           try {
             let status: string;
-            if (abortClassification) {
+            if (backgroundProcessFailure !== undefined) {
+              status = "Halted (background process incomplete)";
+            } else if (abortClassification) {
               status = `Halted (${abortClassification.category})`;
             } else if (result.finishReason === "error" && result.errorContext) {
               const retryHint = result.errorContext.retryable ? ", retryable" : "";
@@ -3399,7 +3507,7 @@ function classifyCompletionErrorKind(
             const taskSnippet = params.task.length > 500
               ? params.task.slice(0, 497) + "..."
               : params.task;
-            const sanitizedResponse = sanitizeAssistantResponse(result.response);
+            const sanitizedResponse = sanitizeAssistantResponse(completionSummary);
             const resultSnippet = sanitizedResponse.length > 500
               ? sanitizedResponse.slice(0, 497) + "..."
               : sanitizedResponse;
@@ -3499,9 +3607,9 @@ function classifyCompletionErrorKind(
                         : sanitizeAssistantResponse(result.response),
                     }
                   : {
-                      error: condensedResult
+                      error: backgroundProcessFailure ?? (condensedResult
                         ? `${condensedResult.result.summary}${fullResultLine}`
-                        : sanitizeAssistantResponse(result.response),
+                        : sanitizeAssistantResponse(result.response)),
                     }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
@@ -3514,6 +3622,7 @@ function classifyCompletionErrorKind(
                 errorContext: result.errorContext,
               });
             }
+            const runCitationEvidence = childCitationEvidence.get(runId);
             await deliverAnnouncement({
               announcementText,
               announceChannelType: params.announceChannelType,
@@ -3528,6 +3637,14 @@ function classifyCompletionErrorKind(
               callerConversation: params.callerConversation,
               destinationEndpoint: run.callerEndpoint,
               resolvedLanguage: params.resolvedLanguage,
+              ...(runCitationEvidence?.observedWebResearch === true
+                ? {
+                    citationEvidence: {
+                      kind: "web_fetch",
+                      urlDigests: [...runCitationEvidence.urlDigests],
+                    },
+                  }
+                : {}),
               terminalOutcome: isSuccess
                 ? { status: "completed" }
                 : {
@@ -3535,7 +3652,12 @@ function classifyCompletionErrorKind(
                     failureNotice: deps.renderAnnouncementFailureNotice?.(
                       params.callerAgentId ?? params.agentId,
                       params.resolvedLanguage,
-                    ) ?? buildBackgroundTaskFailedNotice(params.resolvedLanguage),
+                      result.finishReason,
+                    ) ?? (
+                      result.finishReason === "loop_detected"
+                        ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
+                        : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
+                    ),
                     ...(result.errorContext?.errorType === "UpstreamToolFailure"
                       && result.errorContext.configKey !== undefined
                       ? { requiredConfigKey: result.errorContext.configKey }
@@ -3586,16 +3708,20 @@ function classifyCompletionErrorKind(
           terminalizeRun(runId, {
             endReason: "failed",
             completedAtMs: completedAt,
-            // A clean stop that skipped its contracted outputs is a validation
-            // failure, not an internal one — routing it through the finish-reason
-            // classifier would label a "stop" as `internal` and send an operator
-            // hunting a crash that never happened.
-            errorKind: subAgentOutcome.reason === "contract_unsatisfied"
-              ? ("validation" as const)
-              : classifyCompletionErrorKind(
-                  result.finishReason,
-                  result.terminalErrorKind,
-                ),
+            // Ordered by specificity. An abandoned background process is a
+            // precondition the child broke; a clean stop that skipped its
+            // contracted outputs is a validation failure. Only when neither
+            // applies does the finish-reason classifier decide — it would label a
+            // "stop" as `internal` and send an operator hunting a crash that
+            // never happened.
+            errorKind: backgroundProcessFailure !== undefined
+              ? ("precondition" as const)
+              : subAgentOutcome.reason === "contract_unsatisfied"
+                ? ("validation" as const)
+                : classifyCompletionErrorKind(
+                    result.finishReason,
+                    result.terminalErrorKind,
+                  ),
             summary: completionSummary || result.errorContext?.originalError,
             ...(materializedRef ? { resultRef: materializedRef } : {}),
           }, telemetry);
@@ -3611,6 +3737,12 @@ function classifyCompletionErrorKind(
           timestamp: completedAt,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
+          ...(backgroundProcesses.unresolved > 0
+            ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+            : {}),
+          ...(backgroundProcesses.failed > 0
+            ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
         });
 
         // Safety-net proxy stop — announceToParent's own finally block handles
@@ -3649,6 +3781,8 @@ function classifyCompletionErrorKind(
         ) return;
 
         const completedAt = clock.now();
+        const backgroundProcesses = backgroundProcessCounts(runId);
+        requestAbandonedBackgroundCleanup(run);
         const errorMessage = error instanceof Error ? error.message : String(error);
         const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
@@ -3721,6 +3855,12 @@ function classifyCompletionErrorKind(
           runId, parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId, success: false,
           runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
+          ...(backgroundProcesses.unresolved > 0
+            ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+            : {}),
+          ...(backgroundProcesses.failed > 0
+            ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
         });
 
         // Stop proxy typing before failure notification
@@ -3790,6 +3930,9 @@ function classifyCompletionErrorKind(
         }
       } finally {
         providerSettledRunIds.delete(runId);
+        childBackgroundProcesses.delete(runId);
+        childCitationEvidence.delete(runId);
+        backgroundCleanupRequestedRunIds.delete(runId);
         // Release the child's trajectory recorder on EVERY terminal settle —
         // completion, natural failure, kill, and watchdog all flow through
         // this promise. Without it the dead child's recorder stays subscribed
@@ -3814,6 +3957,8 @@ function classifyCompletionErrorKind(
 
       const completedAt = clock.now();
       const runtimeMs = completedAt - run.startedAt;
+      const backgroundProcesses = backgroundProcessCounts(runId);
+      requestAbandonedBackgroundCleanup(run);
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
@@ -3871,6 +4016,12 @@ function classifyCompletionErrorKind(
         runId, parentSessionKey: run.callerSessionKey ?? "unknown",
         agentId: run.agentId, success: false,
         runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
+        ...(backgroundProcesses.unresolved > 0
+          ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+          : {}),
+        ...(backgroundProcesses.failed > 0
+          ? { failedBackgroundProcesses: backgroundProcesses.failed }
+          : {}),
       });
 
       // Stop proxy typing on watchdog timeout
@@ -4081,7 +4232,6 @@ function classifyCompletionErrorKind(
       errorKind: killedBy === "health_monitor" ? "timeout" : "precondition",
       summary: errorMessage,
     });
-    forceTerminalCleanup(run);
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -4113,6 +4263,9 @@ function classifyCompletionErrorKind(
       ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
       timestamp: killedAt,
     });
+    // Keep the child recorder subscribed through the kill event. Closing it
+    // first silently drops the event that explains why this run terminalized.
+    forceTerminalCleanup(run);
 
     // Abort the in-flight SDK session via composite-key resolver
     // (best-effort).

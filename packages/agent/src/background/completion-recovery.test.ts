@@ -36,6 +36,7 @@ function makeOrigin(): BackgroundTaskOrigin {
       channelId: "conversation-a",
     },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
   };

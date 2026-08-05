@@ -551,6 +551,7 @@ export {
   buildExecutionFailureReply,
   buildPipelineTimeoutReply,
   buildBackgroundTaskFailedNotice,
+  buildLoopDetectedReply,
   catalogFromLocalePacks,
 } from "./executor/degraded-reply.js";
 // Card locale projection — consumed by the orchestrator's activity-turn coordinator, the one

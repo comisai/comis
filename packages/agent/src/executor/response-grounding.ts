@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Deterministic grounding for agent configuration and self-authority replies. */
 
+import { isCompletionClaim } from "./critic-isolation.js";
+
+export { enforceCitationEvidence } from "./citation-evidence.js";
+export type { CitationEvidenceGuardResult } from "./citation-evidence.js";
+
 function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }
@@ -113,6 +118,48 @@ export interface OngoingWorkEvidenceGuardResult {
   response: string;
   corrected: boolean;
   reason?: "missing_ongoing_work_evidence";
+}
+
+export interface CompletionEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "unrecovered_tool_failure_completion_claim";
+  correction?: "replaced" | "prefixed_partial";
+}
+
+/**
+ * Ground affirmative completion prose when the recovery-aware terminal tool
+ * inventory still contains a failure. Read-only partial results can remain
+ * beneath an explicit runtime warning; all other responses are replaced. A
+ * later matching success removes the tool from this input before the guard
+ * runs, so recovered attempts remain eligible for ordinary completion replies.
+ */
+export function enforceCompletionEvidence(params: {
+  response: string;
+  unrecoveredToolFailures?: readonly string[];
+  honestResponse: string;
+  preservePartialResponse?: boolean;
+}): CompletionEvidenceGuardResult {
+  if (
+    (params.unrecoveredToolFailures?.length ?? 0) === 0
+    || !isCompletionClaim(params.response)
+  ) {
+    return { response: params.response, corrected: false };
+  }
+  if (params.preservePartialResponse === true) {
+    return {
+      response: `${params.honestResponse}\n\n${params.response}`,
+      corrected: true,
+      reason: "unrecovered_tool_failure_completion_claim",
+      correction: "prefixed_partial",
+    };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "unrecovered_tool_failure_completion_claim",
+    correction: "replaced",
+  };
 }
 
 const ONGOING_WORK_CLAIM_PATTERNS = [

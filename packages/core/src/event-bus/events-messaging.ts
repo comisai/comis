@@ -139,6 +139,10 @@ export interface MessagingEvents {
     cacheReadTokens?: number;
     /** Cache write tokens for this run. */
     cacheWriteTokens?: number;
+    /** Unresolved exec auto-background sessions at provider return. */
+    unresolvedBackgroundProcesses?: number;
+    /** Auto-background sessions observed in a failed or killed state. */
+    failedBackgroundProcesses?: number;
   };
 
   /** A synchronous parent wait observed a child's terminal outcome. */
@@ -659,7 +663,9 @@ export interface MessagingEvents {
      *  `explain` name the exact knob ("token limb: 30640/60000") instead of an
      *  operator grepping the "Per-root … budget exceeded" daemon-log line. Absent
      *  for non-spend aborts and for the priced $-ceiling path. */
-    perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+    perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
+    /** Exact agent step ceiling that stopped this execution. */
+    stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   };
 
   /** Budget trajectory warning: approaching token budget exhaustion */
@@ -749,7 +755,9 @@ export interface MessagingEvents {
    *  they could authorize admin-only changes), or
    *  `agent_update_noop_grounding` (an unchanged successful agent update was
    *  contradicted by the final prose), or `missing_ongoing_work_evidence`
-   *  (terminal prose promised continued work without a background receipt).
+   *  (terminal prose promised continued work without a background receipt), or
+   *  `unrecovered_tool_failure_completion_claim` (affirmative completion prose
+   *  contradicted the recovery-aware failed-tool inventory).
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -765,7 +773,8 @@ export interface MessagingEvents {
       | "locale_fidelity"
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
-      | "missing_ongoing_work_evidence";
+      | "missing_ongoing_work_evidence"
+      | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;
   };

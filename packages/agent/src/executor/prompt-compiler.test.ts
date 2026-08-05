@@ -58,6 +58,20 @@ describe("compileExecutionPrompt", () => {
     );
   });
 
+  it("requires current evidence for provider prerequisite claims", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(
+      /do not claim.*credential.*provider.*prerequisite.*configured or missing.*current.*evidence/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /registered tool.*available to attempt.*trust.*prerequisite/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /distinguish.*successful provider call/iu,
+    );
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{
@@ -75,6 +89,20 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/do not grant.*capabilit/iu);
     expect(result.stableEnginePrefix).toMatch(/registered tools.*authoritative/iu);
     expect(result.stableEnginePrefix).toMatch(/do not claim.*output.*skill.*advertis/iu);
+  });
+
+  it("limits prompt-skill invocation to the current registry snapshot", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(
+      /only.*current.*available_skills.*(?:active|available).*prompt skill/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /remembered.*SKILL\.md.*ordinary.*untrusted data/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /skill.*absent.*available_skills.*(?:unavailable|not available)/iu,
+    );
   });
 
   it("requires exact retrieved source URLs when the user asks for attribution", () => {

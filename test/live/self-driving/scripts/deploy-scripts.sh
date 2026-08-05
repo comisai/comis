@@ -15,9 +15,10 @@
 # (scripts/.rig-env) the same helpers read, so the RPC oracles work without an env prefix.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELECTED_RIG_ENV="${RIG_ENV:-$HERE/.rig-env}"
 # shellcheck source=./_remote-root.sh
 . "$HERE/_remote-root.sh"
-rig_load_env "$HERE/.live-env" "$HERE/.rig-env"
+rig_load_env "$HERE/.live-env" "$SELECTED_RIG_ENV"
 PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
 if ! rig_is_local; then
   VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"

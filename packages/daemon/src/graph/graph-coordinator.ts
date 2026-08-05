@@ -40,7 +40,7 @@ import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
 import { getModel, completeSimple } from "@earendil-works/pi-ai/compat";
 
 // Module imports
-import { globalCompletionHandler, releaseAndDrainQueue } from "./graph-concurrency.js";
+import { globalCompletionHandler, releaseAndDrainQueue, type GraphSubAgentCompletionEvent } from "./graph-concurrency.js";
 import {
   spawnNode as spawnNodeFn,
   spawnReadyNodes as spawnReadyNodesFn,
@@ -331,7 +331,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       });
     },
 
-    handleSubAgentCompleted: (gs: GraphRunState, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => {
+    handleSubAgentCompleted: (gs: GraphRunState, event: GraphSubAgentCompletionEvent) => {
       runDurableTransition(gs, (afterPersistence) => {
         handleSubAgentCompletedFn(state, deps, config, gs, event, {
           spawnReadyNodes: (gs2) => afterPersistence(() => callbacks.spawnReadyNodes(gs2)),
@@ -353,7 +353,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       callbacks.handleGraphCompletion(gs),
   };
 
-  function onSubAgentCompleted(event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }): void {
+  function onSubAgentCompleted(event: GraphSubAgentCompletionEvent): void {
     globalCompletionHandler(state, config, event, {
       handleDriverTurnCompleted: (gs, nodeId, evt) =>
         handleDriverTurnCompletedFn(state, deps, config, gs, nodeId, evt, driverCallbacks),
@@ -688,13 +688,16 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     return gs ? resolveGraphRunSnapshot(gs) : undefined;
   }
 
-  function cancel(graphId: string): boolean {
+  function cancel(graphId: string): {
+    cancelled: boolean;
+    killed: number;
+  } {
     return cancelGraphRun(
       state,
       deps,
       graphId,
       callbacks.handleGraphCompletion,
-    ).cancelled;
+    );
   }
 
   function cancelByRootRunId(rootRunId: string): {

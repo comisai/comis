@@ -34,32 +34,21 @@ import {
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
-import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { ensureTool, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
+import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js";
+import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
 // ---------------------------------------------------------------------------
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
-/** Minimum same-tool failures for a breaker/repeated-failure signal. Used by
- * the heuristic registry; surfaced here for one source of truth. */
+/** Minimum same-tool failures for a breaker/repeated-failure signal; shared with the heuristic registry. */
 export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
 const DO_NOT_RETRY_RE = /DO NOT retry/i;
 const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
-
-function ensureTool(
-  acc: Acc,
-  tool: string,
-): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
-  let entry = acc.toolStats.get(tool);
-  if (entry === undefined) {
-    entry = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map() };
-    acc.toolStats.set(tool, entry);
-  }
-  return entry;
-}
 function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
   return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
@@ -67,13 +56,11 @@ function nonnegativeInteger(value: unknown): number {
 // ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
-
 function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
   const msg = asString(rec.msg) ?? "";
   const tool = asString(rec.toolName);
   const sessionKey = asString(rec.sessionKey);
   if (sessionKey && !acc.sessionKey) acc.sessionKey = sessionKey;
-
   // Offload (log shape).
   if (msg === "Tool result offloaded to disk" && tool) {
     acc.offloads.push({
@@ -84,7 +71,6 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     });
     return;
   }
-
   // Failure (log shape) — keyed on the "Tool execution failed" message.
   if (msg === "Tool execution failed" && tool) {
     const entry = ensureTool(acc, tool);
@@ -127,7 +113,6 @@ function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
     });
     return;
   }
-
   // Success (log shape): either an explicit success:true with a toolName, or a
   // "Tool audit: <tool> succeeded" audit line.
   if (tool && (rec.success === true || /succeeded/.test(msg))) {
@@ -138,6 +123,7 @@ function handleEventRecord(
   acc: Acc,
   rec: Record<string, unknown>,
   latestPromptSeq: number | undefined,
+  previousPromptSeq: number | undefined,
 ): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
@@ -147,6 +133,10 @@ function handleEventRecord(
     || (recordSeq !== undefined && recordSeq > latestPromptSeq);
   if (accumulateQueueRecord(acc, type, recordSeq, data)) return;
   if (accumulateContextRecord(acc, type, data, recordSeq, isCurrentTurn)) return;
+  if (accumulateMediaAttachmentRejection(
+    acc.mediaAttachmentRejections, type, data, recordSeq,
+    latestPromptSeq, previousPromptSeq,
+  )) return;
   switch (type) {
     case "prompt.submitted": {
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
@@ -265,37 +255,17 @@ function handleEventRecord(
       acc.terminalDriveEvictedMs = asNumber(data.durationMs) ?? acc.terminalDriveEvictedMs;
       return;
     }
-    case "subagent.killed": {
-      // An attributed sub-agent kill (bridged from subagent:killed, the
-      // runner's kill chokepoint). Keep the LAST kill's closed attribution +
-      // telemetry for the subagent_stuck_killed verdict — the child's own
-      // rollup can still read success when the kill races completion, so this
-      // record is the kill's authoritative explain-side evidence.
-      const killedBy = asString(data.killedBy);
-      if (killedBy !== undefined) {
-        acc.subagentKilledBy = killedBy;
-        acc.subagentKilledRuntimeMs = asNumber(data.runtimeMs);
-        acc.subagentKilledIdleMs = asNumber(data.idleMs);
-        acc.subagentKilledThresholdMs = asNumber(data.thresholdMs);
-      }
-      return;
-    }
+    case "subagent.killed":
+    case "subagent.background_processes_abandoned":
     case "subagent.delivery_skipped": {
-      if (!isCurrentTurn) return;
-      const runId = asString(data.runId);
-      const reason = asString(data.reason);
-      if (
-        runId === undefined
-        || (reason !== "no_origin" && reason !== "no_channel_params")
-      ) return;
-      acc.subagentDeliverySkippedCount += 1;
-      acc.subagentDeliverySkippedLastRunId = runId;
-      acc.subagentDeliverySkippedLastReason = reason;
+      accumulateSubagentIncidentRecord(acc, type, data, isCurrentTurn);
       return;
     }
     case "background_task.promoted":
     case "background_task.completed":
     case "background_task.failed":
+    case "background_task.cancelled":
+    case "background_task.reentered":
     case "background_task.notified":
       accumulateBackgroundTaskRecord(acc, type, data, asNumber(rec.seq) ?? acc.seq++);
       return;
@@ -578,11 +548,7 @@ function handleEventRecord(
       if (data.providerErrorCode === "invalid_tool_identity") {
         acc.providerErrorCode = data.providerErrorCode;
       }
-      // Tally the calls the provider REJECTED (fold in the sibling module).
-      acc.modelErrorCounts = foldModelErrorCategory(
-        acc.modelErrorCounts,
-        asString(data.modelErrorCategory),
-      );
+      acc.modelErrorCounts = foldModelErrorCategory(acc.modelErrorCounts, asString(data.modelErrorCategory));
       return;
     }
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
@@ -602,9 +568,25 @@ function handleEventRecord(
       if (prb && typeof prb === "object") {
         const limb = asString(prb.limb);
         const spent = asNumber(prb.spent);
+        const attempted = asNumber(prb.attempted);
         const cap = asNumber(prb.cap);
         if (limb !== undefined && spent !== undefined && cap !== undefined) {
-          acc.perRootBudget = { limb, spent, cap, unit: asString(prb.unit) ?? "usd" };
+          acc.perRootBudget = {
+            limb,
+            spent,
+            ...(attempted !== undefined ? { attempted } : {}),
+            cap,
+            unit: asString(prb.unit) ?? "usd",
+          };
+        }
+      }
+      const step = (data as { stepLimit?: Record<string, unknown> }).stepLimit;
+      if (step && typeof step === "object") {
+        const bindingKnob = asString(step.bindingKnob);
+        const stepsExecuted = asNumber(step.stepsExecuted);
+        const cap = asNumber(step.cap);
+        if (bindingKnob !== undefined && stepsExecuted !== undefined && cap !== undefined) {
+          acc.stepLimit = { bindingKnob, stepsExecuted, cap };
         }
       }
       return;
@@ -666,11 +648,9 @@ function handleEventRecord(
       return;
   }
 }
-
 // ---------------------------------------------------------------------------
 // Public normalizer.
 // ---------------------------------------------------------------------------
-
 /**
  * Normalize a heterogeneous record stream (raw log lines AND/OR structured
  * trajectory events) into one `IncidentSignals` view.
@@ -681,6 +661,7 @@ function handleEventRecord(
  */
 export function toIncidentSignals(records: Array<Record<string, unknown>>): IncidentSignals {
   const latestPromptSeq = latestPromptSequence(records);
+  const previousPromptSeq = previousPromptSequence(records, latestPromptSeq);
   const acc: Acc = {
     toolStats: new Map(),
     failures: [],
@@ -711,6 +692,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    subagentBackgroundProcessesAbandonedCount: 0,
     subagentDeliverySkippedCount: 0,
     subagentCompletedRunIds: new Set(),
     subagentCompletedCount: 0,
@@ -721,9 +703,11 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     backgroundTerminalTaskIds: new Set(),
     backgroundCompletedTaskIds: new Set(),
     backgroundFailedTaskIds: new Set(),
+    backgroundCancelledTaskIds: new Set(),
+    backgroundReenteredTaskIds: new Set(),
     backgroundAcceptedTaskIds: new Set(),
+    mediaAttachmentRejections: [],
   };
-
   for (const rec of records) {
     // Envelope agentId (first seen) — the metadata rollup often lacks it.
     if (acc.agentId === undefined) {
@@ -742,7 +726,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
         else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
       }
-      handleEventRecord(acc, rec, latestPromptSeq);
+      handleEventRecord(acc, rec, latestPromptSeq, previousPromptSeq);
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
       // stage records carry toolName + success and previously fell into the
@@ -753,7 +737,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       handleLogRecord(acc, rec);
     }
   }
-
   // Newest-first failures (highest seq first).
   acc.failures.sort((a, b) => b.seq - a.seq);
   const currentTurnFailures = latestPromptSeq === undefined
@@ -762,9 +745,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   const currentTurnNodeBudgetBreaches = latestPromptSeq === undefined
     ? acc.nodeBudgetBreaches
     : acc.nodeBudgetBreaches.filter((breach) => breach.seq > latestPromptSeq);
-
   const { toolStats, repeatedFailureCount, mostFailedTool } = summarizeToolStats(acc);
-
   // Misclassification derivation (log-evidence only): a tool with BOTH a
   // success and ≥MISCLASS_N failures AND a status/200/403 token in a body.
   let hasMisclassificationSignal = false;
@@ -779,7 +760,6 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       break;
     }
   }
-
   const learning = buildLearningSignal(acc.learning); // undefined ⇒ omitted below
   const backgroundTasks = buildBackgroundTasksSignal(acc);
   const turnTraceCount = acc.promptTraceIds.size > 0
@@ -804,6 +784,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }
       : {}),
+    ...(acc.mediaAttachmentRejections.length > 0
+      ? { mediaAttachmentRejections: acc.mediaAttachmentRejections.slice(-16) }
+      : {}),
     toolStats,
     failures: currentTurnFailures,
     breakerEvents: acc.breakerEvents,
@@ -823,7 +806,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               ? { lastFailedRunId: acc.subagentLastFailedRunId }
               : {}),
           },
-        }
+  }
       : {}),
     // Materialize run skeletons and join tool calls through each child lease id.
     ...(acc.orchestrateRunsByRunId.size > 0
@@ -835,7 +818,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
                 ? [...(acc.orchestrateToolCallsByLease.get(run.leaseId)?.values() ?? [])]
                 : [],
           })),
-        }
+  }
       : {}),
     ...(breakerOpenedTool !== undefined
       ? { breakerOpenedTool }
@@ -878,10 +861,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
                   degraded: acc.recallDegraded.count,
                   lastDegradedScope: acc.recallDegraded.lastScope,
                   lastDegradedErrorKind: acc.recallDegraded.lastErrorKind,
-                }
+  }
               : {}),
           },
-        }
+  }
       : {}),
     // Collapse the per-reason cache-break fold → a bounded,
     // deterministically-ordered array (count desc, then reason asc — the system
@@ -898,15 +881,19 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
               tokenDrop: v.tokenDrop,
             }))
             .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
-        }
+  }
       : {}),
     // The terminal spend-kill breach (undefined when not spend-killed — never {}); the verdict stays amount-free, this carries the numbers.
     ...(acc.spend !== undefined ? { spend: acc.spend } : {}),
     // The per-ROOT autonomy.budget limb that tripped (token/wall-clock/$),
     // with its numbers in their unit — lets the spend verdict name the exact knob.
     ...(acc.perRootBudget !== undefined ? { perRootBudget: acc.perRootBudget } : {}),
+    ...(acc.stepLimit !== undefined ? { stepLimit: acc.stepLimit } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
+    ...(acc.summaryTopErrorKinds !== undefined
+      ? { summaryTopErrorKinds: acc.summaryTopErrorKinds }
+      : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.providerErrorCode !== undefined ? { providerErrorCode: acc.providerErrorCode } : {}),
     ...modelErrorsField(acc.modelErrorCounts),
@@ -930,7 +917,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             reason: acc.terminalDrivePromotedReason ?? "unknown",
             count: acc.terminalDrivePromotedCount,
           },
-        }
+  }
       : {}),
     // Surface a reaper eviction ONLY when one fired (undefined, never {}, when
     // no drive was evicted). `wasProducing` is DERIVED from the already-folded
@@ -945,7 +932,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             idleMs: acc.terminalDriveEvictedMs ?? 0,
             wasProducing: acc.terminalDrivePromotedReason === "producing",
           },
-        }
+  }
       : {}),
     // Surface an attributed sub-agent kill ONLY when one fired (undefined,
     // never {}). Idle/threshold ride only when present (health-monitor kills).
@@ -956,6 +943,15 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
             ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
+          },
+        }
+      : {}),
+    ...(acc.subagentBackgroundProcessesAbandonedCount > 0
+      && acc.subagentBackgroundProcessesAbandonedLastRunId !== undefined
+      ? {
+          subagentBackgroundProcessesAbandoned: {
+            count: acc.subagentBackgroundProcessesAbandonedCount,
+            lastRunId: acc.subagentBackgroundProcessesAbandonedLastRunId,
           },
         }
       : {}),

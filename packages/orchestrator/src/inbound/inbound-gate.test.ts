@@ -186,6 +186,53 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
 const SEND_OVERRIDES = { get: () => undefined, set: vi.fn(), delete: vi.fn() };
 
 describe("evaluateInboundGate history serialization", () => {
+  it("binds the active group policy to an activated turn", async () => {
+    const deps = makeDeps({
+      autoReplyEngineConfig: {
+        enabled: true,
+        groupActivation: "mention-gated",
+        customPatterns: [],
+        historyInjection: false,
+        maxHistoryInjections: 50,
+        maxGroupHistoryMessages: 20,
+      },
+    });
+    const msg = makeMsg({
+      metadata: {
+        telegramMessageId: "41",
+        telegramChatType: "group",
+        isBotMentioned: true,
+        autoReplyPolicyContext: {
+          groupActivation: "always",
+          historyInjection: true,
+        },
+      },
+    });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toMatchObject({
+      action: "process",
+      processedMsg: {
+        metadata: {
+          autoReplyPolicyContext: {
+            groupActivation: "mention-gated",
+            historyInjection: false,
+          },
+        },
+      },
+    });
+  });
+
   it("passes ingress terminal authority into queued history injection", async () => {
     const enqueue = vi.fn(async () => ok(undefined));
     const deps = makeDeps({

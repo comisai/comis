@@ -106,6 +106,17 @@ export interface AgentEvents {
      * `background_task:{completed,failed}` terminal event instead.
      */
     backgrounded?: boolean;
+    /**
+     * Process-registry session identity for an exec auto-background handoff or
+     * a later process-tool observation. Content-free opaque id only.
+     */
+    processSessionId?: string;
+    /**
+     * Closed process-registry state paired with `processSessionId`. An exec
+     * auto-background handoff is reported as `running`; process.status/kill
+     * supplies the later terminal observation.
+     */
+    processSessionStatus?: "running" | "completed" | "failed" | "killed";
     userId?: string;
     traceId?: string;
     agentId?: string;
@@ -160,6 +171,9 @@ export interface AgentEvents {
     /** The source HOSTS the web result came from (e.g. ["example.com"]) —
      *  hosts ONLY, never full URLs with paths/queries, never bodies. */
     domains?: string[];
+    /** SHA-256 of the exact final URL for a successful web_fetch. This is
+     *  relay-only citation evidence: never the URL, path, query, or body. */
+    citationUrlDigest?: string;
   };
 
   /** Tools filtered out by policy before execution (debugging/audit) */

@@ -6,7 +6,8 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { ok, err } from "@comis/shared";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
@@ -55,6 +56,167 @@ describe("createBeforeToolCallGuard", () => {
     const result = await guard({});
 
     expect(result).toBeUndefined();
+  });
+
+  it("blocks an outbound repaired-file claim without matched mutation evidence", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const onBlocked = vi.fn();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "its broken",
+      undefined,
+      {
+        requestMutationToolNames: new Set(["edit", "write"]),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked,
+      },
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "message" },
+      args: {
+        action: "attach",
+        caption: "Here is the repaired run tracker file.",
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(/successful current-turn mutation/iu),
+    });
+    expect(onBlocked).toHaveBeenCalledOnce();
+  });
+
+  it("allows an outbound repair claim after a matched mutation succeeds", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "its broken",
+      undefined,
+      {
+        requestMutationToolNames: new Set(["edit", "write"]),
+        currentSuccessfulMutationCount: () => 1,
+        onBlocked: vi.fn(),
+      },
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "message" },
+      args: {
+        action: "attach",
+        caption: "Here is the repaired run tracker file.",
+      },
+    })).resolves.toBeUndefined();
+  });
+
+  it("allows a neutral attachment caption without mutation evidence", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "its broken",
+      undefined,
+      {
+        requestMutationToolNames: new Set(["edit"]),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked: vi.fn(),
+      },
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "message" },
+      args: { action: "attach", caption: "Here is the current file for inspection." },
+    })).resolves.toBeUndefined();
+  });
+
+  it("blocks an outbound citation whose exact URL lacks fetch evidence", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const fetchedUrl = "https://example.com/source/abcdef";
+    const mutatedUrl = "https://example.com/source/abcdeg";
+    const onCitationBlocked = vi.fn();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "where is that from",
+      undefined,
+      {
+        requestMutationToolNames: new Set<string>(),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked: vi.fn(),
+        citationEvidenceEnabled: () => true,
+        allowedCitationDigests: () => [
+          createHash("sha256").update(fetchedUrl, "utf8").digest("hex"),
+        ],
+        onCitationBlocked,
+      },
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "message" },
+      args: {
+        action: "reply",
+        text: `[Source](${mutatedUrl})`,
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(/exact successful web_fetch/iu),
+    });
+    expect(onCitationBlocked).toHaveBeenCalledOnce();
+  });
+
+  it("allows an outbound citation backed by the exact fetch digest", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const fetchedUrl = "https://example.com/source/abcdef";
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "where is that from",
+      undefined,
+      {
+        requestMutationToolNames: new Set<string>(),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked: vi.fn(),
+        citationEvidenceEnabled: () => true,
+        allowedCitationDigests: () => [
+          createHash("sha256").update(fetchedUrl, "utf8").digest("hex"),
+        ],
+        onCitationBlocked: vi.fn(),
+      },
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "message" },
+      args: { action: "send", text: `[Source](${fetchedUrl})` },
+    })).resolves.toBeUndefined();
   });
 
   it("checks step counter first (priority order)", async () => {

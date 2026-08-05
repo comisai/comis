@@ -122,6 +122,16 @@ describe("selectVisionProvider", () => {
     expect(result).toBe(anthropic);
   });
 
+  it("does not fall back when the explicit provider is unavailable", () => {
+    const registry = new Map<string, VisionProvider>();
+    const openai = makeProvider("openai", ["image"]);
+    registry.set("openai", openai);
+
+    const result = selectVisionProvider(registry, "image", "google");
+
+    expect(result).toBeUndefined();
+  });
+
   it("falls back through priority order for image", () => {
     const registry = new Map<string, VisionProvider>();
     // No openai, so fallback order should reach anthropic

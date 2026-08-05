@@ -7,6 +7,7 @@ import type { LearningEvents } from "./events-learning.js";
 import type { TrajectoryEvents } from "./events-trajectory.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
+import type { BackgroundRecoveryEvents } from "./events-background-recovery.js";
 import type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 import type { TerminalEvents } from "./events-terminal.js";
 import type {
@@ -30,6 +31,7 @@ import type {
  *   (prompt:submitted, session:started/ended/summary, observability:trajectory_degraded)
  * - ChannelEvents: channel, queue, streaming, typing, autoreply, sendpolicy, debounce, priority, retry, ack
  * - InfraEvents: config, plugin, hook, browser, auth, device, diagnostic, media, scheduler, system, metrics
+ * - BackgroundRecoveryEvents: protected task-store recovery scan standing state
  * - TerminalEvents: interactive terminal-driver session lifecycle (session_state, spawn_failed)
  * - MediaGenerationEvents: image-generation lifecycle (image:requested/generated/delivered/failed)
  * - MediaVisionEvents: vision-analysis lifecycle (media.vision:requested/completed/failed)
@@ -45,6 +47,7 @@ export interface EventMap
     TrajectoryEvents,
     ChannelEvents,
     InfraEvents,
+    BackgroundRecoveryEvents,
     SchedulerTaskEvents,
     TerminalEvents,
     MediaGenerationEvents,

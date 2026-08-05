@@ -775,6 +775,66 @@ describe("durable cron scheduler lifecycle", () => {
     }));
   });
 
+  it("acknowledges a manual trigger after its durable start while execution continues", async () => {
+    let settleExecution!: (result: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    let runtimeInput!: CronRuntimeExecutionInput;
+    const built = await fixture({
+      seedJob: job("future", { kind: "at", atMs: NOW_MS + 10_000 }),
+      execute: (input) => {
+        runtimeInput = input;
+        return new Promise((resolve) => { settleExecution = resolve; });
+      },
+    });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+
+    await expect(built.scheduler.triggerJob("future")).resolves.toEqual(ok("execution_1"));
+    expect(settleExecution).toBeTypeOf("function");
+    const started = await built.tracker.readExecution("execution_1");
+    expect(started.ok && started.value?.start.executionId).toBe("execution_1");
+    expect(started.ok && started.value?.terminal).toBeUndefined();
+
+    settleExecution(ok(completed(runtimeInput)));
+    await built.scheduler.waitForIdle();
+    const terminal = await built.tracker.readExecution("execution_1");
+    expect(terminal).toMatchObject({ ok: true, value: { terminal: { outcome: { kind: "agent_turn" } } } });
+  });
+
+  it("refuses a manual trigger before the scheduler is accepting execution", async () => {
+    const built = await fixture({ seedJob: job() });
+    await built.scheduler.initialize();
+    // Deliberately NOT activated: the admission gate must reject before any
+    // execution id is minted, so no durable start row can exist to acknowledge.
+    await expect(built.scheduler.triggerJob("job_a")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "not_active", errorKind: "precondition" },
+    });
+    expect(await built.tracker.readExecution("execution_1")).toMatchObject({ ok: true, value: undefined });
+  });
+
+  it("converts an execution that rejects outside its Result contract into a governed failure", async () => {
+    const built = await fixture({ seedJob: job() });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    // Throw from the FIRST read inside executeOccurrence so the occurrence promise
+    // rejects rather than resolving a Result — the boundary the catch exists for.
+    vi.spyOn(built.store, "listJobs").mockImplementation(() => {
+      throw new Error("expected contract breach");
+    });
+
+    await expect(built.scheduler.runJob("job_a")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "operation_failed", errorKind: "internal" },
+    });
+    expect(built.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "execution_boundary", jobId: "job_a", errorKind: "internal" }),
+      "Cron execution rejected outside its Result contract",
+    );
+    // The slot must be released even on the non-Result path, or the scheduler
+    // would leak a running entry and never reach idle.
+    await expect(built.scheduler.waitForIdle()).resolves.toBeUndefined();
+  });
+
   it("rejects activation when recurring stagger eligibility would overflow", async () => {
     const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
     recurring.lifecycle = {

@@ -29,6 +29,16 @@ describe("TRAJECTORY_EVENT_TYPES contains automatic link-prefetch evidence", () 
   });
 });
 
+describe("TRAJECTORY_EVENT_TYPES contains attachment rejection evidence", () => {
+  it("includes the content-free media.attachment.rejected receipt", () => {
+    expect(
+      (TRAJECTORY_EVENT_TYPES as readonly string[]).includes(
+        "media.attachment.rejected",
+      ),
+    ).toBe(true);
+  });
+});
+
 // The four image-generation lifecycle types are appended
 // to the closed tuple so the daemon image RPC handler can `recordEvent(...)`
 // them via the per-session recorder (recordEvent REJECTS a type absent from

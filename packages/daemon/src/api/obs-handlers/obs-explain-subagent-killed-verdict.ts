@@ -81,6 +81,25 @@ export function subagentDeliverySkippedVerdict(
   };
 }
 
+/** A child returned while its owned process work was unresolved or failed. */
+export function subagentBackgroundProcessesAbandonedVerdict(
+  s: IncidentSignals,
+): SubagentKilledVerdict | null {
+  const abandoned = s.subagentBackgroundProcessesAbandoned;
+  if (abandoned === undefined) return null;
+  return {
+    code: "subagent_background_processes_abandoned",
+    detail:
+      `sub-agent ${abandoned.lastRunId} returned with ${String(abandoned.count)} `
+      + "auto-backgrounded process session(s) not terminal; its graph node was rejected rather than accepted as complete",
+    suggestedNextSteps: [
+      "poll every auto-backgrounded process with process.status until it is terminal before returning",
+      "make the process task idempotent before retrying because the original side effect may have started",
+      `run comis explain ${abandoned.lastRunId} --depth full to inspect the child lifecycle`,
+    ],
+  };
+}
+
 /**
  * The health-monitor stuck-kill verdict. Fires only on the autonomous kill;
  * deliberate (parent/operator/system) kills return null.

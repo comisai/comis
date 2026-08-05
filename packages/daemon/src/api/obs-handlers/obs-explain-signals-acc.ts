@@ -193,7 +193,9 @@ export interface Acc {
    *  priced observability.spend $-ceiling): the token / wall-clock limbs carry
    *  tokens / ms in `spent`/`cap` (NOT dollars), and the right knob is
    *  `autonomy.budget.<limb>`, not `observability.spend.*`. Content-free. */
-  perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
+  /** Exact configured step ceiling from the terminal max-steps abort. */
+  stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
   turnFinalized?: {
@@ -232,6 +234,7 @@ export interface Acc {
    *  trajectory-derived turn total the assembler prefers over the
    *  last-write-wins rollup turnCount. Absent ⇒ no summary records. */
   summaryTurnCount?: number;
+  summaryTopErrorKinds?: IncidentSignals["summaryTopErrorKinds"];
   /** Σ of the session's `model.completed` token fields — the trajectory-derived
    *  token ledger (source of cost.totalTokens + cacheReadRatio). Absent ⇒ no
    *  model.completed records. */
@@ -298,6 +301,8 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  subagentBackgroundProcessesAbandonedCount: number;
+  subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;
   subagentDeliverySkippedLastRunId?: string;
   subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
@@ -317,7 +322,26 @@ export interface Acc {
   backgroundTerminalTaskIds: Set<string>;
   backgroundCompletedTaskIds: Set<string>;
   backgroundFailedTaskIds: Set<string>;
+  backgroundCancelledTaskIds: Set<string>;
+  backgroundReenteredTaskIds: Set<string>;
   backgroundAcceptedTaskIds: Set<string>;
   /** Session aggregate of direct `link.prefetch` counts-only receipts. */
   linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;
+  /** Rejections belonging to the latest prompt-anchored turn. */
+  mediaAttachmentRejections: NonNullable<
+    IncidentSignals["mediaAttachmentRejections"]
+  >;
+}
+
+/**
+ * Get-or-create the per-tool tally. Lives with `Acc` so every fold that
+ * touches `toolStats` shares one initializer.
+ */
+export function ensureTool(acc: Acc, tool: string): { ok: number; failed: number; noOp: number; errorKinds: Map<string, number> } {
+  let entry = acc.toolStats.get(tool);
+  if (entry === undefined) {
+    entry = { ok: 0, failed: 0, noOp: 0, errorKinds: new Map() };
+    acc.toolStats.set(tool, entry);
+  }
+  return entry;
 }

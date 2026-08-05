@@ -620,9 +620,12 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     const dataDir = tmpDataDir();
     const sessionFile = buildRealSessionFile(dataDir);
 
-    // The trajectory lives at the runtimeFile the POINTER names — the co-located
-    // <sessionFile>.trajectory.jsonl path, matching production.
-    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    // The trajectory lives at the runtimeFile the POINTER names. Production
+    // commonly keeps it under the data-root trajectories directory rather
+    // than beside the session JSONL.
+    const runtimeDir = path.join(dataDir, "trajectories");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const runtimeFile = path.join(runtimeDir, "default-session.trajectory.jsonl");
     fs.writeFileSync(runtimeFile, trajectoryLines(), "utf-8");
 
     // Write the REAL pointer via the PRODUCTION writer (NOT a hand-built
@@ -658,6 +661,10 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     // EXACT field-name regression this assertion forbids.
     expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
+    expect(report.coverage?.sources).toEqual({
+      session: sessionFile,
+      trajectory: runtimeFile,
+    });
   });
 
   it("diagnoses a provider tool-identity rejection from the real nested session layout", async () => {

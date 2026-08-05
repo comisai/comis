@@ -471,7 +471,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
         return result;
       }
       const existing = findJob(scheduler, { jobName: params.jobName });
-      const executionId = unwrap(await scheduler.runJob(existing.id));
+      const executionId = unwrap(await scheduler.triggerJob(existing.id));
       const result = {
         triggered: true,
         mode: "force" as const,

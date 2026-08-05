@@ -68,24 +68,25 @@ import {
   CONTEXT_BLOAT_MIN_OFFLOADS,
   TOKEN_SPIKE_CHARS,
   MODULE_NOT_FOUND_MARKERS,
+  boundedConfigKey,
   breakerTool,
   hasModuleNotFound,
 } from "./obs-explain-heuristics-helpers.js";
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
-import {
-  subagentDeliverySkippedVerdict,
-  subagentFailedVerdict,
-  subagentStuckKilledVerdict,
-} from "./obs-explain-subagent-killed-verdict.js";
+import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 import {
   backgroundPendingVerdict,
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
-import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
+import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
 import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
+import {
+  executionAuthFailureVerdict,
+  recallMissVerdict,
+} from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
 import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -109,28 +110,6 @@ export interface RootCause {
   code: string;
   detail: string;
   suggestedNextSteps: string[];
-}
-
-function boundedConfigKey(value: string | undefined): string | undefined {
-  if (value === undefined || value.length === 0 || value.length > 256) {
-    return undefined;
-  }
-  const segments = value.split(".");
-  if (segments.length < 2 || segments.length > 9) return undefined;
-  for (const segment of segments) {
-    if (segment.length === 0) return undefined;
-    for (const character of segment) {
-      const code = character.charCodeAt(0);
-      const allowed =
-        (code >= 65 && code <= 90)
-        || (code >= 97 && code <= 122)
-        || (code >= 48 && code <= 57)
-        || character === "_"
-        || character === "-";
-      if (!allowed) return undefined;
-    }
-  }
-  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +169,9 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
+  // The unresolved child process is upstream of a missing control-plane delivery route.
+  subagentBackgroundProcessesAbandonedVerdict,
+
   subagentDeliverySkippedVerdict,
 
   subagentFailedVerdict,
@@ -248,15 +230,44 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         candidate.classifiedFailureBy === "runtime_guard" && candidate.matchedRule === "step_limit",
     );
     if (failure === undefined && s.endReason !== "max_steps") return null;
+    const stepLimit = s.stepLimit;
+    const bindingDetail = stepLimit === undefined
+      ? `endReason=${s.endReason ?? "max_steps"}`
+      : `${stepLimit.bindingKnob}=${String(stepLimit.cap)} stopped at `
+        + `${String(stepLimit.stepsExecuted)} tool-execution steps`;
     return {
       code: "execution_step_limit_reached",
       detail:
-        "the local execution step limit blocked additional tool calls (endReason=" +
-        (s.endReason ?? "max_steps") +
-        "); no provider request was attempted for the guarded calls",
+        `the local execution step limit (${bindingDetail}) blocked additional tool calls; `
+        + "no provider request was attempted for the guarded calls",
       suggestedNextSteps: [
         "simplify the workflow or use a composite tool that performs the bounded operation in one call",
-        "increase max_steps only when the task legitimately requires more independent calls",
+        stepLimit === undefined
+          ? "increase agents.<agentId>.maxSteps only when the task legitimately requires more independent calls"
+          : `increase ${stepLimit.bindingKnob} above ${String(stepLimit.cap)} only when the task legitimately requires more independent calls`,
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // A background MCP call may spend most of its fixed deadline waiting for a
+  // per-server concurrency slot. The terminal event retains only the trusted
+  // config key and timing numbers, so this verdict can name the binding value
+  // without persisting the external error body.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) => candidate.failureCode === "mcp_call_deadline_exceeded",
+    );
+    if (failure === undefined) return null;
+    const detail = failure.errorPreview.length > 0
+      ? failure.errorPreview
+      : "integrations.mcp.callToolTimeoutMs expired; timing details were unavailable";
+    return {
+      code: "mcp_background_call_deadline_exceeded",
+      detail: `${failure.toolName} exceeded its background MCP call deadline (${detail})`,
+      suggestedNextSteps: [
+        "reduce per-server queue contention; raise maxConcurrency only when the MCP server supports parallel tool calls",
+        "otherwise narrow or split the MCP request so it finishes within integrations.mcp.callToolTimeoutMs",
         "obs.explain depth=full",
       ],
     };
@@ -449,6 +460,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // outranks retained breaker noise from earlier turns.
   toolInvocationStallVerdict,
 
+  backgroundHardTimeoutVerdict, // runtime hard limit causes any breaker it trips
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;
@@ -553,7 +566,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 6) provider_timeout (insurance — any timeout-kind failure).
+  // 6) provider_timeout (insurance — any remaining timeout-kind failure).
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");
     if (failure === undefined) return null;
@@ -780,13 +793,9 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 9b-bis) provider_rejected_request. The provider refused the request itself,
-  //     so the model never ran and NO tool/recall evidence on this session can
-  //     be the cause — it is all downstream. Above recall_miss (and the
-  //     catch-all) for exactly that reason: a live incident reported
-  //     `recall_miss` for a session whose every LLM call was rejected, because a
-  //     provider-side rejection produces no tool-shaped `failures[]` entry.
-  //     Full rationale in the sibling obs-explain-provider-rejection-verdict.ts.
+  // 9b-bis) provider_rejected_request. The provider refused the request itself, so the
+  //     model never ran and any tool/recall evidence is downstream — hence above
+  //     recall_miss and the catch-all. See obs-explain-provider-rejection-verdict.ts.
   providerRejectedRequestVerdict,
 
   // 9c) background_pending. The foreground turn deliberately deferred its
@@ -801,6 +810,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     NO tool failures (mutually exclusive with the catch-all) + the
   //     authoritative `degraded` flag (full rationale in the sibling
   //     obs-explain-recall-verdict.ts module doc).
+  executionAuthFailureVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened

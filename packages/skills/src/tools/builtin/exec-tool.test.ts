@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createExecTool, buildSpawnCommand, killTree } from "./exec-tool/index.js";
 import { createProcessRegistry } from "./process-registry.js";
-import type { ProcessRegistry } from "./process-registry.js";
+import type { ProcessRegistry, ProcessSession } from "./process-registry.js";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExecSandboxConfig, SandboxProvider, SandboxOptions } from "./sandbox/types.js";
 import { homedir, tmpdir } from "node:os";
@@ -796,6 +796,22 @@ describe("createExecTool", () => {
       expect(registry.size()).toBe(1);
     });
 
+    it("auto-background process retains its owning session", { timeout: 15_000 }, async () => {
+      const tool = setup();
+      const result = await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc-owned-auto-background", {
+          command: "sleep 5",
+          autoBackgroundMs: 20,
+        }),
+      );
+      const details = result.details as { sessionId: string };
+
+      expect(
+        (registry.get(details.sessionId) as ProcessSession & { ownerSessionKey?: string })
+          .ownerSessionKey,
+      ).toBe(makeApprovalContext().sessionKey);
+    });
+
     it("does not expose a host pid after sandboxed auto-background escalation", { timeout: 15_000 }, async () => {
       registry = createProcessRegistry();
       const tool = createExecTool({
@@ -911,6 +927,22 @@ describe("createExecTool", () => {
       };
       // Should be the existing background behavior ("started"), not the auto-background status ("backgrounded")
       expect(details.status).toBe("started");
+    });
+
+    it("explicit background process retains its owning session", async () => {
+      const tool = setup();
+      const result = await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc-owned-explicit-background", {
+          command: "sleep 5",
+          background: true,
+        }),
+      );
+      const details = result.details as { sessionId: string };
+
+      expect(
+        (registry.get(details.sessionId) as ProcessSession & { ownerSessionKey?: string })
+          .ownerSessionKey,
+      ).toBe(makeApprovalContext().sessionKey);
     });
   });
 
@@ -2457,7 +2489,7 @@ function makeApprovalContext(): RequestContext {
       },
     },
     deliveryOrigin: Object.freeze({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelId: "chat-1",
     }),
   };
 }

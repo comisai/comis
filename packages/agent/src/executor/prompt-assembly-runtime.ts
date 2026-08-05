@@ -647,6 +647,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     channel: msg.channelType,
     chatType: resolveChatType(msg),
     flags: buildMessageFlags(msg),
+    ...(msg.metadata.replyContext !== undefined
+      ? { replyContext: msg.metadata.replyContext }
+      : {}),
+    ...(msg.metadata.autoReplyPolicyContext !== undefined
+      ? { autoReplyPolicyContext: msg.metadata.autoReplyPolicyContext }
+      : {}),
   };
 
   // Sender trust resolution

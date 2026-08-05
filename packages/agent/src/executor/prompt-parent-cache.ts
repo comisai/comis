@@ -67,6 +67,9 @@ export async function assembleParentCachePrompt(
       channel: msg.channelType,
       chatType,
       flags: buildMessageFlags(msg),
+      ...(msg.metadata.autoReplyPolicyContext !== undefined
+        ? { autoReplyPolicyContext: msg.metadata.autoReplyPolicyContext }
+        : {}),
     };
     const inboundLines = buildInboundMetadataSection(inboundMeta, false);
     if (inboundLines.length > 0) dynamicPreambleParts.push(inboundLines.join("\n"));

@@ -11,8 +11,10 @@ export type {
   // is NOT re-exported here — like OrchestrationEvents /
   // TrajectoryEvents, it stays internal and reaches consumers via EventMap.
   ChannelEvents,
+  BackgroundTaskFailureDiagnostic,
   BackgroundTaskFailureCode,
   InfraEvents,
+  BackgroundTaskRecoveryScanFailureKind,
   WebhookFailureReason,
   // SpendScopeKind — the closed wire enum (agent|tenant|global) for the spend
   // kill-switch events. Consumed by the @comis/agent spend-accumulator.

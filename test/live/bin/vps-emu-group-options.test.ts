@@ -14,6 +14,7 @@ import {
   assertValidGroupSpec,
   EMULATOR_BOT_ID,
   EMULATOR_BOT_USERNAME,
+  toCreateGroupChatOptions,
 } from "./vps-emu-group-options.js";
 
 const members = [{ id: 678314278, firstName: "U1", username: "u1" }];
@@ -23,6 +24,21 @@ describe("assertValidGroupSpec", () => {
     expect(() =>
       assertValidGroupSpec({ chatId: -1001234567890, members, supergroup: true, forum: true }),
     ).not.toThrow();
+  });
+
+  it("an omitted bot identity still creates the authenticated emulator bot member", () => {
+    const options = toCreateGroupChatOptions({
+      chatId: -1001234567890,
+      members,
+      supergroup: true,
+      forum: true,
+    });
+
+    expect(options.bot).toEqual({
+      id: EMULATOR_BOT_ID,
+      firstName: "bot",
+      username: EMULATOR_BOT_USERNAME,
+    });
   });
 
   it("rejects `id` in place of `chatId` and names the correct key", () => {

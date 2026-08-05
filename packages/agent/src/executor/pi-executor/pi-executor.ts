@@ -62,12 +62,15 @@ import {
   createConversationRef,
   emitObservationalEventSafely,
   LinkPrefetchReceiptSchema,
+  MediaAttachmentPreprocessReceiptsSchema,
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
+  classifyToolInvocationMutation,
   getToolMetadata,
+  matchesToolMutationRequest,
   tryGetContext,
   verifyWorkspacePolicySnapshot,
   ResponseLocalePolicySchema,
@@ -180,6 +183,11 @@ import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
 import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
+import {
+  historicalCitationDigests,
+  isCitationSourceRequest,
+} from "../citation-evidence.js";
+import { hasTrustedRuntimeActionEvidence } from "../persistent-action-evidence.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
@@ -1845,6 +1853,20 @@ async function runSessionLocked(
           : {}),
       });
     }
+    const attachmentReceipts = MediaAttachmentPreprocessReceiptsSchema.safeParse(
+      msg.metadata?.mediaAttachmentPreprocess,
+    );
+    if (attachmentReceipts.success) {
+      for (const receipt of attachmentReceipts.data) {
+        trajectoryRecorder.recordEvent("media.attachment.rejected", {
+          attachmentIndex: receipt.attachmentIndex,
+          reason: receipt.reason,
+          sizeBytes: receipt.sizeBytes,
+          maxBytes: receipt.maxBytes,
+          configKey: receipt.configKey,
+        });
+      }
+    }
   }
 
   // Reconcile settlements that arrived after the previous foreground
@@ -1905,6 +1927,20 @@ async function runSessionLocked(
   // Per-execution turn-loop detector: dedup idempotent reads + break a
   // runaway repeating-tool loop early. Closure-local, one per run.
   const turnLoopDetector = createTurnLoopDetector();
+  const requestMutationToolNames = new Set(
+    mergedCustomTools
+      .filter((tool) => matchesToolMutationRequest(tool.name, msg.text))
+      .map((tool) => tool.name),
+  );
+  let currentSuccessfulMutationCount = (): number => 0;
+  let currentWebResearchObserved = (): boolean => false;
+  let currentCitationDigests = (): readonly string[] => [];
+  const inheritedCitationDigests = isCitationSourceRequest(msg.text)
+    ? historicalCitationDigests(sm)
+    : [];
+  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+    ? msg.metadata.citationEvidence
+    : undefined;
 
   // Proactive safety -- block tool execution before it starts when
   // safety limits are already reached. Existing reactive checks in
@@ -1926,6 +1962,109 @@ async function runSessionLocked(
         ...deps.modelRegistry.getAll().map((model) => model.provider.toLowerCase()),
         ...[...(deps.providerAliases?.keys() ?? [])].map((provider) => provider.toLowerCase()),
       ]),
+      {
+        requestMutationToolNames,
+        currentSuccessfulMutationCount: () => currentSuccessfulMutationCount(),
+        citationEvidenceEnabled: () =>
+          currentWebResearchObserved()
+          || relayedCitationEvidence !== undefined
+          || inheritedCitationDigests.length > 0,
+        allowedCitationDigests: () => [
+          ...currentCitationDigests(),
+          ...(relayedCitationEvidence?.urlDigests ?? []),
+          ...inheritedCitationDigests,
+        ],
+        onBlocked: () => {
+          deps.logger.warn(
+            {
+              step: "response-honesty",
+              matchedMutationToolCount: requestMutationToolNames.size,
+              errorKind: "precondition" as const,
+              hint:
+                "Complete and verify one request-matched mutation before retrying "
+                + "the user-visible message.",
+            },
+            "Outbound completion claim blocked before delivery",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "response.outbound_completion_evidence_guard",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                claimKind: "completion",
+                reason: "missing_current_turn_mutation_receipt",
+                matchedMutationToolCount: requestMutationToolNames.size,
+              },
+            },
+          );
+        },
+        onCitationBlocked: () => {
+          deps.logger.warn(
+            {
+              step: "citation-evidence",
+              errorKind: "validation" as const,
+              hint:
+                "Retry the outbound message with only exact URLs from successful "
+                + "web_fetch receipts visible in this execution.",
+            },
+            "Outbound citation blocked before delivery",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "response.outbound_citation_evidence_guard",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                claimKind: "citation",
+                reason: "citation_without_fetch_evidence",
+              },
+            },
+          );
+        },
+      },
+      {
+        activeLocations: new Set(frozenPromptSkillLocations?.keys() ?? []),
+        onBlocked: (skillName) => {
+          deps.logger.warn(
+            {
+              step: "prompt-skill-read",
+              skillName,
+              errorKind: "precondition" as const,
+              hint:
+                "Add the skill's reviewed directory to agents.<id>.skills.discoveryPaths "
+                + "or import it through skills_manage before retrying.",
+            },
+            "Unregistered prompt skill invocation blocked",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "prompt_skill.unregistered_invocation",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                skillName,
+                reason: "absent_from_current_registry",
+              },
+            },
+          );
+        },
+      },
     );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
@@ -2640,6 +2779,28 @@ async function runSessionLocked(
         }
       : undefined,
   });
+  currentSuccessfulMutationCount = () =>
+    (bridge.getResult().toolExecResults ?? []).filter(
+      (record) =>
+        record.success
+        && requestMutationToolNames.has(record.toolName)
+        && classifyToolInvocationMutation(
+          record.toolName,
+          record.action === undefined ? {} : { action: record.action },
+        ) === "mutating",
+    ).length;
+  currentWebResearchObserved = () =>
+    (bridge.getResult().toolExecResults ?? []).some(
+      (record) => record.toolName === "web_fetch" || record.toolName === "web_search",
+    );
+  currentCitationDigests = () =>
+    (bridge.getResult().toolExecResults ?? []).flatMap((record) =>
+      record.toolName === "web_fetch"
+      && record.success
+      && record.citationUrlDigest !== undefined
+        ? [record.citationUrlDigest]
+        : [],
+    );
 
   const unsubscribe = session.subscribe(bridge.listener);
 
@@ -2731,6 +2892,7 @@ async function runSessionLocked(
         conversationRef: conversationRef.value,
         deliveryOrigin: context.deliveryOrigin,
         traceId: executionId ?? null,
+        trustLevel: context.trustLevel,
         responseLocalePolicy,
         backgroundHopCount: incomingHopCount,
       };

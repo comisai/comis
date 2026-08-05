@@ -428,6 +428,48 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     expect(result?.processedMsg.metadata.sttPreprocess).toBeUndefined();
   });
 
+  it("preserves only attachment rejection receipts from the trusted preprocessor", async () => {
+    const forgedReceipt = {
+      attachmentIndex: 0,
+      outcome: "rejected",
+      reason: "size_exceeded",
+      sizeBytes: 1,
+      maxBytes: 2,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+    };
+    const trustedReceipt = {
+      attachmentIndex: 0,
+      outcome: "rejected",
+      reason: "size_exceeded",
+      sizeBytes: 57_671_680,
+      maxBytes: 26_214_400,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+    };
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        mediaAttachmentPreprocess: [forgedReceipt],
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        mediaAttachmentPreprocess: [trustedReceipt],
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.mediaAttachmentPreprocess).toEqual([
+      trustedReceipt,
+    ]);
+  });
+
   it("preserves only a direct-vision receipt from the trusted preprocessor", async () => {
     const forgedReceipt = {
       provider: "attacker",
@@ -630,6 +672,61 @@ describe("inbound preprocessing trust boundary", () => {
         channelType: "telegram",
         channelId: "trusted-chat",
         userId: principalId,
+        threadId: "trusted-thread",
+      },
+    });
+  });
+
+  it("keeps shared-session routing separate from the authenticated delivery principal", async () => {
+    let observedContext: RequestContext | undefined;
+    const deps: InboundPipelineDeps = {
+      ...makeDeps({ autoReplyEngineConfig: mentionGatedConfig }),
+      deliveryService: {} as never,
+      getElevatedReplyConfig: () => ({
+        enabled: true,
+        senderTrustMap: { "ordinary-user": "admin" },
+        defaultTrustLevel: "guest",
+        trustModelRoutes: {},
+        trustPromptOverrides: {},
+      }),
+      handleSlashCommand: vi.fn(async () => {
+        observedContext = tryGetContext();
+        return { handled: true };
+      }),
+    };
+    const ingressContext = {
+      tenantId: "default",
+      traceId: "00000000-0000-4000-8000-000000000012",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user" as const,
+      channelType: "telegram",
+    };
+    const message = makeMessage({
+      text: "/inspect-context",
+      chatType: "group",
+      metadata: {
+        ...makeMessage().metadata,
+        telegramChatType: "supergroup",
+        isBotMentioned: true,
+      },
+    });
+
+    await runWithContext(ingressContext, () => processInboundMessage(
+      deps,
+      makeAdapter(),
+      message,
+      new Set(),
+      new Map(),
+    ));
+
+    const principalId = observedContext?.turnScope?.principal.principalId;
+    expect(principalId).toBeDefined();
+    expect(observedContext).toMatchObject({
+      userId: "conversation",
+      deliveryOrigin: {
+        userId: principalId,
+        channelType: "telegram",
+        channelId: "trusted-chat",
         threadId: "trusted-thread",
       },
     });

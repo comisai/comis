@@ -128,9 +128,60 @@ describe("createTurnLoopDetector", () => {
     expect(detector.shouldBreakLoop()).toBe(false); // counter restarted after the success
   });
 
-  it("does not break on repeated SUCCESSFUL mutations (no false trip)", () => {
+  it("breaks the loop after six identical successful mutation results", () => {
     const detector = createTurnLoopDetector();
-    for (let i = 0; i < 10; i++) detector.recordCall("write", { path: `/f${i}`, content: "x" }, { ok: true });
+    for (let i = 0; i < 7; i++) {
+      detector.recordCall("exec", { command: "check-fixture" }, { content: "waiting", isError: false });
+    }
+    expect(detector.shouldBreakLoop()).toBe(true);
+  });
+
+  it("resets successful-repeat progress when the tool result changes", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 6; i++) {
+      detector.recordCall("exec", { command: "check-fixture" }, { content: "waiting", isError: false });
+    }
+    expect(detector.shouldBreakLoop()).toBe(false);
+
+    detector.recordCall("exec", { command: "check-fixture" }, { content: "flipped", isError: false });
+    expect(detector.shouldBreakLoop()).toBe(false);
+  });
+
+  it("ignores a one-shot Comis tool guide when comparing successful results", () => {
+    const detector = createTurnLoopDetector();
+    detector.recordCall(
+      "mcp__fixture--check_condition",
+      {},
+      {
+        content: [
+          { type: "text", text: "WAITING" },
+          {
+            type: "text",
+            text: "\n---\n[Tool Guide - shown once per session]\nUse the fixture safely.\n---",
+          },
+        ],
+        details: { success: true },
+      },
+    );
+    for (let i = 0; i < 6; i++) {
+      detector.recordCall(
+        "mcp__fixture--check_condition",
+        {},
+        {
+          content: [{ type: "text", text: "WAITING" }],
+          details: { success: true },
+        },
+      );
+    }
+
+    expect(detector.shouldBreakLoop()).toBe(true);
+  });
+
+  it("does not break on distinct successful mutations", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 10; i++) {
+      detector.recordCall("write", { path: `/f${i}`, content: "x" }, { ok: true });
+    }
     expect(detector.shouldBreakLoop()).toBe(false);
   });
 });

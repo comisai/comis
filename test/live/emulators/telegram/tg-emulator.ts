@@ -721,6 +721,8 @@ function buildInjectAddressing(
   text: string,
   opts: InjectOpts | undefined,
   bot: GroupMember | undefined,
+  chatId: number,
+  repliedText: string | undefined,
 ): { entities?: MessageEntity[]; replyToMessage?: Message } {
   if (opts === undefined) return {};
   const botUsername = bot?.username ?? EMULATOR_BOT_IDENTITY.username;
@@ -756,12 +758,13 @@ function buildInjectAddressing(
   if (opts.replyTo !== undefined) {
     result.replyToMessage = makeBotMessage({
       messageId: opts.replyTo,
-      chatId: 0,
+      chatId,
       botUser: makeBotUser({
         id: EMULATOR_BOT_IDENTITY.id,
         firstName: EMULATOR_BOT_IDENTITY.firstName,
         username: EMULATOR_BOT_IDENTITY.username,
       }),
+      ...(repliedText !== undefined ? { text: repliedText } : {}),
     });
   } else if (opts.replyToUser !== undefined) {
     const replyUser: User = makeUser({ id: opts.replyToUser, firstName: `user_${opts.replyToUser}` });
@@ -1518,7 +1521,18 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       const group = groupChats.get(chat.chatId);
       // Build the entities / reply_to_message the mapper's
       // detectBotAddressing reads, from the InjectOpts.
-      const addressing = buildInjectAddressing(text, opts, group?.bot);
+      const repliedOutbound = opts?.replyTo === undefined
+        ? undefined
+        : [...(chats.get(chat.chatId)?.outbound ?? [])]
+          .reverse()
+          .find((outbound) => outbound.messageId === opts.replyTo);
+      const addressing = buildInjectAddressing(
+        text,
+        opts,
+        group?.bot,
+        chat.chatId,
+        repliedOutbound?.text,
+      );
       const update = makeMessageUpdate({
         updateId: nextUpdateId(),
         messageId,
@@ -1737,10 +1751,24 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         firstName: from.firstName,
         ...(from.username !== undefined ? { username: from.username } : {}),
       });
+      const group = groupChats.get(chat.chatId);
+      const originalOutbound = chats.get(chat.chatId)?.outbound.find(
+        (outbound) => outbound.method === "sendMessage" && outbound.messageId === botMessageId,
+      );
+      const botIdentity = group?.bot;
       const botMessage = makeBotMessage({
         messageId: botMessageId,
         chatId: chat.chatId,
-        botUser: makeBotUser({ id: 12345, firstName: "TestBot", username: "test_bot" }),
+        ...(group === undefined ? {} : { chat: group.chat }),
+        botUser: makeBotUser({
+          id: botIdentity?.id ?? 12345,
+          firstName: botIdentity?.firstName ?? "TestBot",
+          ...(botIdentity?.username === undefined ? {} : { username: botIdentity.username }),
+        }),
+        ...(originalOutbound?.text === undefined ? {} : { text: originalOutbound.text }),
+        ...(originalOutbound?.messageThreadId === undefined
+          ? {}
+          : { messageThreadId: originalOutbound.messageThreadId }),
       });
       const update = makeCallbackUpdate({
         updateId: nextUpdateId(),

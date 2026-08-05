@@ -77,6 +77,7 @@ import {
 import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
+import { setupChildProcessCleanup } from "./setup-child-process-cleanup.js";
 // Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
@@ -350,6 +351,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     }
     return registry;
   }
+
+  setupChildProcessCleanup({
+    eventBus,
+    logger: skillsLogger,
+    getRegistry: (agentId) => processRegistries.get(agentId),
+  });
 
   /** Per-agent MediaPersistenceService for browser screenshot persistence. */
   const screenshotPersistenceServices = new Map<string, MediaPersistenceService>();

@@ -56,6 +56,46 @@ describe("trajectory event type filtering", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus background cancellation and reentry", () => {
+  it("records cancelled and reentered lifecycle events on the owning trajectory", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({
+      eventBus: bus,
+      recorder,
+      ownerSessionKey: "default:agent-a:telegram:chat-a:user_a",
+    });
+
+    bus.emit("background_task:cancelled", {
+      agentId: "agent-a",
+      taskId: "task-cancelled",
+      toolName: "slow_report",
+      timestamp: 10,
+    });
+    bus.emit("background_task:reentered", {
+      agentId: "agent-a",
+      taskId: "task-reentered",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      hopCount: 1,
+      traceId: "trace-a",
+      timestamp: 20,
+    });
+
+    expect(recorder.calls).toEqual([
+      {
+        type: "background_task.cancelled",
+        data: { taskId: "task-cancelled", toolName: "slow_report" },
+        parentEntryId: undefined,
+      },
+      {
+        type: "background_task.reentered",
+        data: { taskId: "task-reentered", hopCount: 1 },
+        parentEntryId: undefined,
+      },
+    ]);
+  });
+});
+
 function createCaptureRecorder(filePath = "/tmp/x.jsonl"): TrajectoryRecorder & { calls: CapturedCall[] } {
   const calls: CapturedCall[] = [];
   return {
@@ -1283,6 +1323,20 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       origin: { agentId: "default", sessionKey: "k" },
       timestamp: 1000,
     },
+    "background_task:cancelled": {
+      agentId: "default",
+      taskId: "t-cancelled",
+      toolName: "slow_report",
+      timestamp: 1000,
+    },
+    "background_task:reentered": {
+      agentId: "default",
+      taskId: "t-reentered",
+      sessionKey: "k",
+      hopCount: 1,
+      traceId: null,
+      timestamp: 1000,
+    },
     "background_task:notified": {
       agentId: "default",
       taskId: "t-1",
@@ -1984,6 +2038,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       runtimeMs: 186_592,
       idleMs: 186_592,
       thresholdMs: 180_000,
+      timestamp: 0,
+    },
+    "subagent:background_processes_abandoned": {
+      runId: "run-background",
+      agentId: "agent-1",
+      sessionKey: "default:sub-agent-background:sub-agent:background",
+      count: 2,
       timestamp: 0,
     },
     // Sub-agent-lifecycle events — the correlation invariant
@@ -2883,6 +2944,31 @@ describe("queue + execution + sender bridge", () => {
     const data = recorder.calls[0].data as Record<string, unknown>;
     expect(data.reason).toBe("spend_exceeded");
     expect(data.perRootBudget).toEqual({ limb: "aggregateUsd", spent: 2.04, cap: 2, unit: "usd" });
+  });
+
+  it("execution_aborted forwards exact step-limit values for explain", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1" as any,
+      reason: "max_steps",
+      agentId: "default",
+      timestamp: Date.now(),
+      stepLimit: {
+        bindingKnob: "agents.default.maxSteps",
+        stepsExecuted: 4,
+        cap: 4,
+      },
+    } as any);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect((recorder.calls[0].data as Record<string, unknown>).stepLimit).toEqual({
+      bindingKnob: "agents.default.maxSteps",
+      stepsExecuted: 4,
+      cap: 4,
+    });
   });
 
   it("activity_turn_finalized maps to activity.turn_finalized carrying the terminal user-surface state", () => {
@@ -4345,7 +4431,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(139);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(142);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

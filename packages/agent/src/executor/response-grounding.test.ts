@@ -5,6 +5,27 @@ import {
   enforceOngoingWorkEvidence,
   enforceProviderModelFailureGrounding,
 } from "./response-grounding.js";
+import * as responseGrounding from "./response-grounding.js";
+
+interface CompletionEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "unrecovered_tool_failure_completion_claim";
+  correction?: "replaced" | "prefixed_partial";
+}
+
+function completionEvidenceGuard(): (params: {
+  response: string;
+  unrecoveredToolFailures?: readonly string[];
+  honestResponse: string;
+  preservePartialResponse?: boolean;
+}) => CompletionEvidenceGuardResult {
+  const candidate = (responseGrounding as Record<string, unknown>)
+    .enforceCompletionEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ReturnType<typeof completionEvidenceGuard>;
+}
+
 
 describe("response grounding module", () => {
   it("uses the latest agent-update receipt as the no-op authority", () => {
@@ -83,4 +104,63 @@ describe("response grounding module", () => {
       honestResponse: "No work is running.",
     })).toEqual({ response, corrected: false });
   });
+
+  it("replaces a completion claim after an unrecovered tool failure", () => {
+    const honestResponse =
+      "I made changes, but I could not verify the request as complete because a tool step failed.";
+
+    expect(completionEvidenceGuard()({
+      response:
+        "I found and fixed the implementation. The page now has working add and delete actions.",
+      unrecoveredToolFailures: ["edit", "exec"],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "unrecovered_tool_failure_completion_claim",
+      correction: "replaced",
+    });
+  });
+
+  it("preserves a completion claim when every failed tool recovered", () => {
+    const response = "I found and fixed the implementation.";
+
+    expect(completionEvidenceGuard()({
+      response,
+      unrecoveredToolFailures: [],
+      honestResponse: "The result is partial.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("preserves an honest failure when a tool remains unrecovered", () => {
+    const response =
+      "I changed the implementation, but validation failed and I could not verify the result.";
+
+    expect(completionEvidenceGuard()({
+      response,
+      unrecoveredToolFailures: ["exec"],
+      honestResponse: "The result is partial.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("keeps useful research beneath a runtime partial-result warning", () => {
+    const response =
+      "Research complete. The retrieved standards agree that storage is origin-scoped.";
+    const honestResponse =
+      "I could not verify the request as complete because one or more tool steps still failed. "
+      + "Treat the result below as partial.";
+
+    expect(completionEvidenceGuard()({
+      response,
+      unrecoveredToolFailures: ["web_fetch"],
+      honestResponse,
+      preservePartialResponse: true,
+    })).toEqual({
+      response: `${honestResponse}\n\n${response}`,
+      corrected: true,
+      reason: "unrecovered_tool_failure_completion_claim",
+      correction: "prefixed_partial",
+    });
+  });
+
 });

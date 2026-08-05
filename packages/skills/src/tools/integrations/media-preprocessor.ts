@@ -27,12 +27,15 @@ import type {
   FileExtractionPort,
   FileExtractionConfig,
   SttPreprocessReceipt,
+  MediaAttachmentPreprocessReceipt,
   SttPreprocessSelection,
   WrapExternalContentOptions,
 } from "@comis/core";
 import {
   DOCUMENT_MIME_WHITELIST,
+  MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY,
   MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+  formatMediaAttachmentRejection,
 } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { processAudioAttachment } from "./media-handler-audio.js";
@@ -111,6 +114,8 @@ export interface PreprocessResult {
   videoDescriptions: Array<{ attachmentUrl: string; description: string }>;
   /** File extraction results (one per document attachment processed). */
   fileExtractions: FileExtractionMetric[];
+  /** Content-free evidence for current attachments rejected by a size guard. */
+  attachmentReceipts: MediaAttachmentPreprocessReceipt[];
 }
 
 /** Per-file extraction metrics. */
@@ -214,16 +219,17 @@ export async function preprocessMessage(
   const imageContents: PreprocessResult["imageContents"] = [];
   const videoDescriptions: PreprocessResult["videoDescriptions"] = [];
   const fileExtractions: PreprocessResult["fileExtractions"] = [];
+  const attachmentReceipts: PreprocessResult["attachmentReceipts"] = [];
 
   // Short-circuit: no attachments to process
   if (!msg.attachments || msg.attachments.length === 0) {
-    return { message: msg, transcriptions, sttReceipts, analyses, imageContents, videoDescriptions, fileExtractions };
+    return { message: msg, transcriptions, sttReceipts, analyses, imageContents, videoDescriptions, fileExtractions, attachmentReceipts };
   }
 
   // Short-circuit: no resolver means we cannot fetch any media data
   if (!deps.resolveAttachment) {
     deps.logger.info("No resolveAttachment provided, skipping media preprocessing");
-    return { message: msg, transcriptions, sttReceipts, analyses, imageContents, videoDescriptions, fileExtractions };
+    return { message: msg, transcriptions, sttReceipts, analyses, imageContents, videoDescriptions, fileExtractions, attachmentReceipts };
   }
 
   const textPrefixes: string[] = [];
@@ -233,7 +239,7 @@ export async function preprocessMessage(
   const maxTotalChars = deps.fileExtractionConfig?.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS;
   let totalExtractedChars = 0;
 
-  for (const att of msg.attachments) {
+  for (const [attachmentIndex, att] of msg.attachments.entries()) {
     // File size pre-check before download (applies to all types)
     if (deps.maxMediaBytes && att.sizeBytes && att.sizeBytes > deps.maxMediaBytes) {
       deps.logger.debug?.({
@@ -242,6 +248,16 @@ export async function preprocessMessage(
         maxBytes: deps.maxMediaBytes,
         reason: "oversized",
       }, "Attachment rejected: exceeds size limit");
+      const receipt: MediaAttachmentPreprocessReceipt = {
+        attachmentIndex,
+        outcome: "rejected",
+        reason: "size_exceeded",
+        sizeBytes: att.sizeBytes,
+        maxBytes: deps.maxMediaBytes,
+        configKey: MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY,
+      };
+      attachmentReceipts.push(receipt);
+      textPrefixes.push(formatMediaAttachmentRejection(receipt));
       continue;
     }
 
@@ -316,5 +332,6 @@ export async function preprocessMessage(
     imageContents,
     videoDescriptions,
     fileExtractions,
+    attachmentReceipts,
   };
 }

@@ -62,6 +62,8 @@ export interface ToolExecutionResultRecord {
   /** Trusted, bounded adapter classification; never raw tool/provider prose. */
   readonly failureDisclosure?: ToolFailureDisclosure;
   readonly recoveryIdentity?: ToolRecoveryIdentity;
+  /** SHA-256 of the exact final URL for a successful web_fetch. */
+  readonly citationUrlDigest?: string;
 }
 
 export interface ToolFailureRecoveryClassification {

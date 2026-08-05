@@ -296,13 +296,29 @@ describe("mcpToolsToAgentTools", () => {
     expect(result.details).toEqual({ success: true });
   });
 
+  it("execute forwards cancellation to the MCP client call", async () => {
+    const callTool = makeCallTool();
+    const tools = mcpToolsToAgentTools([makeTool()], callTool);
+    const ac = new AbortController();
+
+    await tools[0].execute("call-abort", { query: "test" }, ac.signal);
+
+    expect(callTool).toHaveBeenCalledWith(
+      "mcp:db-server/search",
+      { query: "test" },
+      ac.signal,
+    );
+  });
+
   it("execute() handles callTool error gracefully", async () => {
-    const callTool = vi.fn().mockResolvedValue(err(new Error("Server unreachable")));
+    const upstreamError = new Error("Server unreachable");
+    const callTool = vi.fn().mockResolvedValue(err(upstreamError));
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
 
-    await expect(tools[0].execute("call-1", { query: "test" })).rejects.toThrow(
-      "MCP tool error: Server unreachable",
-    );
+    await expect(tools[0].execute("call-1", { query: "test" })).rejects.toMatchObject({
+      message: "MCP tool error: Server unreachable",
+      cause: upstreamError,
+    });
   });
 
   it("execute() handles MCP isError flag", async () => {

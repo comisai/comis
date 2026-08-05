@@ -120,6 +120,26 @@ describe("drive group conversation correlation", () => {
     )).toBe(expected);
   });
 
+  it("falls back to the Telegram General topic trajectory", () => {
+    const sessionsRoot = "/data/workspace/sessions";
+    const directory =
+      `${sessionsRoot}/default/telegram@3atelegram-12345@3a-1001234567890/`;
+    const general = `${directory}conversation~thread~1.jsonl.trajectory.jsonl`;
+    const candidates = [
+      { path: `${directory}conversation~thread~2.jsonl.trajectory.jsonl`, mtimeMs: 30 },
+      { path: general, mtimeMs: 20 },
+    ];
+
+    expect(selectTelegramConversationTrajectoryPath(
+      candidates,
+      sessionsRoot,
+      "default",
+      12345,
+      -1001234567890,
+      undefined,
+    )).toBe(general);
+  });
+
   it("accepts a visible corrected reply after the exact group turn ends", () => {
     const outbound = [{
       method: "sendMessage",

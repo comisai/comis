@@ -156,6 +156,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   // the explain verdict reads it. Content-free: runId + closed killedBy +
   // numbers ONLY — never the free-text kill reason.
   "subagent.killed",
+  "subagent.background_processes_abandoned",
 
   // The reserved trajectory types for three
   // sub-agent-lifecycle events — a fail-closed sandbox-downgrade spawn
@@ -201,6 +202,8 @@ export const TRAJECTORY_EVENT_TYPES = [
   "background_task.promoted",
   "background_task.completed",
   "background_task.failed",
+  "background_task.cancelled",
+  "background_task.reentered",
   // The fallback-notice decision — whether a raw completion notice fired and
   // whether it was correct (content-free: tool NAME + notified bool + reason enum).
   // `notified:true` while the origin turn remains live identifies a duplicate
@@ -391,6 +394,11 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.tts.requested",
   "media.tts.completed",
   "media.tts.failed",
+
+  // Current inbound attachment guards. Direct-emitted by the executor from a
+  // trusted preprocessing receipt because preprocessing completes before the
+  // session recorder opens. Content-free indices, byte counts, and config key.
+  "media.attachment.rejected",
 
   // The spend kill-switch lifecycle on the explain timeline.
   // The 3 spend.* events are bridged (not system-only rollups) so a spend-killed

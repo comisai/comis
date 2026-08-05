@@ -24,6 +24,21 @@ import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 import { registerFailureDetectorMetadata } from "./register-failure-detector-metadata.js";
 import { registerInvocationSideEffectMetadata } from "./register-invocation-side-effect-metadata.js";
 
+const FILE_MUTATION_REQUEST_PREFIXES = [
+  "fix",
+  "repair",
+  "correct",
+  "modify",
+  "its broken",
+  "it's broken",
+  "it is broken",
+  "this is broken",
+  "the tests are failing",
+  "tests are failing",
+  "the test is failing",
+  "test is failing",
+] as const;
+
 export function registerAllToolMetadata(): void {
   // =========================================================================
   // Result Size Caps
@@ -86,9 +101,18 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("ctx_expand",  { isReadOnly: true });
 
   // --- Mutating tools (25) ---
-  registerToolMetadata("edit",        { isReadOnly: false });
-  registerToolMetadata("write",       { isReadOnly: false });
-  registerToolMetadata("apply_patch", { isReadOnly: false });
+  registerToolMetadata("edit", {
+    isReadOnly: false,
+    mutationRequestPrefixes: FILE_MUTATION_REQUEST_PREFIXES,
+  });
+  registerToolMetadata("write", {
+    isReadOnly: false,
+    mutationRequestPrefixes: FILE_MUTATION_REQUEST_PREFIXES,
+  });
+  registerToolMetadata("apply_patch", {
+    isReadOnly: false,
+    mutationRequestPrefixes: FILE_MUTATION_REQUEST_PREFIXES,
+  });
 
   registerToolMetadata("exec",    { isReadOnly: false });
   registerToolMetadata("process", { isReadOnly: false });

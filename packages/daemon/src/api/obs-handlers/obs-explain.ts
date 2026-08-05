@@ -45,6 +45,7 @@ import {
 } from "./obs-explain-resolve.js";
 import {
   makeRealReader,
+  resolveTrajectoryFilePath,
   resolveSessionFilePath,
   type IncidentSourceReader,
   type MessageLifecycleDiagnosticEvidence,
@@ -54,6 +55,11 @@ import { toIncidentSignals } from "./obs-explain-signals.js";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
+import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
+import {
+  completionEvidenceGuardVerdict,
+  outboundCompletionEvidenceGuardVerdict,
+} from "./obs-explain-completion-evidence-verdict.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
@@ -114,7 +120,12 @@ function recordsForExecution(
   const start = records.findIndex(
     (record) => record.type === "prompt.submitted" && recordHasTraceId(record, traceId),
   );
-  if (start < 0) return records.filter((record) => recordHasTraceId(record, traceId));
+  if (start < 0) {
+    return joinBackgroundTaskFollowups(
+      records,
+      records.filter((record) => recordHasTraceId(record, traceId)),
+    );
+  }
   const relativeEnd = records.slice(start + 1).findIndex(
     (record) => record.type === "prompt.submitted",
   );
@@ -125,7 +136,10 @@ function recordsForExecution(
   const settlementRecords = records
     .slice(end)
     .filter((record) => recordHasTraceId(record, traceId));
-  return [...preparationRecords, ...records.slice(start, end), ...settlementRecords];
+  return joinBackgroundTaskFollowups(
+    records,
+    [...preparationRecords, ...records.slice(start, end), ...settlementRecords],
+  );
 }
 
 function latestPromptTraceId(
@@ -592,12 +606,17 @@ export async function assembleIncidentReportFromSources(
   // relative/odd dataDir (e.g. the "." offline/CLI base); swallow to undefined so the pointer
   // is simply omitted rather than crashing the assembly (degrade, never error).
   let sessionSourcePath: string | undefined;
+  let trajectorySourcePath: string | undefined;
   if (sessionKey !== "" && taskCheck === null) {
     try {
       sessionSourcePath = reader.resolveSessionFilePath?.(sessionKey)
         ?? resolveSessionFilePath(dataDir, sessionKey);
+      trajectorySourcePath = sessionSourcePath === undefined
+        ? undefined
+        : resolveTrajectoryFilePath(sessionSourcePath);
     } catch {
       sessionSourcePath = undefined;
+      trajectorySourcePath = undefined;
     }
   }
   const report = assembleIncidentReport(
@@ -617,6 +636,7 @@ export async function assembleIncidentReportFromSources(
           toolResultsReturned: losslessEvidence.records.length,
           truncated: losslessEvidence.truncated,
         },
+    trajectorySourcePath,
   );
   if (executionDiagnostic !== null && selectedRecords.length === 0) {
     report.coverage = {
@@ -711,6 +731,20 @@ export async function assembleIncidentReportFromSources(
     // A proven same-source fallback explains the user-visible outcome more
     // accurately than chronic breaker noise from the failed primary tool.
     report.likelyRootCause = visionFallbackVerdict;
+  }
+  const completionEvidenceVerdict = completionEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (completionEvidenceVerdict !== null) {
+    report.likelyRootCause = completionEvidenceVerdict;
+  }
+  const outboundCompletionEvidenceVerdict = outboundCompletionEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (outboundCompletionEvidenceVerdict !== null) {
+    report.likelyRootCause = outboundCompletionEvidenceVerdict;
   }
   const delegationEvidenceVerdict = delegationEvidenceGuardVerdict(
     auditRows,

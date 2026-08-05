@@ -589,6 +589,22 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     expect(result.finishReason).toBe("error");
   });
 
+  it("carries a missing provider credential into the terminal health kind", async () => {
+    const { params, warn, result } = makeFailureParams("c-missing-key");
+
+    await processFailurePath(
+      params,
+      "hello",
+      undefined,
+      new Error("No API key found for anthropic."),
+    );
+
+    const warnCall = warn.mock.calls.find((c) => c[1] === "Prompt execution error");
+    expect(warnCall?.[0].errorKind).toBe("auth");
+    expect(result.finishReason).toBe("error");
+    expect(result.terminalErrorKind).toBe("auth");
+  });
+
   it("restores overflow recovery mutation when terminal admission denies retry dispatch", async () => {
     const { params } = makeFailureParams("c-overflow-terminal");
     const originalStreamFn = vi.fn();

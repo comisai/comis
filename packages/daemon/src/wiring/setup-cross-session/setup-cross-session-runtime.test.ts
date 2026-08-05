@@ -318,7 +318,11 @@ function getAnnounceToParent(runnerArgs: any) {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: {
+      threadId?: string;
+      resolvedLanguage?: string;
+      citationEvidence?: { kind: "web_fetch"; urlDigests: string[] };
+    },
   ) => runWithConversationAuthority(agentId, sessionKey, (scopedSessionKey) => (
     announceToParent(
       agentId,
@@ -616,12 +620,23 @@ describe("setupCrossSession", () => {
       tenantId: "target-tenant",
       userId: "target-user",
       sessionKey: "target-tenant:agent:target-agent:target-user:target-channel:thread:target-thread",
-      agentId: "source-agent",
+      agentId: "target-agent",
       traceId: "20000000-0000-4000-8000-000000000002",
       startedAt: 2_000,
       trustLevel: "admin",
       channelType: "telegram",
       deliveryOrigin: targetOrigin,
+      turnScope: {
+        conversation: makeConversation("target-tenant", "target-agent").conversationScope,
+        principal: { principalId: "target-user" },
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-main",
+          conversationId: "target-channel",
+          threadId: "target-thread",
+          conversationKind: "direct",
+        },
+      },
     };
 
     await runWithContext(ambient, () => (
@@ -998,6 +1013,12 @@ describe("setupCrossSession", () => {
       "Rewrite this completion",
       "telegram",
       "chat-123",
+      {
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["d".repeat(64)],
+        },
+      },
     );
 
     expect(deps.assembleToolsForAgent).not.toHaveBeenCalled();
@@ -1008,6 +1029,10 @@ describe("setupCrossSession", () => {
       metadata: {
         crossSession: true,
         runtimeActionEvidence: { kind: "background_completion" },
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["d".repeat(64)],
+        },
       },
     });
     expect(execute).toHaveBeenCalledWith(

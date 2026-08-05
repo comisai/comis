@@ -10,6 +10,11 @@ export interface SessionTracker {
     channelType: string,
     conversationId: string,
   ): ChannelEndpoint | undefined;
+  findUniqueEndpoint(
+    agentId: string,
+    channelType: string,
+    conversationId: string,
+  ): ChannelEndpoint | undefined;
 }
 
 export function createSessionTracker(opts?: { nowMs?: () => number }): SessionTracker {
@@ -71,6 +76,21 @@ export function createSessionTracker(opts?: { nowMs?: () => number }): SessionTr
         if (!best || entry.lastActiveMs >= best.lastActiveMs) best = entry;
       }
       return best?.endpoint;
+    },
+
+    findUniqueEndpoint(agentId, channelType, conversationId) {
+      const agentMap = tracker.get(agentId);
+      if (!agentMap) return undefined;
+      let match: ChannelEndpoint | undefined;
+      for (const entry of agentMap.values()) {
+        if (
+          entry.endpoint.channelType !== channelType
+          || entry.endpoint.conversationId !== conversationId
+        ) continue;
+        if (match !== undefined) return undefined;
+        match = entry.endpoint;
+      }
+      return match;
     },
   };
 }

@@ -24,15 +24,12 @@
  *
  * @module
  */
-
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
-
 import type { StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
 import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
-
 import type { RequestBodyInjectorConfig } from "./types.js";
 import { getMinCacheableTokens } from "./cache-breakpoints.js";
 import {
@@ -42,7 +39,16 @@ import {
 } from "./context-window.js";
 import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
-import { reorderContentForStablePrefix, stripTransientRecallFromHistory, stripReplayThinking, deferRecallToUncachedTail, stripTransientRecallFromResponsesInput, deferRecallToTrailingResponsesItem, stripReplayReasoningFromResponsesInput } from "./tool-result-clearing.js";
+import {
+  separateRecallBeforeCurrentResponsesItem,
+  deferRecallToUncachedTail,
+  dropOrphanedResponsesToolOutputs,
+  reorderContentForStablePrefix,
+  stripReplayReasoningFromResponsesInput,
+  stripReplayThinking,
+  stripTransientRecallFromHistory,
+  stripTransientRecallFromResponsesInput,
+} from "./tool-result-clearing.js";
 import { findInlineRecallIndices } from "./recall-diagnostics.js";
 import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
 import { describePayloadTail, findCachePointPositions } from "./keyed-cache-marker.js";
@@ -64,7 +70,6 @@ import { applyKillSwitch } from "./kill-switch.js";
 import { estimateTtlSplit } from "./ttl-split-estimation.js";
 import { stripBedrockToolHistory } from "./bedrock-tool-history.js";
 import { translateKeyedCacheMarkers } from "./keyed-cache-marker.js";
-
 /**
  * Create a stream wrapper that mutates the outgoing request body via the
  * onPayload hook. Consolidates four concerns:
@@ -92,15 +97,13 @@ export function createRequestBodyInjector(
       const needsCacheBreakpoints = config.modelProfile?.supportsPromptCache
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
-
       // ALL OpenAI Responses-family providers drive the same `input` item array and need the
       // auto-cached prefix stabilised: native openai (`openai-responses`),
       // Azure (`azure-openai-responses`), and codex (`openai-codex-responses` /
       // provider:"openai-codex"). The cache-breakpoint machinery is correctly skipped for them
       // (running cache_control on a Responses body strips type:"function" tools -> backend 400);
-      // we install onPayload only to defer the per-turn inline-recall block off the user turns
-      // onto an uncached trailing item so the prefix does not collapse to the instructions+tools
-      // floor every time the recalled memory rotates (see the deferral block below). NOTE: the
+      // we install onPayload only to separate per-turn inline recall from the current user item
+      // while keeping it before the authoritative request (see the separation block below). NOTE: the
       // gate must cover the whole Responses family — gating on `provider === "openai-codex"`
       // alone leaves the native `openai` provider (gpt-5.5 -> openai-responses) unstabilised
       // (5 floor-collapses observed live).
@@ -538,24 +541,27 @@ export function createRequestBodyInjector(
           // WITHOUT recall -> the auto-cached prefix diverges at that item -> cached_tokens
           // collapses to the instructions+tools floor (~21.5k) once per turn (confirmed live:
           // a clean A/B showed 4 floor-collapses with this OFF, 0 with it ON).
-          // Fix (OpenAI analog of the Anthropic deferRecallToUncachedTail): strip recall off the
-          // user items and re-attach the current-turn recall as a SEPARATE trailing item, so the
-          // user turns are byte-identical to their future historical clean form and the prefix
-          // is stable. The model still sees recall (trailing = freshest position); the trailing
-          // item is transient (never persisted) so it never enters the cached prefix.
+          // Fix: strip recall off the current user item and re-attach it as a SEPARATE item
+          // immediately before that request. The model sees the original memory-then-request
+          // order, and tool continuations repeat the same stable pair instead of moving recalled
+          // content after the newest tool result.
           // Tool-safe: matches role:"user" only (never function_call/reasoning items).
           // Unconditional (mirrors the always-on Anthropic deferRecallToUncachedTail).
           if (needsResponsesInputStabilizer && Array.isArray((result as Record<string, unknown>).input)) {
             result.input = structuredClone((result as Record<string, unknown>).input);
             const inputItems = result.input as Array<Record<string, unknown>>;
-            // 1. Defensive: strip recall from any HISTORICAL user item (no-op when history is
+            // 1. Enforce tool call/output pairing on the provider-ready shape. The upstream
+            //    converter drops aborted assistant turns, so a synthesized result that was paired
+            //    in canonical context can become orphaned only after conversion.
+            const orphanedToolOutputsDropped = dropOrphanedResponsesToolOutputs(inputItems);
+            // 2. Defensive: strip recall from any HISTORICAL user item (no-op when history is
             //    already clean, which it is when recall is transient).
             const strippedCount = stripTransientRecallFromResponsesInput(inputItems);
-            // 2. Recall deferral: defer recall on the LATEST user item to a trailing (uncached,
-            //    never persisted) item, so the latest item is byte-identical to its future
-            //    historical clean form and the auto-cached prefix never mutates at the turn boundary.
-            const deferred = deferRecallToTrailingResponsesItem(inputItems);
-            // 3. Reasoning strip: strip ALL replayed reasoning items — ONLY on the native
+            // 3. Recall separation: preserve recall immediately before the current request. It is
+            //    transient and never persisted, while the authoritative request and any later tool
+            //    result remain newer in provider attention order.
+            const deferred = separateRecallBeforeCurrentResponsesItem(inputItems);
+            // 4. Reasoning strip: strip ALL replayed reasoning items — ONLY on the native
             //    openai / Azure Responses path (needsResponsesApiInjection). With `store:false`
             //    the SDK keeps reasoning for recent turns but drops it from aging turns -> an
             //    early-index prefix mutation -> floor-collapse. Removing them consistently every
@@ -565,10 +571,20 @@ export function createRequestBodyInjector(
             const reasoningStripped = needsResponsesApiInjection
               ? stripReplayReasoningFromResponsesInput(inputItems)
               : 0;
+            if (orphanedToolOutputsDropped > 0) {
+              logger.debug(
+                {
+                  sessionKey: config.sessionKey,
+                  orphanedResponsesToolOutputsDropped: orphanedToolOutputsDropped,
+                  step: "responses-input-repair",
+                },
+                "Removed unmatched tool outputs from OpenAI Responses input",
+              );
+            }
             if (strippedCount > 0 || deferred > 0 || reasoningStripped > 0) {
               logger.debug(
-                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallDeferredOai: deferred, reasoningStrippedOai: reasoningStripped },
-                "Stabilised OpenAI Responses prefix: deferred recall + stripped replayed reasoning",
+                { sessionKey: config.sessionKey, recallStrippedOai: strippedCount, recallSeparatedOai: deferred, reasoningStrippedOai: reasoningStripped },
+                "Stabilised OpenAI Responses prefix: separated recall + stripped replayed reasoning",
               );
             }
           }

@@ -69,10 +69,10 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
     || !originIsLocked.ok
     || !originIsLocked.value
     || identity.tenantId !== origin.tenantId
-    || identity.userId !== origin.userId
     || identity.channelType !== origin.channelType
     || turnScope.conversation.tenantId !== origin.tenantId
     || turnScope.conversation.agentId !== agentId
+    || turnScope.principal.principalId !== origin.userId
     || turnScope.endpoint.channelType !== origin.channelType
     || turnScope.endpoint.conversationId !== origin.channelId
     || turnScope.endpoint.threadId !== origin.threadId
@@ -87,7 +87,7 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
 
   const callbackOwner: ApprovalCallbackOwner = Object.freeze({
     tenantId: origin.tenantId,
-    userId: origin.userId,
+    userId: turnScope.principal.principalId,
     channelType: origin.channelType,
     channelKey: origin.channelId,
     ...(origin.threadId === undefined ? {} : { threadId: origin.threadId }),

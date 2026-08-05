@@ -11,7 +11,8 @@
  *     cached result + a one-line steer (the model sees "you already ran this;
  *     answer or take a new action") — it never re-executes the read.
  *   - Six consecutive no-progress steps break the turn early (loop_detected),
- *     well before maxSteps, so a runaway loop cannot burn the whole budget.
+ *     including identical successful mutation results. This fires well before
+ *     maxSteps, so a runaway loop cannot burn the whole budget.
  *   - Consecutive content-less ("empty") turns are capped.
  *
  * Safety: caching is an explicit ALLOWLIST of idempotent read-only tools. Any
@@ -104,6 +105,22 @@ function cacheKey(toolName: string, args: unknown): string {
   return `${toolName}::${canonicalize(args)}`;
 }
 
+const ONE_SHOT_TOOL_GUIDE_PREFIX =
+  "\n---\n[Tool Guide - shown once per session]\n";
+
+/** Remove runtime-added one-shot guidance before comparing tool semantics. */
+function semanticToolResult(result: unknown): unknown {
+  if (result === null || typeof result !== "object") return result;
+  const record = result as Record<string, unknown>;
+  if (!Array.isArray(record.content)) return result;
+  const content = record.content.filter((block) => {
+    if (block === null || typeof block !== "object") return true;
+    const text = (block as { text?: unknown }).text;
+    return typeof text !== "string" || !text.startsWith(ONE_SHOT_TOOL_GUIDE_PREFIX);
+  });
+  return content.length === record.content.length ? result : { ...record, content };
+}
+
 /**
  * True when a tool result represents a FAILURE / blocked call. The canonical
  * signal is `isError: true`; we also catch content-gate / sandbox rejections that
@@ -132,6 +149,7 @@ export function createTurnLoopDetector(): TurnLoopDetector {
   const readCache = new Map<string, unknown>();
   let noProgressCount = 0;
   let emptyTurnCount = 0;
+  let lastSuccessfulMutationFingerprint: string | undefined;
 
   function isIdempotentRead(toolName: string): boolean {
     return IDEMPOTENT_READONLY_TOOLS.has(toolName);
@@ -162,8 +180,15 @@ export function createTurnLoopDetector(): TurnLoopDetector {
         if (isFailureResult(result)) {
           noProgressCount++;
         } else {
-          noProgressCount = 0;
-          emptyTurnCount = 0;
+          const fingerprint =
+            `${cacheKey(toolName, args)}::${canonicalize(semanticToolResult(result))}`;
+          if (fingerprint === lastSuccessfulMutationFingerprint) {
+            noProgressCount++;
+          } else {
+            noProgressCount = 0;
+            emptyTurnCount = 0;
+          }
+          lastSuccessfulMutationFingerprint = fingerprint;
         }
         return;
       }
@@ -174,6 +199,7 @@ export function createTurnLoopDetector(): TurnLoopDetector {
         // A new distinct read is progress.
         noProgressCount = 0;
         emptyTurnCount = 0;
+        lastSuccessfulMutationFingerprint = undefined;
       } else {
         noProgressCount++;
       }
@@ -186,6 +212,7 @@ export function createTurnLoopDetector(): TurnLoopDetector {
     recordProgress(): void {
       noProgressCount = 0;
       emptyTurnCount = 0;
+      lastSuccessfulMutationFingerprint = undefined;
     },
 
     shouldBreakLoop(): boolean {

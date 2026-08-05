@@ -201,6 +201,14 @@ describe("local rig mode", () => {
     expect(guard).toBeLessThan(memoryWipe);
   });
 
+  it("clears prior diagnostic trajectories during a clean restart", () => {
+    const source = readFileSync(CLEAN_RESTART, "utf8");
+    const guard = source.indexOf('rig_refuse_continuity_wipe "$DATA"');
+    const trajectoryWipe = source.indexOf("rm -rf '$DATA'/trajectories/*");
+
+    expect(trajectoryWipe).toBeGreaterThan(guard);
+  });
+
   it("limits clean-restart worker cleanup to the selected data root", () => {
     const source = readFileSync(CLEAN_RESTART, "utf8");
 
@@ -658,6 +666,42 @@ describe("local rig mode", () => {
     ]) {
       expect(() => execFileSync("bash", ["-n", script]), script).not.toThrow();
     }
+  });
+
+  it("keeps a selected rig env isolated while rendering credentials", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    expect(source).toContain(
+      'SELECTED_RIG_ENV="${RIG_ENV:-$HERE/.rig-env}"',
+    );
+    expect(source).toContain(
+      'rig_load_env "$HERE/.live-env" "$SELECTED_RIG_ENV"',
+    );
+    expect(source).not.toContain(
+      'rig_load_env "$HERE/.live-env" "$HERE/.rig-env"',
+    );
+  });
+
+  it("probes bubblewrap on a local Linux phase-zero gate", () => {
+    if (process.platform !== "linux") return;
+    const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
+    const result = spawnSync("bash", [PHASE_ZERO_CHECK], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RIG_MODE: "local",
+        DATA: directory,
+        COMIS_DATA_DIR: directory,
+        COMIS_CONFIG_PATHS: resolve(directory, "config.yaml"),
+        GW_PORT: "48991",
+        SERVICE: "comis-phase-zero-test",
+        COMIS_USER: process.env["USER"] ?? "user_a",
+      },
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(output).toMatch(/PASS.*jail-dep:bwrap/);
+    expect(output).not.toContain("NO-ACCESS on the local macOS rig");
   });
 
   it("lets bare node helpers discover the rendered local rig mode", () => {

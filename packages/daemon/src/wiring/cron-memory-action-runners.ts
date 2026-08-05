@@ -296,6 +296,8 @@ export function createCronMemoryActionRunners(
       untrustedDrops: totals.untrustedDrops,
       nameLengthRejections: totals.nameLengthRejections,
       skipped: totals.skipped,
+      dependencyFailures: totals.dependencyFailures,
+      failedPasses,
       sourceTrajectoryCount: totals.sourceTrajectoryCount,
       totalSourceChars: totals.totalSourceChars,
       admissionOutcome,

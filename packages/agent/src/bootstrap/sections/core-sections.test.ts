@@ -226,4 +226,56 @@ describe("buildInboundMetadataSection", () => {
     const joined = result.join("\n");
     expect(joined).not.toContain("sender_trust");
   });
+
+  it("renders replied-to message content as bounded channel history", () => {
+    const meta = {
+      messageId: "msg-2",
+      senderId: "user-1",
+      chatId: "chat-1",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isReply: true },
+      replyContext: {
+        messageId: "platform-42",
+        senderKind: "agent",
+        text: "the exact earlier answer",
+      },
+    } as InboundMetadata;
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toContain('"reply_to_message_id": "platform-42"');
+    expect(joined).toContain('"reply_to_sender_kind": "agent"');
+    expect(joined).toContain("## Replied-To Message");
+    expect(joined).toContain("Source: Channel history");
+    expect(joined).toContain("the exact earlier answer");
+  });
+
+  it("renders authoritative group auto-reply configuration keys", () => {
+    const meta = {
+      messageId: "msg-3",
+      senderId: "user-1",
+      chatId: "group-1",
+      channel: "telegram",
+      chatType: "group",
+      flags: { isGroup: true },
+      autoReplyPolicyContext: {
+        groupActivation: "mention-gated",
+        historyInjection: true,
+      },
+    } as InboundMetadata & {
+      autoReplyPolicyContext: {
+        groupActivation: "mention-gated";
+        historyInjection: true;
+      };
+    };
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toContain("autoReplyEngine.groupActivation");
+    expect(joined).toContain('"mention-gated"');
+    expect(joined).toContain("autoReplyEngine.historyInjection");
+    expect(joined).toContain("true");
+    expect(joined).toContain("authoritative for the current group turn");
+  });
 });

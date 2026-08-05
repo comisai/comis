@@ -114,6 +114,27 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("assembleIncidentReport — request-relevant tool selection", () => {
+  it("surfaces current attachment size rejections on the one-call report", () => {
+    const mediaAttachmentRejections = [{
+      attachmentIndex: 0,
+      reason: "size_exceeded" as const,
+      sizeBytes: 57_671_680,
+      maxBytes: 26_214_400,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes" as const,
+    }];
+    const report = assembleIncidentReport(
+      makeSignals({ mediaAttachmentRejections }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.mediaAttachmentRejections).toEqual(mediaAttachmentRejections);
+    expect(IncidentReportSchema.parse(report).mediaAttachmentRejections)
+      .toEqual(mediaAttachmentRejections);
+  });
+
   it("surfaces selected tools when a turn completed without invoking one", () => {
     const selected = ["mcp_manage", "gateway"];
     const signals = makeSignals({
@@ -892,6 +913,32 @@ describe("assembleIncidentReport — per-root budget abort", () => {
     expect(report.outcome.endReason).toBe("max_steps");
   });
 
+  it("folds exact step-limit values from the terminal abort", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.aborted",
+        seq: 20,
+        agentId: "default",
+        traceId: "t-step-limit",
+        data: {
+          reason: "max_steps",
+          stepLimit: {
+            bindingKnob: "agents.default.maxSteps",
+            stepsExecuted: 4,
+            cap: 4,
+          },
+        },
+      },
+    ]);
+
+    expect((signals as unknown as { stepLimit?: unknown }).stepLimit).toEqual({
+      bindingKnob: "agents.default.maxSteps",
+      stepsExecuted: 4,
+      cap: 4,
+    });
+  });
+
   it("derives endReason + perRootBudget from a terminal execution.aborted when the rollup lacks a spend endReason", () => {
     const records: Array<Record<string, unknown>> = [
       // an EARLIER non-spend turn in the same (multi-turn) session
@@ -905,7 +952,7 @@ describe("assembleIncidentReport — per-root budget abort", () => {
         traceId: "t-abort",
         data: {
           reason: "spend_exceeded",
-          perRootBudget: { limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" },
+          perRootBudget: { limb: "tokens", spent: 139397, attempted: 24561, cap: 150000, unit: "tokens" },
         },
       },
     ];
@@ -920,7 +967,13 @@ describe("assembleIncidentReport — per-root budget abort", () => {
     );
     // The per-root abort is surfaced, not swallowed as endReason:"unknown".
     expect(report.outcome.endReason).toBe("spend_exceeded");
-    expect(report.perRootBudget).toEqual({ limb: "tokens", spent: 139397, cap: 150000, unit: "tokens" });
+    expect(report.perRootBudget).toEqual({
+      limb: "tokens",
+      spent: 139397,
+      attempted: 24561,
+      cap: 150000,
+      unit: "tokens",
+    });
   });
 
   it("the spend-verdict names the tripped limb once endReason+perRootBudget are surfaced", () => {
@@ -2174,6 +2227,54 @@ describe("assembleIncidentReportFromSources — audit?", () => {
         "inspect the failed exec record and its bound approval request",
         "confirm the intended target exists inside the configured workspace or write fence",
         "retry only after correcting the target; do not treat an exit-zero no-op as success",
+      ],
+    });
+  });
+
+  it("names an unverified completion claim as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.completion_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "unverified_completion_claim",
+      detail:
+        "the response honesty guard replaced a completion claim because one or more "
+        + "tool steps still had an unrecovered failure",
+      suggestedNextSteps: [
+        "inspect the failed tool records in this report and correct the failing step",
+        "retry verification before treating the requested result as complete",
+      ],
+    });
+  });
+
+  it("names a pre-send completion-evidence block as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_completion_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_completion_evidence_missing",
+      detail:
+        "the pre-send response honesty guard blocked a completion claim because the "
+        + "current mutation request had no successful matching mutation receipt",
+      suggestedNextSteps: [
+        "inspect the blocked message tool record and request-matched mutation tools",
+        "complete and verify the mutation before retrying user-visible delivery",
       ],
     });
   });

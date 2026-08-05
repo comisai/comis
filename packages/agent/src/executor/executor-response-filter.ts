@@ -129,10 +129,15 @@ function containsUnnegatedEvidencePhrase(
       const index = text.indexOf(phrase, offset);
       if (index < 0) break;
       const prefix = text.slice(Math.max(0, index - 20), index + 1);
-      const negated = DELEGATION_NEGATION_PREFIXES.some(
+      const directlyNegated = DELEGATION_NEGATION_PREFIXES.some(
         (negation) => prefix.endsWith(negation),
       );
-      if (!negated) return true;
+      const coordinatedPrefix = text.slice(Math.max(0, index - 160), index + 1);
+      const coordinatedNegation =
+        /\b(?:don't|dont|do not|never|without|no)\b[^.!?;\n]{0,120}\b(?:or|nor|and)\s*$/.test(
+          coordinatedPrefix,
+        );
+      if (!directlyNegated && !coordinatedNegation) return true;
       offset = index + phrase.length;
     }
   }
@@ -255,6 +260,7 @@ export function enforceDestructiveEffectEvidence(params: {
 export {
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
@@ -262,6 +268,7 @@ export {
 export type {
   ProviderModelFailureGroundingGuardResult,
   AgentUpdateNoOpGroundingGuardResult,
+  CompletionEvidenceGuardResult,
   OngoingWorkEvidenceGuardResult,
   SenderAuthorityGroundingGuardResult,
   ActiveModelSelfStatusGuardResult,

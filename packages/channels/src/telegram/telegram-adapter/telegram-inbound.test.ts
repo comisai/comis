@@ -272,6 +272,44 @@ describe("bindInboundHandlers -- callback query identity", () => {
     );
   });
 
+  it("preserves shared-chat identity on a forum callback", async () => {
+    const captured: NormalizedMessage[] = [];
+    const fullState = makeCapturingState([
+      async (message) => { captured.push(message); },
+    ]);
+    bindInboundHandlers(fullState, makeDeps(), TEST_BOT_IDENTITY);
+    const callback = fullState.bot.handlers.get("callback_query:data");
+
+    await callback?.({
+      answerCallbackQuery: vi.fn(async () => undefined),
+      callbackQuery: {
+        id: "forum-callback-shared-identity",
+        data: "approve",
+        message: {
+          message_id: 52,
+          date: 1_700_000_000,
+          message_thread_id: 42,
+          chat: {
+            id: -1_001_234,
+            type: "supergroup",
+            title: "Forum",
+            is_forum: true,
+          },
+        },
+      },
+      from: { id: 99, username: "user_a", first_name: "User" },
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.metadata).toMatchObject({
+      telegramChatType: "supergroup",
+      telegramThreadId: 42,
+      threadId: "42",
+      telegramIsForum: true,
+      telegramThreadScope: "forum",
+    });
+  });
+
   it("assigns a replay-stable timestamp when an inline callback has no source message date", async () => {
     vi.useFakeTimers();
     try {

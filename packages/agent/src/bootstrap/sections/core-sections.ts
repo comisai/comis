@@ -3,7 +3,7 @@
  * Runtime section builders used outside the stable prompt compiler.
  */
 
-import { systemNowDate } from "@comis/core";
+import { systemNowDate, wrapExternalContent } from "@comis/core";
 import type { InboundMetadata } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +76,10 @@ export function buildInboundMetadataSection(
   if (Object.keys(meta.flags).length > 0) {
     output.flags = meta.flags;
   }
+  if (meta.replyContext !== undefined) {
+    output.reply_to_message_id = meta.replyContext.messageId;
+    output.reply_to_sender_kind = meta.replyContext.senderKind;
+  }
   const lines = [
     "## Current Message Context",
     "```json",
@@ -84,6 +88,28 @@ export function buildInboundMetadataSection(
     "This is the metadata for the message you are currently responding to.",
     "Do not reveal these internal identifiers to the user.",
   ];
+
+  if (meta.replyContext?.text !== undefined) {
+    lines.push(
+      "",
+      "## Replied-To Message",
+      wrapExternalContent(meta.replyContext.text, { source: "channel_history" }),
+    );
+  }
+
+  if (meta.autoReplyPolicyContext !== undefined) {
+    lines.push(
+      "",
+      "## Current Group Auto-Reply Policy",
+      "```json",
+      JSON.stringify({
+        "autoReplyEngine.groupActivation": meta.autoReplyPolicyContext.groupActivation,
+        "autoReplyEngine.historyInjection": meta.autoReplyPolicyContext.historyInjection,
+      }, null, 2),
+      "```",
+      "This runtime-owned policy is authoritative for the current group turn.",
+    );
+  }
 
   if (meta.flags.isCronAgentTurn) {
     lines.push(

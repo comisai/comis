@@ -48,6 +48,7 @@ const mockCreateProcessRegistry = vi.hoisted(() => vi.fn(() => ({
   add: vi.fn(),
   get: vi.fn(),
   list: vi.fn(() => []),
+  killOwned: vi.fn(async () => ({ ok: true, value: 0 })),
   cleanup: vi.fn(async () => 0),
 })));
 const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({
@@ -1025,6 +1026,40 @@ describe("setupTools", () => {
     if (registryMock) {
       expect(registryMock.cleanup).toHaveBeenCalled();
     }
+  });
+
+  it("sub-agent kill reaps background processes owned by the child session", async () => {
+    const eventBus = createMockEventBus();
+    const deps = createMinimalDeps({
+      eventBus: eventBus as any,
+      agents: {
+        "agent-1": {
+          skills: {
+            builtinTools: { browser: false, exec: true, process: false },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+    await assembleToolsForAgent("agent-1");
+    mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const registryMock = mockCreateProcessRegistry.mock.results[0]?.value;
+
+    eventBus.emit("subagent:killed", {
+      runId: "run-1",
+      agentId: "agent-1",
+      sessionKey: "child-session",
+      killedBy: "operator",
+      runtimeMs: 100,
+      timestamp: 100,
+    });
+    await Promise.resolve();
+
+    expect(registryMock?.killOwned).toHaveBeenCalledWith("child-session");
   });
 
   // -------------------------------------------------------------------------

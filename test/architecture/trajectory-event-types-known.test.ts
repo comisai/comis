@@ -232,14 +232,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "autoreply:suppressed",
 
   // -------------------------------------------------------------------
-  // Background task manager — long-running task lifecycle outside the
-  // single execute() boundary. promoted/completed/failed are BRIDGED to the
-  // trajectory (TRAJECTORY_BRIDGE_MAPPING); cancelled/reentered
-  // remain unmapped (cancellation is rare; reentered is an SLO-latency hook).
-  // -------------------------------------------------------------------
-  "background_task:cancelled",
-  "background_task:reentered",
-
+  // Background task manager lifecycle is bridged to the trajectory.
   // -------------------------------------------------------------------
   // Coalescing + buffering at the orchestrator queue level (debounce
   // signals only — queue:* events are now in TRAJECTORY_BRIDGE_MAPPING).

@@ -6,7 +6,21 @@
  * @module
  */
 
+import type { MessagingEvents } from "@comis/core";
 import type { CoordinatorSharedState, GraphCoordinatorDeps, GraphRunState, CoordinatorConfig } from "./graph-coordinator-state.js";
+
+export type GraphSubAgentCompletionEvent = Pick<
+  MessagingEvents["session:sub_agent_completed"],
+  "runId" | "success"
+> & Partial<Pick<
+  MessagingEvents["session:sub_agent_completed"],
+  | "tokensUsed"
+  | "cost"
+  | "cacheReadTokens"
+  | "cacheWriteTokens"
+  | "unresolvedBackgroundProcesses"
+  | "failedBackgroundProcesses"
+>>;
 
 // ---------------------------------------------------------------------------
 // Concurrency gating
@@ -75,10 +89,10 @@ export function releaseAndDrainQueue(
 export function globalCompletionHandler(
   state: CoordinatorSharedState,
   config: Pick<CoordinatorConfig, "maxGlobalSubAgents">,
-  event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number },
+  event: GraphSubAgentCompletionEvent,
   callbacks: {
-    handleDriverTurnCompleted: (gs: GraphRunState, nodeId: string, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => void;
-    handleSubAgentCompleted: (gs: GraphRunState, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => void;
+    handleDriverTurnCompleted: (gs: GraphRunState, nodeId: string, event: GraphSubAgentCompletionEvent) => void;
+    handleSubAgentCompleted: (gs: GraphRunState, event: GraphSubAgentCompletionEvent) => void;
   },
 ): void {
   // Ownership-first filter: scan all graphs for the runId.

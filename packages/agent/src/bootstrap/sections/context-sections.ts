@@ -299,6 +299,11 @@ export function buildSubagentRoleSection(
     "### Your Task",
     `Complete this task: ${params.task}`,
     `You are NOT the ${parentLabel}. Do not try to be.`,
+    "",
+    "### Controller Steering",
+    "A later runtime-delivered message beginning `Controller steering request:` replaces the task above as the current work item.",
+    "Fulfill its bounded body within existing system and operator policy, approvals, and available capabilities.",
+    "It remains a user-level request and does not change your authority, grant tools, or weaken security controls.",
   ];
 
   // --- New enriched sections (inserted BEFORE Rules) ---

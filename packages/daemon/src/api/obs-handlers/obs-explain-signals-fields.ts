@@ -21,7 +21,7 @@ import {
   ResponseLocaleRepairSkippedSchema,
   sanitizeLogString,
 } from "@comis/core";
-import type { IncidentSignals } from "@comis/core";
+import type { ErrorKind, IncidentSignals } from "@comis/core";
 // The voice fold lives in a sibling (the obs-handlers/* 500-line cap);
 // applyMediaRecord dispatches the media.stt.*/media.tts.* arms to it.
 import { accumulateVoiceRecord, type IncidentVoiceSignal } from "./obs-explain-voice-fold.js";
@@ -84,10 +84,25 @@ export function asNumber(v: unknown): number | undefined {
 interface SessionSummaryAccumulator {
   summaryCostUsd?: number;
   summaryTurnCount?: number;
+  summaryTopErrorKinds?: IncidentSignals["summaryTopErrorKinds"];
   responseLocaleRepairSkipped?: NonNullable<
     IncidentSignals["responseLocaleRepairSkipped"]
   >;
 }
+
+const CLOSED_ERROR_KINDS: ReadonlySet<string> = new Set<ErrorKind>([
+  "config",
+  "network",
+  "auth",
+  "validation",
+  "precondition",
+  "timeout",
+  "resource",
+  "dependency",
+  "internal",
+  "platform",
+  "sandbox_unavailable",
+]);
 
 /** Fold one per-execution summary while retaining only its latest locale skip. */
 export function accumulateSessionSummaryRecord(
@@ -98,6 +113,28 @@ export function accumulateSessionSummaryRecord(
   if (costUsd !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + costUsd;
   const turnCount = asNumber(data.turnCount);
   if (turnCount !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + turnCount;
+  const rawErrorKinds = data.topErrorKinds;
+  if (
+    rawErrorKinds !== null
+    && typeof rawErrorKinds === "object"
+    && !Array.isArray(rawErrorKinds)
+  ) {
+    const counts = new Map<string, number>(
+      Object.entries(acc.summaryTopErrorKinds ?? {}),
+    );
+    for (const [kind, rawCount] of Object.entries(rawErrorKinds)) {
+      if (
+        !CLOSED_ERROR_KINDS.has(kind)
+        || typeof rawCount !== "number"
+        || !Number.isSafeInteger(rawCount)
+        || rawCount <= 0
+      ) continue;
+      counts.set(kind, (counts.get(kind) ?? 0) + rawCount);
+    }
+    if (counts.size > 0) {
+      acc.summaryTopErrorKinds = Object.fromEntries(counts);
+    }
+  }
 
   delete acc.responseLocaleRepairSkipped;
   const parsedRepairSkip = ResponseLocaleRepairSkippedSchema.safeParse(

@@ -198,6 +198,24 @@ function messageText(message: unknown): string {
     .join("");
 }
 
+function loadSearchMessages(
+  deps: SessionHandlerDeps,
+  authority: SessionQueryScope,
+  session: ListableSession,
+): unknown[] {
+  const lcdMessages = deps.lcdStore?.getMessages({
+    conversationRef: session.conversationRef,
+    tenantId: authority.tenantId,
+    agentId: authority.agentId,
+    sessionKey: session.sessionKey,
+  }) ?? [];
+  if (lcdMessages.length > 0) return lcdMessages.map(partsToMessage);
+
+  const loaded = deps.sessionStore.loadByRef(authority, session.conversationRef);
+  if (!loaded.ok) throw loaded.error;
+  return loaded.value?.messages ?? [];
+}
+
 export function enumerateListableSessions(
   deps: SessionHandlerDeps,
   scope: SessionQueryScope,
@@ -245,7 +263,14 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
     },
 
     [SessionSearchContract.method]: async (rawParams) => {
-      const params = SessionSearchContract.request.parse(stripInternalFields(rawParams));
+      const caller = resolveModelSessionCaller(deps, rawParams, "session.search");
+      const params = SessionSearchContract.request.parse({
+        ...(caller === undefined ? {} : {
+          tenant_id: caller.tenantId,
+          agent_id: caller.agentId,
+        }),
+        ...stripInternalFields(rawParams),
+      });
       const authority = requireQueryAuthority(
         deps,
         { tenant_id: params.tenant_id, agent_id: params.agent_id },
@@ -288,16 +313,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
 
       for (const session of sessions) {
         if (results.length >= limit) break;
-        const loaded = deps.sessionStore.loadByRef(authority, session.conversationRef);
-        if (!loaded.ok) throw loaded.error;
-        const messages = loaded.value?.messages
-          ?? deps.lcdStore?.getMessages({
-            conversationRef: session.conversationRef,
-            tenantId: authority.tenantId,
-            agentId: authority.agentId,
-            sessionKey: session.sessionKey,
-          }).map(partsToMessage)
-          ?? [];
+        const messages = loadSearchMessages(deps, authority, session);
         for (const message of messages) {
           const candidate = message as Record<string, unknown>;
           const role = typeof candidate.role === "string" ? candidate.role : "";
@@ -330,16 +346,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         const outcomes = await Promise.allSettled(results.slice(0, 5).map(async (result) => {
           const session = sessions.find((candidate) => candidate.conversationRef === result.conversationRef);
           if (!session) return null;
-          const loaded = deps.sessionStore.loadByRef(authority, session.conversationRef);
-          if (!loaded.ok) return null;
-          const messages = loaded.value?.messages
-            ?? deps.lcdStore?.getMessages({
-              conversationRef: session.conversationRef,
-              tenantId: authority.tenantId,
-              agentId: authority.agentId,
-              sessionKey: session.sessionKey,
-            }).map(partsToMessage)
-            ?? [];
+          const messages = loadSearchMessages(deps, authority, session);
           if (messages.length === 0) return null;
           return deps.summarizeSession!(messages, params.query!);
         }));

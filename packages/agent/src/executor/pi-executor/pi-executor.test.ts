@@ -7933,6 +7933,18 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(completedRecord).toBeGreaterThan(requestedRecord);
   });
 
+  it("records trusted current-attachment rejections after the session recorder opens", async () => {
+    const src = await readPiExecutorSrc();
+    const recorderResolution = src.indexOf("trajectoryRecorder = trajectoryResult.value.recorder");
+    const receiptParse = src.indexOf("MediaAttachmentPreprocessReceiptsSchema.safeParse");
+    const rejectedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.attachment.rejected"',
+    );
+
+    expect(receiptParse).toBeGreaterThan(recorderResolution);
+    expect(rejectedRecord).toBeGreaterThan(receiptParse);
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
@@ -8556,6 +8568,15 @@ describe("per-turn locale inheritance wiring", () => {
   });
 });
 
+describe("background continuation authority wiring", () => {
+  it("captures the resolved immutable trust snapshot with the background origin", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/trustLevel:\s*context\.trustLevel/);
+  });
+});
+
 describe("recent recall context provenance wiring", () => {
   it("derives recent raw user turns from structured session entries", () => {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -8564,6 +8585,19 @@ describe("recent recall context provenance wiring", () => {
     expect(src).toMatch(
       /selectRecentUserTurns\(\s*sessionContext\.messages,\s*sm\.getEntries\?\.\(\) \?\? \[\],\s*msg\.id,\s*\)/,
     );
+  });
+});
+
+describe("outbound completion evidence wiring", () => {
+  it("threads request-matched mutation receipts into the pre-send guard", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/requestMutationToolNames/);
+    expect(src).toMatch(/currentSuccessfulMutationCount/);
+    expect(src).toMatch(/response\.outbound_completion_evidence_guard/);
+    expect(src.indexOf("requestMutationToolNames"))
+      .toBeLessThan(src.indexOf("createBeforeToolCallGuard("));
   });
 });
 

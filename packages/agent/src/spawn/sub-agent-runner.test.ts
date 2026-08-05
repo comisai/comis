@@ -286,6 +286,116 @@ describe("createSubAgentRunner", () => {
     });
   });
 
+  it("does not report success while an auto-backgrounded child process is unresolved", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "wait for the command to finish",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const running = runner.getRunStatus(runId);
+    expect(running?.status).toBe("running");
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "exec",
+      toolCallId: "call-backgrounded",
+      durationMs: 1_000,
+      success: true,
+      backgrounded: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "running",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+      traceId: "child-trace",
+    });
+    resolveExecution({
+      response: "done",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "failed",
+      completion: { endReason: "failed", errorKind: "precondition" },
+    });
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({
+        runId,
+        success: false,
+        unresolvedBackgroundProcesses: 1,
+      }),
+    );
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "subagent:background_processes_abandoned",
+      expect.objectContaining({ runId, sessionKey: running.sessionKey, count: 1 }),
+    );
+  });
+
+  it("accepts success after the child observes its auto-backgrounded process complete", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "wait for the command to finish",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const running = runner.getRunStatus(runId);
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "exec",
+      toolCallId: "call-backgrounded",
+      durationMs: 1_000,
+      success: true,
+      backgrounded: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "running",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    deps.eventBus.emit("tool:executed", {
+      toolName: "process",
+      toolCallId: "call-status",
+      durationMs: 5,
+      success: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "completed",
+      timestamp: 124,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    resolveExecution({
+      response: "completed after observing the process exit",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "completed" });
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "subagent:background_processes_abandoned",
+      expect.objectContaining({ runId }),
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Run completes and updates status
   // -----------------------------------------------------------------------
@@ -1009,6 +1119,68 @@ describe("createSubAgentRunner", () => {
     }));
     await runner.shutdown();
     fs.rmSync(outputDir, { recursive: true, force: true });
+  });
+
+  it("relays successful child web-fetch digests without relaying fetched URLs", async () => {
+    let resolveExecution!: (value: {
+      response: string;
+      tokensUsed: { total: number };
+      cost: { total: number };
+      finishReason: string;
+      stepsExecuted: number;
+    }) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "research the storage standard",
+      agentId: "research-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const child = runner.getRunStatus(runId);
+    const digest = "c".repeat(64);
+    deps.eventBus.emit("tool:executed", {
+      toolName: "web_fetch",
+      toolCallId: "fetch-1",
+      durationMs: 12,
+      success: true,
+      citationUrlDigest: digest,
+      timestamp: testClock.now(),
+      agentId: "research-agent",
+      sessionKey: child?.sessionKey,
+    });
+    resolveExecution({
+      response: "research complete",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      citationEvidence: { kind: "web_fetch", urlDigests: [digest] },
+    }));
+    expect(JSON.stringify(enqueue.mock.calls[0])).not.toContain("https://");
+    await runner.shutdown();
   });
 
   it("resolves relative expected outputs inside the child workspace", async () => {
@@ -3804,6 +3976,19 @@ describe("buildAnnouncementMessage with abort", () => {
     const result = buildAnnouncementMessage({ ...baseParams, finishReason: "circuit_open", abort });
     expect(result).toContain("Abort: external_timeout");
   });
+
+  it("labels a detected successful loop with its distinct governor bound", () => {
+    const abort = classifyAbortReason("loop_detected");
+    const result = buildAnnouncementMessage({
+      ...baseParams,
+      status: "failed",
+      finishReason: "loop_detected",
+      abort,
+    });
+    expect(result).toContain("Halted (no-progress loop limit reached)");
+    expect(result).toContain("Abort: loop_limit");
+    expect(result).toContain("6 consecutive");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3954,7 +4139,47 @@ describe("abort wiring in spawn", () => {
 
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith("default", "he");
+    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith(
+      "default",
+      "he",
+      "max_steps",
+    );
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "telegram",
+      "chat-1",
+      expect.stringContaining(failureNotice),
+      undefined,
+    );
+  });
+
+  it("passes loop_detected to the failure renderer so a parent rewrite cannot hide the bound", async () => {
+    const failureNotice =
+      "⚠️ This background task failed. Governor limit: 6 consecutive no-progress tool results.";
+    deps.renderAnnouncementFailureNotice = vi.fn().mockReturnValue(failureNotice);
+    deps.announceToParent = vi.fn().mockResolvedValue("The checker stopped before it flipped.");
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "partial output",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "loop_detected",
+      stepsExecuted: 7,
+    });
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "check the condition",
+      agentId: "default",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.renderAnnouncementFailureNotice).toHaveBeenCalledWith(
+      "default",
+      undefined,
+      "loop_detected",
+    );
     expect(deps.sendToChannel).toHaveBeenCalledWith(
       "telegram",
       "chat-1",
@@ -4278,6 +4503,15 @@ describe("classifyAbortReason", () => {
     expect(result.hint).toContain("max_steps");
   });
 
+  it("maps loop_detected to a distinct no-progress governor category and bound", () => {
+    const result = classifyAbortReason("loop_detected");
+    expect(result.category).toBe("loop_limit");
+    expect(result.severity).toBe("actionable");
+    expect(result.hint).toContain("6 consecutive");
+    expect(result.hint).toMatch(/successful|unchanged/i);
+    expect(result.hint).not.toContain("daemon logs");
+  });
+
   // budget_exceeded -> budget
   it("maps budget_exceeded to budget category", () => {
     const result = classifyAbortReason("budget_exceeded");
@@ -4319,6 +4553,14 @@ describe("classifyAbortReason", () => {
     const result = classifyAbortReason("circuit_open");
     expect(result.category).toBe("external_timeout");
     expect(result.severity).toBe("investigate");
+  });
+
+  it("maps prompt_timeout to its subagent operation timeout knob", () => {
+    const result = classifyAbortReason("prompt_timeout");
+    expect(result.category).toBe("prompt_timeout");
+    expect(result.severity).toBe("actionable");
+    expect(result.hint).toContain("agents.<id>.operationModels.subagent.timeout");
+    expect(result.hint).not.toContain("daemon logs");
   });
 
   // error + "Request was aborted" -> external_timeout
@@ -6468,6 +6710,26 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     expect(typeof payload.runtimeMs).toBe("number");
     // Free-text reason stays on the run/failure-record/log — never the bus.
     expect("reason" in payload).toBe(false);
+  });
+
+  it("emits killed telemetry before closing the child trajectory recorder", async () => {
+    const localDeps = runningDeps();
+    const closeTrajectory = vi.fn().mockResolvedValue(undefined);
+    localDeps.closeTrajectory = closeTrajectory;
+    const runner = createSubAgentRunner(localDeps);
+    const runId = runner.spawn({ task: "t", agentId: "default" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    runner.killRun(runId);
+
+    const emit = vi.mocked(localDeps.eventBus.emit);
+    const killedCallIndex = emit.mock.calls.findIndex(
+      (call) => call[0] === "subagent:killed",
+    );
+    expect(killedCallIndex).toBeGreaterThanOrEqual(0);
+    expect(emit.mock.invocationCallOrder[killedCallIndex]).toBeLessThan(
+      closeTrajectory.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("parent kill emits killedBy parent and delivers NO notification", async () => {

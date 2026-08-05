@@ -308,6 +308,87 @@ describe("bindObsExplainHandlers", () => {
     );
   });
 
+  it("origin trace joins later terminal records for only its promoted background tasks", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-background-origin-"));
+    const sessionKey = "default:agent:default:user_a:telegram:peer:user_a";
+    const originTraceId = "trace-background-origin";
+    seedCronTraceIndex(dataDir, sessionKey, [originTraceId]);
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory", type: "prompt.submitted", seq: 1,
+        traceId: originTraceId, sessionKey, data: { inboundKind: "message" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "background_task.promoted", seq: 2,
+        traceId: originTraceId, sessionKey, data: { taskId: "task-done", toolName: "slow_report" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "background_task.promoted", seq: 3,
+        traceId: originTraceId, sessionKey, data: { taskId: "task-cancelled", toolName: "slow_report" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", seq: 4,
+        traceId: originTraceId, sessionKey,
+        data: { endReason: "background_pending", degraded: true, toolStats: {} },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "prompt.submitted", seq: 5,
+        traceId: "trace-cancel-turn", sessionKey, data: { inboundKind: "message" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "background_task.cancelled", seq: 6,
+        traceId: "trace-cancel-turn", sessionKey,
+        data: { taskId: "task-cancelled", toolName: "slow_report" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "background_task.completed", seq: 7,
+        traceId: "trace-reentry", sessionKey,
+        data: { taskId: "task-done", toolName: "slow_report", durationMs: 55_000 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "background_task.reentered", seq: 8,
+        traceId: "trace-reentry", sessionKey, data: { taskId: "task-done", hopCount: 1 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "background_task.notified", seq: 9,
+        traceId: "trace-reentry", sessionKey,
+        data: {
+          taskId: "task-done",
+          toolName: "slow_report",
+          notified: true,
+          reason: "continuation_accepted",
+        },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId: originTraceId,
+        sessionEnd: { endReason: "background_pending", degraded: true, toolStats: {} },
+      }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      traceId: originTraceId,
+      depth: "full",
+    });
+
+    expect(report.backgroundTasks).toEqual({
+      promoted: 2,
+      completed: 1,
+      failed: 0,
+      cancelled: 1,
+      reentered: 1,
+      accepted: 1,
+      pending: 0,
+    });
+    expect(report.outcome).toEqual({ endReason: "success", degraded: false, severity: "ok" });
+    expect(report.likelyRootCause?.code).not.toBe("background_pending");
+  });
+
   // ------------------------------------------------------------------------
   // depth:summary ≤6 KB, no raw body (end-to-end over a real fixture).
   // ------------------------------------------------------------------------
@@ -1210,6 +1291,8 @@ describe("assembleIncidentReportFromSources", () => {
       promoted: 1,
       completed: 1,
       failed: 0,
+      cancelled: 0,
+      reentered: 0,
       accepted: 1,
       pending: 0,
     });
@@ -1220,6 +1303,71 @@ describe("assembleIncidentReportFromSources", () => {
     });
     expect(report.likelyRootCause?.code).not.toBe("background_pending");
     expect(report.toolStats.skills_manage).toMatchObject({ ok: 1, failed: 1 });
+  });
+
+  it("reports cancelled tasks and fresh background reentries without leaving phantom pending work", async () => {
+    const sessionKey = "default:agent-a:telegram:chat-a:user_a";
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.promoted",
+        seq: 1,
+        agentId: "agent-a",
+        data: { taskId: "task-completed", toolName: "slow_report" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.completed",
+        seq: 2,
+        agentId: "agent-a",
+        data: { taskId: "task-completed", toolName: "slow_report" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.reentered",
+        seq: 3,
+        agentId: "agent-a",
+        data: { taskId: "task-completed", hopCount: 1 },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.promoted",
+        seq: 4,
+        agentId: "agent-a",
+        data: { taskId: "task-cancelled", toolName: "slow_report" },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.cancelled",
+        seq: 5,
+        agentId: "agent-a",
+        data: { taskId: "task-cancelled", toolName: "slow_report" },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "agent-a" }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, ".", { sessionKey });
+
+    expect(report.backgroundTasks).toEqual({
+      promoted: 2,
+      completed: 1,
+      failed: 0,
+      cancelled: 1,
+      reentered: 1,
+      accepted: 0,
+      pending: 0,
+    });
   });
 
   it("678 fixture: produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {

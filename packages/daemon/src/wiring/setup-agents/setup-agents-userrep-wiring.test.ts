@@ -178,4 +178,15 @@ describe("setupSingleAgent forwards mentalModelStore into createPiExecutor (the 
       expect.objectContaining({ mentalModelStore: SENTINEL_MENTAL_MODEL }),
     );
   });
+
+  it("omits the learned profile store when the memory master switch is disabled", async () => {
+    const agentId = "default";
+    const container = makeContainer(agentId);
+    container.config.memory = { enabled: false } as AppContainer["config"]["memory"];
+    const deps = makeDeps(container);
+
+    await setupSingleAgent(agentId, container.config.agents[agentId] as PerAgentConfig, deps);
+
+    expect(mockCreatePiExecutor.mock.calls[0]?.[1]).not.toHaveProperty("mentalModelStore");
+  });
 });

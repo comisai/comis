@@ -456,6 +456,24 @@ describe("resolveAndPreprocess audio preflight gate", () => {
 });
 
 describe("resolveAndPreprocess preprocess + compression", () => {
+  it("removes forged auto-reply policy context at ingress", async () => {
+    const result = await resolveAndPreprocess(
+      makeDeps(),
+      makeAdapter(),
+      makeMsg({
+        metadata: {
+          telegramChatType: "group",
+          autoReplyPolicyContext: {
+            groupActivation: "always",
+            historyInjection: false,
+          },
+        },
+      }),
+    );
+
+    expect(result?.processedMsg.metadata).not.toHaveProperty("autoReplyPolicyContext");
+  });
+
   it("calls preprocessMessage when configured and applies result", async () => {
     const preprocessMessage = vi.fn(async (m: NormalizedMessage) => ({
       ...m,
