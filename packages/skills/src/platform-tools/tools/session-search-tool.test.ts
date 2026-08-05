@@ -21,6 +21,20 @@ function createMockRpcCall(response?: unknown) {
 describe("session_search tool", () => {
   const authority = { tenant_id: "tenant-a", agent_id: "agent-a" } as const;
 
+  it("uses authenticated RPC authority without model-supplied scope identifiers", async () => {
+    const rpcCall = createMockRpcCall();
+    const tool = createSessionSearchTool(rpcCall);
+
+    await tool.execute("call-authenticated-scope", { query: "test" } as never);
+
+    expect(rpcCall).toHaveBeenCalledWith("session.search", {
+      query: "test",
+      scope: "all",
+      limit: 10,
+      summarize: true,
+    });
+  });
+
   it("calls rpcCall with query and defaults (scope=all, limit=10)", async () => {
     const rpcCall = createMockRpcCall();
     const tool = createSessionSearchTool(rpcCall);
