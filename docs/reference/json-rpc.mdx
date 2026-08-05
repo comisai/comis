@@ -789,6 +789,12 @@ durably reset a task transition, the higher-priority
 reconciliation authority and the
 `health_signal:background_task_recovery_failed` system-health signal.
 
+A background task the runtime aborted at its own hard runtime ceiling
+root-causes to **`background_hard_timeout`** instead. The verdict names the tool
+and the binding `agents.<id>.backgroundTasks.maxBackgroundDurationMs` value
+taken from the abort record, and it out-ranks the retry breaker that abort may
+have tripped -- the ceiling is the cause, the breaker its downstream symptom.
+
 The report may include content-free request-selection evidence:
 `requestRelevantToolNames` lists the bounded tool names selected for the turn;
 `requestRelevanceHistory` records `{ turnCount, charCount, saturated }` for the

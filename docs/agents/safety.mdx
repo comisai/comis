@@ -181,7 +181,10 @@ response leaves the agent:
   strings. A cited URL with no successful `web_fetch` in the run is dropped from
   the reply rather than presented as a source. The completion and citation checks
   also run *before* a user-visible send, so a `message` tool call cannot ship the
-  unverified claim ahead of the correction.
+  unverified claim ahead of the correction. A send blocked that way is reported by
+  [`comis explain`](/reference/cli#comis-explain) as the
+  `outbound_completion_evidence_missing` root cause, which names the missing
+  mutation receipt instead of a generic tool error.
 - **Post-compaction safety reinject** — when context compaction has just
   fired, a short reminder of the agent's current task is re-injected so the
   model does not silently lose the thread.
