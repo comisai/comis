@@ -888,6 +888,34 @@ describe("reflectFunnelEventToRow", () => {
     // Counts + the closed enum only — never a reflected doc body.
     expect(row.details).not.toMatch(/procedure|markdown|##/);
   });
+
+  it("marks a partial reflection dependency failure as warning with content-free counters", () => {
+    const payload = {
+      agentId: "default",
+      synthesized: 4,
+      validated: 1,
+      admitted: 1,
+      maxClusterCardinality: 2,
+      singleOwnerCorroborated: 0,
+      distinctTopicKeys: 2,
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 1,
+      sourceTrajectoryCount: 4,
+      totalSourceChars: 170,
+      dependencyFailures: 1,
+      failedPasses: 0,
+      admissionOutcome: "admitted" as const,
+      timestamp: 4242,
+    };
+
+    const row = reflectFunnelEventToRow(payload);
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+
+    expect(row.severity).toBe("warning");
+    expect(details.dependencyFailures).toBe(1);
+    expect(details.failedPasses).toBe(0);
+  });
 });
 
 describe("lifecycleSweptEventToRow (forget sweep → memory_lifecycle)", () => {

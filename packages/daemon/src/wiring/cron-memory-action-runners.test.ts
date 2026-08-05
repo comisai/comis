@@ -331,6 +331,10 @@ describe("cron memory action runners", () => {
         { name: "failed_passes", value: 0 },
       ],
     }));
+    expect(runtimeDeps._emit).toHaveBeenCalledWith("reflect:funnel", expect.objectContaining({
+      dependencyFailures: 1,
+      failedPasses: 0,
+    }));
   });
 
   it("keeps a legitimate empty reflection completed without a dependency failure", async () => {
