@@ -643,6 +643,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       : "default",
     // Capability-class active-tool ceiling.
     activeToolCeiling: capacityDefaults.activeToolCeiling,
+    mcpActiveToolBudget: capacityDefaults.mcpActiveToolBudget,
   };
   const deferralResult = applyToolDeferral(
     mergedCustomTools,

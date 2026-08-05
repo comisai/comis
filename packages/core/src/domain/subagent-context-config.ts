@@ -15,6 +15,9 @@ import { z } from "zod";
  * Composed into AgentToAgentConfigSchema via `.extend()` in
  * `config/schema-security.ts`.
  */
+/** Absolute sub-agent watchdog ceiling — a backstop behind stuckKillThresholdMs. */
+export const SUBAGENT_MAX_RUN_TIMEOUT_MS_DEFAULT = 1_500_000;
+
 export const SubagentContextConfigSchema = z.strictObject({
   /** Maximum spawn depth (parent -> child -> grandchild). 1 = no nesting. */
   maxSpawnDepth: z.number().int().min(1).max(10).default(3),
@@ -47,7 +50,13 @@ export const SubagentContextConfigSchema = z.strictObject({
   /** How long a queued spawn waits before failing with timeout (ms). */
   queueTimeoutMs: z.number().int().min(1000).max(600_000).default(120_000),
   /** Maximum wall-clock time for a single sub-agent run before watchdog force-fail (ms). */
-  maxRunTimeoutMs: z.number().int().positive().default(600_000),
+  // Backstop, not the primary killer — stuckKillThresholdMs (180s of no
+  // progress) is what catches a genuinely hung run. At 600_000 this was ending
+  // healthy work instead: live, a paginated month-wide report collected all its
+  // data, wrote its builder script, and was killed 21 SECONDS later. Raised so
+  // long-but-progressing jobs finish; a stalled one still dies on the idle
+  // threshold, which fires far sooner.
+  maxRunTimeoutMs: z.number().int().positive().default(SUBAGENT_MAX_RUN_TIMEOUT_MS_DEFAULT),
   /** Per-step timeout used to compute dynamic watchdog: min(max_steps * perStepTimeoutMs, maxRunTimeoutMs). */
   perStepTimeoutMs: z.number().int().positive().default(60_000),
   /** Health-tick stuck kill threshold for graph sub-agents (ms), measured as

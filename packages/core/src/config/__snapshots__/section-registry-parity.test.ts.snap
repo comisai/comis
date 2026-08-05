@@ -7873,7 +7873,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
         "maxChildrenPerAgent": 5,
         "maxQueuedPerAgent": 10,
         "maxResultTokens": 4000,
-        "maxRunTimeoutMs": 600000,
+        "maxRunTimeoutMs": 1500000,
         "maxSpawnDepth": 3,
         "narrativeCasting": true,
         "objectiveReinforcement": true,
@@ -7993,7 +7993,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
       "maxChildrenPerAgent": 5,
       "maxQueuedPerAgent": 10,
       "maxResultTokens": 4000,
-      "maxRunTimeoutMs": 600000,
+      "maxRunTimeoutMs": 1500000,
       "maxSpawnDepth": 3,
       "narrativeCasting": true,
       "objectiveReinforcement": true,
@@ -8063,7 +8063,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "type": "integer"
   },
   {
-    "default": 600000,
+    "default": 1500000,
     "immutable": true,
     "path": "security.agentToAgent.subagentContext.maxRunTimeoutMs",
     "type": "integer"
@@ -14894,7 +14894,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxChildrenPerAgent": 5,
           "maxQueuedPerAgent": 10,
           "maxResultTokens": 4000,
-          "maxRunTimeoutMs": 600000,
+          "maxRunTimeoutMs": 1500000,
           "maxSpawnDepth": 3,
           "narrativeCasting": true,
           "objectiveReinforcement": true,
@@ -14977,7 +14977,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxChildrenPerAgent": 5,
         "maxQueuedPerAgent": 10,
         "maxResultTokens": 4000,
-        "maxRunTimeoutMs": 600000,
+        "maxRunTimeoutMs": 1500000,
         "maxSpawnDepth": 3,
         "narrativeCasting": true,
         "objectiveReinforcement": true,
@@ -15097,7 +15097,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "maxChildrenPerAgent": 5,
       "maxQueuedPerAgent": 10,
       "maxResultTokens": 4000,
-      "maxRunTimeoutMs": 600000,
+      "maxRunTimeoutMs": 1500000,
       "maxSpawnDepth": 3,
       "narrativeCasting": true,
       "objectiveReinforcement": true,
@@ -15167,7 +15167,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": 600000,
+    "default": 1500000,
     "immutable": true,
     "path": "security.agentToAgent.subagentContext.maxRunTimeoutMs",
     "type": "integer"
@@ -26536,7 +26536,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           "maxChildrenPerAgent": 5,
           "maxQueuedPerAgent": 10,
           "maxResultTokens": 4000,
-          "maxRunTimeoutMs": 600000,
+          "maxRunTimeoutMs": 1500000,
           "maxSpawnDepth": 3,
           "narrativeCasting": true,
           "objectiveReinforcement": true,
@@ -26662,7 +26662,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
             "maxChildrenPerAgent": 5,
             "maxQueuedPerAgent": 10,
             "maxResultTokens": 4000,
-            "maxRunTimeoutMs": 600000,
+            "maxRunTimeoutMs": 1500000,
             "maxSpawnDepth": 3,
             "narrativeCasting": true,
             "objectiveReinforcement": true,
@@ -26730,7 +26730,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
               "type": "integer"
             },
             "maxRunTimeoutMs": {
-              "default": 600000,
+              "default": 1500000,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
@@ -40377,7 +40377,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxChildrenPerAgent": 5,
             "maxQueuedPerAgent": 10,
             "maxResultTokens": 4000,
-            "maxRunTimeoutMs": 600000,
+            "maxRunTimeoutMs": 1500000,
             "maxSpawnDepth": 3,
             "narrativeCasting": true,
             "objectiveReinforcement": true,
@@ -40461,7 +40461,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxChildrenPerAgent": 5,
               "maxQueuedPerAgent": 10,
               "maxResultTokens": 4000,
-              "maxRunTimeoutMs": 600000,
+              "maxRunTimeoutMs": 1500000,
               "maxSpawnDepth": 3,
               "narrativeCasting": true,
               "objectiveReinforcement": true,
@@ -40587,7 +40587,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maxChildrenPerAgent": 5,
                 "maxQueuedPerAgent": 10,
                 "maxResultTokens": 4000,
-                "maxRunTimeoutMs": 600000,
+                "maxRunTimeoutMs": 1500000,
                 "maxSpawnDepth": 3,
                 "narrativeCasting": true,
                 "objectiveReinforcement": true,
@@ -40655,7 +40655,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "integer"
                 },
                 "maxRunTimeoutMs": {
-                  "default": 600000,
+                  "default": 1500000,
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991,
                   "type": "integer"

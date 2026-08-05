@@ -107,6 +107,24 @@ export interface DeferralContext {
    *  active count <= ceiling.
    *  undefined = no ceiling (nano has its own aggressive path; frontier/mid uncapped). */
   activeToolCeiling?: number;
+  /** Max MCP tools left ACTIVE in the request; the rest are deferred behind
+   *  discover_tools. Distinct from {@link activeToolCeiling}, which is a
+   *  capability-class cap on the TOTAL count and never fires for frontier/mid.
+   *
+   *  An MCP server can contribute hundreds of schemas. Measured live: one server
+   *  supplied 120 of 192 tools and produced an 81,234-token system prompt — 54%
+   *  of a 151k request — re-sent on every turn, re-written on every cold cache
+   *  and re-uploaded on every retry. That cost is cache-write tokens and upload
+   *  latency, which do NOT shrink with a bigger context window, so a
+   *  window-pressure ceiling never addressed it.
+   *
+   *  Builtins are exempt: the tool array is sorted builtins-first, so a
+   *  count-based cap would defer the builtins and keep the MCP tail — exactly
+   *  backwards. CORE_TOOLS and recently-used tools stay active as everywhere
+   *  else, and nothing loses capability: deferred tools remain reachable through
+   *  discover_tools / server-side tool search.
+   *  undefined = no MCP budget (behaviour unchanged). */
+  mcpActiveToolBudget?: number;
 }
 
 /** Entry describing a deferred tool with its display description and original definition. */
@@ -610,6 +628,29 @@ export function applyToolDeferral(
         if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
         deferredSet.add(t.name);
         remaining--;
+      }
+    }
+  }
+
+  // MCP long-tail budget. Runs AFTER the class ceiling so an explicit ceiling
+  // still wins, and only touches `mcp__`-prefixed tools — builtins are never
+  // deferred to satisfy it (see mcpActiveToolBudget). Defers from the END of the
+  // MCP range: the array is sorted builtins-first then MCP alphabetically, so
+  // trimming the tail keeps placement stable across turns and does not churn the
+  // cached tool prefix.
+  if (deferralContext.mcpActiveToolBudget !== undefined) {
+    const budget = deferralContext.mcpActiveToolBudget;
+    const activeMcp = tools.filter(
+      (t) => !deferredSet.has(t.name) && t.name.startsWith("mcp__"),
+    );
+    let overBudget = activeMcp.length - budget;
+    if (overBudget > 0) {
+      for (let i = activeMcp.length - 1; i >= 0 && overBudget > 0; i--) {
+        const t = activeMcp[i]!;
+        if (CORE_TOOLS.has(t.name)) continue;
+        if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
+        deferredSet.add(t.name);
+        overBudget--;
       }
     }
   }

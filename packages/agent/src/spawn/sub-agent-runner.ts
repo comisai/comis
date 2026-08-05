@@ -1035,7 +1035,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return sanitized.slice(0, SUBAGENT_RESULT_SUMMARY_MAX_CHARS);
   }
 
-  function classifyCompletionErrorKind(
+  /** Mirrors the `maxRunTimeoutMs` default in `SubagentContextConfigSchema`
+ *  (@comis/core) for the paths that read subagentContext optionally. Keep the
+ *  two in step — the schema is the source of truth. */
+const SUBAGENT_MAX_RUN_MS_FALLBACK = 1_500_000;
+
+function classifyCompletionErrorKind(
     finishReason: string,
     terminalErrorKind: ErrorKind | undefined,
   ): ErrorKind {
@@ -1879,7 +1884,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Ghost run sweep -- defense-in-depth for stuck runs
-    const ghostGraceMs = (deps.config.subagentContext?.maxRunTimeoutMs ?? 600_000) + 120_000;
+    const ghostGraceMs = (deps.config.subagentContext?.maxRunTimeoutMs ?? SUBAGENT_MAX_RUN_MS_FALLBACK) + 120_000;
     for (const [runId, run] of runs) {
       if (run.status !== "running") continue;
 
@@ -3793,7 +3798,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Per-run watchdog timer
     const subagentCtx = deps.config.subagentContext;
     const perStepMs = subagentCtx?.perStepTimeoutMs ?? 60_000;
-    const maxRunMs = subagentCtx?.maxRunTimeoutMs ?? 600_000;
+    const maxRunMs = subagentCtx?.maxRunTimeoutMs ?? SUBAGENT_MAX_RUN_MS_FALLBACK;
     const runTimeoutMs = params.max_steps
       ? Math.min(params.max_steps * perStepMs, maxRunMs)
       : maxRunMs;

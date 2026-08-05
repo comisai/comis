@@ -279,7 +279,7 @@ security:
       # -- Spawn limits --
       maxSpawnDepth: 3             # max depth: parent -> child -> grandchild
       maxChildrenPerAgent: 5       # max concurrent active children per parent
-      maxRunTimeoutMs: 600000      # absolute watchdog ceiling
+      maxRunTimeoutMs: 1500000     # absolute watchdog ceiling (backstop; stuckKillThresholdMs catches hangs sooner)
       perStepTimeoutMs: 60000      # dynamic budget per requested step
       stuckKillThresholdMs: 180000 # idle-progress health-monitor threshold
 

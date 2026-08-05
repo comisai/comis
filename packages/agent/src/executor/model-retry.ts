@@ -51,6 +51,11 @@ import type { ProviderDispatchGuard } from "./provider-dispatch.js";
  */
 const SHORT_RETRY_THRESHOLD_MS = 20_000;
 
+/** Backoff used for a 429/529 that carries no parseable Retry-After. Long
+ *  enough to let a transient overload clear, short enough that a user waiting
+ *  on a reply does not notice a second of it. */
+const DEFAULT_OVERLOAD_BACKOFF_MS = 2_000;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -365,8 +370,16 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
     if (!promptSucceeded) {
       const status = getErrorStatus(primaryError);
       if (status === 429 || status === 529) {
-        const retryAfterMs = parseRetryAfterMs(primaryError, clock);
-        if (retryAfterMs !== null && retryAfterMs < SHORT_RETRY_THRESHOLD_MS) {
+        // Anthropic's 529 "Overloaded" ships NO Retry-After. Gating the short
+        // retry on a parseable header therefore skipped this path entirely for
+        // the most common overload, and the caller re-dispatched with no pause —
+        // live, 8 attempts in ~100s, each re-uploading a 151k-token prompt to a
+        // provider that had just reported no capacity. Fall back to a fixed
+        // backoff so the retry still preserves the model (and the cache) but
+        // gives the provider a moment.
+        const retryAfterMs = parseRetryAfterMs(primaryError, clock)
+          ?? DEFAULT_OVERLOAD_BACKOFF_MS;
+        if (retryAfterMs < SHORT_RETRY_THRESHOLD_MS) {
           logger.debug(
             { retryAfterMs, model: displayModel, sessionKey: deps.sessionKey },
             "Short retry -- preserving model for cache hit",

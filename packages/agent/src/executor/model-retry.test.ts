@@ -712,7 +712,7 @@ describe("runWithModelRetry", () => {
       expect(session.setModel).toHaveBeenCalled();
     });
 
-    it("skips short retry on 429 without retry-after header", async () => {
+    it("short-retries the same model on a 429 without a retry-after header", async () => {
       const session = makeSession();
       const rateLimitError = Object.assign(
         new Error("Rate limited"),
@@ -737,8 +737,11 @@ describe("runWithModelRetry", () => {
       const result = await runWithModelRetry(params);
 
       expect(result.succeeded).toBe(true);
-      // Should have gone to fallback (setModel called)
-      expect(session.setModel).toHaveBeenCalled();
+      // Previously this fell straight through to a fallback MODEL, which throws
+      // away the prompt cache on top of the overload. With a default backoff the
+      // same model is retried first, so a transient 429 costs a pause instead of
+      // a full cache rewrite on a different model.
+      expect(session.setModel).not.toHaveBeenCalled();
     });
 
     it("skips short retry on non-429/529 error", async () => {
@@ -802,6 +805,28 @@ describe("runWithModelRetry", () => {
       expect(result.succeeded).toBe(true);
       // Auth rotation should have been attempted
       expect(authRotation.rotateKey).toHaveBeenCalled();
+    });
+
+    it("retries with the same model on a 529 that carries NO retry-after", async () => {
+      // Anthropic's 529 "Overloaded" ships no Retry-After header. With the short
+      // retry gated on a parseable one, this path was skipped entirely and the
+      // caller re-dispatched immediately — live, 8 attempts in ~100s, each
+      // re-uploading a 151k-token prompt to a provider that had just said it was
+      // out of capacity. A default backoff keeps the same model (cache-preserving)
+      // and puts a pause between attempts.
+      const session = makeSession();
+      const overloadError = Object.assign(new Error("Overloaded"), { status: 529 });
+      session.prompt
+        .mockRejectedValueOnce(overloadError)
+        .mockResolvedValueOnce(undefined);
+
+      const params = makeParams({ session });
+      const result = await runWithModelRetry(params);
+
+      expect(result.succeeded).toBe(true);
+      // Same model — the retry must not rotate or fail over.
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(session.prompt).toHaveBeenCalledTimes(2);
     });
 
     it("retries with same model on 529 with short retry-after", async () => {
