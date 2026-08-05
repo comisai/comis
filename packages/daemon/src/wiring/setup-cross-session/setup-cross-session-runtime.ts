@@ -21,7 +21,7 @@ import type {
   MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
 } from "@comis/core";
 import {
-  createConversationRef, createResolvedRequestContext, formatSessionKey,
+  createConversationRef, createResolvedRequestContext,
   resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
