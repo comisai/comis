@@ -14,6 +14,27 @@ interface CompletionEvidenceGuardResult {
   correction?: "replaced" | "prefixed_partial";
 }
 
+interface SchedulerStateEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_scheduler_state_evidence";
+}
+
+function schedulerStateEvidenceGuard(): (params: {
+  response: string;
+  toolExecResults?: readonly {
+    toolName: string;
+    action?: string;
+    success: boolean;
+  }[];
+  honestResponse: string;
+}) => SchedulerStateEvidenceGuardResult {
+  const candidate = (responseGrounding as Record<string, unknown>)
+    .enforceSchedulerStateEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ReturnType<typeof schedulerStateEvidenceGuard>;
+}
+
 function completionEvidenceGuard(): (params: {
   response: string;
   unrecoveredToolFailures?: readonly string[];
@@ -28,6 +49,54 @@ function completionEvidenceGuard(): (params: {
 
 
 describe("response grounding module", () => {
+  it("rejects an already-set reminder claim without current scheduler evidence", () => {
+    const honestResponse =
+      "I did not verify the current reminder state in this turn, so I cannot say that it is set.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "Got it—the reminder is already set for Thursday at 9:00 AM UTC.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("keeps a reminder state claim grounded by a current cron receipt", () => {
+    const response = "The reminder is set for Thursday at 9:00 AM UTC.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [{
+        toolName: "cron",
+        action: "list",
+        success: true,
+      }],
+      honestResponse: "I could not verify the reminder.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not treat a removed cron receipt as proof that a reminder exists", () => {
+    const honestResponse = "I could not verify the reminder.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response: "Your reminder is already scheduled.",
+      toolExecResults: [{
+        toolName: "cron",
+        action: "remove",
+        success: true,
+      }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
   it("uses the latest agent-update receipt as the no-op authority", () => {
     const honestResponse =
       "No configuration change was needed. This agent already uses provider_a / model_a.";
