@@ -689,17 +689,21 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("re-entry ignores a mismatched ambient admin context and uses the persisted physical route at guest trust", async () => {
+  it("re-entry ignores ambient admin authority and uses the persisted user trust snapshot", async () => {
     const originTraceId = randomUUID();
-    const task = buildTask({
-      result: "ok",
-      origin: buildOrigin({
+    const persistedOrigin = {
+      ...buildOrigin({
         agentId: "agent_a",
         sessionKey: "tenant_a:user_a:session-channel:thread:thread_a",
         channelType: "telegram",
         channelId: "chat_a",
         traceId: originTraceId,
       }),
+      trustLevel: "user" as const,
+    };
+    const task = buildTask({
+      result: "ok",
+      origin: persistedOrigin,
     });
     taskManager.getTask.mockReturnValue(task);
 
@@ -756,7 +760,7 @@ describe("createBackgroundCompletionRunner", () => {
       sessionKey: originSessionKey(task.origin),
       agentId: "agent_a",
       traceId: originTraceId,
-      trustLevel: "guest",
+      trustLevel: "user",
       learningEligible: false,
       channelType: "telegram",
       deliveryOrigin: {
@@ -770,6 +774,40 @@ describe("createBackgroundCompletionRunner", () => {
     expect(Object.isFrozen(executorContext?.deliveryOrigin)).toBe(true);
     expect(Reflect.set(executorContext!, "trustLevel", "admin")).toBe(false);
     expect(Reflect.set(executorContext!, "agentId", "admin_agent")).toBe(false);
+  });
+
+  it("re-entry preserves persisted admin trust without ambient authority", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: {
+        ...buildOrigin(),
+        trustLevel: "admin" as const,
+      },
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    let executorContext: RequestContext | undefined;
+    executor.execute.mockImplementation(async (...args) => {
+      executorContext = getContext();
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-admin-context",
+        finishReason: "stop",
+      })(...args);
+    });
+
+    const runner = build();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executorContext?.trustLevel).toBe("admin");
   });
 
   it("invalid persisted physical route is contained and falls back without executor re-entry", async () => {
