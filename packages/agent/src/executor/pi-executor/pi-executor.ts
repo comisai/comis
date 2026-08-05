@@ -2018,6 +2018,38 @@ async function runSessionLocked(
           );
         },
       },
+      {
+        activeLocations: new Set(frozenPromptSkillLocations?.keys() ?? []),
+        onBlocked: (skillName) => {
+          deps.logger.warn(
+            {
+              step: "prompt-skill-read",
+              skillName,
+              errorKind: "precondition" as const,
+              hint:
+                "Add the skill's reviewed directory to agents.<id>.skills.discoveryPaths "
+                + "or import it through skills_manage before retrying.",
+            },
+            "Unregistered prompt skill invocation blocked",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "prompt_skill.unregistered_invocation",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                skillName,
+                reason: "absent_from_current_registry",
+              },
+            },
+          );
+        },
+      },
     );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
