@@ -199,6 +199,40 @@ export type VisionDirectPreprocessReceipt = z.infer<
   typeof VisionDirectPreprocessReceiptSchema
 >;
 
+/** The operator-facing limit that bounds remote attachment downloads. */
+export const MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY =
+  "integrations.media.infrastructure.maxRemoteFetchBytes" as const;
+
+/**
+ * Content-free evidence that one current attachment was rejected before its
+ * bytes entered the workspace or model context.
+ */
+export const MediaAttachmentPreprocessReceiptSchema = z.strictObject({
+  attachmentIndex: z.number().int().nonnegative().max(15),
+  outcome: z.literal("rejected"),
+  reason: z.literal("size_exceeded"),
+  sizeBytes: z.number().int().nonnegative(),
+  maxBytes: z.number().int().nonnegative(),
+  configKey: z.literal(MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY),
+});
+
+export const MediaAttachmentPreprocessReceiptsSchema = z
+  .array(MediaAttachmentPreprocessReceiptSchema)
+  .max(16);
+
+export type MediaAttachmentPreprocessReceipt = z.infer<
+  typeof MediaAttachmentPreprocessReceiptSchema
+>;
+
+/** Render trusted current-attachment status without including names, URLs, or content. */
+export function formatMediaAttachmentRejection(
+  receipt: MediaAttachmentPreprocessReceipt,
+): string {
+  return `<attachment-status attachment-index="${receipt.attachmentIndex + 1}" outcome="rejected" reason="size_exceeded" size-bytes="${receipt.sizeBytes}" max-bytes="${receipt.maxBytes}" config-key="${receipt.configKey}">
+The current attachment was not downloaded or persisted because it exceeds the configured remote-fetch limit. Do not claim to have read it. Do not substitute an earlier attachment or workspace file. Ask for a smaller file, or report the exact config key and byte values above.
+</attachment-status>`;
+}
+
 /**
  * Content-free proof that the internal completion relay is rewriting a
  * runtime-settled action result rather than handling ordinary cross-session
@@ -273,6 +307,8 @@ export const NormalizedMessageSchema = z.strictObject({
       sttPreprocess: SttPreprocessReceiptsSchema.optional(),
       /** Trusted, content-free direct model-vision preprocessing receipt. */
       visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
+      /** Trusted, content-free current-attachment rejection receipts. */
+      mediaAttachmentPreprocess: MediaAttachmentPreprocessReceiptsSchema.optional(),
       /** Runtime-owned current-action receipt for internal completion rewrites. */
       runtimeActionEvidence: RuntimeActionEvidenceSchema.optional(),
       /** Runtime-owned exact-URL digests from successful background web fetches. */

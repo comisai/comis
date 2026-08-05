@@ -14,7 +14,7 @@
  */
 
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
-import { sanitizeLogString, systemNowMs } from "@comis/core";
+import { MediaResolutionError, sanitizeLogString, systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { fileTypeFromBuffer } from "file-type";
@@ -91,9 +91,11 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
 
         // Pre-download size check
         if (file.file_size != null && file.file_size > deps.maxBytes) {
-          return err(new Error(
-            `Telegram file size ${file.file_size} exceeds limit of ${deps.maxBytes} bytes`,
-          ));
+          return err(new MediaResolutionError({
+            kind: "size_exceeded",
+            sizeBytes: file.file_size,
+            maxBytes: deps.maxBytes,
+          }));
         }
 
         // Log getFile result for media pipeline visibility
