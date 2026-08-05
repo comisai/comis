@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
 import { buildFindings, pipelineAuthoringAggregateFromRows } from "./system-findings.js";
+import * as systemFindings from "./system-findings.js";
 import { orchestrateEfficiencyFromRow, pricingGapFromRow } from "./system-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
@@ -925,6 +926,74 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
 describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("names the protected record for an active background recovery scan failure", () => {
+    const finding = buildFindings(
+      [{
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "failed",
+          failureCount: 1,
+          failureKinds: ["task_validation"],
+          recordRefs: ["default/task-a.json"],
+        }),
+      }],
+      [],
+      [],
+    ).find((candidate) => candidate.code === "background_task_recovery_scan_failed");
+
+    expect(finding?.detail).toContain("task_validation");
+    expect(finding?.hint).toContain("background-tasks/default/task-a.json");
+    expect(finding?.hint).not.toMatch(/comis explain/i);
+  });
+
+  it("clears the background recovery finding after the latest healthy scan", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "failed",
+          failureCount: 1,
+          failureKinds: ["task_validation"],
+          recordRefs: ["default/task-a.json"],
+        }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "info",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "healthy",
+          failureCount: 0,
+          failureKinds: [],
+          recordRefs: [],
+        }),
+      },
+    ];
+
+    expect(buildFindings(rows, [], []).some(
+      (candidate) => candidate.code === "background_task_recovery_scan_failed",
+    )).toBe(false);
+
+    const activeWarningCount = (systemFindings as unknown as Record<string, unknown>)[
+      "activeHealthSignalWarningCount"
+    ];
+    if (typeof activeWarningCount !== "function") {
+      expect(activeWarningCount).toBeTypeOf("function");
+      return;
+    }
+    expect((activeWarningCount as (input: DiagnosticRow[]) => number)(rows)).toBe(0);
+  });
+
   it("makes pre-session inbound persistence failures actionable without explain", () => {
     const finding = buildFindings(
       [{
