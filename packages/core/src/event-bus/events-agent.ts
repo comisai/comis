@@ -171,6 +171,9 @@ export interface AgentEvents {
     /** The source HOSTS the web result came from (e.g. ["example.com"]) —
      *  hosts ONLY, never full URLs with paths/queries, never bodies. */
     domains?: string[];
+    /** SHA-256 of the exact final URL for a successful web_fetch. This is
+     *  relay-only citation evidence: never the URL, path, query, or body. */
+    citationUrlDigest?: string;
   };
 
   /** Tools filtered out by policy before execution (debugging/audit) */

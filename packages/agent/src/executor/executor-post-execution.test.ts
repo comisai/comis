@@ -1061,6 +1061,17 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — exact citation evidence is enforced after critic rewrites and before persistence", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceCitationEvidence\(/);
+    expect(stripped).toMatch(/response\.citation_evidence_guard/);
+    expect(stripped.indexOf("runVerificationCritic("))
+      .toBeLessThan(stripped.indexOf("enforceCitationEvidence("));
+    expect(stripped.indexOf("enforceCitationEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — a successful unchanged agent update is grounded before delivery", () => {
     const stripped = readPostExecStripped();
 

@@ -18,6 +18,7 @@ import type { MessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { TurnLoopDetector } from "../turn-loop-detector.js";
 import { tryCatch } from "@comis/shared";
 import { isCompletionClaim } from "../critic-isolation.js";
+import { enforceCitationEvidence } from "../citation-evidence.js";
 
 const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
 
@@ -25,6 +26,11 @@ export interface OutboundCompletionEvidence {
   readonly requestMutationToolNames: ReadonlySet<string>;
   readonly currentSuccessfulMutationCount: () => number;
   readonly onBlocked: () => void;
+  /** Whether this execution has current or inherited research evidence. */
+  readonly citationEvidenceEnabled?: () => boolean;
+  /** Exact successful-fetch URL digests eligible for outbound citation. */
+  readonly allowedCitationDigests?: () => readonly string[];
+  readonly onCitationBlocked?: () => void;
 }
 
 function visibleMessageDelivery(context: unknown): string | undefined {
@@ -70,6 +76,33 @@ function outboundCompletionEvidenceVerdict(
       "Completion delivery blocked: this request matched mutating tools, but no "
       + "successful current-turn mutation has completed. Use a matching mutation "
       + "tool, verify the result, and then retry the message.",
+  };
+}
+
+function outboundCitationEvidenceVerdict(
+  context: unknown,
+  evidence?: OutboundCompletionEvidence,
+): { block: true; reason: string } | undefined {
+  if (
+    evidence?.citationEvidenceEnabled?.() !== true
+    || evidence.allowedCitationDigests === undefined
+  ) {
+    return undefined;
+  }
+  const visibleDelivery = visibleMessageDelivery(context);
+  if (visibleDelivery === undefined) return undefined;
+  const guarded = enforceCitationEvidence({
+    response: visibleDelivery,
+    allowedUrlDigests: evidence.allowedCitationDigests(),
+    enabled: true,
+  });
+  if (!guarded.corrected) return undefined;
+  evidence.onCitationBlocked?.();
+  return {
+    block: true,
+    reason:
+      "Citation delivery blocked: one or more source URLs lack an exact successful "
+      + "web_fetch receipt. Retry using only the exact fetched URLs.",
   };
 }
 
@@ -259,6 +292,12 @@ export function createBeforeToolCallGuard(
       outboundCompletionEvidence,
     );
     if (completionEvidenceVerdict) return completionEvidenceVerdict;
+
+    const citationEvidenceVerdict = outboundCitationEvidenceVerdict(
+      context,
+      outboundCompletionEvidence,
+    );
+    if (citationEvidenceVerdict) return citationEvidenceVerdict;
 
     // Short-circuit a repeat idempotent read (the loop-breaker seam).
     // The SDK's BeforeToolCallResult has only {block, reason} -- no content

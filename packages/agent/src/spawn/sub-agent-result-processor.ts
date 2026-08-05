@@ -492,6 +492,7 @@ export async function deliverAnnouncement(params: {
   callerConversation?: ConversationLocator;
   destinationEndpoint?: ChannelEndpoint;
   resolvedLanguage?: string;
+  citationEvidence?: import("@comis/core").CitationEvidence;
   terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;
   attachments?: CompletionAttachmentShape[];
@@ -556,6 +557,7 @@ export async function deliverAnnouncement(params: {
       callerConversation: params.callerConversation,
       destinationEndpoint: params.destinationEndpoint,
       ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
+      ...(params.citationEvidence ? { citationEvidence: params.citationEvidence } : {}),
       terminalOutcome: params.terminalOutcome,
       runId,
       idempotencyKey: announceKey,
@@ -636,10 +638,11 @@ export async function deliverAnnouncement(params: {
     try {
       const parentSk = conversationScopeToSessionKey(params.callerConversation.conversationScope);
       if (!parentSk.ok) throw parentSk.error;
-      const parentOptions = params.announceThreadId || params.resolvedLanguage
+      const parentOptions = params.announceThreadId || params.resolvedLanguage || params.citationEvidence
         ? {
             ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
             ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
+            ...(params.citationEvidence ? { citationEvidence: params.citationEvidence } : {}),
           }
         : undefined;
       const candidate = await withTimeout(

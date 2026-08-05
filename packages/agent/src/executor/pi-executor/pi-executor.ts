@@ -182,6 +182,11 @@ import { maybeRunBootstrapSweep } from "./maybe-run-bootstrap-sweep.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
 import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
+import {
+  historicalCitationDigests,
+  isCitationSourceRequest,
+} from "../citation-evidence.js";
+import { hasTrustedRuntimeActionEvidence } from "../persistent-action-evidence.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
@@ -1913,6 +1918,14 @@ async function runSessionLocked(
       .map((tool) => tool.name),
   );
   let currentSuccessfulMutationCount = (): number => 0;
+  let currentWebResearchObserved = (): boolean => false;
+  let currentCitationDigests = (): readonly string[] => [];
+  const inheritedCitationDigests = isCitationSourceRequest(msg.text)
+    ? historicalCitationDigests(session)
+    : [];
+  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+    ? msg.metadata.citationEvidence
+    : undefined;
 
   // Proactive safety -- block tool execution before it starts when
   // safety limits are already reached. Existing reactive checks in
@@ -1937,6 +1950,15 @@ async function runSessionLocked(
       {
         requestMutationToolNames,
         currentSuccessfulMutationCount: () => currentSuccessfulMutationCount(),
+        citationEvidenceEnabled: () =>
+          currentWebResearchObserved()
+          || relayedCitationEvidence !== undefined
+          || inheritedCitationDigests.length > 0,
+        allowedCitationDigests: () => [
+          ...currentCitationDigests(),
+          ...(relayedCitationEvidence?.urlDigests ?? []),
+          ...inheritedCitationDigests,
+        ],
         onBlocked: () => {
           deps.logger.warn(
             {
@@ -1963,6 +1985,34 @@ async function runSessionLocked(
                 claimKind: "completion",
                 reason: "missing_current_turn_mutation_receipt",
                 matchedMutationToolCount: requestMutationToolNames.size,
+              },
+            },
+          );
+        },
+        onCitationBlocked: () => {
+          deps.logger.warn(
+            {
+              step: "citation-evidence",
+              errorKind: "validation" as const,
+              hint:
+                "Retry the outbound message with only exact URLs from successful "
+                + "web_fetch receipts visible in this execution.",
+            },
+            "Outbound citation blocked before delivery",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "response.outbound_citation_evidence_guard",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                claimKind: "citation",
+                reason: "citation_without_fetch_evidence",
               },
             },
           );
@@ -2692,6 +2742,18 @@ async function runSessionLocked(
           record.action === undefined ? {} : { action: record.action },
         ) === "mutating",
     ).length;
+  currentWebResearchObserved = () =>
+    (bridge.getResult().toolExecResults ?? []).some(
+      (record) => record.toolName === "web_fetch" || record.toolName === "web_search",
+    );
+  currentCitationDigests = () =>
+    (bridge.getResult().toolExecResults ?? []).flatMap((record) =>
+      record.toolName === "web_fetch"
+      && record.success
+      && record.citationUrlDigest !== undefined
+        ? [record.citationUrlDigest]
+        : [],
+    );
 
   const unsubscribe = session.subscribe(bridge.listener);
 

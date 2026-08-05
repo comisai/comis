@@ -1121,6 +1121,68 @@ describe("createSubAgentRunner", () => {
     fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
+  it("relays successful child web-fetch digests without relaying fetched URLs", async () => {
+    let resolveExecution!: (value: {
+      response: string;
+      tokensUsed: { total: number };
+      cost: { total: number };
+      finishReason: string;
+      stepsExecuted: number;
+    }) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "research the storage standard",
+      agentId: "research-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const child = runner.getRunStatus(runId);
+    const digest = "c".repeat(64);
+    deps.eventBus.emit("tool:executed", {
+      toolName: "web_fetch",
+      toolCallId: "fetch-1",
+      durationMs: 12,
+      success: true,
+      citationUrlDigest: digest,
+      timestamp: testClock.now(),
+      agentId: "research-agent",
+      sessionKey: child?.sessionKey,
+    });
+    resolveExecution({
+      response: "research complete",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      citationEvidence: { kind: "web_fetch", urlDigests: [digest] },
+    }));
+    expect(JSON.stringify(enqueue.mock.calls[0])).not.toContain("https://");
+    await runner.shutdown();
+  });
+
   it("resolves relative expected outputs inside the child workspace", async () => {
     vi.useRealTimers();
     const outputDir = await mkdtemp(join(tmpdir(), "relative-completion-output-test-"));

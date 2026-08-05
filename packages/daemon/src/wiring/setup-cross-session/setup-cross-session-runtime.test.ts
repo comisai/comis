@@ -318,7 +318,11 @@ function getAnnounceToParent(runnerArgs: any) {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: {
+      threadId?: string;
+      resolvedLanguage?: string;
+      citationEvidence?: { kind: "web_fetch"; urlDigests: string[] };
+    },
   ) => runWithConversationAuthority(agentId, sessionKey, (scopedSessionKey) => (
     announceToParent(
       agentId,
@@ -998,6 +1002,12 @@ describe("setupCrossSession", () => {
       "Rewrite this completion",
       "telegram",
       "chat-123",
+      {
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["d".repeat(64)],
+        },
+      },
     );
 
     expect(deps.assembleToolsForAgent).not.toHaveBeenCalled();
@@ -1008,6 +1018,10 @@ describe("setupCrossSession", () => {
       metadata: {
         crossSession: true,
         runtimeActionEvidence: { kind: "background_completion" },
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["d".repeat(64)],
+        },
       },
     });
     expect(execute).toHaveBeenCalledWith(
