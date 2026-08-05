@@ -12,14 +12,13 @@
  *
  * @module
  */
-
 import type {
   AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
   DeliveryOrigin, DeliveryService, DeliverToChannelOptions, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef, ConversationScope,
   ResolvedTurnScope,
-  MemoryWriteEntry, MemoryWriteScope,
+  MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
 } from "@comis/core";
 import {
   createConversationRef, createResolvedRequestContext, DeliveryOriginSchema, formatSessionKey,
@@ -86,7 +85,7 @@ export interface CrossSessionResult {
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string }) => Promise<string | undefined>;
+  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence }) => Promise<string | undefined>;
   /** Dead-letter queue for failed announcement persistence. */
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
@@ -214,6 +213,7 @@ export function setupCrossSession(deps: {
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
     resolvedLanguage?: string,
     runtimeActionEvidence?: NormalizedMessage["metadata"]["runtimeActionEvidence"],
+    citationEvidence?: CitationEvidence,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
     const targetSessionKey = { ...sessionKey, agentId };
     const formattedTargetSessionKey = formatSessionKey(targetSessionKey);
@@ -257,7 +257,7 @@ export function setupCrossSession(deps: {
         text,
         timestamp: systemNowMs(),
         attachments: [],
-        metadata: { crossSession: true, ...(runtimeActionEvidence ? { runtimeActionEvidence } : {}) },
+        metadata: { crossSession: true, ...(runtimeActionEvidence ? { runtimeActionEvidence } : {}), ...(citationEvidence ? { citationEvidence } : {}) },
       };
       const tools = fixedTools ?? await assembleToolsForAgent(agentId);
       const result = await getExecutor(agentId).execute(msg, targetSessionKey, tools, undefined, agentId);
@@ -324,7 +324,7 @@ export function setupCrossSession(deps: {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
   ): Promise<string | undefined> => {
     deps.logger?.debug({
       callerAgentId,
@@ -369,7 +369,7 @@ export function setupCrossSession(deps: {
         callerConversation,
         text,
         [],
-        options?.resolvedLanguage, { kind: "background_completion" },
+        options?.resolvedLanguage, { kind: "background_completion" }, options?.citationEvidence,
       );
       const trimmed = result.response.trim();
       const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");

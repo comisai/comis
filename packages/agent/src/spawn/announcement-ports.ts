@@ -22,7 +22,7 @@
  */
 
 import type { Result } from "@comis/shared";
-import type { ChannelEndpoint, ConversationLocator } from "@comis/core";
+import type { ChannelEndpoint, CitationEvidence, ConversationLocator } from "@comis/core";
 import type { AnnouncementTerminalOutcome } from "./sub-agent-announcement-content.js";
 
 export interface AnnouncementOperationIdentity {
@@ -84,6 +84,8 @@ export interface QueuedAnnouncementShape {
   destinationEndpoint: ChannelEndpoint;
   /** Response locale resolved for the originating user turn. */
   resolvedLanguage?: string;
+  /** Successful child web-fetch evidence, represented only as exact URL digests. */
+  citationEvidence?: CitationEvidence;
   /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
   terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;

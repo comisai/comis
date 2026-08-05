@@ -158,6 +158,11 @@ import {
   type FinalAssistantSyncDiagnostics,
 } from "./phase-filter.js";
 import {
+  enforceCitationEvidence,
+  historicalCitationDigests,
+  isCitationSourceRequest,
+} from "./citation-evidence.js";
+import {
   buildSubagentTerminalToolFailureReply,
   classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
@@ -2152,12 +2157,79 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     if (cr.verdict !== "verified" && cr.verdict !== "skipped") { result.response = cr.response; }
   }
 
+  // Citation integrity is enforced after every model-authored rewrite (including
+  // locale repair and the optional critic), immediately before the canonical
+  // assistant turn is synchronized. Current successful web_fetch receipts are
+  // authoritative. A background completion carries only their SHA-256 URL
+  // digests, while a later explicit source question may reuse digests attached
+  // by this same guard to earlier canonical assistant turns.
+  const currentWebResearchObserved = (bridgeResult.toolExecResults ?? []).some(
+    (toolResult) => toolResult.toolName === "web_fetch" || toolResult.toolName === "web_search",
+  );
+  const currentFetchDigests = (bridgeResult.toolExecResults ?? [])
+    .filter(
+      (toolResult) =>
+        toolResult.toolName === "web_fetch"
+        && toolResult.success
+        && toolResult.citationUrlDigest !== undefined,
+    )
+    .flatMap((toolResult) =>
+      toolResult.citationUrlDigest === undefined ? [] : [toolResult.citationUrlDigest],
+    );
+  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+    ? msg.metadata.citationEvidence
+    : undefined;
+  const historicalDigests = isCitationSourceRequest(msg.text ?? "")
+    ? historicalCitationDigests(session)
+    : [];
+  const allowedCitationDigests = [
+    ...currentFetchDigests,
+    ...(relayedCitationEvidence?.urlDigests ?? []),
+    ...historicalDigests,
+  ];
+  const citationGrounding = enforceCitationEvidence({
+    response: result.response ?? "",
+    allowedUrlDigests: allowedCitationDigests,
+    enabled:
+      currentWebResearchObserved
+      || relayedCitationEvidence !== undefined
+      || historicalDigests.length > 0,
+  });
+  result.response = citationGrounding.response;
+  if (citationGrounding.corrected) {
+    deps.logger.warn(
+      {
+        step: "citation-evidence",
+        removedCitationCount: citationGrounding.removedCitationCount,
+        errorKind: "validation" as const,
+        hint:
+          "The response contained a citation URL without an exact successful web_fetch digest; "
+          + "inspect the current tool receipts and canonical assistant citation evidence in comis explain.",
+      },
+      "Citation without exact fetch evidence removed",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.citation_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "citation",
+        reason: citationGrounding.reason,
+        removedCitationCount: citationGrounding.removedCitationCount,
+      },
+    });
+  }
+
   const syncDiagnostics: FinalAssistantSyncDiagnostics = {};
   const responseSync = synchronizeFinalAssistantResponse(
     session,
     result.response ?? "",
     sm,
     syncDiagnostics,
+    citationGrounding.matchedDigests,
   );
   if (responseSync === "updated") {
     deps.logger.info(

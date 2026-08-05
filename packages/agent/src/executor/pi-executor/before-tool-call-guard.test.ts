@@ -188,6 +188,37 @@ describe("createBeforeToolCallGuard", () => {
     expect(onCitationBlocked).toHaveBeenCalledOnce();
   });
 
+  it("allows an outbound citation backed by the exact fetch digest", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const fetchedUrl = "https://example.com/source/abcdef";
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "where is that from",
+      undefined,
+      {
+        requestMutationToolNames: new Set<string>(),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked: vi.fn(),
+        citationEvidenceEnabled: () => true,
+        allowedCitationDigests: () => [
+          createHash("sha256").update(fetchedUrl, "utf8").digest("hex"),
+        ],
+        onCitationBlocked: vi.fn(),
+      },
+    ]);
+
+    await expect(guard({
+      toolCall: { name: "message" },
+      args: { action: "send", text: `[Source](${fetchedUrl})` },
+    })).resolves.toBeUndefined();
+  });
+
   it("checks step counter first (priority order)", async () => {
     // All three would block -- step counter should be the reason
     const stepCounter = { shouldHalt: () => true, increment: () => 1, reset: () => {}, getCount: () => 50 };

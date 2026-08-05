@@ -14,6 +14,7 @@ export {
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
   RuntimeActionEvidenceSchema,
+  CitationEvidenceSchema,
   NormalizedMessageSchema,
   parseMessage,
   parseInboundMessageProvenanceBatch,
@@ -31,6 +32,7 @@ export type {
   SttPreprocessSelection,
   VisionDirectPreprocessReceipt,
   RuntimeActionEvidence,
+  CitationEvidence,
   OriginalInboundMessage,
   NormalizedMessage,
 } from "./normalized-message.js";

@@ -212,6 +212,18 @@ export type RuntimeActionEvidence = z.infer<
   typeof RuntimeActionEvidenceSchema
 >;
 
+/**
+ * Runtime-owned proof that a background result observed successful web fetches.
+ * Only exact SHA-256 URL digests cross the relay boundary: fetched URLs, page
+ * content, titles, and snippets remain out of metadata and telemetry.
+ */
+export const CitationEvidenceSchema = z.strictObject({
+  kind: z.literal("web_fetch"),
+  urlDigests: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).max(100),
+});
+
+export type CitationEvidence = z.infer<typeof CitationEvidenceSchema>;
+
 export interface SttPreprocessSelection {
   readonly provider: string;
   readonly keyless: boolean;
@@ -263,6 +275,8 @@ export const NormalizedMessageSchema = z.strictObject({
       visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
       /** Runtime-owned current-action receipt for internal completion rewrites. */
       runtimeActionEvidence: RuntimeActionEvidenceSchema.optional(),
+      /** Runtime-owned exact-URL digests from successful background web fetches. */
+      citationEvidence: CitationEvidenceSchema.optional(),
       /** Trusted projection of earlier group chatter, rendered as untrusted prompt context. */
       groupHistoryContext: z
         .array(GroupHistoryContextEntrySchema)

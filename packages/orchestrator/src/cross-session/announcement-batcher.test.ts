@@ -125,6 +125,30 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent.mock.calls[0]![3]).toContain("A background task has completed.");
   });
 
+  it("unions successful fetch digests across a batched parent rewrite", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+    const firstDigest = "a".repeat(64);
+    const secondDigest = "b".repeat(64);
+
+    await batcher.enqueue(makeAnnouncement({
+      runId: "research-1",
+      citationEvidence: { kind: "web_fetch", urlDigests: [firstDigest] },
+    }));
+    await batcher.enqueue(makeAnnouncement({
+      runId: "research-2",
+      citationEvidence: { kind: "web_fetch", urlDigests: [firstDigest, secondDigest] },
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent.mock.calls[0]![6]).toEqual({
+      citationEvidence: {
+        kind: "web_fetch",
+        urlDigests: [firstDigest, secondDigest],
+      },
+    });
+  });
+
   it("repairs a failed completion rewrite that omits the terminal failure", async () => {
     const failureNotice = "⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.";
     const deps = makeDeps({

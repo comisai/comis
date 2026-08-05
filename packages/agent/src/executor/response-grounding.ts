@@ -3,6 +3,9 @@
 
 import { isCompletionClaim } from "./critic-isolation.js";
 
+export { enforceCitationEvidence } from "./citation-evidence.js";
+export type { CitationEvidenceGuardResult } from "./citation-evidence.js";
+
 function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }

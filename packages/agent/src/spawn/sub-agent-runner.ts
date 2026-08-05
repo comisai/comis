@@ -37,6 +37,7 @@ import {
   type AgentCapability,
   type ResultRef,
   type ErrorKind,
+  type CitationEvidence,
   type EventMap,
   AgentExecutionFinishReasonSchema,
   classifyAgentFinishErrorKind,
@@ -481,7 +482,11 @@ export interface SubAgentRunnerDeps {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: {
+      threadId?: string;
+      resolvedLanguage?: string;
+      citationEvidence?: CitationEvidence;
+    },
   ) => Promise<string | undefined>;
   /** Render the deterministic failed-completion disclosure for the parent agent. */
   renderAnnouncementFailureNotice?: (
@@ -937,6 +942,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     failed: Set<string>;
   }
   const childBackgroundProcesses = new Map<string, ChildBackgroundProcessState>();
+  const childCitationEvidence = new Map<string, {
+    observedWebResearch: boolean;
+    urlDigests: Set<string>;
+  }>();
   const backgroundCleanupRequestedRunIds = new Set<string>();
   const createRunProgress = (updatedAt: number): SubAgentRunProgress => ({
     health: "healthy",
@@ -955,6 +964,22 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         || run.sessionKey !== event.sessionKey
       ) {
         continue;
+      }
+      if (event.toolName === "web_search" || event.toolName === "web_fetch") {
+        const evidence = childCitationEvidence.get(run.runId) ?? {
+          observedWebResearch: false,
+          urlDigests: new Set<string>(),
+        };
+        evidence.observedWebResearch = true;
+        if (
+          event.toolName === "web_fetch"
+          && event.success
+          && event.citationUrlDigest !== undefined
+          && evidence.urlDigests.size < 100
+        ) {
+          evidence.urlDigests.add(event.citationUrlDigest);
+        }
+        childCitationEvidence.set(run.runId, evidence);
       }
       if (event.backgrounded) {
         if (event.toolName === "exec") {
@@ -3565,6 +3590,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 errorContext: result.errorContext,
               });
             }
+            const runCitationEvidence = childCitationEvidence.get(runId);
             await deliverAnnouncement({
               announcementText,
               announceChannelType: params.announceChannelType,
@@ -3579,6 +3605,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerConversation: params.callerConversation,
               destinationEndpoint: run.callerEndpoint,
               resolvedLanguage: params.resolvedLanguage,
+              ...(runCitationEvidence?.observedWebResearch === true
+                ? {
+                    citationEvidence: {
+                      kind: "web_fetch",
+                      urlDigests: [...runCitationEvidence.urlDigests],
+                    },
+                  }
+                : {}),
               terminalOutcome: isSuccess
                 ? { status: "completed" }
                 : {
@@ -3857,6 +3891,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       } finally {
         providerSettledRunIds.delete(runId);
         childBackgroundProcesses.delete(runId);
+        childCitationEvidence.delete(runId);
         backgroundCleanupRequestedRunIds.delete(runId);
         // Release the child's trajectory recorder on EVERY terminal settle —
         // completion, natural failure, kill, and watchdog all flow through

@@ -3,8 +3,8 @@
  * `extractWebResultMetadata` — the CONTENT-FREE
  * web_search / web_fetch grounding summary threaded onto the trajectory
  * `tool.result` so a "grounded in fetched results" predicate is verifiable from
- * `comis explain` without a DEBUG daemon-log grep. Pins: count + source HOSTS
- * only; NEVER titles / snippets / paths / queries / bodies; undefined for any
+ * `comis explain` without a DEBUG daemon-log grep. Pins: count + source HOSTS +
+ * an exact-URL SHA-256 digest; NEVER titles / snippets / paths / queries / bodies; undefined for any
  * other tool or an unparseable result (the emit is unchanged for everything else).
  *
  * @module

@@ -623,11 +623,14 @@ describe("synchronize final assistant response", () => {
           structuredClone(rejected),
         ],
       };
+      const citationDigest = "e".repeat(64);
       expect(
         synchronize(
           liveSession,
           "openai / gpt-4.1-nano",
           manager,
+          undefined,
+          [citationDigest],
         ),
       ).toBe("updated");
 
@@ -638,6 +641,7 @@ describe("synchronize final assistant response", () => {
       expect(canonical[1]).toMatchObject({
         role: "assistant",
         content: [{ type: "text", text: "openai / gpt-4.1-nano" }],
+        citationEvidenceDigests: [citationDigest],
       });
       expect(
         reopened.getEntries().filter(
