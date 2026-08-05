@@ -13,7 +13,6 @@ export type {
   ChannelEvents,
   BackgroundTaskFailureDiagnostic,
   BackgroundTaskFailureCode,
-  BackgroundRecoveryEvents,
   InfraEvents,
   BackgroundTaskRecoveryScanFailureKind,
   WebhookFailureReason,
