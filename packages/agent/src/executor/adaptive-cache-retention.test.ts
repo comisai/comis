@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { createAdaptiveCacheRetention, createStaticRetention, FAST_PATH_CACHE_WRITE_THRESHOLD, PREFIX_INSTABILITY_THRESHOLD } from "./adaptive-cache-retention.js";
+import { coldStartRetentionFor, createAdaptiveCacheRetention, createStaticRetention, FAST_PATH_CACHE_WRITE_THRESHOLD, PREFIX_INSTABILITY_THRESHOLD } from "./adaptive-cache-retention.js";
 import type { AdaptiveCacheRetentionConfig } from "./adaptive-cache-retention.js";
 
 // ---------------------------------------------------------------------------
@@ -789,6 +789,74 @@ describe("prefix instability detection", () => {
       retention.recordCacheReads(10_000);
     }
     expect(retention.getRetention()).toBe("long"); // instability cleared
+  });
+
+  // -------------------------------------------------------------------------
+  // Cold-start derivation
+  //
+  // The ladder only works when cold and warm DIFFER: tryEscalate() returns
+  // early on `currentRetention === config.warmRetention`. Passing the same
+  // value for both pins `escalated` false forever, which disables the
+  // escalation, the onEscalated warm-state callback, AND the
+  // prefix-instability downgrade (it falls back to coldStartRetention, i.e.
+  // the same "long" it was meant to escape).
+  // -------------------------------------------------------------------------
+
+  it("derives a cheaper cold start for a long warm target", () => {
+    expect(coldStartRetentionFor("long")).toBe("short");
+  });
+
+  it("leaves a non-long warm target unchanged (nothing to step down from)", () => {
+    expect(coldStartRetentionFor("short")).toBe("short");
+    expect(coldStartRetentionFor("none")).toBe("none");
+  });
+
+  it("escalates to the warm target when cold and warm differ", () => {
+    const retention = createAdaptiveCacheRetention({
+      coldStartRetention: coldStartRetentionFor("long"),
+      warmRetention: "long",
+      escalationThreshold: 1000,
+    });
+    expect(retention.getRetention()).toBe("short");
+    for (let i = 0; i < 3; i++) {
+      retention.recordTurn();
+      retention.recordCacheReads(10_000);
+    }
+    expect(retention.hasEscalated()).toBe(true);
+    expect(retention.getRetention()).toBe("long");
+  });
+
+  it("never escalates when cold and warm are the same value", () => {
+    // Regression lock on the defect: a session configured long/long can never
+    // report escalation, so the warm-state callback never fires and the
+    // instability downgrade has nowhere to step down to.
+    const onEscalated = vi.fn();
+    const retention = createAdaptiveCacheRetention({
+      coldStartRetention: "long",
+      warmRetention: "long",
+      escalationThreshold: 1000,
+      onEscalated,
+    });
+    for (let i = 0; i < 10; i++) {
+      retention.recordTurn();
+      retention.recordCacheReads(10_000);
+    }
+    expect(retention.hasEscalated()).toBe(false);
+    expect(onEscalated).not.toHaveBeenCalled();
+  });
+
+  it("promotes on turn 2 via the large-first-write fast path", () => {
+    const retention = createAdaptiveCacheRetention({
+      coldStartRetention: coldStartRetentionFor("long"),
+      warmRetention: "long",
+      escalationThreshold: 1000,
+    });
+    // Measured live: cold writes averaged ~38K tokens, well over the 20K gate,
+    // so a real session pays the cheap 5m rate for exactly one turn.
+    retention.recordTurnWithCacheWrite(FAST_PATH_CACHE_WRITE_THRESHOLD + 18_000);
+    retention.recordCacheReads(5_000);
+    retention.recordTurnWithCacheWrite(0);
+    expect(retention.getRetention()).toBe("long");
   });
 
   it("static retention recordCacheReadForStability is no-op", () => {

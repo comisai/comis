@@ -251,7 +251,7 @@ Multi-agent configuration map. Each key is an agent ID, and the value is a `PerA
 | `thinkingLevel` | `enum` | _(unset)_ | SDK thinking level override: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` |
 | `maxTokens` | `number` | _(unset)_ | SDK max tokens override |
 | `temperature` | `number` | _(unset)_ | SDK temperature override (0-2) |
-| `cacheRetention` | `enum` | `"long"` | Anthropic prompt cache retention: `none`, `short`, `long` |
+| `cacheRetention` | `enum` | `"long"` | Anthropic prompt cache retention: `none`, `short`, `long`. This sets the **warm** target, not the rate every write pays. A session starts cold at 5m so its first write is cheap, then escalates to the configured value once the cache is observed being read — immediately on turn 2 when the first write exceeded 20K tokens, otherwise after 3 turns. A session whose cached prefix keeps collapsing is held down at 5m rather than repeatedly paying the 1h write premium. `short` and `none` disable the escalation (there is nothing to step up to). |
 | `maxContextChars` | `number` | `100000` | Maximum total characters for context window (~25k tokens) |
 | `maxToolResultChars` | `number` | `50000` | Maximum characters per tool result before truncation. Small/nano-class models default lower (small `12000`, nano `8000`) so a single large result can't fill the window; set this explicitly (or use `capabilityClassOverride: frontier`) to keep the full `50000`. |
 | `preserveRecent` | `number` | `4` | Minimum recent messages to always preserve during compaction |

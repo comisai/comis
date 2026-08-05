@@ -29,6 +29,7 @@ import type { PiExecutorDeps } from "./pi-executor-types.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
 import { resolveProviderApiKey } from "../../model/resolve-provider-api-key.js";
 import {
+  coldStartRetentionFor,
   createAdaptiveCacheRetention,
   createStaticRetention,
 } from "../adaptive-cache-retention.js";
@@ -264,7 +265,12 @@ export function decodeExecutionOverrides(
     const adaptiveRetention = isSubAgent
       ? createStaticRetention(configRetentionForSubagent)
       : createAdaptiveCacheRetention({
-          coldStartRetention: configRetention,
+          // Cold and warm MUST differ or the ladder is inert (see
+          // coldStartRetentionFor). The first write of a session lands at 5m;
+          // the >20K fast path then promotes on turn 2, so a large system
+          // prompt reaches 1h TTL as soon as it is shown to be read — rather
+          // than paying the 2x 1h write premium up front on every cold start.
+          coldStartRetention: coldStartRetentionFor(configRetention),
           warmRetention: configRetention,
           escalationThreshold: 1000,
           onEscalated: () => setCacheWarm(formattedKeyForRetention, true),

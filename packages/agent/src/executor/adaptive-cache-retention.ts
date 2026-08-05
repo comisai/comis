@@ -65,6 +65,26 @@ export interface AdaptiveCacheRetention {
   recordCacheReadForStability(cacheReadTokens: number, baselineTokens: number): boolean;
 }
 
+/**
+ * Cold-start retention for a configured warm target.
+ *
+ * The ladder only functions when cold and warm DIFFER: `tryEscalate` returns
+ * early on `currentRetention === config.warmRetention`, so supplying the same
+ * value for both pins `escalated` false for the life of the session. That
+ * silently disables three things at once — the escalation itself, the
+ * `onEscalated` warm-state callback, and the prefix-instability downgrade
+ * (which steps back to `coldStartRetention`, i.e. to the very value it was
+ * meant to escape).
+ *
+ * Starting cold at 5m makes the FIRST write of a session cheap, and the >20K
+ * fast path promotes on turn 2 — so a large system prompt reaches 1h TTL as
+ * soon as it has proven it is read at all, instead of paying the 2x 1h write
+ * premium before any evidence the cache will be used.
+ */
+export function coldStartRetentionFor(warmRetention: CacheRetention): CacheRetention {
+  return warmRetention === "long" ? "short" : warmRetention;
+}
+
 export function createAdaptiveCacheRetention(
   config: AdaptiveCacheRetentionConfig,
 ): AdaptiveCacheRetention {
