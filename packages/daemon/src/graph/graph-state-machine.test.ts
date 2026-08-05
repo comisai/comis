@@ -178,6 +178,30 @@ describe("createGraphStateMachine", () => {
       expect(sm.getNodeState("A")?.output).toBe("result data");
     });
 
+    it("clears the prior attempt error and conversation after a retry succeeds", () => {
+      const sm = createGraphStateMachine(buildGraph([{ nodeId: "A", retries: 1 }]));
+      sm.markNodeRunning("A", "run-1");
+      sm.markNodeFailed("A", "first attempt failed", {
+        conversationScope: {
+          tenantId: "default",
+          agentId: "child-a",
+          partition: { kind: "principal", principalId: "user_a" },
+        },
+        conversationRef: "conversation-ref",
+      });
+      sm.markNodeRunning("A", "run-2");
+
+      const result = sm.markNodeCompleted("A", "retry result");
+
+      expect(result.ok).toBe(true);
+      expect(sm.getNodeState("A")).toEqual(expect.objectContaining({
+        status: "completed",
+        output: "retry result",
+      }));
+      expect(sm.getNodeState("A")?.error).toBeUndefined();
+      expect(sm.getNodeState("A")?.priorConversation).toBeUndefined();
+    });
+
     it("sets completedAt timestamp", () => {
       const sm = createGraphStateMachine(buildGraph([{ nodeId: "A" }]));
       sm.markNodeRunning("A", "run-1");

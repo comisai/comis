@@ -705,6 +705,33 @@ describe("handleSubAgentCompleted: per-node budget", () => {
     expect(emit.mock.calls.find((c) => c[0] === "subagent:budget_exceeded")).toBeUndefined();
   });
 
+  it("does not retry a child that returned with an unresolved background process", () => {
+    const callOrder: string[] = [];
+    const { gs, markNodeFailed, markNodeCompleted } = makeBudgetGs({
+      nodes: [{ nodeId: "n1", agentId: "child-a" }],
+      onFailure: "continue",
+      runNodeId: "n1",
+      callOrder,
+    });
+    const deps = makeCompletionDeps();
+
+    handleSubAgentCompleted(
+      makeState(), deps, makeCompletionConfig(), gs,
+      {
+        runId: "run-1",
+        success: false,
+        tokensUsed: 500,
+        cost: 0.01,
+        unresolvedBackgroundProcesses: 1,
+      } as Parameters<typeof handleSubAgentCompleted>[4],
+      noopCallbacks(vi.fn()),
+    );
+
+    expect(markNodeFailed).toHaveBeenCalledTimes(1);
+    expect(markNodeFailed.mock.calls[0][3]).toEqual({ terminal: true });
+    expect(markNodeCompleted).not.toHaveBeenCalled();
+  });
+
   it("captures the terminal completion summary as the graph node output", () => {
     const callOrder: string[] = [];
     const { gs, markNodeCompleted } = makeBudgetGs({
