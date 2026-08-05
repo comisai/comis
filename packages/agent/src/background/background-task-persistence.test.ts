@@ -553,6 +553,37 @@ describe("background-task-persistence", () => {
       expect(onDisk.status).toBe("running");
     });
 
+    it("recovers a record persisted before the origin carried a trust level", () => {
+      // A record written by a build that predates `trustLevel` on the origin.
+      // Live on a production upgrade: every such file failed PersistedTaskStateSchema
+      // and was skipped, so a task still in flight across the restart could never be
+      // recovered. The absent field must degrade to LEAST privilege, never to the
+      // trust the turn might have had.
+      const agentDir = safePath(dataDir, "legacy-agent");
+      mkdirSync(agentDir, { recursive: true });
+      const { trustLevel: _dropped, ...legacyOrigin } = buildOrigin({ agentId: "legacy-agent" });
+      writeFileSync(
+        safePath(agentDir, "legacy.json"),
+        JSON.stringify({
+          id: "legacy",
+          toolName: "tool1",
+          status: "running",
+          startedAt: 1000,
+          origin: legacyOrigin,
+          continuationExecutionId: "legacy",
+          dispatchAttempts: 0,
+        }),
+        "utf-8",
+      );
+
+      const recovered = recoverTasks(dataDir);
+
+      expect(recovered.failures).toEqual([]);
+      expect(recovered.tasks).toHaveLength(1);
+      expect(recovered.tasks[0]?.id).toBe("legacy");
+      expect(recovered.tasks[0]?.origin.trustLevel).toBe("guest");
+    });
+
     it("reports files missing durable task identity", () => {
       // Write a completely malformed file (no id or toolName)
       const agentDir = safePath(dataDir, "bad-agent");

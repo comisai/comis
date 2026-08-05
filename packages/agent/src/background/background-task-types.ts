@@ -146,6 +146,31 @@ export interface BackgroundFinalizedResultRecoveryInput {
   readonly journalKey: string;
 }
 
+/**
+ * Origin as read back from disk.
+ *
+ * `trustLevel` is required when a task is promoted — it is the authorization
+ * snapshot the originating turn resolved, and a delayed re-entry must execute
+ * with the trust the user actually had. But a record written before the field
+ * existed still has to load: the promote-time schema is also the read-time
+ * schema, so adding a required field silently made every older record fail
+ * validation, and a task still in flight across the upgrade became
+ * unrecoverable rather than merely untrusted.
+ *
+ * An absent field degrades to LEAST privilege. The turn's real trust is not
+ * knowable after the fact, so it must never be inferred upward. Only the read
+ * path is tolerant; `BackgroundTaskOriginSchema` stays strict for promotion.
+ */
+const PersistedOriginSchema = z.preprocess(
+  (value) => (
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      && !("trustLevel" in value)
+      ? { ...(value as Record<string, unknown>), trustLevel: "guest" }
+      : value
+  ),
+  BackgroundTaskOriginSchema,
+);
+
 export const PersistedTaskStateSchema = z.strictObject({
   id: z.string().min(1).max(512),
   toolName: z.string().min(1).max(256),
@@ -154,7 +179,7 @@ export const PersistedTaskStateSchema = z.strictObject({
   completedAt: z.number().finite().optional(),
   result: z.string().max(102_400).optional(),
   error: z.string().max(102_400).optional(),
-  origin: BackgroundTaskOriginSchema,
+  origin: PersistedOriginSchema,
   notificationPolicy: BackgroundTaskNotificationPolicySchema.optional(),
   dispatchState: BackgroundSessionStateSchema.optional(),
   continuationExecutionId: z.string().min(1).max(512),
