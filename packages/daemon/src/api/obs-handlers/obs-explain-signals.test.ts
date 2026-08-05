@@ -27,6 +27,9 @@ import type { IncidentSignals } from "@comis/core";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 
+const MEDIA_LIMIT_CONFIG_KEY =
+  "integrations.media.infrastructure.maxRemoteFetchBytes";
+
 // ---------------------------------------------------------------------------
 // Fixture-shaped record builders (mirror the VERIFIED on-disk shapes).
 // ---------------------------------------------------------------------------
@@ -41,6 +44,57 @@ function log678Success(): Record<string, unknown> {
     msg: 'Tool audit: web_fetch succeeded (506ms) — {"url":"https://example.com/q","extractMode":"text"}',
   };
 }
+
+describe("attachment rejection trajectory normalization", () => {
+  it("selects the rejection immediately preceding the latest prompt", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "media.attachment.rejected",
+        seq: 1,
+        data: {
+          attachmentIndex: 0,
+          reason: "size_exceeded",
+          sizeBytes: 30_000_000,
+          maxBytes: 20_000_000,
+          configKey: MEDIA_LIMIT_CONFIG_KEY,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 2,
+        data: {},
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "media.attachment.rejected",
+        seq: 3,
+        data: {
+          attachmentIndex: 1,
+          reason: "size_exceeded",
+          sizeBytes: 57_671_680,
+          maxBytes: 26_214_400,
+          configKey: MEDIA_LIMIT_CONFIG_KEY,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 4,
+        data: {},
+      },
+    ]);
+
+    expect(signals.mediaAttachmentRejections).toEqual([{
+      attachmentIndex: 1,
+      reason: "size_exceeded",
+      sizeBytes: 57_671_680,
+      maxBytes: 26_214_400,
+      configKey: MEDIA_LIMIT_CONFIG_KEY,
+    }]);
+  });
+});
 
 // 678 log-shaped failure: errorText carries the injection block AND a
 // `"status": 200` substring (escaped, exactly as in the fixture). The block

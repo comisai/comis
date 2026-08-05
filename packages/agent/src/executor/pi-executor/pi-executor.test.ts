@@ -7933,6 +7933,18 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(completedRecord).toBeGreaterThan(requestedRecord);
   });
 
+  it("records trusted current-attachment rejections after the session recorder opens", async () => {
+    const src = await readPiExecutorSrc();
+    const recorderResolution = src.indexOf("trajectoryRecorder = trajectoryResult.value.recorder");
+    const receiptParse = src.indexOf("MediaAttachmentPreprocessReceiptsSchema.safeParse");
+    const rejectedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.attachment.rejected"',
+    );
+
+    expect(receiptParse).toBeGreaterThan(recorderResolution);
+    expect(rejectedRecord).toBeGreaterThan(receiptParse);
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
