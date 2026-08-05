@@ -90,7 +90,7 @@ describe("durable graph probe candidate selection", () => {
     expect(selectPipelineApproval([
       {
         messageId: 40,
-        text: "approval required: pipeline\n(running 0 s)",
+        text: "approval required: pipeline graph.execute\n(running 0 s)",
         replyMarkup: {
           inline_keyboard: [[
             { text: "Approve", callback_data: "v1.approve.stale.signature" },
@@ -108,7 +108,7 @@ describe("durable graph probe candidate selection", () => {
       },
       {
         messageId: 43,
-        text: "approval required: pipeline\n(running 0 s)",
+        text: "approval required: pipeline graph.execute\n(running 0 s)",
         raw: {
           reply_markup: {
             inline_keyboard: [[
@@ -127,7 +127,7 @@ describe("durable graph probe candidate selection", () => {
   it("rejects ambiguous new pipeline approval callbacks", () => {
     const event = (messageId: number) => ({
       messageId,
-      text: "approval required: pipeline\n(running 0 s)",
+      text: "approval required: pipeline graph.execute\n(running 0 s)",
       replyMarkup: {
         inline_keyboard: [[
           { text: "Approve", callback_data: `v1.approve.${messageId}.signature` },
