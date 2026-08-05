@@ -66,7 +66,18 @@ const MAX_ERRORS_BEFORE_RECONNECT = 3;
  *   - "Failed to reconnect SSE stream: ..."        (streamableHttp.js:152)
  */
 function isSelfHealedTransientError(error: Error): boolean {
-  return error.message.startsWith("SSE stream disconnected:");
+  if (error.message.startsWith("SSE stream disconnected:")) return true;
+  // A progress notification that arrives for a token the SDK no longer tracks.
+  // This is the NORMAL tail of abandoning a slow call: once the call deadline
+  // (`integrations.mcp.callToolTimeoutMs`) fires, the request is dropped while
+  // the server keeps streaming progress for it. The notification says nothing
+  // about connection health — live, a tool abandoned at 120s while the server
+  // was still working (progress 252/3595) produced enough of these to trip
+  // MAX_ERRORS_BEFORE_RECONNECT and tear the server down, after which every
+  // OTHER tool failed with "is reconnecting, cannot call tool" and the
+  // reconnect returned a different tool set, breaking the prompt cache too.
+  // Absorb it: the call it refers to is already gone.
+  return error.message.startsWith("Received a progress notification for an unknown token:");
 }
 
 // ---------------------------------------------------------------------------

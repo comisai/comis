@@ -225,6 +225,31 @@ describe("wireClientLifecycleCallbacks — self-heal predicate narrowness", () =
     expect(conn?.status).toBe("connected");
   });
 
+  it("a stale progress notification for an abandoned call does not escalate to a reconnect", () => {
+    // Live cascade: an MCP tool hit the 120s call deadline and was abandoned, so
+    // its progress token stopped being tracked. The server was still working
+    // (progress 252/3595) and kept streaming, and the SDK raised one onerror per
+    // late notification. Three of those tripped MAX_ERRORS_BEFORE_RECONNECT and
+    // tore down the whole server: every OTHER tool then failed with
+    // "<server> is reconnecting, cannot call tool", and the reconnect came back
+    // with a different tool set, breaking the prompt cache too. A notification
+    // about a call we already gave up on is informational, not a fault.
+    const state = makeState({ serverName: "srv" });
+    const client = wireConnected(state, "srv");
+
+    wireClientLifecycleCallbacks(state, { logger: NOOP_LOGGER }, client, "srv");
+
+    for (let i = 0; i < 5; i++) {
+      client.onerror!(new Error(
+        'Received a progress notification for an unknown token: {"method":"notifications/progress",'
+        + '"params":{"progress":252,"total":3595,"message":"collecting events","progressToken":35}}',
+      ));
+    }
+
+    expect(state.consecutiveErrors.get("srv") ?? 0).toBe(0);
+    expect(state.connections.get("srv")?.status).toBe("connected");
+  });
+
   it("'Maximum reconnection attempts (2) exceeded.' error escalates: triggers reconnect after threshold", () => {
     // Invariant guard — the predicate must not swallow this message.
     // Observable side-effect: after threshold (3) errors, handleDisconnection
