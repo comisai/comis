@@ -732,21 +732,35 @@ export function buildFindings(
     }
     let admittedSum = 0;
     let untrustedSum = 0;
+    let dependencyFailureSum = 0;
+    let failedPassSum = 0;
+    let failedRuns = 0;
     for (const row of learningHealth) {
       const d = parseDetailsObject(row.details);
       if (typeof d.admitted === "number") admittedSum += d.admitted;
       if (typeof d.untrustedDrops === "number") untrustedSum += d.untrustedDrops;
+      const dependencyFailures = typeof d.dependencyFailures === "number" ? d.dependencyFailures : 0;
+      const failedPasses = typeof d.failedPasses === "number" ? d.failedPasses : 0;
+      dependencyFailureSum += dependencyFailures;
+      failedPassSum += failedPasses;
+      if (dependencyFailures > 0 || failedPasses > 0) failedRuns += 1;
     }
     const ld = parseDetailsObject(latest.details);
     const latestOutcome =
       typeof ld.admissionOutcome === "string" && REFLECT_ADMISSION_OUTCOMES.has(ld.admissionOutcome)
         ? ld.admissionOutcome
         : "unknown";
+    const latestFailed =
+      (typeof ld.dependencyFailures === "number" && ld.dependencyFailures > 0)
+      || (typeof ld.failedPasses === "number" && ld.failedPasses > 0);
+    const latestTerminal = latestFailed
+      ? "latest status=failed, errorKind=dependency"
+      : "latest status=completed";
     findings.push({
       code: "learning_health",
-      detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
+      detail: `${learningHealth.length} reflection run(s) in the window; ${latestTerminal}, latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}, failedRuns=${failedRuns}, dependencyFailures=${dependencyFailureSum}, failedPasses=${failedPassSum}`,
       count: learningHealth.length,
-      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. Use `comis cron runs "Memory review" --agent <agentId>` for the per-run funnel; these summed counts are the deployment-wide surface. If outcome COVERAGE is low, also check the boot log for `outcome judge unavailable` / `correction detector unavailable` — without a cheap-model key both silently no-op while learning events keep firing, so the funnel starves upstream of admission.',
+      hint: 'failedRuns/dependencyFailures above zero means reflection only partially completed; check provider credentials, quota, and availability, then use `comis cron runs "Reflection" --agent <agentId>` for the exact failed execution. admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. If outcome COVERAGE is low, also check the boot log for `outcome judge unavailable` / `correction detector unavailable` — without a cheap-model key both silently no-op while learning events keep firing, so the funnel starves upstream of admission.',
     });
   }
 
