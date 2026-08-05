@@ -620,12 +620,23 @@ describe("setupCrossSession", () => {
       tenantId: "target-tenant",
       userId: "target-user",
       sessionKey: "target-tenant:agent:target-agent:target-user:target-channel:thread:target-thread",
-      agentId: "source-agent",
+      agentId: "target-agent",
       traceId: "20000000-0000-4000-8000-000000000002",
       startedAt: 2_000,
       trustLevel: "admin",
       channelType: "telegram",
       deliveryOrigin: targetOrigin,
+      turnScope: {
+        conversation: makeConversation("target-tenant", "target-agent").conversationScope,
+        principal: { principalId: "target-user" },
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-main",
+          conversationId: "target-channel",
+          threadId: "target-thread",
+          conversationKind: "direct",
+        },
+      },
     };
 
     await runWithContext(ambient, () => (
