@@ -231,5 +231,5 @@ export function appendCitationEvidenceRecord(params: {
 /** Narrow trigger for a later request asking the agent to identify its sources. */
 export function isCitationSourceRequest(request: string): boolean {
   return /\b(?:cite|cites|citation|citations|reference|references|source|sources)\b/iu.test(request)
-    || /\bwhere(?:'s| is| are)\b[^.!?\n]{0,40}\bfrom\b/iu.test(request);
+    || /\bwhere(?:'?s| is| are)\b[^.!?\n]{0,40}\bfrom\b/iu.test(request);
 }
