@@ -110,6 +110,11 @@ function makeTestOrigin(
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    // The authorization snapshot the originating turn resolved. Captured at
+    // promote time so a delayed re-entry re-executes with the trust the user
+    // actually had, rather than a level inferred later from the completion
+    // envelope. "user" is the ordinary inbound turn these tests model.
+    trustLevel: "user" as const,
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(
