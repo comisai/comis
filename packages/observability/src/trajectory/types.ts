@@ -156,6 +156,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   // the explain verdict reads it. Content-free: runId + closed killedBy +
   // numbers ONLY — never the free-text kill reason.
   "subagent.killed",
+  "subagent.background_processes_abandoned",
 
   // The reserved trajectory types for three
   // sub-agent-lifecycle events — a fail-closed sandbox-downgrade spawn

@@ -230,6 +230,7 @@ import {
   normalizeToolFailureDisclosure,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
+import { extractProcessSessionObservation } from "./process-session-observation.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
 
 // ---------------------------------------------------------------------------
@@ -1473,6 +1474,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             typeof resultDetails?.changed === "boolean"
               ? resultDetails.changed
               : undefined;
+          const processSessionObservation = extractProcessSessionObservation({
+            toolName: endEvent.toolName,
+            resultBackgrounded,
+            resultDetails,
+            toolArgs: rawArgsForParams !== null && typeof rawArgsForParams === "object"
+              ? rawArgsForParams as Record<string, unknown>
+              : undefined,
+          });
           // Track all tool execution results
           m.toolExecResults.push({
             toolName: endEvent.toolName,
@@ -1611,6 +1620,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
+            ...processSessionObservation,
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),

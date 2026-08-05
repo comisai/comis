@@ -104,6 +104,8 @@ describe("AgentEvents payload structure", () => {
       errorMessage: "Permission denied",
       errorKind: "internal",
       description: "Test run",
+      processSessionId: "proc-1",
+      processSessionStatus: "failed",
     };
 
     bus.on("tool:executed", handler);
@@ -118,6 +120,8 @@ describe("AgentEvents payload structure", () => {
     expect(received.userId).toBe("user-1");
     expect(received.traceId).toBe("trace-abc");
     expect(received.description).toBe("Test run");
+    expect(received.processSessionId).toBe("proc-1");
+    expect(received.processSessionStatus).toBe("failed");
 
     // With only required fields
     const minPayload: EventMap["tool:executed"] = {

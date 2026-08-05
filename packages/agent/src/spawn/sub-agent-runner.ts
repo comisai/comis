@@ -932,6 +932,12 @@ function classifyRequiredTool(
 export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
+  interface ChildBackgroundProcessState {
+    pending: Set<string>;
+    failed: Set<string>;
+  }
+  const childBackgroundProcesses = new Map<string, ChildBackgroundProcessState>();
+  const backgroundCleanupRequestedRunIds = new Set<string>();
   const createRunProgress = (updatedAt: number): SubAgentRunProgress => ({
     health: "healthy",
     toolCalls: 0,
@@ -939,7 +945,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     updatedAt,
   });
   const observeChildToolOutcome = (event: EventMap["tool:executed"]): void => {
-    if (event.backgrounded || event.agentId === undefined || event.sessionKey === undefined) {
+    if (event.agentId === undefined || event.sessionKey === undefined) {
       return;
     }
     for (const run of runs.values()) {
@@ -949,6 +955,31 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         || run.sessionKey !== event.sessionKey
       ) {
         continue;
+      }
+      if (event.backgrounded) {
+        if (event.toolName === "exec") {
+          const state = childBackgroundProcesses.get(run.runId) ?? {
+            pending: new Set<string>(),
+            failed: new Set<string>(),
+          };
+          state.pending.add(event.processSessionId ?? `tool-call:${event.toolCallId}`);
+          childBackgroundProcesses.set(run.runId, state);
+        }
+        run.progress.updatedAt = event.timestamp;
+        continue;
+      }
+      if (
+        event.toolName === "process"
+        && event.processSessionId !== undefined
+        && event.processSessionStatus !== undefined
+      ) {
+        const state = childBackgroundProcesses.get(run.runId);
+        const terminal = event.processSessionStatus !== "running";
+        if (state !== undefined && terminal && state.pending.delete(event.processSessionId)) {
+          if (event.processSessionStatus === "failed" || event.processSessionStatus === "killed") {
+            state.failed.add(event.processSessionId);
+          }
+        }
       }
       run.progress.toolCalls++;
       run.progress.updatedAt = event.timestamp;
@@ -963,6 +994,27 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
   };
   deps.eventBus.on("tool:executed", observeChildToolOutcome);
+
+  function backgroundProcessCounts(runId: string): { unresolved: number; failed: number } {
+    const state = childBackgroundProcesses.get(runId);
+    return {
+      unresolved: state?.pending.size ?? 0,
+      failed: state?.failed.size ?? 0,
+    };
+  }
+
+  function requestAbandonedBackgroundCleanup(run: SubAgentRun): void {
+    const { unresolved } = backgroundProcessCounts(run.runId);
+    if (unresolved === 0 || backgroundCleanupRequestedRunIds.has(run.runId)) return;
+    backgroundCleanupRequestedRunIds.add(run.runId);
+    deps.eventBus.emit("subagent:background_processes_abandoned", {
+      runId: run.runId,
+      agentId: run.agentId,
+      sessionKey: run.sessionKey,
+      count: unresolved,
+      timestamp: clock.now(),
+    });
+  }
   interface CompletionDeferred {
     promise: Promise<SubAgentCompletion>;
     resolve(completion: SubAgentCompletion): void;
@@ -3102,7 +3154,25 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (deliverySuppressedRunIds.has(runId)) return;
 
         const providerCompletedAt = clock.now();
-        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
+        const backgroundProcesses = backgroundProcessCounts(runId);
+        const backgroundProcessFailure = backgroundProcesses.unresolved > 0
+          ? `Sub-agent returned while ${backgroundProcesses.unresolved} auto-backgrounded process${backgroundProcesses.unresolved === 1 ? " was" : "es were"} still running.`
+          : backgroundProcesses.failed > 0
+            ? `Sub-agent returned after ${backgroundProcesses.failed} auto-backgrounded process${backgroundProcesses.failed === 1 ? " failed or was killed" : "es failed or were killed"}.`
+            : undefined;
+        const isSuccess = backgroundProcessFailure === undefined
+          && (result.finishReason === "stop" || result.finishReason === "end_turn");
+        requestAbandonedBackgroundCleanup(run);
+        if (backgroundProcessFailure !== undefined) {
+          deps.logger?.warn({
+            runId,
+            agentId: params.agentId,
+            unresolvedBackgroundProcesses: backgroundProcesses.unresolved,
+            failedBackgroundProcesses: backgroundProcesses.failed,
+            hint: "Poll each auto-backgrounded exec session with process.status until it reaches a terminal state before returning from the sub-agent",
+            errorKind: "precondition" as const,
+          }, "Sub-agent returned before auto-backgrounded process work was complete");
+        }
 
         // Warn on empty response — may indicate prompt or context issues
         if (!result.response || result.response.trim().length === 0) {
@@ -3258,18 +3328,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const haltedWithoutOutput =
           isSubAgentAbortFinishReason(result.finishReason)
           && usableSummary.trim().length === 0;
-        const completionSummary = haltedWithoutOutput
-          ? buildHaltedAccount({
-            finishReason: result.finishReason,
-            stepsExecuted: result.stepsExecuted,
-            ...(abortClassification?.category === undefined
-              ? {}
-              : { category: abortClassification.category }),
-            ...(abortClassification?.hint === undefined
-              ? {}
-              : { hint: abortClassification.hint }),
-          })
-          : usableSummary;
+        const completionSummary = backgroundProcessFailure ?? (
+          haltedWithoutOutput
+            ? buildHaltedAccount({
+                finishReason: result.finishReason,
+                stepsExecuted: result.stepsExecuted,
+                ...(abortClassification?.category === undefined
+                  ? {}
+                  : { category: abortClassification.category }),
+                ...(abortClassification?.hint === undefined
+                  ? {}
+                  : { hint: abortClassification.hint }),
+              })
+            : usableSummary
+        );
         if (haltedWithoutOutput) {
           deps.logger?.warn({
             runId, agentId: params.agentId,
@@ -3362,7 +3434,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (deps.memoryAdapter) {
           try {
             let status: string;
-            if (abortClassification) {
+            if (backgroundProcessFailure !== undefined) {
+              status = "Halted (background process incomplete)";
+            } else if (abortClassification) {
               status = `Halted (${abortClassification.category})`;
             } else if (result.finishReason === "error" && result.errorContext) {
               const retryHint = result.errorContext.retryable ? ", retryable" : "";
@@ -3376,7 +3450,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             const taskSnippet = params.task.length > 500
               ? params.task.slice(0, 497) + "..."
               : params.task;
-            const sanitizedResponse = sanitizeAssistantResponse(result.response);
+            const sanitizedResponse = sanitizeAssistantResponse(completionSummary);
             const resultSnippet = sanitizedResponse.length > 500
               ? sanitizedResponse.slice(0, 497) + "..."
               : sanitizedResponse;
@@ -3476,9 +3550,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                         : sanitizeAssistantResponse(result.response),
                     }
                   : {
-                      error: condensedResult
+                      error: backgroundProcessFailure ?? (condensedResult
                         ? `${condensedResult.result.summary}${fullResultLine}`
-                        : sanitizeAssistantResponse(result.response),
+                        : sanitizeAssistantResponse(result.response)),
                     }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
@@ -3568,10 +3642,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           terminalizeRun(runId, {
             endReason: "failed",
             completedAtMs: completedAt,
-            errorKind: classifyCompletionErrorKind(
-              result.finishReason,
-              result.terminalErrorKind,
-            ),
+            errorKind: backgroundProcessFailure === undefined
+              ? classifyCompletionErrorKind(
+                  result.finishReason,
+                  result.terminalErrorKind,
+                )
+              : "precondition",
             summary: completionSummary || result.errorContext?.originalError,
             ...(materializedRef ? { resultRef: materializedRef } : {}),
           }, telemetry);
@@ -3587,6 +3663,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           timestamp: completedAt,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
+          ...(backgroundProcesses.unresolved > 0
+            ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+            : {}),
+          ...(backgroundProcesses.failed > 0
+            ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
         });
 
         // Safety-net proxy stop — announceToParent's own finally block handles
@@ -3625,6 +3707,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         ) return;
 
         const completedAt = clock.now();
+        const backgroundProcesses = backgroundProcessCounts(runId);
+        requestAbandonedBackgroundCleanup(run);
         const errorMessage = error instanceof Error ? error.message : String(error);
         const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
@@ -3697,6 +3781,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           runId, parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId, success: false,
           runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
+          ...(backgroundProcesses.unresolved > 0
+            ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+            : {}),
+          ...(backgroundProcesses.failed > 0
+            ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
         });
 
         // Stop proxy typing before failure notification
@@ -3766,6 +3856,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
       } finally {
         providerSettledRunIds.delete(runId);
+        childBackgroundProcesses.delete(runId);
+        backgroundCleanupRequestedRunIds.delete(runId);
         // Release the child's trajectory recorder on EVERY terminal settle —
         // completion, natural failure, kill, and watchdog all flow through
         // this promise. Without it the dead child's recorder stays subscribed
@@ -3790,6 +3882,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       const completedAt = clock.now();
       const runtimeMs = completedAt - run.startedAt;
+      const backgroundProcesses = backgroundProcessCounts(runId);
+      requestAbandonedBackgroundCleanup(run);
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
@@ -3847,6 +3941,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         runId, parentSessionKey: run.callerSessionKey ?? "unknown",
         agentId: run.agentId, success: false,
         runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
+        ...(backgroundProcesses.unresolved > 0
+          ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+          : {}),
+        ...(backgroundProcesses.failed > 0
+          ? { failedBackgroundProcesses: backgroundProcesses.failed }
+          : {}),
       });
 
       // Stop proxy typing on watchdog timeout

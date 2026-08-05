@@ -139,6 +139,10 @@ export interface MessagingEvents {
     cacheReadTokens?: number;
     /** Cache write tokens for this run. */
     cacheWriteTokens?: number;
+    /** Unresolved exec auto-background sessions at provider return. */
+    unresolvedBackgroundProcesses?: number;
+    /** Auto-background sessions observed in a failed or killed state. */
+    failedBackgroundProcesses?: number;
   };
 
   /** A synchronous parent wait observed a child's terminal outcome. */

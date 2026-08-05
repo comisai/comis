@@ -184,6 +184,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // (translate-orchestration-payload.ts): runId + closed killedBy + numbers
   // ONLY — the free-text kill reason never crosses the bus.
   "subagent:killed": "subagent.killed",
+  "subagent:background_processes_abandoned": "subagent.background_processes_abandoned",
   "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
   // The self-healing transient RETRY
   // — the sibling of subagent:delivery_deadlettered. Emitted by the announcement-batcher

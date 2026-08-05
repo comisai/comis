@@ -308,6 +308,8 @@ describe("createSubAgentRunner", () => {
       durationMs: 1_000,
       success: true,
       backgrounded: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "running",
       timestamp: 123,
       agentId: "researcher",
       sessionKey: running.sessionKey,
@@ -328,7 +330,69 @@ describe("createSubAgentRunner", () => {
     });
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
       "session:sub_agent_completed",
-      expect.objectContaining({ runId, success: false }),
+      expect.objectContaining({
+        runId,
+        success: false,
+        unresolvedBackgroundProcesses: 1,
+      }),
+    );
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "subagent:background_processes_abandoned",
+      expect.objectContaining({ runId, sessionKey: running.sessionKey, count: 1 }),
+    );
+  });
+
+  it("accepts success after the child observes its auto-backgrounded process complete", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "wait for the command to finish",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const running = runner.getRunStatus(runId);
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "exec",
+      toolCallId: "call-backgrounded",
+      durationMs: 1_000,
+      success: true,
+      backgrounded: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "running",
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    deps.eventBus.emit("tool:executed", {
+      toolName: "process",
+      toolCallId: "call-status",
+      durationMs: 5,
+      success: true,
+      processSessionId: "proc-1",
+      processSessionStatus: "completed",
+      timestamp: 124,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+    });
+    resolveExecution({
+      response: "completed after observing the process exit",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 2,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.getRunStatus(runId)).toMatchObject({ status: "completed" });
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "subagent:background_processes_abandoned",
+      expect.objectContaining({ runId }),
     );
   });
 
