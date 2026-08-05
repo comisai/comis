@@ -1888,6 +1888,22 @@ describe("createPiEventBridge", () => {
         expect(getResult().finishReason).toBe("context_exhausted");
       });
 
+      it("does not classify local context exhaustion as provider health", () => {
+        deps.providerHealth = {
+          recordSuccess: vi.fn(),
+          recordFailure: vi.fn(),
+          isDegraded: vi.fn(() => false),
+          getHealthSummary: vi.fn(() => new Map()),
+        };
+        const { listener } = createPiEventBridge(deps);
+        listener(makeErrorTurnEnd(new ContextExhaustionError(32000, 30525).message) as any);
+
+        expect(deps.circuitBreaker.recordSuccess).not.toHaveBeenCalled();
+        expect(deps.circuitBreaker.recordFailure).not.toHaveBeenCalled();
+        expect(deps.providerHealth?.recordSuccess).not.toHaveBeenCalled();
+        expect(deps.providerHealth?.recordFailure).not.toHaveBeenCalled();
+      });
+
       it("does NOT map a generic provider error to context_exhausted", () => {
         const { listener, getResult } = createPiEventBridge(deps);
         listener(makeErrorTurnEnd("503 upstream connect error") as any);
@@ -2212,6 +2228,33 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("circuit breaker mid-execution abort", () => {
+    it("preserves consecutive provider failures until the circuit opens", () => {
+      let consecutiveFailures = 0;
+      let open = false;
+      deps.circuitBreaker = {
+        isOpen: vi.fn(() => open),
+        recordSuccess: vi.fn(() => {
+          consecutiveFailures = 0;
+        }),
+        recordFailure: vi.fn(() => {
+          consecutiveFailures++;
+          if (consecutiveFailures >= 3) open = true;
+        }),
+        getState: vi.fn(() => open ? "open" as const : "closed" as const),
+        reset: vi.fn(),
+      };
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+
+      expect(deps.circuitBreaker.recordSuccess).not.toHaveBeenCalled();
+      expect(deps.circuitBreaker.recordFailure).toHaveBeenCalledTimes(3);
+      expect(deps.onAbort).toHaveBeenCalledTimes(1);
+      expect(getResult().finishReason).toBe("circuit_open");
+    });
+
     it("triggers abort when circuit breaker opens after recordFailure", () => {
       // Circuit breaker opens after recordFailure is called
       (deps.circuitBreaker.isOpen as ReturnType<typeof vi.fn>)
