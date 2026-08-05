@@ -105,8 +105,15 @@ tries them in order and uses the first one that has a valid API key.
 
 Comis tries providers in order (OpenAI first, then Anthropic, then Google)
 and uses the first one that has a valid API key configured. You can change
-this order or set a specific default provider using the `providers` and
-`defaultProvider` configuration options.
+this order with the `providers` option.
+
+`defaultProvider` is different: it is a **hard pin**, not a preference. Once you
+set it, Comis uses that provider and nothing else -- if it is unconfigured or
+cannot handle the media type, the request fails with an "unavailable" result
+rather than quietly using a different provider. Leave `defaultProvider` unset if
+you want the ordered chain above. See the
+[vision provider precedence reference](/reference/config-yaml#integrations) for
+the full resolution order.
 
 If a provider fails (network error, API rate limit, invalid key), Comis does
 not automatically fall back to the next provider for the automatic
@@ -146,7 +153,10 @@ resource usage:
 
 <Warning>
 Video analysis requires the Google (Gemini) provider. If you only have
-OpenAI or Anthropic configured, video description will not be available.
+OpenAI or Anthropic configured, video description will not be available. The
+same applies when `defaultProvider` pins a provider that cannot handle video --
+that pin is not bypassed for videos, so pin `google` or leave `defaultProvider`
+unset when you need video description.
 </Warning>
 
 ## Scope Rules (Cost Control)
@@ -251,7 +261,7 @@ integrations:
         - openai
         - anthropic
         - google
-      defaultProvider: openai            # Override auto-selection
+      defaultProvider: openai            # Hard pin - no fallback (omit for the chain)
       imageMaxFileSizeMb: 20            # Max image file size in MB
       videoMaxRawBytes: 50000000        # Max video size: 50 MB
       videoMaxBase64Bytes: 70000000     # Max base64 video size: 70 MB

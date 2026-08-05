@@ -428,6 +428,34 @@ describe("comis explain renders durable task-check lifecycle evidence", () => {
     expect(output).toContain("correlation=correlation-a");
     expect(output).toContain("root=root-task-check-a");
     expect(output).toContain("delivered=1 failed=0 ambiguous=0");
+    expect(output).toContain("suppression=none");
+  });
+
+  it("prints the content-free task-check suppression reason", async () => {
+    const taskReport = {
+      ...FAKE_REPORT,
+      taskCheck: {
+        rootRunId: "root-task-check-a",
+        attemptId: "attempt-a",
+        correlationId: "correlation-a",
+        lifecycle: "terminal",
+        outcome: "dismissed",
+        recovery: "live",
+        suppressionReason: "heartbeat_token",
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(taskReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "root-task-check-a"]);
+
+    expect(getSpyOutput(consoleSpy.log)).toContain("suppression=heartbeat_token");
   });
 });
 

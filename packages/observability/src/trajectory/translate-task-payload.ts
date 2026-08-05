@@ -36,7 +36,7 @@ export function translateTaskPayload(
       return pick(payload, [
         "attemptId", "rootRunId", "correlationId", "taskIds", "sourceExecutionIds",
         "originTraceIds", "outcome", "recovery", "errorKind", "deliveredChunks",
-        "failedChunks", "ambiguousChunks", "durationMs",
+        "failedChunks", "ambiguousChunks", "suppressionReason", "durationMs",
       ]);
     case "scheduler:task_delivery_history_failed":
       return pick(payload, ["attemptId", "rootRunId", "taskIds", "errorKind", "durationMs"]);

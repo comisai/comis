@@ -4,7 +4,7 @@
 # not_found/error (a retired/unavailable alias = NO-ACCESS, not a Comis bug). Restores PRIMARY at the end.
 # Run BACKGROUNDED:  MODELS="…" PRIMARY="…" nohup bash models-sweep.sh >/root/sweep.out 2>&1 &
 #
-#   Codex:     MODELS="gpt-5.5 gpt-5.4 gpt-5.4-mini gpt-5.3-codex-spark"          PRIMARY=gpt-5.5
+#   Codex:     MODELS="gpt-5.6-terra gpt-5.6-luna gpt-5.6-sol gpt-5.5 gpt-5.4 gpt-5.4-mini gpt-5.3-codex-spark"  PRIMARY=gpt-5.6-luna
 #   Anthropic: MODELS="claude-opus-4-8 claude-sonnet-4-6 claude-haiku-4-5 claude-opus-4-0"  PRIMARY=claude-sonnet-4-6
 # (Get the valid set from:  node -e 'import("@earendil-works/pi-ai").then(m=>console.log(m.getModels("<provider>").map(x=>x.id)))')
 set +e

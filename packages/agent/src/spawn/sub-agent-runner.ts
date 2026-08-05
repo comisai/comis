@@ -3232,11 +3232,13 @@ function classifyCompletionErrorKind(
         }
 
         const backgroundProcesses = backgroundProcessCounts(runId);
+        // Only a process the child NEVER polled to a terminal state invalidates the run: the
+        // child returned without knowing the outcome. A non-zero exit or a deliberate cleanup
+        // kill that the child DID observe is an outcome it already reported on, so its answer
+        // stays authoritative and only rides the completion event as a diagnostic count.
         const backgroundProcessFailure = backgroundProcesses.unresolved > 0
           ? `Sub-agent returned while ${backgroundProcesses.unresolved} auto-backgrounded process${backgroundProcesses.unresolved === 1 ? " was" : "es were"} still running.`
-          : backgroundProcesses.failed > 0
-            ? `Sub-agent returned after ${backgroundProcesses.failed} auto-backgrounded process${backgroundProcesses.failed === 1 ? " failed or was killed" : "es failed or were killed"}.`
-            : undefined;
+          : undefined;
         requestAbandonedBackgroundCleanup(run);
         if (backgroundProcessFailure !== undefined) {
           deps.logger?.warn({
@@ -3247,6 +3249,12 @@ function classifyCompletionErrorKind(
             hint: "Poll each auto-backgrounded exec session with process.status until it reaches a terminal state before returning from the sub-agent",
             errorKind: "precondition" as const,
           }, "Sub-agent returned before auto-backgrounded process work was complete");
+        } else if (backgroundProcesses.failed > 0) {
+          deps.logger?.debug({
+            runId,
+            agentId: params.agentId,
+            failedBackgroundProcesses: backgroundProcesses.failed,
+          }, "Sub-agent observed an auto-backgrounded process reach a non-zero terminal state");
         }
 
         const subAgentOutcome = resolveSubAgentOutcome({

@@ -8599,6 +8599,22 @@ describe("outbound completion evidence wiring", () => {
     expect(src.indexOf("requestMutationToolNames"))
       .toBeLessThan(src.indexOf("createBeforeToolCallGuard("));
   });
+
+  it("counts any successful mutation as the receipt, not only the request-matched tools", () => {
+    // A fix delivered through cron, exec, or a channel action satisfies a "fix …"
+    // request just as much as an edit does. Scoping the receipt to the three file
+    // tools that declare mutation prefixes blocked those completions outright.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    const start = src.indexOf("currentSuccessfulMutationCount = () =>");
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf(").length;", start));
+
+    expect(block).toContain('record.toolName !== "message"');
+    expect(block).toMatch(/classifyToolInvocationMutation\([\s\S]*?\) === "mutating"/);
+    expect(block).not.toContain("requestMutationToolNames.has(");
+  });
 });
 
 // ---------------------------------------------------------------------------

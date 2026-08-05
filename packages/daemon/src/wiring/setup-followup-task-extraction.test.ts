@@ -201,6 +201,55 @@ describe("follow-up task extraction composition", () => {
     expect(data.emitSafely).not.toHaveBeenCalledWith("scheduler:task_extraction_outcome", expect.anything());
   });
 
+  it("names the closed parser error code on the dropped-batch event and warning", async () => {
+    const data = setup();
+    expect(data.runtime.ok).toBe(true);
+    if (!data.runtime.ok) return;
+
+    // A due time inside the heartbeat floor (captured 1_000 + 60_000) closes the parser
+    // with `before_minimum_due` on both the initial and the repair response. The repair
+    // prompt carries only the rejected output, so the item id is held from the first call.
+    let itemId = "missing";
+    data.execute.mockImplementation(async (message: { text: string }) => {
+      itemId = /Item (\S+)/u.exec(message.text)?.[1] ?? itemId;
+      return execution(JSON.stringify({
+        candidates: [{
+          itemId,
+          text: "Check the outcome",
+          dueInSecondsEarliest: 30,
+          dueInSecondsLatest: 120,
+          confidence: 0.9,
+        }],
+      }));
+    });
+
+    expect(data.runtime.value.taskExtractionPort.enqueue(turn())).toEqual(ok("enqueued"));
+    data.timers.advance(1_000);
+    await data.runtime.value.waitForIdle();
+
+    expect(data.execute).toHaveBeenCalledTimes(2);
+    expect(data.admitCandidates).not.toHaveBeenCalled();
+    expect(data.emitSafely).toHaveBeenCalledWith(
+      "scheduler:task_extraction_failed",
+      expect.objectContaining({
+        agentId: "agent-a",
+        rootRunId: expect.stringMatching(/^root-task-extract-/u),
+        sourceExecutionIds: ["execution-source-a"],
+        stage: "model_output",
+        errorKind: "validation",
+        outputErrorCode: "before_minimum_due",
+      }),
+    );
+    expect(data.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: "model_output",
+        errorKind: "validation",
+        outputErrorCode: "before_minimum_due",
+      }),
+      "Task extraction batch dropped",
+    );
+  });
+
   it("rejects new capture immediately after the live opt-in gate closes", () => {
     const data = setup();
     expect(data.runtime.ok).toBe(true);

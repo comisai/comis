@@ -207,8 +207,15 @@ export const MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY =
  * Content-free evidence that one current attachment was rejected before its
  * bytes entered the workspace or model context.
  */
+/** Bound on the trusted rejection evidence carried on one turn's metadata. */
+export const MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX = 16;
+
 export const MediaAttachmentPreprocessReceiptSchema = z.strictObject({
-  attachmentIndex: z.number().int().nonnegative().max(15),
+  attachmentIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX - 1),
   outcome: z.literal("rejected"),
   reason: z.literal("size_exceeded"),
   sizeBytes: z.number().int().nonnegative(),
@@ -218,7 +225,7 @@ export const MediaAttachmentPreprocessReceiptSchema = z.strictObject({
 
 export const MediaAttachmentPreprocessReceiptsSchema = z
   .array(MediaAttachmentPreprocessReceiptSchema)
-  .max(16);
+  .max(MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX);
 
 export type MediaAttachmentPreprocessReceipt = z.infer<
   typeof MediaAttachmentPreprocessReceiptSchema

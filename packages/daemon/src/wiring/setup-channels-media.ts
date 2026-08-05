@@ -35,7 +35,7 @@ import {
 } from "@comis/skills";
 import type { LinkRunner, MediaPersistenceService, PersistedFile } from "@comis/skills";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { formatMediaAttachmentRejection, MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY, MediaAttachmentPreprocessReceiptsSchema, MediaResolutionError as StructuredMediaResolutionError, safePath, SttPreprocessReceiptsSchema, systemNowMs } from "@comis/core";
+import { formatMediaAttachmentRejection, MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX, MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY, MediaAttachmentPreprocessReceiptSchema, MediaAttachmentPreprocessReceiptsSchema, MediaResolutionError as StructuredMediaResolutionError, safePath, SttPreprocessReceiptsSchema, systemNowMs } from "@comis/core";
 import os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -330,7 +330,10 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
       const resolveCurrentAttachment = (att: Attachment): Promise<Buffer | null> =>
         resolveAttachmentWithReceipt(att, (error) => {
           const attachmentIndex = enrichedMsg.attachments?.indexOf(att) ?? -1;
-          if (attachmentIndex < 0 || attachmentIndex > 15) return;
+          if (
+            attachmentIndex < 0
+            || attachmentIndex >= MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX
+          ) return;
           attachmentReceiptsByIndex.set(attachmentIndex, {
             attachmentIndex,
             outcome: "rejected",
@@ -498,8 +501,32 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           && candidate.reason === receipt.reason,
         ) === index,
       );
+      // Validate receipt by receipt. A coalesced turn can carry more attachments than
+      // one receipt can address, and parsing the batch as a unit dropped every valid
+      // receipt alongside the one out-of-range entry — losing the trajectory records
+      // and the incident signal for rejections that were correctly observed.
+      const trustedAttachmentReceipts = combinedAttachmentReceipts.filter(
+        (receipt) => MediaAttachmentPreprocessReceiptSchema.safeParse(receipt).success,
+      );
+      const droppedAttachmentReceiptCount =
+        combinedAttachmentReceipts.length - trustedAttachmentReceipts.length
+        + Math.max(
+          0,
+          trustedAttachmentReceipts.length - MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX,
+        );
+      if (droppedAttachmentReceiptCount > 0) {
+        channelsLogger.warn({
+          droppedAttachmentReceiptCount,
+          trustedAttachmentReceiptCount: Math.min(
+            trustedAttachmentReceipts.length,
+            MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX,
+          ),
+          errorKind: "validation" as const,
+          hint: `Attachment rejection evidence is bounded to the first ${MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX} attachments of a turn; rejections beyond that bound reach the model as prose only`,
+        }, "Attachment rejection receipts dropped before turn metadata");
+      }
       const attachmentReceipts = MediaAttachmentPreprocessReceiptsSchema.safeParse(
-        combinedAttachmentReceipts,
+        trustedAttachmentReceipts.slice(0, MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX),
       );
       const missingNotices = attachmentReceipts.success
         ? attachmentReceipts.data

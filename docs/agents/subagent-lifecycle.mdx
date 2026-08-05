@@ -346,6 +346,21 @@ returned by `session.run_status` and `subagent.wait`:
 it is not a run-completion reason returned by those status surfaces. Terminal
 reasons are also included in lifecycle observability and narrative metadata.
 
+**A child that returns with its own work still running does not end
+`completed`.** When a sub-agent answers while one or more of its
+[`exec`](/skills/built-in-tools) calls are still auto-backgrounded and were never
+polled to a terminal state, the run ends `failed` -- the child reported an
+outcome it could not have known. Only *unpolled* handoffs invalidate the run: a
+non-zero exit the child did observe stays its own authoritative answer and rides
+the completion record as a diagnostic count. The daemon then reaps the background
+processes owned by that child's session -- as it also does on a `killed` run --
+so a torn-down sub-agent leaves nothing running behind it.
+[`comis explain`](/reference/cli#comis-explain) on that child session root-causes
+the run as `subagent_background_processes_abandoned` and names how many process
+sessions were left unpolled, so a rejected completion is never mistaken for an
+ordinary child failure. Have the child poll each session with the `process`
+tool's `status` action until it is terminal before returning.
+
 ## Related
 
 <CardGroup cols={2}>

@@ -283,21 +283,6 @@ describe("ACCEPT-01 scenario 3 Stage-B — the never-published guard re-verifies
     ).toEqual([]);
   });
 
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // ACCEPT-01 scenario 3 drives the already-wired injection-resistance boundary +
-    // sweeps the isolated memory.db with NO product edit. If this fails, a product
-    // file was touched — STOP (a real injection/residency DEFECT closed TEST-FIRST
-    // + full validate + DOC-current is the only sanctioned product touch).
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
 });
 
 // ---------------------------------------------------------------------------

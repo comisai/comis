@@ -353,6 +353,9 @@ function taskCheckReportSection(
     lifecycle: evidence.lifecycle,
     ...(evidence.outcome === undefined ? {} : { outcome: evidence.outcome }),
     ...(evidence.recovery === undefined ? {} : { recovery: evidence.recovery }),
+    ...(evidence.suppressionReason === undefined
+      ? {}
+      : { suppressionReason: evidence.suppressionReason }),
     ...(evidence.deliveredChunks === undefined
       ? {}
       : { deliveredChunks: evidence.deliveredChunks }),

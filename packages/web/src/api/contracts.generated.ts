@@ -12365,6 +12365,15 @@ export const CONTRACTS = {
                 "ownership_recovery"
               ]
             },
+            "suppressionReason": {
+              "type": "string",
+              "enum": [
+                "heartbeat_token",
+                "ack_under_threshold",
+                "empty_reply",
+                "visibility_filter"
+              ]
+            },
             "deliveredChunks": {
               "anyOf": [
                 {

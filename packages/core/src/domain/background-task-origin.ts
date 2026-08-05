@@ -30,7 +30,12 @@ export const BackgroundTaskOriginSchema = z.strictObject({
   deliveryOrigin: DeliveryOriginSchema,
   /** Per-execution trace identifier; null when no trace was active. */
   traceId: z.string().nullable(),
-  /** Immutable authorization snapshot resolved for the originating turn. */
+  /** Immutable authorization snapshot resolved for the originating turn.
+   *  Required here: this is the promote-time contract, so a promotion path that
+   *  fails to resolve the turn's trust must fail loudly rather than silently
+   *  execute at some default. Tolerance for a record persisted before the field
+   *  existed belongs to the read path alone — see `PersistedOriginSchema`, which
+   *  degrades an absent field to LEAST privilege on recovery. */
   trustLevel: UserTrustLevelSchema,
   /** Exact locale decision captured before promotion. Delayed re-entry must
    *  not infer a locale from the internal completion envelope. */

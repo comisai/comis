@@ -180,8 +180,9 @@ export function registerExplainCommand(program: Command): void {
             const delivered = task.deliveredChunks ?? "unknown";
             const failed = task.failedChunks ?? "unknown";
             const ambiguous = task.ambiguousChunks ?? "unknown";
+            const suppression = task.suppressionReason ?? "none";
             info(
-              `Task check: ${disposition} · attempt=${task.attemptId} · correlation=${task.correlationId} · root=${task.rootRunId} · delivered=${delivered} failed=${failed} ambiguous=${ambiguous}`,
+              `Task check: ${disposition} · attempt=${task.attemptId} · correlation=${task.correlationId} · root=${task.rootRunId} · delivered=${delivered} failed=${failed} ambiguous=${ambiguous} · suppression=${suppression}`,
             );
           }
           if (report.graph !== undefined) {

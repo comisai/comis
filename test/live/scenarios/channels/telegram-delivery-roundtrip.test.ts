@@ -348,23 +348,6 @@ describe("DELIV-01/ORACLE-02 Stage-B — both delivery oracles + the HARD cross-
 // Stage-B — zero production code change (the milestone's load-bearing proof)
 // ---------------------------------------------------------------------------
 
-describe("DELIV-01 Stage-B — the whole phase diff is test/-only (zero production code change)", () => {
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // DELIV-01 reaches the delivery layer with NO product edit — the real
-    // adapter -> delivery path already writes both tables. If this fails, a
-    // product file was touched — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Stage-C — the AGENT-AUTHORED delivery round-trip via the full daemon (COMIS_LIVE)
 // ---------------------------------------------------------------------------

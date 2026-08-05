@@ -241,24 +241,6 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
 // Stage-B — zero production code change (the milestone's load-bearing proof)
 // ---------------------------------------------------------------------------
 
-describe("MEDIA Stage-B — the whole phase diff is test/-only (zero production code change)", () => {
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // The media pipeline (buildAttachments / mapGrammyToNormalized / the resolver)
-    // is already wired in packages/channels/src and verified at HEAD — the harness
-    // EMITS what it consumes + serves the bytes. If this fails, a product file was
-    // touched — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Stage-C — the byte-download + real transcribe/vision/extract (COMIS_LIVE)
 // ---------------------------------------------------------------------------

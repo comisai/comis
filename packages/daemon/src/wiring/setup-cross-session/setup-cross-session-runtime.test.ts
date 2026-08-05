@@ -1024,6 +1024,12 @@ describe("setupCrossSession", () => {
       "Rewrite this completion",
       "telegram",
       "chat-123",
+      {
+        citationEvidence: {
+          kind: "web_fetch",
+          urlDigests: ["d".repeat(64)],
+        },
+      },
     );
 
     const [, , shippedTools, , , , , overrides] = execute.mock.calls[0] as unknown[];

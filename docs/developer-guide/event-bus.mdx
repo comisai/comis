@@ -8,7 +8,7 @@ Comis uses a `TypedEventBus` for cross-module communication. Instead of packages
 
 ## How It Works
 
-The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 5 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`, `TerminalEvents`).
+The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are declared in the `EventMap` interface in `packages/core/src/event-bus/events.ts`, composed from domain-grouped sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`, and others). That declaration and its doc comment are the authoritative registry of the groups and each group's scope -- read them when you need the complete, current set.
 
 API methods include `emit()`, `emitSafely()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
 
@@ -34,15 +34,7 @@ eventBus.emit("tool:executed", {
 
 ## Event Naming Convention
 
-Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). Events are organized into 5 subsystems:
-
-| Subsystem | Event Count | Scope |
-|-----------|-------------|-------|
-| `MessagingEvents` | 38 | Message lifecycle, sessions, subagent lifecycle, compaction, context, execution control, announcements |
-| `AgentEvents` | 43 | Skills, tools, audit, observability, model selection, security, graphs, cache, SEP |
-| `ChannelEvents` | 44 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer, inbound reactions |
-| `InfraEvents` | 55 | Approvals, config, plugins, hooks, auth, diagnostics, media, scheduler, system, MCP, notifications, background tasks |
-| `TerminalEvents` | 4 | Terminal session lifecycle, keystrokes, session eviction |
+Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). Each subsystem is owned by exactly one sub-interface of `EventMap`. The group list and each group's scope live in the `EventMap` doc comment in `packages/core/src/event-bus/events.ts` -- the single authoritative registry -- so this page does not restate them.
 
 ## Most Commonly Used Events
 
@@ -64,6 +56,8 @@ A quick reference for the events developers are most likely to need when buildin
 | `diagnostic:message_processed` | Infra | Full message lifecycle complete | End-to-end metrics |
 
 ## Event Reference
+
+The accordions below describe the groups most often consumed outside the composition root, with the payload fields a subscriber usually needs. They are hand-maintained and **not exhaustive** -- `packages/core/src/event-bus/events*.ts` is authoritative for the complete event set and for every payload field.
 
 <AccordionGroup>
 
@@ -338,7 +332,7 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 
 </Accordion>
 
-<Accordion title="TerminalEvents (4 events)">
+<Accordion title="TerminalEvents">
 
 Terminal session lifecycle, spawn failures, keystroke forwarding, and session pool eviction events.
 

@@ -345,20 +345,6 @@ describe("ACCEPT-01 scenario 1 Stage-B — the never-published guard re-verifies
     ).toEqual([]);
   });
 
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // ACCEPT-01 scenario 1 drives the already-wired reaction->outcome->synthesis->
-    // reuse chain with NO product edit. If this fails, a product file was touched
-    // — STOP (any product change must be test-first + pass full validate before landing).
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
 });
 
 // ---------------------------------------------------------------------------

@@ -83,10 +83,10 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
 
     **Parameters:**
 
+    The tenant and agent scope is derived from the calling agent's authenticated context -- there are no `tenant_id` / `agent_id` parameters.
+
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `tenant_id` | string | Yes | Tenant that owns the sessions. |
-    | `agent_id` | string | Yes | Agent whose session history should be searched. |
     | `query` | string | No | Search query -- keywords, phrases, or boolean expressions. Omit for recent-session metadata. |
     | `scope` | string | No | Filter by message role: `all` (default), `user`, `assistant`, or `tool` |
     | `summarize` | boolean | No | Summarize matched sessions using LLM (default: true when `query` provided) |

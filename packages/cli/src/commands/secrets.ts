@@ -185,10 +185,10 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("init")
     .description("Generate a new master encryption key")
-    .option("--write", "Append key to ~/.comis/.env")
+    .option("--write", "Append key to the selected data directory's .env")
     .action(async (options: { write?: boolean }) => {
       if (options.write) {
-        const dataDir = safePath(os.homedir(), ".comis");
+        const dataDir = resolveOfflineDataDir();
         const result = writeMasterKeyIfAbsent(dataDir);
         if (result.written) {
           success(`Master key written to ${result.path} (permissions: 0600)`);
@@ -239,7 +239,7 @@ export function registerSecretsCommand(program: Command): void {
             }
           } else {
             // Daemon-free fallback: write directly to the encrypted SQLite store
-            const dataDir = safePath(os.homedir(), ".comis");
+            const dataDir = resolveOfflineDataDir();
             const envFilePath = safePath(dataDir, ".env");
             const result = offlineSecretSet({
               name,
@@ -353,7 +353,7 @@ export function registerSecretsCommand(program: Command): void {
           });
           rows = result.secrets;
         } else {
-          const dataDir = safePath(os.homedir(), ".comis");
+          const dataDir = resolveOfflineDataDir();
           const envFilePath = safePath(dataDir, ".env");
           const result = offlineSecretsList({ dataDir, envFilePath });
           if (!result.ok) {
@@ -432,10 +432,11 @@ export function registerSecretsCommand(program: Command): void {
     .description(
       "Import secrets from a .env file. Uses daemon RPC when running; falls back to direct store when daemon is offline.",
     )
-    .option("--file <path>", "Source .env file path (default: ~/.comis/.env)")
+    .option("--file <path>", "Source .env file path (default: the selected data directory's .env)")
     .action(async (options: { file?: string }) => {
-      const sourcePath =
-        options.file ?? safePath(os.homedir() + "/.comis", ".env");
+      const dataDir = resolveOfflineDataDir();
+      const envFilePath = safePath(dataDir, ".env");
+      const sourcePath = options.file ?? envFilePath;
 
       try {
         // Load source file into a fresh record
@@ -452,9 +453,6 @@ export function registerSecretsCommand(program: Command): void {
         let imported = 0;
         let skipped = 0;
         let failed = 0;
-
-        const dataDir = safePath(os.homedir(), ".comis");
-        const envFilePath = safePath(dataDir, ".env");
 
         for (const [key, value] of Object.entries(envRecord)) {
           if (value === undefined) continue;

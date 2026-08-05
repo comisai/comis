@@ -280,6 +280,9 @@ export const IncidentReportSchema = z.object({
         ])
         .optional(),
       recovery: z.enum(["live", "ownership_recovery"]).optional(),
+      suppressionReason: z
+        .enum(["heartbeat_token", "ack_under_threshold", "empty_reply", "visibility_filter"])
+        .optional(),
       deliveredChunks: z.number().int().nonnegative().nullable().optional(),
       failedChunks: z.number().int().nonnegative().nullable().optional(),
       ambiguousChunks: z.number().int().nonnegative().nullable().optional(),

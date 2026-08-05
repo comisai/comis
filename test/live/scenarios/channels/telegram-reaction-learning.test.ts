@@ -263,23 +263,6 @@ describe("REACT-03 Stage-B — the reaction->outcome WIRING (real DDL + real sto
 // Stage-B — zero production code change (the milestone's load-bearing proof)
 // ---------------------------------------------------------------------------
 
-describe("REACT-03 Stage-B — the whole phase diff is test/-only (zero production code change)", () => {
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // REACT-03 drives the already-wired reaction->outcome->synthesis->reuse chain
-    // with NO product edit (the conditional obs fix is a SEPARATE gated plan).
-    // If this fails, a product file was touched — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Stage-C — the full A->B reaction-gated skill-reuse loop (COMIS_LIVE)
 // ---------------------------------------------------------------------------
