@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { ok, err } from "@comis/shared";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
@@ -143,6 +144,48 @@ describe("createBeforeToolCallGuard", () => {
       toolCall: { name: "message" },
       args: { action: "attach", caption: "Here is the current file for inspection." },
     })).resolves.toBeUndefined();
+  });
+
+  it("blocks an outbound citation whose exact URL lacks fetch evidence", async () => {
+    const { stepCounter, budgetGuard, circuitBreaker } = passThroughSafety();
+    const fetchedUrl = "https://example.com/source/abcdef";
+    const mutatedUrl = "https://example.com/source/abcdeg";
+    const onCitationBlocked = vi.fn();
+    const guard = Reflect.apply(createBeforeToolCallGuard, undefined, [
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "where is that from",
+      undefined,
+      {
+        requestMutationToolNames: new Set<string>(),
+        currentSuccessfulMutationCount: () => 0,
+        onBlocked: vi.fn(),
+        citationEvidenceEnabled: () => true,
+        allowedCitationDigests: () => [
+          createHash("sha256").update(fetchedUrl, "utf8").digest("hex"),
+        ],
+        onCitationBlocked,
+      },
+    ]);
+
+    const result = await guard({
+      toolCall: { name: "message" },
+      args: {
+        action: "reply",
+        text: `[Source](${mutatedUrl})`,
+      },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringMatching(/exact successful web_fetch/iu),
+    });
+    expect(onCitationBlocked).toHaveBeenCalledOnce();
   });
 
   it("checks step counter first (priority order)", async () => {
