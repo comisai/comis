@@ -4,6 +4,7 @@ import {
   createProcessRegistry,
   generateSessionId,
   appendOutput,
+  type ProcessRegistry,
   type ProcessSession,
 } from "./process-registry.js";
 import type { InstallDetourDecision } from "./install-detour.js";
@@ -117,6 +118,33 @@ describe("createProcessRegistry", () => {
     expect(registry.size()).toBe(1);
     registry.add(makeSession({ id: "s2" }));
     expect(registry.size()).toBe(2);
+  });
+
+  it("kills only running processes owned by one session", async () => {
+    const registry = createProcessRegistry();
+    registry.add(makeSession({
+      id: "owned-running",
+      ownerSessionKey: "child-session",
+    } as Partial<ProcessSession>));
+    registry.add(makeSession({
+      id: "other-running",
+      ownerSessionKey: "other-session",
+    } as Partial<ProcessSession>));
+    registry.add(makeSession({
+      id: "owned-completed",
+      ownerSessionKey: "child-session",
+      status: "completed",
+      exitCode: 0,
+    } as Partial<ProcessSession>));
+
+    const killed = await (registry as ProcessRegistry & {
+      killOwned(ownerSessionKey: string): Promise<number>;
+    }).killOwned("child-session");
+
+    expect(killed).toBe(1);
+    expect(registry.get("owned-running")?.status).toBe("killed");
+    expect(registry.get("other-running")?.status).toBe("running");
+    expect(registry.get("owned-completed")?.status).toBe("completed");
   });
 
   it("status returns session details for known ID", () => {
