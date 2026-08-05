@@ -158,6 +158,7 @@ import {
   type FinalAssistantSyncDiagnostics,
 } from "./phase-filter.js";
 import {
+  appendCitationEvidenceRecord,
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
@@ -2162,7 +2163,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // assistant turn is synchronized. Current successful web_fetch receipts are
   // authoritative. A background completion carries only their SHA-256 URL
   // digests, while a later explicit source question may reuse digests attached
-  // by this same guard to earlier canonical assistant turns.
+  // by this same guard to earlier append-only runtime journal receipts.
   const currentWebResearchObserved = (bridgeResult.toolExecResults ?? []).some(
     (toolResult) => toolResult.toolName === "web_fetch" || toolResult.toolName === "web_search",
   );
@@ -2180,7 +2181,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     ? msg.metadata.citationEvidence
     : undefined;
   const historicalDigests = isCitationSourceRequest(msg.text ?? "")
-    ? historicalCitationDigests(session)
+    ? historicalCitationDigests(sm)
     : [];
   const allowedCitationDigests = [
     ...currentFetchDigests,
@@ -2204,7 +2205,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         errorKind: "validation" as const,
         hint:
           "The response contained a citation URL without an exact successful web_fetch digest; "
-          + "inspect the current tool receipts and canonical assistant citation evidence in comis explain.",
+          + "inspect current tool receipts and citation_evidence journal entries in comis explain.",
       },
       "Citation without exact fetch evidence removed",
     );
@@ -2229,7 +2230,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response ?? "",
     sm,
     syncDiagnostics,
-    citationGrounding.matchedDigests,
   );
   if (responseSync === "updated") {
     deps.logger.info(
@@ -2281,6 +2281,47 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
       "Could not synchronize post-processed response with live session transcript",
     );
+  }
+
+  if (citationGrounding.matchedDigests.length > 0) {
+    const journalStartedAt = deps.clock.now();
+    const citationReceipt = appendCitationEvidenceRecord({
+      sessionManager: sm,
+      sourceMessageId: msg.id,
+      urlDigests: citationGrounding.matchedDigests,
+    });
+    const durationMs = Math.max(0, deps.clock.now() - journalStartedAt);
+    if (!citationReceipt.ok) {
+      deps.logger.warn(
+        {
+          step: "citation-evidence-persistence",
+          durationMs,
+          errorKind: "resource" as const,
+          hint:
+            "Inspect the selected session JSONL for a valid citation_evidence custom entry "
+            + "and verify that the session directory is writable.",
+        },
+        "Citation evidence could not be persisted",
+      );
+      deps.eventBus.emit("audit:event", {
+        timestamp: deps.clock.now(),
+        agentId: effectiveAgentId,
+        tenantId: deps.tenantId,
+        actionType: "response.citation_evidence_persistence",
+        kind: "audit",
+        outcome: "denied",
+        metadata: { reason: "append_failed" },
+      });
+    } else {
+      deps.logger.debug(
+        {
+          step: "citation-evidence-persistence",
+          durationMs,
+          citationCount: citationGrounding.matchedDigests.length,
+        },
+        "Citation evidence persisted",
+      );
+    }
   }
 
   // Map the settled finishReason to the terminal endReason ONCE via the single

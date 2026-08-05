@@ -200,7 +200,6 @@ export function synchronizeFinalAssistantResponse(
   response: string,
   sessionManager?: SessionManager,
   diagnostics?: FinalAssistantSyncDiagnostics,
-  citationEvidenceDigests: readonly string[] = [],
 ): FinalAssistantResponseSync {
   const messages: any[] | undefined = session?.messages;
   if (!Array.isArray(messages)) return "missing";
@@ -222,30 +221,15 @@ export function synchronizeFinalAssistantResponse(
       .filter(isVisibleTextBlock)
       .map((block: any) => block.text)
       .join("");
-    const existingCitationEvidence = Array.isArray(message.citationEvidenceDigests)
-      ? message.citationEvidenceDigests
-      : [];
-    const desiredCitationEvidence = citationEvidenceDigests[Symbol.iterator]();
-    const citationEvidenceMatches =
-      existingCitationEvidence.length === citationEvidenceDigests.length
-      && existingCitationEvidence.every(
-        (digest: unknown) => digest === desiredCitationEvidence.next().value,
-      );
-    if (visible === response && citationEvidenceMatches) return "unchanged";
+    if (visible === response) return "unchanged";
 
     const protocolBlocks = content.filter(
       (block: any) => !isVisibleTextBlock(block),
     );
     const replacement = {
       ...message,
-      ...(citationEvidenceDigests.length > 0
-        ? { citationEvidenceDigests: [...citationEvidenceDigests] }
-        : {}),
       content: [...protocolBlocks, { type: "text", text: response }],
     };
-    if (citationEvidenceDigests.length === 0) {
-      delete replacement.citationEvidenceDigests;
-    }
     const durable: DurablePersistOutcome = sessionManager === undefined
       ? { ok: true }
       : persistAssistantReplacement(sessionManager, message, replacement);

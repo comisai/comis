@@ -14,7 +14,6 @@ export {
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
   RuntimeActionEvidenceSchema,
-  CitationEvidenceSchema,
   NormalizedMessageSchema,
   parseMessage,
   parseInboundMessageProvenanceBatch,

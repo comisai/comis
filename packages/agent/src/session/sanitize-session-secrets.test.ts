@@ -809,20 +809,20 @@ describe("projectSessionValueForPersistence — runtime citation receipts", () =
     .update("https://example.com/source", "utf8")
     .digest("hex");
 
-  it("keeps exact citation digests on a runtime-authored assistant turn", () => {
+  it("does not trust a digest-shaped assistant property as a runtime receipt", () => {
     const out = projectSessionValueForPersistence({
       role: "assistant",
       content: [{ type: "text", text: "[Source](https://example.com/source)" }],
       citationEvidenceDigests: [DIGEST],
     });
 
-    expect(out.redactions).toBe(0);
+    expect(out.redactions).toBeGreaterThan(0);
     expect(
       (out.value as { citationEvidenceDigests: string[] }).citationEvidenceDigests,
-    ).toEqual([DIGEST]);
+    ).toEqual(["[REDACTED]"]);
   });
 
-  it("keeps exact citation digests through the durable session repair", () => {
+  it("redacts an unjournaled assistant digest through durable session repair", () => {
     const tmpDir = makeTmpDir();
     try {
       const path = writeJsonl(tmpDir, [
@@ -837,11 +837,11 @@ describe("projectSessionValueForPersistence — runtime citation receipts", () =
         },
       ]);
 
-      expect(sanitizeSessionSecrets(path)).toBe(0);
+      expect(sanitizeSessionSecrets(path)).toBe(1);
       const entries = readJsonlEntries(path) as Array<{
         message?: { citationEvidenceDigests?: string[] };
       }>;
-      expect(entries[1]?.message?.citationEvidenceDigests).toEqual([DIGEST]);
+      expect(entries[1]?.message?.citationEvidenceDigests).toEqual(["[REDACTED]"]);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

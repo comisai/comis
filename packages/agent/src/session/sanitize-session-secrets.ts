@@ -197,22 +197,31 @@ function isToolProtocolIdentity(
     );
 }
 
-/**
- * Preserve only the bounded receipt list attached by the runtime to an
- * assistant turn. A digest-shaped string in user or tool-controlled data still
- * follows the normal secret projection, so the field name cannot launder an
- * unrelated high-entropy value.
- */
-function isRuntimeCitationDigestList(
+/** Preserve only the exact bounded shape of a runtime-owned journal receipt. */
+function isRuntimeCitationEvidenceData(
   container: Record<string, unknown>,
   fieldName: string,
   value: unknown,
-): value is string[] {
-  return container.role === "assistant"
-    && fieldName === "citationEvidenceDigests"
-    && Array.isArray(value)
-    && value.length <= 500
-    && value.every(
+): value is Record<string, unknown> {
+  if (
+    container.type !== "custom"
+    || container.customType !== "citation_evidence"
+    || fieldName !== "data"
+    || typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+  ) {
+    return false;
+  }
+  const data = value as Record<string, unknown>;
+  return Object.keys(data).length === 2
+    && typeof data.sourceMessageId === "string"
+    && data.sourceMessageId.length > 0
+    && data.sourceMessageId.length <= 256
+    && Array.isArray(data.urlDigests)
+    && data.urlDigests.length > 0
+    && data.urlDigests.length <= 100
+    && data.urlDigests.every(
       (digest) => typeof digest === "string" && CITATION_URL_DIGEST_SHAPE.test(digest),
     );
 }
@@ -284,7 +293,7 @@ function projectPersistenceValue(
     // Tool arguments and result content still traverse the secret scrubber.
     const container = value as Record<string, unknown>;
     const next = isToolProtocolIdentity(container, key, item)
-      || isRuntimeCitationDigestList(container, key, item)
+      || isRuntimeCitationEvidenceData(container, key, item)
       ? { value: item, redactions: 0 }
       : projectPersistenceValue(item, key, seen);
     projected[key] = next.value;

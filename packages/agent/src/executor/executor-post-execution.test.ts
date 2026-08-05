@@ -1070,6 +1070,9 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("enforceCitationEvidence("));
     expect(stripped.indexOf("enforceCitationEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+    expect(stripped.indexOf("synchronizeFinalAssistantResponse("))
+      .toBeLessThan(stripped.indexOf("appendCitationEvidenceRecord("));
+    expect(stripped).toMatch(/response\.citation_evidence_persistence/);
   });
 
   it("source-grep — a successful unchanged agent update is grounded before delivery", () => {
