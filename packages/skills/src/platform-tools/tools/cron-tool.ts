@@ -243,6 +243,49 @@ function buildWakeGate(params: Record<string, unknown>): Record<string, unknown>
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Keep model-facing schedule inventory bounded and exclude message, script, and route bodies. */
+function compactCronListResult(result: unknown): unknown {
+  if (!isRecord(result) || !Array.isArray(result.jobs)) return result;
+  const jobs = result.jobs.map((value) => {
+    if (!isRecord(value)) return { invalid: true };
+    const payload = isRecord(value.payload) ? value.payload : undefined;
+    const payloadSummary = payload === undefined
+      ? undefined
+      : {
+          ...(typeof payload.kind === "string" ? { kind: payload.kind } : {}),
+          ...(typeof payload.action === "string" ? { action: payload.action } : {}),
+          ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+          ...(typeof payload.timeoutSeconds === "number"
+            ? { timeoutSeconds: payload.timeoutSeconds }
+            : {}),
+        };
+    return {
+      ...(typeof value.id === "string" ? { id: value.id } : {}),
+      ...(typeof value.name === "string" ? { name: value.name } : {}),
+      ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
+      ...(typeof value.source === "string" ? { source: value.source } : {}),
+      ...(isRecord(value.schedule) ? { schedule: value.schedule } : {}),
+      ...(isRecord(value.lifecycle) ? { lifecycle: value.lifecycle } : {}),
+      ...(payloadSummary === undefined ? {} : { payload: payloadSummary }),
+      wakeGateConfigured: value.wakeGate !== undefined,
+      deliveryBound: value.deliveryTarget !== undefined,
+      ...(typeof value.continuationMode === "string"
+        ? { continuationMode: value.continuationMode }
+        : {}),
+    };
+  });
+  return {
+    ...(typeof result.resolvedAgentId === "string"
+      ? { resolvedAgentId: result.resolvedAgentId }
+      : {}),
+    jobs,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -322,7 +365,7 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
 
           case "list": {
             const result = await rpcCall("cron.list", {});
-            return jsonResult(result);
+            return jsonResult(compactCronListResult(result));
           }
 
           case "update": {
