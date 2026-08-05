@@ -286,6 +286,52 @@ describe("createSubAgentRunner", () => {
     });
   });
 
+  it("does not report success while an auto-backgrounded child process is unresolved", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({
+      task: "wait for the command to finish",
+      agentId: "researcher",
+      callerSessionKey: "default:user1:channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const running = runner.getRunStatus(runId);
+    expect(running?.status).toBe("running");
+    if (running?.status !== "running") throw new Error("expected running run");
+
+    deps.eventBus.emit("tool:executed", {
+      toolName: "exec",
+      toolCallId: "call-backgrounded",
+      durationMs: 1_000,
+      success: true,
+      backgrounded: true,
+      timestamp: 123,
+      agentId: "researcher",
+      sessionKey: running.sessionKey,
+      traceId: "child-trace",
+    });
+    resolveExecution({
+      response: "done",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "failed",
+      completion: { endReason: "failed", errorKind: "precondition" },
+    });
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_completed",
+      expect.objectContaining({ runId, success: false }),
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Run completes and updates status
   // -----------------------------------------------------------------------
