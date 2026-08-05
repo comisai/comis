@@ -6,6 +6,11 @@ export interface PromptSkillReadPolicy {
   readonly onBlocked?: (skillName: string) => void;
 }
 
+export interface PromptSkillReadGuardState {
+  readonly sourceText?: string;
+  readonly policy?: PromptSkillReadPolicy;
+}
+
 const PROMPT_SKILL_INVOCATION_RE = /\b(?:use|load|follow|invoke|run)\b/iu;
 
 function normalizedToolPath(value: string): string {
@@ -14,10 +19,10 @@ function normalizedToolPath(value: string): string {
 
 /** Keep ordinary file inspection available while fail-closing stale skill invocation. */
 export function promptSkillReadVerdict(
-  sourceText: string | undefined,
+  state: PromptSkillReadGuardState,
   context: unknown,
-  policy?: PromptSkillReadPolicy,
 ): { block: true; reason: string } | undefined {
+  const { sourceText, policy } = state;
   if (
     sourceText === undefined
     || policy === undefined

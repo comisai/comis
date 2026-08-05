@@ -293,9 +293,11 @@ export function createBeforeToolCallGuard(
     if (exactModelVerdict) return exactModelVerdict;
 
     const skillReadVerdict = promptSkillReadVerdict(
-      explicitMutationSource,
+      {
+        sourceText: explicitMutationSource,
+        policy: promptSkillReadPolicy,
+      },
       context,
-      promptSkillReadPolicy,
     );
     if (skillReadVerdict) return skillReadVerdict;
 
