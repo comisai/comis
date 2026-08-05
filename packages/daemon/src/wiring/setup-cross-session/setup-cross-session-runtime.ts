@@ -220,17 +220,35 @@ export function setupCrossSession(deps: {
     const ambientContext = tryGetContext();
     const parsedOrigin = DeliveryOriginSchema.safeParse(ambientContext?.deliveryOrigin);
     const candidateOrigin = parsedOrigin.success ? parsedOrigin.data : undefined;
+    const ambientTurnScope = ambientContext?.turnScope;
+    const ambientConversationRef = ambientTurnScope === undefined
+      ? undefined
+      : createConversationRef(ambientTurnScope.conversation);
     const targetOrigin: DeliveryOrigin | undefined = candidateOrigin !== undefined
+      && ambientTurnScope !== undefined
+      && ambientConversationRef?.ok === true
+      && ambientConversationRef.value === conversation.conversationRef
       && ambientContext?.tenantId === sessionKey.tenantId
       && ambientContext.userId === sessionKey.userId
+      && ambientContext.agentId === agentId
       && ambientContext.sessionKey === formattedTargetSessionKey
       && ambientContext.channelType === candidateOrigin.channelType
       && candidateOrigin.tenantId === sessionKey.tenantId
-      && candidateOrigin.userId === sessionKey.userId
+      && candidateOrigin.userId === ambientTurnScope.principal.principalId
       && candidateOrigin.channelId === sessionKey.channelId
       && candidateOrigin.threadId === sessionKey.threadId
+      && ambientTurnScope.endpoint.channelType === candidateOrigin.channelType
+      && ambientTurnScope.endpoint.conversationId === candidateOrigin.channelId
+      && ambientTurnScope.endpoint.threadId === candidateOrigin.threadId
       ? Object.freeze(candidateOrigin)
       : undefined;
+    const targetTurnScope = targetOrigin === undefined || ambientTurnScope === undefined
+      ? createInternalTurnScope(conversation.conversationScope)
+      : {
+          conversation: conversation.conversationScope,
+          principal: ambientTurnScope.principal,
+          endpoint: ambientTurnScope.endpoint,
+        };
     const targetContextResult = createResolvedRequestContext({
       tenantId: sessionKey.tenantId,
       userId: sessionKey.userId,
@@ -241,7 +259,7 @@ export function setupCrossSession(deps: {
       trustLevel: "guest",
       resolvedModel: undefined,
       resolvedLanguage,
-      turnScope: createInternalTurnScope(conversation.conversationScope),
+      turnScope: targetTurnScope,
       ...(targetOrigin !== undefined
         ? { channelType: targetOrigin.channelType, deliveryOrigin: targetOrigin }
         : {}),
