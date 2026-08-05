@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { Attachment } from "@comis/core";
+import { MediaResolutionError, type Attachment } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
@@ -184,6 +184,12 @@ describe("telegram-resolver / createTelegramResolver", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      expect(result.error).toBeInstanceOf(MediaResolutionError);
+      expect(result.error).toMatchObject({
+        kind: "size_exceeded",
+        sizeBytes: 20 * 1024 * 1024,
+        maxBytes: 10 * 1024 * 1024,
+      });
       expect(result.error.message).toMatch(/exceeds limit/);
     }
 

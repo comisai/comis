@@ -483,8 +483,23 @@ describe("preprocessMessage", () => {
 
     const result = await preprocessMessage(deps, msg);
 
-    // Should skip the attachment entirely
-    expect(result.message.text).toBe("big file");
+    expect(result.message.text).toContain('outcome="rejected"');
+    expect(result.message.text).toContain('reason="size_exceeded"');
+    expect(result.message.text).toContain('size-bytes="50000000"');
+    expect(result.message.text).toContain('max-bytes="25000000"');
+    expect(result.message.text).toContain(
+      'config-key="integrations.media.infrastructure.maxRemoteFetchBytes"',
+    );
+    expect(result.message.text).toContain("Do not substitute an earlier attachment");
+    expect(result.message.text).toContain("big file");
+    expect(result.attachmentReceipts).toEqual([{
+      attachmentIndex: 0,
+      outcome: "rejected",
+      reason: "size_exceeded",
+      sizeBytes: 50_000_000,
+      maxBytes: 25_000_000,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+    }]);
     expect(result.transcriptions).toHaveLength(0);
     expect(resolver).not.toHaveBeenCalled();
     expect(transcriber.transcribe).not.toHaveBeenCalled();
@@ -1785,7 +1800,7 @@ describe("preprocessMessage", () => {
 
     // Negative tests
 
-    it("does NOT emit hint for oversized attachment", async () => {
+    it("emits a current-attachment rejection instead of silently dropping oversized media", async () => {
       const resolver = makeResolver();
       const att: Attachment = {
         type: "audio",
@@ -1806,8 +1821,10 @@ describe("preprocessMessage", () => {
 
       const result = await preprocessMessage(deps, msg);
 
-      expect(result.message.text).toBe("oversized test");
-      expect(result.message.text).not.toContain("[Attached:");
+      expect(result.message.text).toContain('<attachment-status attachment-index="1"');
+      expect(result.message.text).toContain("The current attachment was not downloaded or persisted");
+      expect(result.message.text).toContain("Do not substitute an earlier attachment");
+      expect(result.message.text).toContain("oversized test");
     });
 
     it("does NOT emit hint for audio with existing transcription", async () => {
