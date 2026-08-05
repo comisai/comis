@@ -38,6 +38,7 @@ import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
 import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js";
+import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
 // ---------------------------------------------------------------------------
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
@@ -129,6 +130,7 @@ function handleEventRecord(
   acc: Acc,
   rec: Record<string, unknown>,
   latestPromptSeq: number | undefined,
+  previousPromptSeq: number | undefined,
 ): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
@@ -138,6 +140,10 @@ function handleEventRecord(
     || (recordSeq !== undefined && recordSeq > latestPromptSeq);
   if (accumulateQueueRecord(acc, type, recordSeq, data)) return;
   if (accumulateContextRecord(acc, type, data, recordSeq, isCurrentTurn)) return;
+  if (accumulateMediaAttachmentRejection(
+    acc.mediaAttachmentRejections, type, data, recordSeq,
+    latestPromptSeq, previousPromptSeq,
+  )) return;
   switch (type) {
     case "prompt.submitted": {
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
@@ -661,6 +667,7 @@ function handleEventRecord(
  */
 export function toIncidentSignals(records: Array<Record<string, unknown>>): IncidentSignals {
   const latestPromptSeq = latestPromptSequence(records);
+  const previousPromptSeq = previousPromptSequence(records, latestPromptSeq);
   const acc: Acc = {
     toolStats: new Map(),
     failures: [],
@@ -705,6 +712,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     backgroundCancelledTaskIds: new Set(),
     backgroundReenteredTaskIds: new Set(),
     backgroundAcceptedTaskIds: new Set(),
+    mediaAttachmentRejections: [],
   };
   for (const rec of records) {
     // Envelope agentId (first seen) — the metadata rollup often lacks it.
@@ -724,7 +732,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
         else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
       }
-      handleEventRecord(acc, rec, latestPromptSeq);
+      handleEventRecord(acc, rec, latestPromptSeq, previousPromptSeq);
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
       // stage records carry toolName + success and previously fell into the
@@ -781,6 +789,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.responseLocaleRepairSkipped !== undefined
       ? { responseLocaleRepairSkipped: acc.responseLocaleRepairSkipped }
+      : {}),
+    ...(acc.mediaAttachmentRejections.length > 0
+      ? { mediaAttachmentRejections: acc.mediaAttachmentRejections.slice(-16) }
       : {}),
     toolStats,
     failures: currentTurnFailures,

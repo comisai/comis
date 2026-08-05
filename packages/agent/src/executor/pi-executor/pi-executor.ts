@@ -62,6 +62,7 @@ import {
   createConversationRef,
   emitObservationalEventSafely,
   LinkPrefetchReceiptSchema,
+  MediaAttachmentPreprocessReceiptsSchema,
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
   safePath,
@@ -1851,6 +1852,20 @@ async function runSessionLocked(
           ? { model: visionReceipt.data.model }
           : {}),
       });
+    }
+    const attachmentReceipts = MediaAttachmentPreprocessReceiptsSchema.safeParse(
+      msg.metadata?.mediaAttachmentPreprocess,
+    );
+    if (attachmentReceipts.success) {
+      for (const receipt of attachmentReceipts.data) {
+        trajectoryRecorder.recordEvent("media.attachment.rejected", {
+          attachmentIndex: receipt.attachmentIndex,
+          reason: receipt.reason,
+          sizeBytes: receipt.sizeBytes,
+          maxBytes: receipt.maxBytes,
+          configKey: receipt.configKey,
+        });
+      }
     }
   }
 

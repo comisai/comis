@@ -16,6 +16,7 @@
 import { z } from "zod";
 import { defineContract } from "./types.js";
 import { ResponseLocaleRepairSkippedSchema } from "../domain/response-locale-policy.js";
+import { MediaAttachmentPreprocessReceiptSchema } from "../domain/normalized-message.js";
 // The section sub-schemas live in a sibling module (file-size cap). Imported
 // locally for use in IncidentReportSchema AND re-exported below so the public
 // barrel surface is unchanged.
@@ -339,6 +340,11 @@ export const IncidentReportSchema = z.object({
       capped: z.number().int().nonnegative(),
       durationMs: z.number().int().nonnegative(),
     })
+    .optional(),
+  /** Current-turn attachments rejected before download or persistence. */
+  mediaAttachmentRejections: z
+    .array(MediaAttachmentPreprocessReceiptSchema.omit({ outcome: true }))
+    .max(16)
     .optional(),
   /** The image-generation turn reconstructed from the
    *  session's `image.*` trajectory records (the terminal image record wins).

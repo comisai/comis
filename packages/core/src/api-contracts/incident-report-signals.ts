@@ -63,7 +63,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 28 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 29 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -219,6 +219,14 @@ export interface IncidentSignals {
     capped: number;
     durationMs: number;
   };
+  /** Current-turn attachment guards reconstructed from pre-prompt receipts. */
+  mediaAttachmentRejections?: Array<{
+    attachmentIndex: number;
+    reason: "size_exceeded";
+    sizeBytes: number;
+    maxBytes: number;
+    configKey: "integrations.media.infrastructure.maxRemoteFetchBytes";
+  }>;
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;

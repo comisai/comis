@@ -585,6 +585,9 @@ export function assembleIncidentReport(
     ...(signals.linkPrefetch !== undefined
       ? { linkPrefetch: signals.linkPrefetch }
       : {}),
+    ...(signals.mediaAttachmentRejections !== undefined
+      ? { mediaAttachmentRejections: signals.mediaAttachmentRejections }
+      : {}),
     // The per-reason cache breaks (absent when the session
     // had none). Bounded to CACHE_BREAKS_CAP highest-count-first; the bound pass
     // (obs-explain-bound.ts) records a truncations[] breadcrumb when it sheds the

@@ -323,4 +323,8 @@ export interface Acc {
   backgroundAcceptedTaskIds: Set<string>;
   /** Session aggregate of direct `link.prefetch` counts-only receipts. */
   linkPrefetch?: NonNullable<IncidentSignals["linkPrefetch"]>;
+  /** Rejections belonging to the latest prompt-anchored turn. */
+  mediaAttachmentRejections: NonNullable<
+    IncidentSignals["mediaAttachmentRejections"]
+  >;
 }
