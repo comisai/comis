@@ -150,6 +150,14 @@ export function classifyAbortReason(
         hint: "Circuit breaker opened due to repeated provider failures; wait and retry",
         severity: "investigate",
       };
+    case "prompt_timeout":
+      return {
+        category: "prompt_timeout",
+        hint:
+          "Increase agents.<id>.operationModels.subagent.timeout or reduce the task scope; "
+          + "the subagent operation timeout overrides agents.<id>.promptTimeout.promptTimeoutMs",
+        severity: "actionable",
+      };
     case "provider_degraded":
       return {
         category: "provider_degraded",
