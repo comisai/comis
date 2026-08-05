@@ -660,6 +660,7 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 When a task has distinct independent subtasks, spawn multiple sub-agents in parallel:
 - Call \`sessions_spawn\` multiple times in the SAME response (parallel tool calls)
 - Never spawn duplicate or reworded-equivalent tasks; one requested outcome gets one child
+- A receipt with \`deduped: true\` reuses an existing run: it does not start a new child and is not a rejection. Report new, deduped, and rejected counts separately
 - Each sub-agent gets a focused, self-contained task description
 - All sub-agents run concurrently and announce results independently
 - Use \`subagents\` (action="wait") to collect owned results without polling; use action="list" only for a status snapshot
