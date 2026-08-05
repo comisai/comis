@@ -65,6 +65,9 @@ export function runTimeBasedMicrocompact(
     result.messages as Array<Record<string, unknown>>,
     keepWindow,
     microcompactFence,
+    // Session scope for the sticky floor: a message already sent stripped must
+    // not have its thinking restored when the fence later advances past it.
+    config.sessionKey,
   );
   if (cleared > 0 || thinkingCleared > 0) {
     config.onContentModification?.();
@@ -98,7 +101,7 @@ export function runTokenCeilingMicrocompact(
   const keepWindow = config.observationKeepWindow ?? 25;
   const ceilingFence = config.getCacheFenceIndex?.() ?? -1;
   const cleared = clearStaleToolResults(msgs, keepWindow, ceilingFence);
-  const thinkingCleared = clearStaleThinkingBlocks(msgs, keepWindow, ceilingFence);
+  const thinkingCleared = clearStaleThinkingBlocks(msgs, keepWindow, ceilingFence, config.sessionKey);
   if (cleared > 0 || thinkingCleared > 0) {
     config.onContentModification?.();
     // NOTE: Do NOT call onAdaptiveRetentionReset -- cache may still be warm

@@ -88,6 +88,29 @@ export function clearStaleToolResults(
 }
 
 /**
+ * Per-session high-water mark of the highest message index whose thinking blocks
+ * were stripped. Bounded FIFO so a long-lived daemon cannot leak: the floor only
+ * needs to outlive the session actively re-sending its own history, and an
+ * evicted entry degrades to the previous fence-only behaviour, never to
+ * anything unsafe.
+ */
+const sessionStrippedThrough = new Map<string, number>();
+const MAX_TRACKED_SESSIONS = 512;
+
+function rememberStrippedThrough(sessionKey: string, index: number): void {
+  if (!sessionStrippedThrough.has(sessionKey) && sessionStrippedThrough.size >= MAX_TRACKED_SESSIONS) {
+    const oldest = sessionStrippedThrough.keys().next();
+    if (!oldest.done) sessionStrippedThrough.delete(oldest.value);
+  }
+  sessionStrippedThrough.set(sessionKey, index);
+}
+
+/** Test seam: drop the sticky floors so cases cannot leak into one another. */
+export function resetStrippedThroughForTest(): void {
+  sessionStrippedThrough.clear();
+}
+
+/**
  * Clear non-redacted thinking blocks from old assistant messages.
  * Thinking blocks (5-20K tokens each) waste cache_creation budget when the cache
  * is cold. This function strips them from assistant messages beyond the keepWindow,
@@ -108,9 +131,16 @@ export function clearStaleThinkingBlocks(
   messages: Array<Record<string, unknown>>,
   keepWindow: number,
   fenceIndex: number = -1,
+  sessionKey?: string,
 ): number {
+  // Highest index this session has ever stripped. Anything at or below it was
+  // already SENT without its thinking block and must stay that way.
+  const strippedThrough = sessionKey === undefined
+    ? -1
+    : sessionStrippedThrough.get(sessionKey) ?? -1;
   // Cached extent unknown: `idx <= fenceIndex` protects NOTHING at -1 (fail-OPEN).
-  if (fenceIndex < 0) return 0;
+  // Still proceed when this session has a sticky floor to honour.
+  if (fenceIndex < 0 && strippedThrough < 0) return 0;
   // Collect assistant message indices
   const assistantIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -126,9 +156,16 @@ export function clearStaleThinkingBlocks(
   const clearableIndices = new Set(assistantIndices.slice(0, clearableCount));
 
   let cleared = 0;
+  let highestStripped = strippedThrough;
   for (const idx of clearableIndices) {
-    // Protect messages within the cached prefix.
-    if (idx <= fenceIndex) continue;
+    // Protect a cached message from a NEW strip — but never RESTORE thinking to
+    // a message this session already sent stripped. A message is stripped while
+    // it is still beyond the fence; once the fence advances past it, this guard
+    // would hand its thinking block back and the already-sent bytes would
+    // change. Live, that was 3 of 5 cached-region mutations
+    // ("block-count-changed … assistant|b1|t0 -> assistant|b2|t1"). Clearing is
+    // therefore monotonic per session: once cleared, always cleared.
+    if (idx <= fenceIndex && idx > strippedThrough) continue;
 
     const msg = messages[idx]!;
     const content = msg.content;
@@ -144,6 +181,13 @@ export function clearStaleThinkingBlocks(
       cleared += (content as unknown[]).length - filtered.length;
       msg.content = filtered;
     }
+    // Record the floor even when this call found nothing left to remove: the
+    // message is in stripped form either way, and a later call must not undo it.
+    if (idx > highestStripped) highestStripped = idx;
+  }
+
+  if (sessionKey !== undefined && highestStripped > strippedThrough) {
+    rememberStrippedThrough(sessionKey, highestStripped);
   }
 
   return cleared;

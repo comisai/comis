@@ -806,6 +806,23 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /**
+   * A STANDING count of background-task announcements held in the dead-letter
+   * store, emitted on each non-zero transition of the health tick.
+   *
+   * Distinct from `announcement:dead_lettered`, which fires once per failed
+   * DELIVERY. A parent-decision reservation — written when the parent turn that
+   * should adjudicate a completion dies before deciding — is never enqueued and
+   * never drained, so it produced no event at all. Live, a user's completed
+   * chart set sat in that state and the only trace was one daemon WARN; the
+   * system-health view, the documented first stop for triage, was structurally
+   * blind to it. Counts only.
+   */
+  "announcement:quarantine_pending": {
+    pendingCount: number;
+    timestamp: number;
+  };
+
   /** Dead-letter entry successfully delivered on retry */
   "announcement:dead_letter_delivered": {
     runId: string;

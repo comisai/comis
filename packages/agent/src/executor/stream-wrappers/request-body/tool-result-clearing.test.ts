@@ -21,6 +21,55 @@ const recall = (content: string) =>
 const envelope = (ts: string) =>
   `[System context]\n## Current Date & Time\n${ts}\n[End system context]\n\n`;
 
+describe("clearStaleThinkingBlocks — clearing is sticky once sent", () => {
+  // The fence guard protects a cached message from being stripped. But a message
+  // is stripped BEFORE the fence reaches it, and once the fence advances past it
+  // the guard restores its thinking — mutating content already sent in stripped
+  // form. Live: 3 of 5 cached-region mutations were exactly this, logged as
+  // "block-count-changed … assistant|b1|t0 -> assistant|b2|t1|[thinking,text]".
+  function makeMessages(): Array<Record<string, unknown>> {
+    return [
+      { role: "user", content: [{ type: "text", text: "q1" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "t" }, { type: "text", text: "a1" }] },
+      { role: "user", content: [{ type: "text", text: "q2" }] },
+      { role: "assistant", content: [{ type: "thinking", thinking: "t" }, { type: "text", text: "a2" }] },
+      { role: "user", content: [{ type: "text", text: "q3" }] },
+      { role: "assistant", content: [{ type: "text", text: "a3" }] },
+    ];
+  }
+  const thinkingCount = (msgs: Array<Record<string, unknown>>, idx: number) =>
+    (msgs[idx]!.content as Array<Record<string, unknown>>).filter((b) => b.type === "thinking").length;
+
+  it("does not restore thinking to a message it already stripped once the fence advances", () => {
+    const key = "session-sticky-a";
+    // Call 1: message 1 is beyond the fence, so it is stripped and sent that way.
+    const first = makeMessages();
+    clearStaleThinkingBlocks(first, 1, 0, key);
+    expect(thinkingCount(first, 1)).toBe(0);
+
+    // Call 2: the fence has advanced past message 1. Without stickiness the
+    // guard protects it and the thinking block comes back.
+    const second = makeMessages();
+    clearStaleThinkingBlocks(second, 1, 3, key);
+    expect(thinkingCount(second, 1)).toBe(0);
+  });
+
+  it("keeps a distinct session unaffected", () => {
+    const first = makeMessages();
+    clearStaleThinkingBlocks(first, 1, 0, "session-sticky-b");
+    const other = makeMessages();
+    // A different session has stripped nothing, so the fence guard still applies.
+    clearStaleThinkingBlocks(other, 1, 3, "session-sticky-c");
+    expect(thinkingCount(other, 1)).toBe(1);
+  });
+
+  it("still protects a cached message that was never stripped", () => {
+    const msgs = makeMessages();
+    clearStaleThinkingBlocks(msgs, 1, 3, "session-sticky-d");
+    expect(thinkingCount(msgs, 1)).toBe(1);
+  });
+});
+
 describe("clearStaleThinkingBlocks (pure)", () => {
   it("removes thinking blocks from assistant messages beyond keepWindow", () => {
     const messages: Array<Record<string, unknown>> = [

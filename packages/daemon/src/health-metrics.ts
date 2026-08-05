@@ -14,6 +14,7 @@ import {
   createSubagentActivityTracker,
   sweepStuckSubAgentRuns,
 } from "./wiring/subagent-stuck-sweep.js";
+import { systemNowMs } from "@comis/core";
 
 export function wireHealthLogging(deps: {
   container: BootContext["container"];
@@ -111,6 +112,13 @@ export function wireHealthLogging(deps: {
         hint: "Quarantined background-task announcements are awaiting an operator decision; nothing drains them automatically because retrying risks a duplicate delivery. Inspect <dataDir>/dead-letters.jsonl and decide whether the user was already informed.",
         errorKind: "internal" as const,
       }, "Announcements quarantined awaiting an operator decision");
+      // Also emit it, so the count reaches the system-health view. The WARN
+      // alone left this diagnosable only by a daemon.log grep — the exact
+      // failure the two-tier triage flow exists to remove.
+      container.eventBus.emitSafely("announcement:quarantine_pending", {
+        pendingCount: deadLetterQueueSize,
+        timestamp: systemNowMs(),
+      });
     }
     lastDeadLetterQueueSize = deadLetterQueueSize;
 
