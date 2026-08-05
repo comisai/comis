@@ -112,6 +112,20 @@ describe("response grounding module", () => {
     });
   });
 
+  it("rejects a confirmed recurring-job policy stated in the present tense", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response: "Confirmed: the briefing skips U.S. federal holidays.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
   it("does not classify an ordinary promise to omit prose as scheduler state", () => {
     const response = "I will skip that section in the draft.";
 
