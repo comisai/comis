@@ -2489,7 +2489,7 @@ function makeApprovalContext(): RequestContext {
       },
     },
     deliveryOrigin: Object.freeze({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelId: "chat-1",
     }),
   };
 }
