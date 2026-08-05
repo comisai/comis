@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { SessionKey } from "@comis/core";
+import { TypedEventBus, type SessionKey } from "@comis/core";
 import type { CronRuntimeExecutionInput } from "@comis/scheduler";
 import { describe, expect, it, vi } from "vitest";
-import { createCronWakeGateAdapter } from "./cron-wake-gate-adapter.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import {
+  createCronWakeGateAdapter,
+  type CronWakeGateAdapterDeps,
+} from "./cron-wake-gate-adapter.js";
 import type { WakeGateRunner } from "./wake-gate-runner.js";
 
 const signal = new AbortController().signal;
@@ -40,6 +44,39 @@ function input(): Extract<CronRuntimeExecutionInput, { kind: "agent_turn" }> {
 }
 
 describe("cron wake-gate adapter", () => {
+  it("emits one content-free scheduler wake-gate event for each evaluated fire", async () => {
+    const eventBus = new TypedEventBus();
+    const clock = createFakeClock(1_800_000_000_123);
+    const events: unknown[] = [];
+    eventBus.on("scheduler:wake_gate", (event) => events.push(event));
+    const execute = createCronWakeGateAdapter({
+      getRunner: () => ({
+        runWakeGate: vi.fn(async () => ({
+          verdict: { wake: false as const },
+          durationMs: 9,
+          toolCalls: 2,
+          failedOpen: false as const,
+          rootRunId: input().rootRunId,
+        })),
+      } as WakeGateRunner),
+      eventBus,
+      clock,
+    } as unknown as CronWakeGateAdapterDeps);
+
+    await execute(input(), sessionKey, signal);
+
+    expect(events).toEqual([{
+      jobId: "job-a",
+      agentId: "agent-a",
+      wake: false,
+      durationMs: 9,
+      toolCalls: 2,
+      estTurnsSaved: 1,
+      failedOpen: false,
+      timestamp: 1_800_000_000_123,
+    }]);
+  });
+
   it("passes the exact occurrence root, synthetic session, and abort signal to the runner", async () => {
     const runWakeGate = vi.fn(async () => ({
       verdict: { wake: true as const, context: "changed" },
