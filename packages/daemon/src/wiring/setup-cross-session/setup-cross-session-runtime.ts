@@ -14,14 +14,14 @@
  */
 import type {
   AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
-  DeliveryOrigin, DeliveryService, DeliverToChannelOptions, DurableRunPort,
+  DeliveryService, DeliverToChannelOptions, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef, ConversationScope,
   ResolvedTurnScope,
   MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
 } from "@comis/core";
 import {
-  createConversationRef, createResolvedRequestContext, DeliveryOriginSchema, formatSessionKey,
+  createConversationRef, createResolvedRequestContext, formatSessionKey,
   resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
@@ -41,6 +41,7 @@ import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
 import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
+import { resolvePreservedCrossSessionRoute } from "./cross-session-route.js";
 /** Silent fallback for test wiring that omits the production logger. */
 const NOOP_LOGGER: ComisLogger = {
   level: "silent",
@@ -216,39 +217,16 @@ export function setupCrossSession(deps: {
     citationEvidence?: CitationEvidence,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
     const targetSessionKey = { ...sessionKey, agentId };
-    const formattedTargetSessionKey = formatSessionKey(targetSessionKey);
     const ambientContext = tryGetContext();
-    const parsedOrigin = DeliveryOriginSchema.safeParse(ambientContext?.deliveryOrigin);
-    const candidateOrigin = parsedOrigin.success ? parsedOrigin.data : undefined;
-    const ambientTurnScope = ambientContext?.turnScope;
-    const ambientConversationRef = ambientTurnScope === undefined
-      ? undefined
-      : createConversationRef(ambientTurnScope.conversation);
-    const targetOrigin: DeliveryOrigin | undefined = candidateOrigin !== undefined
-      && ambientTurnScope !== undefined
-      && ambientConversationRef?.ok === true
-      && ambientConversationRef.value === conversation.conversationRef
-      && ambientContext?.tenantId === sessionKey.tenantId
-      && ambientContext.userId === sessionKey.userId
-      && ambientContext.agentId === agentId
-      && ambientContext.sessionKey === formattedTargetSessionKey
-      && ambientContext.channelType === candidateOrigin.channelType
-      && candidateOrigin.tenantId === sessionKey.tenantId
-      && candidateOrigin.userId === ambientTurnScope.principal.principalId
-      && candidateOrigin.channelId === sessionKey.channelId
-      && candidateOrigin.threadId === sessionKey.threadId
-      && ambientTurnScope.endpoint.channelType === candidateOrigin.channelType
-      && ambientTurnScope.endpoint.conversationId === candidateOrigin.channelId
-      && ambientTurnScope.endpoint.threadId === candidateOrigin.threadId
-      ? Object.freeze(candidateOrigin)
-      : undefined;
-    const targetTurnScope = targetOrigin === undefined || ambientTurnScope === undefined
-      ? createInternalTurnScope(conversation.conversationScope)
-      : {
-          conversation: conversation.conversationScope,
-          principal: ambientTurnScope.principal,
-          endpoint: ambientTurnScope.endpoint,
-        };
+    const preservedRoute = resolvePreservedCrossSessionRoute({
+      ambientContext,
+      agentId,
+      sessionKey,
+      conversation,
+    });
+    const targetOrigin = preservedRoute?.origin;
+    const targetTurnScope = preservedRoute?.turnScope
+      ?? createInternalTurnScope(conversation.conversationScope);
     const targetContextResult = createResolvedRequestContext({
       tenantId: sessionKey.tenantId,
       userId: sessionKey.userId,
