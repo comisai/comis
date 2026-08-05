@@ -211,6 +211,13 @@ export function setupCrossSession(deps: {
     sessionKey: SessionKey,
     conversation: ConversationLocator,
     text: string,
+    /**
+     * Tools to ship INSTEAD of assembling the agent's set. Pass `undefined` for
+     * the normal set — an empty array is taken literally and ships no tools,
+     * which drops the tools block from the head of the provider cache prefix and
+     * invalidates every cached message behind it. Only pass `[]` for a turn that
+     * is meant to be capability-free AND does not share a cached prefix.
+     */
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
     resolvedLanguage?: string,
     runtimeActionEvidence?: NormalizedMessage["metadata"]["runtimeActionEvidence"],
@@ -364,6 +371,11 @@ export function setupCrossSession(deps: {
         callerSessionKey,
         callerConversation,
         text,
+        // Deliberately capability-free: this is the candidate REWRITE boundary for
+        // a background completion, not a work turn. Giving it tools would let a
+        // sub-agent completion trigger fresh work and act on the very evidence it
+        // is supposed to be grounded by. Empty is correct here — see the cache
+        // note on `fixedTools` for why that is expensive and what fixes it.
         [],
         options?.resolvedLanguage, { kind: "background_completion" }, options?.citationEvidence,
       );
