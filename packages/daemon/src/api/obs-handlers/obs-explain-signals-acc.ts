@@ -297,6 +297,8 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  subagentBackgroundProcessesAbandonedCount: number;
+  subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;
   subagentDeliverySkippedLastRunId?: string;
   subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";

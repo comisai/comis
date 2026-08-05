@@ -165,6 +165,13 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Child runs that returned before their auto-backgrounded process sessions
+   * reached terminal state. Folded from
+   * `subagent.background_processes_abandoned`; counts and run ids only. */
+  subagentBackgroundProcessesAbandoned?: {
+    count: number;
+    lastRunId: string;
+  };
   /** Completed sub-agent results that had no authenticated completion route.
    * Folded from `subagent.delivery_skipped`; counts and stable identifiers only. */
   subagentDeliverySkipped?: {
