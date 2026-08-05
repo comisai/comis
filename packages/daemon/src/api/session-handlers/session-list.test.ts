@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
-import { createConversationRef, type ConversationScope, type SessionDetailedEntry } from "@comis/core";
+import {
+  createConversationRef,
+  messageToParts,
+  type ConversationScope,
+  type SessionDetailedEntry,
+} from "@comis/core";
 import { ok } from "@comis/shared";
 import { bindSessionListHandlers } from "./session-list.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
@@ -196,6 +201,56 @@ describe("session list explicit authority", () => {
       expect.objectContaining({ conversationRef: reference(scope("agent_a")), agentId: "agent_a" }),
     ]);
     expect(result.total).toBe(1);
+  });
+
+  it("searches lossless LCD history when the session metadata row has no messages", async () => {
+    const conversationScope = scope("agent_a");
+    const conversationRef = reference(conversationScope);
+    const getMessages = vi.fn().mockReturnValue([{
+      id: "lcd-message-1",
+      conversationRef,
+      seq: 0,
+      role: "user",
+      tokenCount: 12,
+      createdAt: 1_700_000_000_500,
+      parts: messageToParts({
+        role: "user",
+        content: "Please confirm whether Friday at 6 still works.",
+        timestamp: 1_700_000_000_500,
+      }),
+    }]);
+    const deps = {
+      ...makeDeps(),
+      sessionStore: {
+        listDetailed: vi.fn().mockReturnValue(ok([entry("agent_a")])),
+        loadByRef: vi.fn().mockReturnValue(ok({
+          conversationRef,
+          conversationScope,
+          messages: [],
+          metadata: {},
+          createdAt: 1_700_000_000_000,
+          updatedAt: 1_700_000_001_000,
+        })),
+      },
+      lcdStore: { getMessages },
+    } as unknown as SessionHandlerDeps;
+    const handlers = bindSessionListHandlers(deps);
+
+    const result = await handlers["session.search"]!({
+      tenant_id: "tenant_a",
+      agent_id: "agent_a",
+      query: "friday at 6",
+      scope: "user",
+      summarize: false,
+    }) as { results: Array<{ snippet: string }>; total: number };
+
+    expect(result.total).toBe(1);
+    expect(result.results[0]?.snippet).toContain("Friday at 6");
+    expect(getMessages).toHaveBeenCalledWith(expect.objectContaining({
+      conversationRef,
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+    }));
   });
 
   it("rejects an agent-origin query for a different agent scope", async () => {
