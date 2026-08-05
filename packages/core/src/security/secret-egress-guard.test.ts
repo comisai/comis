@@ -71,6 +71,17 @@ describe("scrubSecretsFromText", () => {
     expect(result.text).not.toContain(yamlValue);
   });
 
+  it("scrubs secret fields inside a JSON-encoded completion payload", () => {
+    const value = "A".repeat(64);
+    const nestedPayload = JSON.stringify(JSON.stringify({ secret: value }));
+
+    const result = scrubSecretsFromText(nestedPayload);
+
+    expect(result.redactions).toBe(1);
+    expect(result.text).not.toContain(value);
+    expect(result.text).toContain("[REDACTED]");
+  });
+
   it("scrubs credential usernames and write-only environment values from install instructions", () => {
     const username = "example-user-value";
     const password = "test-password-value";
