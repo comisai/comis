@@ -8556,6 +8556,15 @@ describe("per-turn locale inheritance wiring", () => {
   });
 });
 
+describe("background continuation authority wiring", () => {
+  it("captures the resolved immutable trust snapshot with the background origin", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/trustLevel:\s*context\.trustLevel/);
+  });
+});
+
 describe("recent recall context provenance wiring", () => {
   it("derives recent raw user turns from structured session entries", () => {
     const here = dirname(fileURLToPath(import.meta.url));

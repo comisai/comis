@@ -32,6 +32,7 @@ function makeOrigin(overrides: Record<string, unknown> = {}) {
       tenantId: "tenant-1",
     },
     traceId: "abc-123",
+    trustLevel: "admin",
     backgroundHopCount: 0,
     responseLocalePolicy: {
       locale: "he",
@@ -49,6 +50,10 @@ describe("BackgroundTaskOriginSchema", () => {
 
   it("accepts a nullable trace identifier", () => {
     expect(BackgroundTaskOriginSchema.parse(makeOrigin({ traceId: null })).traceId).toBeNull();
+  });
+
+  it("preserves the authenticated trust snapshot for delayed re-entry", () => {
+    expect(BackgroundTaskOriginSchema.parse(makeOrigin()).trustLevel).toBe("admin");
   });
 
   it("defaults the background hop count to zero", () => {
