@@ -914,6 +914,10 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
         runId: "old-failed-child",
         reason: "no_origin",
       }),
+      event("subagent.background_processes_abandoned", 4.5, {
+        runId: "old-failed-child",
+        count: 1,
+      }),
       event("subagent.budget_exceeded", 5, {
         nodeId: "old-budget-node",
         capSource: "node",
@@ -936,6 +940,7 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
     expect(s.nodeBudgetBreaches).toEqual([]);
     expect(s.subagentCompletions).toBeUndefined();
     expect(s.subagentDeliverySkipped).toBeUndefined();
+    expect(s.subagentBackgroundProcessesAbandoned).toBeUndefined();
     expect(rootCause({ ...s, endReason: "success", degraded: false })).toBeNull();
   });
 
@@ -2396,5 +2401,28 @@ describe("toIncidentSignals — subagent.killed (attributed kill signal)", () =>
 
   it("is ABSENT (undefined, not {}) when no kill fired", () => {
     expect(toIncidentSignals([event("session.started", 0, {})]).subagentKilled).toBeUndefined();
+  });
+});
+
+describe("toIncidentSignals — abandoned sub-agent background processes", () => {
+  it("sums process counts and keeps the latest owning run identifier", () => {
+    const s = toIncidentSignals([
+      event("subagent.background_processes_abandoned", 1, { runId: "run-a", count: 1 }),
+      event("subagent.background_processes_abandoned", 2, { runId: "run-b", count: 2 }),
+    ]);
+
+    expect(s.subagentBackgroundProcessesAbandoned).toEqual({
+      count: 3,
+      lastRunId: "run-b",
+    });
+  });
+
+  it("omits malformed or zero-count abandoned-process records", () => {
+    const s = toIncidentSignals([
+      event("subagent.background_processes_abandoned", 1, { runId: "run-a", count: 0 }),
+      event("subagent.background_processes_abandoned", 2, { count: 2 }),
+    ]);
+
+    expect(s.subagentBackgroundProcessesAbandoned).toBeUndefined();
   });
 });

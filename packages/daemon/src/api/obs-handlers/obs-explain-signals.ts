@@ -37,6 +37,7 @@ import {
 import { summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
+import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js";
 // ---------------------------------------------------------------------------
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
@@ -255,32 +256,10 @@ function handleEventRecord(
       acc.terminalDriveEvictedMs = asNumber(data.durationMs) ?? acc.terminalDriveEvictedMs;
       return;
     }
-    case "subagent.killed": {
-      // An attributed sub-agent kill (bridged from subagent:killed, the
-      // runner's kill chokepoint). Keep the LAST kill's closed attribution +
-      // telemetry for the subagent_stuck_killed verdict — the child's own
-      // rollup can still read success when the kill races completion, so this
-      // record is the kill's authoritative explain-side evidence.
-      const killedBy = asString(data.killedBy);
-      if (killedBy !== undefined) {
-        acc.subagentKilledBy = killedBy;
-        acc.subagentKilledRuntimeMs = asNumber(data.runtimeMs);
-        acc.subagentKilledIdleMs = asNumber(data.idleMs);
-        acc.subagentKilledThresholdMs = asNumber(data.thresholdMs);
-      }
-      return;
-    }
+    case "subagent.killed":
+    case "subagent.background_processes_abandoned":
     case "subagent.delivery_skipped": {
-      if (!isCurrentTurn) return;
-      const runId = asString(data.runId);
-      const reason = asString(data.reason);
-      if (
-        runId === undefined
-        || (reason !== "no_origin" && reason !== "no_channel_params")
-      ) return;
-      acc.subagentDeliverySkippedCount += 1;
-      acc.subagentDeliverySkippedLastRunId = runId;
-      acc.subagentDeliverySkippedLastReason = reason;
+      accumulateSubagentIncidentRecord(acc, type, data, isCurrentTurn);
       return;
     }
     case "background_task.promoted":
@@ -712,6 +691,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    subagentBackgroundProcessesAbandonedCount: 0,
     subagentDeliverySkippedCount: 0,
     subagentCompletedRunIds: new Set(),
     subagentCompletedCount: 0,
@@ -957,6 +937,15 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
             ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
+          },
+        }
+      : {}),
+    ...(acc.subagentBackgroundProcessesAbandonedCount > 0
+      && acc.subagentBackgroundProcessesAbandonedLastRunId !== undefined
+      ? {
+          subagentBackgroundProcessesAbandoned: {
+            count: acc.subagentBackgroundProcessesAbandonedCount,
+            lastRunId: acc.subagentBackgroundProcessesAbandonedLastRunId,
           },
         }
       : {}),
