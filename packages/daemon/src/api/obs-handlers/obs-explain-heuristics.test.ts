@@ -166,6 +166,34 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/requesterOrigin|announce/i);
   });
 
+  it("abandoned child processes outrank the expected operator-origin delivery skip", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: true,
+      subagentDeliverySkipped: {
+        count: 1,
+        lastRunId: "run-background-process",
+        lastReason: "no_origin",
+      },
+    }) as IncidentSignals & {
+      subagentBackgroundProcessesAbandoned: {
+        count: number;
+        lastRunId: string;
+      };
+    };
+    signals.subagentBackgroundProcessesAbandoned = {
+      count: 2,
+      lastRunId: "run-background-process",
+    };
+
+    const r = rootCause(signals);
+
+    expect(r?.code).toBe("subagent_background_processes_abandoned");
+    expect(r?.detail).toContain("run-background-process");
+    expect(r?.detail).toContain("2");
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/process\.status|idempotent/i);
+  });
+
   it("a per-node budget breach outranks the expected operator-origin delivery skip", () => {
     const r = rootCause(
       makeSignals({
