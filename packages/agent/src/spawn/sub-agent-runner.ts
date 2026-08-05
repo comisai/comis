@@ -83,6 +83,7 @@ import {
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
 import { buildHaltedAccount } from "./halted-account.js";
+import { resolveSubAgentOutcome } from "./sub-agent-outcome.js";
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
@@ -3098,7 +3099,52 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (deliverySuppressedRunIds.has(runId)) return;
 
         const providerCompletedAt = clock.now();
-        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
+        const modelStoppedCleanly =
+          result.finishReason === "stop" || result.finishReason === "end_turn";
+
+        // Output-contract validation. Hoisted ABOVE the outcome derivation (it used to run
+        // several hundred lines below, purely as a WARN) because a clean model stop is not the
+        // same as doing the job: a child that stops without writing its declared
+        // `expected_outputs` has not satisfied the contract its own prompt told it would be
+        // validated. Resolved ONCE here so the WARN, the announcement, the terminal endReason,
+        // the proxy stop and the lifecycle hook cannot disagree about whether the run worked.
+        let validationResults: ValidationResult[] | undefined;
+        let missingContractedOutputs: string[] = [];
+        if (params.expected_outputs && params.expected_outputs.length > 0) {
+          try {
+            validationResults = await validateOutputs(
+              params.expected_outputs,
+              3,
+              200,
+              result.workspaceDir,
+            );
+            missingContractedOutputs = validationResults
+              .filter((v) => !v.exists)
+              .map((v) => v.path);
+            if (missingContractedOutputs.length > 0) {
+              deps.logger?.warn({
+                runId,
+                missingFiles: missingContractedOutputs,
+                finishReason: result.finishReason,
+                hint: "Verify each expected_outputs entry names a file written inside the child execution workspace. The run is reported to the parent as failed: it stopped without producing the outputs it declared.",
+                errorKind: "validation" as const,
+              }, "Sub-agent output validation: missing files");
+            }
+          } catch (validationErr) {
+            deps.logger?.warn({
+              runId,
+              err: validationErr,
+              hint: "Output validation failed unexpectedly; the run keeps its model-level outcome and the announcement proceeds without validation data",
+              errorKind: "internal" as const,
+            }, "Sub-agent output validation error");
+          }
+        }
+
+        const subAgentOutcome = resolveSubAgentOutcome({
+          modelStoppedCleanly,
+          missingContractedOutputs,
+        });
+        const isSuccess = subAgentOutcome.success;
 
         // Warn on empty response — may indicate prompt or context issues
         if (!result.response || result.response.trim().length === 0) {
@@ -3283,35 +3329,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
         };
-        // Post-execution output validation (best-effort, never blocks)
-        let validationResults: ValidationResult[] | undefined;
-        if (params.expected_outputs && params.expected_outputs.length > 0) {
-          try {
-            validationResults = await validateOutputs(
-              params.expected_outputs,
-              3,
-              200,
-              result.workspaceDir,
-            );
-            const missing = validationResults.filter((v) => !v.exists);
-            if (missing.length > 0) {
-              deps.logger?.warn({
-                runId,
-                missingFiles: missing.map((v) => v.path),
-                hint: "Verify each expected_outputs entry names a file written inside the child execution workspace",
-                errorKind: "validation" as const,
-              }, "Sub-agent output validation: missing files");
-            }
-          } catch (validationErr) {
-            deps.logger?.warn({
-              runId,
-              err: validationErr,
-              hint: "Output validation failed unexpectedly; announcement will proceed without validation data",
-              errorKind: "internal" as const,
-            }, "Sub-agent output validation error");
-          }
-        }
-
         // Classified once, above, where the halt account also needs it — never recomputed, so the
         // WARN and the parent-facing account cannot disagree about why a run was halted.
 
@@ -3559,10 +3576,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           terminalizeRun(runId, {
             endReason: "failed",
             completedAtMs: completedAt,
-            errorKind: classifyCompletionErrorKind(
-              result.finishReason,
-              result.terminalErrorKind,
-            ),
+            // A clean stop that skipped its contracted outputs is a validation
+            // failure, not an internal one — routing it through the finish-reason
+            // classifier would label a "stop" as `internal` and send an operator
+            // hunting a crash that never happened.
+            errorKind: subAgentOutcome.reason === "contract_unsatisfied"
+              ? ("validation" as const)
+              : classifyCompletionErrorKind(
+                  result.finishReason,
+                  result.terminalErrorKind,
+                ),
             summary: completionSummary || result.errorContext?.originalError,
             ...(materializedRef ? { resultRef: materializedRef } : {}),
           }, telemetry);
