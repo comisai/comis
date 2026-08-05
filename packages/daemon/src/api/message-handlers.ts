@@ -43,7 +43,7 @@ import {
 } from "@comis/core";
 import { err, ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
-import { relative } from "node:path";
+import { relative, resolve } from "node:path";
 import { resolveAdapter, authorizeChannelAccess } from "../wiring/daemon-utils.js";
 import { wrapOutwardSend } from "./outward-ledger-wrap.js";
 
@@ -564,17 +564,24 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
 
       let attachmentUrl = rawParams.attachment_url as string;
 
-      // Resolve file:// URLs and absolute paths to validated local paths
+      // Resolve file:// URLs and workspace paths to validated local paths.
+      // A RELATIVE path is resolved against the caller's workspace root: that is
+      // the shape `find` emits and the shape the message tool's guide promises,
+      // and leaving it unresolved handed the raw string to the channel adapter.
       const isFileUrl = attachmentUrl.startsWith("file://");
       const isAbsPath = attachmentUrl.startsWith("/");
-      if (isFileUrl || isAbsPath) {
-        const rawPath = isFileUrl
-          ? decodeURIComponent(new URL(attachmentUrl).pathname)
-          : attachmentUrl;
-
+      const isHttpUrl = attachmentUrl.startsWith("http://") || attachmentUrl.startsWith("https://");
+      const isWorkspaceRelative = !isFileUrl && !isAbsPath && !isHttpUrl;
+      if (isFileUrl || isAbsPath || isWorkspaceRelative) {
         // Determine workspace dir for the calling agent
         const callerAgentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
         const workspaceDir = deps.workspaceDirs.get(callerAgentId) ?? deps.defaultWorkspaceDir;
+
+        const rawPath = isFileUrl
+          ? decodeURIComponent(new URL(attachmentUrl).pathname)
+          : isAbsPath
+            ? attachmentUrl
+            : resolve(workspaceDir, attachmentUrl);
 
         // Validate path stays within workspace
         const relativePath = relative(workspaceDir, rawPath);

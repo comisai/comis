@@ -249,13 +249,33 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
             if (attachment_url) {
               const isHttp = attachment_url.startsWith("http://") || attachment_url.startsWith("https://");
               const isFile = attachment_url.startsWith("file://");
-              const isAbsPath = attachment_url.startsWith("/");
-              if (!isHttp && !isFile && !isAbsPath) {
+              // Anything shaped `scheme://` is a URL and must be one we support;
+              // everything else is a workspace path (absolute or relative).
+              const hasUrlScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//u.test(attachment_url);
+              if (hasUrlScheme && !isHttp && !isFile) {
                 throwToolError(
                   "invalid_value",
-                  "Attachment URL must be http://, https://, file:// URL, or an absolute workspace path.",
-                  { param: "attachment_url", hint: "Use a valid URL scheme or absolute path." },
+                  "Attachment URL must be an http://, https:// or file:// URL, or a workspace path.",
+                  { param: "attachment_url", hint: "Use a supported URL scheme or a workspace file path." },
                 );
+              }
+              if (!hasUrlScheme && !attachment_url.startsWith("/")) {
+                // Workspace-RELATIVE path. `find` documents its output as "paths
+                // relative to workspace root" and this tool's own guide promises
+                // "attachment_url can be a workspace file path", so rejecting it
+                // forced the model to invent an absolute path it has no reliable
+                // way to know — observed live as a wasted call before it retried.
+                // Containment is enforced authoritatively server-side (safePath
+                // against the caller's workspace); this is the fail-fast for an
+                // obvious escape so the round trip is not spent to learn it.
+                const escapes = attachment_url.split("/").some((segment) => segment === "..");
+                if (escapes || attachment_url.includes("\0")) {
+                  throwToolError(
+                    "invalid_value",
+                    "Attachment path must stay inside the workspace.",
+                    { param: "attachment_url", hint: "Pass a path relative to the workspace root, with no `..` segments." },
+                  );
+                }
               }
             }
             const attachment_type = readStringParam(p, "attachment_type", false) ?? "file";

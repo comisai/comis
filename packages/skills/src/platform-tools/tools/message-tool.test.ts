@@ -192,6 +192,45 @@ describe("message tool", () => {
     });
   });
 
+  it("attach action accepts a workspace-relative path", async () => {
+    // `find` returns paths "relative to workspace root" (its own output schema)
+    // and the message tool guide promises "attachment_url can be a workspace
+    // file path". Live, the agent passed exactly that and was rejected, costing
+    // a wasted LLM call before it recovered.
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ attached: true }));
+
+    const tool = createMessageTool(mockRpcCall);
+    const result = await tool.execute("call-rel", {
+      action: "attach",
+      channel_type: "telegram",
+      channel_id: "ch-7",
+      attachment_url: "output/weekly_report.xlsx",
+      attachment_type: "file",
+    } as never);
+
+    expect((parseResult(result) as { attached: boolean }).attached).toBe(true);
+    expect(mockRpcCall).toHaveBeenCalledWith(
+      "message.attach",
+      expect.objectContaining({ attachment_url: "output/weekly_report.xlsx" }),
+    );
+  });
+
+  it("attach action still rejects a parent-escaping relative path", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ ok: true }));
+
+    const tool = createMessageTool(mockRpcCall);
+    await expect(
+      tool.execute("call-esc", {
+        action: "attach",
+        channel_type: "telegram",
+        channel_id: "ch-7",
+        attachment_url: "../../etc/passwd",
+        attachment_type: "file",
+      } as never),
+    ).rejects.toThrow();
+    expect(mockRpcCall).not.toHaveBeenCalled();
+  });
+
   it("attach action throws for unsupported URL schemes (ftp://)", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ ok: true }));
 

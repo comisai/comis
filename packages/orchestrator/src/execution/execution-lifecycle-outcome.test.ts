@@ -38,6 +38,36 @@ function makeExecutionResult(
 }
 
 describe("execution lifecycle outcome classification", () => {
+  // A turn that COMPLETED and delivered a reply is not an execution failure, even
+  // when a tool errored along the way. Classifying it as one made the Verified
+  // Learning pipeline record a deterministic `failure` at 0.9 confidence for a
+  // correct answer (live: one attachment-validation error that the agent retried
+  // successfully in the same turn), and selected the "agent-runtime-failure"
+  // delivery origin for a reply the agent genuinely produced. Same carve-out the
+  // `background_pending` case already documents in this file.
+  it("does not report an execution failure when the turn completed with tool errors", () => {
+    const outcome = classifyExecutionFinishReason(
+      makeExecutionResult({ finishReason: "completed_with_tool_errors", terminalErrorKind: "validation" }),
+    );
+    expect(outcome.status).not.toBe("error");
+    expect(outcome.failureStage).toBeUndefined();
+  });
+
+  it("retains the tool errorKind on a completed-with-tool-errors turn", () => {
+    const outcome = classifyExecutionFinishReason(
+      makeExecutionResult({ finishReason: "completed_with_tool_errors", terminalErrorKind: "validation" }),
+    );
+    expect(outcome.errorKind).toBe("validation");
+  });
+
+  it("still reports an execution failure for a hard error finish", () => {
+    const outcome = classifyExecutionFinishReason(
+      makeExecutionResult({ finishReason: "error", terminalErrorKind: "internal" }),
+    );
+    expect(outcome.status).toBe("error");
+    expect(outcome.failureStage).toBe("execution");
+  });
+
   it.each([
     ["stop", { status: "success" }],
     ["max_steps", { status: "error", failureStage: "execution", errorKind: "resource" }],

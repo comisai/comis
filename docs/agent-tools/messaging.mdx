@@ -198,7 +198,7 @@ All actions require the `channel_type` parameter to specify which platform adapt
     | `action` | string | Yes | Must be `attach` |
     | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
     | `channel_id` | string | Yes | The target channel |
-    | `attachment_url` | string | Yes | URL or workspace path of file to send: `http://`, `https://`, `file://`, or absolute path |
+    | `attachment_url` | string | Yes | URL or workspace path of the file to send: `http://`, `https://`, `file://`, an absolute path, or a path relative to the workspace root (the form `find` returns). Relative paths resolve against the calling agent's workspace and cannot escape it. |
     | `attachment_type` | string | No | Attachment media type: `image`, `file`, `audio`, or `video` (default: `file`) |
     | `mime_type` | string | No | MIME type of attachment |
     | `file_name` | string | No | Display filename for the attachment |
