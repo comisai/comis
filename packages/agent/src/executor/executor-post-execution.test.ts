@@ -1091,6 +1091,20 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — unrecovered failures ground completion claims before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceCompletionEvidence\(/);
+    expect(stripped).toMatch(/unrecoveredToolFailures/);
+    expect(stripped).toMatch(/buildCompletionEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.completion_evidence_guard/);
+    expect(stripped).toMatch(
+      /completionEvidenceGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"unrecovered_tool_failure_completion_claim"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceCompletionEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
     const stripped = readPostExecStripped();
     const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");

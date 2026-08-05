@@ -339,4 +339,20 @@ describe("isCompletionClaim", () => {
   it("returns true for 'I accomplished the goals'", () => {
     expect(isCompletionClaim("I accomplished the goals")).toBe(true);
   });
+
+  it("detects a fixed-and-working completion claim from a live tool-failure turn", () => {
+    expect(
+      isCompletionClaim(
+        "I found and fixed the implementation. The page now has working add and delete actions.",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not turn an explicit verification failure into a completion claim", () => {
+    expect(
+      isCompletionClaim(
+        "I could not verify that the page works; the test still fails.",
+      ),
+    ).toBe(false);
+  });
 });
