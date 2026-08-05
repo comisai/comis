@@ -10,6 +10,8 @@ import {
 import type { WakeGateRunner } from "./wake-gate-runner.js";
 
 const signal = new AbortController().signal;
+const quietEventBus = new TypedEventBus();
+const quietClock = createFakeClock(1_800_000_000_000);
 const sessionKey = {
   tenantId: "tenant-a",
   agentId: "agent-a",
@@ -87,6 +89,8 @@ describe("cron wake-gate adapter", () => {
     }));
     const execute = createCronWakeGateAdapter({
       getRunner: () => ({ runWakeGate } as WakeGateRunner),
+      eventBus: quietEventBus,
+      clock: quietClock,
     });
 
     await expect(execute(input(), sessionKey, signal)).resolves.toEqual({
@@ -118,6 +122,8 @@ describe("cron wake-gate adapter", () => {
           errorKind: "timeout",
         })),
       } as WakeGateRunner),
+      eventBus: quietEventBus,
+      clock: quietClock,
     });
     await expect(failed(input(), sessionKey, signal)).resolves.toEqual({
       status: "failed_open",
@@ -126,7 +132,11 @@ describe("cron wake-gate adapter", () => {
       errorKind: "timeout",
     });
 
-    const missing = createCronWakeGateAdapter({ getRunner: () => undefined });
+    const missing = createCronWakeGateAdapter({
+      getRunner: () => undefined,
+      eventBus: quietEventBus,
+      clock: quietClock,
+    });
     await expect(missing(input(), sessionKey, signal)).resolves.toEqual({
       status: "unavailable",
       reason: "wake_gate_unbound",
@@ -134,6 +144,8 @@ describe("cron wake-gate adapter", () => {
 
     const degraded = createCronWakeGateAdapter({
       getRunner: () => ({ runWakeGate: vi.fn(async () => ({ runAsToday: true })) } as WakeGateRunner),
+      eventBus: quietEventBus,
+      clock: quietClock,
     });
     await expect(degraded(input(), sessionKey, signal)).resolves.toEqual({
       status: "unavailable",
@@ -151,6 +163,8 @@ describe("cron wake-gate adapter", () => {
           failedOpen: false,
         })),
       } as WakeGateRunner),
+      eventBus: quietEventBus,
+      clock: quietClock,
     });
 
     await expect(execute(input(), sessionKey, signal)).resolves.toEqual({
