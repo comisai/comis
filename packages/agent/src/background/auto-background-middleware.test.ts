@@ -640,7 +640,7 @@ describe("wrapToolForAutoBackground", () => {
   //     live), so the "backgrounded" placeholder is redundant and is exactly
   //     what tricks the model into polling.
   // ---------------------------------------------------------------------------
-  describe("never-auto-background tools (meta + self-delivering media)", () => {
+  describe("never-auto-background tools (meta, secret-once, and self-delivering media)", () => {
     // `sleep` joined the set after a second live incident (2026-07-08): the model
     // slept to await a backgrounded MCP result; the sleep itself hit the 10s
     // threshold, promoted, and its raw 'Background task "sleep" completed.'
@@ -663,6 +663,7 @@ describe("wrapToolForAutoBackground", () => {
       "image_generate",
       "video_generate",
       "discover_tools",
+      "tokens_manage",
     ]) {
       it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
         config.excludeTools = [];
