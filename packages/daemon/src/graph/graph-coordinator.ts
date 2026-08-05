@@ -688,13 +688,16 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     return gs ? resolveGraphRunSnapshot(gs) : undefined;
   }
 
-  function cancel(graphId: string): boolean {
+  function cancel(graphId: string): {
+    cancelled: boolean;
+    killed: number;
+  } {
     return cancelGraphRun(
       state,
       deps,
       graphId,
       callbacks.handleGraphCompletion,
-    ).cancelled;
+    );
   }
 
   function cancelByRootRunId(rootRunId: string): {

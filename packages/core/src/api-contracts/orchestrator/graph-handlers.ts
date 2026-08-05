@@ -149,7 +149,8 @@ export const GraphStatusContract = defineContract({
  *   - Unknown graphId or terminal → `"Graph not found or already terminal"`.
  *
  * Request: `{ graphId?, graph_id? }`. Either form accepted.
- * Response: `{ cancelled, graphId }`.
+ * Response: `{ cancelled, graphId, killed }` where `killed` is the exact
+ * number of running graph children terminated by the cancellation.
  */
 export const GraphCancelContract = defineContract({
   method: "graph.cancel",
@@ -160,6 +161,7 @@ export const GraphCancelContract = defineContract({
   response: z.object({
     cancelled: z.boolean(),
     graphId: z.string(),
+    killed: z.number().int().nonnegative(),
   }),
   scopes: ["rpc"] as const,
 });

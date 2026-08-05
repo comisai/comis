@@ -278,6 +278,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
     },
 
     [GraphCancelContract.method]: async (rawParams) => {
+      const startedAtMs = deps.schedulerNowMs();
       // In-process capability gate (see graph.define).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:graph");
 
@@ -294,17 +295,26 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphCancelContract.request.parse(userParams);
 
-      const cancelled = deps.graphCoordinator.cancel(cancelGraphId as string);
-      if (!cancelled) {
+      const cancellation = deps.graphCoordinator.cancel(cancelGraphId as string);
+      if (!cancellation.cancelled) {
         throw new Error("Graph not found or already terminal");
       }
 
       deps.logger?.info(
-        { graphId: cancelGraphId, method: "graph.cancel" },
+        {
+          graphId: cancelGraphId,
+          killed: cancellation.killed,
+          method: "graph.cancel",
+          durationMs: deps.schedulerNowMs() - startedAtMs,
+        },
         "Graph cancelled",
       );
 
-      const result = { cancelled: true, graphId: cancelGraphId as string };
+      const result = {
+        cancelled: true,
+        graphId: cancelGraphId as string,
+        killed: cancellation.killed,
+      };
       if (IS_DEV) GraphCancelContract.response.parse(result);
       return result;
     },

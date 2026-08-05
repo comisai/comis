@@ -42,7 +42,10 @@ export interface GraphRunSummary {
 export interface GraphCoordinator {
   run(params: GraphRunParams): Promise<Result<string, string>>;
   getStatus(graphId: string): GraphExecutionSnapshot | undefined;
-  cancel(graphId: string): boolean;
+  cancel(graphId: string): {
+    cancelled: boolean;
+    killed: number;
+  };
   cancelByRootRunId(rootRunId: string): {
     graphsCancelled: number;
     killed: number;

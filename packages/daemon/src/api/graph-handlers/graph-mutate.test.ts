@@ -103,7 +103,7 @@ function makeDeps(overrides: FakeDepsOverrides = {}): GraphHandlerDeps {
     // graphCoordinator.run is awaited by graph.execute; return ok(graphId).
     graphCoordinator: {
       run: overrides.run ?? vi.fn(async () => ok("graph-123")),
-      cancel: vi.fn(() => true),
+      cancel: vi.fn(() => ({ cancelled: true, killed: 0 })),
     },
     securityConfig: {
       agentToAgent: { enabled: overrides.a2aEnabled ?? true, waitTimeoutMs: 1000 },
