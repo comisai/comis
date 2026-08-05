@@ -15,7 +15,10 @@
  *
  * @module
  */
-import { ERROR_KINDS } from "@comis/core";
+import {
+  ERROR_KINDS,
+  type BackgroundTaskRecoveryScanFailureKind,
+} from "@comis/core";
 import type { DiagnosticRow } from "@comis/memory";
 
 /**
@@ -29,6 +32,78 @@ export interface Finding {
   detail: string;
   count: number;
   hint: string;
+}
+
+export interface BackgroundRecoveryScanState {
+  timestamp: number;
+  status: "healthy" | "failed";
+  failureCount: number;
+  failureKinds: BackgroundTaskRecoveryScanFailureKind[];
+  recordRefs: string[];
+}
+
+const BACKGROUND_RECOVERY_FAILURE_KINDS: ReadonlySet<string> = new Set([
+  "root_read",
+  "agent_path",
+  "agent_stat",
+  "agent_read",
+  "task_path",
+  "task_read",
+  "task_parse",
+  "task_validation",
+]);
+const BACKGROUND_RECOVERY_RECORD_REF =
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}\/[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+
+/** Read one bounded recovery-scan standing-state row without echoing raw details. */
+export function backgroundRecoveryScanFromRow(
+  row: DiagnosticRow,
+): BackgroundRecoveryScanState | null {
+  if (row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as {
+      signal?: unknown;
+      status?: unknown;
+      failureCount?: unknown;
+      failureKinds?: unknown;
+      recordRefs?: unknown;
+    };
+    if (
+      parsed.signal !== "background_task_recovery_scan"
+      || (parsed.status !== "healthy" && parsed.status !== "failed")
+      || typeof parsed.failureCount !== "number"
+      || !Number.isSafeInteger(parsed.failureCount)
+      || parsed.failureCount < 0
+      || !Array.isArray(parsed.failureKinds)
+      || !Array.isArray(parsed.recordRefs)
+      || (parsed.status === "failed" && parsed.failureCount === 0)
+      || (
+        parsed.status === "healthy"
+        && (
+          parsed.failureCount !== 0
+          || parsed.failureKinds.length !== 0
+          || parsed.recordRefs.length !== 0
+        )
+      )
+    ) return null;
+    const failureKinds = parsed.failureKinds.filter(
+      (kind): kind is BackgroundTaskRecoveryScanFailureKind =>
+        typeof kind === "string" && BACKGROUND_RECOVERY_FAILURE_KINDS.has(kind),
+    ).slice(0, 8);
+    const recordRefs = parsed.recordRefs.filter(
+      (recordRef): recordRef is string =>
+        typeof recordRef === "string" && BACKGROUND_RECOVERY_RECORD_REF.test(recordRef),
+    ).slice(0, 8);
+    return {
+      timestamp: row.timestamp,
+      status: parsed.status,
+      failureCount: parsed.failureCount,
+      failureKinds,
+      recordRefs,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function healthSignalLabel(row: DiagnosticRow): string {
@@ -226,6 +301,7 @@ export function multilingualFromRow(row: DiagnosticRow): {
  *  `health_signal:<label>` rollup below — listing one here without adding its
  *  dedicated branch would silently drop it, so the two move together. */
 export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
+  "background_task_recovery_scan",
   "script_zero_hit",
   "summary_language_mismatch",
   "generation_quality",

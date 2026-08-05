@@ -66,7 +66,12 @@ import { pipelineAuthoringGate } from "@comis/observability";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import { readSessionIndexWindow } from "./system-session-index.js";
-import { buildFindings, pipelineAuthoringAggregateFromRows, type Finding } from "./system-findings.js";
+import {
+  activeHealthSignalWarningCount,
+  buildFindings,
+  pipelineAuthoringAggregateFromRows,
+  type Finding,
+} from "./system-findings.js";
 import { computeAutonomySlice } from "./system-autonomy.js";
 import { computeCronWakeGateSlice } from "./system-cron-wake-gate.js";
 import { reconcileBillingTotal } from "./obs-metrics.js";
@@ -555,7 +560,7 @@ export async function assembleSystemHealthReport(
     // them here made a healthy system root-cause to "recurring health WARN
     // signal(s)" off once-per-session-start rebases — the same severity
     // discipline the findings rollup applies.
-    healthSignalCount: healthSignals.filter((r) => r.severity !== "info").length,
+    healthSignalCount: activeHealthSignalWarningCount(healthSignals),
     configPostureCount: configPosture.length,
     ...(configPostureFinding === undefined
       ? {}

@@ -24,6 +24,7 @@ import {
   orchestrateRunSummaryEventToRow,
   trajectoryDegradedEventToRow,
   backgroundRecoveryEventToRow,
+  backgroundRecoveryScanEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
@@ -54,7 +55,6 @@ import * as nodePath from "node:path";
 import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
 import * as orchestrationRows from "./obs-orchestration-rows.js";
-import * as persistenceWiring from "./obs-persistence-wiring.js";
 
 function deliveryAuthorityEventFields(channelType: string, conversationId: string) {
   return {
@@ -1832,20 +1832,7 @@ describe("backgroundRecoveryEventToRow", () => {
 
 describe("background recovery scan diagnostics", () => {
   it("maps protected scan state without persisting error bodies or absolute paths", () => {
-    const mapper = (persistenceWiring as unknown as Record<string, unknown>)[
-      "backgroundRecoveryScanEventToRow"
-    ];
-    if (typeof mapper !== "function") {
-      expect(mapper).toBeTypeOf("function");
-      return;
-    }
-
-    const row = (mapper as (payload: Record<string, unknown>) => {
-      category: string;
-      severity: string;
-      message: string;
-      details?: string;
-    })({
+    const row = backgroundRecoveryScanEventToRow({
       status: "failed",
       failureCount: 1,
       failureKinds: ["task_validation"],
@@ -1865,6 +1852,14 @@ describe("background recovery scan diagnostics", () => {
       failureKinds: ["task_validation"],
       recordRefs: ["default/task-a.json"],
     });
+
+    expect(backgroundRecoveryScanEventToRow({
+      status: "healthy",
+      failureCount: 0,
+      failureKinds: [],
+      recordRefs: [],
+      timestamp: 10_004,
+    }).severity).toBe("info");
   });
 });
 
