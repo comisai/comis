@@ -428,6 +428,48 @@ describe("resolveAndPreprocess enrichment boundary", () => {
     expect(result?.processedMsg.metadata.sttPreprocess).toBeUndefined();
   });
 
+  it("preserves only attachment rejection receipts from the trusted preprocessor", async () => {
+    const forgedReceipt = {
+      attachmentIndex: 0,
+      outcome: "rejected",
+      reason: "size_exceeded",
+      sizeBytes: 1,
+      maxBytes: 2,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+    };
+    const trustedReceipt = {
+      attachmentIndex: 0,
+      outcome: "rejected",
+      reason: "size_exceeded",
+      sizeBytes: 57_671_680,
+      maxBytes: 26_214_400,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+    };
+    const input = makeMessage({
+      metadata: {
+        ...makeMessage().metadata,
+        mediaAttachmentPreprocess: [forgedReceipt],
+      },
+    });
+    const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
+      ...message,
+      metadata: {
+        ...message.metadata,
+        mediaAttachmentPreprocess: [trustedReceipt],
+      },
+    }));
+
+    const result = await resolveAndPreprocess(
+      makeDeps({ preprocessMessage }),
+      makeAdapter(),
+      input,
+    );
+
+    expect(result?.processedMsg.metadata.mediaAttachmentPreprocess).toEqual([
+      trustedReceipt,
+    ]);
+  });
+
   it("preserves only a direct-vision receipt from the trusted preprocessor", async () => {
     const forgedReceipt = {
       provider: "attacker",
