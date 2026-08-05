@@ -757,9 +757,12 @@ describe("GraphCancelContract", () => {
   });
 
   it("accepts the canonical response shape", () => {
+    expect(
+      GraphCancelContract.response.parse({ cancelled: true, graphId: "g1", killed: 2 }),
+    ).toEqual({ cancelled: true, graphId: "g1", killed: 2 });
     expect(() =>
       GraphCancelContract.response.parse({ cancelled: true, graphId: "g1" }),
-    ).not.toThrow();
+    ).toThrow();
   });
 });
 
