@@ -30,6 +30,7 @@ import type {
   GraphRunState,
   CoordinatorConfig,
 } from "./graph-coordinator-state.js";
+import type { GraphSubAgentCompletionEvent } from "./graph-concurrency.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -626,7 +627,7 @@ export function handleSubAgentCompleted(
   deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendToChannel" | "touchParentSession" | "defaultAgentId">,
   config: Pick<CoordinatorConfig, "maxResultLength" | "subAgentTokenBudget">,
   gs: GraphRunState,
-  event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number },
+  event: GraphSubAgentCompletionEvent,
   callbacks: {
     spawnReadyNodes: (gs: GraphRunState) => void;
     handleGraphCompletion: (gs: GraphRunState) => void;
@@ -668,6 +669,9 @@ export function handleSubAgentCompleted(
   let output = completion?.summary;
   const completionError = completion?.summary
     ?? (completion ? `Sub-agent ended: ${completion.endReason}` : "Unknown error");
+  const backgroundProcessFailure =
+    (event.unresolvedBackgroundProcesses ?? 0) > 0
+    || (event.failedBackgroundProcesses ?? 0) > 0;
 
   // 5a. Resolve degenerate file-reference outputs
   if (gs.sharedDir && output) {
@@ -711,7 +715,7 @@ export function handleSubAgentCompleted(
     if (budgetBreach.failResult) {
       emitSkipsAndSpawnReady(deps, gs, budgetBreach.failResult, callbacks.spawnReadyNodes);
     }
-  } else if (event.success) {
+  } else if (event.success && !backgroundProcessFailure) {
     const result = gs.stateMachine.markNodeCompleted(nodeId, output);
     if (!result.ok) {
       deps.logger?.warn(
@@ -719,7 +723,7 @@ export function handleSubAgentCompleted(
         "Graph node state transition to completed failed",
       );
     }
-  } else if (detectPartialCompletion(nodeId, gs.sharedDir, output)) {
+  } else if (!backgroundProcessFailure && detectPartialCompletion(nodeId, gs.sharedDir, output)) {
     // Partial completion recovery: sub-agent was killed but wrote output before death
     deps.logger?.info(
       { graphId: gs.graphId, nodeId, hint: "Sub-agent killed but partial output detected, treating as completed", errorKind: "internal" as const },
@@ -733,15 +737,29 @@ export function handleSubAgentCompleted(
       );
     }
   } else {
-    // Original failure path -- no partial completion detected
-    // Pass the failed run's sessionKey so retry spawns can reuse it
-    // (see resolveGraphCacheRetention / reuseConversation — lets Anthropic cache
-    // amortize across a retry instead of cold-starting on every attempt).
-    const result = gs.stateMachine.markNodeFailed(
-      nodeId,
-      completionError,
-      run ? { conversationScope: run.conversationScope, conversationRef: run.conversationRef } : undefined,
-    );
+    // Ordinary failures retain their conversation for cache-aware retries.
+    // Background-process failures are terminal because re-running an arbitrary
+    // command can duplicate side effects after its process outcome was lost.
+    if (backgroundProcessFailure) {
+      deps.logger?.warn(
+        {
+          graphId: gs.graphId,
+          nodeId,
+          unresolvedBackgroundProcesses: event.unresolvedBackgroundProcesses ?? 0,
+          failedBackgroundProcesses: event.failedBackgroundProcesses ?? 0,
+          hint: "Inspect the child process lifecycle and make the task idempotent before retrying it",
+          errorKind: "precondition" as const,
+        },
+        "Graph node retry suppressed after background process failure",
+      );
+    }
+    const result = backgroundProcessFailure
+      ? gs.stateMachine.markNodeFailed(nodeId, completionError, undefined, { terminal: true })
+      : gs.stateMachine.markNodeFailed(
+        nodeId,
+        completionError,
+        run ? { conversationScope: run.conversationScope, conversationRef: run.conversationRef } : undefined,
+      );
     if (!result.ok) {
       deps.logger?.warn(
         { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(result.error), hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
