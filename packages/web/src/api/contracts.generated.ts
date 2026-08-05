@@ -5859,11 +5859,17 @@ export const CONTRACTS = {
         },
         "graphId": {
           "type": "string"
+        },
+        "killed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
         "cancelled",
-        "graphId"
+        "graphId",
+        "killed"
       ],
       "additionalProperties": false
     },
@@ -12880,6 +12886,9 @@ export const CONTRACTS = {
             "spent": {
               "type": "number"
             },
+            "attempted": {
+              "type": "number"
+            },
             "cap": {
               "type": "number"
             },
@@ -12993,6 +13002,12 @@ export const CONTRACTS = {
             "failed": {
               "type": "number"
             },
+            "cancelled": {
+              "type": "number"
+            },
+            "reentered": {
+              "type": "number"
+            },
             "accepted": {
               "type": "number"
             },
@@ -13004,6 +13019,8 @@ export const CONTRACTS = {
             "promoted",
             "completed",
             "failed",
+            "cancelled",
+            "reentered",
             "accepted",
             "pending"
           ],
