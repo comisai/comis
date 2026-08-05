@@ -264,6 +264,33 @@ describe("governed task extraction runner", () => {
       status: "dropped",
       stage: "model_output",
       errorKind: "validation",
+      outputErrorCode: "output_too_large",
+    }));
+  });
+
+  it("reports the final closed parser error code for a dropped repaired response", async () => {
+    const data = setup();
+    const beforeMinimum = JSON.stringify({
+      candidates: [{
+        itemId: "item-a",
+        text: "Check the outcome",
+        dueInSecondsEarliest: 30,
+        confidence: 0.9,
+      }],
+    });
+    data.modelRun
+      .mockResolvedValueOnce(ok({ raw: "{invalid" }))
+      .mockResolvedValueOnce(ok({ raw: beforeMinimum }));
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await data.runner.waitForIdle();
+
+    expect(data.persistCandidates).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "model_output",
+      errorKind: "validation",
+      outputErrorCode: "before_minimum_due",
     }));
   });
 
