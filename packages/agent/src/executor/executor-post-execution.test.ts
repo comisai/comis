@@ -1117,6 +1117,8 @@ describe("tool-failure endReason and notice", () => {
     );
     expect(stripped.indexOf("enforceCompletionEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+    expect(stripped).toMatch(/getToolMetadata\([^)]*\)\?\.isReadOnly\s*===\s*true/);
+    expect(stripped).toMatch(/preservePartialResponse:/);
   });
 
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
