@@ -505,7 +505,10 @@ describe("graph-handlers", () => {
 
       await expect(
         handlers["graph.status"]!({ graphId: "non-existent" }),
-      ).rejects.toThrow("Graph not found");
+      ).rejects.toMatchObject({
+        name: "PreconditionError",
+        message: "Graph not found",
+      });
     });
 
     it("accepts graph_id (snake_case) as well as graphId", async () => {
