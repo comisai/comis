@@ -24,7 +24,7 @@
  * @module
  */
 
-import { scrubSecretsFromText, type ComisLogger } from "@comis/core";
+import { scrubSecretsFromText, type ComisLogger, type ChannelEndpoint } from "@comis/core";
 import {
   decideAutoAnswer,
   getPlatformProfile,
@@ -106,12 +106,21 @@ export interface WokenTurnBus {
   ): unknown;
 }
 
-/** A NotifyFn that routes an escalation to a human. Optional; absent ⇒ bus-only audit. */
+/**
+ * A NotifyFn that routes an escalation to a human. Optional; absent ⇒ bus-only audit.
+ *
+ * `destinationEndpoint` is the drive's ORIGIN conversation (stamped at create, recovered via
+ * the registry's `getOriginEndpoint` seam). Present ⇒ the notification is pinned to the
+ * thread the drive was started from; absent ⇒ the shipped
+ * `primaryChannel → recent-session` resolution, unchanged. It carries no authority — the
+ * delivery authority is minted by the notification boundary either way.
+ */
 export type WokenTurnNotify = (opts: {
   agentId: string;
   message: string;
   priority: "normal";
   origin: "background_task";
+  destinationEndpoint?: ChannelEndpoint;
 }) => Promise<unknown>;
 
 /**
@@ -208,11 +217,16 @@ export function buildWokenTurnDriver(
     if (deps.notify) {
       // A short, redaction-safe, ACTIONABLE human message — the structural reason + how to
       // respond, NEVER the screen (built by buildEscalationMessage from sessionId + reason only).
+      // Pin it to the drive's ORIGIN conversation (the registry's getOriginEndpoint seam, the
+      // same source setupTerminalWake reads): an escalation is the one notification that MUST
+      // reach a human, and delivering it to a more-recent thread parks the drive unanswered.
+      const origin = deps.registries.get(owner.agentId)?.getOriginEndpoint?.(sessionId);
       await deps.notify({
         agentId: owner.agentId,
         message: buildEscalationMessage(sessionId, reason),
         priority: "normal",
         origin: "background_task",
+        ...(origin !== undefined ? { destinationEndpoint: origin } : {}),
       });
     }
   }

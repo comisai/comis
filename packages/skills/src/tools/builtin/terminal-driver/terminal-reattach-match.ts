@@ -54,6 +54,8 @@
  * @module
  */
 
+import type { ChannelEndpoint } from "@comis/core";
+
 import type { TerminalScope } from "./allowlist-matcher.js";
 import type { SessionOwner } from "./terminal-session-owner.js";
 
@@ -95,6 +97,15 @@ export interface SessionDescriptor {
   allowId: string;
   /** The owning `(agentId, sessionKey)` to re-stamp VERBATIM; type-only import. */
   owner: SessionOwner;
+  /**
+   * The conversation this drive was created from, persisted so a durable drive re-attached
+   * after a daemon restart still reports its outcome to the thread that STARTED it rather
+   * than to whichever conversation is most recent. Re-stamped verbatim, like `owner`.
+   * OPTIONAL: absent on a descriptor persisted before this field existed, and on a drive
+   * created outside a channel turn — both route through the shipped
+   * primaryChannel→recent-session chain, unchanged.
+   */
+  originEndpoint?: ChannelEndpoint;
   /** The SAME jail/uid/credentialPaths scope — never widened; type-only import. */
   scope?: TerminalScope;
   /** Terminal columns of the (resumed) session. */
@@ -231,6 +242,21 @@ function isScope(v: unknown): v is TerminalScope {
 }
 
 /**
+ * True iff `v` is a well-formed {@link ChannelEndpoint} — the four required strings plus the
+ * closed `conversationKind` enum and an optional string `threadId`. Structural only: the
+ * notification service re-resolves and cross-checks the endpoint at send time, so this is a
+ * shape guard against a corrupt-after-crash value, not an authorization check.
+ */
+function isChannelEndpoint(v: unknown): v is ChannelEndpoint {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const e = v as Record<string, unknown>;
+  if (!isNonEmptyString(e.channelType) || !isNonEmptyString(e.channelInstanceId) || !isNonEmptyString(e.conversationId)) return false;
+  if (e.conversationKind !== "direct" && e.conversationKind !== "shared") return false;
+  if (e.threadId !== undefined && !isNonEmptyString(e.threadId)) return false;
+  return true;
+}
+
+/**
  * Defensively map a persisted/parsed value to a {@link SessionDescriptor}, or `undefined`
  * if it is not a well-formed descriptor. PURE; TOTAL; NEVER throws. Accepts either a JSON
  * string (which it parses, treating invalid JSON as "no descriptor") or an already-parsed
@@ -302,6 +328,16 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
   }
   if (r.tmuxSocket !== undefined) {
     descriptor.tmuxSocket = r.tmuxSocket;
+  }
+  // `originEndpoint` is optional AND drop-on-malformed — a deliberate DIVERGENCE from the
+  // reject-the-descriptor posture above. `scope`/`tmuxSocket` reject because dropping them
+  // would widen the jail or probe the wrong server; a delivery hint grants nothing, so
+  // dropping it degrades to the shipped primaryChannel→recent-session chain. Rejecting the
+  // whole descriptor over a routing hint would instead flip a LIVE 40h drive to
+  // unrecoverable on the next boot — strictly the worse failure. A descriptor written
+  // before this field existed simply has none and re-attaches unchanged.
+  if (isChannelEndpoint(r.originEndpoint)) {
+    descriptor.originEndpoint = r.originEndpoint;
   }
   return descriptor;
 }

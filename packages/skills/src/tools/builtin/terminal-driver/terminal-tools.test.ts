@@ -28,6 +28,7 @@ import {
   createTerminalSessionResizeTool,
   createTerminalSessionWaitTool,
   resolveOwner,
+  resolveOriginEndpoint,
   type TerminalToolDeps,
   type TerminalEventBus,
   type TerminalInputNeededEvent,
@@ -296,6 +297,54 @@ function baseDeps(
     ...overrides,
   };
 }
+
+// The drive's ORIGIN conversation, captured server-side from the resolved turn scope so a
+// backgrounded drive's outcome/escalation returns to the thread that started it. It is
+// deliberately NOT a create param: an agent-supplied endpoint would let a prompt-injected
+// drive redirect its own escalations into another conversation (the same rule that keeps
+// `scope` sourced exclusively from the operator's allow entry).
+describe("terminal session origin endpoint", () => {
+  const ENDPOINT = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-A",
+    conversationKind: "direct" as const,
+  };
+  const ctxWithScope = (): RequestContext => ({
+    tenantId: "default",
+    userId: "human-user",
+    agentId: "resolved-agent",
+    sessionKey: "default:human-user:telegram",
+    traceId: "30000000-0000-4000-8000-000000000004",
+    startedAt: 1,
+    trustLevel: "admin",
+    turnScope: {
+      conversation: { partition: { kind: "endpoint-conversation", endpoint: ENDPOINT } },
+      principal: { principalId: "human-user" },
+      endpoint: ENDPOINT,
+    },
+  } as unknown as RequestContext);
+
+  it("resolves the origin endpoint from the turn scope", () => {
+    expect(runWithContext(ctxWithScope(), () => resolveOriginEndpoint())).toEqual(ENDPOINT);
+  });
+
+  it("is undefined with no request context or no turn scope (an API/cron drive routes as today)", () => {
+    expect(resolveOriginEndpoint()).toBeUndefined();
+    expect(runWithContext(
+      {
+        tenantId: "default",
+        userId: "human-user",
+        agentId: "resolved-agent",
+        sessionKey: "default:human-user:telegram",
+        traceId: "30000000-0000-4000-8000-000000000005",
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => resolveOriginEndpoint(),
+    )).toBeUndefined();
+  });
+});
 
 describe("terminal session owner identity", () => {
   it("uses the resolved agent instead of the human user", () => {

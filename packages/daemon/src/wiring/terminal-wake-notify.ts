@@ -36,6 +36,8 @@
 
 import { busyOrHung, mapTerminalOutcome, shouldNotifyOutcome, heartbeatLine, type NotifyPolicy, type EvictReason, type DriveJournal } from "@comis/skills/tools";
 
+import type { ChannelEndpoint } from "@comis/core";
+
 import type { WokenTurnNotify } from "./terminal-wake-turn.js";
 import type { LivenessSignal } from "./terminal-wake-types.js";
 
@@ -67,6 +69,44 @@ export interface TerminalNotifyDeps {
   nowMs(): number;
   /** The operator `drive.notify` policy — the gate `shouldNotifyOutcome` reads. */
   policy: NotifyPolicy;
+  /**
+   * Resolve a session's ORIGIN conversation (the registry's `getOriginEndpoint` seam, bound
+   * once by `setupTerminalWake`). Present ⇒ the notification is pinned to the thread the
+   * drive was started from; absent (or `undefined` for that session) ⇒ the shipped
+   * `primaryChannel → recent-session` resolution, unchanged.
+   */
+  originEndpointFor?: OriginEndpointResolver;
+}
+
+/**
+ * Resolve the conversation a drive was created from. One shared shape so every notify site
+ * (outcome / heartbeat / completion / escalation / promotion) reads the SAME source — the
+ * registry's `getOriginEndpoint` seam — instead of each inventing its own routing.
+ */
+export type OriginEndpointResolver = (sessionId: string, agentId: string) => ChannelEndpoint | undefined;
+
+/**
+ * Bind the shared {@link OriginEndpointResolver} to the per-agent registries — the conversation
+ * a drive was created from, stamped at create beside the owner and re-stamped verbatim on a
+ * durable re-attach. Without it every drive notification falls through to
+ * `primaryChannel → recent-session`, so with several drives in flight an escalation lands in
+ * whatever thread was active last. `undefined` outside a channel turn (API/cron) ⇒ that chain.
+ */
+export function makeOriginEndpointResolver(
+  registries: ReadonlyMap<string, { getOriginEndpoint?(sessionId: string): ChannelEndpoint | undefined }>,
+): OriginEndpointResolver {
+  return (sessionId, agentId) => registries.get(agentId)?.getOriginEndpoint?.(sessionId);
+}
+
+/**
+ * Spread-merge the resolved origin onto a notify payload — the ONE place the
+ * `destinationEndpoint` field is attached, shared by every notify site on the drive path
+ * (outcome / heartbeat / completion here; escalation + promotion in the holder). Returns the
+ * payload UNCHANGED when there is no origin, so a non-channel (API/cron) drive reaches the
+ * resolver byte-identically to before this field existed.
+ */
+export function withOrigin<T extends object>(base: T, endpoint: ChannelEndpoint | undefined): T {
+  return endpoint === undefined ? base : { ...base, destinationEndpoint: endpoint };
 }
 
 /**
@@ -205,7 +245,10 @@ export function emitTerminalOutcome(deps: TerminalNotifyDeps, args: TerminalOutc
       ? `Terminal drive for session ${args.sessionId} completed (done)${describeTail(args)}.`
       : `Terminal drive for session ${args.sessionId} failed${failedSuffix}${describeTail(args)}.`;
   void deps
-    .notify({ agentId: args.agentId, message, priority: "normal", origin: "background_task" })
+    .notify(withOrigin(
+      { agentId: args.agentId, message, priority: "normal" as const, origin: "background_task" as const },
+      deps.originEndpointFor?.(args.sessionId, args.agentId),
+    ))
     .catch((err: unknown) => {
       deps.warn(
         { sessionId: args.sessionId, agentId: args.agentId, err, outcome, hint: "drive-outcome notification failed; the drive lifecycle is unaffected (bus-only)", errorKind: "resource" as const, step: "drive_outcome_notify_failed" },
@@ -246,6 +289,8 @@ export interface HeartbeatTickArgs {
   nowMs(): number;
   /** The coarse user-facing heartbeat cadence (`drive.heartbeatNotifyMs`). */
   readonly heartbeatNotifyMs: number;
+  /** Resolve the session's ORIGIN conversation so the heartbeat reaches the thread that started the drive. */
+  readonly originEndpointFor?: OriginEndpointResolver;
 }
 
 /**
@@ -275,7 +320,10 @@ export function runHeartbeatTick(args: HeartbeatTickArgs): void {
       "terminal drive heartbeat",
     );
     void args
-      .notify({ agentId, message, priority: "normal", origin: "background_task" })
+      .notify(withOrigin(
+        { agentId, message, priority: "normal" as const, origin: "background_task" as const },
+        args.originEndpointFor?.(sessionId, agentId),
+      ))
       .catch((err: unknown) => {
         args.warn(
           { sessionId, agentId, err, hint: "drive heartbeat notification failed; the drive continues (bus-only)", errorKind: "resource" as const, step: "drive_heartbeat_notify_failed" },
@@ -319,6 +367,8 @@ export interface BackstopSessionCheckArgs {
   notifyPolicy: NotifyPolicy;
   info: (obj: Record<string, unknown>, msg: string) => void;
   warn: (obj: Record<string, unknown>, msg: string) => void;
+  /** Resolve the session's ORIGIN conversation so the completion notice reaches the thread that started the drive. */
+  originEndpointFor?: OriginEndpointResolver;
 }
 
 export async function runBackstopSessionCheck(a: BackstopSessionCheckArgs): Promise<void> {
@@ -337,12 +387,15 @@ export async function runBackstopSessionCheck(a: BackstopSessionCheckArgs): Prom
             "terminal drive finished its current work and is awaiting input; delivered a one-time completion notification",
           );
           void a
-            .notify({
-              agentId: a.agentId,
-              message: `Terminal session ${a.sessionId} has finished its current task and is now idle, waiting for input. Reply with the next step, ask me to "show the terminal", or say "stop" to end the drive.`,
-              priority: "normal",
-              origin: "background_task",
-            })
+            .notify(withOrigin(
+              {
+                agentId: a.agentId,
+                message: `Terminal session ${a.sessionId} has finished its current task and is now idle, waiting for input. Reply with the next step, ask me to "show the terminal", or say "stop" to end the drive.`,
+                priority: "normal" as const,
+                origin: "background_task" as const,
+              },
+              a.originEndpointFor?.(a.sessionId, a.agentId),
+            ))
             .catch((err: unknown) => {
               a.warn(
                 { sessionId: a.sessionId, agentId: a.agentId, err, hint: "drive completion notification failed; the drive continues idle (bus-only)", errorKind: "resource" as const, step: "drive_completion_notify_failed" },

@@ -36,7 +36,7 @@ import { createVideoGenProvider, createVideoGenRateLimiter } from "@comis/skills
 import { createVideoJobStore } from "@comis/memory";
 import { createVideoPoller, type VideoPoller } from "./setup-video-poller.js";
 import { resolveVideoSecretsForRedaction } from "./video-log-redaction.js";
-import type { DeliveryAdapter, TimerPort, ChannelPort } from "@comis/core";
+import type { DeliveryAdapter, TimerPort, ChannelPort, ChannelEndpoint } from "@comis/core";
 // The per-agent media persistence getter mirrors the screenshot
 // precedent (setup-tools.ts:69,305). Sibling-direct on the `@comis/skills/tools`
 // subpath (the proven path), NOT the bare `@comis/skills` barrel.
@@ -850,14 +850,30 @@ export function buildMediaVisionBundle(deps: {
  * notifyUser guard requires — there is no originating turn context here. A
  * missing service or a no-channel resolution is non-fatal: the background
  * notification is simply dropped.
+ *
+ * `destinationEndpoint` is the OPTIONAL origin the caller already knows — the conversation
+ * the background work was started from. It is the FIRST rung of the resolver's
+ * `explicit → platform-match → primaryChannel → recent-session` chain, so passing it pins
+ * the notification to that thread; omitting it keeps the shipped fallback behavior exactly.
+ * Without it a drive started in one thread reports to whichever conversation was most
+ * recently active — and an escalation delivered to the wrong thread is an escalation lost.
+ *
+ * It names WHERE the notification goes, never WHO authorized it: the delivery authority is
+ * still minted by the notification boundary (`resolveInternalTurnIdentity`, control-plane),
+ * deliberately not the user's ingress conversation.
  */
 export function createBgNotifyFn(
   bgNotifyRef: { ref?: import("../notification/notification-service.js").NotificationService },
-): (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => Promise<void> {
+): (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task"; destinationEndpoint?: ChannelEndpoint }) => Promise<void> {
   return async (opts) => {
     const service = bgNotifyRef.ref;
     if (!service) return;
-    const destination = service.resolveDestination({ agentId: opts.agentId });
+    const destination = service.resolveDestination({
+      agentId: opts.agentId,
+      // Spread-omit rather than pass `undefined`: the absent case must reach the resolver
+      // byte-identically to before this field existed.
+      ...(opts.destinationEndpoint !== undefined ? { destinationEndpoint: opts.destinationEndpoint } : {}),
+    });
     if (!destination.ok) return;
     await service.notifyUser({
       agentId: opts.agentId,

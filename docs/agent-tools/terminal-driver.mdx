@@ -271,6 +271,16 @@ A long drive's hundreds of event-woken turns stay **out** of your conversation (
 
 - **Every notification is content-free.** A notification or heartbeat carries the outcome/reason/`errorKind`, the duration, the interaction count, and a **redacted** final-screen excerpt -- **never** raw TUI bytes, keystrokes, or secrets. The heartbeat digest is drawn from the content-free drive journal, and a driven AI CLI's screen is treated as untrusted (a prompt-injection vector), so its text never rides a notification verbatim.
 
+### Where a notification goes
+
+A drive's notifications -- the "running in the background" promotion, the heartbeat, the `done`/`failed` outcome, the completion notice, and every escalation -- go back to **the conversation the drive was started from**. The session records that origin at `terminal_session_create` (from the resolved turn scope) and keeps it for the drive's whole life: a **durable** drive persists it with its descriptor, so a drive re-attached after a daemon restart still reports to the same thread hours later.
+
+This matters most when several drives run at once. Delivery resolves in the order **origin -> `notification.primaryChannel` -> most recent session**, so without a recorded origin a drive started in one chat would report to whichever conversation happened to be active when it finished -- and an escalation delivered to the wrong thread is an escalation nobody answers, leaving the drive parked.
+
+A drive with **no channel origin** -- one started from the HTTP API or a cron turn -- has nothing to pin, and falls through to `notification.primaryChannel`, then the most recent session. Set `primaryChannel` for the agent if you run unattended drives and want their outcomes somewhere predictable.
+
+The origin is a **delivery destination only**. It is captured server-side from the request context and is never a tool parameter, so a prompt-injected agent cannot redirect its own escalations into another conversation; it grants no privilege, and the delivery authority is still minted by the daemon's notification boundary rather than by the originating chat.
+
 ### Classifier reliability
 
 The classifier distinguishes `awaiting-input` (a prompt is waiting for you) from `stuck` (no progress) **structurally**, not by a per-CLI pattern table. A settled, unchanged frame is read as `awaiting-input` when its structure is unmistakably an interactive dialog -- a bordered region, an enumerated option list (`1.` / `2.`), an arrow/`(y/n)` selector, or an empty input line beneath a non-empty prompt block. This closes the documented misread where a full-screen permission/menu dialog (the prompt rendered above, the cursor parked on a blank input line below) was mistaken for a hung session. A genuinely hung frame -- no box, no menu, no selector, no progress past the `stuckMs` threshold -- still classifies `stuck`. The actual answer is always gated downstream by the auto-answer policy (`safe-only` escalates anything destructive/approval/auth), so a structurally-detected dialog never bypasses an escalation.

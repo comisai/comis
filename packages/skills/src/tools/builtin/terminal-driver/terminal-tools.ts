@@ -21,6 +21,7 @@ import {
   scrubSecretsFromText,
   tryGetContext,
   type ApprovalGate,
+  type ChannelEndpoint,
 } from "@comis/core";
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
@@ -312,6 +313,22 @@ export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
   return { agentId: ctx.agentId, sessionKey: ctx.sessionKey };
 }
 
+/**
+ * Derive the CONVERSATION this call originates from — the resolved turn scope's endpoint.
+ * Stamped on the session at create so a backgrounded drive's outcome/escalation
+ * notifications resolve back to the thread that started it, instead of through the
+ * `primaryChannel → recent-session` fallback, which — once more than one drive is in flight —
+ * delivers an escalation to whichever conversation happened to be active last.
+ *
+ * Read from the request context ONLY, never from tool params — the same rule that keeps
+ * the sandbox `scope` operator-sourced. An agent-supplied endpoint would let a
+ * prompt-injected drive redirect its own escalations into someone else's conversation.
+ * `undefined` outside a channel turn (an API/cron drive) ⇒ today's resolution, unchanged.
+ */
+export function resolveOriginEndpoint(): ChannelEndpoint | undefined {
+  return tryGetContext()?.turnScope?.endpoint;
+}
+
 /** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted. */
 const ABORTED_SEND: SendResult = { screen: "", cursor: { x: 0, y: 0 } };
 
@@ -379,6 +396,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       }
 
       const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
+      const originEndpoint = resolveOriginEndpoint();
       const createRequest = {
         allowId,
         bin,
@@ -390,6 +408,10 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         ...(cwd !== undefined ? { cwd } : {}),
         ...(project !== undefined ? { project } : {}),
         ...(deps.durable ? { durable: true } : {}),
+        // The origin conversation, from the RESOLVED CONTEXT — never a create param (the
+        // same sourcing rule as `scope`). It follows the session onto the handle + the
+        // durable descriptor so this drive's notifications come back to this thread.
+        ...(originEndpoint !== undefined ? { originEndpoint } : {}),
       };
 
       // (2b) CONSENT GATE. A high-risk entry (`approveOnCreate`)

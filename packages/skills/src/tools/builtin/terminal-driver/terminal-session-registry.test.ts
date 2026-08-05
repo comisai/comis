@@ -640,6 +640,68 @@ describe("createTerminalSessionRegistry — scope rides the create frame", () =>
 });
 
 // ===========================================================================
+// originEndpoint — the conversation the drive was created FROM, stamped on the handle
+// beside `owner` so a promoted drive's outcome/escalation notifications resolve back to
+// that thread instead of to whichever conversation is most recent. Like `owner` it rides
+// the HANDLE only, never the worker frame (the worker is origin-agnostic), and it is a
+// DELIVERY hint — it never participates in the owner-scoped authorization gate.
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — originEndpoint (the drive's origin conversation)", () => {
+  const ORIGIN = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-A",
+    conversationKind: "direct" as const,
+  };
+
+  it("stamps the origin endpoint on the handle and exposes it via the getOriginEndpoint seam", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const res = await registry.create({
+      allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, originEndpoint: ORIGIN,
+    }, OWNER);
+
+    expect(registry.getOriginEndpoint?.(res.sessionId)).toEqual(ORIGIN);
+  });
+
+  it("never rides the worker create frame (the worker is origin-agnostic, like owner)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await registry.create({
+      allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, originEndpoint: ORIGIN,
+    }, OWNER);
+
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame?.params["originEndpoint"]).toBeUndefined();
+  });
+
+  it("is undefined for a session created with no origin (an API/cron drive)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const res = await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }, OWNER);
+
+    expect(registry.getOriginEndpoint?.(res.sessionId)).toBeUndefined();
+  });
+
+  // The origin is a DELIVERY destination, never an authorization field: it must not widen
+  // (or narrow) the owner gate that makes two subagents mutually invisible.
+  it("does NOT participate in the owner gate (a cross-owner read stays not-found)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const res = await registry.create({
+      allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, originEndpoint: ORIGIN,
+    }, OWNER);
+
+    expect(registry.get(res.sessionId, { agentId: OWNER.agentId, sessionKey: "sub-agent:other" })).toBeUndefined();
+  });
+});
+
+// ===========================================================================
 // The registry is the seam that threads the daemon-resolved bwrapPath toward the
 // worker. bwrapPath is a STRING, so it rides the create frame (like scope/
 // workspace/cwd) for the eventual worker-main to read; the live egressControl
