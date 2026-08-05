@@ -253,6 +253,22 @@ describe("session list explicit authority", () => {
     }));
   });
 
+  it("derives a model search scope from authenticated caller authority", async () => {
+    const callerScope = scope("agent_a");
+    const handlers = bindSessionListHandlers(makeDeps());
+
+    const result = await handlers["session.search"]!({
+      query: "marker",
+      summarize: false,
+      _agentId: "agent_a",
+      _tenantId: "tenant_a",
+      _callerConversationScope: callerScope,
+    }) as { results: Array<{ conversationRef: string }>; total: number };
+
+    expect(result.total).toBe(1);
+    expect(result.results[0]?.conversationRef).toBe(reference(callerScope));
+  });
+
   it("rejects an agent-origin query for a different agent scope", async () => {
     const handlers = bindSessionListHandlers(makeDeps());
 
