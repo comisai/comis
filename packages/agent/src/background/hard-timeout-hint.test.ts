@@ -47,7 +47,7 @@ describe("hard runtime limit hint", () => {
     expect(hint.toLowerCase()).toContain("not returned");
   });
 
-  it("stays bounded", () => {
+  it("keeps the timeout hint bounded", () => {
     const hint = hardTimeoutHint({
       toolName: "t".repeat(2000),
       agentId: "a".repeat(2000),
