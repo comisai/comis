@@ -33,6 +33,7 @@ import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { getOrCreateTracker, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
 import { resolveProviderCapabilities } from "../provider/capabilities.js";
+import { resolveToolChoiceEnforcement } from "./tool-choice-policy.js";
 import type { ToolLifecycleConfig } from "./tool-lifecycle.js";
 import { createJitGuideWrapper } from "./jit-guide-injector.js";
 import {
@@ -145,8 +146,18 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // 1. Merge per-request tools (AgentTool[]) with deps.customTools
   // -------------------------------------------------------------------
   const capabilitiesDisabled = executionOverrides?.capabilityAccess === "none";
-  let mergedCustomTools = capabilitiesDisabled ? [] : deps.customTools;
-  if (!capabilitiesDisabled && tools && tools.length > 0 && deps.convertTools) {
+  // A turn that must not invoke tools is enforced either by the provider refusing
+  // the call (tools stay on the wire, so the conversation's cached prefix survives)
+  // or, wherever no such guarantee exists, by shipping none at all. The fallback is
+  // the DEFAULT: an unrecognised provider loses the cache saving, never the
+  // containment. See tool-choice-policy.ts.
+  const noToolCalls = executionOverrides?.toolChoice === "none";
+  const toolChoiceEnforcement = noToolCalls
+    ? resolveToolChoiceEnforcement(resolvedModel?.provider)
+    : undefined;
+  const toolsStructurallyRemoved = capabilitiesDisabled || toolChoiceEnforcement === "structural";
+  let mergedCustomTools = toolsStructurallyRemoved ? [] : deps.customTools;
+  if (!toolsStructurallyRemoved && tools && tools.length > 0 && deps.convertTools) {
     const converted = deps.convertTools(tools);
     const existingNames = new Set(deps.customTools.map(t => t.name));
     const uniqueConverted = converted.filter(t => !existingNames.has(t.name));

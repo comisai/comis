@@ -579,6 +579,11 @@ describe("setupCrossSession", () => {
       [{ name: "tool-1" }],
       undefined,
       "target-agent",
+      undefined,
+      undefined,
+      // No execution overrides: an ordinary cross-session turn is unconstrained.
+      // Only the announcement rewrite boundary sets `toolChoice: "none"`.
+      undefined,
     );
   });
 
@@ -994,7 +999,43 @@ describe("setupCrossSession", () => {
     expect(mockDeliverToChannel).not.toHaveBeenCalled();
   });
 
-  it("announceToParent executes the candidate boundary without any tools", async () => {
+  it("announceToParent never lets the rewrite boundary call a tool", async () => {
+    // THE pin for this boundary. The turn relays a background completion and must
+    // not act on the evidence grounding it. It is now kept capability-free by a
+    // provider-enforced constraint rather than by an empty tool array, because an
+    // empty array drops the tools block from the head of the cache key and re-wrote
+    // a ~200k prefix twice per announcement. Either enforcement is acceptable; a
+    // turn that ships tools with NO constraint is not, and that is what this pins.
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    const execute = vi.fn(async () => ({
+      response: "Safe candidate",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+    }));
+    deps.getExecutor = vi.fn(() => ({ execute }));
+    setupCrossSession(deps);
+    const announceToParent = getAnnounceToParent(mockCreateSubAgentRunner.mock.calls[0][0]);
+
+    await announceToParent(
+      "agent-1",
+      { channelId: "chan-1", userId: "user-1", tenantId: "t-1" },
+      "Rewrite this completion",
+      "telegram",
+      "chat-123",
+    );
+
+    const [, , shippedTools, , , , , overrides] = execute.mock.calls[0] as unknown[];
+    const toolsShipped = Array.isArray(shippedTools) ? shippedTools.length : 0;
+    const forbidsToolCalls = (overrides as { toolChoice?: string } | undefined)?.toolChoice === "none";
+    expect(
+      toolsShipped === 0 || forbidsToolCalls,
+      `the rewrite boundary shipped ${toolsShipped} callable tool(s) with no no-tool-calls constraint`,
+    ).toBe(true);
+  });
+
+  it("announceToParent forbids tool calls on the candidate boundary", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
     const execute = vi.fn(async () => ({
@@ -1021,7 +1062,6 @@ describe("setupCrossSession", () => {
       },
     );
 
-    expect(deps.assembleToolsForAgent).not.toHaveBeenCalled();
     const announcementMessage = execute.mock.calls[0]![0];
     expect(announcementMessage).toMatchObject({
       channelType: "cross-session",
@@ -1035,12 +1075,20 @@ describe("setupCrossSession", () => {
         },
       },
     });
+    // The boundary stays capability-free, but via the no-tool-calls constraint
+    // rather than an empty tool array — an empty array drops the tools block from
+    // the head of the provider cache key and re-writes the whole conversation
+    // prefix. `toolChoice: "none"` is honoured by the provider where one enforces
+    // it, and degrades to shipping no tools where none does (tool-choice-policy.ts).
     expect(execute).toHaveBeenCalledWith(
       expect.any(Object),
       expect.any(Object),
-      [],
+      expect.any(Array),
       undefined,
       "agent-1",
+      undefined,
+      undefined,
+      expect.objectContaining({ toolChoice: "none" }),
     );
   });
 

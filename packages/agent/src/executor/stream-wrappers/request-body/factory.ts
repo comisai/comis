@@ -31,7 +31,8 @@ import type { StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
 import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
-import { getMinCacheableTokens } from "./cache-breakpoints.js";
+import { getMinCacheableTokens, sortToolsForCacheStability, maybePromoteBreakpoints } from "./cache-breakpoints.js";
+import { applyToolChoice } from "./tool-choice-payload.js";
 import {
   CONTEXT_1M_BETA,
   parseHeaderList,
@@ -52,7 +53,6 @@ import {
 import { findInlineRecallIndices } from "./recall-diagnostics.js";
 import { findCurrentTurnUserIndex } from "./tool-use-cycle.js";
 import { describePayloadTail, findCachePointPositions } from "./keyed-cache-marker.js";
-import { sortToolsForCacheStability } from "./cache-breakpoints.js";
 import { applyRenderedToolCache } from "./tool-cache.js";
 import {
   runTimeBasedMicrocompact,
@@ -61,7 +61,6 @@ import {
 } from "./microcompact.js";
 import { runPrefixStabilityDiagnostic } from "./prefix-stability.js";
 import { runCacheBreakpointPhase } from "./breakpoint-orchestration.js";
-import { maybePromoteBreakpoints } from "./cache-breakpoints.js";
 import { enforceMonotonicTtlOrdering } from "./monotonic-ttl.js";
 import { trackRecentZoneCadence } from "./cadence-tracking.js";
 import { upgradeSdkMarkers } from "./marker-upgrade.js";
@@ -209,6 +208,7 @@ export function createRequestBodyInjector(
           // via buildParams(), but we must not mutate SDK-owned objects to prevent stale marker
           // accumulation if the SDK ever caches or reuses params across calls.
           const result: Record<string, unknown> = { ...params };
+          applyToolChoice(result, params.tools, config.getToolChoice?.());
           if (needsCacheBreakpoints) {
             if (Array.isArray(params.system)) {
               result.system = structuredClone(params.system);
