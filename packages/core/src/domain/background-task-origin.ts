@@ -14,6 +14,7 @@
  */
 
 import { z } from "zod";
+import { UserTrustLevelSchema } from "../context/context.js";
 import { DeliveryOriginSchema } from "./delivery-origin.js";
 import { ConversationRefSchema, ResolvedTurnScopeSchema, createConversationRef } from "./conversation-scope.js";
 import { ResponseLocalePolicySchema } from "./response-locale-policy.js";
@@ -29,6 +30,8 @@ export const BackgroundTaskOriginSchema = z.strictObject({
   deliveryOrigin: DeliveryOriginSchema,
   /** Per-execution trace identifier; null when no trace was active. */
   traceId: z.string().nullable(),
+  /** Immutable authorization snapshot resolved for the originating turn. */
+  trustLevel: UserTrustLevelSchema,
   /** Exact locale decision captured before promotion. Delayed re-entry must
    *  not infer a locale from the internal completion envelope. */
   responseLocalePolicy: ResponseLocalePolicySchema,
