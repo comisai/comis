@@ -23,6 +23,16 @@ type TaskExtractionFailureStage =
   | "store"
   | "internal";
 
+type TaskExtractionOutputErrorCode =
+  | "output_too_large"
+  | "invalid_output"
+  | "candidate_too_large"
+  | "unknown_item"
+  | "duplicate_item"
+  | "invalid_time_range"
+  | "before_minimum_due"
+  | "time_overflow";
+
 type TaskCheckTerminalOutcome =
   | "dismissed"
   | "retry_scheduled"
@@ -85,6 +95,7 @@ export interface SchedulerTaskEvents {
     sourceExecutionIds: readonly string[];
     stage: TaskExtractionFailureStage;
     errorKind: ErrorKind;
+    outputErrorCode?: TaskExtractionOutputErrorCode;
     releaseErrorKind?: ErrorKind;
     durationMs: number;
     timestamp: number;

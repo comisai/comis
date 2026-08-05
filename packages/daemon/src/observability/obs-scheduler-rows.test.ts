@@ -224,7 +224,8 @@ describe("scheduler ownership diagnostic persistence", () => {
     });
     eventBus.emit("scheduler:task_extraction_failed", {
       agentId: "agent-a", rootRunId: "root-task-extract-b", itemCount: 1,
-      sourceExecutionIds: ["execution-b"], stage: "model", errorKind: "dependency",
+      sourceExecutionIds: ["execution-b"], stage: "model_output", errorKind: "validation",
+      outputErrorCode: "before_minimum_due",
       durationMs: 6, timestamp: 2_000,
     });
     eventBus.emit("scheduler:task_check_started", {
@@ -274,6 +275,10 @@ describe("scheduler ownership diagnostic persistence", () => {
     ]);
     expect(rows[0]).toMatchObject({ category: "health_signal", severity: "info", agentId: "agent-a" });
     expect(rows[1]).toMatchObject({ severity: "warning" });
+    expect(JSON.parse(rows[1].details)).toMatchObject({
+      signal: "task_extraction_failed",
+      outputErrorCode: "before_minimum_due",
+    });
     expect(rows[3]).toMatchObject({ severity: "warning" });
     expect(rows[6]).toMatchObject({ severity: "warning" });
     expect(rows.every((row) => !String(row.details).includes("archive"))).toBe(true);

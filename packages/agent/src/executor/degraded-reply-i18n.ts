@@ -31,6 +31,7 @@ export type LocaleMessageId =
   | "provider_requires_model"
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
+  | "scheduler_state_evidence_missing"
   | "completion_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
@@ -98,6 +99,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   ongoing_work_evidence_missing:
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
+  scheduler_state_evidence_missing:
+    "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
+      + "say that it is set. I need to check the scheduler before confirming it.",
   completion_evidence_missing:
     "I could not verify the request as complete because one or more tool steps still failed. "
       + "Treat the result below as partial; any completion claim in it is unverified.",
@@ -394,6 +398,14 @@ export function selectOngoingWorkEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "ongoing_work_evidence_missing");
+}
+
+/** Honest replacement when current scheduler state lacks a current-turn receipt. */
+export function selectSchedulerStateEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "scheduler_state_evidence_missing");
 }
 
 /** Honest replacement when affirmative completion prose contradicts failed tool evidence. */

@@ -458,6 +458,19 @@ describe("completion evidence missing reply", () => {
   });
 });
 
+describe("scheduler state evidence missing reply", () => {
+  it("requires a scheduler check before confirming current reminder state", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildSchedulerStateEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/did not verify.*reminder.*scheduled-job state/iu);
+    expect(reply).toMatch(/check the scheduler/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("scheduler_state_evidence_missing");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Nameless tool-failure notice
 // ---------------------------------------------------------------------------

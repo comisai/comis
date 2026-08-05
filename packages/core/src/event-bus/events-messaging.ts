@@ -758,6 +758,8 @@ export interface MessagingEvents {
    *  (terminal prose promised continued work without a background receipt), or
    *  `unrecovered_tool_failure_completion_claim` (affirmative completion prose
    *  contradicted the recovery-aware failed-tool inventory).
+   *  `missing_scheduler_state_evidence` means affirmative reminder state was
+   *  replaced because no current-turn scheduler receipt supported it.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -774,6 +776,7 @@ export interface MessagingEvents {
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
+      | "missing_scheduler_state_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;

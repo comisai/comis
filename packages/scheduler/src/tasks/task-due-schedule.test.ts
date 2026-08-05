@@ -167,6 +167,21 @@ describe("follow-up task due schedule", () => {
     expect(data.timers.unrefRecord().filter((record) => !record.cancelled)).toHaveLength(1);
   });
 
+  it("rejects an authority scan that settles after scheduler shutdown", async () => {
+    const data = fixture();
+    let resolveRead: ((value: ReturnType<typeof ok<FollowupTaskStoreFile>>) => void) | undefined;
+    data.read.mockImplementationOnce(() => new Promise((resolve) => { resolveRead = resolve; }));
+
+    const initializing = data.schedule.initialize();
+    await vi.waitFor(() => expect(resolveRead).toBeTypeOf("function"));
+    data.schedule.shutdown();
+    resolveRead?.(ok(root(NOW_MS + 60_000)));
+
+    await expect(initializing).resolves.toEqual(
+      err({ code: "not_accepting", errorKind: "precondition" }),
+    );
+  });
+
   it("rejects unsafe pending and retention timestamps from durable authority", async () => {
     const invalidPending = fixture(Number.NaN);
     await expect(invalidPending.schedule.initialize()).resolves.toEqual(
@@ -364,6 +379,43 @@ describe("follow-up task due schedule", () => {
     expect(data.submitTaskWake).toHaveBeenCalledTimes(1);
     expect(data.timers.unrefRecord().filter((record) => !record.cancelled)).toEqual([]);
     expect(data.schedule.getNextDueAtMs()).toBeNull();
+  });
+
+  it("reports a rejected admission retry rescan through the suppression boundary", async () => {
+    const data = fixture(NOW_MS);
+    data.submitTaskWake.mockReturnValue(err({ code: "not_accepting", errorKind: "precondition" }));
+    await initializeAndActivate(data.schedule);
+    data.advance(0);
+    await flush();
+    data.logger.debug.mockImplementationOnce(() => {
+      throw new Error("debug sink unavailable");
+    });
+
+    data.advance(30_000);
+    await flush();
+
+    expect(data.logger.debug).toHaveBeenLastCalledWith(expect.objectContaining({
+      step: "task_due_wake_retry_rescan",
+    }), expect.stringContaining("task due admission retry rescan"));
+  });
+
+  it("reports a rejected retention rescan through the suppression boundary", async () => {
+    const terminalAtMs = NOW_MS - 60_000;
+    const maintenanceAtMs = terminalAtMs + FOLLOWUP_TASK_RETENTION_MS;
+    const data = fixture(null);
+    data.setRoot(terminalRoot(terminalAtMs));
+    await initializeAndActivate(data.schedule);
+    data.setRoot(root(null));
+    data.logger.debug.mockImplementationOnce(() => {
+      throw new Error("debug sink unavailable");
+    });
+
+    data.advance(maintenanceAtMs - NOW_MS);
+    await flush();
+
+    expect(data.logger.debug).toHaveBeenLastCalledWith(expect.objectContaining({
+      step: "task_retention_rescan",
+    }), expect.stringContaining("task retention schedule rescan"));
   });
 
   it("identifies a rejected trusted due-task timing contract without logging task content", async () => {
