@@ -97,6 +97,31 @@ describe("response grounding module", () => {
     });
   });
 
+  it("rejects a future recurring-job policy claim inherited from conversation history", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "Confirmed: U.S. federal holidays. The Saturday briefing will skip them.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("does not classify an ordinary promise to omit prose as scheduler state", () => {
+    const response = "I will skip that section in the draft.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify the scheduled job.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("uses the latest agent-update receipt as the no-op authority", () => {
     const honestResponse =
       "No configuration change was needed. This agent already uses provider_a / model_a.";
