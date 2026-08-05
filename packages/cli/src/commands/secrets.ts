@@ -270,7 +270,7 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("get <name>")
     .description(
-      "Decrypt and display a secret. Requires the comis daemon to be running, or pass --offline to read the selected local store directly.",
+      "Decrypt and display a secret. Requires the comis daemon to be running, or pass --offline with SECRETS_MASTER_KEY available to read the selected local store directly.",
     )
     .option("--yes", "Skip confirmation prompt")
     .option(
