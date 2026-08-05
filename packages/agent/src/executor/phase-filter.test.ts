@@ -507,6 +507,7 @@ describe("synchronize final assistant response", () => {
     response: string,
     sessionManager?: SessionManager,
     diagnostics?: { durableFailureReason?: string },
+    citationEvidenceDigests?: readonly string[],
   ): "unchanged" | "updated" | "updated_memory_only" | "missing" {
     const candidate = (phaseFilter as Record<string, unknown>)
       .synchronizeFinalAssistantResponse;
@@ -516,11 +517,13 @@ describe("synchronize final assistant response", () => {
       response: string,
       sessionManager?: SessionManager,
       diagnostics?: { durableFailureReason?: string },
+      citationEvidenceDigests?: readonly string[],
     ) => "unchanged" | "updated" | "updated_memory_only" | "missing")(
       session,
       response,
       sessionManager,
       diagnostics,
+      citationEvidenceDigests,
     );
   }
 
@@ -561,6 +564,26 @@ describe("synchronize final assistant response", () => {
     };
 
     expect(synchronize(session, "Current reply")).toBe("unchanged");
+  });
+
+  it("persists runtime citation digests on an otherwise unchanged assistant reply", () => {
+    const digest = "a".repeat(64);
+    const session = {
+      messages: [
+        { role: "assistant", content: [{ type: "text", text: "[Source](https://example.com/a)" }] },
+      ],
+    };
+
+    expect(
+      synchronize(
+        session,
+        "[Source](https://example.com/a)",
+        undefined,
+        undefined,
+        [digest],
+      ),
+    ).toBe("updated");
+    expect(session.messages[0]).toMatchObject({ citationEvidenceDigests: [digest] });
   });
 
   it("makes the corrected assistant response canonical after reopening the on-disk session", () => {

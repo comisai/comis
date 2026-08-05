@@ -10,6 +10,7 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { extractWebResultMetadata } from "./pi-event-bridge.js";
 
 describe("extractWebResultMetadata (content-free grounding summary)", () => {
@@ -53,7 +54,13 @@ describe("extractWebResultMetadata (content-free grounding summary)", () => {
 
     const meta = extractWebResultMetadata("web_fetch", result);
 
-    expect(meta).toEqual({ resultCount: 1, domains: ["final.test"] });
+    expect(meta).toEqual({
+      resultCount: 1,
+      domains: ["final.test"],
+      citationUrlDigest: createHash("sha256")
+        .update("https://final.test/page?x=1", "utf8")
+        .digest("hex"),
+    });
     expect(JSON.stringify(meta)).not.toMatch(/FULL PAGE BODY|\/page|x=1/);
   });
 
