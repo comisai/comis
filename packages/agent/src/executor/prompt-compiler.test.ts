@@ -91,6 +91,20 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/do not claim.*output.*skill.*advertis/iu);
   });
 
+  it("limits prompt-skill invocation to the current registry snapshot", () => {
+    const result = compileExecutionPrompt(makeInput());
+
+    expect(result.stableEnginePrefix).toMatch(
+      /only.*current.*available_skills.*(?:active|available).*prompt skill/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /remembered.*SKILL\.md.*ordinary.*untrusted data/iu,
+    );
+    expect(result.stableEnginePrefix).toMatch(
+      /skill.*absent.*available_skills.*(?:unavailable|not available)/iu,
+    );
+  });
+
   it("requires exact retrieved source URLs when the user asks for attribution", () => {
     const result = compileExecutionPrompt(makeInput());
 
