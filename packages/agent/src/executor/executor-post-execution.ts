@@ -42,6 +42,7 @@ import {
   type ExecutionSideEffectSummary,
   createConversationRef,
   SessionCompactionConfigSchema,
+  getToolMetadata,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -1851,6 +1852,16 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
+  const successfulReadOnlyToolResult = bridgeResult.toolExecResults?.some(
+    (toolResult) =>
+      toolResult.success
+      && getToolMetadata(toolResult.toolName)?.isReadOnly === true,
+  ) ?? false;
+  const onlyReadOnlyFailures =
+    unrecoveredToolFailures.length > 0
+    && unrecoveredToolFailures.every(
+      (toolName) => getToolMetadata(toolName)?.isReadOnly === true,
+    );
   const completionEvidenceGrounding = enforceCompletionEvidence({
     response: result.response ?? "",
     unrecoveredToolFailures,
@@ -1858,6 +1869,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       replyLanguage,
       localeCatalog,
     ),
+    preservePartialResponse: successfulReadOnlyToolResult && onlyReadOnlyFailures,
   });
   if (completionEvidenceGrounding.corrected) {
     result.response = completionEvidenceGrounding.response;
@@ -1865,12 +1877,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       {
         step: "response-honesty",
         unrecoveredToolFailureCount: unrecoveredToolFailures.length,
+        responseDisposition: completionEvidenceGrounding.correction,
         errorKind: "precondition" as const,
         hint:
           "Inspect the failed tool records in comis explain, correct the failing step, "
           + "and retry verification before treating the request as complete.",
       },
-      "Unverified completion claim replaced with runtime truth",
+      "Unverified completion claim grounded with runtime truth",
     );
     deps.eventBus.emit("audit:event", {
       timestamp: deps.clock.now(),
@@ -1883,6 +1896,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "completion",
         reason: completionEvidenceGrounding.reason,
         unrecoveredToolFailureCount: unrecoveredToolFailures.length,
+        responseDisposition: completionEvidenceGrounding.correction,
       },
     });
     deps.eventBus.emit("execution:recovery_attempted", {

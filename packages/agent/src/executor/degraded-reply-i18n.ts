@@ -99,8 +99,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
   completion_evidence_missing:
-    "I made changes, but I could not verify the request as complete because one or more "
-      + "tool steps still failed. Treat the result as partial and retry or inspect the failed step.",
+    "I could not verify the request as complete because one or more tool steps still failed. "
+      + "Treat the result below as partial; any completion claim in it is unverified.",
   sender_authority_overclaim:
     "Your current trust does not authorize admin-only changes. I can use tools available at "
       + "your current trust level, but your approval cannot grant admin access. Installing "
