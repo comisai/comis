@@ -2,8 +2,8 @@
 /**
  * createBeforeToolCallGuard — proactive tool-call safety guard.
  *
- * Takes 5 typed parameters (StepCounter, ExecutionBudgetWindow, CircuitBreaker,
- * ToolRetryBreaker?, MessageSendLimiter?) — does not follow the
+ * Takes typed safety dependencies plus optional request-evidence guards. It
+ * does not follow the
  * closure-extraction `state` first-param contract because it operates
  * at the top level of the executor.
  *
@@ -17,8 +17,61 @@ import type { ToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
 import type { MessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { TurnLoopDetector } from "../turn-loop-detector.js";
 import { tryCatch } from "@comis/shared";
+import { isCompletionClaim } from "../critic-isolation.js";
 
 const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
+
+export interface OutboundCompletionEvidence {
+  readonly requestMutationToolNames: ReadonlySet<string>;
+  readonly currentSuccessfulMutationCount: () => number;
+  readonly onBlocked: () => void;
+}
+
+function visibleMessageDelivery(context: unknown): string | undefined {
+  if (context === null || typeof context !== "object") return undefined;
+  const call = context as { toolCall?: { name?: string }; args?: unknown };
+  if (call.toolCall?.name !== "message") return undefined;
+  if (call.args === null || typeof call.args !== "object") return undefined;
+
+  const args = call.args as {
+    action?: unknown;
+    caption?: unknown;
+    text?: unknown;
+  };
+  const visible = args.action === "attach"
+    ? args.caption
+    : args.action === "send" || args.action === "reply" || args.action === "edit"
+      ? args.text
+      : undefined;
+  return typeof visible === "string" ? visible : undefined;
+}
+
+function outboundCompletionEvidenceVerdict(
+  context: unknown,
+  evidence?: OutboundCompletionEvidence,
+): { block: true; reason: string } | undefined {
+  if (
+    evidence === undefined
+    || evidence.requestMutationToolNames.size === 0
+    || evidence.currentSuccessfulMutationCount() > 0
+  ) {
+    return undefined;
+  }
+
+  const visibleDelivery = visibleMessageDelivery(context);
+  if (visibleDelivery === undefined || !isCompletionClaim(visibleDelivery)) {
+    return undefined;
+  }
+
+  evidence.onBlocked();
+  return {
+    block: true,
+    reason:
+      "Completion delivery blocked: this request matched mutating tools, but no "
+      + "successful current-turn mutation has completed. Use a matching mutation "
+      + "tool, verify the result, and then retry the message.",
+  };
+}
 
 function explicitModelTargets(
   sourceText: string,
@@ -177,6 +230,7 @@ export function createBeforeToolCallGuard(
   failedToolRedirects?: ReadonlyMap<string, string>,
   explicitMutationSource?: string,
   knownProviderIdentifiers?: ReadonlySet<string>,
+  outboundCompletionEvidence?: OutboundCompletionEvidence,
 ) {
   return async (context: unknown, _signal?: AbortSignal) => {
     // Proactive step limit check
@@ -199,6 +253,12 @@ export function createBeforeToolCallGuard(
       knownProviderIdentifiers,
     );
     if (exactModelVerdict) return exactModelVerdict;
+
+    const completionEvidenceVerdict = outboundCompletionEvidenceVerdict(
+      context,
+      outboundCompletionEvidence,
+    );
+    if (completionEvidenceVerdict) return completionEvidenceVerdict;
 
     // Short-circuit a repeat idempotent read (the loop-breaker seam).
     // The SDK's BeforeToolCallResult has only {block, reason} -- no content

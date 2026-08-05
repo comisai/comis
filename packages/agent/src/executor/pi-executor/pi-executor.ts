@@ -67,7 +67,9 @@ import {
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
+  classifyToolInvocationMutation,
   getToolMetadata,
+  matchesToolMutationRequest,
   tryGetContext,
   verifyWorkspacePolicySnapshot,
   ResponseLocalePolicySchema,
@@ -1905,6 +1907,12 @@ async function runSessionLocked(
   // Per-execution turn-loop detector: dedup idempotent reads + break a
   // runaway repeating-tool loop early. Closure-local, one per run.
   const turnLoopDetector = createTurnLoopDetector();
+  const requestMutationToolNames = new Set(
+    mergedCustomTools
+      .filter((tool) => matchesToolMutationRequest(tool.name, msg.text))
+      .map((tool) => tool.name),
+  );
+  let currentSuccessfulMutationCount = (): number => 0;
 
   // Proactive safety -- block tool execution before it starts when
   // safety limits are already reached. Existing reactive checks in
@@ -1926,6 +1934,40 @@ async function runSessionLocked(
         ...deps.modelRegistry.getAll().map((model) => model.provider.toLowerCase()),
         ...[...(deps.providerAliases?.keys() ?? [])].map((provider) => provider.toLowerCase()),
       ]),
+      {
+        requestMutationToolNames,
+        currentSuccessfulMutationCount: () => currentSuccessfulMutationCount(),
+        onBlocked: () => {
+          deps.logger.warn(
+            {
+              step: "response-honesty",
+              matchedMutationToolCount: requestMutationToolNames.size,
+              errorKind: "precondition" as const,
+              hint:
+                "Complete and verify one request-matched mutation before retrying "
+                + "the user-visible message.",
+            },
+            "Outbound completion claim blocked before delivery",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "response.outbound_completion_evidence_guard",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                claimKind: "completion",
+                reason: "missing_current_turn_mutation_receipt",
+                matchedMutationToolCount: requestMutationToolNames.size,
+              },
+            },
+          );
+        },
+      },
     );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
@@ -2640,6 +2682,16 @@ async function runSessionLocked(
         }
       : undefined,
   });
+  currentSuccessfulMutationCount = () =>
+    (bridge.getResult().toolExecResults ?? []).filter(
+      (record) =>
+        record.success
+        && requestMutationToolNames.has(record.toolName)
+        && classifyToolInvocationMutation(
+          record.toolName,
+          record.action === undefined ? {} : { action: record.action },
+        ) === "mutating",
+    ).length;
 
   const unsubscribe = session.subscribe(bridge.listener);
 

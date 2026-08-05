@@ -5,6 +5,8 @@ import type { IncidentReport } from "@comis/core";
 
 const COMPLETION_EVIDENCE_GUARD_ACTION =
   "response.completion_evidence_guard";
+const OUTBOUND_COMPLETION_EVIDENCE_GUARD_ACTION =
+  "response.outbound_completion_evidence_guard";
 
 /** Name the response correction while preserving failed-tool details in the report. */
 export function completionEvidenceGuardVerdict(
@@ -31,6 +33,35 @@ export function completionEvidenceGuardVerdict(
     suggestedNextSteps: [
       "inspect the failed tool records in this report and correct the failing step",
       "retry verification before treating the requested result as complete",
+    ],
+  };
+}
+
+/** Name a completion claim rejected before its outbound delivery side effect. */
+export function outboundCompletionEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === OUTBOUND_COMPLETION_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    code: "outbound_completion_evidence_missing",
+    detail:
+      "the pre-send response honesty guard blocked a completion claim because the "
+      + "current mutation request had no successful matching mutation receipt",
+    suggestedNextSteps: [
+      "inspect the blocked message tool record and request-matched mutation tools",
+      "complete and verify the mutation before retrying user-visible delivery",
     ],
   };
 }

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { completionEvidenceGuardVerdict } from "./obs-explain-completion-evidence-verdict.js";
+import {
+  completionEvidenceGuardVerdict,
+  outboundCompletionEvidenceGuardVerdict,
+} from "./obs-explain-completion-evidence-verdict.js";
 
 describe("completionEvidenceGuardVerdict", () => {
   it("returns the acute verdict for a matching denied audit event", () => {
@@ -34,5 +37,20 @@ describe("completionEvidenceGuardVerdict", () => {
         outcome: "success",
       },
     ], "trace-1")).toBeNull();
+  });
+});
+
+describe("outboundCompletionEvidenceGuardVerdict", () => {
+  it("returns the acute verdict for a denied outbound audit event", () => {
+    const verdict = outboundCompletionEvidenceGuardVerdict([
+      {
+        traceId: "trace-1",
+        action: "response.outbound_completion_evidence_guard",
+        outcome: "denied",
+      },
+    ], "trace-1");
+
+    expect(verdict?.code).toBe("outbound_completion_evidence_missing");
+    expect(verdict?.detail).toMatch(/pre-send response honesty guard/iu);
   });
 });
