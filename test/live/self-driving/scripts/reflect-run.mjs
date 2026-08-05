@@ -21,14 +21,28 @@ const { withClient } = await importCli("client/rpc-client.js");
 const [, , jobName = "Reflection", maxWaitArg, agentId] = process.argv;
 const maxWaitS = Number.parseInt(maxWaitArg ?? "120", 10);
 if (!Number.isFinite(maxWaitS) || maxWaitS <= 0) { console.log("ERROR:maxWaitS must be a positive integer (arg 2)"); process.exit(1); }
+const deadline = Date.now() + maxWaitS * 1000;
 
 const params = agentId ? { jobName, agentId } : { jobName };
 let triggered;
+const TRIGGER_TIMEOUT = Symbol("trigger-timeout");
+let triggerTimer;
 try {
-  triggered = await withClient((c) => c.call("cron.run", params));
+  triggered = await Promise.race([
+    withClient((c) => c.call("cron.run", params)),
+    new Promise((resolve) => {
+      triggerTimer = setTimeout(() => resolve(TRIGGER_TIMEOUT), Math.max(1, deadline - Date.now()));
+    }),
+  ]);
 } catch (e) {
   console.log("ERROR:cron.run failed: " + (e?.message || String(e)));
   process.exit(1);
+} finally {
+  clearTimeout(triggerTimer);
+}
+if (triggered === TRIGGER_TIMEOUT) {
+  console.log(`TIMEOUT after ${maxWaitS}s — cron.run did not acknowledge a durable start.`);
+  process.exit(2);
 }
 if (!triggered?.triggered) { console.log("ERROR:cron.run did not trigger: " + JSON.stringify(triggered)); process.exit(1); }
 if (typeof triggered.executionId !== "string" || triggered.executionId.length === 0) {
@@ -38,7 +52,6 @@ if (typeof triggered.executionId !== "string" || triggered.executionId.length ==
 const executionId = triggered.executionId;
 console.log(`TRIGGERED ${jobName} (resolvedAgentId=${triggered.resolvedAgentId ?? agentId ?? "default"}, executionId=${executionId}); waiting for durable terminal state (max ${maxWaitS}s)…`);
 
-const deadline = Date.now() + maxWaitS * 1000;
 const terminalStatuses = new Set(["completed", "failed", "aborted", "skipped", "unknown"]);
 while (Date.now() < deadline) {
   let history;

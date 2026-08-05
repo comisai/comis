@@ -102,6 +102,9 @@ export interface CronScheduler {
   removeJob(jobId: string): Promise<Result<boolean, CronSchedulerLifecycleError>>;
   getJobs(): Result<readonly CronJob[], CronSchedulerLifecycleError>;
   runMissedJobs(): Promise<Result<readonly string[], CronSchedulerLifecycleError>>;
+  /** Start a manual run and acknowledge it after the durable start row is appended. */
+  triggerJob(jobId: string): Promise<Result<string, CronSchedulerLifecycleError>>;
+  /** Run a manual occurrence and wait for its terminal settlement. */
   runJob(jobId: string): Promise<Result<string, CronSchedulerLifecycleError>>;
 }
 
@@ -279,10 +282,34 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     return runOccurrence(jobId, "manual", deps.clock.now());
   }
 
+  async function triggerJob(jobId: string): Promise<Result<string, CronSchedulerLifecycleError>> {
+    const ready = requireActive();
+    if (!ready.ok) return ready;
+    let acknowledged = false;
+    let resolveStarted!: (result: Result<string, CronSchedulerLifecycleError>) => void;
+    const started = new Promise<Result<string, CronSchedulerLifecycleError>>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const acknowledge = (result: Result<string, CronSchedulerLifecycleError>): void => {
+      if (acknowledged) return;
+      acknowledged = true;
+      resolveStarted(result);
+    };
+    const completion = runOccurrence(
+      jobId,
+      "manual",
+      deps.clock.now(),
+      (executionId) => acknowledge(ok(executionId)),
+    );
+    void completion.then(acknowledge);
+    return started;
+  }
+
   async function runOccurrence(
     jobId: string,
     trigger: CronTrigger,
     scheduledForMs: number,
+    onDurableStart?: (executionId: string) => void,
   ): Promise<Result<string, CronSchedulerLifecycleError>> {
     const executionId = deps.idFactory();
     if (running.has(executionId)) {
@@ -290,10 +317,30 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     }
     const controller = new AbortController();
     activeControllers.set(executionId, controller);
-    const promise = executeOccurrence(jobId, executionId, trigger, scheduledForMs, controller);
+    const promise = executeOccurrence(
+      jobId,
+      executionId,
+      trigger,
+      scheduledForMs,
+      controller,
+      onDurableStart,
+    );
     running.set(executionId, promise);
     try {
       return await promise;
+    } catch {
+      const failure = schedulerError(
+        "operation_failed",
+        "internal",
+        "Cron execution rejected outside its Result contract",
+      );
+      logFailure("Cron execution rejected outside its Result contract", failure, {
+        executionId,
+        jobId,
+        step: "execution_boundary",
+        hint: "Inspect the cron runtime adapter; the durable claim will be reconciled on restart if settlement did not complete",
+      });
+      return err(failure);
     } finally {
       running.delete(executionId);
       activeControllers.delete(executionId);
@@ -306,6 +353,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     trigger: CronTrigger,
     scheduledForMs: number,
     controller: AbortController,
+    onDurableStart?: (executionId: string) => void,
   ): Promise<Result<string, CronSchedulerLifecycleError>> {
     const initialJobs = deps.store.listJobs();
     if (!initialJobs.ok) return operationFailure("read cron job for claim", initialJobs.error);
@@ -347,6 +395,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
       return operationFailure("append cron execution start", started.error);
     }
     emitDurableCronStarted({ eventBus: deps.eventBus, logger: deps.logger, start });
+    onDurableStart?.(executionId);
 
     if (rootRunId !== null) {
       const registered = await deps.rootRegistrar.register({ rootRunId, executionId, job: claimed.value.job });
@@ -774,6 +823,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     removeJob,
     getJobs,
     runMissedJobs,
+    triggerJob,
     runJob,
   };
 }

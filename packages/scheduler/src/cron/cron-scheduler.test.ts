@@ -791,7 +791,8 @@ describe("durable cron scheduler lifecycle", () => {
     await expect(built.scheduler.triggerJob("future")).resolves.toEqual(ok("execution_1"));
     expect(settleExecution).toBeTypeOf("function");
     const started = await built.tracker.readExecution("execution_1");
-    expect(started).toMatchObject({ ok: true, value: { terminal: undefined } });
+    expect(started.ok && started.value?.start.executionId).toBe("execution_1");
+    expect(started.ok && started.value?.terminal).toBeUndefined();
 
     settleExecution(ok(completed(runtimeInput)));
     await built.scheduler.waitForIdle();
