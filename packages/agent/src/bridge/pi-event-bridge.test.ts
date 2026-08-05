@@ -774,6 +774,37 @@ describe("createPiEventBridge", () => {
       ]);
     });
 
+    it("classifies current cron-list policy evidence without retaining task text", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "cron",
+        toolCallId: "tc-cron-list",
+        args: { action: "list" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "cron",
+        "tc-cron-list",
+        false,
+        {
+          content: [{ type: "text", text: "bounded current schedule inventory" }],
+          details: {
+            jobs: [
+              { payload: { kind: "agent_turn", messagePreview: "Skip federal holidays" } },
+              { payload: { kind: "delivery", textPreview: "Weekday summary" } },
+            ],
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        schedulerPolicyEvidence?: readonly string[];
+      };
+      expect(record.schedulerPolicyEvidence).toEqual(["holiday", "weekday"]);
+      expect(JSON.stringify(record)).not.toContain("Skip federal holidays");
+    });
+
     it("keeps an auto-background handoff neutral in breaker and execution outcome accounting", () => {
       const recordResult = vi.fn();
       const depsWithBreaker = createMockDeps({

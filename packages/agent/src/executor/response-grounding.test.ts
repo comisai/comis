@@ -26,6 +26,7 @@ function schedulerStateEvidenceGuard(): (params: {
     toolName: string;
     action?: string;
     success: boolean;
+    schedulerPolicyEvidence?: readonly ("holiday" | "weekday" | "weekend")[];
   }[];
   honestResponse: string;
 }) => SchedulerStateEvidenceGuardResult {
@@ -76,6 +77,40 @@ describe("response grounding module", () => {
         success: true,
       }],
       honestResponse: "I could not verify the reminder.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("rejects a listed holiday policy absent from the current scheduler receipt", () => {
+    const honestResponse = "I could not verify that holiday policy in the current job.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response: "The Saturday briefing skips U.S. federal holidays.",
+      toolExecResults: [{
+        toolName: "cron",
+        action: "list",
+        success: true,
+        schedulerPolicyEvidence: [],
+      }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("keeps a listed holiday policy present in the current scheduler receipt", () => {
+    const response = "The Saturday briefing skips U.S. federal holidays.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [{
+        toolName: "cron",
+        action: "list",
+        success: true,
+        schedulerPolicyEvidence: ["holiday"],
+      }],
+      honestResponse: "I could not verify that holiday policy.",
     })).toEqual({ response, corrected: false });
   });
 
