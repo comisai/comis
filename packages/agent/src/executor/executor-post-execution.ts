@@ -2194,7 +2194,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
     ? msg.metadata.citationEvidence
     : undefined;
-  const historicalDigests = isCitationSourceRequest(msg.text ?? "")
+  const citationSourceRequest = isCitationSourceRequest(msg.text ?? "");
+  const historicalDigests = citationSourceRequest
     ? historicalCitationDigests(sm)
     : [];
   const allowedCitationDigests = [
@@ -2208,7 +2209,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     enabled:
       currentWebResearchObserved
       || relayedCitationEvidence !== undefined
-      || historicalDigests.length > 0,
+      || historicalDigests.length > 0
+      || citationSourceRequest,
   });
   result.response = citationGrounding.response;
   if (citationGrounding.corrected) {
