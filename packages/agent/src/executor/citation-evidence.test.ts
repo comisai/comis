@@ -9,6 +9,7 @@ import {
   appendCitationEvidenceRecord,
   enforceCitationEvidence,
   historicalCitationDigests,
+  isCitationSourceRequest,
 } from "./citation-evidence.js";
 import * as citationEvidenceModule from "./citation-evidence.js";
 import { sanitizeSessionSecrets } from "../session/sanitize-session-secrets.js";
@@ -181,5 +182,9 @@ describe("exact citation evidence grounding", () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
+  });
+
+  it("recognizes a casual source question without an apostrophe", () => {
+    expect(isCitationSourceRequest("wheres that from")).toBe(true);
   });
 });
