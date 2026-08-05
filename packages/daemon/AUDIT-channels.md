@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:139–170`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 15 (9 required + 6 optional + 0 stale-fallback)
+**Field count:** 19 (8 required + 11 optional + 0 stale-fallback)
 **Location:** co-located with the `@comis/daemon` package; `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -14,6 +14,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | **Field** | **Classification** | **When-absent** | **Evidence-link** |
 |-----------|--------------------|-----------------|-------------------|
 | adaptersByType | required | — | packages/daemon/src/api/types.ts:147 |
+| resolveMessageEndpoint | optional | agent-addressed non-origin message operations cannot resolve a previously observed complete endpoint and are rejected before delivery; origin-bound and explicitly scoped operator operations remain available | packages/daemon/src/api/types.ts:256 |
 | inboundMessageIdResolver | optional | message.delete / message.edit / message.react fall back to using the daemon NormalizedMessage.id directly; platform-native id mapping is skipped (compat path for daemon configs with all channel adapters disabled) | packages/daemon/src/api/types.ts:151 |
 | channelConfig | required | — | packages/daemon/src/api/types.ts:152 |
 | wsConnections | optional | gateway broadcasts (channel.list updates, message.new events) are suppressed; clients must re-poll RPC for state | packages/daemon/src/api/types.ts:154 |
@@ -38,8 +39,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Pre-audit count:** 15
-- **Final count:** 15 (9 required + 6 optional, after promoting `channelPlugins` to required)
+- **Pre-audit count:** 19
+- **Final count:** 19 (8 required + 11 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 
