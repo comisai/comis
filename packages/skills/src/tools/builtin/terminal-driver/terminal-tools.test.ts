@@ -1484,7 +1484,7 @@ function makeTerminalApprovalContext(): RequestContext {
       },
     },
     deliveryOrigin: Object.freeze({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelId: "chat-1",
     }),
   };
 }
@@ -1627,7 +1627,7 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     expect(call.conversationRef).toMatch(/^cv_/);
     expect(call.resolvingPrincipalId).toBe("principal-test-user");
     expect(call.callbackOwner).toEqual({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelKey: "chat-1",
     });
     expect(call.trustLevel).toBe("guest");
   });

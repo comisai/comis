@@ -51,7 +51,7 @@ function makeApprovalContext(): RequestContext {
       },
     },
     deliveryOrigin: Object.freeze({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelId: "chat-1",
     }),
   };
 }
@@ -705,7 +705,7 @@ describe("createPipelineTool", () => {
         conversationRef: expect.stringMatching(/^cv_/),
         resolvingPrincipalId: "principal-test-user",
         callbackOwner: {
-          tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+          tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelKey: "chat-1",
         },
       }));
       const approval = requestApproval.mock.calls[0]![0] as {
