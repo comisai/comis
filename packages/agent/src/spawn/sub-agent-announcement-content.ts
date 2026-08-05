@@ -5,7 +5,15 @@ import { safePath, systemSleep } from "@comis/core";
 import { stat } from "node:fs/promises";
 
 export interface AbortClassification {
-  category: "step_limit" | "loop_limit" | "budget" | "context_full" | "external_timeout" | "provider_degraded" | "unknown";
+  category:
+    | "step_limit"
+    | "loop_limit"
+    | "budget"
+    | "context_full"
+    | "external_timeout"
+    | "prompt_timeout"
+    | "provider_degraded"
+    | "unknown";
   hint: string;
   severity: "expected" | "actionable" | "investigate";
 }
