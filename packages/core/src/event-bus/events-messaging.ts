@@ -650,12 +650,14 @@ export interface MessagingEvents {
    *  `denial_breaker` is the denial-limit breaker abort —
    *  N consecutive floor-blocks tripped the per-rootRunId breaker, so the run
    *  aborts + escalates instead of retry-looping (the "never loop" guarantee).
-   *  Distinct from `circuit_breaker`, which is the TOOL-FAILURE breaker
-   *  (provider cascade) — this is the CAPABILITY-DENIAL breaker. */
+   *  Distinct from `circuit_breaker`, which is the model-provider failure
+   *  breaker — this is the CAPABILITY-DENIAL breaker. */
   "execution:aborted": {
     sessionKey: SessionKey;
     reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
     agentId: string;
+    /** Model provider whose request failures opened the circuit breaker. */
+    provider?: string;
     timestamp: number;
     /** On a per-ROOT autonomy.budget abort, the exact tripped limb + its
      *  numbers in their own unit (token/wall-clock breaches carry tokens/ms, NOT

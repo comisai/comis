@@ -570,6 +570,14 @@ function handleEventRecord(
       // sessionEnd rollup, so the spend-verdict can fire + name the limb.
       const reason = asString(data.reason);
       if (reason !== undefined && reason.length > 0) acc.abortReason = reason;
+      if (reason === "circuit_breaker") {
+        const provider = asString(data.provider);
+        acc.breakerEvents.push({
+          seq: asNumber(rec.seq) ?? acc.seq++,
+          event: "opened",
+          toolName: provider === undefined ? "provider" : `provider:${provider}`,
+        });
+      }
       const prb = (data as { perRootBudget?: Record<string, unknown> }).perRootBudget;
       if (prb && typeof prb === "object") {
         const limb = asString(prb.limb);

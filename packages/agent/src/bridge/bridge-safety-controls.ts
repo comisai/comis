@@ -563,6 +563,7 @@ export function emitCircuitBreakerAbort(
     eventBus: TypedEventBus;
     sessionKey: SessionKey;
     agentId: string;
+    provider: string;
     logger: ComisLogger;
     onAbort?: () => void;
   },
@@ -572,6 +573,7 @@ export function emitCircuitBreakerAbort(
     sessionKey: deps.sessionKey,
     reason: "circuit_breaker",
     agentId: deps.agentId,
+    provider: deps.provider,
     timestamp: systemNowMs(),
   });
   deps.logger.warn(

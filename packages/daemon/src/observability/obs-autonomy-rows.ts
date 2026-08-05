@@ -164,11 +164,11 @@ export function autonomyKilledEventToRow(payload: EventMap["autonomy:killed"]): 
  * `health_signal` diagnostic row. A capability-DENIAL breaker trip
  * (N consecutive floor-blocks aborted + killed the run tree) had NO system surface:
  * the trip is never a session endReason and never a `breakerTripCount`, so the
- * system health view's `breakerTrips` read-back (← `breakerTripTotal`, the TOOL-failure
+ * system health view's `breakerTrips` read-back (← `breakerTripTotal`, the execution-failure
  * breaker) ALWAYS showed 0 for it, and the aborted run lands in durable status
  * 'completed' (not orphaned/revoked) → 0 in every other count. The DISTINCT
  * `autonomy_denial_breaker` signal label is the ONLY way the system health view counts the
- * capability-denial breaker SEPARABLY from the tool-failure breaker (the same
+ * capability-denial breaker SEPARABLY from execution-failure breakers (the same
  * separation discipline as `autonomy_killed` vs `autonomy_revoked`). `details`
  * carries the closed signal label + the per-event COUNT (1 — each trip is one
  * event) + the rootRunId (an id) ONLY — NEVER the engine's free-text deny reason

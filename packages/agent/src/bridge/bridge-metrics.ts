@@ -76,8 +76,8 @@ export interface BridgeMetricsState {
   turnUsedSkillIds: Set<string>;
   failedToolCount: number;
   failedToolNames: string[];
-  /** Per-execution count of breaker-open transitions (`tool:breaker_opened`).
-   *  Incremented in pi-event-bridge's opened branch; forwarded as
+  /** Per-execution count of tool- or provider-failure breaker-open transitions.
+   *  Incremented in pi-event-bridge's opened branches; forwarded as
    *  `bridgeResult.breakerTripCount` for the session-health rollup. */
   breakerTripCount: number;
 

@@ -482,6 +482,27 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 
   backgroundHardTimeoutVerdict, // runtime hard limit causes any breaker it trips
 
+  // A model-provider circuit breaker is independent of the per-tool retry
+  // breaker below. The terminal abort is the authoritative signal; the
+  // provider-prefixed timeline entry attributes it without retaining an error
+  // body or credential material.
+  (s) => {
+    if (s.abortReason !== "circuit_breaker" && s.endReason !== "circuit_open") return null;
+    const providerEvent = s.breakerEvents.find(
+      (event) => event.event === "opened" && event.toolName.startsWith("provider:"),
+    );
+    const provider = providerEvent?.toolName.slice("provider:".length) || "the configured provider";
+    return {
+      code: "provider_circuit_open",
+      detail: `the model provider circuit breaker opened for ${provider} after repeated request failures`,
+      suggestedNextSteps: [
+        `check credentials, endpoint connectivity, and provider configuration for ${provider}`,
+        "retry after the provider recovers or the configured breaker cooldown expires",
+        "obs.explain depth=full for the breaker timeline",
+      ],
+    };
+  },
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;

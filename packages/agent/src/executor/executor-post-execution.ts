@@ -206,7 +206,7 @@ export interface PostExecutionBridgeResult {
   /** Per-tool execution results carrying the classified errorKind —
    *  the rollup's failure source for toolStats + topErrorKinds. */
   toolExecResults?: ToolExecutionResultRecord[];
-  /** How many times a tool circuit breaker opened this session. */
+  /** How many times an execution failure breaker opened this session. */
   breakerTripCount?: number;
   /** Turn count for the session:summary event. */
   turnCount?: number;

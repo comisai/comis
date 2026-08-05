@@ -3151,6 +3151,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             {
               const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
               if (cbCheck.shouldAbort) {
+                m.breakerTripCount++;
                 m.finishReason = cbCheck.finishReason!;
                 m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
