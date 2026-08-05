@@ -74,6 +74,22 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     });
   });
 
+  it("retains bounded content-free attachment rejection evidence", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      mediaAttachmentRejections: [{
+        attachmentIndex: 0,
+        reason: "size_exceeded",
+        sizeBytes: 57_671_680,
+        maxBytes: 26_214_400,
+        configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+      }],
+    });
+
+    expect(parsed.mediaAttachmentRejections).toHaveLength(1);
+    expect(parsed.mediaAttachmentRejections?.[0]?.sizeBytes).toBe(57_671_680);
+  });
+
   it("retains the content-free locale repair skip diagnosis", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

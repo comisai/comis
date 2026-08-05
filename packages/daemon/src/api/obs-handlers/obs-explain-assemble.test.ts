@@ -114,6 +114,27 @@ function makeMetadata(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("assembleIncidentReport — request-relevant tool selection", () => {
+  it("surfaces current attachment size rejections on the one-call report", () => {
+    const mediaAttachmentRejections = [{
+      attachmentIndex: 0,
+      reason: "size_exceeded" as const,
+      sizeBytes: 57_671_680,
+      maxBytes: 26_214_400,
+      configKey: "integrations.media.infrastructure.maxRemoteFetchBytes" as const,
+    }];
+    const report = assembleIncidentReport(
+      makeSignals({ mediaAttachmentRejections }),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.mediaAttachmentRejections).toEqual(mediaAttachmentRejections);
+    expect(IncidentReportSchema.parse(report).mediaAttachmentRejections)
+      .toEqual(mediaAttachmentRejections);
+  });
+
   it("surfaces selected tools when a turn completed without invoking one", () => {
     const selected = ["mcp_manage", "gateway"];
     const signals = makeSignals({
