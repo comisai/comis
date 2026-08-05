@@ -447,6 +447,34 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     const calls = emit.mock.calls.filter((c) => c[0] === "execution:recovery_attempted");
     expect(calls.some((c) => c[1].reason === "continuation_nudge")).toBe(true);
   });
+
+  it("does not retry after a continuation opens a safety circuit", async () => {
+    vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
+    const { params } = makeDispatchParams([], "network failure", "c-continuation-abort");
+    const beforeAbort = {
+      llmCalls: 4,
+      stepsExecuted: 1,
+      textEmitted: false,
+      finishReason: "stop",
+      lastLlmErrorMessage: "network failure",
+    };
+    const afterAbort = {
+      ...beforeAbort,
+      llmCalls: 5,
+      finishReason: "circuit_open",
+      abortResponse: "[Stopped: circuit_open] Please try again.",
+    };
+    (params.bridge.getResult as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(beforeAbort)
+      .mockReturnValueOnce(beforeAbort)
+      .mockReturnValue(afterAbort);
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    expect(runWithModelRetry).toHaveBeenCalledTimes(1);
+    expect(outcome.promptSucceeded).toBe(true);
+    expect(outcome.promptError).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

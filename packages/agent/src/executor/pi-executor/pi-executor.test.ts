@@ -3601,6 +3601,30 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("abort compaction", () => {
+    it("disables pending SDK retries before aborting a safety-stopped execution", async () => {
+      const callOrder: string[] = [];
+      mockApplyOverrides.mockImplementation((overrides: unknown) => {
+        if (JSON.stringify(overrides) === JSON.stringify({ retry: { enabled: false } })) {
+          callOrder.push("disableRetry");
+        }
+      });
+      mockAbortCompaction.mockImplementation(() => {
+        callOrder.push("abortCompaction");
+      });
+      mockAbort.mockImplementation(() => {
+        callOrder.push("abort");
+        return Promise.resolve(undefined);
+      });
+      const executor = createPiExecutor(testConfig, createMockDeps());
+
+      await executor.execute(testMessage, testSessionKey);
+      const bridgeCall = (createPiEventBridge as Mock).mock.calls[0][0];
+      bridgeCall.onAbort();
+
+      expect(mockApplyOverrides).toHaveBeenCalledWith({ retry: { enabled: false } });
+      expect(callOrder).toEqual(["disableRetry", "abortCompaction", "abort"]);
+    });
+
     it("onAbort calls abortCompaction before abort -- session state preserved", async () => {
       // Track call order to verify abortCompaction is called BEFORE abort
       const callOrder: string[] = [];
