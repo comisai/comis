@@ -1355,7 +1355,8 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     },
     "scheduler:task_extraction_failed": {
       rootRunId: "root-task-extract-a", itemCount: 1, sourceExecutionIds: ["execution-a"],
-      stage: "model", errorKind: "dependency", durationMs: 5, timestamp: 1000,
+      stage: "model_output", errorKind: "validation", outputErrorCode: "before_minimum_due",
+      durationMs: 5, timestamp: 1000,
     },
     "scheduler:task_check_started": {
       attemptId: "attempt-a", rootRunId: "root-task-check-a", correlationId: "correlation-a",
@@ -2165,6 +2166,35 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       expect(data.sessionId, `${eventName}.data.sessionId`).toBeUndefined();
     },
   );
+
+  it("records the closed task-extraction parser error without model output content", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("scheduler:task_extraction_failed", {
+      agentId: "agent-a",
+      rootRunId: "root-task-extract-a",
+      itemCount: 1,
+      sourceExecutionIds: ["execution-a"],
+      stage: "model_output",
+      errorKind: "validation",
+      outputErrorCode: "before_minimum_due",
+      durationMs: 5,
+      timestamp: 1_000,
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "scheduler.task_extraction_failed",
+      data: {
+        stage: "model_output",
+        errorKind: "validation",
+        outputErrorCode: "before_minimum_due",
+      },
+    });
+    expect(JSON.stringify(recorder.calls[0])).not.toContain("Check the outcome");
+  });
 });
 
 describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {

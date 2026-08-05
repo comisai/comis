@@ -462,8 +462,9 @@ describe("InfraEvents payload structure", () => {
       rootRunId: null,
       itemCount: 2,
       sourceExecutionIds: ["execution-a", "execution-b"],
-      stage: "queue_transfer",
-      errorKind: "precondition",
+      stage: "model_output",
+      errorKind: "validation",
+      outputErrorCode: "before_minimum_due",
       durationMs: 0,
       timestamp: 2_000,
     };
