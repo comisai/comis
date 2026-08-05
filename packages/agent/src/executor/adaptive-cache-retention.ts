@@ -85,6 +85,36 @@ export function coldStartRetentionFor(warmRetention: CacheRetention): CacheReten
   return warmRetention === "long" ? "short" : warmRetention;
 }
 
+/**
+ * Where a session's ladder should START.
+ *
+ * The ladder is rebuilt per EXECUTION, not per session, so "cold start" is only
+ * true the first time. A session that has already escalated has its prefix cached
+ * at the warm TTL; starting it cold again writes the entire prefix at 5m and then
+ * re-writes it at 1h on re-escalation — `6.25N + 10N` where `10N` would have done,
+ * and again on the next execution. Changing the TTL of a cache_control entry does
+ * not retag the existing one, it creates another, so the ladder cannot be climbed
+ * for free.
+ *
+ * Live, that was `reason=retention_changed` dropping 627,920 tokens in ~9.5h. The
+ * escalation already recorded the warm state via `onEscalated` — nothing ever read
+ * it back (`getCacheWarm` had exactly one reference in the repository: its own
+ * definition).
+ *
+ * A genuinely cold prefix is unchanged: no evidence the cache will be read yet, so
+ * it still starts cheap rather than paying the 2x premium up front.
+ *
+ * @param warmRetention - The session's configured (warm) retention.
+ * @param sessionAlreadyWarm - Whether this session has previously escalated.
+ * @returns The retention the ladder should begin this execution at.
+ */
+export function resolveColdStartRetention(
+  warmRetention: CacheRetention,
+  sessionAlreadyWarm: boolean | undefined,
+): CacheRetention {
+  return sessionAlreadyWarm === true ? warmRetention : coldStartRetentionFor(warmRetention);
+}
+
 export function createAdaptiveCacheRetention(
   config: AdaptiveCacheRetentionConfig,
 ): AdaptiveCacheRetention {

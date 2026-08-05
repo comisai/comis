@@ -29,11 +29,11 @@ import type { PiExecutorDeps } from "./pi-executor-types.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
 import { resolveProviderApiKey } from "../../model/resolve-provider-api-key.js";
 import {
-  coldStartRetentionFor,
   createAdaptiveCacheRetention,
   createStaticRetention,
+  resolveColdStartRetention,
 } from "../adaptive-cache-retention.js";
-import { setCacheWarm } from "../executor-session-state.js";
+import { getCacheWarm, setCacheWarm } from "../executor-session-state.js";
 import type { PerAgentConfig } from "@comis/core";
 
 /**
@@ -270,7 +270,13 @@ export function decodeExecutionOverrides(
           // the >20K fast path then promotes on turn 2, so a large system
           // prompt reaches 1h TTL as soon as it is shown to be read — rather
           // than paying the 2x 1h write premium up front on every cold start.
-          coldStartRetention: coldStartRetentionFor(configRetention),
+          // But the ladder is rebuilt per EXECUTION: a session that already
+          // escalated must resume warm, or it re-writes its whole prefix at 5m
+          // and again at 1h every execution (see resolveColdStartRetention).
+          coldStartRetention: resolveColdStartRetention(
+            configRetention,
+            getCacheWarm(formattedKeyForRetention),
+          ),
           warmRetention: configRetention,
           escalationThreshold: 1000,
           onEscalated: () => setCacheWarm(formattedKeyForRetention, true),

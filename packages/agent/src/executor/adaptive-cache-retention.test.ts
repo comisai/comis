@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { coldStartRetentionFor, createAdaptiveCacheRetention, createStaticRetention, FAST_PATH_CACHE_WRITE_THRESHOLD, PREFIX_INSTABILITY_THRESHOLD } from "./adaptive-cache-retention.js";
+import { coldStartRetentionFor, resolveColdStartRetention, createAdaptiveCacheRetention, createStaticRetention, FAST_PATH_CACHE_WRITE_THRESHOLD, PREFIX_INSTABILITY_THRESHOLD } from "./adaptive-cache-retention.js";
 import type { AdaptiveCacheRetentionConfig } from "./adaptive-cache-retention.js";
 
 // ---------------------------------------------------------------------------
@@ -801,6 +801,31 @@ describe("prefix instability detection", () => {
   // prefix-instability downgrade (it falls back to coldStartRetention, i.e.
   // the same "long" it was meant to escape).
   // -------------------------------------------------------------------------
+
+  it("starts an already-warm session at the warm retention instead of re-climbing the ladder", () => {
+    // The ladder is rebuilt per EXECUTION, not per session. A session that already
+    // escalated has its prefix cached at the warm TTL, so starting cold again writes
+    // the whole prefix at 5m and then re-writes it at 1h on re-escalation — 6.25N +
+    // 10N where 10N would have done, every execution. Live: `reason=retention_changed`
+    // dropping 627,920 tokens in ~9.5h. The escalation already records the warm state;
+    // nothing read it back (getCacheWarm had exactly one reference repo-wide: its own
+    // definition).
+    expect(resolveColdStartRetention("long", true)).toBe("long");
+  });
+
+  it("starts a session that has never escalated at the cold retention", () => {
+    // Unchanged for a genuinely cold prefix: no evidence the cache will be read yet,
+    // so do not pay the 2x 1h write premium up front.
+    expect(resolveColdStartRetention("long", false)).toBe("short");
+    expect(resolveColdStartRetention("long", undefined)).toBe("short");
+  });
+
+  it("leaves a non-escalating retention alone whatever the warm state", () => {
+    for (const warm of [true, false, undefined]) {
+      expect(resolveColdStartRetention("short", warm)).toBe("short");
+      expect(resolveColdStartRetention("none", warm)).toBe("none");
+    }
+  });
 
   it("derives a cheaper cold start for a long warm target", () => {
     expect(coldStartRetentionFor("long")).toBe("short");
