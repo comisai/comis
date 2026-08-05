@@ -162,6 +162,11 @@ const SCHEDULER_STATE_PREDICATES = [
 
 const SCHEDULER_STATE_TERMINATORS = [" ", ".", ",", "!", "?", ":", ";", "—", "-"];
 
+const SCHEDULER_MUTATION_CONFIRMATION = /\b(?:confirmed|updated|done|scheduled|set)\b/u;
+const SCHEDULER_FUTURE_BEHAVIOR = /\bwill\s+(?:not\s+)?(?:run|fire|send|deliver|skip)\b/u;
+const SCHEDULER_TEMPORAL_CONTEXT =
+  /\b(?:hourly|daily|weekly|monthly|weekdays?|weekends?|holidays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}:\d{2}\b|\b(?:a\.?m\.?|p\.?m\.?)\b/u;
+
 const SCHEDULER_STATE_EVIDENCE_ACTIONS = new Set([
   "add",
   "update",
@@ -186,13 +191,18 @@ export function enforceSchedulerStateEvidence(params: {
   honestResponse: string;
 }): SchedulerStateEvidenceGuardResult {
   const normalizedResponse = normalizedEvidenceText(params.response);
-  const claimsCurrentSchedulerState = SCHEDULER_STATE_SUBJECTS.some(
+  const explicitStateClaim = SCHEDULER_STATE_SUBJECTS.some(
     (subject) => SCHEDULER_STATE_PREDICATES.some(
       (predicate) => SCHEDULER_STATE_TERMINATORS.some(
         (terminator) => normalizedResponse.includes(` ${subject}${predicate}${terminator}`),
       ),
     ),
   );
+  const futureBehaviorClaim =
+    SCHEDULER_MUTATION_CONFIRMATION.test(normalizedResponse)
+    && SCHEDULER_FUTURE_BEHAVIOR.test(normalizedResponse)
+    && SCHEDULER_TEMPORAL_CONTEXT.test(normalizedResponse);
+  const claimsCurrentSchedulerState = explicitStateClaim || futureBehaviorClaim;
   if (!claimsCurrentSchedulerState) {
     return { response: params.response, corrected: false };
   }
