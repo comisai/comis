@@ -12553,6 +12553,46 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "mediaAttachmentRejections": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attachmentIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 15
+              },
+              "reason": {
+                "type": "string",
+                "const": "size_exceeded"
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "maxBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "configKey": {
+                "type": "string",
+                "const": "integrations.media.infrastructure.maxRemoteFetchBytes"
+              }
+            },
+            "required": [
+              "attachmentIndex",
+              "reason",
+              "sizeBytes",
+              "maxBytes",
+              "configKey"
+            ],
+            "additionalProperties": false
+          }
+        },
         "image": {
           "type": "object",
           "properties": {

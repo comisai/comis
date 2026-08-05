@@ -13,7 +13,6 @@ export {
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
-  MediaAttachmentPreprocessReceiptSchema,
   MediaAttachmentPreprocessReceiptsSchema,
   MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY,
   formatMediaAttachmentRejection,
@@ -41,10 +40,6 @@ export type {
   NormalizedMessage,
 } from "./normalized-message.js";
 export { MediaResolutionError } from "./media-resolution-error.js";
-export type {
-  MediaResolutionErrorKind,
-  MediaResolutionErrorOptions,
-} from "./media-resolution-error.js";
 export { NormalizedReactionSchema, parseReaction } from "./normalized-reaction.js";
 export type { NormalizedReaction } from "./normalized-reaction.js";
 

@@ -395,6 +395,11 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.tts.completed",
   "media.tts.failed",
 
+  // Current inbound attachment guards. Direct-emitted by the executor from a
+  // trusted preprocessing receipt because preprocessing completes before the
+  // session recorder opens. Content-free indices, byte counts, and config key.
+  "media.attachment.rejected",
+
   // The spend kill-switch lifecycle on the explain timeline.
   // The 3 spend.* events are bridged (not system-only rollups) so a spend-killed
   // session's WARNING / ABORT / UNPRICEABLE signals reach `comis explain` and the
