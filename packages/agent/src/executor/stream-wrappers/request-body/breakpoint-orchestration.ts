@@ -305,6 +305,24 @@ export function runCacheBreakpointPhase(
     }
   }
 
+  // The anchor above emits 1h regardless of the resolved retention, and the
+  // system marker sits BEFORE every message marker in wire order — so on a
+  // session still at "short" (a cold start, before the adaptive ladder
+  // escalates) the payload went out as system(5m) -> message(1h), violating
+  // Anthropic's non-increasing TTL rule. The earlier system upgrade cannot cover
+  // it: that runs before this loop and only when retention is already "long".
+  // enforceMonotonicTtlOrdering repaired it at the end of the phase and logged
+  // "MONOTONIC-TTL: upgraded out-of-order 5m markers to 1h" naming system[1] —
+  // an upstream-placement-bug WARN on every such turn. Promote here instead, the
+  // same coordination the recent-zone retention below already performs.
+  if (eFixFiredAt !== undefined && resolvedRetention !== "long" && Array.isArray(result.system)) {
+    for (const block of result.system as Array<Record<string, unknown>>) {
+      if (block.cache_control) {
+        block.cache_control = { type: "ephemeral", ttl: "1h" };
+      }
+    }
+  }
+
   // During eviction cooldown, limit to 1 breakpoint (recent zone) at "short" retention.
   const evictionCooldown = config.getEvictionCooldown?.();
   const inCooldown = evictionCooldown != null && evictionCooldown.turnsRemaining > 0;

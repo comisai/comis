@@ -60,6 +60,85 @@ function makeResult(messages: Array<Record<string, unknown>>): Record<string, un
 // system prefix misses every time.
 // ---------------------------------------------------------------------------
 
+describe("runCacheBreakpointPhase — system marker coordinates with the UNTRUSTED_ 1h anchor", () => {
+  const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" };
+
+  // Anthropic requires a non-increasing TTL along tools -> system -> messages.
+  // The UNTRUSTED_ anchor places 1h on a large user message regardless of the
+  // resolved retention, and the message zones already coordinate upward for it.
+  // The system marker did not: its upgrade runs earlier and only when retention
+  // is already "long", so a cold-start session (5m) that carried a large
+  // untrusted block emitted system(5m) -> message(1h). The safety net repaired
+  // it and logged "MONOTONIC-TTL: upgraded out-of-order 5m markers to 1h" at
+  // system[1] — a WARN that names an upstream placement bug, and an upgrade that
+  // silently undid the cheap cold-start write.
+  it("promotes the system marker to 1h when the UNTRUSTED_ anchor fires at short retention", () => {
+    const logger = makeLogger();
+    const result = makeResult([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "<<<UNTRUSTED_HTML>>>" + "x".repeat(20000) + "</UNTRUSTED_HTML>>>" },
+        ],
+      },
+    ]);
+
+    runCacheBreakpointPhase(
+      result,
+      model,
+      makeConfig({
+        getCacheRetention: () => "short",
+        getSystemPromptBlocks: () => ({
+          staticPrefix: "ENGINE".repeat(200),
+          attribution: "OPERATOR".repeat(200),
+          semiStableBody: "## Current Date & Time\n2026-08-05T08:34:29.719Z",
+        }),
+      }),
+      true,
+      false,
+      0,
+      logger,
+    );
+
+    // The end state is 1h either way — the safety net repairs it in the same
+    // call. What must NOT happen is the repair: placement has to be correct at
+    // source, or every such turn logs an upstream-placement-bug WARN.
+    const system = result.system as Array<Record<string, unknown>>;
+    const anchored = system.filter((block) => block.cache_control !== undefined);
+    expect(anchored).toHaveLength(1);
+    expect(anchored[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const warned = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .some((call) => String(call[1] ?? "").includes("MONOTONIC-TTL"));
+    expect(warned).toBe(false);
+  });
+
+  it("leaves the system marker at 5m when no UNTRUSTED_ anchor fires", () => {
+    const result = makeResult([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+
+    runCacheBreakpointPhase(
+      result,
+      model,
+      makeConfig({
+        getCacheRetention: () => "short",
+        getSystemPromptBlocks: () => ({
+          staticPrefix: "ENGINE".repeat(200),
+          attribution: "OPERATOR".repeat(200),
+          semiStableBody: "## Current Date & Time\n2026-08-05T08:34:29.719Z",
+        }),
+      }),
+      true,
+      false,
+      0,
+      makeLogger(),
+    );
+
+    const system = result.system as Array<Record<string, unknown>>;
+    const anchored = system.filter((block) => block.cache_control !== undefined);
+    expect(anchored).toHaveLength(1);
+    expect(anchored[0]!.cache_control).toEqual({ type: "ephemeral" });
+  });
+});
+
 describe("runCacheBreakpointPhase — system-prompt breakpoint sits on the stable prefix", () => {
   const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" };
 
