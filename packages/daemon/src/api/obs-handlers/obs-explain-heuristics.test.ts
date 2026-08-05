@@ -148,6 +148,31 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/web_fetch/);
   });
 
+  it("names a provider circuit-open terminal before per-tool breaker inference", () => {
+    const r = rootCause(
+      makeSignals({
+        abortReason: "circuit_breaker",
+        endReason: "circuit_open",
+        degraded: true,
+        breakerEvents: [{
+          seq: 12,
+          event: "opened",
+          toolName: "provider:test-provider",
+        }],
+      }),
+    );
+
+    expect(r).toEqual({
+      code: "provider_circuit_open",
+      detail: "the model provider circuit breaker opened for test-provider after repeated request failures",
+      suggestedNextSteps: [
+        "check credentials, endpoint connectivity, and provider configuration for test-provider",
+        "retry after the provider recovers or the configured breaker cooldown expires",
+        "obs.explain depth=full for the breaker timeline",
+      ],
+    });
+  });
+
   it("missing sub-agent completion route outranks a clean execution rollup", () => {
     const r = rootCause(
       makeSignals({

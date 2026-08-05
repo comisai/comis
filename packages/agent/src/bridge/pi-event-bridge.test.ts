@@ -2273,6 +2273,7 @@ describe("createPiEventBridge", () => {
 
       expect(deps.onAbort).toHaveBeenCalledTimes(1);
       expect(getResult().finishReason).toBe("circuit_open");
+      expect(getResult().breakerTripCount).toBe(1);
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           hint: expect.stringContaining("Circuit breaker opened"),
@@ -2304,6 +2305,7 @@ describe("createPiEventBridge", () => {
         sessionKey: deps.sessionKey,
         reason: "circuit_breaker",
         agentId: "test-agent",
+        provider: "anthropic",
         timestamp: expect.any(Number),
       }));
     });
