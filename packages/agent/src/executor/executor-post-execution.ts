@@ -132,13 +132,14 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceSchedulerStateEvidence,
   enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
   enforceSenderAuthorityGrounding,
@@ -1632,6 +1633,48 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
       reason: "agent_update_noop_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const schedulerStateGrounding = enforceSchedulerStateEvidence({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildSchedulerStateEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (schedulerStateGrounding.corrected) {
+    result.response = schedulerStateGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "Inspect the current-turn cron receipts in comis explain and call cron list or status "
+          + "before confirming that a reminder or scheduled job still exists.",
+      },
+      "Unsupported scheduler state claim replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.scheduler_state_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "scheduler_state",
+        reason: schedulerStateGrounding.reason,
+        requiredTool: "cron",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_scheduler_state_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),

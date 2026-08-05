@@ -120,6 +120,98 @@ export interface OngoingWorkEvidenceGuardResult {
   reason?: "missing_ongoing_work_evidence";
 }
 
+export interface SchedulerStateEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_scheduler_state_evidence";
+}
+
+const SCHEDULER_STATE_SUBJECTS = [
+  "reminder",
+  "alarm",
+  "timer",
+  "cron job",
+  "scheduled job",
+  "scheduled task",
+];
+
+const SCHEDULER_STATE_PREDICATES = [
+  " is active",
+  " is already active",
+  " is created",
+  " is already created",
+  " is scheduled",
+  " is already scheduled",
+  " is set",
+  " is already set",
+  " was active",
+  " was already active",
+  " was created",
+  " was already created",
+  " was scheduled",
+  " was already scheduled",
+  " was set",
+  " was already set",
+  " has been created",
+  " has been scheduled",
+  " has been set",
+  " had been created",
+  " had been scheduled",
+  " had been set",
+];
+
+const SCHEDULER_STATE_TERMINATORS = [" ", ".", ",", "!", "?", ":", ";", "—", "-"];
+
+const SCHEDULER_STATE_EVIDENCE_ACTIONS = new Set([
+  "add",
+  "update",
+  "list",
+  "status",
+  "runs",
+  "run",
+]);
+
+/**
+ * Require a current-turn scheduler receipt before preserving affirmative prose
+ * about an existing reminder or scheduled job. Conversation history records
+ * what was once reported, not whether the mutable scheduler still contains it.
+ */
+export function enforceSchedulerStateEvidence(params: {
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+  }>;
+  honestResponse: string;
+}): SchedulerStateEvidenceGuardResult {
+  const normalizedResponse = normalizedEvidenceText(params.response);
+  const claimsCurrentSchedulerState = SCHEDULER_STATE_SUBJECTS.some(
+    (subject) => SCHEDULER_STATE_PREDICATES.some(
+      (predicate) => SCHEDULER_STATE_TERMINATORS.some(
+        (terminator) => normalizedResponse.includes(` ${subject}${predicate}${terminator}`),
+      ),
+    ),
+  );
+  if (!claimsCurrentSchedulerState) {
+    return { response: params.response, corrected: false };
+  }
+  const hasEvidence = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "cron"
+      && result.success
+      && result.action !== undefined
+      && SCHEDULER_STATE_EVIDENCE_ACTIONS.has(result.action),
+  );
+  return hasEvidence
+    ? { response: params.response, corrected: false }
+    : {
+        response: params.honestResponse,
+        corrected: true,
+        reason: "missing_scheduler_state_evidence",
+      };
+}
+
 export interface CompletionEvidenceGuardResult {
   response: string;
   corrected: boolean;
