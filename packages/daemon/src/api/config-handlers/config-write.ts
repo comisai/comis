@@ -52,6 +52,7 @@ import {
 } from "./config-helpers.js";
 import { runCommittedConfigLifecycle, valueChangeIndicator } from "./config-lifecycle.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
+import { commitConfigVersionBestEffort } from "../shared/config-git-commit.js";
 /** Rate-limit bucket shape exposed by `createTokenBucket` in config-helpers.ts. */
 export interface PatchBucket {
   tryConsume(): { allowed: boolean; retryAfterMs?: number };
@@ -288,21 +289,21 @@ export function bindConfigWriteHandlers(
         runCommittedConfigLifecycle(deps, validation.data, "config.patch");
         // Best-effort git versioning
         if (deps.configGitManager) {
-          const gitStart = systemNowMs();
-          await deps.configGitManager.commit({
-            section,
-            key,
-            agent: ctx?.agentId ?? (rawParams._agentId as string | undefined),
-            user: ctx?.userId ?? (rawParams._userId as string | undefined),
-            traceId: ctx?.traceId ?? (rawParams._traceId as string | undefined),
-            summary: key
-              ? `Changed ${section}.${key} to ${JSON.stringify(value)}`
-              : `Updated ${section} section`,
-          }).then(() => {
-            deps.logger.debug({ method: "config.patch", durationMs: systemNowMs() - gitStart, outcome: "success", section }, "Git commit recorded");
-          }).catch((gitErr: unknown) => {
-            deps.logger.debug({ method: "config.patch", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, section }, "Git commit failed (best-effort)");
-          });
+          await commitConfigVersionBestEffort(
+            deps.configGitManager,
+            {
+              section,
+              key,
+              agent: ctx?.agentId ?? (rawParams._agentId as string | undefined),
+              user: ctx?.userId ?? (rawParams._userId as string | undefined),
+              traceId: ctx?.traceId ?? (rawParams._traceId as string | undefined),
+              summary: key
+                ? `Changed ${section}.${key} to ${JSON.stringify(value)}`
+                : `Updated ${section} section`,
+            },
+            deps.logger,
+            { method: "config.patch", section },
+          );
         }
 
         const durationMs = systemNowMs() - startMs;

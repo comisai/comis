@@ -61,6 +61,7 @@ import { ok, err } from "@comis/shared";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { parse as parseYaml, stringify as yamlStringify } from "yaml";
+import { commitConfigVersionBestEffort } from "./config-git-commit.js";
 
 // ---------------------------------------------------------------------------
 // Env-ref masking for the plaintext-secret scan.
@@ -458,7 +459,6 @@ export async function persistToConfig(
 
     // Best-effort git versioning
     if (deps.configGitManager) {
-      const gitStart = systemNowMs();
       const section = Object.keys(opts.patch)[0] ?? "config";
       const meta: GitCommitMetadata = {
         section,
@@ -468,11 +468,12 @@ export async function persistToConfig(
         traceId: opts.traceId,
         summary: `${opts.actionType}: ${opts.entityId}`,
       };
-      await deps.configGitManager.commit(meta).then(() => {
-        deps.logger.debug({ method: "persistToConfig", durationMs: systemNowMs() - gitStart, outcome: "success" }, "Git commit recorded");
-      }).catch((gitErr: unknown) => {
-        deps.logger.debug({ method: "persistToConfig", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, hint: "Git commit failed (best-effort)", errorKind: "internal" as const }, "Git commit failed (best-effort)");
-      });
+      await commitConfigVersionBestEffort(
+        deps.configGitManager,
+        meta,
+        deps.logger,
+        { method: "persistToConfig" },
+      );
     }
 
     const durationMs = systemNowMs() - startMs;
