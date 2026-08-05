@@ -3422,10 +3422,6 @@
     "category": "session",
     "schema": {
       "properties": {
-        "agent_id": {
-          "description": "Agent that owns the sessions",
-          "type": "string"
-        },
         "limit": {
           "description": "Maximum results to return (default: 10, max: 30)",
           "maximum": 30,
@@ -3443,16 +3439,8 @@
         "summarize": {
           "description": "Summarize matched sessions using LLM (default: true when query provided)",
           "type": "boolean"
-        },
-        "tenant_id": {
-          "description": "Tenant that owns the sessions",
-          "type": "string"
         }
       },
-      "required": [
-        "tenant_id",
-        "agent_id"
-      ],
       "type": "object"
     },
     "conditional": false

@@ -263,7 +263,14 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
     },
 
     [SessionSearchContract.method]: async (rawParams) => {
-      const params = SessionSearchContract.request.parse(stripInternalFields(rawParams));
+      const caller = resolveModelSessionCaller(deps, rawParams, "session.search");
+      const params = SessionSearchContract.request.parse({
+        ...(caller === undefined ? {} : {
+          tenant_id: caller.tenantId,
+          agent_id: caller.agentId,
+        }),
+        ...stripInternalFields(rawParams),
+      });
       const authority = requireQueryAuthority(
         deps,
         { tenant_id: params.tenant_id, agent_id: params.agent_id },
