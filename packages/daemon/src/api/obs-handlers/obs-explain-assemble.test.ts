@@ -2234,6 +2234,30 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("names a pre-send completion-evidence block as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_completion_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_completion_evidence_missing",
+      detail:
+        "the pre-send response honesty guard blocked a completion claim because the "
+        + "current mutation request had no successful matching mutation receipt",
+      suggestedNextSteps: [
+        "inspect the blocked message tool record and request-matched mutation tools",
+        "complete and verify the mutation before retrying user-visible delivery",
+      ],
+    });
+  });
+
   it("keeps an acute spawn ceiling refusal above its downstream delegation correction", async () => {
     const reader: IncidentSourceReader = {
       ...makeAuditReader([

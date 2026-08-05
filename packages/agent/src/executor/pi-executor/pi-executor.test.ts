@@ -8567,6 +8567,19 @@ describe("recent recall context provenance wiring", () => {
   });
 });
 
+describe("outbound completion evidence wiring", () => {
+  it("threads request-matched mutation receipts into the pre-send guard", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/requestMutationToolNames/);
+    expect(src).toMatch(/currentSuccessfulMutationCount/);
+    expect(src).toMatch(/response\.outbound_completion_evidence_guard/);
+    expect(src.indexOf("requestMutationToolNames"))
+      .toBeLessThan(src.indexOf("createBeforeToolCallGuard("));
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Source-text wiring guard: normalizeModelCompat call-site threading
 // ---------------------------------------------------------------------------
