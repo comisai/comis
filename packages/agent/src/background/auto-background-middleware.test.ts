@@ -96,6 +96,7 @@ function buildOrigin(
       tenantId,
     },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(
@@ -489,6 +490,7 @@ describe("wrapToolForAutoBackground", () => {
           tenantId: "default",
         },
         traceId: "child-trace",
+        trustLevel: "user",
         responseLocalePolicy: { source: "unset", enforceLocale: false },
         backgroundHopCount: 0,
       };

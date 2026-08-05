@@ -360,6 +360,7 @@ describe("mountGatewayRoutes", () => {
       conversationRef: conversationRef.value,
       deliveryOrigin,
       traceId: context?.traceId ?? null,
+      trustLevel: context?.trustLevel,
       responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     });

@@ -116,9 +116,11 @@ function createReentryContext(
       agentId: origin.turnScope.conversation.agentId,
       traceId,
       startedAt: systemNowMs(),
-      trustLevel: "guest" as const,
-      // A completion announcement continues an existing authorized turn. It is
-      // runtime-generated context, not fresh user evidence for durable learning.
+      // Continue with the immutable authority resolved for the originating
+      // turn. Ambient context must neither escalate nor demote delayed work.
+      trustLevel: origin.trustLevel,
+      // A completion announcement is runtime-generated context, not fresh user
+      // evidence for durable learning.
       learningEligible: false,
       channelType: deliveryOrigin.channelType,
       deliveryOrigin,

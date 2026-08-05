@@ -171,6 +171,7 @@ function buildOrigin(
       channelId: "test",
     },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...authorityOverrides,

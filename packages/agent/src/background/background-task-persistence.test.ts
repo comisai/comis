@@ -39,6 +39,7 @@ function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: stri
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId: "default" },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId")),

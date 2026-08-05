@@ -51,6 +51,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; s
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
@@ -838,7 +839,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
   });
 
-  it("restart re-entry without ambient context creates one valid guest scope for the event and executor", async () => {
+  it("restart re-entry without ambient context restores the persisted user scope", async () => {
     const task = buildTask({
       status: "failed",
       error: "Daemon restarted while task was running",
@@ -889,7 +890,7 @@ describe("createBackgroundCompletionRunner", () => {
       userId: "user_restart",
       sessionKey: originSessionKey(task.origin),
       agentId: "agent_restart",
-      trustLevel: "guest",
+      trustLevel: "user",
       channelType: "telegram",
       deliveryOrigin: {
         channelType: "telegram",
