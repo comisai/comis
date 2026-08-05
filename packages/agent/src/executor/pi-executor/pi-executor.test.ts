@@ -3604,7 +3604,10 @@ describe("PiExecutor", () => {
     it("disables pending SDK retries before aborting a safety-stopped execution", async () => {
       const callOrder: string[] = [];
       mockApplyOverrides.mockImplementation((overrides: unknown) => {
-        if (JSON.stringify(overrides) === JSON.stringify({ retry: { enabled: false } })) {
+        if (JSON.stringify(overrides) === JSON.stringify({
+          retry: { enabled: false },
+          compaction: { enabled: false },
+        })) {
           callOrder.push("disableRetry");
         }
       });
@@ -3621,7 +3624,10 @@ describe("PiExecutor", () => {
       const bridgeCall = (createPiEventBridge as Mock).mock.calls[0][0];
       bridgeCall.onAbort();
 
-      expect(mockApplyOverrides).toHaveBeenCalledWith({ retry: { enabled: false } });
+      expect(mockApplyOverrides).toHaveBeenCalledWith({
+        retry: { enabled: false },
+        compaction: { enabled: false },
+      });
       expect(callOrder).toEqual(["disableRetry", "abortCompaction", "abort"]);
     });
 
