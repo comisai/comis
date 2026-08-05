@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, ClockPort, NormalizedMessage, ResolvedTurnScope, SttPreprocessSelection, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, VisionDirectPreprocessReceipt, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ClockPort, NormalizedMessage, ResolvedTurnScope, SttPreprocessSelection, TranscriptionPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, VisionDirectPreprocessReceipt, WrapExternalContentOptions, MediaAttachmentPreprocessReceipt, MediaResolutionError } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isVisionCapable } from "@comis/agent";
@@ -35,7 +35,7 @@ import {
 } from "@comis/skills";
 import type { LinkRunner, MediaPersistenceService, PersistedFile } from "@comis/skills";
 import { getModel } from "@earendil-works/pi-ai/compat";
-import { safePath, SttPreprocessReceiptsSchema, systemNowMs } from "@comis/core";
+import { formatMediaAttachmentRejection, MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY, MediaAttachmentPreprocessReceiptsSchema, MediaResolutionError as StructuredMediaResolutionError, safePath, SttPreprocessReceiptsSchema, systemNowMs } from "@comis/core";
 import os from "node:os";
 
 // ---------------------------------------------------------------------------
@@ -260,17 +260,39 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
   }, "CompositeResolver initialized");
 
   // Resolve attachment callback for media preprocessor and preflight
-  const resolveAttachment = async (att: Attachment): Promise<Buffer | null> => {
+  const resolveAttachmentWithReceipt = async (
+    att: Attachment,
+    onRejection?: (error: MediaResolutionError) => void,
+  ): Promise<Buffer | null> => {
+    const startedAt = systemNowMs();
     const result = await compositeResolver.resolve(att);
     if (!result.ok) {
+      const durationMs = systemNowMs() - startedAt;
+      if (result.error instanceof StructuredMediaResolutionError) {
+        onRejection?.(result.error);
+        channelsLogger.warn(
+          {
+            sizeBytes: result.error.sizeBytes,
+            maxBytes: result.error.maxBytes,
+            configKey: MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY,
+            durationMs,
+            hint: `Send an attachment no larger than ${result.error.maxBytes} bytes or raise ${MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY} above ${result.error.sizeBytes}`,
+            errorKind: "precondition" as const,
+          },
+          "Media attachment rejected by size limit",
+        );
+        return null;
+      }
       channelsLogger.warn(
-        { url: att.url, err: result.error.message, hint: "Check platform resolver and network connectivity", errorKind: "network" as const },
+        { url: att.url, err: result.error.message, durationMs, hint: "Check the channel media resolver, platform credentials, and network connectivity", errorKind: "network" as const },
         "Media resolution failed",
       );
       return null;
     }
     return result.value.buffer;
   };
+  const resolveAttachment = (att: Attachment): Promise<Buffer | null> =>
+    resolveAttachmentWithReceipt(att);
 
   // Build preprocessMessage callback (wraps link understanding + media resolution)
   const preprocessMessageCallback = async (
@@ -304,6 +326,20 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
 
     // 2. Media preprocessing with vision gating
     if (enrichedMsg.attachments && enrichedMsg.attachments.length > 0) {
+      const attachmentReceiptsByIndex = new Map<number, MediaAttachmentPreprocessReceipt>();
+      const resolveCurrentAttachment = (att: Attachment): Promise<Buffer | null> =>
+        resolveAttachmentWithReceipt(att, (error) => {
+          const attachmentIndex = enrichedMsg.attachments?.indexOf(att) ?? -1;
+          if (attachmentIndex < 0 || attachmentIndex > 15) return;
+          attachmentReceiptsByIndex.set(attachmentIndex, {
+            attachmentIndex,
+            outcome: "rejected",
+            reason: error.kind,
+            sizeBytes: error.sizeBytes,
+            maxBytes: error.maxBytes,
+            configKey: MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY,
+          });
+        });
       const hasImages = enrichedMsg.attachments.some(
         (a) => a.type === "image" || a.mimeType?.startsWith("image/"),
       );
@@ -358,7 +394,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           const existing = persistenceResolutions.get(att.url);
           if (existing) return existing;
           const pending = (async () => {
-            const buffer = await resolveAttachment(att);
+            const buffer = await resolveCurrentAttachment(att);
             if (buffer) {
               // Classify attachment for subdirectory routing
               const mediaKind = att.mimeType?.startsWith("image/") || att.type === "image" ? "image"
@@ -402,7 +438,7 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
           persistenceResolutions.set(att.url, pending);
           return pending;
         }
-        : resolveAttachment;
+        : resolveCurrentAttachment;
 
       if (persistenceEnabled) {
         for (const attachment of enrichedMsg.attachments) {
@@ -453,16 +489,38 @@ export async function buildMediaPipeline(deps: MediaPipelineDeps): Promise<Media
       const sttReceipts = SttPreprocessReceiptsSchema.safeParse(
         result.sttReceipts,
       );
-      const resultMessage = sttReceipts.success
-        && sttReceipts.data.length > 0
-        ? {
-            ...result.message,
-            metadata: {
-              ...result.message.metadata,
-              sttPreprocess: sttReceipts.data,
-            },
-          }
-        : result.message;
+      const combinedAttachmentReceipts = [
+        ...(result.attachmentReceipts ?? []),
+        ...attachmentReceiptsByIndex.values(),
+      ].filter((receipt, index, all) =>
+        all.findIndex((candidate) =>
+          candidate.attachmentIndex === receipt.attachmentIndex
+          && candidate.reason === receipt.reason,
+        ) === index,
+      );
+      const attachmentReceipts = MediaAttachmentPreprocessReceiptsSchema.safeParse(
+        combinedAttachmentReceipts,
+      );
+      const missingNotices = attachmentReceipts.success
+        ? attachmentReceipts.data
+            .map(formatMediaAttachmentRejection)
+            .filter((notice) => !result.message.text.includes(notice))
+        : [];
+      const resultMessage = {
+        ...result.message,
+        text: missingNotices.length > 0
+          ? `${missingNotices.join("\n")}\n\n${result.message.text}`
+          : result.message.text,
+        metadata: {
+          ...result.message.metadata,
+          ...(sttReceipts.success && sttReceipts.data.length > 0
+            ? { sttPreprocess: sttReceipts.data }
+            : {}),
+          ...(attachmentReceipts.success && attachmentReceipts.data.length > 0
+            ? { mediaAttachmentPreprocess: attachmentReceipts.data }
+            : {}),
+        },
+      };
 
       // Emit file extraction events
       for (const fe of result.fileExtractions) {
