@@ -57,6 +57,91 @@ describe("exact citation evidence grounding", () => {
     });
   });
 
+  it("keeps a fetched citation written as prose with sentence punctuation", () => {
+    const fetched = "https://example.com/report";
+    const response = `Source: ${fetched}. Cited again as ${fetched}, then "${fetched}".`;
+
+    expect(enforceCitationEvidence({
+      response,
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    })).toEqual({
+      response,
+      corrected: false,
+      matchedDigests: [urlDigest(fetched)],
+      removedCitationCount: 0,
+    });
+  });
+
+  it("removes an unverified prose URL but keeps the sentence terminator", () => {
+    const fetched = "https://example.com/report";
+    const guarded = enforceCitationEvidence({
+      response: "Source: https://unverified.example/x. Nothing else.",
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    });
+
+    expect(guarded.response).toBe("Source: . Nothing else.");
+    expect(guarded.removedCitationCount).toBe(1);
+    expect(guarded.corrected).toBe(true);
+  });
+
+  it("keeps a fetched citation whose path carries balanced parentheses", () => {
+    const fetched = "https://en.wikipedia.org/wiki/Comis_(software)";
+    const response = `See [Comis (software)](${fetched}) — bare form ${fetched}.`;
+
+    expect(enforceCitationEvidence({
+      response,
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    })).toEqual({
+      response,
+      corrected: false,
+      matchedDigests: [urlDigest(fetched)],
+      removedCitationCount: 0,
+    });
+  });
+
+  it("does not echo an unverified URL back through a markdown link label", () => {
+    const unverified = "https://unverified.example/x";
+    const guarded = enforceCitationEvidence({
+      response: `Read more: [${unverified}](${unverified})`,
+      allowedUrlDigests: [urlDigest("https://example.com/report")],
+      enabled: true,
+    });
+
+    expect(guarded.response).not.toContain("unverified.example");
+    expect(guarded.corrected).toBe(true);
+    expect(guarded.removedCitationCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("strips an unverified URL out of an evidence-backed link's label", () => {
+    const fetched = "https://example.com/report";
+    const guarded = enforceCitationEvidence({
+      response: `[https://unverified.example/x](${fetched})`,
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    });
+
+    expect(guarded.response).not.toContain("unverified.example");
+    expect(guarded.response).toContain(fetched);
+    expect(guarded.corrected).toBe(true);
+    expect(guarded.matchedDigests).toEqual([urlDigest(fetched)]);
+  });
+
+  it("does not leave an unverified autolink inside a link label", () => {
+    const fetched = "https://example.com/report";
+    const guarded = enforceCitationEvidence({
+      response: `[see <https://unverified.example/x> too](${fetched})`,
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    });
+
+    expect(guarded.response).not.toContain("unverified.example");
+    expect(guarded.response).toContain(fetched);
+    expect(guarded.corrected).toBe(true);
+  });
+
   it("does not filter citations outside an evidence-bearing research turn", () => {
     const response = "Project home: https://example.com/product";
     expect(enforceCitationEvidence({
