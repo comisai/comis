@@ -6,6 +6,7 @@ import {
   projectSessionValueForPersistence,
 } from "./sanitize-session-secrets.js";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -800,5 +801,61 @@ describe("projectSessionValueForPersistence — structural conversation identity
     const out = projectSessionValueForPersistence({ someOtherField: REF });
 
     expect(out.redactions).toBeGreaterThan(0);
+  });
+});
+
+describe("projectSessionValueForPersistence — runtime citation receipts", () => {
+  const DIGEST = createHash("sha256")
+    .update("https://example.com/source", "utf8")
+    .digest("hex");
+
+  it("keeps exact citation digests on a runtime-authored assistant turn", () => {
+    const out = projectSessionValueForPersistence({
+      role: "assistant",
+      content: [{ type: "text", text: "[Source](https://example.com/source)" }],
+      citationEvidenceDigests: [DIGEST],
+    });
+
+    expect(out.redactions).toBe(0);
+    expect(
+      (out.value as { citationEvidenceDigests: string[] }).citationEvidenceDigests,
+    ).toEqual([DIGEST]);
+  });
+
+  it("keeps exact citation digests through the durable session repair", () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const path = writeJsonl(tmpDir, [
+        { type: "session", version: 1, id: "s1" },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "[Source](https://example.com/source)" }],
+            citationEvidenceDigests: [DIGEST],
+          },
+        },
+      ]);
+
+      expect(sanitizeSessionSecrets(path)).toBe(0);
+      const entries = readJsonlEntries(path) as Array<{
+        message?: { citationEvidenceDigests?: string[] };
+      }>;
+      expect(entries[1]?.message?.citationEvidenceDigests).toEqual([DIGEST]);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still redacts a digest-shaped value outside a runtime assistant receipt", () => {
+    const out = projectSessionValueForPersistence({
+      role: "user",
+      citationEvidenceDigests: [DIGEST],
+    });
+
+    expect(out.redactions).toBeGreaterThan(0);
+    expect(
+      (out.value as { citationEvidenceDigests: string[] }).citationEvidenceDigests,
+    ).toEqual(["[REDACTED]"]);
   });
 });
