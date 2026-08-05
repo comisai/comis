@@ -1336,6 +1336,24 @@ describe("buildFindings — learning_health (reflection funnel rollup)", () => {
       .toContain("comis cron runs");
   });
 
+  it("surfaces partial reflection dependency failures in the daemon-wide finding", () => {
+    const row = learningHealthRow(1_000, { admissionOutcome: "admitted", admitted: 1 });
+    row.details = JSON.stringify({
+      admissionOutcome: "admitted",
+      admitted: 1,
+      untrustedDrops: 0,
+      dependencyFailures: 1,
+      failedPasses: 0,
+    });
+
+    const finding = buildFindings([], [], [], [row]).find((item) => item.code === "learning_health");
+
+    expect(finding?.detail).toContain("latest status=failed");
+    expect(finding?.detail).toContain("errorKind=dependency");
+    expect(finding?.detail).toContain("failedRuns=1");
+    expect(finding?.detail).toContain("dependencyFailures=1");
+  });
+
   it("no learning_health finding when there are no reflection rows (callers omitting the argument are unchanged)", () => {
     expect(buildFindings([], [], []).some((f) => f.code === "learning_health")).toBe(false);
   });
