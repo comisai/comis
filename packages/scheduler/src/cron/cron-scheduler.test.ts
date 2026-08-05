@@ -775,6 +775,30 @@ describe("durable cron scheduler lifecycle", () => {
     }));
   });
 
+  it("acknowledges a manual trigger after its durable start while execution continues", async () => {
+    let settleExecution!: (result: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    let runtimeInput!: CronRuntimeExecutionInput;
+    const built = await fixture({
+      seedJob: job("future", { kind: "at", atMs: NOW_MS + 10_000 }),
+      execute: (input) => {
+        runtimeInput = input;
+        return new Promise((resolve) => { settleExecution = resolve; });
+      },
+    });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+
+    await expect(built.scheduler.triggerJob("future")).resolves.toEqual(ok("execution_1"));
+    expect(settleExecution).toBeTypeOf("function");
+    const started = await built.tracker.readExecution("execution_1");
+    expect(started).toMatchObject({ ok: true, value: { terminal: undefined } });
+
+    settleExecution(ok(completed(runtimeInput)));
+    await built.scheduler.waitForIdle();
+    const terminal = await built.tracker.readExecution("execution_1");
+    expect(terminal).toMatchObject({ ok: true, value: { terminal: { outcome: { kind: "agent_turn" } } } });
+  });
+
   it("rejects activation when recurring stagger eligibility would overflow", async () => {
     const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
     recurring.lifecycle = {

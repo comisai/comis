@@ -67,6 +67,7 @@ function scheduler(jobs: CronJob[] = [job()]): CronScheduler {
     removeJob: vi.fn(async () => ok(true)),
     getJobs: vi.fn(() => ok(jobs)),
     runMissedJobs: vi.fn(async () => ok([])),
+    triggerJob: vi.fn(async () => ok("execution-a")),
     runJob: vi.fn(async () => ok("execution-a")),
   };
 }
@@ -226,14 +227,15 @@ describe("strict cron RPC mutations", () => {
     })).rejects.toThrow(/config-owned/i);
   });
 
-  it("manual run delegates to runJob without rewriting persisted lifecycle", async () => {
+  it("manual run acknowledges a durable trigger without rewriting persisted lifecycle", async () => {
     const scheduled = job();
     const cronScheduler = scheduler([scheduled]);
     const bound = handlers(deps(cronScheduler));
 
     const result = await bound["cron.run"]!({ jobName: scheduled.name });
 
-    expect(cronScheduler.runJob).toHaveBeenCalledWith(scheduled.id);
+    expect(cronScheduler.triggerJob).toHaveBeenCalledWith(scheduled.id);
+    expect(cronScheduler.runJob).not.toHaveBeenCalled();
     expect(cronScheduler.runMissedJobs).not.toHaveBeenCalled();
     expect(scheduled.lifecycle).toEqual({
       status: "scheduled",
