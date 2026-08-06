@@ -150,7 +150,17 @@ export function scoreSdkSteeringBurst({
     }
   }
 
-  const overlap = overlapReport(trajectoryRecords);
+  // The follow-up ingress trace is a zero-duration disposition marker, not a
+  // second model execution. Including it reports "overlap=true" with
+  // maxConcurrent=1, a self-contradictory metric. SDK steering remains one
+  // execution whose live input changed in flight.
+  const baseTraceId = trajectoryRecords.find(
+    (record) => record?.type === "queue.enqueued",
+  )?.traceId;
+  const executionRecords = baseTraceId === undefined
+    ? trajectoryRecords
+    : trajectoryRecords.filter((record) => record?.traceId === baseTraceId);
+  const overlap = overlapReport(executionRecords);
   return {
     attribution,
     wire: wireReport,
