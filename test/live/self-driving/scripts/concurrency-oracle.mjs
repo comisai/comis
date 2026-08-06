@@ -396,8 +396,10 @@ export function wireReconciliation({ wire = [], bindings = [] }) {
     if (state?.status !== "answered" || typeof state.answerKey !== "string") continue;
     boundAnswers.set(state.answerKey, (boundAnswers.get(state.answerKey) ?? 0) + 1);
   }
+  const hasBoundAnswers = boundAnswers.size > 0;
   const violations = [];
   for (const [text, count] of occurrences) {
+    if (hasBoundAnswers && !boundAnswers.has(text)) continue;
     const allowed = Math.max(1, boundAnswers.get(text) ?? 0);
     if (count <= allowed) continue;
     violations.push({
@@ -412,17 +414,25 @@ export function wireReconciliation({ wire = [], bindings = [] }) {
     });
   }
   const answered = bindings.filter((state) => state.status === "answered").length;
-  if (substantive.length < answered) {
+  const matchedSubstantive = hasBoundAnswers
+    ? [...boundAnswers.entries()].reduce(
+        (total, [text, expected]) => total + Math.min(occurrences.get(text) ?? 0, expected),
+        0,
+      )
+    : substantive.length;
+  if (matchedSubstantive < answered) {
     violations.push({
       kind: "answer-not-delivered",
       severity: "hard",
       detail:
-        `the transcript bound ${answered} answers but only ${substantive.length} substantive `
+        `the transcript bound ${answered} answers but only ${matchedSubstantive} matching substantive `
         + "outbound records reached the wire",
     });
   }
   return {
-    substantiveOutbound: substantive.length,
+    substantiveOutbound: matchedSubstantive,
+    rawSubstantiveOutbound: substantive.length,
+    unattributedOutbound: substantive.length - matchedSubstantive,
     progressOutbound: progress,
     violations,
   };

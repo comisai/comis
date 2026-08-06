@@ -236,6 +236,8 @@ const report = {
   ambiguousAnswers: scored.attribution.ambiguousAnswers,
   wire: {
     substantiveOutbound: scored.wire.substantiveOutbound,
+    rawSubstantiveOutbound: scored.wire.rawSubstantiveOutbound,
+    unattributedOutbound: scored.wire.unattributedOutbound,
     progressOutbound: scored.wire.progressOutbound,
   },
   overlapDetail: {
@@ -252,7 +254,11 @@ if (format === 'json') {
   console.log(`row               ${report.label ?? '(unlabelled)'}  chat ${report.chatId}`);
   console.log(`shape             ${scored.verdict.shape}`);
   console.log(`inbounds          ${counts.injected} injected · ${counts.answered} answered · ${counts.ambiguous} ambiguous · ${counts.unanswered} unanswered`);
-  console.log(`wire              ${report.wire.substantiveOutbound} substantive · ${report.wire.progressOutbound} progress`);
+  console.log(
+    `wire              ${report.wire.substantiveOutbound} matched substantive · `
+    + `${report.wire.rawSubstantiveOutbound} raw · ${report.wire.unattributedOutbound} unrelated · `
+    + `${report.wire.progressOutbound} progress`,
+  );
   console.log(`overlap           ${overlap.overlapped ? 'PROVEN' : 'NONE'} · maxConcurrent ${overlap.maxConcurrent} · traces ${overlap.traces}`);
   console.log(`transcript        ${report.transcript ?? '(none matched)'} (${report.inboundsFoundInTranscript}/${counts.injected} inbounds)`);
   console.log(`trajectory        ${report.trajectory ?? '(none resolved)'}`);
