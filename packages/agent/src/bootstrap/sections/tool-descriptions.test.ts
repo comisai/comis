@@ -113,6 +113,12 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/CRITICAL/);
   });
 
+  it("gateway guide defers post-restart verification to a later turn", () => {
+    expect(TOOL_GUIDES.gateway).toMatch(/restarting:true.*scheduled.*not completed/isu);
+    expect(TOOL_GUIDES.gateway).toMatch(/end the turn.*without.*read.*verify/isu);
+    expect(TOOL_GUIDES.gateway).toMatch(/do not claim.*restart.*completed/isu);
+  });
+
   it("gateway guide adds Credential Discovery section header", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Credential Discovery/);
   });
