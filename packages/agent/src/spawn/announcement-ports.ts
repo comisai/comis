@@ -91,6 +91,10 @@ export interface QueuedAnnouncementShape {
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;
+  /** Outward-ledger tree root for the parked decision reservation. Without it a
+   *  reservation can never be adjudicated and a finished completion parks forever.
+   *  Mirrors QueuedAnnouncement.reservationRootRunId — keep in lockstep. */
+  reservationRootRunId?: string | undefined;
   attachments?: CompletionAttachmentShape[];
 }
 

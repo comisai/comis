@@ -566,7 +566,7 @@ export async function deliverAnnouncement(params: {
       ...(params.citationEvidence ? { citationEvidence: params.citationEvidence } : {}),
       terminalOutcome: params.terminalOutcome,
       runId,
-      idempotencyKey: announceKey,
+      idempotencyKey: announceKey, reservationRootRunId: resolveReservationRoot(deps.resolveRootRunId, callerAgentId, params.callerConversation.conversationScope),
       ...(params.attachments?.length ? { attachments: params.attachments } : {}),
     });
     if (!enqueued?.ok) {

@@ -708,7 +708,23 @@ export function createAnnouncementDeadLetterQueue(
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
     for (const reservation of [...decisionReservations]) {
-      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) continue;
+      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) {
+        // PERMANENT, unlike the ledger-error skip below: with no tree root there
+        // is nothing to ask the ledger, so this reservation can never settle and
+        // the completion behind it is never delivered. Silence here made a
+        // permanently-lost result indistinguishable from a transient one.
+        logger?.warn(
+          {
+            runId: reservation.runId,
+            agentId: reservation.agentId,
+            channelType: reservation.channelType,
+            hint: "This parked completion can never be adjudicated: the reservation carries no rootRunId, so the outward ledger cannot be asked whether the announcement was sent. Deliver or discard it by hand, and ensure the reserving path stamps rootRunId.",
+            errorKind: "internal" as const,
+          },
+          "Parent decision reservation can never be adjudicated (no ledger root)",
+        );
+        continue;
+      }
       const step = await fromPromise(
         ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
       );

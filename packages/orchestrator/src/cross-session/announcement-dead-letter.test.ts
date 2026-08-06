@@ -806,6 +806,38 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(1);
   });
 
+  // `adjudicateReservations` is fail-safe: a reservation with no ledger tree root
+  // cannot be settled, because there is no tree to ask for the step the send
+  // WOULD have used. That skip was SILENT, so a permanently unrecoverable
+  // reservation looked identical to a transient one — live on comis-moshe, two
+  // sat parked for over 24h while the only signal was a count, and a real user
+  // never received the chart set a sub-agent had already produced.
+  it("warns, naming the missing ledger root, when a reservation can never be adjudicated", async () => {
+    const logger = createMockLogger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger,
+      outwardLedger: {
+        allocateStep: vi.fn(),
+        recordState: vi.fn(),
+        findByOperation: vi.fn(),
+      } as unknown as OutwardSendLedgerPort,
+    });
+
+    await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
+    await queue.drain(vi.fn().mockResolvedValue(true));
+
+    const warned = (logger.warn as unknown as { mock: { calls: [Record<string, unknown>, string][] } })
+      .mock.calls.find(([, msg]) => /never be adjudicated|cannot be adjudicated/i.test(msg));
+    expect(warned).toBeDefined();
+    expect(warned?.[0]).toMatchObject({ runId: "run-parent-1", errorKind: "internal" });
+    expect(String(warned?.[0].hint)).toMatch(/rootRunId/);
+    // Fail-safe: it must still be retained, never discarded on the strength of
+    // being unrecoverable.
+    expect(queue.size()).toBe(1);
+  });
+
   it("removes a parent decision only through an explicit terminal resolution", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
