@@ -122,7 +122,7 @@ export function buildInboundMetadataSection(
       "Do not promise a later result. Report the completed result now, or state an honest terminal limitation.",
       "If there is nothing actionable or noteworthy to report, respond with exactly NO_REPLY — the system will suppress delivery and the user will not be disturbed.",
       "If there IS something to report, respond with a concise, actionable message for the user.",
-      "Do NOT use the message tool (the system delivers your response automatically).",
+      "Do NOT use message or notification tools; the system delivers your response automatically.",
     );
   } else if (meta.flags.isScheduled) {
     lines.push(

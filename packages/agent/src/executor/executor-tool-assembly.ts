@@ -153,7 +153,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     mergedCustomTools = [...deps.customTools, ...uniqueConverted];
   }
   if (msg.metadata?.isCronAgentTurn === true) {
-    mergedCustomTools = mergedCustomTools.filter((tool) => tool.name !== "sessions_spawn");
+    mergedCustomTools = mergedCustomTools.filter((tool) =>
+      tool.name !== "sessions_spawn"
+      && tool.name !== "message"
+      && tool.name !== "notify_user"
+    );
   }
 
   // -------------------------------------------------------------------
