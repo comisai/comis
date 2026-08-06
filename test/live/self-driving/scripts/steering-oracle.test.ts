@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   scoreSdkSteeringBurst,
@@ -28,7 +29,18 @@ const assistantRecord = (text: string): string => JSON.stringify({
   message: { role: "assistant", content: [{ type: "text", text }] },
 });
 
+const burstVerifySource = readFileSync(
+  new URL("./burst-verify.mjs", import.meta.url),
+  "utf8",
+);
+
 describe("SDK steering burst ground-truth oracle", () => {
+  it("routes the steering CLI flag through the dedicated selector and scorer", () => {
+    expect(burstVerifySource).toContain("token === '--sdk-steering'");
+    expect(burstVerifySource).toContain("selectSdkSteeringTrajectoryRecords(");
+    expect(burstVerifySource).toContain("scoreSdkSteeringBurst({");
+  });
+
   it("accepts a steered inbound that intentionally has no separate transcript turn", () => {
     const transcriptSource = [
       userRecord(BASE_GUID, "write a long report"),
