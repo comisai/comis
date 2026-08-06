@@ -46,14 +46,38 @@ if (!YAML) {
   );
 }
 
-let offlineSecretSet;
-try {
-  const { comisDist } = await import("./_rig.mjs");
-  ({ offlineSecretSet } = await import(comisDist("memory", "dist/index.js")));
-} catch {
-  fail(
-    "the encrypted secret-store adapter is unavailable from the resolved code root; build or install Comis before initializing the rig",
-  );
+/**
+ * The encrypted secret-store writer, resolved on FIRST USE rather than at module load.
+ *
+ * Only `init` persists a token, so gating module load on this import made
+ * `validate` — which reads a config and touches no secret — require a built
+ * `packages/memory/dist`. Two costs: `validate` failed on any box without a
+ * global `comisai` install (the fallback code root) reporting a secret-store
+ * problem for an operation that needs no secret store, and the kit's unit gate
+ * is contracted to run WITHOUT a `pnpm build` (see `vitest.config.ts`), so a
+ * dist import at load time reintroduced exactly the stale-dist coupling that
+ * contract exists to forbid.
+ *
+ * The failure text names the resolved path and the underlying reason: "build or
+ * install Comis" is the wrong instruction when the real fault is a code root
+ * pointing somewhere this box has no install at all.
+ */
+async function loadOfflineSecretSet() {
+  const { comisDist, rig } = await import("./_rig.mjs");
+  const modulePath = comisDist("memory", "dist/index.js");
+  try {
+    const { offlineSecretSet } = await import(modulePath);
+    if (typeof offlineSecretSet !== "function") {
+      fail(`the encrypted secret-store adapter at ${modulePath} exports no offlineSecretSet`);
+    }
+    return offlineSecretSet;
+  } catch (e) {
+    if (e?.code !== "ERR_MODULE_NOT_FOUND") throw e;
+    fail(
+      `the encrypted secret-store adapter is unavailable at ${modulePath} (code root ${rig.codeRoot}): `
+        + `${e.message.split("\n")[0]}. Build this checkout, or point PKG/COMIS_SRC at the install to initialize against.`,
+    );
+  }
 }
 
 function canonicalPath(input) {
@@ -185,11 +209,14 @@ function ensureMasterKey(dataDir) {
   return { envPath, created: true };
 }
 
-function initialize(configPath, dataDir, portInput, chatId) {
+async function initialize(configPath, dataDir, portInput, chatId) {
   assertLocalInitSelection(configPath, dataDir, portInput);
   if (existsSync(configPath)) {
     fail(`${configPath} already exists; local initialization never overwrites it`);
   }
+  // Resolved before any mutation, so an unavailable adapter aborts without
+  // having created a data dir or a master key to clean up.
+  const offlineSecretSet = await loadOfflineSecretSet();
   const port = parsePort(portInput);
   const config = parseConfig(resolve(here, "config.example.yaml"));
   const token = randomBytes(24).toString("hex");
@@ -239,5 +266,8 @@ if (!command || !configPath || !dataDir || !portInput) {
 }
 
 if (command === "validate") validate(configPath, dataDir, portInput);
-else if (command === "init") initialize(configPath, dataDir, portInput, chatId);
+// Awaited: `initialize` resolves the secret-store adapter lazily, so leaving the
+// promise dangling would surface a real failure as an unhandled rejection trace
+// instead of the single-line `fail()` the caller parses.
+else if (command === "init") await initialize(configPath, dataDir, portInput, chatId);
 else fail(`unknown local config command '${command}'`);
