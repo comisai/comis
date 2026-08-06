@@ -36,6 +36,19 @@ const assistantRecord = (text: string): string => JSON.stringify({
   message: { role: "assistant", content: [{ type: "text", text }] },
 });
 
+const assistantToolRecord = (
+  atMs: number,
+  name: string,
+  args: Record<string, unknown>,
+): string => JSON.stringify({
+  type: "message",
+  timestamp: new Date(atMs).toISOString(),
+  message: {
+    role: "assistant",
+    content: [{ type: "toolCall", name, arguments: args }],
+  },
+});
+
 const burstVerifySource = readFileSync(
   new URL("./burst-verify.mjs", import.meta.url),
   "utf8",
@@ -208,6 +221,59 @@ describe("SDK steering burst ground-truth oracle", () => {
     expect(scored.verdict.hard.map((violation) => violation.kind)).toContain(
       "unexpected-steering-delivery",
     );
+  });
+
+  it("fails when a post-boundary tool call advances the superseded goal", () => {
+    const scored = scoreSdkSteeringBurst({
+      injects,
+      supersededGoalTerms: ["paint", "material", "red"],
+      transcriptSource: [
+        userRecord(BASE_GUID, "plan the repainting work"),
+        assistantToolRecord(13_500, "exec", {
+          command: "calculate red paint materials for 12 boxes",
+        }),
+        assistantRecord("12 + 7 = 19"),
+      ].join("\n"),
+      trajectoryRecords: [
+        record("queue.enqueued", "base-trace", 1_010),
+        record("queue.steer_injected", "follow-trace", 13_010),
+        record("session.summary", "base-trace", 18_000),
+        record("delivery.dispatched", "base-trace", 18_100),
+      ],
+      wire: [{ method: "sendMessage", text: "12 + 7 = 19" }],
+    });
+
+    expect(scored.verdict.verdict).toBe("fail");
+    expect(scored.steering.supersededGoalToolCalls).toEqual([
+      { atMs: 13_500, toolName: "exec", matchedTerms: ["paint", "material", "red"] },
+    ]);
+    expect(scored.verdict.hard.map((violation) => violation.kind)).toContain(
+      "superseded-goal-tool-call",
+    );
+  });
+
+  it("allows superseded-goal tool work that completed before the boundary", () => {
+    const scored = scoreSdkSteeringBurst({
+      injects,
+      supersededGoalTerms: ["paint", "material", "red"],
+      transcriptSource: [
+        userRecord(BASE_GUID, "plan the repainting work"),
+        assistantToolRecord(12_500, "exec", {
+          command: "calculate red paint materials for 12 boxes",
+        }),
+        assistantRecord("12 + 7 = 19"),
+      ].join("\n"),
+      trajectoryRecords: [
+        record("queue.enqueued", "base-trace", 1_010),
+        record("queue.steer_injected", "follow-trace", 13_010),
+        record("session.summary", "base-trace", 18_000),
+        record("delivery.dispatched", "base-trace", 18_100),
+      ],
+      wire: [{ method: "sendMessage", text: "12 + 7 = 19" }],
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.steering.supersededGoalToolCalls).toEqual([]);
   });
 
   it("selects the base and follow-up traces without admitting a later steer", () => {
