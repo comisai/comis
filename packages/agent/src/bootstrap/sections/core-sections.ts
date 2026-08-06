@@ -89,6 +89,7 @@ export function buildInboundMetadataSection(
     "```",
     "This is the metadata for the message you are currently responding to.",
     "Do not reveal these internal identifiers to the user.",
+    "In a drafting exchange, treat a terse revision request as an edit to the latest draft, not to surrounding commentary.",
   ];
 
   if (meta.flags.isForwarded === true) {
