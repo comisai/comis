@@ -11,7 +11,5 @@ export type {
 export { applyOverflowPolicy } from "./overflow.js";
 export type { OverflowResult } from "./overflow.js";
 export { coalesceMessages } from "./coalescer.js";
-export { createDebounceBuffer } from "./debounce-buffer.js";
-export type { DebounceBuffer, DebounceBufferDeps } from "./debounce-buffer.js";
 export { createFollowupTrigger } from "./followup-trigger.js";
 export type { FollowupTrigger, FollowupTriggerDeps } from "./followup-trigger.js";

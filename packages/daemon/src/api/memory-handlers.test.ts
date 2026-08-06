@@ -149,6 +149,43 @@ function bindMemoryAskHandler(deps: MemoryHandlerDeps) {
   };
 }
 
+describe("memory.search_files operator authority", () => {
+  it("searches with explicit scope for an authenticated admin without an ambient turn", async () => {
+    const deps = makeDeps();
+    const handlers = createRawMemoryHandlers(deps);
+
+    const result = await handlers["memory.search_files"]!({
+      query: "surface sweep",
+      tenantId: "operator-tenant",
+      agentId: "operator-agent",
+      _trustLevel: "admin",
+    });
+
+    expect(result).toEqual({ results: [] });
+    expect(deps.memoryApi.search).toHaveBeenCalledWith(
+      "surface sweep",
+      expect.objectContaining({
+        scope: expect.objectContaining({
+          agentId: "operator-agent",
+          tenantId: "operator-tenant",
+        }),
+      }),
+    );
+  });
+
+  it("rejects a context-free non-admin search instead of trusting caller-supplied ids", async () => {
+    const deps = makeDeps();
+    const handlers = createRawMemoryHandlers(deps);
+
+    await expect(handlers["memory.search_files"]!({
+      query: "surface sweep",
+      tenantId: "operator-tenant",
+      agentId: "operator-agent",
+    })).rejects.toThrow("Memory operation requires resolved request authority");
+    expect(deps.memoryApi.search).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Tests for the 5 new memory management handlers
 // ---------------------------------------------------------------------------

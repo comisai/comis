@@ -620,9 +620,12 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     const dataDir = tmpDataDir();
     const sessionFile = buildRealSessionFile(dataDir);
 
-    // The trajectory lives at the runtimeFile the POINTER names — the co-located
-    // <sessionFile>.trajectory.jsonl path, matching production.
-    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    // The trajectory lives at the runtimeFile the POINTER names. Production
+    // commonly keeps it under the data-root trajectories directory rather
+    // than beside the session JSONL.
+    const runtimeDir = path.join(dataDir, "trajectories");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const runtimeFile = path.join(runtimeDir, "default-session.trajectory.jsonl");
     fs.writeFileSync(runtimeFile, trajectoryLines(), "utf-8");
 
     // Write the REAL pointer via the PRODUCTION writer (NOT a hand-built
@@ -658,6 +661,10 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     // EXACT field-name regression this assertion forbids.
     expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
+    expect(report.coverage?.sources).toEqual({
+      session: sessionFile,
+      trajectory: runtimeFile,
+    });
   });
 
   it("diagnoses a provider tool-identity rejection from the real nested session layout", async () => {
@@ -991,6 +998,41 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
       }),
     ]);
     expect(JSON.stringify(report)).not.toContain("PRIVATE TASK BODY MUST NOT SURFACE");
+    db.close();
+  });
+
+  it("preserves the content-free task-check suppression reason", async () => {
+    const dataDir = tmpDataDir();
+    const db = new Database(":memory:");
+    initSchema(db, 1_536);
+    const store = createObservabilityStore(db);
+    const terminalRow = taskEventToRow("scheduler:task_check_terminal", {
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      attemptId: "attempt-task-a",
+      rootRunId: TASK_ROOT_RUN_ID,
+      correlationId: TASK_CORRELATION_ID,
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-1"],
+      outcome: "dismissed",
+      recovery: "live",
+      durationMs: 21,
+      timestamp: 3_021,
+    });
+    terminalRow.details = JSON.stringify({
+      ...JSON.parse(terminalRow.details ?? "{}") as Record<string, unknown>,
+      suppressionReason: "heartbeat_token",
+    });
+    store.insertDiagnostic(terminalRow);
+
+    const evidence = await makeRealReader(dataDir, store)
+      .readTaskCheckLifecycle?.(TASK_ROOT_RUN_ID);
+
+    expect(evidence).toMatchObject({
+      outcome: "dismissed",
+      suppressionReason: "heartbeat_token",
+    });
     db.close();
   });
 

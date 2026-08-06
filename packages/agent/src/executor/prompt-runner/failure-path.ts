@@ -19,7 +19,11 @@ import { formatSessionKey, resolveModelPricing, scriptTokenFactor } from "@comis
 import type { ErrorKind } from "@comis/core";
 
 import { withPromptTimeout, PromptTimeoutError } from "../prompt-timeout.js";
-import { classifyError, classifyPromptTimeout } from "../error-classifier.js";
+import {
+  classifyError,
+  classifyPromptTimeout,
+  errorKindForCategory,
+} from "../error-classifier.js";
 import { createOverflowRecoveryWrapper } from "../overflow-recovery.js";
 import { isContextOverflowError } from "../../safety/context-truncation-recovery.js";
 import { scanWithOutputGuard } from "../executor-response-filter.js";
@@ -156,17 +160,25 @@ function emitFailureDiagnostics(
         deps.clock.now() - executionStartMs,
       )
     : classifyError(promptError);
+  const terminalErrorKind = isPromptTimeout
+    ? ("timeout" as const)
+    : errorKindForCategory(classified.category) === "auth"
+      ? ("auth" as const)
+      : ("dependency" as const);
 
   deps.logger.warn(
     {
       err: promptError,
       totalElapsedMs: deps.clock.now() - executionStartMs,
       hint: classified.hint ?? "All models failed (primary + fallbacks)",
-      errorKind: (isPromptTimeout ? "timeout" : "dependency") as ErrorKind,
+      errorKind: terminalErrorKind,
     },
     "Prompt execution error",
   );
   result.finishReason = isPromptTimeout ? "prompt_timeout" : "error";
+  if (!isPromptTimeout) {
+    result.terminalErrorKind = terminalErrorKind;
+  }
   // Never expose raw error internals to users.
   // The raw error is already logged to deps.logger.warn above for operator diagnostics.
   // The classified userMessage stays generic/user-safe — the knob detail

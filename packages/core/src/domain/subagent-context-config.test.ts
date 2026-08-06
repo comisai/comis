@@ -25,7 +25,7 @@ describe("SubagentContextConfigSchema", () => {
       parentSummaryMaxTokens: 1_000,
       maxQueuedPerAgent: 10,
       queueTimeoutMs: 120_000,
-      maxRunTimeoutMs: 600_000,
+      maxRunTimeoutMs: 1_500_000,
       perStepTimeoutMs: 60_000,
       graphStuckKillThresholdMs: 600_000,
       stuckKillThresholdMs: 180_000,
@@ -143,9 +143,13 @@ describe("SubagentContextConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("maxRunTimeoutMs defaults to 600000", () => {
+  it("maxRunTimeoutMs defaults to 1500000", () => {
     const result = SubagentContextConfigSchema.parse({});
-    expect(result.maxRunTimeoutMs).toBe(600_000);
+    // Backstop, not the primary killer — stuckKillThresholdMs (180s of no
+    // progress) catches a hung run far sooner. At 600_000 the watchdog was
+    // ending healthy work: live, a paginated month-wide report finished
+    // collecting, wrote its builder script, and was killed 21s later.
+    expect(result.maxRunTimeoutMs).toBe(1_500_000);
   });
 
   it("perStepTimeoutMs defaults to 60000", () => {

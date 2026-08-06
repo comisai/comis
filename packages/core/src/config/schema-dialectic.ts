@@ -41,7 +41,7 @@ import { z } from "zod";
 export const DialecticConfigSchema = z.strictObject({
   /** Enable the `memory_ask` grounded-Q&A tool for this agent. Default: true (opt-out posture).
    *  A COST feature (it makes the one query-time LLM call) — force-disabled
-   *  when `memory.costFeatures.enabled: false`. */
+   *  when `memory.enabled: false`. */
   enabled: z.boolean().default(true),
   /** Per-ask synthesis-LLM output bound (the cost axis — the DoS bound on one answer). */
   maxOutputTokens: z.number().int().positive().default(1024),

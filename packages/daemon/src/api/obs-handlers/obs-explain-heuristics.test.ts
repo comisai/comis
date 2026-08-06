@@ -148,6 +148,31 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/web_fetch/);
   });
 
+  it("names a provider circuit-open terminal before per-tool breaker inference", () => {
+    const r = rootCause(
+      makeSignals({
+        abortReason: "circuit_breaker",
+        endReason: "circuit_open",
+        degraded: true,
+        breakerEvents: [{
+          seq: 12,
+          event: "opened",
+          toolName: "provider:test-provider",
+        }],
+      }),
+    );
+
+    expect(r).toEqual({
+      code: "provider_circuit_open",
+      detail: "the model provider circuit breaker opened for test-provider after repeated request failures",
+      suggestedNextSteps: [
+        "check credentials, endpoint connectivity, and provider configuration for test-provider",
+        "retry after the provider recovers or the configured breaker cooldown expires",
+        "obs.explain depth=full for the breaker timeline",
+      ],
+    });
+  });
+
   it("missing sub-agent completion route outranks a clean execution rollup", () => {
     const r = rootCause(
       makeSignals({
@@ -164,6 +189,34 @@ describe("obs-explain-heuristics", () => {
     expect(r?.code).toBe("subagent_delivery_skipped");
     expect(r?.detail).toMatch(/no_origin|route/i);
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/requesterOrigin|announce/i);
+  });
+
+  it("abandoned child processes outrank the expected operator-origin delivery skip", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: true,
+      subagentDeliverySkipped: {
+        count: 1,
+        lastRunId: "run-background-process",
+        lastReason: "no_origin",
+      },
+    }) as IncidentSignals & {
+      subagentBackgroundProcessesAbandoned: {
+        count: number;
+        lastRunId: string;
+      };
+    };
+    signals.subagentBackgroundProcessesAbandoned = {
+      count: 2,
+      lastRunId: "run-background-process",
+    };
+
+    const r = rootCause(signals);
+
+    expect(r?.code).toBe("subagent_background_processes_abandoned");
+    expect(r?.detail).toContain("run-background-process");
+    expect(r?.detail).toContain("2");
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/process\.status|idempotent/i);
   });
 
   it("a per-node budget breach outranks the expected operator-origin delivery skip", () => {
@@ -261,6 +314,23 @@ describe("obs-explain-heuristics", () => {
 
     expect(result?.code).toBe("execution_step_limit_reached");
     expect(result?.detail).toContain("max_steps");
+  });
+
+  it("names the exact max-steps binding knob and values", () => {
+    const result = rootCause(makeSignals({
+      endReason: "max_steps",
+      stepLimit: {
+        bindingKnob: "agents.default.maxSteps",
+        stepsExecuted: 4,
+        cap: 4,
+      },
+    } as unknown as Partial<IncidentSignals>));
+
+    expect(result?.code).toBe("execution_step_limit_reached");
+    expect(result?.detail).toContain("agents.default.maxSteps=4");
+    expect(result?.detail).toContain("4 tool");
+    expect(result?.suggestedNextSteps.join(" ")).toContain("agents.default.maxSteps");
+    expect(result?.suggestedNextSteps.join(" ")).not.toContain("max_steps");
   });
 
   it("background capacity guards name the exact saturated config knob and occupancy", () => {
@@ -390,6 +460,38 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/operator/i);
   });
 
+  it("background hard timeout names its own limit instead of the MCP deadline", () => {
+    const r = rootCause(
+      makeSignals({
+        breakerOpenedTool: "mcp__vendor--report",
+        hasDoNotRetrySignal: true,
+        repeatedFailureCount: { "mcp__vendor--report": 2 },
+        failures: [
+          {
+            seq: 0,
+            toolName: "mcp__vendor--report",
+            classifiedFailureBy: "background_task",
+            transportOk: false,
+            errorKind: "timeout",
+            failureCode: "background_hard_timeout_exceeded",
+            resultDigest: "abc",
+            resultBytes: 73,
+            errorPreview:
+              "agents.agent-1.backgroundTasks.maxBackgroundDurationMs=12000ms",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("background_hard_timeout");
+    expect(`${r?.detail} ${r?.suggestedNextSteps.join(" ")}`).toContain(
+      "agents.agent-1.backgroundTasks.maxBackgroundDurationMs=12000ms",
+    );
+    expect(`${r?.detail} ${r?.suggestedNextSteps.join(" ")}`).not.toContain(
+      "integrations.mcp.callToolTimeoutMs",
+    );
+  });
+
   it("insurance: a zero-argument MCP timeout does not invent request scope controls", () => {
     const r = rootCause(
       makeSignals({
@@ -483,7 +585,13 @@ describe("obs-explain-heuristics", () => {
     const r = rootCause(
       makeSignals({
         endReason: "spend_exceeded",
-        perRootBudget: { limb: "tokens", spent: 30640, cap: 60000, unit: "tokens" },
+        perRootBudget: {
+          limb: "tokens",
+          spent: 30640,
+          attempted: 35000,
+          cap: 60000,
+          unit: "tokens",
+        },
       }),
     );
     expect(r).not.toBeNull();
@@ -491,7 +599,10 @@ describe("obs-explain-heuristics", () => {
     expect(r!.detail).toMatch(/autonomy\.budget/);
     expect(r!.detail).toContain("tokens");
     expect(r!.detail).toContain("30640");
+    expect(r!.detail).toContain("35000");
+    expect(r!.detail).toContain("65640");
     expect(r!.detail).toContain("60000");
+    expect(r!.detail).toMatch(/current.*attempted.*would total/is);
     expect(r!.suggestedNextSteps.some((s) => /autonomy\.budget\.tokens/.test(s))).toBe(true);
   });
 
@@ -1007,6 +1118,47 @@ describe("obs-explain-heuristics", () => {
     // Points at the two real gaps from the live runs: scope + non-Latin lanes.
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/scope/i);
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
+  });
+
+  it("ranks a hard provider rejection above an incidental zero-hit recall", () => {
+    // The production shape: every LLM call rejected with the same deterministic
+    // category, on a fresh install whose empty memory store makes EVERY recall
+    // a zero-hit. recall_miss used to win because a provider-side rejection
+    // produced no `failures[]` entry (that array is tool-boundary-shaped).
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        recall: allMissRecall,
+        modelErrors: { total: 3, byCategory: { model_capability_unsupported: 3 } },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("provider_rejected_request");
+    // Names the category and how many calls it killed.
+    expect(r!.detail).toContain("model_capability_unsupported");
+    expect(r!.detail).toContain("3");
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/model|provider/i);
+  });
+
+  it("recall_miss still fires when no model call was rejected", () => {
+    // Regression guard: the new gate must not swallow the genuine recall_miss.
+    const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
+    expect(r!.code).toBe("recall_miss");
+  });
+
+  it("ranks a terminal authentication failure above an incidental recall miss", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+    }) as IncidentSignals & { summaryTopErrorKinds?: Record<string, number> };
+    signals.summaryTopErrorKinds = { auth: 1 };
+
+    const result = rootCause(signals);
+
+    expect(result?.code).toBe("execution_auth_failure");
+    expect(result?.suggestedNextSteps.join(" ")).toMatch(/credential|provider/iu);
   });
 
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
@@ -1805,6 +1957,32 @@ describe("prompt_timeout terminal verdict", () => {
     expect(r!.suggestedNextSteps[0]).toContain(
       "tools.web.search.tavily.apiKey",
     );
+  });
+
+  it("explains an MCP background deadline with the configured value and queue wait", () => {
+    const r = rootCause(
+      makeSignals({
+        failures: [
+          {
+            seq: 5,
+            toolName: "mcp__reports--slow_lookup",
+            classifiedFailureBy: "background_task",
+            transportOk: false,
+            errorKind: "dependency",
+            failureCode: "mcp_call_deadline_exceeded",
+            resultDigest: "deadline",
+            resultBytes: 88,
+            errorPreview:
+              "integrations.mcp.callToolTimeoutMs=120000ms; queueWaitedMs=110025; requestBudgetMs=9975",
+          },
+        ],
+      }),
+    );
+
+    expect(r?.code).toBe("mcp_background_call_deadline_exceeded");
+    expect(r?.detail).toContain("integrations.mcp.callToolTimeoutMs=120000ms");
+    expect(r?.detail).toContain("queueWaitedMs=110025");
+    expect(r?.suggestedNextSteps.join(" ")).toContain("maxConcurrency");
   });
 
   it("a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (no tool failure required)", () => {

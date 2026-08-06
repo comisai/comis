@@ -72,6 +72,12 @@ const BOOTSTRAP_MAX_CHARS_SENTINEL = 20_000 as const;
  *  At 24 tools × ~300 chars avg ≈ 7K chars (vs 12K at 40) — ~750–1250 tokens saved. */
 const SMALL_DEFAULT_ACTIVE_TOOL_CEILING = 24 as const;
 
+/** Max MCP tools left active in a request before the long tail is deferred
+ *  behind discover_tools. Sized from the live measurement that motivated it:
+ *  a 120-tool server averaged ~423 tokens/schema, so 32 keeps a working surface
+ *  (~13k tokens) instead of ~51k. Builtins are never counted or deferred here. */
+const DEFAULT_MCP_ACTIVE_TOOL_BUDGET = 32 as const;
+
 /** Total bootstrap budget for small/nano. Caps the SUM of all bootstrap file chars.
  *  Per-file cap (3_500) still applies as an upper bound per file; this cap is the aggregate.
  *  Rationale: only AGENTS.md (6780) exceeds 3500 so per-file trimming only trims that one
@@ -168,6 +174,9 @@ export interface ScaffoldDefaults {
    * Ceiling is enforced in applyToolDeferral via DeferralContext.activeToolCeiling.
    */
   activeToolCeiling: number | undefined;
+  /** Max MCP tools left active before the long tail is deferred. Applies to
+   *  every capability class — see DEFAULT_MCP_ACTIVE_TOOL_BUDGET. */
+  mcpActiveToolBudget: number;
   /**
    * Effective total bootstrap budget (sum of all file chars after per-file truncation).
    *
@@ -375,6 +384,16 @@ export function resolveScaffoldDefaults(
       ? SMALL_DEFAULT_ACTIVE_TOOL_CEILING
       : undefined;
 
+  // MCP long-tail budget — every class. The class ceiling above is a
+  // context-WINDOW mitigation and is undefined for frontier/mid, so a capable
+  // model carried an entire MCP catalogue inline forever: measured live at 120
+  // of 192 tools and an 81,234-token system prompt (54% of a 151k request) on
+  // every turn, re-written on each cold cache and re-uploaded on each retry.
+  // Those costs are independent of window size, so the budget applies
+  // regardless of class. Generous enough that a typical single-server surface
+  // stays fully active; deferred tools remain reachable via discover_tools.
+  const mcpActiveToolBudget = DEFAULT_MCP_ACTIVE_TOOL_BUDGET;
+
   // -------------------------------------------------------------------------
   // Total bootstrap budget — small/nano only.
   // Applied in buildBootstrapContextFiles as a second pass after per-file truncation.
@@ -399,5 +418,5 @@ export function resolveScaffoldDefaults(
           ? SMALL_DEFAULT_MAX_TOOL_RESULT_CHARS
           : undefined;                                  // frontier/mid → consumer uses config (50_000)
 
-  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, bootstrapTotalMaxChars, maxToolResultChars, relevanceFirst };
+  return { goalAnchorEnabled, baseFloor, verificationEnabled, criticModel, bootstrapMaxChars, activeToolCeiling, mcpActiveToolBudget, bootstrapTotalMaxChars, maxToolResultChars, relevanceFirst };
 }

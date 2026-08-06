@@ -13,6 +13,8 @@
  * @module
  */
 
+import type { RootRunIdResolver } from "@comis/core";
+import { resolveReservationRoot } from "./reservation-root.js";
 import {
   conversationScopeToSessionKey,
   safePath,
@@ -44,6 +46,7 @@ import {
   type AbortClassification,
   type AnnouncementTerminalOutcome,
 } from "./sub-agent-announcement-content.js";
+import { NO_PROGRESS_LOOP_THRESHOLD } from "../executor/turn-loop-detector.js";
 export {
   buildAnnouncementMessage,
   validateOutputs,
@@ -91,7 +94,7 @@ export function isSubAgentAbortFinishReason(finishReason: string): boolean {
 
 /**
  * Classify a sub-agent abort reason from finishReason and optional error context.
- * Maps 7 possible finishReason values to 5 abort categories with remediation
+ * Maps supported finish reasons to specific abort categories with remediation
  * hints and severity levels. Normal completions (stop, end_turn) are not
  * expected inputs but are handled gracefully as "unknown".
  * @param finishReason - The finishReason from ExecutionResult or error context
@@ -108,6 +111,15 @@ export function classifyAbortReason(
       return {
         category: "step_limit",
         hint: "Increase max_steps in sessions_spawn or simplify the task",
+        severity: "actionable",
+      };
+    case "loop_detected":
+      return {
+        category: "loop_limit",
+        hint:
+          `The governor stopped after ${NO_PROGRESS_LOOP_THRESHOLD} consecutive no-progress `
+          + "tool results, including successful calls whose result stayed unchanged; change "
+          + "the condition or approach before retrying",
         severity: "actionable",
       };
     case "budget_exceeded":
@@ -139,6 +151,14 @@ export function classifyAbortReason(
         category: "external_timeout",
         hint: "Circuit breaker opened due to repeated provider failures; wait and retry",
         severity: "investigate",
+      };
+    case "prompt_timeout":
+      return {
+        category: "prompt_timeout",
+        hint:
+          "Increase agents.<id>.operationModels.subagent.timeout or reduce the task scope; "
+          + "the subagent operation timeout overrides agents.<id>.promptTimeout.promptTimeoutMs",
+        severity: "actionable",
       };
     case "provider_degraded":
       return {
@@ -474,6 +494,7 @@ export async function deliverAnnouncement(params: {
   callerConversation?: ConversationLocator;
   destinationEndpoint?: ChannelEndpoint;
   resolvedLanguage?: string;
+  citationEvidence?: import("@comis/core").CitationEvidence;
   terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;
   attachments?: CompletionAttachmentShape[];
@@ -492,6 +513,10 @@ export async function deliverAnnouncement(params: {
    * SAME instance the batcher uses.
    */
   deliveryDedup?: DeliveryDedup;
+  /** Resolves the outward-ledger tree root for a caller turn. Stamped onto the
+   *  parked decision reservation so a drain can later ask the ledger whether the
+   *  announcement was ever actually sent, instead of parking it forever. */
+  resolveRootRunId?: RootRunIdResolver;
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
@@ -538,6 +563,7 @@ export async function deliverAnnouncement(params: {
       callerConversation: params.callerConversation,
       destinationEndpoint: params.destinationEndpoint,
       ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
+      ...(params.citationEvidence ? { citationEvidence: params.citationEvidence } : {}),
       terminalOutcome: params.terminalOutcome,
       runId,
       idempotencyKey: announceKey,
@@ -591,6 +617,8 @@ export async function deliverAnnouncement(params: {
         }, "Sub-agent parent decision cannot be reserved");
         return;
       }
+      // Stamp the ledger tree root; a reservation without it can never be adjudicated.
+      const reservationRoot = resolveReservationRoot(deps.resolveRootRunId, callerAgentId, params.callerConversation?.conversationScope);
       const reservationBoundary = await fromPromise(deps.deadLetterQueue.reserveDecision({
         idempotencyKey: announceKey,
         agentId: callerAgentId,
@@ -599,6 +627,7 @@ export async function deliverAnnouncement(params: {
         channelType: announceChannelType,
         channelId: announceChannelId,
         failedAt: systemNowMs(),
+        ...(reservationRoot ? { rootRunId: reservationRoot } : {}),
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!reservationBoundary.ok || !reservationBoundary.value.ok) {
@@ -618,10 +647,11 @@ export async function deliverAnnouncement(params: {
     try {
       const parentSk = conversationScopeToSessionKey(params.callerConversation.conversationScope);
       if (!parentSk.ok) throw parentSk.error;
-      const parentOptions = params.announceThreadId || params.resolvedLanguage
+      const parentOptions = params.announceThreadId || params.resolvedLanguage || params.citationEvidence
         ? {
             ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
             ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
+            ...(params.citationEvidence ? { citationEvidence: params.citationEvidence } : {}),
           }
         : undefined;
       const candidate = await withTimeout(

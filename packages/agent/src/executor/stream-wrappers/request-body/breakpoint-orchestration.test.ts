@@ -50,6 +50,147 @@ function makeResult(messages: Array<Record<string, unknown>>): Record<string, un
 }
 
 // ---------------------------------------------------------------------------
+// System-block breakpoint placement
+//
+// Anthropic caching is PREFIX-based: a cache_control marker caches everything
+// up to and including its block. The system prompt is split into a stable
+// engine prefix, a stable operator policy block, and a dynamic runtime preamble
+// that carries per-call content (the current date/time). Anchoring on the last
+// block therefore anchors on the one that changes every call, so the whole
+// system prefix misses every time.
+// ---------------------------------------------------------------------------
+
+describe("runCacheBreakpointPhase — system marker coordinates with the UNTRUSTED_ 1h anchor", () => {
+  const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" };
+
+  // Anthropic requires a non-increasing TTL along tools -> system -> messages.
+  // The UNTRUSTED_ anchor places 1h on a large user message regardless of the
+  // resolved retention, and the message zones already coordinate upward for it.
+  // The system marker did not: its upgrade runs earlier and only when retention
+  // is already "long", so a cold-start session (5m) that carried a large
+  // untrusted block emitted system(5m) -> message(1h). The safety net repaired
+  // it and logged "MONOTONIC-TTL: upgraded out-of-order 5m markers to 1h" at
+  // system[1] — a WARN that names an upstream placement bug, and an upgrade that
+  // silently undid the cheap cold-start write.
+  it("promotes the system marker to 1h when the UNTRUSTED_ anchor fires at short retention", () => {
+    const logger = makeLogger();
+    const result = makeResult([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "<<<UNTRUSTED_HTML>>>" + "x".repeat(20000) + "</UNTRUSTED_HTML>>>" },
+        ],
+      },
+    ]);
+
+    runCacheBreakpointPhase(
+      result,
+      model,
+      makeConfig({
+        getCacheRetention: () => "short",
+        getSystemPromptBlocks: () => ({
+          staticPrefix: "ENGINE".repeat(200),
+          attribution: "OPERATOR".repeat(200),
+          semiStableBody: "## Current Date & Time\n2026-08-05T08:34:29.719Z",
+        }),
+      }),
+      true,
+      false,
+      0,
+      logger,
+    );
+
+    // The end state is 1h either way — the safety net repairs it in the same
+    // call. What must NOT happen is the repair: placement has to be correct at
+    // source, or every such turn logs an upstream-placement-bug WARN.
+    const system = result.system as Array<Record<string, unknown>>;
+    const anchored = system.filter((block) => block.cache_control !== undefined);
+    expect(anchored).toHaveLength(1);
+    expect(anchored[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const warned = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .some((call) => String(call[1] ?? "").includes("MONOTONIC-TTL"));
+    expect(warned).toBe(false);
+  });
+
+  it("leaves the system marker at 5m when no UNTRUSTED_ anchor fires", () => {
+    const result = makeResult([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+
+    runCacheBreakpointPhase(
+      result,
+      model,
+      makeConfig({
+        getCacheRetention: () => "short",
+        getSystemPromptBlocks: () => ({
+          staticPrefix: "ENGINE".repeat(200),
+          attribution: "OPERATOR".repeat(200),
+          semiStableBody: "## Current Date & Time\n2026-08-05T08:34:29.719Z",
+        }),
+      }),
+      true,
+      false,
+      0,
+      makeLogger(),
+    );
+
+    const system = result.system as Array<Record<string, unknown>>;
+    const anchored = system.filter((block) => block.cache_control !== undefined);
+    expect(anchored).toHaveLength(1);
+    expect(anchored[0]!.cache_control).toEqual({ type: "ephemeral" });
+  });
+});
+
+describe("runCacheBreakpointPhase — system-prompt breakpoint sits on the stable prefix", () => {
+  const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" };
+
+  function runWithBlocks(semiStableBody: string) {
+    const result = makeResult([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+    runCacheBreakpointPhase(
+      result,
+      model,
+      makeConfig({
+        getSystemPromptBlocks: () => ({
+          staticPrefix: "ENGINE".repeat(200),
+          attribution: "OPERATOR".repeat(200),
+          semiStableBody,
+        }),
+      }),
+      true,
+      false,
+      0,
+      makeLogger(),
+    );
+    return result.system as Array<Record<string, unknown>>;
+  }
+
+  it("anchors on the last STABLE block, never on the volatile runtime preamble", () => {
+    // Live: a 1-character date/time delta in the runtime preamble dropped 100%
+    // of a 56,276-token cached system prefix (cache.break system_changed,
+    // tokenDropRelative 1).
+    const blocks = runWithBlocks("## Current Date & Time\n2026-08-04T20:54:07.004Z");
+    expect(blocks).toHaveLength(3);
+    expect(blocks[1]!.cache_control).toEqual({ type: "ephemeral" });
+    // The volatile block must stay OUTSIDE the cached prefix.
+    expect(blocks[2]!.cache_control).toBeUndefined();
+  });
+
+  it("keeps the cached prefix byte-identical when only the runtime preamble changes", () => {
+    const a = runWithBlocks("## Current Date & Time\n2026-08-04T20:54:07.004Z");
+    const b = runWithBlocks("## Current Date & Time\n2026-08-04T21:07:41.221Z");
+    const cachedPrefix = (blocks: Array<Record<string, unknown>>) =>
+      blocks.slice(0, 2).map((block) => block.text).join("");
+    expect(cachedPrefix(a)).toBe(cachedPrefix(b));
+    // And the anchor stays at the same index across the two calls.
+    expect(a[1]!.cache_control).toEqual(b[1]!.cache_control);
+  });
+
+  it("anchors on the only block when there is no runtime preamble", () => {
+    const blocks = runWithBlocks("");
+    expect(blocks).toHaveLength(2);
+    expect(blocks[1]!.cache_control).toEqual({ type: "ephemeral" });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 1h TTL upgrade for UNTRUSTED_ blocks
 // ---------------------------------------------------------------------------
 

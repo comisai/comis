@@ -7,7 +7,7 @@
  * into the dispatch-deps object the handler reads (the field-plumbing forward-presence belt
  * locks that the spread is not dropped — setup-dialectic.test.ts Test 4).
  *
- * The dialectic is OPT-IN and default-OFF (the cost gate): when `dialectic.enabled !== true`
+ * The dialectic is default-ON and opt-out (the cost gate): when `dialectic.enabled !== true`
  * this returns `{}` (no seam, no recall builder ⇒ the handler abstains gracefully). When on,
  * it resolves the CHEAP "cron"/cheap operation model (never the agent's primary) + the
  * provider apiKey BY NAME (never the value — `apiKey: ""` when unresolved ⇒ the seam degrades

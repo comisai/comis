@@ -12,7 +12,7 @@
  */
 
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
+import { ok, err, fromPromise } from "@comis/shared";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -33,6 +33,7 @@ import type {
 import { parseQualifiedName } from "./mcp-client-types.js";
 import {
   MIN_VIABLE_CALL_BUDGET_MS,
+  McpCallDeadlineError,
   emitMcpBreakerOpened,
   mcpCallQueueExhaustedHint,
   mcpCallTimeoutHint,
@@ -112,6 +113,7 @@ export async function callTool(
   deps: McpClientManagerDeps,
   qualifiedName: string,
   args: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<Result<McpToolCallResult, Error>> {
   const { logger } = deps;
   // The deadline clock starts HERE, not at the SDK request. `callToolTimeoutMs` is
@@ -130,6 +132,9 @@ export async function callTool(
   }
 
   const { serverName, toolName } = parsed;
+  const cancelledError = (): Error =>
+    new Error(`MCP tool "${toolName}" on server "${serverName}" was cancelled by the caller`);
+  if (signal?.aborted) return err(cancelledError());
 
   // Resolve the connection, lazily reconnecting an idle-evicted server
   // (connection gone, config retained, flag unset). The happy path is
@@ -196,7 +201,7 @@ export async function callTool(
     }
   }
 
-  return queue.add(async () => {
+  const queuedResult = await fromPromise(queue.add(async () => {
     // Re-check connection status -- may have changed while queued
     const currentConn = state.connections.get(serverName);
     if (!currentConn || currentConn.status !== "connected") {
@@ -259,6 +264,7 @@ export async function callTool(
           // What is LEFT of the caller's deadline, not the whole of it — the reconnect
           // and queue wait already consumed `waitedMs` of the same budget.
           timeout: remainingMs,
+          ...(signal === undefined ? {} : { signal }),
           // The absolute ceiling is UNCONDITIONAL — it is not part of the
           // tracing branch. `resetTimeoutOnProgress` restarts `timeout` on every
           // progress notification and the SDK applies no ceiling of its own
@@ -320,6 +326,11 @@ export async function callTool(
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
+
+      if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+        logger.debug?.({ serverName, toolName }, "MCP tool call cancelled by caller");
+        return err(cancelledError());
+      }
 
       // Intercept 401/UnauthorizedError FIRST — return structured needs_reauth result,
       // trip the circuit breaker IMMEDIATELY (bypass threshold), and record reason="auth" so
@@ -460,10 +471,16 @@ export async function callTool(
           },
           "MCP tool call timed out at the configured call deadline",
         );
-        return err(new Error(timeoutHint));
+        return err(new McpCallDeadlineError(timeoutHint, timeoutMs, waitedMs));
       }
 
       return err(error instanceof Error ? error : new Error(message));
     }
-  }) as Promise<Result<McpToolCallResult, Error>>;
+  }, { signal }) as Promise<Result<McpToolCallResult, Error>>);
+  if (!queuedResult.ok) {
+    return signal?.aborted ? err(cancelledError()) : err(queuedResult.error);
+  }
+  return queuedResult.value ?? err(new Error(
+    `MCP server "${serverName}" call queue ended without a result for tool "${toolName}"`,
+  ));
 }

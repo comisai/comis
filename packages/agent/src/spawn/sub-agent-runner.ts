@@ -11,6 +11,7 @@
  * @module
  */
 
+import type { RootRunIdResolver } from "@comis/core";
 import {
   formatSessionKey,
   conversationScopeToSessionKey,
@@ -37,6 +38,7 @@ import {
   type AgentCapability,
   type ResultRef,
   type ErrorKind,
+  type CitationEvidence,
   type EventMap,
   AgentExecutionFinishReasonSchema,
   classifyAgentFinishErrorKind,
@@ -61,7 +63,10 @@ import {
   type CoordinatorProgressForkHandle,
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
-import { buildBackgroundTaskFailedNotice } from "../executor/degraded-reply.js";
+import {
+  buildBackgroundTaskFailedNotice,
+  buildLoopDetectedReply,
+} from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
   AnnouncementBatcher,
@@ -83,6 +88,7 @@ import {
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
 import { buildHaltedAccount } from "./halted-account.js";
+import { resolveSubAgentOutcome } from "./sub-agent-outcome.js";
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
@@ -478,12 +484,17 @@ export interface SubAgentRunnerDeps {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: {
+      threadId?: string;
+      resolvedLanguage?: string;
+      citationEvidence?: CitationEvidence;
+    },
   ) => Promise<string | undefined>;
   /** Render the deterministic failed-completion disclosure for the parent agent. */
   renderAnnouncementFailureNotice?: (
     agentId: string,
     resolvedLanguage?: string,
+    finishReason?: string,
   ) => string;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
@@ -547,6 +558,10 @@ export interface SubAgentRunnerDeps {
    * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
    */
   deliveryDedup?: DeliveryDedup;
+  /** Resolves the outward-ledger tree root for a caller turn. Forwarded to
+   *  deliverAnnouncement, which stamps it onto a parked decision reservation so
+   *  the dead-letter drain can later adjudicate it against the ledger. */
+  resolveRootRunId?: RootRunIdResolver;
   /** Optional live-run resolver for aborting in-flight SDK sessions on kill. */
   sessionResolver?: {
     resolveActiveSession(conversationRef: ConversationRef): { abort(): Promise<void> } | undefined;
@@ -928,6 +943,16 @@ function classifyRequiredTool(
 export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
+  interface ChildBackgroundProcessState {
+    pending: Set<string>;
+    failed: Set<string>;
+  }
+  const childBackgroundProcesses = new Map<string, ChildBackgroundProcessState>();
+  const childCitationEvidence = new Map<string, {
+    observedWebResearch: boolean;
+    urlDigests: Set<string>;
+  }>();
+  const backgroundCleanupRequestedRunIds = new Set<string>();
   const createRunProgress = (updatedAt: number): SubAgentRunProgress => ({
     health: "healthy",
     toolCalls: 0,
@@ -935,7 +960,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     updatedAt,
   });
   const observeChildToolOutcome = (event: EventMap["tool:executed"]): void => {
-    if (event.backgrounded || event.agentId === undefined || event.sessionKey === undefined) {
+    if (event.agentId === undefined || event.sessionKey === undefined) {
       return;
     }
     for (const run of runs.values()) {
@@ -945,6 +970,47 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         || run.sessionKey !== event.sessionKey
       ) {
         continue;
+      }
+      if (event.toolName === "web_search" || event.toolName === "web_fetch") {
+        const evidence = childCitationEvidence.get(run.runId) ?? {
+          observedWebResearch: false,
+          urlDigests: new Set<string>(),
+        };
+        evidence.observedWebResearch = true;
+        if (
+          event.toolName === "web_fetch"
+          && event.success
+          && event.citationUrlDigest !== undefined
+          && evidence.urlDigests.size < 100
+        ) {
+          evidence.urlDigests.add(event.citationUrlDigest);
+        }
+        childCitationEvidence.set(run.runId, evidence);
+      }
+      if (event.backgrounded) {
+        if (event.toolName === "exec") {
+          const state = childBackgroundProcesses.get(run.runId) ?? {
+            pending: new Set<string>(),
+            failed: new Set<string>(),
+          };
+          state.pending.add(event.processSessionId ?? `tool-call:${event.toolCallId}`);
+          childBackgroundProcesses.set(run.runId, state);
+        }
+        run.progress.updatedAt = event.timestamp;
+        continue;
+      }
+      if (
+        event.toolName === "process"
+        && event.processSessionId !== undefined
+        && event.processSessionStatus !== undefined
+      ) {
+        const state = childBackgroundProcesses.get(run.runId);
+        const terminal = event.processSessionStatus !== "running";
+        if (state !== undefined && terminal && state.pending.delete(event.processSessionId)) {
+          if (event.processSessionStatus === "failed" || event.processSessionStatus === "killed") {
+            state.failed.add(event.processSessionId);
+          }
+        }
       }
       run.progress.toolCalls++;
       run.progress.updatedAt = event.timestamp;
@@ -959,6 +1025,27 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
   };
   deps.eventBus.on("tool:executed", observeChildToolOutcome);
+
+  function backgroundProcessCounts(runId: string): { unresolved: number; failed: number } {
+    const state = childBackgroundProcesses.get(runId);
+    return {
+      unresolved: state?.pending.size ?? 0,
+      failed: state?.failed.size ?? 0,
+    };
+  }
+
+  function requestAbandonedBackgroundCleanup(run: SubAgentRun): void {
+    const { unresolved } = backgroundProcessCounts(run.runId);
+    if (unresolved === 0 || backgroundCleanupRequestedRunIds.has(run.runId)) return;
+    backgroundCleanupRequestedRunIds.add(run.runId);
+    deps.eventBus.emit("subagent:background_processes_abandoned", {
+      runId: run.runId,
+      agentId: run.agentId,
+      sessionKey: run.sessionKey,
+      count: unresolved,
+      timestamp: clock.now(),
+    });
+  }
   interface CompletionDeferred {
     promise: Promise<SubAgentCompletion>;
     resolve(completion: SubAgentCompletion): void;
@@ -1034,7 +1121,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return sanitized.slice(0, SUBAGENT_RESULT_SUMMARY_MAX_CHARS);
   }
 
-  function classifyCompletionErrorKind(
+  /** Mirrors the `maxRunTimeoutMs` default in `SubagentContextConfigSchema`
+ *  (@comis/core) for the paths that read subagentContext optionally. Keep the
+ *  two in step — the schema is the source of truth. */
+const SUBAGENT_MAX_RUN_MS_FALLBACK = 1_500_000;
+
+function classifyCompletionErrorKind(
     finishReason: string,
     terminalErrorKind: ErrorKind | undefined,
   ): ErrorKind {
@@ -1878,7 +1970,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Ghost run sweep -- defense-in-depth for stuck runs
-    const ghostGraceMs = (deps.config.subagentContext?.maxRunTimeoutMs ?? 600_000) + 120_000;
+    const ghostGraceMs = (deps.config.subagentContext?.maxRunTimeoutMs ?? SUBAGENT_MAX_RUN_MS_FALLBACK) + 120_000;
     for (const [runId, run] of runs) {
       if (run.status !== "running") continue;
 
@@ -3098,7 +3190,83 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (deliverySuppressedRunIds.has(runId)) return;
 
         const providerCompletedAt = clock.now();
-        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
+        const modelStoppedCleanly =
+          result.finishReason === "stop" || result.finishReason === "end_turn";
+
+        // Output-contract validation. Hoisted ABOVE the outcome derivation (it used to run
+        // several hundred lines below, purely as a WARN) because a clean model stop is not the
+        // same as doing the job: a child that stops without writing its declared
+        // `expected_outputs` has not satisfied the contract its own prompt told it would be
+        // validated. Resolved ONCE here so the WARN, the announcement, the terminal endReason,
+        // the proxy stop and the lifecycle hook cannot disagree about whether the run worked.
+        let validationResults: ValidationResult[] | undefined;
+        let missingContractedOutputs: string[] = [];
+        if (params.expected_outputs && params.expected_outputs.length > 0) {
+          try {
+            validationResults = await validateOutputs(
+              params.expected_outputs,
+              3,
+              200,
+              result.workspaceDir,
+            );
+            missingContractedOutputs = validationResults
+              .filter((v) => !v.exists)
+              .map((v) => v.path);
+            if (missingContractedOutputs.length > 0) {
+              deps.logger?.warn({
+                runId,
+                missingFiles: missingContractedOutputs,
+                finishReason: result.finishReason,
+                hint: "Verify each expected_outputs entry names a file written inside the child execution workspace. The run is reported to the parent as failed: it stopped without producing the outputs it declared.",
+                errorKind: "validation" as const,
+              }, "Sub-agent output validation: missing files");
+            }
+          } catch (validationErr) {
+            deps.logger?.warn({
+              runId,
+              err: validationErr,
+              hint: "Output validation failed unexpectedly; the run keeps its model-level outcome and the announcement proceeds without validation data",
+              errorKind: "internal" as const,
+            }, "Sub-agent output validation error");
+          }
+        }
+
+        const backgroundProcesses = backgroundProcessCounts(runId);
+        // Only a process the child NEVER polled to a terminal state invalidates the run: the
+        // child returned without knowing the outcome. A non-zero exit or a deliberate cleanup
+        // kill that the child DID observe is an outcome it already reported on, so its answer
+        // stays authoritative and only rides the completion event as a diagnostic count.
+        const backgroundProcessFailure = backgroundProcesses.unresolved > 0
+          ? `Sub-agent returned while ${backgroundProcesses.unresolved} auto-backgrounded process${backgroundProcesses.unresolved === 1 ? " was" : "es were"} still running.`
+          : undefined;
+        requestAbandonedBackgroundCleanup(run);
+        if (backgroundProcessFailure !== undefined) {
+          deps.logger?.warn({
+            runId,
+            agentId: params.agentId,
+            unresolvedBackgroundProcesses: backgroundProcesses.unresolved,
+            failedBackgroundProcesses: backgroundProcesses.failed,
+            hint: "Poll each auto-backgrounded exec session with process.status until it reaches a terminal state before returning from the sub-agent",
+            errorKind: "precondition" as const,
+          }, "Sub-agent returned before auto-backgrounded process work was complete");
+        } else if (backgroundProcesses.failed > 0) {
+          deps.logger?.debug({
+            runId,
+            agentId: params.agentId,
+            failedBackgroundProcesses: backgroundProcesses.failed,
+          }, "Sub-agent observed an auto-backgrounded process reach a non-zero terminal state");
+        }
+
+        const subAgentOutcome = resolveSubAgentOutcome({
+          modelStoppedCleanly,
+          missingContractedOutputs,
+        });
+        // Two INDEPENDENT reasons a run is not a success, and a run can hit
+        // either: it stopped without writing the outputs it declared, or it
+        // returned while work it had launched was still unfinished. Neither
+        // subsumes the other — a child can write every contracted file and still
+        // abandon a running process — so both gate the outcome.
+        const isSuccess = subAgentOutcome.success && backgroundProcessFailure === undefined;
 
         // Warn on empty response — may indicate prompt or context issues
         if (!result.response || result.response.trim().length === 0) {
@@ -3254,18 +3422,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const haltedWithoutOutput =
           isSubAgentAbortFinishReason(result.finishReason)
           && usableSummary.trim().length === 0;
-        const completionSummary = haltedWithoutOutput
-          ? buildHaltedAccount({
-            finishReason: result.finishReason,
-            stepsExecuted: result.stepsExecuted,
-            ...(abortClassification?.category === undefined
-              ? {}
-              : { category: abortClassification.category }),
-            ...(abortClassification?.hint === undefined
-              ? {}
-              : { hint: abortClassification.hint }),
-          })
-          : usableSummary;
+        const completionSummary = backgroundProcessFailure ?? (
+          haltedWithoutOutput
+            ? buildHaltedAccount({
+                finishReason: result.finishReason,
+                stepsExecuted: result.stepsExecuted,
+                ...(abortClassification?.category === undefined
+                  ? {}
+                  : { category: abortClassification.category }),
+                ...(abortClassification?.hint === undefined
+                  ? {}
+                  : { hint: abortClassification.hint }),
+              })
+            : usableSummary
+        );
         if (haltedWithoutOutput) {
           deps.logger?.warn({
             runId, agentId: params.agentId,
@@ -3283,35 +3453,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
         };
-        // Post-execution output validation (best-effort, never blocks)
-        let validationResults: ValidationResult[] | undefined;
-        if (params.expected_outputs && params.expected_outputs.length > 0) {
-          try {
-            validationResults = await validateOutputs(
-              params.expected_outputs,
-              3,
-              200,
-              result.workspaceDir,
-            );
-            const missing = validationResults.filter((v) => !v.exists);
-            if (missing.length > 0) {
-              deps.logger?.warn({
-                runId,
-                missingFiles: missing.map((v) => v.path),
-                hint: "Verify each expected_outputs entry names a file written inside the child execution workspace",
-                errorKind: "validation" as const,
-              }, "Sub-agent output validation: missing files");
-            }
-          } catch (validationErr) {
-            deps.logger?.warn({
-              runId,
-              err: validationErr,
-              hint: "Output validation failed unexpectedly; announcement will proceed without validation data",
-              errorKind: "internal" as const,
-            }, "Sub-agent output validation error");
-          }
-        }
-
         // Classified once, above, where the halt account also needs it — never recomputed, so the
         // WARN and the parent-facing account cannot disagree about why a run was halted.
 
@@ -3358,7 +3499,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (deps.memoryAdapter) {
           try {
             let status: string;
-            if (abortClassification) {
+            if (backgroundProcessFailure !== undefined) {
+              status = "Halted (background process incomplete)";
+            } else if (abortClassification) {
               status = `Halted (${abortClassification.category})`;
             } else if (result.finishReason === "error" && result.errorContext) {
               const retryHint = result.errorContext.retryable ? ", retryable" : "";
@@ -3372,7 +3515,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             const taskSnippet = params.task.length > 500
               ? params.task.slice(0, 497) + "..."
               : params.task;
-            const sanitizedResponse = sanitizeAssistantResponse(result.response);
+            const sanitizedResponse = sanitizeAssistantResponse(completionSummary);
             const resultSnippet = sanitizedResponse.length > 500
               ? sanitizedResponse.slice(0, 497) + "..."
               : sanitizedResponse;
@@ -3472,9 +3615,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                         : sanitizeAssistantResponse(result.response),
                     }
                   : {
-                      error: condensedResult
+                      error: backgroundProcessFailure ?? (condensedResult
                         ? `${condensedResult.result.summary}${fullResultLine}`
-                        : sanitizeAssistantResponse(result.response),
+                        : sanitizeAssistantResponse(result.response)),
                     }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
@@ -3487,6 +3630,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 errorContext: result.errorContext,
               });
             }
+            const runCitationEvidence = childCitationEvidence.get(runId);
             await deliverAnnouncement({
               announcementText,
               announceChannelType: params.announceChannelType,
@@ -3501,6 +3645,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerConversation: params.callerConversation,
               destinationEndpoint: run.callerEndpoint,
               resolvedLanguage: params.resolvedLanguage,
+              ...(runCitationEvidence?.observedWebResearch === true
+                ? {
+                    citationEvidence: {
+                      kind: "web_fetch",
+                      urlDigests: [...runCitationEvidence.urlDigests],
+                    },
+                  }
+                : {}),
               terminalOutcome: isSuccess
                 ? { status: "completed" }
                 : {
@@ -3508,7 +3660,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                     failureNotice: deps.renderAnnouncementFailureNotice?.(
                       params.callerAgentId ?? params.agentId,
                       params.resolvedLanguage,
-                    ) ?? buildBackgroundTaskFailedNotice(params.resolvedLanguage),
+                      result.finishReason,
+                    ) ?? (
+                      result.finishReason === "loop_detected"
+                        ? `${buildBackgroundTaskFailedNotice(params.resolvedLanguage)}\n\n${buildLoopDetectedReply({ language: params.resolvedLanguage })}`
+                        : buildBackgroundTaskFailedNotice(params.resolvedLanguage)
+                    ),
                     ...(result.errorContext?.errorType === "UpstreamToolFailure"
                       && result.errorContext.configKey !== undefined
                       ? { requiredConfigKey: result.errorContext.configKey }
@@ -3559,10 +3716,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           terminalizeRun(runId, {
             endReason: "failed",
             completedAtMs: completedAt,
-            errorKind: classifyCompletionErrorKind(
-              result.finishReason,
-              result.terminalErrorKind,
-            ),
+            // Ordered by specificity. An abandoned background process is a
+            // precondition the child broke; a clean stop that skipped its
+            // contracted outputs is a validation failure. Only when neither
+            // applies does the finish-reason classifier decide — it would label a
+            // "stop" as `internal` and send an operator hunting a crash that
+            // never happened.
+            errorKind: backgroundProcessFailure !== undefined
+              ? ("precondition" as const)
+              : subAgentOutcome.reason === "contract_unsatisfied"
+                ? ("validation" as const)
+                : classifyCompletionErrorKind(
+                    result.finishReason,
+                    result.terminalErrorKind,
+                  ),
             summary: completionSummary || result.errorContext?.originalError,
             ...(materializedRef ? { resultRef: materializedRef } : {}),
           }, telemetry);
@@ -3578,6 +3745,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           timestamp: completedAt,
           cacheReadTokens: cacheRead,
           cacheWriteTokens: cacheWrite,
+          ...(backgroundProcesses.unresolved > 0
+            ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+            : {}),
+          ...(backgroundProcesses.failed > 0
+            ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
         });
 
         // Safety-net proxy stop — announceToParent's own finally block handles
@@ -3616,6 +3789,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         ) return;
 
         const completedAt = clock.now();
+        const backgroundProcesses = backgroundProcessCounts(runId);
+        requestAbandonedBackgroundCleanup(run);
         const errorMessage = error instanceof Error ? error.message : String(error);
         const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
@@ -3688,6 +3863,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           runId, parentSessionKey: params.callerSessionKey ?? "unknown",
           agentId: params.agentId, success: false,
           runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
+          ...(backgroundProcesses.unresolved > 0
+            ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+            : {}),
+          ...(backgroundProcesses.failed > 0
+            ? { failedBackgroundProcesses: backgroundProcesses.failed }
+            : {}),
         });
 
         // Stop proxy typing before failure notification
@@ -3757,6 +3938,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
       } finally {
         providerSettledRunIds.delete(runId);
+        childBackgroundProcesses.delete(runId);
+        childCitationEvidence.delete(runId);
+        backgroundCleanupRequestedRunIds.delete(runId);
         // Release the child's trajectory recorder on EVERY terminal settle —
         // completion, natural failure, kill, and watchdog all flow through
         // this promise. Without it the dead child's recorder stays subscribed
@@ -3770,7 +3954,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Per-run watchdog timer
     const subagentCtx = deps.config.subagentContext;
     const perStepMs = subagentCtx?.perStepTimeoutMs ?? 60_000;
-    const maxRunMs = subagentCtx?.maxRunTimeoutMs ?? 600_000;
+    const maxRunMs = subagentCtx?.maxRunTimeoutMs ?? SUBAGENT_MAX_RUN_MS_FALLBACK;
     const runTimeoutMs = params.max_steps
       ? Math.min(params.max_steps * perStepMs, maxRunMs)
       : maxRunMs;
@@ -3781,6 +3965,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       const completedAt = clock.now();
       const runtimeMs = completedAt - run.startedAt;
+      const backgroundProcesses = backgroundProcessCounts(runId);
+      requestAbandonedBackgroundCleanup(run);
 
       deliverySuppressedRunIds.add(runId);
       const errorMessage = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
@@ -3838,6 +4024,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         runId, parentSessionKey: run.callerSessionKey ?? "unknown",
         agentId: run.agentId, success: false,
         runtimeMs, tokensUsed: 0, cost: 0, timestamp: completedAt,
+        ...(backgroundProcesses.unresolved > 0
+          ? { unresolvedBackgroundProcesses: backgroundProcesses.unresolved }
+          : {}),
+        ...(backgroundProcesses.failed > 0
+          ? { failedBackgroundProcesses: backgroundProcesses.failed }
+          : {}),
       });
 
       // Stop proxy typing on watchdog timeout
@@ -4048,7 +4240,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       errorKind: killedBy === "health_monitor" ? "timeout" : "precondition",
       summary: errorMessage,
     });
-    forceTerminalCleanup(run);
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
     if (deps.dataDir) {
@@ -4080,6 +4271,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ...(opts?.thresholdMs !== undefined ? { thresholdMs: opts.thresholdMs } : {}),
       timestamp: killedAt,
     });
+    // Keep the child recorder subscribed through the kill event. Closing it
+    // first silently drops the event that explains why this run terminalized.
+    forceTerminalCleanup(run);
 
     // Abort the in-flight SDK session via composite-key resolver
     // (best-effort).

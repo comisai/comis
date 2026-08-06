@@ -53,3 +53,29 @@ export function hasModuleNotFound(s: IncidentSignals): boolean {
       MODULE_NOT_FOUND_MARKERS.some((marker) => f.errorPreview.includes(marker)),
   );
 }
+
+/**
+ * A config key is safe to echo back in a verdict only when it looks like a
+ * dotted path of plain identifier segments — never free-form text from a log.
+ */
+export function boundedConfigKey(value: string | undefined): string | undefined {
+  if (value === undefined || value.length === 0 || value.length > 256) {
+    return undefined;
+  }
+  const segments = value.split(".");
+  if (segments.length < 2 || segments.length > 9) return undefined;
+  for (const segment of segments) {
+    if (segment.length === 0) return undefined;
+    for (const character of segment) {
+      const code = character.charCodeAt(0);
+      const allowed =
+        (code >= 65 && code <= 90)
+        || (code >= 97 && code <= 122)
+        || (code >= 48 && code <= 57)
+        || character === "_"
+        || character === "-";
+      if (!allowed) return undefined;
+    }
+  }
+  return value;
+}

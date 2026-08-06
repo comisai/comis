@@ -56,11 +56,17 @@ export const spendExceededVerdict = (s: IncidentSignals): SpendVerdict | null =>
   // the verdict answers "which limb, by how much, which knob" in one call.
   const prb = s.perRootBudget;
   if (prb !== undefined) {
+    const breachMath = prb.attempted === undefined
+      ? `current ${String(prb.spent)} / cap ${String(prb.cap)} ${prb.unit}`
+      : prb.attempted === 0
+        ? `current ${String(prb.spent)} exceeded cap ${String(prb.cap)} ${prb.unit}`
+        : `current ${String(prb.spent)} + rejected attempted ${String(prb.attempted)} `
+          + `would total ${String(prb.spent + prb.attempted)}, above cap ${String(prb.cap)} ${prb.unit}`;
     return {
       code: "spend_exceeded",
       detail:
         `per-root autonomy.budget exhausted — the ${prb.limb} limb tripped ` +
-        `(${prb.spent}/${prb.cap} ${prb.unit}), aborting the run's spawn tree. This is the ` +
+        `(${breachMath}), aborting the run's spawn tree. This is the ` +
         `per-ROOT autonomy.budget meter, NOT the observability.spend $-ceiling.`,
       suggestedNextSteps: [
         `raise this agent's autonomy.budget.${prb.limb} (currently ${prb.cap} ${prb.unit}) for heavier/longer turns — NOT observability.spend.*`,

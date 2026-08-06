@@ -64,10 +64,20 @@ export type SttSelection =
 /** The exact config knob an explicit-no-key hint must name. */
 const PROVIDER_KNOB = "integrations.media.transcription.provider";
 
+const KEYED_PROVIDER_SECRETS: Readonly<Record<string, string>> = {
+  openai: "OPENAI_API_KEY",
+  groq: "GROQ_API_KEY",
+  deepgram: "DEEPGRAM_API_KEY",
+};
+
 function keyHint(provider: string): string {
+  const secretName = KEYED_PROVIDER_SECRETS[provider];
+  const credentialAction = secretName === undefined
+    ? "Set the selected provider's API key"
+    : `Set ${secretName}`;
   return (
     `STT provider "${provider}" is configured but its audio key is unavailable. ` +
-    `Set the provider's API key, choose a keyless provider (local), or change ` +
+    `${credentialAction}, choose a keyless provider (local), or change ` +
     `${PROVIDER_KNOB}.`
   );
 }

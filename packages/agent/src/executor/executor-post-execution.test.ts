@@ -1061,6 +1061,34 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — exact citation evidence is enforced after critic rewrites and before persistence", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceCitationEvidence\(/);
+    expect(stripped).toMatch(/response\.citation_evidence_guard/);
+    expect(stripped.indexOf("runVerificationCritic("))
+      .toBeLessThan(stripped.indexOf("enforceCitationEvidence("));
+    expect(stripped.indexOf("enforceCitationEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+    expect(stripped.indexOf("synchronizeFinalAssistantResponse("))
+      .toBeLessThan(stripped.indexOf("appendCitationEvidenceRecord("));
+    expect(stripped).toMatch(/response\.citation_evidence_persistence/);
+  });
+
+  it("source-grep — source questions without a durable receipt fail closed", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(
+      /const citationSourceRequest\s*=\s*isCitationSourceRequest\(msg\.text\s*\?\?\s*""\)/,
+    );
+    expect(stripped).toMatch(
+      /const historicalDigests\s*=\s*citationSourceRequest\s*\?\s*historicalCitationDigests\(sm\)/,
+    );
+    expect(stripped).toMatch(
+      /enabled:[\s\S]{0,300}?\|\|\s*citationSourceRequest/,
+    );
+  });
+
   it("source-grep — a successful unchanged agent update is grounded before delivery", () => {
     const stripped = readPostExecStripped();
 
@@ -1088,6 +1116,50 @@ describe("tool-failure endReason and notice", () => {
       /ongoingWorkGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_ongoing_work_evidence"[\s\S]*?succeeded:\s*true/,
     );
     expect(stripped.indexOf("enforceOngoingWorkEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
+  it("source-grep — unrecovered failures ground completion claims before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceCompletionEvidence\(/);
+    expect(stripped).toMatch(/unrecoveredToolFailures/);
+    expect(stripped).toMatch(/buildCompletionEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.completion_evidence_guard/);
+    expect(stripped).toMatch(
+      /completionEvidenceGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"unrecovered_tool_failure_completion_claim"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceCompletionEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+    expect(stripped).toMatch(/getToolMetadata\([^)]*\)\?\.isReadOnly\s*===\s*true/);
+    expect(stripped).toMatch(/preservePartialResponse:/);
+  });
+
+  it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceSchedulerStateEvidence\(/);
+    expect(stripped).toMatch(/buildSchedulerStateEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/buildPendingSchedulerConfirmationReply\(/);
+    expect(stripped).toMatch(/pending_scheduler_confirmation/);
+    expect(stripped).toMatch(/response\.scheduler_state_evidence_guard/);
+    expect(stripped).toMatch(
+      /schedulerStateGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:[\s\S]*?"pending_scheduler_confirmation"[\s\S]*?"missing_scheduler_state_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceSchedulerStateEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
+  it("source-grep — runtime self-reports require current observability evidence before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceRuntimeSelfReportEvidence\(/);
+    expect(stripped).toMatch(/buildRuntimeSelfReportEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.runtime_self_report_evidence_guard/);
+    expect(stripped).toMatch(
+      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceRuntimeSelfReportEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 

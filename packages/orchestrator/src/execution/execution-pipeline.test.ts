@@ -453,8 +453,39 @@ describe("executeAndDeliver", () => {
         "agent-1",
         undefined, // no directives
         undefined, // prevTimestamp
-        { operationType: "interactive", inboundProvenancePlans: [] }, // overrides
+        {
+          operationType: "interactive",
+          inboundProvenancePlans: [],
+          suppressFinalResponseAfterOutboundDelivery: {
+            channelType: "telegram",
+            channelId: "12345",
+          },
+        }, // overrides
       );
+    });
+
+    it("binds redundant-final suppression to the authenticated inbound route", async () => {
+      const adapter = makeAdapter();
+      const executor = makeExecutor();
+      const deps = makeDeps();
+      const msg = makeMessage({
+        channelId: "-1001234567890",
+        channelType: "telegram",
+        chatType: "group",
+      });
+
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+        deps, adapter, msg, msg, executor, makeSessionKey(), "agent-1",
+        makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      ));
+
+      expect(vi.mocked(executor.execute).mock.calls[0]?.[7]).toMatchObject({
+        operationType: "interactive",
+        suppressFinalResponseAfterOutboundDelivery: {
+          channelType: "telegram",
+          channelId: "-1001234567890",
+        },
+      });
     });
 
     it("delivers response via adapter.sendMessage", async () => {
@@ -2792,9 +2823,6 @@ describe("executeAndDeliver — out-of-order reply anchoring", () => {
  * so the ordinary "work continues in the background" acknowledgement was dispatched as
  * `agent-runtime-failure` — with nothing having failed.
  *
- * That is not cosmetic. The delivery mirror explicitly skips runtime-failure deliveries, so these
- * acknowledgements were silently excluded from it.
- *
  * The pipeline already encodes the correct reading 140 lines earlier, where the coordinator outcome
  * treats `background_pending` as "non-terminal UI state, not a failed activity". This makes the
  * origin agree with that, rather than two branches disagreeing about the same fact.
@@ -2865,8 +2893,9 @@ describe("executeAndDeliver — delivery origin", () => {
       makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
     ));
 
-    // The guard that matters: narrowing the failure origin must not stop labelling REAL failures,
-    // or the delivery mirror would start carrying them.
+    // The guard that matters: narrowing the failure origin must not stop labelling real failures.
+    // The origin remains useful for lifecycle and observability classification even though every
+    // delivered message is mirrored for exact conversation continuity.
     expect(delivery.origins()).toContain("agent-runtime-failure");
   });
 });

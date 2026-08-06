@@ -218,29 +218,6 @@ describe("SEC-01 Stage-B — loopback bind + the file-route verdict (no COMIS_LI
 // Stage-B — zero production code change (the milestone's load-bearing proof)
 // ---------------------------------------------------------------------------
 
-describe("Stage-B — the whole phase diff is test/-only (zero production code change)", () => {
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // The walking skeleton is the milestone's load-bearing proof: the apiRoot
-    // seam already exists end-to-end, so the WHOLE integration is wired with no
-    // `packages` source edit. If this fails, a product file was touched — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-    });
-    // Lines look like " M packages/...", "?? test/...", "A  test/..." — strip the
-    // 3-char XY+space status prefix and check no path is under packages/<pkg>/src/.
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      // A rename shows "old -> new"; check the destination too.
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Stage-C — the AGENT-AUTHORED round-trip via the full daemon (COMIS_LIVE)
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@
 import {
   BackgroundTaskOriginSchema,
   type BackgroundTaskOrigin,
+  type BackgroundTaskFailureDiagnostic,
   type BackgroundTaskFailureCode,
   type ErrorKind,
   type SessionKey,
@@ -21,7 +22,28 @@ export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
 export const BackgroundTaskFailureCodeSchema = z.enum([
   "skill_import_incomplete",
   "mcp_connection_details_missing",
+  "mcp_secret_reference_missing",
+  "mcp_call_deadline_exceeded",
+  "background_hard_timeout_exceeded",
+  "mutation_not_persisted",
 ]) satisfies z.ZodType<BackgroundTaskFailureCode>;
+export const BackgroundTaskFailureDiagnosticSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("mcp_call_deadline_exceeded"),
+    configKey: z.literal("integrations.mcp.callToolTimeoutMs"),
+    configuredMs: z.number().finite().nonnegative(),
+    queueWaitedMs: z.number().finite().nonnegative(),
+    requestBudgetMs: z.number().finite().nonnegative(),
+  }),
+  z.strictObject({
+    kind: z.literal("background_hard_timeout_exceeded"),
+    configKey: z.custom<`agents.${string}.backgroundTasks.maxBackgroundDurationMs`>(
+      (value) => typeof value === "string"
+        && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(value),
+    ),
+    configuredMs: z.number().finite().nonnegative(),
+  }),
+]) satisfies z.ZodType<BackgroundTaskFailureDiagnostic>;
 
 /**
  * Notification policy for a background task. Typed enum (NOT a boolean):
@@ -124,6 +146,31 @@ export interface BackgroundFinalizedResultRecoveryInput {
   readonly journalKey: string;
 }
 
+/**
+ * Origin as read back from disk.
+ *
+ * `trustLevel` is required when a task is promoted — it is the authorization
+ * snapshot the originating turn resolved, and a delayed re-entry must execute
+ * with the trust the user actually had. But a record written before the field
+ * existed still has to load: the promote-time schema is also the read-time
+ * schema, so adding a required field silently made every older record fail
+ * validation, and a task still in flight across the upgrade became
+ * unrecoverable rather than merely untrusted.
+ *
+ * An absent field degrades to LEAST privilege. The turn's real trust is not
+ * knowable after the fact, so it must never be inferred upward. Only the read
+ * path is tolerant; `BackgroundTaskOriginSchema` stays strict for promotion.
+ */
+const PersistedOriginSchema = z.preprocess(
+  (value) => (
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      && !("trustLevel" in value)
+      ? { ...(value as Record<string, unknown>), trustLevel: "guest" }
+      : value
+  ),
+  BackgroundTaskOriginSchema,
+);
+
 export const PersistedTaskStateSchema = z.strictObject({
   id: z.string().min(1).max(512),
   toolName: z.string().min(1).max(256),
@@ -132,7 +179,7 @@ export const PersistedTaskStateSchema = z.strictObject({
   completedAt: z.number().finite().optional(),
   result: z.string().max(102_400).optional(),
   error: z.string().max(102_400).optional(),
-  origin: BackgroundTaskOriginSchema,
+  origin: PersistedOriginSchema,
   notificationPolicy: BackgroundTaskNotificationPolicySchema.optional(),
   dispatchState: BackgroundSessionStateSchema.optional(),
   continuationExecutionId: z.string().min(1).max(512),
@@ -147,6 +194,7 @@ export const PersistedTaskStateSchema = z.strictObject({
     "resource", "dependency", "internal", "platform", "sandbox_unavailable",
   ]).optional(),
   failureCode: BackgroundTaskFailureCodeSchema.optional(),
+  failureDiagnostic: BackgroundTaskFailureDiagnosticSchema.optional(),
 });
 
 // @optional-field-count: Lifecycle fields are conditional by task state; underscored fields exist only while execution or terminal persistence is in flight.
@@ -174,6 +222,7 @@ export interface BackgroundTask {
   traceId?: string;
   errorKind?: ErrorKind;
   failureCode?: BackgroundTaskFailureCode;
+  failureDiagnostic?: BackgroundTaskFailureDiagnostic;
   /** Durable completion lifecycle. */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;
@@ -193,11 +242,13 @@ export interface BackgroundTask {
     error?: string;
     errorKind?: ErrorKind;
     failureCode?: BackgroundTaskFailureCode;
+    failureDiagnostic?: BackgroundTaskFailureDiagnostic;
   };
   _ownsCounterSlot?: boolean;
 }
 
 /** Serializable subset of BackgroundTask for file persistence. */
+// @optional-field-count: Terminal, delivery, correlation, and diagnostic fields are conditional on the persisted lifecycle state.
 export interface PersistedTaskState {
   id: string;
   toolName: string;
@@ -227,6 +278,7 @@ export interface PersistedTaskState {
   traceId?: string;
   errorKind?: ErrorKind;
   failureCode?: BackgroundTaskFailureCode;
+  failureDiagnostic?: BackgroundTaskFailureDiagnostic;
 }
 
 export function isClosedBackgroundTask(task: Pick<BackgroundTask, "status" | "dispatchState">): boolean {

@@ -52,7 +52,7 @@ a row the code contradicts is itself a finding.
 | S3 | Sender trust is `channels.telegram.allowFrom` (ingress) + `agents.<id>.elevatedReply.senderTrustMap` (per-message trust; admin inherits the control plane) | channel + agent schemas |
 | S4 | `queue.defaultMode` has FOUR values — `followup`, `collect`, `steer`, `steer+followup` — and the default is **`steer+followup`**, which already does progress-preserving mid-turn injection. Abort-and-restart `steer` is the non-default opt-in | `packages/core/src/config/schema-queue.ts` |
 | S5 | Auto-backgrounding is **default-ON**: `backgroundTasks.enabled` true, `autoBackgroundMs` 10000, `maxPerAgent` 5, `maxTotal` 20, `maxBackgroundDurationMs` 300000, `maxBackgroundHops` 3. A completion **re-enters the originating session as a fresh turn** — that is an unprompted message to the user | `packages/core/src/config/schema-background-tasks.ts` |
-| S6 | Structurally never auto-backgrounded regardless of config: `exec`, `background_tasks`, `image_generate`, `video_generate` | `packages/agent/src/background/auto-background-middleware.ts` |
+| S6 | Structurally never auto-backgrounded regardless of config: `exec`, `background_tasks`, `subagents`, `sleep`, `discover_tools`, `image_generate`, `video_generate` | `packages/agent/src/background/auto-background-middleware.ts` |
 | S7 | Heartbeat is **default-ON**: `scheduler.heartbeat.enabled` true, `intervalMs` 300000, `showOk` false, `alertThreshold` 2, `staleMs` 120000. The empty-`HEARTBEAT.md` gate short-circuits with no LLM call, so **silence on an idle daemon is CORRECT** | `packages/core/src/config/schema-scheduler.ts`, `packages/scheduler/src/heartbeat/` |
 | S8 | `scheduler.tasks` (model-inferred follow-up tasks) is **implemented and wired**, explicit opt-in `enabled:false`; `confidenceThreshold` 0.8, `debounceMs` 15000, `batchMax` 8, `maxPerCheck` 3, `maxPerDayPerConversation` 3, `defaultWindowMs` 12h. It is no longer dead config | `packages/daemon/src/wiring/setup-followup-task-extraction.ts`, `packages/daemon/src/daemon.ts` |
 | S9 | Autonomy is default-ON via `profile: "standard"` (names: `assistant`, `standard`, `unattended`, `max`). Tree bounds default `aggregateUsd` 200, `tokens` 200000000, `wallClockMs` 48h; spawn bounds `maxConcurrentSelfAgents` 4, `maxSpawnDepth` 3, `maxChildrenPerAgent` 5; message posture `originOnly` true, `volumeCap` 4000 | `packages/core/src/config/schema-agent/schema-agent-autonomy*.ts` |
@@ -279,19 +279,18 @@ mid-flight `hows that going` reads the real task state via `background_tasks lis
 cancels. The 6th concurrent ask is refused or queued honestly, never silently dropped. A failing
 background tool's breaker is recorded against the **originating** tool, not against the poller.
 
-**Oracle.** ⚠ Only FOUR background events reach the trajectory. `event-bus-bridge.ts` maps
-`background_task:promoted|completed|failed|notified`; the emitted `background_task:cancelled` and
-`background_task:reentered` are **NOT bridged**, so a cancel and the fresh-turn re-entry are invisible to
-`comis explain`. Verified at HEAD — do not read their absence as "it didn't happen". So: use the four
-bridged events for promote/finish; read the CANCEL from the `background_tasks` tool receipt plus the task's
-terminal state; read the RE-ENTRY from the new turn's own record in the session (a turn with no inbound
-message initiating it). Then `delivery_mirror` for the unprompted send (exactly one row) and `explain`
-per-tool `{ok,failed}`. **The bridge gap is itself an obs-loop finding** — two emitted events that
-`explain` cannot see, on the default-ON path that produces unprompted user-visible messages.
+**Oracle.** All six background lifecycle events reach the trajectory: `event-bus-bridge.ts` maps
+`background_task:promoted|completed|failed|cancelled|reentered|notified`. Use the promoted task IDs to
+join later terminal, re-entry, and notification records onto the originating trace; `comis explain` folds
+those records into promoted/completed/failed/cancelled/reentered/accepted/pending counts. Corroborate a
+cancel with the `background_tasks` tool receipt and the task's terminal state, and corroborate re-entry with
+the new turn's own session record (a turn with no inbound message initiating it). Then check
+`delivery_mirror` for the unprompted send (exactly one row) and `explain` per-tool `{ok,failed}`.
 
 **HARD.** The unprompted completion is bound to the ORIGINATING conversation only (a completion must
 never land in another chat). No false "done" — a failed background task reports as failed. `exec`,
-`image_generate`, `video_generate` are NOT promoted (S6), so their turns must not ack-and-vanish.
+`background_tasks`, `subagents`, `sleep`, `discover_tools`, `image_generate`, and `video_generate` are
+NOT promoted (S6), so their turns must not ack-and-vanish.
 
 **Config polarity.** `backgroundTasks.enabled` false → the same ask blocks in-turn or times out honestly,
 with no ack-and-continue; `autoBackgroundMs` raised → a medium task stays in-turn.
@@ -707,8 +706,10 @@ S10) · `ask my notes what i decided about <X>` (`memory_ask` — default-on, op
 **Predicate.** Every mutating control-plane action is admin-gated, approval-gated where destructive,
 reversible, and reflected in the config audit trail. Every media path either produces a REAL artifact on
 the wire or fails honestly naming the missing knob — never a text-only false success. The video job store
-survives a restart. `memory_ask` with the knob OFF is absent from the surface and the agent says so; with
-it ON, the answer is grounded and cited.
+survives a restart. `memory_ask` with either cost knob OFF is absent from the surface and the agent must
+not claim that the dialectic ran. The separate LLM-free recall path remains available and may still answer
+from injected or searched memories; that is not evidence that `memory_ask` leaked through the gate. With
+both knobs ON, an explicit cited-memory request invokes `memory_ask` and returns a grounded, cited answer.
 
 **Oracle.** `config.audit.list`/`config.diff`/`config.rollback`; `RecordedOutbound.mediaKind` on
 `…/outbound` (a media-only turn prints `[NO SUBSTANTIVE ANSWER]` — read the outbound, not the text
@@ -1137,7 +1138,7 @@ TRADEOFF (recommend, don't flip) · DEAD.
 
 | knob | shipped default | the arc that puts it under evidence | what to measure |
 |---|---|---|---|
-| `queue.debounceBuffer.windowMs` | **0 — disabled** (`firstMessageImmediate` true, `maxBufferedMessages` 10) | A12 / B1 — the 3-message burst, the single most characteristic real-user behaviour | How many TURNS a 2–4 message burst produces, and whether the agent answers the first fragment before the thought is finished. Coalescing is off out of the box, so the canonical phone-typing pattern is un-debounced by default. If a burst yields a confused partial answer plus a second turn, say so with the turn count. |
+| `queue.defaultDebounceMs` | **0 — disabled**; applies to pending messages only when queue mode is `collect` | A12 / B1 — the 3-message burst, the single most characteristic real-user behaviour | How many TURNS a 2–4 message burst produces, and whether the agent answers the first fragment before the thought is finished. Coalescing is off out of the box, so the canonical phone-typing pattern is un-debounced by default. For the polarity, use `collect` plus a bounded nonzero delay: the first message starts immediately and later fragments coalesce into one follow-up. |
 | `queue.defaultMode` | `steer+followup` | A9 / B1 — interruption mid-work | Whether the mid-turn message preserved progress or discarded it, and whether the user could TELL which happened. A correct steer that reads as a dropped message is EXPERIENCE-WRONG. |
 | `backgroundTasks.autoBackgroundMs` | 10000 | B1 — "just ping me when its done" | The gap between the ack and the real completion. A tool promoted at 10s that finishes at 12s produces an ack the user did not need; a 4-minute job that never acks produces silence. Report both tails you actually saw. |
 | `backgroundTasks.maxBackgroundDurationMs` · `maxPerAgent` · `maxBackgroundHops` | 300000 · 5 · 3 | B1 — the slow job, six concurrent asks, the install→generate→send chain | Whether a legitimately long job hits the 5-minute wall, whether the 6th ask degrades honestly, and whether a normal multi-step sequence exhausts 3 hops. |

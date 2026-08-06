@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clean slate then relaunch. Wipes the test session + LCD + follow-up tasks + logs; PRESERVES
+# Clean slate then relaunch. Wipes the test session + LCD + follow-up tasks + logs + trajectories; PRESERVES
 # config.yaml, secrets.db, and the master key (<dataDir>/.env). Then restarts the daemon via
 # restart-daemon.sh (systemd on the remote rig; an explicit stop/relaunch locally).
 #
@@ -92,6 +92,9 @@ as_service_user "
   # (the whole-day file, not time-windowed), and cache-trace.jsonl pollutes the cache lens, so a
   # bare '*.log' leaves a 'clean' rig surfacing prior runs.
   rm -f '$DATA'/logs/*.log '$DATA'/logs/session-index.*.jsonl* '$DATA'/logs/cache-trace.jsonl
+  # Session-key explain folds the durable trajectory, so retaining it makes a clean session report
+  # prior turns and tools even when the LCD and session JSONL are empty.
+  rm -rf '$DATA'/trajectories/*
   rm -rf '$DATA'/graph-runs/* '$DATA'/subagent-results/*
   # Clear the DURABLE TERMINAL DRIVE + WAKE-STATE stores. A backgrounded coding-CLI drive persists its
   # descriptor/journal in <DATA>/terminal-drive/ AND its wake-dispatch FSM state in <DATA>/terminal-wake/

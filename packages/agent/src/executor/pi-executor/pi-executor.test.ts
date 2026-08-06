@@ -3601,6 +3601,36 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("abort compaction", () => {
+    it("disables pending SDK retries before aborting a safety-stopped execution", async () => {
+      const callOrder: string[] = [];
+      mockApplyOverrides.mockImplementation((overrides: unknown) => {
+        if (JSON.stringify(overrides) === JSON.stringify({
+          retry: { enabled: false },
+          compaction: { enabled: false },
+        })) {
+          callOrder.push("disableRetry");
+        }
+      });
+      mockAbortCompaction.mockImplementation(() => {
+        callOrder.push("abortCompaction");
+      });
+      mockAbort.mockImplementation(() => {
+        callOrder.push("abort");
+        return Promise.resolve(undefined);
+      });
+      const executor = createPiExecutor(testConfig, createMockDeps());
+
+      await executor.execute(testMessage, testSessionKey);
+      const bridgeCall = (createPiEventBridge as Mock).mock.calls[0][0];
+      bridgeCall.onAbort();
+
+      expect(mockApplyOverrides).toHaveBeenCalledWith({
+        retry: { enabled: false },
+        compaction: { enabled: false },
+      });
+      expect(callOrder).toEqual(["disableRetry", "abortCompaction", "abort"]);
+    });
+
     it("onAbort calls abortCompaction before abort -- session state preserved", async () => {
       // Track call order to verify abortCompaction is called BEFORE abort
       const callOrder: string[] = [];
@@ -7933,6 +7963,18 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(completedRecord).toBeGreaterThan(requestedRecord);
   });
 
+  it("records trusted current-attachment rejections after the session recorder opens", async () => {
+    const src = await readPiExecutorSrc();
+    const recorderResolution = src.indexOf("trajectoryRecorder = trajectoryResult.value.recorder");
+    const receiptParse = src.indexOf("MediaAttachmentPreprocessReceiptsSchema.safeParse");
+    const rejectedRecord = src.indexOf(
+      'trajectoryRecorder.recordEvent("media.attachment.rejected"',
+    );
+
+    expect(receiptParse).toBeGreaterThan(recorderResolution);
+    expect(rejectedRecord).toBeGreaterThan(receiptParse);
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
@@ -8556,6 +8598,15 @@ describe("per-turn locale inheritance wiring", () => {
   });
 });
 
+describe("background continuation authority wiring", () => {
+  it("captures the resolved immutable trust snapshot with the background origin", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/trustLevel:\s*context\.trustLevel/);
+  });
+});
+
 describe("recent recall context provenance wiring", () => {
   it("derives recent raw user turns from structured session entries", () => {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -8564,6 +8615,35 @@ describe("recent recall context provenance wiring", () => {
     expect(src).toMatch(
       /selectRecentUserTurns\(\s*sessionContext\.messages,\s*sm\.getEntries\?\.\(\) \?\? \[\],\s*msg\.id,\s*\)/,
     );
+  });
+});
+
+describe("outbound completion evidence wiring", () => {
+  it("threads request-matched mutation receipts into the pre-send guard", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/requestMutationToolNames/);
+    expect(src).toMatch(/currentSuccessfulMutationCount/);
+    expect(src).toMatch(/response\.outbound_completion_evidence_guard/);
+    expect(src.indexOf("requestMutationToolNames"))
+      .toBeLessThan(src.indexOf("createBeforeToolCallGuard("));
+  });
+
+  it("counts any successful mutation as the receipt, not only the request-matched tools", () => {
+    // A fix delivered through cron, exec, or a channel action satisfies a "fix …"
+    // request just as much as an edit does. Scoping the receipt to the three file
+    // tools that declare mutation prefixes blocked those completions outright.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    const start = src.indexOf("currentSuccessfulMutationCount = () =>");
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf(").length;", start));
+
+    expect(block).toContain('record.toolName !== "message"');
+    expect(block).toMatch(/classifyToolInvocationMutation\([\s\S]*?\) === "mutating"/);
+    expect(block).not.toContain("requestMutationToolNames.has(");
   });
 });
 

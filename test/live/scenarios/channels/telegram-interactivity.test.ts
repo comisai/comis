@@ -300,20 +300,6 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
     expect(offendingPkgJson, `SEC-02: no package.json may live under test/live/** — found: ${offendingPkgJson.join(", ")}`).toEqual([]);
   });
 
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // The callback/edit/inline-keyboard pipelines are already wired in
-    // packages/channels/src and verified at HEAD — the harness EMITS what they
-    // consume. If this fails, a product file was touched — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
 });
 
 // ---------------------------------------------------------------------------

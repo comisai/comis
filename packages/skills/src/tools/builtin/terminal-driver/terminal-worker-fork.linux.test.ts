@@ -129,14 +129,25 @@ describe.skipIf(!isLinux() || !distBuilt)(
       // the terminal scope jail") flips it `lost`. So POLL the list until the session
       // is gone — listing immediately races the reply on a loaded CI runner (the
       // session is briefly `alive:true` before the flip lands).
+      // The budget is wall-clock, not a poll count: a 3s ceiling passed when this
+      // file ran alone and failed when it ran with the other 17 linux suites on a
+      // 2-core box — the fork + IPC reply simply took longer than the polls allowed.
+      // A fail-closed assertion that flakes under load is one people learn to
+      // ignore, so wait generously (still far under the 30s test timeout) and
+      // report how long it waited, keeping "slow to fail-closed" distinguishable
+      // from "never fail-closed".
+      const FAIL_CLOSE_BUDGET_MS = 20_000;
+      const startedAt = Date.now();
       let live: { sessionId: string; alive: boolean } | undefined;
-      for (let i = 0; i < 60; i++) {
+      let waitedMs = 0;
+      do {
         const list = (await listTool.execute("list-a", {})).details as Array<{ sessionId: string; alive: boolean }>;
         live = list.find((s) => s.sessionId === details.sessionId && s.alive);
         if (live === undefined) break;
         await new Promise((r) => setTimeout(r, 50));
-      }
-      expect(live).toBeUndefined();
+        waitedMs = Date.now() - startedAt;
+      } while (waitedMs < FAIL_CLOSE_BUDGET_MS);
+      expect(live, `an unjailed session was still alive after ${waitedMs}ms with no bwrapPath`).toBeUndefined();
 
       await registry.cleanup();
     }, 30000);

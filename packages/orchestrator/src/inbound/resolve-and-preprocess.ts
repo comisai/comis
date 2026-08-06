@@ -12,6 +12,7 @@ import {
   getOriginalInboundMessages,
   LinkPrefetchReceiptSchema,
   MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
+  MediaAttachmentPreprocessReceiptsSchema,
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
   systemNowMs,
@@ -184,12 +185,14 @@ function projectContentEnrichment(
     allowLinkPrefetch: boolean;
     allowSttPreprocess: boolean;
     allowVisionPreprocess: boolean;
+    allowMediaAttachmentPreprocess: boolean;
   },
 ): NormalizedMessage {
   const metadata = { ...authoritative.metadata };
   delete metadata.linkPrefetch;
   delete metadata.sttPreprocess;
   delete metadata.visionPreprocess;
+  delete metadata.mediaAttachmentPreprocess;
   if (options.allowAudioMention && candidate.metadata.isBotMentioned === true) {
     metadata.isBotMentioned = true;
   }
@@ -218,6 +221,14 @@ function projectContentEnrichment(
       candidate.metadata.visionPreprocess,
     );
     if (receipt.success) metadata.visionPreprocess = receipt.data;
+  }
+  if (options.allowMediaAttachmentPreprocess) {
+    const receipts = MediaAttachmentPreprocessReceiptsSchema.safeParse(
+      candidate.metadata.mediaAttachmentPreprocess,
+    );
+    if (receipts.success && receipts.data.length > 0) {
+      metadata.mediaAttachmentPreprocess = receipts.data;
+    }
   }
 
   return {
@@ -380,7 +391,9 @@ export async function resolveAndPreprocess(
   delete ingressMetadata.linkPrefetch;
   delete ingressMetadata.sttPreprocess;
   delete ingressMetadata.visionPreprocess;
+  delete ingressMetadata.mediaAttachmentPreprocess;
   delete ingressMetadata.groupHistoryContext;
+  delete ingressMetadata.autoReplyPolicyContext;
   let processedMsg: NormalizedMessage = {
     ...effectiveMsg,
     metadata: ingressMetadata,
@@ -423,6 +436,7 @@ export async function resolveAndPreprocess(
               allowLinkPrefetch: false,
               allowSttPreprocess: false,
               allowVisionPreprocess: false,
+              allowMediaAttachmentPreprocess: false,
             },
           );
           deps.logger.debug({
@@ -457,6 +471,7 @@ export async function resolveAndPreprocess(
           allowLinkPrefetch: true,
           allowSttPreprocess: true,
           allowVisionPreprocess: true,
+          allowMediaAttachmentPreprocess: true,
         },
       );
     } catch (preprocessErr) {

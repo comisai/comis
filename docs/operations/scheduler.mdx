@@ -98,6 +98,8 @@ scheduler:
 
 <Info>Task extraction requires explicit opt-in with `scheduler.tasks.enabled: true`. Extracted work remains subject to the confidence, batch, retry, and per-conversation delivery limits above.</Info>
 
+A proactive check can legitimately run and deliver nothing — the model may decline, or a visibility setting may withhold the reply. [`comis explain`](/reference/cli#comis-explain) reports that attempt's disposition, delivery counts, and the exact suppression reason in one call, so a silent check is never indistinguishable from a broken one.
+
 ## Quiet Hours
 
 Quiet hours control scheduled delivery and task-lane admission during specified times — for example, overnight when you do not want notifications. They do not stop the cron engine or agent heartbeat execution.

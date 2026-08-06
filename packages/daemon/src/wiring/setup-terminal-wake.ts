@@ -50,7 +50,7 @@ import {
 import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
 import { removeWakeStateFile, type PersistedWakeOwner } from "./terminal-wake-persistence.js";
 import { driveScopeKeyFor, registryOwnerFor } from "./terminal-drive-scope.js";
-import { emitTerminalOutcome, runHeartbeatTick, runBackstopSessionCheck, shouldFailOnLost, type TerminalNotifyDeps } from "./terminal-wake-notify.js";
+import { emitTerminalOutcome, runHeartbeatTick, runBackstopSessionCheck, shouldFailOnLost, withOrigin, makeOriginEndpointResolver, type TerminalNotifyDeps, type OriginEndpointResolver } from "./terminal-wake-notify.js";
 import type { LivenessSignal } from "./terminal-wake-types.js";
 
 /** Dependencies for the keystone wake wiring. */
@@ -180,6 +180,9 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
 
   // The resolved drive.notify policy (default "terminal").
   const notifyPolicy: NotifyPolicy = deps.notifyPolicy ?? "terminal";
+
+  // The ONE origin resolver every notify site on this path shares (see its factory).
+  const originEndpointFor: OriginEndpointResolver = makeOriginEndpointResolver(deps.registries);
   // The structural notify/log/clock/policy bundle the extracted emit helper consumes
   // (terminal-wake-notify.ts) — keeps the holder thin (the gating + the structured log record live there).
   const notifyDeps: TerminalNotifyDeps = {
@@ -188,6 +191,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     warn: (obj, msg) => log.warn(obj, msg),
     nowMs,
     policy: notifyPolicy,
+    originEndpointFor,
   };
 
   // Default hop / concurrency caps for the FSM construction. The PER-WAKE owner-config
@@ -336,12 +340,13 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       "terminal wake hop-limit escalation",
     );
     if (deps.notify) {
-      await deps.notify({
+      // Pinned to the ORIGIN conversation: an escalation sent to a more-recent thread is lost, and the drive then parks unanswered.
+      await deps.notify(withOrigin({
         agentId: opts.owner.agentId,
         message: `Terminal session ${opts.sessionId} hit the wake hop-limit and needs a human.`,
-        priority: "normal",
-        origin: "background_task",
-      });
+        priority: "normal" as const,
+        origin: "background_task" as const,
+      }, originEndpointFor(opts.sessionId, opts.owner.agentId)));
     }
   };
 
@@ -388,12 +393,12 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
       // uncaughtException that crashes the daemon. The message is STRUCTURAL only (session id +
       // "background") — no screen text/secrets.
       void deps
-        .notify({
+        .notify(withOrigin({
           agentId,
           message: `Terminal drive for session ${sessionId} is now running in the background.`,
-          priority: "normal",
-          origin: "background_task",
-        })
+          priority: "normal" as const,
+          origin: "background_task" as const,
+        }, originEndpointFor(sessionId, agentId)))
         .catch((err: unknown) => {
           log.warn(
             { sessionId, agentId, err, hint: "drive-started notification failed; the drive continues (bus-only)", errorKind: "resource" as const, step: "drive_promoted_notify_failed" },
@@ -532,6 +537,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
         notifyPolicy,
         info: (obj, msg) => log.info(obj, msg),
         warn: (obj, msg) => log.warn(obj, msg),
+        originEndpointFor,
       }).catch((err: unknown) => {
         log.warn(
           { sessionId, err, hint: "liveness backstop check faulted; skipped this tick (the next tick retries)", errorKind: "resource" as const, step: "liveness_backstop_failed" },
@@ -571,6 +577,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
           warn: (obj, msg) => log.warn(obj, msg),
           nowMs,
           heartbeatNotifyMs,
+          originEndpointFor,
         }),
       heartbeatNotifyMs,
     );

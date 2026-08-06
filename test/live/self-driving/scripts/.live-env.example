@@ -77,7 +77,7 @@ fi
 
 # Group chats exist ONLY if the emulator is launched with them — they cannot be created over the
 # /control API. Set this to drive group/mention arcs (restart-emu.sh passes it through):
-#   : "${EMU_GROUPS:=[{"chatId":-1001234567890,"members":[{"id":678314278,"firstName":"owner"},{"id":678314279,"firstName":"peer"}],"botId":1234567,"botUsername":"comis_bot"}]}"; export EMU_GROUPS
+#   : "${EMU_GROUPS:=[{"chatId":-1001234567890,"members":[{"id":678314278,"firstName":"owner"},{"id":678314279,"firstName":"peer"}],"supergroup":true,"forum":true}]}"; export EMU_GROUPS
 
 # Gateway bearer token for the RPC helpers (revoke.mjs & co). Under a production install `comis init`
 # stores it in the encrypted secrets store and config.yaml references ${COMIS_GATEWAY_TOKEN} —

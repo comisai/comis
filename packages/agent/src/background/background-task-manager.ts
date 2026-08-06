@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
-import { hardTimeoutHint } from "./hard-timeout-hint.js";
+import { BackgroundHardTimeoutError } from "./hard-timeout-hint.js";
 import { backgroundFailureCause } from "./background-failure-cause.js";
 import {
-  classifyBackgroundTaskFailure,
   projectBackgroundCompletionResult,
+  projectBackgroundTaskFailure,
 } from "./background-terminal-classify.js";
 import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import {
@@ -27,6 +27,7 @@ import {
   type TaskRecoveryOps,
 } from "./background-task-persistence.js";
 import { createBackgroundTaskRecoveryController } from "./background-task-recovery-controller.js";
+import { projectSessionValueForPersistence } from "../session/sanitize-session-secrets.js";
 import type {
   BackgroundTask,
   BackgroundContinuationOutbox,
@@ -225,10 +226,15 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
   function truncateResult(value: unknown): string {
     try {
-      const json = JSON.stringify(value);
+      // A promoted tool has no live caller waiting for its raw result. Project
+      // credentials out before the result reaches either the durable task file
+      // or the synthetic completion turn; the continuation still receives the
+      // full non-sensitive shape needed to summarize the outcome.
+      const projected = projectSessionValueForPersistence(value);
+      const json = JSON.stringify(projected.value);
       return json.length > MAX_RESULT_CHARS ? json.slice(0, MAX_RESULT_CHARS) : json;
     } catch {
-      return String(value).slice(0, MAX_RESULT_CHARS);
+      return String(projectSessionValueForPersistence(String(value)).value).slice(0, MAX_RESULT_CHARS);
     }
   }
 
@@ -263,6 +269,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       ...(terminal.error === undefined ? {} : { error: terminal.error }),
       ...(terminal.errorKind === undefined ? {} : { errorKind: terminal.errorKind }),
       ...(terminal.failureCode === undefined ? {} : { failureCode: terminal.failureCode }),
+      ...(terminal.failureDiagnostic === undefined
+        ? {}
+        : { failureDiagnostic: terminal.failureDiagnostic }),
     };
     const persisted = persistTaskAtomically(dataDir, candidate, persistenceOps);
     if (!persisted.ok) {
@@ -285,6 +294,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     if (terminal.error !== undefined) task.error = terminal.error;
     if (terminal.errorKind !== undefined) task.errorKind = terminal.errorKind;
     if (terminal.failureCode !== undefined) task.failureCode = terminal.failureCode;
+    if (terminal.failureDiagnostic !== undefined) {
+      task.failureDiagnostic = terminal.failureDiagnostic;
+    }
     task._pendingTerminal = undefined;
     terminalRetryTimers.get(task.id)?.cancel();
     terminalRetryTimers.delete(task.id);
@@ -399,7 +411,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           // beside it already follows.
           manager.fail(
             taskId,
-            new Error(hardTimeoutHint({ toolName, agentId, limitMs: hardLimitMs })),
+            new BackgroundHardTimeoutError({ toolName, agentId, limitMs: hardLimitMs }),
             "timeout",
           );
         }
@@ -465,7 +477,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             completedAt: clock.now(),
             error: error instanceof Error ? error.message : String(error),
             errorKind,
-            failureCode: classifyBackgroundTaskFailure(task.toolName, error),
+            ...projectBackgroundTaskFailure(task.toolName, error),
           };
       const committed = commitTerminal(task, terminal);
       if (!committed.ok) return committed;
@@ -497,6 +509,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         error: terminal.error ?? "Background task failed",
         errorKind: terminal.errorKind ?? errorKind,
         ...(terminal.failureCode !== undefined ? { failureCode: terminal.failureCode } : {}),
+        ...(terminal.failureDiagnostic !== undefined
+          ? { failureDiagnostic: terminal.failureDiagnostic }
+          : {}),
         durationMs,
         origin: task.origin,
         timestamp: clock.now(),
@@ -526,6 +541,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         agentId: task.origin.turnScope.conversation.agentId,
         taskId,
         toolName: task.toolName,
+        ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
+        traceId: task.traceId ?? task.origin.traceId ?? null,
         timestamp: clock.now(),
       });
 
@@ -678,6 +695,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             ...(task.sessionKey !== undefined ? { sessionKey: task.sessionKey } : {}),
             ...(task.traceId !== undefined ? { traceId: task.traceId } : {}),
             ...(task.failureCode !== undefined ? { failureCode: task.failureCode } : {}),
+            ...(task.failureDiagnostic !== undefined
+              ? { failureDiagnostic: task.failureDiagnostic }
+              : {}),
           });
         }
       }
@@ -878,6 +898,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             error: current.error ?? "Background task failed",
             errorKind: current.errorKind ?? "dependency",
             ...(current.failureCode !== undefined ? { failureCode: current.failureCode } : {}),
+            ...(current.failureDiagnostic !== undefined
+              ? { failureDiagnostic: current.failureDiagnostic }
+              : {}),
           });
         }
       }, delayMs);

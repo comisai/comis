@@ -29,6 +29,11 @@ vi.mock("../sync-tooling/daemon-guard.js", () => ({
 vi.mock("../util/offline-secrets-store.js", () => ({
   offlineSecretSet: vi.fn(),
   offlineSecretsList: vi.fn(),
+  offlineSecretGet: vi.fn(),
+}));
+
+vi.mock("../util/offline-obs.js", () => ({
+  resolveOfflineDataDir: vi.fn(() => "/isolated/comis-data"),
 }));
 
 vi.mock("../client/rpc-client.js", () => ({
@@ -58,7 +63,7 @@ vi.mock("./sessions.js", () => ({
 
 import { registerSecretsCommand } from "./secrets.js";
 import { isDaemonRunning } from "../sync-tooling/daemon-guard.js";
-import { offlineSecretSet, offlineSecretsList } from "../util/offline-secrets-store.js";
+import { offlineSecretSet, offlineSecretsList, offlineSecretGet } from "../util/offline-secrets-store.js";
 import { withClient, callTyped } from "../client/rpc-client.js";
 import { error as outputError } from "../output/format.js";
 import { Command } from "commander";
@@ -70,6 +75,7 @@ import { Command } from "commander";
 const mockedIsDaemonRunning = isDaemonRunning as ReturnType<typeof vi.fn>;
 const mockedOfflineSecretSet = offlineSecretSet as ReturnType<typeof vi.fn>;
 const mockedOfflineSecretsList = offlineSecretsList as ReturnType<typeof vi.fn>;
+const mockedOfflineSecretGet = offlineSecretGet as ReturnType<typeof vi.fn>;
 const mockedWithClient = withClient as ReturnType<typeof vi.fn>;
 const mockedCallTyped = callTyped as ReturnType<typeof vi.fn>;
 const mockedOutputError = outputError as ReturnType<typeof vi.fn>;
@@ -180,6 +186,55 @@ describe("secrets set", () => {
     expect(mockedOutputError).toHaveBeenCalledWith(
       expect.stringMatching(/SECRETS_MASTER_KEY|comis secrets init/i),
     );
+  });
+});
+
+describe("secrets get", () => {
+  it("reads the selected offline data root instead of the operator default", async () => {
+    mockedOfflineSecretGet.mockReturnValue(ok("test-key"));
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      const prog = makeProgram();
+      await parseArgs(prog, ["secrets", "get", "COMIS_GATEWAY_TOKEN", "--offline", "--yes"]);
+
+      expect(mockedOfflineSecretGet).toHaveBeenCalledWith({
+        name: "COMIS_GATEWAY_TOKEN",
+        dataDir: "/isolated/comis-data",
+        envFilePath: "/isolated/comis-data/.env",
+      });
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+});
+
+describe("offline secret store root", () => {
+  it("writes and lists against the same selected root that get reads", async () => {
+    mockedIsDaemonRunning.mockResolvedValue(false);
+    mockedOfflineSecretSet.mockReturnValue(ok(undefined));
+    mockedOfflineSecretsList.mockReturnValue(ok([]));
+    mockedOfflineSecretGet.mockReturnValue(ok("test-key"));
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await parseArgs(makeProgram(), ["secrets", "set", "FOO", "--value", "bar"]);
+      await parseArgs(makeProgram(), ["secrets", "list"]);
+      await parseArgs(makeProgram(), ["secrets", "get", "FOO", "--offline", "--yes"]);
+    } catch {
+      // process.exit may throw via the spy; the call assertions below are what matter
+    } finally {
+      consoleSpy.mockRestore();
+    }
+
+    for (const mocked of [mockedOfflineSecretSet, mockedOfflineSecretsList, mockedOfflineSecretGet]) {
+      expect(mocked).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dataDir: "/isolated/comis-data",
+          envFilePath: "/isolated/comis-data/.env",
+        }),
+      );
+    }
   });
 });
 

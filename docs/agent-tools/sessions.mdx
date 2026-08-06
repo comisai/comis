@@ -83,10 +83,10 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
 
     **Parameters:**
 
+    The tenant and agent scope is derived from the calling agent's authenticated context -- there are no `tenant_id` / `agent_id` parameters.
+
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `tenant_id` | string | Yes | Tenant that owns the sessions. |
-    | `agent_id` | string | Yes | Agent whose session history should be searched. |
     | `query` | string | No | Search query -- keywords, phrases, or boolean expressions. Omit for recent-session metadata. |
     | `scope` | string | No | Filter by message role: `all` (default), `user`, `assistant`, or `tool` |
     | `summarize` | boolean | No | Summarize matched sessions using LLM (default: true when `query` provided) |
@@ -156,7 +156,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `objective` | string | No | Objective statement that survives context compaction |
     | `include_parent_history` | `"none"` or `"summary"` | No | Include a condensed summary of the parent conversation (default: `"none"`) |
     | `domain_knowledge` | string[] | No | Domain knowledge entries to pass to the sub-agent |
-    | `expected_outputs` | string[] | No | File paths to validate after sub-agent execution completes |
+    | `expected_outputs` | string[] | No | File paths the sub-agent must produce. Validated after execution: a run that stops cleanly without writing every listed path is reported to the parent as **failed** (`errorKind: validation`), not completed, and the missing paths ride the announcement. Declaring outputs is therefore how you stop a child from silently returning nothing. |
     | `max_steps` | integer | No | Maximum execution steps (floor of 30, default 50, capped at config default) |
     `sessions_spawn` never blocks for the child result. It returns the run ID and a background-running marker immediately; a queued spawn additionally returns `queued: true`. The result is delivered to the immutable originating conversation, so the model-facing tool cannot select an announcement channel. Use `subagents` with `action: wait` to await owned children without polling.
 

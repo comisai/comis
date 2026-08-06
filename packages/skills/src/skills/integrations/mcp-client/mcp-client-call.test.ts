@@ -203,6 +203,13 @@ describe("call timeout names its knob", () => {
     // the ACTUAL configured value, so the operator does not have to go look it up
     expect(message).toContain(String(state.options.callToolTimeoutMs));
     expect(message).toContain(serverName);
+    expect(result.error).toMatchObject({
+      code: "mcp_call_deadline_exceeded",
+      configKey: "integrations.mcp.callToolTimeoutMs",
+      configuredMs: state.options.callToolTimeoutMs,
+      queueWaitedMs: expect.any(Number),
+      requestBudgetMs: expect.any(Number),
+    });
   });
 
   it("tells the caller NOT to retry unchanged (the retry storm is the failure mode)", async () => {
@@ -444,6 +451,44 @@ describe("call deadline covers the queue wait", () => {
     const calls = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
       .mock.calls;
     expect(calls.length).toBe(1);
+  });
+
+  it("removes a cancelled queued call before it consumes the server slot", async () => {
+    const serverName = "inventory";
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let callIndex = 0;
+    const state = makeConnectedState(serverName, () => {
+      callIndex += 1;
+      return callIndex === 1
+        ? gate.then(() => ({ content: [{ type: "text", text: "first" }] }))
+        : Promise.resolve({ content: [{ type: "text", text: "cancelled call ran" }] });
+    });
+    const ac = new AbortController();
+    const abortableCallTool = callTool as unknown as (
+      state: McpClientManagerState,
+      deps: McpClientManagerDeps,
+      qualifiedName: string,
+      args: Record<string, unknown>,
+      signal: AbortSignal,
+    ) => ReturnType<typeof callTool>;
+
+    const first = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    const second = abortableCallTool(
+      state,
+      deps,
+      `mcp:${serverName}/slow_report`,
+      {},
+      ac.signal,
+    );
+    ac.abort();
+    release?.();
+    const [, secondResult] = await Promise.all([first, second]);
+
+    expect(secondResult.ok).toBe(false);
+    expect(state.connections.get(serverName)?.client.callTool).toHaveBeenCalledTimes(1);
   });
 });
 

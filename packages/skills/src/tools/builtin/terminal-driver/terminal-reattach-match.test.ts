@@ -287,3 +287,65 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
     expect(deserializeDescriptor(badHosts)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// originEndpoint — the drive's ORIGIN conversation, persisted so a durable drive
+// re-attached after a daemon restart still reports its outcome back to the thread that
+// STARTED it (rather than to whichever conversation happens to be most recent).
+//
+// The malformed posture deliberately DIVERGES from `scope`/`tmuxSocket`: those reject the
+// whole descriptor because dropping them would widen the jail / probe the wrong server. A
+// delivery hint grants nothing, so a malformed one is DROPPED (degrading to the shipped
+// primaryChannel→recent-session chain) rather than killing the re-attach of a live 40h
+// drive over a routing hint.
+// ---------------------------------------------------------------------------
+describe("terminal-reattach-match — originEndpoint (the drive's origin conversation)", () => {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-a",
+    conversationKind: "direct" as const,
+  };
+
+  it("round-trips the origin endpoint so a re-attached durable drive still reports to its own thread", () => {
+    const desc = makeDescriptor({ sessionId: "rt-origin", tmuxName: "comis-rt-origin", originEndpoint: endpoint });
+    const round = deserializeDescriptor(serializeDescriptor(desc));
+
+    expect(round).toEqual(desc);
+    expect(round?.originEndpoint).toEqual(endpoint);
+  });
+
+  it("round-trips the optional threadId (a thread-scoped origin is a DIFFERENT destination than its parent chat)", () => {
+    const threaded = { ...endpoint, threadId: "thread-7" };
+    const round = deserializeDescriptor(serializeDescriptor(makeDescriptor({ originEndpoint: threaded })));
+
+    expect(round?.originEndpoint).toEqual(threaded);
+  });
+
+  // The upgrade-boot contract: every descriptor persisted BEFORE this field existed must
+  // still deserialize. Rejecting it would drop every in-flight durable drive on the first
+  // boot after the upgrade — strictly worse than losing the routing hint.
+  it("accepts a LEGACY descriptor with no originEndpoint (undefined, never a corrupt-skip)", () => {
+    const legacy = makeDescriptor();
+    delete (legacy as { originEndpoint?: unknown }).originEndpoint;
+    const round = deserializeDescriptor(serializeDescriptor(legacy));
+
+    expect(round).toBeDefined();
+    expect(round?.originEndpoint).toBeUndefined();
+  });
+
+  it("DROPS a malformed origin endpoint but keeps the descriptor (a routing hint must never kill a live re-attach)", () => {
+    for (const bad of [
+      { channelType: "", channelInstanceId: "i", conversationId: "c", conversationKind: "direct" },
+      { channelType: "telegram", conversationId: "c", conversationKind: "direct" }, // missing instance
+      { channelType: "telegram", channelInstanceId: "i", conversationId: "c", conversationKind: "broadcast" }, // not a kind
+      { channelType: "telegram", channelInstanceId: "i", conversationId: "c", conversationKind: "direct", threadId: 7 },
+      "not-an-object",
+      null,
+    ]) {
+      const round = deserializeDescriptor({ ...makeDescriptor(), originEndpoint: bad as never });
+      expect(round, `malformed endpoint ${JSON.stringify(bad)} must not skip the descriptor`).toBeDefined();
+      expect(round?.originEndpoint).toBeUndefined();
+    }
+  });
+});

@@ -150,10 +150,21 @@ export function captureRecallObservability(
   // it is a schema-required field in production, so crossUserCount is 0 solely when the
   // requester genuinely can't be resolved (a conservative under-count, never a false leak).
   const requesterUserId = ctx.sessionKey.userId as string | undefined;
+  // An `agent-shared` memory has no sender owner, so it can never BE another
+  // sender's memory — it is deliberately scoped to the agent. Counting it made
+  // the canary chirp constantly: the memory-review cron writes facts about the
+  // user under its own synthetic principal (`scheduler-cron-<agent>`), which on
+  // a single-user deployment flagged 4 of 5 recalls as cross-user injection. A
+  // signal that always fires is one an operator learns to ignore, so the real
+  // leak would hide inside the noise. Only USER-scoped entries can leak across
+  // senders, so only those are counted.
   const crossUserCount =
     requesterUserId === undefined
       ? 0
-      : includedRanked.reduce((n, r) => (r.entry.userId !== requesterUserId ? n + 1 : n), 0);
+      : includedRanked.reduce((n, r) => {
+          if (r.entry.visibility?.kind === "agent-shared") return n;
+          return r.entry.userId !== requesterUserId ? n + 1 : n;
+        }, 0);
   const distinctSources = new Set(includedRanked.map((r) => r.entry.source?.who)).size;
   try {
     deps.eventBus.emit("memory:recalled", {

@@ -147,8 +147,13 @@ export function renderResponseLocalePolicy(policy: ResponseLocalePolicy): string
   const translation = policy.translationTarget === undefined
     ? ""
     : ` translation-target="${policy.translationTarget}"`;
+  // The anti-transliteration clause is load-bearing: a script-only tag plus
+  // "use the same human language" is satisfiable by romanization, and a model
+  // obeying both literally will produce it. A Hebrew conversation answered in
+  // Latin letters is never the intended reading of a script tag.
   const scriptGuidance = policy.locale.startsWith("und-")
     ? " The tag identifies only the writing system; use the same human language as the current user request."
+      + " Never transliterate: if that language is not normally written in this script, write it in its own script."
     : "";
   const requestPriority = policy.source === "request"
     ? " When the current request has a clear language signal, the current request takes precedence over earlier conversation turns."

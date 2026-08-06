@@ -119,7 +119,14 @@ function makeToolApprovalContext(channelId: string) {
     channelType: "echo",
     deliveryOrigin: {
       tenantId: "test",
-      userId: "admin-operator",
+      // The origin's `userId` carries the authenticated PRINCIPAL, not the session
+      // user: the inbound pipeline builds it as `turnScope.principal.principalId`.
+      // The two differ on purpose — in a shared conversation the session user is a
+      // placeholder, so an approval bound to it could be answered by anyone in the
+      // room. Approval resolution cross-checks origin.userId against the principal,
+      // and a fixture that set the session user here modelled a turn the pipeline
+      // cannot produce.
+      userId: "principal:admin-operator",
       channelType: "echo",
       channelId,
     },

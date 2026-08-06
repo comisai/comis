@@ -361,14 +361,14 @@ export function createVisionProviderRegistry(
 export function selectVisionProvider(
   registry: Map<string, VisionProvider>,
   mediaType: "image" | "video",
-  preferredProvider?: string,
+  explicitProvider?: string,
 ): VisionProvider | undefined {
-  // Try preferred provider first
-  if (preferredProvider) {
-    const preferred = registry.get(preferredProvider);
-    if (preferred && preferred.capabilities.includes(mediaType)) {
-      return preferred;
-    }
+  // An explicit provider is an operator boundary, not a soft preference. If
+  // it cannot serve this media type, fail closed instead of sending the media
+  // to a different provider.
+  if (explicitProvider) {
+    const selected = registry.get(explicitProvider);
+    return selected?.capabilities.includes(mediaType) ? selected : undefined;
   }
 
   // For video: find any provider with video capability

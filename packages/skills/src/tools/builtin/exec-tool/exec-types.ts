@@ -179,6 +179,7 @@ export interface EscalationContext {
   stdoutBuf: string;
   stderrBuf: string;
   registry: ProcessRegistry;
+  ownerSessionKey?: string;
   sandboxConfig?: ExecSandboxConfig;
   logger?: ToolLogger;
   spillStream: ReturnType<typeof createWriteStream> | null;

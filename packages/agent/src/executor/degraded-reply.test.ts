@@ -34,6 +34,7 @@ import {
   selectContextExhaustedReply,
   selectLoopDetectedReply,
 } from "./degraded-reply-i18n.js";
+import { NO_PROGRESS_LOOP_THRESHOLD } from "./turn-loop-detector.js";
 
 describe("buildDegradedReply — deterministic per endReason", () => {
   it("output_starved → returns the annotation string (non-empty)", () => {
@@ -282,6 +283,8 @@ describe("buildContextExhaustedReply — recovery guidance + incident ref", () =
       expect(reply).toBeDefined();
       expect(reply!.length).toBeGreaterThan(0);
       expect(reply!.toLowerCase()).toMatch(/repeat|loop|progress/);
+      expect(reply).toContain(`${NO_PROGRESS_LOOP_THRESHOLD} consecutive`);
+      expect(reply).toMatch(/successful|unchanged/i);
     });
 
     it("appends the incident traceId when provided", () => {
@@ -437,6 +440,61 @@ describe("buildOngoingWorkEvidenceMissingReply", () => {
     expect(reply).toMatch(/did not start ongoing work/iu);
     expect(reply).toMatch(/no background task running/iu);
     expect(LOCALE_MESSAGE_IDS).toContain("ongoing_work_evidence_missing");
+  });
+});
+
+describe("completion evidence missing reply", () => {
+  it("states that failed tool evidence makes the result partial", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildCompletionEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/could not verify.*complete/iu);
+    expect(reply).toMatch(/tool steps? still failed/iu);
+    expect(reply).toMatch(/partial/iu);
+    expect(reply).not.toMatch(/made changes/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("completion_evidence_missing");
+  });
+});
+
+describe("scheduler state evidence missing reply", () => {
+  it("requires a scheduler check before confirming current reminder state", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildSchedulerStateEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/did not verify.*reminder.*scheduled-job state/iu);
+    expect(reply).toMatch(/check the scheduler/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("scheduler_state_evidence_missing");
+  });
+});
+
+describe("runtime self-report evidence missing reply", () => {
+  it("states that runtime work, cause, and spend require a current diagnostic receipt", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildRuntimeSelfReportEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/could not verify.*runtime activity/iu);
+    expect(reply).toMatch(/work counts?.*cause.*cost/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("runtime_self_report_evidence_missing");
+  });
+});
+
+describe("pending scheduler confirmation reply", () => {
+  it("asks for removal confirmation without asserting that the job exists", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildPendingSchedulerConfirmationReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/confirm.*remove.*scheduled job/iu);
+    expect(reply).toMatch(/nothing has been removed/iu);
+    expect(reply).not.toMatch(/(?:job|reminder) is (?:set|scheduled|active)/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("pending_scheduler_confirmation");
   });
 });
 

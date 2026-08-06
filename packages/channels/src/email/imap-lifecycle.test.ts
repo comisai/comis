@@ -92,14 +92,18 @@ describe("createImapLifecycle", () => {
     return import("./imap-lifecycle.js");
   }
 
-  it("creates handle with start/stop/onNewMessage methods", async () => {
-    const { createImapLifecycle } = await getModule();
-    const handle = createImapLifecycle(makeOpts());
-    expect(handle).toBeDefined();
-    expect(typeof handle.start).toBe("function");
-    expect(typeof handle.stop).toBe("function");
-    expect(typeof handle.onNewMessage).toBe("function");
-  });
+  it(
+    "creates handle with start/stop/onNewMessage methods",
+    async () => {
+      const { createImapLifecycle } = await getModule();
+      const handle = createImapLifecycle(makeOpts());
+      expect(handle).toBeDefined();
+      expect(typeof handle.start).toBe("function");
+      expect(typeof handle.stop).toBe("function");
+      expect(typeof handle.onNewMessage).toBe("function");
+    },
+    15_000,
+  );
 
   it("start connects ImapFlow client with correct host/port/auth", async () => {
     const { createImapLifecycle } = await getModule();

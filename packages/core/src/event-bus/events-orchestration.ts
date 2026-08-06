@@ -158,6 +158,22 @@ export interface OrchestrationEvents {
   };
 
   /**
+   * A child provider returned while one or more exec auto-background handoffs
+   * were still running. The runner rejects terminal success and emits this
+   * content-free cleanup request before post-processing, so the composition
+   * root can reap only processes owned by the child session.
+   */
+  "subagent:background_processes_abandoned": {
+    runId: string;
+    agentId: string;
+    /** CHILD session key used for exact process-registry ownership cleanup. */
+    sessionKey: string;
+    /** Number of unresolved auto-background process sessions. */
+    count: number;
+    timestamp: number;
+  };
+
+  /**
    * A running sub-agent was steered IN-FLIGHT —
    * a high-priority message injected at the child's next step boundary
    * (transcript + progress preserved) instead of a kill+respawn. Emitted

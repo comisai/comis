@@ -135,4 +135,40 @@ describe("SessionTracker", () => {
     expect(tracker.getMostRecent("agent-1")).toEqual(accountB);
     expect(tracker.findEndpoint("agent-1", "telegram", "shared-chat")).toEqual(accountB);
   });
+
+  it("findUniqueEndpoint returns one exact match and rejects ambiguous coordinates", () => {
+    const tracker = createSessionTracker({ nowMs: () => 1000 });
+    const trackerWithUniqueLookup = tracker as typeof tracker & {
+      findUniqueEndpoint(
+        agentId: string,
+        channelType: string,
+        conversationId: string,
+      ): ReturnType<typeof endpoint> | undefined;
+    };
+    const direct = endpoint("telegram", "direct-chat", "account-a");
+    tracker.recordActivity("agent-1", direct);
+
+    expect(trackerWithUniqueLookup.findUniqueEndpoint(
+      "agent-1",
+      "telegram",
+      "direct-chat",
+    )).toEqual(direct);
+
+    tracker.recordActivity("agent-1", {
+      ...endpoint("telegram", "shared-chat", "account-a"),
+      threadId: "thread-a",
+      conversationKind: "shared",
+    });
+    tracker.recordActivity("agent-1", {
+      ...endpoint("telegram", "shared-chat", "account-a"),
+      threadId: "thread-b",
+      conversationKind: "shared",
+    });
+
+    expect(trackerWithUniqueLookup.findUniqueEndpoint(
+      "agent-1",
+      "telegram",
+      "shared-chat",
+    )).toBeUndefined();
+  });
 });

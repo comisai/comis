@@ -19,4 +19,16 @@ describe("announcement failure locale renderer", () => {
     expect(render("default", "und-Hebr"))
       .toBe("⚠️ משימת הרקע נכשלה ולכן התוצאה עלולה להיות חלקית.");
   });
+
+  it("adds the deterministic governor bound for a loop-detected child", () => {
+    const render = createAnnouncementFailureNoticeRenderer({ default: {} as never }) as (
+      agentId: string,
+      resolvedLanguage?: string,
+      finishReason?: string,
+    ) => string;
+
+    const notice = render("default", undefined, "loop_detected");
+    expect(notice).toContain("6 consecutive");
+    expect(notice).toMatch(/successful|unchanged/i);
+  });
 });

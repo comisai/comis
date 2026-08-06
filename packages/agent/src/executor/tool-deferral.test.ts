@@ -93,6 +93,27 @@ describe("applyToolDeferral - rule-based deferral", () => {
     expect(result.deferredNames).not.toContain("read");
   });
 
+  it("keeps an explicitly named privileged tool callable for its runtime trust denial", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [
+      makeTool("read"),
+      makeTool("agents_manage"),
+      makeTool("obs_query"),
+    ];
+    const ctx = makeContext({
+      trustLevel: "user",
+      requestText: "use agents manage to list them",
+      toolNames: tools.map((tool) => tool.name),
+    });
+
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    expect(result.activeTools.map((tool) => tool.name)).toContain("agents_manage");
+    expect(result.deferredNames).not.toContain("agents_manage");
+    expect(result.deferredNames).toContain("obs_query");
+    expect(result.requestRelevantToolNames).toContain("agents_manage");
+  });
+
   it("keeps privileged tools active when trustLevel is admin", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
@@ -3286,6 +3307,92 @@ describe("buildDeferredToolsContext — maxEntries truncation", () => {
 // ---------------------------------------------------------------------------
 // Suite 5b: applyToolDeferral — active-tool ceiling for small class
 // ---------------------------------------------------------------------------
+
+describe("applyToolDeferral - MCP long-tail budget (frontier/mid)", () => {
+  // Measured live: one MCP server contributed 120 of 192 tools and the agent's
+  // system prompt was 81,234 tokens — 54% of a 151k request — on EVERY turn,
+  // including a two-word greeting. The existing ceiling never fires for a
+  // frontier model (activeToolCeiling is undefined there) because deferral was
+  // designed as a context-WINDOW mitigation; on a 1M window there is no
+  // pressure. The real cost is cache-write tokens and upload latency, which do
+  // not shrink with a bigger window.
+  function mcpTools(count: number): ToolDefinition[] {
+    return Array.from({ length: count }, (_, i) =>
+      makeTool(`mcp__srv--tool_${String(i).padStart(3, "0")}`));
+  }
+
+  it("defers the MCP long tail on a frontier model", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), makeTool("exec"), ...mcpTools(120)];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      mcpActiveToolBudget: 8,
+    });
+    const result = applyToolDeferral(tools, 1_000_000, ctx, logger);
+    const activeMcp = result.activeTools.filter(t => t.name.startsWith("mcp__"));
+    expect(activeMcp.length).toBeLessThanOrEqual(8);
+    expect(result.deferredEntries.length).toBeGreaterThan(100);
+  });
+
+  it("never defers a builtin to satisfy the MCP budget", () => {
+    // Tools are sorted builtins-first, so a naive count ceiling would defer the
+    // builtins and KEEP the MCP tail — exactly backwards.
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), makeTool("exec"), makeTool("browser"), ...mcpTools(60)];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      mcpActiveToolBudget: 4,
+    });
+    const result = applyToolDeferral(tools, 1_000_000, ctx, logger);
+    const names = result.activeTools.map(t => t.name);
+    expect(names).toContain("read");
+    expect(names).toContain("exec");
+    expect(names).toContain("browser");
+  });
+
+  it("keeps a recently-used MCP tool active", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), ...mcpTools(40)];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      mcpActiveToolBudget: 2,
+      recentlyUsedToolNames: new Set(["mcp__srv--tool_039"]),
+    });
+    const result = applyToolDeferral(tools, 1_000_000, ctx, logger);
+    expect(result.activeTools.map(t => t.name)).toContain("mcp__srv--tool_039");
+  });
+
+  it("leaves a small MCP surface untouched", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), ...mcpTools(3)];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+      mcpActiveToolBudget: 8,
+    });
+    const result = applyToolDeferral(tools, 1_000_000, ctx, logger);
+    expect(result.activeTools.filter(t => t.name.startsWith("mcp__")).length).toBe(3);
+  });
+
+  it("is inert when no budget is configured", () => {
+    const logger = createMockLogger();
+    const tools: ToolDefinition[] = [makeTool("read"), ...mcpTools(30)];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "frontier",
+      toolNames: tools.map(t => t.name),
+    });
+    const result = applyToolDeferral(tools, 1_000_000, ctx, logger);
+    expect(result.activeTools.filter(t => t.name.startsWith("mcp__")).length).toBe(30);
+  });
+});
 
 describe("applyToolDeferral - active-tool ceiling", () => {
   it("small class with activeToolCeiling=3: only ≤3 active tools, cold long-tail deferred", () => {

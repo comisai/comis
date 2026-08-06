@@ -569,7 +569,7 @@ export async function setupMedia(deps: {
   // handlers thread `source`/`keyless`/`provider` + the collected `onSkip` reasons
   // onto the `media.stt.*`/`media.tts.*` trajectory (no re-derivation — the SAME
   // SttSelection/TtsSelection the adapter construction above used). Present only
-  // when the selector ran. Honest STT unavailability retains the same typed
+  // when the selector ran. Honest voice unavailability retains the same typed
   // resolver result so downstream handlers do not replace its actionable hint
   // with a generic message.
   const voiceSelection: ResolvedVoiceState = {};
@@ -597,6 +597,11 @@ export async function setupMedia(deps: {
       source: ttsSel.source,
       ...(skips.length > 0 ? { onSkip: skips } : {}),
     };
+  } else if (ttsSel !== undefined) {
+    voiceSelection.ttsUnavailable = {
+      errorKind: ttsSel.errorKind,
+      hint: ttsSel.hint,
+    };
   }
 
   return {
@@ -606,6 +611,7 @@ export async function setupMedia(deps: {
     ...(voiceSelection.stt !== undefined
       || voiceSelection.tts !== undefined
       || voiceSelection.sttUnavailable !== undefined
+      || voiceSelection.ttsUnavailable !== undefined
       ? { voiceSelection }
       : {}),
   };

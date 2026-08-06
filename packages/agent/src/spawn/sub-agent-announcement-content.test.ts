@@ -49,4 +49,28 @@ describe("sub-agent announcement content", () => {
     expect(disclosure.text).toContain("tools.web.search");
     expect(disclosure.text).toContain(failureNotice);
   });
+
+  it("does not duplicate a multipart failure disclosure whose required anchors survived rewriting", () => {
+    const genericNotice =
+      "⚠️ This background task failed, so its result may be incomplete.";
+    const governorNotice =
+      "I stopped at the governor limit of 6 consecutive no-progress tool results. "
+      + "This includes successful calls when the tool and its result stay unchanged, "
+      + "as well as failed or blocked calls. Try a different approach or change the "
+      + "condition before retrying.";
+    const candidate =
+      `The fixture stayed unchanged.\n\n${genericNotice}\n\n`
+      + "I stopped at the governor limit of 6 consecutive no-progress tool results. "
+      + "Change the condition or approach before retrying.";
+
+    const disclosure = enforceAnnouncementTerminalOutcome(candidate, {
+      status: "failed",
+      failureNotice: `${genericNotice}\n\n${governorNotice}`,
+    });
+
+    expect(disclosure.corrected).toBe(true);
+    expect(disclosure.text).toContain(governorNotice);
+    expect(disclosure.text?.match(/background task failed/gu)).toHaveLength(1);
+    expect(disclosure.text?.match(/governor limit of 6/gu)).toHaveLength(1);
+  });
 });

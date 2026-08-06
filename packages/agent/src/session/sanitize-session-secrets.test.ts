@@ -6,6 +6,7 @@ import {
   projectSessionValueForPersistence,
 } from "./sanitize-session-secrets.js";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -800,5 +801,77 @@ describe("projectSessionValueForPersistence — structural conversation identity
     const out = projectSessionValueForPersistence({ someOtherField: REF });
 
     expect(out.redactions).toBeGreaterThan(0);
+  });
+});
+
+describe("projectSessionValueForPersistence — runtime citation receipts", () => {
+  const DIGEST = createHash("sha256")
+    .update("https://example.com/source", "utf8")
+    .digest("hex");
+
+  it("does not trust a digest-shaped assistant property as a runtime receipt", () => {
+    const out = projectSessionValueForPersistence({
+      role: "assistant",
+      content: [{ type: "text", text: "[Source](https://example.com/source)" }],
+      citationEvidenceDigests: [DIGEST],
+    });
+
+    expect(out.redactions).toBeGreaterThan(0);
+    expect(
+      (out.value as { citationEvidenceDigests: string[] }).citationEvidenceDigests,
+    ).toEqual(["[REDACTED]"]);
+  });
+
+  it("redacts an unjournaled assistant digest through durable session repair", () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const path = writeJsonl(tmpDir, [
+        { type: "session", version: 1, id: "s1" },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "[Source](https://example.com/source)" }],
+            citationEvidenceDigests: [DIGEST],
+          },
+        },
+      ]);
+
+      expect(sanitizeSessionSecrets(path)).toBe(1);
+      const entries = readJsonlEntries(path) as Array<{
+        message?: { citationEvidenceDigests?: string[] };
+      }>;
+      expect(entries[1]?.message?.citationEvidenceDigests).toEqual(["[REDACTED]"]);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still redacts a digest-shaped value outside a runtime assistant receipt", () => {
+    const out = projectSessionValueForPersistence({
+      role: "user",
+      citationEvidenceDigests: [DIGEST],
+    });
+
+    expect(out.redactions).toBeGreaterThan(0);
+    expect(
+      (out.value as { citationEvidenceDigests: string[] }).citationEvidenceDigests,
+    ).toEqual(["[REDACTED]"]);
+  });
+
+  it("keeps a validated append-only runtime citation receipt", () => {
+    const out = projectSessionValueForPersistence({
+      type: "custom",
+      customType: "citation_evidence",
+      data: {
+        sourceMessageId: "message_a",
+        urlDigests: [DIGEST],
+      },
+    });
+
+    expect(out.redactions).toBe(0);
+    expect(
+      (out.value as { data: { urlDigests: string[] } }).data.urlDigests,
+    ).toEqual([DIGEST]);
   });
 });

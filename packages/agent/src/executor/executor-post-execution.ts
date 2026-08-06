@@ -42,6 +42,7 @@ import {
   type ExecutionSideEffectSummary,
   createConversationRef,
   SessionCompactionConfigSchema,
+  getToolMetadata,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -131,14 +132,17 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
+  enforceSchedulerStateEvidence,
+  enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
+  enforceRuntimeSelfReportEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
@@ -156,6 +160,12 @@ import {
   synchronizeFinalAssistantResponse,
   type FinalAssistantSyncDiagnostics,
 } from "./phase-filter.js";
+import {
+  appendCitationEvidenceRecord,
+  enforceCitationEvidence,
+  historicalCitationDigests,
+  isCitationSourceRequest,
+} from "./citation-evidence.js";
 import {
   buildSubagentTerminalToolFailureReply,
   classifySubagentTerminalToolFailure,
@@ -197,7 +207,7 @@ export interface PostExecutionBridgeResult {
   /** Per-tool execution results carrying the classified errorKind —
    *  the rollup's failure source for toolStats + topErrorKinds. */
   toolExecResults?: ToolExecutionResultRecord[];
-  /** How many times a tool circuit breaker opened this session. */
+  /** How many times an execution failure breaker opened this session. */
   breakerTripCount?: number;
   /** Turn count for the session:summary event. */
   turnCount?: number;
@@ -1629,6 +1639,103 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       timestamp: deps.clock.now(),
     });
   }
+  const runtimeSelfReportGrounding = enforceRuntimeSelfReportEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildRuntimeSelfReportEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (runtimeSelfReportGrounding.corrected) {
+    result.response = runtimeSelfReportGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "The runtime self-report lacked a successful current-turn obs_query receipt; "
+          + "inspect request-tool relevance and obs_query availability in comis explain.",
+      },
+      "Unsupported runtime self-report replaced with an evidence limitation",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.runtime_self_report_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "runtime_self_report",
+        reason: runtimeSelfReportGrounding.reason,
+        requiredTool: "obs_query",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_runtime_self_report_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const schedulerStateGrounding = enforceSchedulerStateEvidence({
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildSchedulerStateEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+    pendingConfirmationResponse: buildPendingSchedulerConfirmationReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (schedulerStateGrounding.corrected) {
+    result.response = schedulerStateGrounding.response;
+    const pendingConfirmation =
+      schedulerStateGrounding.reason === "pending_scheduler_confirmation";
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint: pendingConfirmation
+          ? "The current cron.remove receipt requires user confirmation and did not mutate state; "
+            + "re-call cron.remove with _confirmed:true only after an explicit confirmation."
+          : "Inspect the current-turn cron receipts in comis explain and call cron list or status "
+            + "before confirming that a reminder or scheduled job still exists.",
+      },
+      pendingConfirmation
+        ? "Pending scheduler removal overclaim replaced with confirmation request"
+        : "Unsupported scheduler state claim replaced with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.scheduler_state_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: pendingConfirmation ? "scheduler_confirmation" : "scheduler_state",
+        reason: schedulerStateGrounding.reason,
+        requiredTool: "cron",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: pendingConfirmation
+        ? "pending_scheduler_confirmation"
+        : "missing_scheduler_state_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
   const ongoingWorkGrounding = enforceOngoingWorkEvidence({
     response: result.response ?? "",
     toolExecResults: bridgeResult.toolExecResults,
@@ -1844,6 +1951,62 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
+  const successfulReadOnlyToolResult = bridgeResult.toolExecResults?.some(
+    (toolResult) =>
+      toolResult.success
+      && getToolMetadata(toolResult.toolName)?.isReadOnly === true,
+  ) ?? false;
+  const onlyReadOnlyFailures =
+    unrecoveredToolFailures.length > 0
+    && unrecoveredToolFailures.every(
+      (toolName) => getToolMetadata(toolName)?.isReadOnly === true,
+    );
+  const completionEvidenceGrounding = enforceCompletionEvidence({
+    response: result.response ?? "",
+    unrecoveredToolFailures,
+    honestResponse: buildCompletionEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+    preservePartialResponse: successfulReadOnlyToolResult && onlyReadOnlyFailures,
+  });
+  if (completionEvidenceGrounding.corrected) {
+    result.response = completionEvidenceGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        unrecoveredToolFailureCount: unrecoveredToolFailures.length,
+        responseDisposition: completionEvidenceGrounding.correction,
+        errorKind: "precondition" as const,
+        hint:
+          "Inspect the failed tool records in comis explain, correct the failing step, "
+          + "and retry verification before treating the request as complete.",
+      },
+      "Unverified completion claim grounded with runtime truth",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.completion_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "completion",
+        reason: completionEvidenceGrounding.reason,
+        unrecoveredToolFailureCount: unrecoveredToolFailures.length,
+        responseDisposition: completionEvidenceGrounding.correction,
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "unrecovered_tool_failure_completion_claim",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
   const unrecoveredFailed = unrecoveredToolFailures;
   const subagentTerminalToolFailureReply = buildSubagentTerminalToolFailureReply({
     operationType: params.executionOverrides?.operationType,
@@ -1948,6 +2111,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     !unavailableVision &&
     !providerModelFailureGrounding.corrected &&
     !ongoingWorkGrounding.corrected &&
+    !completionEvidenceGrounding.corrected &&
     userVisibleFailed.length > 0 &&
     isStopTurn &&
     !modelAcknowledgedFailure(result.response ?? "", userVisibleFailed) &&
@@ -2107,6 +2271,74 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     if (cr.verdict !== "verified" && cr.verdict !== "skipped") { result.response = cr.response; }
   }
 
+  // Citation integrity is enforced after every model-authored rewrite (including
+  // locale repair and the optional critic), immediately before the canonical
+  // assistant turn is synchronized. Current successful web_fetch receipts are
+  // authoritative. A background completion carries only their SHA-256 URL
+  // digests, while a later explicit source question may reuse digests attached
+  // by this same guard to earlier append-only runtime journal receipts.
+  const currentWebResearchObserved = (bridgeResult.toolExecResults ?? []).some(
+    (toolResult) => toolResult.toolName === "web_fetch" || toolResult.toolName === "web_search",
+  );
+  const currentFetchDigests = (bridgeResult.toolExecResults ?? [])
+    .filter(
+      (toolResult) =>
+        toolResult.toolName === "web_fetch"
+        && toolResult.success
+        && toolResult.citationUrlDigest !== undefined,
+    )
+    .flatMap((toolResult) =>
+      toolResult.citationUrlDigest === undefined ? [] : [toolResult.citationUrlDigest],
+    );
+  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+    ? msg.metadata.citationEvidence
+    : undefined;
+  const citationSourceRequest = isCitationSourceRequest(msg.text ?? "");
+  const historicalDigests = citationSourceRequest
+    ? historicalCitationDigests(sm)
+    : [];
+  const allowedCitationDigests = [
+    ...currentFetchDigests,
+    ...(relayedCitationEvidence?.urlDigests ?? []),
+    ...historicalDigests,
+  ];
+  const citationGrounding = enforceCitationEvidence({
+    response: result.response ?? "",
+    allowedUrlDigests: allowedCitationDigests,
+    enabled:
+      currentWebResearchObserved
+      || relayedCitationEvidence !== undefined
+      || historicalDigests.length > 0
+      || citationSourceRequest,
+  });
+  result.response = citationGrounding.response;
+  if (citationGrounding.corrected) {
+    deps.logger.warn(
+      {
+        step: "citation-evidence",
+        removedCitationCount: citationGrounding.removedCitationCount,
+        errorKind: "validation" as const,
+        hint:
+          "The response contained a citation URL without an exact successful web_fetch digest; "
+          + "inspect current tool receipts and citation_evidence journal entries in comis explain.",
+      },
+      "Citation without exact fetch evidence removed",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.citation_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "citation",
+        reason: citationGrounding.reason,
+        removedCitationCount: citationGrounding.removedCitationCount,
+      },
+    });
+  }
+
   const syncDiagnostics: FinalAssistantSyncDiagnostics = {};
   const responseSync = synchronizeFinalAssistantResponse(
     session,
@@ -2164,6 +2396,47 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
       "Could not synchronize post-processed response with live session transcript",
     );
+  }
+
+  if (citationGrounding.matchedDigests.length > 0) {
+    const journalStartedAt = deps.clock.now();
+    const citationReceipt = appendCitationEvidenceRecord({
+      sessionManager: sm,
+      sourceMessageId: msg.id,
+      urlDigests: citationGrounding.matchedDigests,
+    });
+    const durationMs = Math.max(0, deps.clock.now() - journalStartedAt);
+    if (!citationReceipt.ok) {
+      deps.logger.warn(
+        {
+          step: "citation-evidence-persistence",
+          durationMs,
+          errorKind: "resource" as const,
+          hint:
+            "Inspect the selected session JSONL for a valid citation_evidence custom entry "
+            + "and verify that the session directory is writable.",
+        },
+        "Citation evidence could not be persisted",
+      );
+      deps.eventBus.emit("audit:event", {
+        timestamp: deps.clock.now(),
+        agentId: effectiveAgentId,
+        tenantId: deps.tenantId,
+        actionType: "response.citation_evidence_persistence",
+        kind: "audit",
+        outcome: "denied",
+        metadata: { reason: "append_failed" },
+      });
+    } else {
+      deps.logger.debug(
+        {
+          step: "citation-evidence-persistence",
+          durationMs,
+          citationCount: citationGrounding.matchedDigests.length,
+        },
+        "Citation evidence persisted",
+      );
+    }
   }
 
   // Map the settled finishReason to the terminal endReason ONCE via the single

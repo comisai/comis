@@ -28,6 +28,36 @@ function task(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   };
 }
 
+describe("reconcilePendingBackgroundTurn — internal identifiers stay out of the notice", () => {
+  // This notice REPLACES the answer the user was waiting for, so everything in it
+  // has to be something they can act on. A live conversation received a readable
+  // tool label followed by "(34560761-1e3d-4267-94ee-88535c12a804)" — a raw
+  // background-task UUID, in front of the end user.
+  it("keeps the raw task id out of the user-facing text", () => {
+    const out = reconcilePendingBackgroundTurn({
+      response: "unrelated terminal text",
+      executionId: "11111111-1111-4111-8111-111111111111",
+      tasks: [task({ id: "34560761-1e3d-4267-94ee-88535c12a804" })],
+    });
+
+    expect(out.finishReason).toBe("background_pending");
+    expect(out.response).not.toContain("34560761-1e3d-4267-94ee-88535c12a804");
+    // The readable label survives — the user still learns what is running.
+    expect(out.response).toContain("large report");
+  });
+
+  it("renders one label for several tasks on the same tool", () => {
+    const out = reconcilePendingBackgroundTurn({
+      response: "unrelated terminal text",
+      executionId: "11111111-1111-4111-8111-111111111111",
+      tasks: [task({ id: "task-a" }), task({ id: "task-b" })],
+    });
+
+    expect(out.pendingCount).toBe(2);
+    expect(out.response.match(/large report/g)).toHaveLength(1);
+  });
+});
+
 describe("reconcilePendingBackgroundTurn", () => {
   it("replaces unrelated terminal text while required work from this execution is still running", () => {
     const result = reconcilePendingBackgroundTurn({
@@ -39,7 +69,7 @@ describe("reconcilePendingBackgroundTurn", () => {
     expect(result.finishReason).toBe("background_pending");
     expect(result.response).toContain("large report");
     expect(result.response).not.toContain("mcp__large_report");
-    expect(result.response).toContain("task-a");
+    expect(result.response).not.toContain("task-a");
     expect(result.response).not.toContain("Tel Aviv");
   });
 
@@ -114,7 +144,7 @@ describe("reconcilePendingBackgroundTurn — localized notice", () => {
     });
     expect(out.finishReason).toBe("background_pending");
     expect(out.response).toContain("Background work is still running");
-    expect(out.response).toContain("task-a");
+    expect(out.response).not.toContain("task-a");
   });
 
   it("resolves an operator pack for the response locale, substituting {labels}", () => {
@@ -129,7 +159,7 @@ describe("reconcilePendingBackgroundTurn — localized notice", () => {
       localeCatalog: catalog,
     });
     expect(out.response).toContain("עבודה ברקע עדיין מתבצעת");
-    expect(out.response).toContain("task-a");
+    expect(out.response).not.toContain("task-a");
     expect(out.response).not.toContain("Background work is still running");
   });
 
@@ -159,7 +189,7 @@ describe("reconcilePendingBackgroundTurn — localized notice", () => {
       localeCatalog: catalog,
     });
     expect(out.response).toContain("עבודה ברקע עדיין מתבצעת");
-    expect(out.response).toContain("task-a");
+    expect(out.response).not.toContain("task-a");
   });
 
   it("localizes the result-ready and mixed-updates variants too", () => {

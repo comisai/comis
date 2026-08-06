@@ -23,6 +23,16 @@ type TaskExtractionFailureStage =
   | "store"
   | "internal";
 
+type TaskExtractionOutputErrorCode =
+  | "output_too_large"
+  | "invalid_output"
+  | "candidate_too_large"
+  | "unknown_item"
+  | "duplicate_item"
+  | "invalid_time_range"
+  | "before_minimum_due"
+  | "time_overflow";
+
 type TaskCheckTerminalOutcome =
   | "dismissed"
   | "retry_scheduled"
@@ -33,6 +43,12 @@ type TaskCheckTerminalOutcome =
   | "configuration_disabled"
   | "delivery_window_closed"
   | "failed";
+
+type TaskCheckSuppressionReason =
+  | "heartbeat_token"
+  | "ack_under_threshold"
+  | "empty_reply"
+  | "visibility_filter";
 
 type TaskStoreOperation =
   | "claim"
@@ -85,6 +101,7 @@ export interface SchedulerTaskEvents {
     sourceExecutionIds: readonly string[];
     stage: TaskExtractionFailureStage;
     errorKind: ErrorKind;
+    outputErrorCode?: TaskExtractionOutputErrorCode;
     releaseErrorKind?: ErrorKind;
     durationMs: number;
     timestamp: number;
@@ -116,6 +133,7 @@ export interface SchedulerTaskEvents {
     originTraceIds: readonly string[];
     outcome: TaskCheckTerminalOutcome;
     recovery: "live" | "ownership_recovery";
+    suppressionReason?: TaskCheckSuppressionReason;
     errorKind?: ErrorKind;
     deliveredChunks?: number | null;
     failedChunks?: number | null;

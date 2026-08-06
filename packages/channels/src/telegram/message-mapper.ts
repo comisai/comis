@@ -234,6 +234,19 @@ export function mapGrammyToNormalized(
   if (addressing.isBotMentioned) metadata.isBotMentioned = true;
   if (addressing.replyToBot) metadata.replyToBot = true;
   if (addressing.isBotCommand) metadata.isBotCommand = true;
+  const repliedMessage = msg.reply_to_message;
+  if (repliedMessage !== undefined) {
+    const repliedText = repliedMessage.text ?? repliedMessage.caption;
+    metadata.replyContext = {
+      messageId: String(repliedMessage.message_id),
+      senderKind: repliedMessage.from?.id === bot.id
+        ? "agent"
+        : repliedMessage.from !== undefined
+          ? "user"
+          : "unknown",
+      ...(repliedText !== undefined ? { text: repliedText } : {}),
+    };
+  }
 
   // Extract text from message body or caption
   let text = msg.text ?? msg.caption ?? "";
@@ -281,6 +294,9 @@ export function mapGrammyToNormalized(
     // CRITICAL: Telegram uses Unix seconds, we use milliseconds
     timestamp: (updateKind === "edited_message" ? msg.edit_date ?? msg.date : msg.date) * 1000,
     attachments,
+    ...(repliedMessage !== undefined
+      ? { replyTo: telegramMessageGuid(bot.id, chatId, repliedMessage.message_id, undefined) }
+      : {}),
     chatType,
     metadata,
   };

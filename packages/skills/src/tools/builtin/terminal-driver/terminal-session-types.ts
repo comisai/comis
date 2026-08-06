@@ -24,6 +24,8 @@
  * @module
  */
 
+import type { ChannelEndpoint } from "@comis/core";
+
 import type { SessionOwner } from "./terminal-session-owner.js";
 import type { SnapshotDiff } from "./terminal-render.js";
 
@@ -84,6 +86,20 @@ export interface SessionHandle {
   workspace?: string;
   /** The origin that owns this session — `(agentId, sessionKey)`. Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
   owner: SessionOwner;
+  /**
+   * The CONVERSATION this session was created from (the resolved turn scope's endpoint),
+   * stamped at `create` beside {@link owner} and re-stamped verbatim on a durable
+   * re-attach. A backgrounded drive's notifications resolve through
+   * `explicit → platform-match → primaryChannel → recent-session`, so WITHOUT this the
+   * outcome of a drive started in one thread lands wherever the agent was last active —
+   * and an escalation delivered to the wrong thread is an escalation lost. Absent for a
+   * session created outside a channel turn (an API/cron drive), which then routes exactly
+   * as before.
+   *
+   * A DELIVERY hint, never authorization: it is captured server-side from the request
+   * context (never an agent-supplied param) and takes no part in the owner gate.
+   */
+  originEndpoint?: ChannelEndpoint;
   /**
    * `true` iff this is a `drive.durable:true` session backed by a
    * detached tmux server that outlives a worker/daemon close. The durable-aware

@@ -14,6 +14,7 @@ function mockResult(
   date?: string,
   occurredDate?: string,
   userId = "memory-owner",
+  tags: string[] = [],
 ): MemorySearchResult {
   return {
     entry: {
@@ -24,7 +25,7 @@ function mockResult(
       content,
       createdAt: date ? new Date(date).getTime() : Date.now(),
       ...(occurredDate !== undefined ? { occurredAt: new Date(occurredDate).getTime() } : {}),
-      tags: [],
+      tags,
       trustLevel: "learned",
       source: { channel: "test" },
     },
@@ -94,6 +95,23 @@ describe("createHybridMemoryInjector", () => {
       expect(result.inlineMemory).not.toContain("another sender");
     });
 
+    it("keeps paired conversation transcripts out of the current-request inline position", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const result = injector.split([
+        mockResult(
+          "[user] create another schedule\n[agent] what time?",
+          0.95,
+          "2026-01-15",
+          undefined,
+          "memory-owner",
+          ["conversation", "paired"],
+        ),
+      ], 5000);
+
+      expect(result.inlineMemory).toBeUndefined();
+      expect(result.systemPromptSections.join("\n")).toContain("create another schedule");
+    });
+
     it("inlines BOTH recorded and occurred dates when occurredAt is present", () => {
       const injector = createHybridMemoryInjector();
       const results = [
@@ -104,6 +122,17 @@ describe("createHybridMemoryInjector", () => {
       expect(result.inlineMemory).toBeDefined();
       expect(result.inlineMemory).toContain("recorded 2026-01-15");
       expect(result.inlineMemory).toContain("occurred 2026-01-03");
+    });
+
+    it("preserves exact recorded time for same-day inline corrections", () => {
+      const injector = createHybridMemoryInjector();
+      const results = [
+        mockResult("The setting is beta now", 0.85, "2026-08-06T04:21:22.702Z"),
+      ];
+
+      const result = injector.split(results, 5000);
+
+      expect(result.inlineMemory).toContain("recorded 2026-08-06T04:21:22.702Z");
     });
 
     it("puts top-1 in system prompt when score below threshold", () => {
@@ -255,6 +284,16 @@ describe("stripInlineRecalledMemoryFromMessage", () => {
 
     expect((carved as { content: string }).content).toBe("what is the forecast?");
     expect(carved).not.toBe(message);
+  });
+
+  it("carves a recall block carrying an exact recorded timestamp", () => {
+    const recall =
+      "[Relevant context from memory: current setting (recorded 2026-08-06T04:21:22.702Z)]\n";
+    const message = { role: "user", content: `${recall}what is current?` } as Message;
+
+    const carved = stripInlineRecalledMemoryFromMessage(message);
+
+    expect((carved as { content: string }).content).toBe("what is current?");
   });
 
   it("carves the recall from the first text block and keeps sibling blocks intact", () => {

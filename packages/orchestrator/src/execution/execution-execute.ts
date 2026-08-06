@@ -211,6 +211,10 @@ export async function executeLlm(
         {
           operationType: "interactive" as const,
           inboundProvenancePlans,
+          suppressFinalResponseAfterOutboundDelivery: {
+            channelType: effectiveMsg.channelType,
+            channelId: effectiveMsg.channelId,
+          },
         },
       ),
       deps.executionTimeoutMs ?? 600_000,

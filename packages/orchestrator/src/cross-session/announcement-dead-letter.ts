@@ -683,12 +683,86 @@ export function createAnnouncementDeadLetterQueue(
     return ok(undefined);
   }
 
+  /**
+   * Settle parked parent-decision reservations against the outward ledger.
+   *
+   * A reservation is written when the parent turn that should adjudicate a
+   * sub-agent completion dies before deciding. Nothing drained them, so a
+   * finished job's result was simply never delivered — live, a completed chart
+   * set sat parked until the user asked for it by hand. The quarantine was
+   * right that we must not guess; it was wrong that we had to. The ledger is
+   * built to answer exactly this, and `allocateStep` is idempotent by
+   * `(rootRunId, operationId)`, so the step the send WOULD have used is
+   * recoverable after the fact — including across a restart.
+   *
+   * Converted reservations are handed to `drainGovernedEntry`, which already
+   * owns the lookup, the committed-skip, the identity-mismatch check and the
+   * parking. Nothing here decides to send; it only supplies the identity that
+   * lets the governed path decide.
+   *
+   * Fail-SAFE throughout: a reservation with no `rootRunId` (written before the
+   * field existed) or any ledger error stays parked. An unanswerable ledger is
+   * never read as "not sent".
+   */
+  async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
+    if (decisionReservations.length === 0) return;
+    const settled: string[] = [];
+    for (const reservation of [...decisionReservations]) {
+      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) continue;
+      const step = await fromPromise(
+        ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
+      );
+      if (!step.ok || !step.value.ok) {
+        logger?.debug(
+          { runId: reservation.runId },
+          "Parent decision reservation left parked: outward step could not be resolved",
+        );
+        continue;
+      }
+      const now = systemNowMs();
+      entries.push({
+        id: reservation.id,
+        announcementText: reservation.announcementText,
+        channelType: reservation.channelType,
+        channelId: reservation.channelId,
+        agentId: reservation.agentId,
+        runId: reservation.runId,
+        failedAt: reservation.failedAt,
+        attemptCount: 0,
+        lastAttemptAt: 0,
+        idempotencyKey: reservation.idempotencyKey,
+        rootRunId: reservation.rootRunId,
+        stepIndex: step.value.value,
+        ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
+      } as DeadLetterEntry);
+      settled.push(reservation.idempotencyKey);
+      void now;
+    }
+    if (settled.length === 0) return;
+    const remaining = decisionReservations.filter(
+      (r) => !settled.includes(r.idempotencyKey),
+    );
+    decisionReservations = [...remaining];
+    const persisted = await persist(entries, remaining);
+    if (!persisted.ok) {
+      logger?.warn(
+        {
+          errorKind: "resource" as const,
+          hint: "restore dead-letter storage; the adjudicated announcements stay in memory for this drain",
+        },
+        "Failed to persist adjudicated parent decision reservations",
+      );
+    }
+  }
+
   async function drainSerialized(
     sendToChannel: (type: ChannelType, id: string, text: string, options?: AnnouncementDeliveryOptions) => Promise<boolean>,
     onDelivered?: (idempotencyKey: string) => void,
   ): Promise<void> {
     const load = await loadFromDisk();
-    if (!load.ok || entries.length === 0) return;
+    if (!load.ok) return;
+    if (outwardLedger) await adjudicateReservations(outwardLedger);
+    if (entries.length === 0) return;
     const now = systemNowMs();
     const workingEntries = entries
       .map((entry) => ({ ...entry }))

@@ -51,8 +51,9 @@ messaged them. Agents can adjust the heartbeat interval or disable it entirely.
 
 ### Messaging
 
-The `message` tool operates on the authoritative endpoint attached to the
-current turn. It supports sending new messages, replying to specific messages,
+The `message` tool operates on an endpoint the runtime holds authority for --
+see [endpoint authority](/agent-tools/messaging) for the exact resolution rule.
+It supports sending new messages, replying to specific messages,
 adding reactions, editing previous messages, and deleting messages without
 collapsing channel instance, thread, or conversation-kind identity.
 

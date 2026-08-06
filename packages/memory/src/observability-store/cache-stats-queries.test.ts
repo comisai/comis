@@ -62,10 +62,49 @@ describe("cache-stats queries", () => {
     expect(r).toEqual({
       cache_read_tokens: 0,
       cache_write_tokens: 0,
+      // The per-TTL split is part of the window shape: an empty window reports a
+      // zero split, never an absent one, so a caller never has to distinguish
+      // "no writes" from "this store cannot tell you".
+      cache_write_5m_tokens: 0,
+      cache_write_1h_tokens: 0,
       non_cached_input_tokens: 0,
       output_tokens: 0,
       turns: 0,
     });
+  });
+
+  it("window_reports_uncached_input_when_the_provider_bills_it_separately", () => {
+    // Anthropic reports `input_tokens` as the UNCACHED portion only — cache reads and
+    // writes are separate counters. Deriving uncached input as
+    // `prompt - read - write` therefore goes hugely negative and clamps to 0, hiding
+    // genuine uncached spend. Live: the console showed 17,184 input tokens while
+    // `cache stats` reported 0, because prompt_tokens summed to 346 against 3.4M
+    // cached. When prompt cannot contain the cached tokens, it IS the uncached input.
+    insertTokenUsage(makeTokenUsageRow({
+      promptTokens: 500, cacheReadTokens: 200_000, cacheWriteTokens: 50_000,
+    }));
+
+    const r = queries.queryCacheStatsWindow({ since: 0 });
+
+    expect(r.non_cached_input_tokens).toBe(500);
+  });
+
+  it("window_reports_the_per_ttl_write_split", () => {
+    // A cache WRITE is billed by its TTL (1h at 2x base, 5m at 1.25x, vs 0.1x to
+    // read), so on a cached workload this split is the number that moves the bill.
+    // Rows that never recorded one contribute nothing rather than being guessed at,
+    // so the two need not sum to cache_write_tokens.
+    insertTokenUsage(makeTokenUsageRow({
+      cacheWriteTokens: 300, cacheWrite5mTokens: 100, cacheWrite1hTokens: 200,
+    }));
+    // A row from before the split was stored: it still counts toward the total.
+    insertTokenUsage(makeTokenUsageRow({ cacheWriteTokens: 50 }));
+
+    const r = queries.queryCacheStatsWindow({ since: 0 });
+
+    expect(r.cache_write_tokens).toBe(350);
+    expect(r.cache_write_5m_tokens).toBe(100);
+    expect(r.cache_write_1h_tokens).toBe(200);
   });
 
   it("single_provider_aggregates_window_totals", () => {

@@ -202,9 +202,9 @@ export const SystemHealthReportSchema = z.object({
       resumed: z.number(),
       revoked: z.number(),
       killed: z.number(),
-      /** The TOOL-FAILURE breaker subset of breakerTripTotal (the synthetic-excluded
+      /** The execution-failure breaker subset of breakerTripTotal (the synthetic-excluded
        *  session-rollup `breakerTripCount` read-back). DISTINCT from `denialBreakerTrips`
-       *  below — the tool-failure breaker and the capability-denial breaker are
+       *  below — execution-failure and capability-denial breakers are
        *  separate mechanisms and must not be conflated. */
       breakerTrips: z.number(),
       /**
@@ -213,7 +213,7 @@ export const SystemHealthReportSchema = z.object({
        * EVENT-SOURCED from the content-free `autonomy_denial_breaker`
        * health_signal rows, NOT the session-rollup `breakerTripCount`: a
        * denial-breaker abort is NEVER a session endReason and NEVER a
-       * breakerTripCount, so `breakerTrips` (the tool-failure read-back) can never
+       * breakerTripCount, so `breakerTrips` (the execution-failure read-back) can never
        * see it — and the aborted run lands in durable status 'completed', so it is
        * 0 in orphaned/revoked/killed too. This separable count is the ONLY system
        * surface for the denial breaker. Counts

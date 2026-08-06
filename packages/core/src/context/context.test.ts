@@ -266,7 +266,7 @@ describe("RequestContext", () => {
         deliveryOrigin: {
           channelType: "telegram",
           channelId: "chat-1",
-          userId: "user-1",
+          userId: "principal-1",
           tenantId: "tenant-1",
         },
         turnScope,

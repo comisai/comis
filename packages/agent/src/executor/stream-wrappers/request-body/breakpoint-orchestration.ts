@@ -122,17 +122,33 @@ export function runCacheBreakpointPhase(
       blocks.push({ type: "text" as const, text: promptBlocks.semiStableBody });
     }
     result.system = blocks;
-    // Only last system block gets cache_control -- cumulative hash covers
-    // all prior blocks. Frees 2 breakpoint slots for message breakpoints.
+    // ONE cache_control for the whole system prompt -- the cumulative hash covers
+    // every prior block, so a single marker frees 2 breakpoint slots for message
+    // breakpoints. It must sit on the last STABLE block, never on the trailing
+    // `semiStableBody`: Anthropic caching is prefix-based, so anchoring on the
+    // runtime preamble puts the per-call date/time INSIDE the cached prefix and
+    // the whole system prompt misses on every turn. Live, a 1-character date
+    // delta dropped 100% of a 56,276-token prefix (cache.break system_changed,
+    // tokenDropRelative 1). Leaving the preamble after the marker re-sends it
+    // uncached each call -- correct, and far cheaper than re-writing the prefix.
     const sysBlocks = result.system as Array<Record<string, unknown>>;
     for (const block of sysBlocks) {
       delete block.cache_control;
     }
-    sysBlocks[sysBlocks.length - 1]!.cache_control = resolvedRetention === "long"
+    const anchorIndex = promptBlocks.semiStableBody && sysBlocks.length > 1
+      ? sysBlocks.length - 2
+      : sysBlocks.length - 1;
+    sysBlocks[anchorIndex]!.cache_control = resolvedRetention === "long"
       ? { type: "ephemeral", ttl: "1h" }
       : { type: "ephemeral" };
     logger.debug(
-      { blockCount: blocks.length, retention: resolvedRetention, modelId: model.id },
+      {
+        blockCount: blocks.length,
+        anchorIndex,
+        uncachedTailBlocks: sysBlocks.length - 1 - anchorIndex,
+        retention: resolvedRetention,
+        modelId: model.id,
+      },
       "Multi-block system prompt injected",
     );
   }
@@ -286,6 +302,24 @@ export function runCacheBreakpointPhase(
       // tools->system->messages TTL sequence monotonically non-increasing.
       eFixFiredAt = i;
       break;
+    }
+  }
+
+  // The anchor above emits 1h regardless of the resolved retention, and the
+  // system marker sits BEFORE every message marker in wire order — so on a
+  // session still at "short" (a cold start, before the adaptive ladder
+  // escalates) the payload went out as system(5m) -> message(1h), violating
+  // Anthropic's non-increasing TTL rule. The earlier system upgrade cannot cover
+  // it: that runs before this loop and only when retention is already "long".
+  // enforceMonotonicTtlOrdering repaired it at the end of the phase and logged
+  // "MONOTONIC-TTL: upgraded out-of-order 5m markers to 1h" naming system[1] —
+  // an upstream-placement-bug WARN on every such turn. Promote here instead, the
+  // same coordination the recent-zone retention below already performs.
+  if (eFixFiredAt !== undefined && resolvedRetention !== "long" && Array.isArray(result.system)) {
+    for (const block of result.system as Array<Record<string, unknown>>) {
+      if (block.cache_control) {
+        block.cache_control = { type: "ephemeral", ttl: "1h" };
+      }
     }
   }
 

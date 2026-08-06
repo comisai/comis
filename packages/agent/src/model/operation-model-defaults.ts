@@ -248,5 +248,9 @@ export const OPERATION_CACHE_DEFAULTS: Partial<Record<ModelOperationType, "none"
   verification: "none",  // critic responses consume the reviewed response and must not be cached
   planning: "none",       // planner responses are request-specific; caching wastes storage
   outcomeJudge: "none",   // judge responses are request-specific (like verification)
-  skillSynthesis: "short", // offline reuse within a run, like cron
+  // Offline synthesis runs on a multi-hour cadence, so a 5m write expires long
+  // before the next run can read it. Measured live over 12 runs: 35,234 tokens
+  // written, 2,472 read, 10 of 12 calls reading nothing. The small intra-run
+  // reuse it did get is cheaper as plain input than as a premium-priced write.
+  skillSynthesis: "none",
 };

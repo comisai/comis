@@ -242,6 +242,62 @@ describe("clear prose and operator pins are the enforcing locale tiers", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Batched messages
+//
+// A turn can coalesce several inbound messages. The prose threshold qualifies a
+// message as a language signal; summing word counts across independent messages
+// manufactures evidence that none of them individually carries. Two
+// sub-threshold command pastes must not add up to an enforced script.
+// ---------------------------------------------------------------------------
+
+describe("batched request messages are qualified individually", () => {
+  // Verbatim from the production incident: two consecutive install pastes, each
+  // correctly sub-threshold on its own, coalesced into one turn.
+  const SKILL_PASTE = "Install this skill: https://example.invalid/skills/xlsx";
+  const MCP_PASTE = [
+    "Install this MCP:",
+    "npx -y some-mcp,",
+    '"SOME_USERNAME": "u",',
+    '"SOME_PASSWORD": "p",',
+    '"SOME_GLOBAL_BASE_URL": "https://api.example.invalid/api/v2"',
+  ].join("\n");
+  const HEBREW_PROSE = "אני גר בישראל, רם-און, דובר עברית";
+
+  it("does not enforce a script that no single batched message justifies", () => {
+    // Each paste alone stays unset (pinned above); batched they must not sum
+    // into an enforced Latin locale, which is what produced a romanized reply.
+    expect(resolveResponseLocalePolicy({ requestTexts: [SKILL_PASTE, MCP_PASTE] }).enforceLocale)
+      .toBe(false);
+  });
+
+  it("keeps the conversation script when only command pastes follow it", () => {
+    // The Hebrew message is the only real prose in the batch, so it — not the
+    // concatenation's dominant script — decides the reply script.
+    expect(resolveResponseLocalePolicy({
+      requestTexts: [HEBREW_PROSE, SKILL_PASTE, MCP_PASTE],
+    })).toEqual({ locale: "und-Hebr", source: "request", enforceLocale: true });
+  });
+
+  it("takes the most recent batched message that carries a real signal", () => {
+    // Documented precedence: the current request outranks earlier turns.
+    expect(resolveResponseLocalePolicy({
+      requestTexts: [HEBREW_PROSE, "Please summarize what happened here this week."],
+    })).toEqual({ locale: "und-Latn", source: "request", enforceLocale: true });
+  });
+
+  it("still enforces when a batched message is genuine prose", () => {
+    expect(resolveResponseLocalePolicy({
+      requestTexts: [SKILL_PASTE, HEBREW_PROSE],
+    })).toEqual({ locale: "und-Hebr", source: "request", enforceLocale: true });
+  });
+
+  it("falls back to the single requestText when no batch is supplied", () => {
+    expect(resolveResponseLocalePolicy({ requestText: HEBREW_PROSE }))
+      .toEqual({ locale: "und-Hebr", source: "request", enforceLocale: true });
+  });
+});
+
 describe("transport-tier locale is advisory, never enforced", () => {
   it("does not enforce a client UI language over the conversation", () => {
     const policy = resolveResponseLocalePolicy({

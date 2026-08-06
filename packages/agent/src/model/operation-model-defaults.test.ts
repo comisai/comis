@@ -437,6 +437,15 @@ describe("OPERATION_CACHE_DEFAULTS", () => {
   it("planning cache retention is none (planner responses must not be cached)", () => {
     expect(OPERATION_CACHE_DEFAULTS["planning"]).toBe("none");
   });
+
+  it("skillSynthesis cache retention is none (its cadence outlives any write it pays for)", () => {
+    // Measured on a live deployment: the offline synthesis cron runs every 3
+    // hours and writes a 5m-TTL cache. Across 12 runs it wrote 35,234 tokens
+    // and read 2,472 — 10 of 12 calls read nothing at all, because the next run
+    // starts 3 hours after the cache expired. Paying the write premium for a
+    // reader that cannot exist is strictly worse than sending plain input.
+    expect(OPERATION_CACHE_DEFAULTS.skillSynthesis).toBe("none");
+  });
 });
 
 describe("OPERATION_TIMEOUT_DEFAULTS — a sub-agent must outlast the tool deadlines it encloses", () => {

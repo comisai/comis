@@ -48,7 +48,7 @@ export async function assembleParentCachePrompt(
     const responseLocalePolicy = resolveResponseLocalePolicy({
       explicitLocale: config.language ?? deps.spawnPacket?.language ?? tryGetContext()?.resolvedLanguage,
       requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
-      requestText: msg.originalMessages?.map(message => message.text).join("\n") ?? msg.text,
+      requestTexts: msg.originalMessages?.map(message => message.text) ?? [msg.text],
     });
 
     // Independently assemble dynamic preamble (same logic as the full path)
@@ -67,6 +67,9 @@ export async function assembleParentCachePrompt(
       channel: msg.channelType,
       chatType,
       flags: buildMessageFlags(msg),
+      ...(msg.metadata.autoReplyPolicyContext !== undefined
+        ? { autoReplyPolicyContext: msg.metadata.autoReplyPolicyContext }
+        : {}),
     };
     const inboundLines = buildInboundMetadataSection(inboundMeta, false);
     if (inboundLines.length > 0) dynamicPreambleParts.push(inboundLines.join("\n"));

@@ -39,6 +39,7 @@ function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: stri
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId: "default" },
     traceId: null,
+    trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId")),
@@ -525,7 +526,10 @@ describe("background-task-persistence", () => {
 
       expect(recoverTasks(dataDir, ops)).toEqual({
         tasks: [],
-        failures: [{ kind: "task_read" }],
+        failures: [{
+          kind: "task_read",
+          recordRef: "a1/transient-read.json",
+        }],
       });
       expect(recoverTasks(dataDir, ops).tasks).toEqual([
         expect.objectContaining({ id: "transient-read" }),
@@ -549,6 +553,37 @@ describe("background-task-persistence", () => {
       expect(onDisk.status).toBe("running");
     });
 
+    it("recovers a record persisted before the origin carried a trust level", () => {
+      // A record written by a build that predates `trustLevel` on the origin.
+      // Live on a production upgrade: every such file failed PersistedTaskStateSchema
+      // and was skipped, so a task still in flight across the restart could never be
+      // recovered. The absent field must degrade to LEAST privilege, never to the
+      // trust the turn might have had.
+      const agentDir = safePath(dataDir, "legacy-agent");
+      mkdirSync(agentDir, { recursive: true });
+      const { trustLevel: _dropped, ...legacyOrigin } = buildOrigin({ agentId: "legacy-agent" });
+      writeFileSync(
+        safePath(agentDir, "legacy.json"),
+        JSON.stringify({
+          id: "legacy",
+          toolName: "tool1",
+          status: "running",
+          startedAt: 1000,
+          origin: legacyOrigin,
+          continuationExecutionId: "legacy",
+          dispatchAttempts: 0,
+        }),
+        "utf-8",
+      );
+
+      const recovered = recoverTasks(dataDir);
+
+      expect(recovered.failures).toEqual([]);
+      expect(recovered.tasks).toHaveLength(1);
+      expect(recovered.tasks[0]?.id).toBe("legacy");
+      expect(recovered.tasks[0]?.origin.trustLevel).toBe("guest");
+    });
+
     it("reports files missing durable task identity", () => {
       // Write a completely malformed file (no id or toolName)
       const agentDir = safePath(dataDir, "bad-agent");
@@ -558,7 +593,10 @@ describe("background-task-persistence", () => {
 
       const recovered = recoverTasks(dataDir);
       expect(recovered.tasks).toEqual([]);
-      expect(recovered.failures).toEqual([{ kind: "task_validation" }]);
+      expect(recovered.failures).toEqual([{
+        kind: "task_validation",
+        recordRef: "bad-agent/malformed.json",
+      }]);
     });
 
     it("reports tasks whose origin lacks canonical turn authority", () => {
@@ -583,7 +621,10 @@ describe("background-task-persistence", () => {
 
       expect(recoverTasks(dataDir)).toEqual({
         tasks: [],
-        failures: [{ kind: "task_validation" }],
+        failures: [{
+          kind: "task_validation",
+          recordRef: "default/stale-origin.json",
+        }],
       });
     });
 

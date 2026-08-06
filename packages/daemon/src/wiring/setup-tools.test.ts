@@ -48,6 +48,7 @@ const mockCreateProcessRegistry = vi.hoisted(() => vi.fn(() => ({
   add: vi.fn(),
   get: vi.fn(),
   list: vi.fn(() => []),
+  killOwned: vi.fn(async () => ({ ok: true, value: 0 })),
   cleanup: vi.fn(async () => 0),
 })));
 const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({
@@ -207,6 +208,7 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "image_generate", category: "media", conditional: (ctx: any) => ctx.imageGenProvider !== undefined, build: (ctx: any) => mockCreateImageGenerateTool(ctx.rpcCall) },
     { name: "transcribe_audio", category: "media", build: (ctx: any) => mockCreateTranscribeAudioTool(ctx.rpcCall) },
     { name: "tts", category: "media", build: (ctx: any) => mockCreateTTSTool(ctx.rpcCall) },
+    { name: "memory_ask", category: "memory", conditional: (ctx: any) => ctx.dialecticEnabled === true, build: (_ctx: any) => ({ name: "memory_ask" }) },
     { name: "memory_get", category: "memory", build: (_ctx: any) => ({ name: "memory_get" }) },
     { name: "memory_manage", category: "memory", build: (_ctx: any) => ({ name: "memory_manage" }) },
     { name: "memory_search", category: "memory", build: (_ctx: any) => ({ name: "memory_search" }) },
@@ -438,6 +440,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
   };
   return {
     rpcCall: vi.fn(async () => ({})),
+    memoryCostFeaturesEnabled: true,
     agents: {
       "agent-1": {
         skills: {
@@ -617,6 +620,32 @@ describe("setupTools", () => {
     const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).not.toContain("browser");
+  });
+
+  it("master memory cost switch removes dialectic while preserving offline recall", async () => {
+    const deps = createMinimalDeps({
+      agents: {
+        "agent-1": {
+          dialectic: { enabled: true },
+          skills: {
+            builtinTools: { browser: false, exec: false, process: false },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    Object.assign(deps, { memoryCostFeaturesEnabled: false });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const toolNames = tools.map((tool: { name: string }) => tool.name);
+    expect(toolNames).not.toContain("memory_ask");
+    expect(toolNames).toContain("memory_search");
   });
 
   // -------------------------------------------------------------------------
@@ -1025,6 +1054,40 @@ describe("setupTools", () => {
     if (registryMock) {
       expect(registryMock.cleanup).toHaveBeenCalled();
     }
+  });
+
+  it("sub-agent kill reaps background processes owned by the child session", async () => {
+    const eventBus = createMockEventBus();
+    const deps = createMinimalDeps({
+      eventBus: eventBus as any,
+      agents: {
+        "agent-1": {
+          skills: {
+            builtinTools: { browser: false, exec: true, process: false },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+    await assembleToolsForAgent("agent-1");
+    mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const registryMock = mockCreateProcessRegistry.mock.results[0]?.value;
+
+    eventBus.emit("subagent:killed", {
+      runId: "run-1",
+      agentId: "agent-1",
+      sessionKey: "child-session",
+      killedBy: "operator",
+      runtimeMs: 100,
+      timestamp: 100,
+    });
+    await Promise.resolve();
+
+    expect(registryMock?.killOwned).toHaveBeenCalledWith("child-session");
   });
 
   // -------------------------------------------------------------------------

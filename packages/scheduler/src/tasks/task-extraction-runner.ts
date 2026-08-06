@@ -43,6 +43,7 @@ type TaskExtractionRunnerCoreOutcome =
     readonly itemCount: number;
     readonly stage: "root_registration" | "model" | "model_output" | "deadline" | "live_gate" | "persistence_fence" | "store" | "internal";
     readonly errorKind: ErrorKind;
+    readonly outputErrorCode?: TaskExtractionOutputError["code"];
     readonly releaseErrorKind?: ErrorKind;
   };
 
@@ -79,6 +80,7 @@ interface ActiveOperation {
 interface StageError {
   readonly stage: Extract<TaskExtractionRunnerOutcome, { status: "dropped" }>["stage"];
   readonly errorKind: ErrorKind;
+  readonly outputErrorCode?: TaskExtractionOutputError["code"];
 }
 
 export function createTaskExtractionRunner(deps: {
@@ -204,7 +206,14 @@ export function createTaskExtractionRunner(deps: {
     timeout.cancel();
     if (!modeled.ok) return dropped(operation, "model", "internal");
     if (!modeled.value.ok) return dropped(operation, "model", modeled.value.error.errorKind);
-    if (!modeled.value.value.ok) return dropped(operation, modeled.value.value.error.stage, modeled.value.value.error.errorKind);
+    if (!modeled.value.value.ok) {
+      return dropped(
+        operation,
+        modeled.value.value.error.stage,
+        modeled.value.value.error.errorKind,
+        modeled.value.value.error.outputErrorCode,
+      );
+    }
     if (operation.timedOut) return dropped(operation, "deadline", "timeout");
     if (!operation.persistFenceOpen || lifecycle !== "active") return dropped(operation, "persistence_fence", "precondition");
     if (!safeEnabled(deps.isEnabled, operation.agentId)) return dropped(operation, "live_gate", "precondition");
@@ -308,14 +317,19 @@ async function extractCandidates(
   return reparsed.ok ? reparsed : err(outputError(reparsed.error));
 }
 
-function outputError(_error: TaskExtractionOutputError): StageError {
-  return { stage: "model_output", errorKind: "validation" };
+function outputError(error: TaskExtractionOutputError): StageError {
+  return {
+    stage: "model_output",
+    errorKind: "validation",
+    outputErrorCode: error.code,
+  };
 }
 
 function dropped(
   operation: ActiveOperation,
   stage: Extract<TaskExtractionRunnerOutcome, { status: "dropped" }>["stage"],
   errorKind: ErrorKind,
+  outputErrorCode?: TaskExtractionOutputError["code"],
 ): TaskExtractionRunnerCoreOutcome {
   return {
     status: "dropped",
@@ -324,6 +338,7 @@ function dropped(
     itemCount: operation.items.length,
     stage,
     errorKind,
+    ...(outputErrorCode === undefined ? {} : { outputErrorCode }),
   };
 }
 

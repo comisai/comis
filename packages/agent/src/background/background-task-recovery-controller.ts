@@ -463,13 +463,32 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     };
     reconcileAuthorities();
     if (failures.length === 0) {
+      const now = deps.clock.now();
+      emitObservationalEventSafely(
+        { eventBus: deps.eventBus, logger: deps.logger },
+        "background_task:recovery_scan",
+        {
+          status: "healthy",
+          failureCount: 0,
+          failureKinds: [],
+          recordRefs: [],
+          timestamp: now,
+        },
+      );
       scanFailureAttempts = 0;
       lastScanEvidenceAt = undefined;
       lastScanEvidenceKey = undefined;
       return;
     }
     const kinds = [...new Set(failures.map((failure) => failure.kind))].sort();
-    const evidenceKey = `${kinds.join(",")}:${[...failedTaskIds].sort().join(",")}`;
+    const recordRefs = [...new Set(failures.flatMap(
+      (failure) => failure.recordRef === undefined ? [] : [failure.recordRef],
+    ))].sort().slice(0, 8);
+    const evidenceKey = [
+      kinds.join(","),
+      [...failedTaskIds].sort().join(","),
+      recordRefs.join(","),
+    ].join(":");
     const now = deps.clock.now();
     if (
       evidenceKey !== lastScanEvidenceKey
@@ -478,14 +497,29 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     ) {
       lastScanEvidenceKey = evidenceKey;
       lastScanEvidenceAt = now;
+      const protectedRecords = recordRefs.map((recordRef) => `background-tasks/${recordRef}`);
       deps.logger.warn(
         {
           failureCount: failures.length,
           failureKinds: kinds,
-          hint: "Repair protected background-task storage; startup recovery will retry",
+          recordRefs,
+          hint: protectedRecords.length === 0
+            ? "Repair protected background-task storage; startup recovery will retry"
+            : `Repair protected background-task record(s): ${protectedRecords.join(", ")}; startup recovery will retry`,
           errorKind: "resource" as const,
         },
         "Background task recovery scan incomplete",
+      );
+      emitObservationalEventSafely(
+        { eventBus: deps.eventBus, logger: deps.logger },
+        "background_task:recovery_scan",
+        {
+          status: "failed",
+          failureCount: failures.length,
+          failureKinds: kinds,
+          recordRefs,
+          timestamp: now,
+        },
       );
       emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "system:error", {
         error: new Error("Background task recovery scan incomplete"),

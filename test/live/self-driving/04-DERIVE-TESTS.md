@@ -11,7 +11,7 @@
 
 ### A1. Target = a USE CASE (a scenario/prompt)
 "Test the DAG pipeline" / "memory recall across sessions" / "STT round-trip".
-1. Name the **capabilities** it exercises (cross-reference `05-CATALOG.md §domains` + the 30-UC catalog — find the matching UC and start from its predicate/oracle).
+1. Name the **capabilities** it exercises (cross-reference `05-CATALOG.md §domains` + the catalog's UC table — find the matching UC and start from its predicate/oracle).
 2. Enumerate the **happy path** + the variants that matter for THAT capability:
    - **edge**: empty / huge / malformed input; the boundary (the oversized-context, the position-limit, the quota edge);
    - **abuse/negative**: the adversarial version (injection, exfil, a runaway, a spoof) — every capability that takes untrusted input or acts outward gets a HARD oracle;
@@ -60,14 +60,14 @@ For each requirement, write the row **before driving**:
 
 ## C. The BROAD axis (cross-cutting, after the deep rows)
 
-- **System-level UCs** — the end-to-end real-world flows that span capabilities (the `05-CATALOG.md §30-UCs`: develop-a-complete-app, the long-session marathon, verified-learning A→B, the multi-agent debate). Run the ones the target plausibly touches; these catch integration bugs the per-requirement tests miss.
+- **System-level UCs** — the end-to-end real-world flows that span capabilities (the `05-CATALOG.md §UC-catalog`: develop-a-complete-app, the long-session marathon, verified-learning A→B, the multi-agent debate). Run the ones the target plausibly touches; these catch integration bugs the per-requirement tests miss.
 - **Track K (providers × models)** — if the target touches model resolution / a new provider path / caching: sweep every provider × catalog model (`scripts/models-sweep.sh`), classify, verify `modelId`==config.
 - **Track L (surface completeness)** — if the target ships RPC methods / tools / CLI / endpoints: smoke-call each + classify; admin-gated reject non-admin.
 - **Track M (config combinations)** — every behavior-changing toggle the target adds, both polarities; modes booted per value; relaxed security defaults must surface.
 
 ## D. Comprehensiveness GATE (mandatory before STEP 3 — `00-MISSION.md` non-negotiable #7)
 **The plan is drive-ready only when it covers the WHOLE scenario on all four axes.** If any axis is empty for a capability the target exercises, the plan is **not done — do not start driving.**
-- **Real-world** — ≥1 **end-to-end** use case per major flow: how a user *actually* exercises it (multi-turn, in context, with the surrounding setup/teardown), not a single isolated call. The "develop-a-complete-app" / "long-session marathon" / "the canonical demo" shapes (`05-CATALOG §30-UCs`).
+- **Real-world** — ≥1 **end-to-end** use case per major flow: how a user *actually* exercises it (multi-turn, in context, with the surrounding setup/teardown), not a single isolated call. The "develop-a-complete-app" / "long-session marathon" / "the canonical demo" shapes (`05-CATALOG §UC-catalog`).
 - **Edge** — empty / huge / malformed / boundary / quota / concurrency / **failure-injection** for every input-taking or stateful capability the target touches.
 - **Deep** — every requirement → ≥1 row; every capability category → ≥2 rows (happy + edge/abuse); every untrusted-input or outward-acting capability → a **HARD** oracle; every config knob → a **Track-M both-polarities** pair; every claimed mechanism → **verified at HEAD**.
 - **Broad** — the cross-cutting **system-level UCs** + the **surface sweep** (Track L, incl. L8 origin-gating) the target plausibly touches.

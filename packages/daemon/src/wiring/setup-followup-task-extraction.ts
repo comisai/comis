@@ -318,6 +318,7 @@ function observeOutcome(
       rootRunId: outcome.rootRunId,
       itemCount: outcome.itemCount,
       stage: outcome.stage,
+      outputErrorCode: outcome.outputErrorCode,
       releaseErrorKind: outcome.releaseErrorKind,
       errorKind: outcome.errorKind,
       hint: "Inspect the rooted extraction trajectory; the volatile batch is dropped and is not safe to replay.",

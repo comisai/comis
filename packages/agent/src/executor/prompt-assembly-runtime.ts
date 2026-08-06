@@ -647,6 +647,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     channel: msg.channelType,
     chatType: resolveChatType(msg),
     flags: buildMessageFlags(msg),
+    ...(msg.metadata.replyContext !== undefined
+      ? { replyContext: msg.metadata.replyContext }
+      : {}),
+    ...(msg.metadata.autoReplyPolicyContext !== undefined
+      ? { autoReplyPolicyContext: msg.metadata.autoReplyPolicyContext }
+      : {}),
   };
 
   // Sender trust resolution
@@ -747,7 +753,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   const responseLocalePolicy = params.responseLocalePolicy ?? resolveResponseLocalePolicy({
     explicitLocale: config.language ?? deps.spawnPacket?.language ?? tryGetContext()?.resolvedLanguage,
     requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
-    requestText: msg.originalMessages?.map(message => message.text).join("\n") ?? msg.text,
+    requestTexts: msg.originalMessages?.map(message => message.text) ?? [msg.text],
   });
 
   // Build subagentRole from SpawnPacket when present.

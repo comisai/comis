@@ -152,6 +152,9 @@ export function wireSchedulerDiagnostics(input: {
   eventBus: TypedEventBus;
   diagnosticBuffer: { push(row: DiagnosticRow): void };
 }): void {
+  input.eventBus.on("announcement:quarantine_pending", (payload) => {
+    input.diagnosticBuffer.push(announcementQuarantineEventToRow(payload));
+  });
   input.eventBus.on("scheduler:cron_ownership_reconciliation", (payload) => {
     input.diagnosticBuffer.push(cronOwnershipReconciliationEventToRow(payload));
   });
@@ -191,4 +194,33 @@ export function wireSchedulerDiagnostics(input: {
   input.eventBus.on("scheduler:task_store_reset", (payload) => {
     input.diagnosticBuffer.push(taskEventToRow("scheduler:task_store_reset", payload));
   });
+}
+
+/**
+ * Map `announcement:quarantine_pending` → a `health_signal` DiagnosticRow.
+ *
+ * Severity is `"warning"`, never `"info"`: a quarantined announcement means a
+ * background task's outcome is being withheld from the user because the runtime
+ * could not prove they were already told. `buildFindings` folds warning-severity
+ * rows into one finding per `signal` label, so this reaches
+ * `comis system-health` as a named finding instead of a daemon.log grep — live,
+ * a completed chart set sat quarantined and the user had to ask for it.
+ * Counts only; no announcement text ever enters a diagnostic row.
+ */
+export function announcementQuarantineEventToRow(
+  payload: EventMap["announcement:quarantine_pending"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: "",
+    sessionKey: "",
+    message: "announcement:quarantine_pending",
+    details: JSON.stringify({
+      signal: "announcement_quarantine",
+      pendingCount: payload.pendingCount,
+    }),
+    traceId: undefined,
+  };
 }

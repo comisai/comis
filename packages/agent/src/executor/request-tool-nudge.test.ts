@@ -69,6 +69,10 @@ registerToolMetadata("read", {
   isReadOnly: true,
 });
 
+registerToolMetadata("obs_query", {
+  isReadOnly: true,
+});
+
 registerToolMetadata("test_guided_mutating_tool", {
   isReadOnly: false,
   mutationRequestPrefixes: ["connect"],
@@ -77,6 +81,36 @@ registerToolMetadata("test_guided_mutating_tool", {
 } as never);
 
 describe("runRequestToolNudge", () => {
+  it("recovers a frontier-model runtime self-report that omitted obs_query", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "what did you even do this week",
+      requestRelevantToolNames: ["obs_query"],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () =>
+        "The current observability report shows 45 sessions.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/runtime self-report.*obs_query/isu),
+      expect.anything(),
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["obs_query"],
+      outcome: "recovered",
+    });
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 

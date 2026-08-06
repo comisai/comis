@@ -5,7 +5,7 @@
  * These types support workspace loading and typed prompt compilation.
  */
 
-import type { WorkspaceFileName } from "@comis/core";
+import type { AutoReplyPolicyContext, ReplyContext, WorkspaceFileName } from "@comis/core";
 
 /**
  * A workspace file loaded (or attempted) from the agent workspace directory.
@@ -57,6 +57,8 @@ export interface InboundMetadata {
   readonly channel: string;
   readonly chatType: string;
   readonly flags: Record<string, boolean>;
+  readonly replyContext?: ReplyContext;
+  readonly autoReplyPolicyContext?: AutoReplyPolicyContext;
 }
 
 /**

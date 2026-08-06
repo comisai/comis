@@ -171,6 +171,10 @@ export interface LearningEvents {
     nameLengthRejections: number;
     /** Corroborated topics SKIPPED (empty reflection or rejected validation) — count only. */
     skipped: number;
+    /** Reflection model calls that returned a dependency failure while still producing a typed result. */
+    dependencyFailures: number;
+    /** Reflection passes that failed before returning a typed funnel result. */
+    failedPasses: number;
     /**
      * The count of source trajectories that ENTERED this run (pre-SELECT input). Paired with
      * `totalSourceChars` it distinguishes "no sources were built" (count 0 → a wiring gap) from

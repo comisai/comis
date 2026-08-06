@@ -107,6 +107,24 @@ export interface DeferralContext {
    *  active count <= ceiling.
    *  undefined = no ceiling (nano has its own aggressive path; frontier/mid uncapped). */
   activeToolCeiling?: number;
+  /** Max MCP tools left ACTIVE in the request; the rest are deferred behind
+   *  discover_tools. Distinct from {@link activeToolCeiling}, which is a
+   *  capability-class cap on the TOTAL count and never fires for frontier/mid.
+   *
+   *  An MCP server can contribute hundreds of schemas. Measured live: one server
+   *  supplied 120 of 192 tools and produced an 81,234-token system prompt — 54%
+   *  of a 151k request — re-sent on every turn, re-written on every cold cache
+   *  and re-uploaded on every retry. That cost is cache-write tokens and upload
+   *  latency, which do NOT shrink with a bigger context window, so a
+   *  window-pressure ceiling never addressed it.
+   *
+   *  Builtins are exempt: the tool array is sorted builtins-first, so a
+   *  count-based cap would defer the builtins and keep the MCP tail — exactly
+   *  backwards. CORE_TOOLS and recently-used tools stay active as everywhere
+   *  else, and nothing loses capability: deferred tools remain reachable through
+   *  discover_tools / server-side tool search.
+   *  undefined = no MCP budget (behaviour unchanged). */
+  mcpActiveToolBudget?: number;
 }
 
 /** Entry describing a deferred tool with its display description and original definition. */
@@ -219,6 +237,18 @@ export const CORE_TOOLS = new Set([
  * caller currently consumes this constant.
  */
 export const SMALL_CLASS_ORCHESTRATION_TOOLS = new Set(["pipeline"]);
+
+function normalizedToolReference(value: string): string {
+  return value.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
+}
+
+function requestExplicitlyNamesTool(requestText: string, toolName: string): boolean {
+  const request = normalizedToolReference(requestText);
+  const name = normalizedToolReference(toolName);
+  return request.length > 0
+    && name.length > 0
+    && ` ${request} `.includes(` ${name} `);
+}
 
 /**
  * Anthropic models that support server-side tool-search via defer_loading.
@@ -467,6 +497,38 @@ export function applyToolDeferral(
   }
   const policyDeferredSet = new Set(deferredSet);
 
+  // An explicitly named privileged tool must reach its own runtime trust
+  // guard. Leaving it behind discovery can strand the turn before that guard:
+  // the model sees the schema, never invokes the tool, and may reuse an older
+  // successful result from session history. Keeping only the named tool active
+  // does not grant authority; its existing handler remains the authoritative
+  // denial boundary for the current request context.
+  if (
+    deferralContext.trustLevel !== "admin"
+    && deferralContext.requestText?.trim()
+  ) {
+    const namedPrivilegedTools = PRIVILEGED_TOOL_NAMES.filter(
+      (name) =>
+        deferredSet.has(name)
+        && requestExplicitlyNamesTool(deferralContext.requestText ?? "", name),
+    );
+    for (const name of namedPrivilegedTools) {
+      deferredSet.delete(name);
+    }
+    if (namedPrivilegedTools.length > 0) {
+      requestRelevantToolNames.push(...namedPrivilegedTools);
+      logger.info(
+        {
+          step: "request-relevant-tool-selection",
+          selectedCount: namedPrivilegedTools.length,
+          selectedNames: namedPrivilegedTools,
+          selectionSource: "explicit_privileged_tool_name",
+        },
+        "Request-relevant tools selected",
+      );
+    }
+  }
+
   // MCP tools are ACTIVE BY DEFAULT. Empirically, the model rarely invokes
   // the server-side discovery tool (`tool_search_tool_regex`) and falls back
   // to `exec`/`web_fetch` -- deferral here paid a 0-discovery cost for no
@@ -608,8 +670,32 @@ export function applyToolDeferral(
         // still deferred for nano.
         if (deferralContext.capabilityClass === "small" && SMALL_CLASS_ORCHESTRATION_TOOLS.has(t.name)) continue;
         if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
+        if (requestRelevantToolNames.includes(t.name)) continue;
         deferredSet.add(t.name);
         remaining--;
+      }
+    }
+  }
+
+  // MCP long-tail budget. Runs AFTER the class ceiling so an explicit ceiling
+  // still wins, and only touches `mcp__`-prefixed tools — builtins are never
+  // deferred to satisfy it (see mcpActiveToolBudget). Defers from the END of the
+  // MCP range: the array is sorted builtins-first then MCP alphabetically, so
+  // trimming the tail keeps placement stable across turns and does not churn the
+  // cached tool prefix.
+  if (deferralContext.mcpActiveToolBudget !== undefined) {
+    const budget = deferralContext.mcpActiveToolBudget;
+    const activeMcp = tools.filter(
+      (t) => !deferredSet.has(t.name) && t.name.startsWith("mcp__"),
+    );
+    let overBudget = activeMcp.length - budget;
+    if (overBudget > 0) {
+      for (let i = activeMcp.length - 1; i >= 0 && overBudget > 0; i--) {
+        const t = activeMcp[i]!;
+        if (CORE_TOOLS.has(t.name)) continue;
+        if (deferralContext.recentlyUsedToolNames.has(t.name)) continue;
+        deferredSet.add(t.name);
+        overBudget--;
       }
     }
   }

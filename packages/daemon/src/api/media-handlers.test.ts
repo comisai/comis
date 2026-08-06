@@ -1111,6 +1111,59 @@ describe("createMediaHandlers", () => {
       await expect(pending).rejects.toThrow(/not configured/i);
     });
 
+    it("tts.synthesize preserves the boot resolver hint and records unavailable TTS evidence", async () => {
+      const hint =
+        'TTS provider "elevenlabs" is configured but its audio key is unavailable. '
+        + "Set ELEVENLABS_API_KEY or change integrations.media.tts.provider.";
+      const records: Array<{ type: string; data: Record<string, unknown> }> = [];
+      const deps = makeDeps({
+        ttsAdapter: undefined,
+        mediaConfig: {
+          imageAnalysis: { maxFileSizeMb: 10 },
+          vision: { scopeRules: [], defaultScopeAction: "allow" },
+          transcription: { provider: "local" },
+          tts: {
+            provider: "elevenlabs",
+            autoMode: "off" as const,
+            tagPattern: "\\[\\[tts\\]\\]",
+          },
+        },
+        voiceSelection: {
+          ttsUnavailable: { errorKind: "auth_required", hint },
+        } as never,
+        trajectoryRegistry: {
+          getRecorder: vi.fn(() => ({
+            recordEvent: vi.fn((type: string, data: Record<string, unknown>) => {
+              records.push({ type, data });
+            }),
+          })),
+        } as never,
+      });
+      const handlers = createMediaHandlers(deps);
+
+      await expect(
+        handlers["tts.synthesize"]!({
+          text: "provider check",
+          _callerSessionKey: "default:u1:telegram:c1",
+        }),
+      ).rejects.toThrow(hint);
+      expect(records).toEqual([
+        expect.objectContaining({
+          type: "media.tts.requested",
+          data: expect.objectContaining({ provider: "elevenlabs", source: "explicit" }),
+        }),
+        expect.objectContaining({
+          type: "media.tts.failed",
+          data: expect.objectContaining({
+            provider: "elevenlabs",
+            source: "explicit",
+            errorKind: "auth_required",
+            outcome: "failed",
+          }),
+        }),
+      ]);
+    });
+
     it("throws when resolveAttachment is not available", async () => {
       const deps = makeDeps({ resolveAttachment: undefined });
       const handlers = createMediaHandlers(deps);

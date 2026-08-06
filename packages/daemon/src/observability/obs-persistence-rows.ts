@@ -62,6 +62,12 @@ export function tokenUsageEventToRow(
     // Already deduped at the emit (Array.from(new Set(m.toolCallHistory))); the
     // write-path JSON-stringifies it onto the tool_tag column (NULL when absent).
     toolTag: payload.toolTag,
+    // The per-TTL write split, carried straight through: the bridge already
+    // normalized it to sum exactly to cacheWriteTokens.
+    ...(payload.cacheWriteTtlSplit === undefined ? {} : {
+      cacheWrite5mTokens: payload.cacheWriteTtlSplit.fiveMinuteTokens,
+      cacheWrite1hTokens: payload.cacheWriteTtlSplit.oneHourTokens,
+    }),
   };
 }
 
@@ -254,6 +260,25 @@ export function backgroundRecoveryEventToRow(
       reason: payload.reason,
       taskId: payload.taskId,
       toolName: payload.toolName,
+    }),
+  };
+}
+
+/** Map protected recovery-scan standing state to a content-free health row. */
+export function backgroundRecoveryScanEventToRow(
+  payload: EventMap["background_task:recovery_scan"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: payload.status === "failed" ? "warning" : "info",
+    message: "background_task_recovery_scan",
+    details: JSON.stringify({
+      signal: "background_task_recovery_scan",
+      status: payload.status,
+      failureCount: payload.failureCount,
+      failureKinds: payload.failureKinds,
+      recordRefs: payload.recordRefs,
     }),
   };
 }
@@ -527,9 +552,9 @@ export function channelIngressAuthRejectedEventToRow(
  * Map a `reflect:funnel` event → a flat DiagnosticRow under
  * `category:"learning_health"`, so the system health view surfaces the daemon-wide reflection posture
  * (is learning admitting? why-0-admitted?) as a queryable finding instead of a daemon.log grep. Severity
- * is ALWAYS `"info"`: a reflection that admitted — OR benignly didn't (no_successes / uncorroborated /
- * untrusted_origin are the anti-poison gates WORKING) — is healthy posture, not an alert (it must not
- * inflate the system degrade count, the BENIGN_*_REASONS discipline). The `details` JSON carries
+ * is `"info"` for a reflection that admitted or benignly abstained (no_successes / uncorroborated /
+ * untrusted_origin are the anti-poison gates WORKING), and `"warning"` when a pass or dependency
+ * failed. The `details` JSON carries
  * the closed `admissionOutcome` enum + the funnel COUNTS ONLY (AGENTS.md §2.7 — the reflect:funnel event
  * is content-free by construction; never a reflected doc body). Beside model_health / config_posture.
  */
@@ -539,7 +564,7 @@ export function reflectFunnelEventToRow(
   return {
     timestamp: payload.timestamp,
     category: "learning_health",
-    severity: "info",
+    severity: payload.failedPasses > 0 || payload.dependencyFailures > 0 ? "warning" : "info",
     agentId: payload.agentId,
     message: "reflect:funnel",
     details: JSON.stringify({
@@ -555,6 +580,8 @@ export function reflectFunnelEventToRow(
       // = successes that didn't merge → topicKey under-merge, not a genuine single-source).
       distinctTopicKeys: payload.distinctTopicKeys,
       untrustedDrops: payload.untrustedDrops,
+      dependencyFailures: payload.dependencyFailures,
+      failedPasses: payload.failedPasses,
       sourceTrajectoryCount: payload.sourceTrajectoryCount,
       totalSourceChars: payload.totalSourceChars,
     }),

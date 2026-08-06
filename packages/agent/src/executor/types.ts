@@ -193,6 +193,21 @@ export interface ExecutionOverrides {
   /** Cache retention override for per-execution TTL control.
    *  "short" = 5m TTL (pipeline sub-agents), "long" = 1h TTL (user conversations), "none" = no caching. */
   cacheRetention?: "none" | "short" | "long";
+  /**
+   * `"none"` = this turn must not invoke tools.
+   *
+   * Prefer this over shipping an empty tool array for a capability-free turn that
+   * shares a conversation's cached prefix. The tools block is the FIRST thing in a
+   * provider's cache key (tools -> system -> messages), so emptying it invalidates
+   * every cached message behind it — live, a capability-free relay turn re-wrote a
+   * byte-identical ~200k prefix, twice, and again on the way back out.
+   *
+   * FAIL-CLOSED: honoured as a provider-enforced constraint only where the provider
+   * actually supports one. Where it does not, tool assembly falls back to shipping
+   * NO tools, so a turn marked `"none"` can never end up with callable tools — it
+   * loses the cache saving, never the containment.
+   */
+  toolChoice?: "none";
   /** Skip RAG memory injection for graph pipeline sub-agents that receive
    *  context via the graph envelope. Prevents cross-run memory contamination
    *  from the tenantId-only RAG search that lacks graphId awareness. */

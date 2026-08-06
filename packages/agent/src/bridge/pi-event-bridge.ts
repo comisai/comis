@@ -140,6 +140,20 @@ function classifyProviderErrorCode(
   return rejectsInputName ? "invalid_tool_identity" : undefined;
 }
 
+/**
+ * Classify the provider error that ended an LLM call into the closed
+ * `ErrorCategory` enum. Returns undefined when there is no error text to
+ * classify, so a turn that merely lacks a captured body stays absent from the
+ * record rather than being labelled "unknown".
+ *
+ * Only the CATEGORY travels — the raw provider body can echo request content,
+ * so it stays in the logs and never reaches a durable trajectory record.
+ */
+function classifyModelErrorCategory(errorMessage: unknown): string | undefined {
+  if (typeof errorMessage !== "string" || errorMessage.length === 0) return undefined;
+  return classifyError(new Error(errorMessage)).category;
+}
+
 function perRootBudgetAbortReason(limb: SpendLimb | undefined): string {
   const resolvedLimb = limb ?? "aggregateUsd";
   switch (resolvedLimb) {
@@ -216,7 +230,7 @@ import {
 } from "./bridge-metrics.js";
 import { recordToolInvocationSideEffects } from "./bridge-side-effect-accumulator.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
-import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
+import { checkStepLimit, emitStepLimitAbort, resolveStepLimitDetails, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
 import {
   computeThinkingBlockHashes,
@@ -228,9 +242,12 @@ import {
 import {
   buildToolRecoveryIdentity,
   normalizeToolFailureDisclosure,
+  type SchedulerPolicyEvidence,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
+import { extractProcessSessionObservation } from "./process-session-observation.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
+import { citationUrlDigest } from "../executor/citation-evidence.js";
 
 // ---------------------------------------------------------------------------
 // Module-level one-shot latches
@@ -292,10 +309,36 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
   );
 }
 
+function extractSchedulerPolicyEvidence(
+  toolName: string,
+  action: string | undefined,
+  details: Record<string, unknown> | undefined,
+): readonly SchedulerPolicyEvidence[] | undefined {
+  if (toolName !== "cron" || action !== "list" || !Array.isArray(details?.jobs)) {
+    return undefined;
+  }
+  let combined = "";
+  for (const value of details.jobs) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const payload = (value as { payload?: unknown }).payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+    const record = payload as { messagePreview?: unknown; textPreview?: unknown };
+    if (typeof record.messagePreview === "string") combined += ` ${record.messagePreview}`;
+    if (typeof record.textPreview === "string") combined += ` ${record.textPreview}`;
+  }
+  const normalized = combined.toLocaleLowerCase();
+  const evidence: SchedulerPolicyEvidence[] = [];
+  if (/\bholidays?\b/u.test(normalized)) evidence.push("holiday");
+  if (/\bweekdays?\b/u.test(normalized)) evidence.push("weekday");
+  if (/\bweekends?\b/u.test(normalized)) evidence.push("weekend");
+  return evidence;
+}
+
 /**
  * A CONTENT-FREE grounding summary of a web_search / web_fetch result for the
- * trajectory `tool.result` — result count + source HOSTS only. NEVER titles,
- * snippets, full URLs (path/query), or bodies. Lets a "grounded in fetched
+ * trajectory `tool.result` — result count, source HOSTS, and (for web_fetch)
+ * a one-way SHA-256 digest of the exact final URL. NEVER titles, snippets,
+ * full URLs (path/query), or bodies. Lets a "grounded in fetched
  * results" predicate be verified from `comis explain` / trajectory without a
  * DEBUG daemon-log grep (load-bearing evidence must not be visible only at
  * DEBUG level). Returns `undefined` for any other tool or an
@@ -303,13 +346,13 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
  *
  * The tool return is an `AgentToolResult`; the structured payload rides `.details`
  * (the same field the success classifier reads at the call site), with a direct-
- * shape fallback. Only `host` is taken from each URL (`new URL(...).host`), never
- * the path or query — so no fetched-content identifiers leak onto the trajectory.
+ * shape fallback. Only `host` and the one-way digest leave this boundary, never
+ * the URL path, query, or fetched content.
  */
 export function extractWebResultMetadata(
   toolName: string,
   result: unknown,
-): { resultCount?: number; domains?: string[] } | undefined {
+): { resultCount?: number; domains?: string[]; citationUrlDigest?: string } | undefined {
   if (toolName !== "web_search" && toolName !== "web_fetch") return undefined;
   if (typeof result !== "object" || result === null) return undefined;
   const top = result as Record<string, unknown>;
@@ -335,9 +378,19 @@ export function extractWebResultMetadata(
     return { resultCount: results.length, domains: [...domains].sort() };
   }
   // web_fetch: a single page → resultCount 1 + the fetched host (final wins).
-  const host = hostOf(payload.finalUrl) ?? hostOf(payload.url);
+  const exactUrl = typeof payload.finalUrl === "string"
+    ? payload.finalUrl
+    : typeof payload.url === "string"
+      ? payload.url
+      : undefined;
+  if (exactUrl === undefined) return undefined;
+  const host = hostOf(exactUrl);
   if (host === undefined) return undefined;
-  return { resultCount: 1, domains: [host] };
+  return {
+    resultCount: 1,
+    domains: [host],
+    citationUrlDigest: citationUrlDigest(exactUrl),
+  };
 }
 
 /** Per-call TTL split estimate, populated by requestBodyInjector's onPayload.
@@ -1473,6 +1526,21 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             typeof resultDetails?.changed === "boolean"
               ? resultDetails.changed
               : undefined;
+          const requiresConfirmation = resultDetails?.requiresConfirmation === true;
+          const webResultMeta = toolSuccess
+            ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
+            : undefined;
+          const schedulerPolicyEvidence = toolSuccess
+            ? extractSchedulerPolicyEvidence(endEvent.toolName, toolAction, resultDetails)
+            : undefined;
+          const processSessionObservation = extractProcessSessionObservation({
+            toolName: endEvent.toolName,
+            resultBackgrounded,
+            resultDetails,
+            toolArgs: rawArgsForParams !== null && typeof rawArgsForParams === "object"
+              ? rawArgsForParams as Record<string, unknown>
+              : undefined,
+          });
           // Track all tool execution results
           m.toolExecResults.push({
             toolName: endEvent.toolName,
@@ -1480,6 +1548,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
+            ...(requiresConfirmation ? { requiresConfirmation: true } : {}),
             durationMs,
             ...(invocationSequence === undefined ? {} : { invocationSequence }),
             ...(recoveryIdentity === undefined ? {} : { recoveryIdentity }),
@@ -1489,6 +1558,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(failureCode !== undefined && { failureCode }),
             ...(failureDisclosure !== undefined && { failureDisclosure }),
+            ...(webResultMeta?.citationUrlDigest !== undefined && {
+              citationUrlDigest: webResultMeta.citationUrlDigest,
+            }),
+            ...(schedulerPolicyEvidence === undefined ? {} : { schedulerPolicyEvidence }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel
@@ -1592,13 +1665,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ? buildFailureArgsPreview(rawArgsForParams, deps.homeDir)
             : undefined;
 
-          // Content-free web_search/web_fetch grounding summary (count +
-          // source hosts only) — computed on the SUCCESS path so the trajectory
+          // Content-free web_search/web_fetch grounding summary (count,
+          // source hosts, and one-way exact-URL digest) — computed on the SUCCESS path so the trajectory
           // tool.result reconstructs grounding without a DEBUG daemon-log grep.
-          const webResultMeta = toolSuccess
-            ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
-            : undefined;
-
           // A background HAND-OFF is not an outcome: the middleware returns a
           // non-error placeholder carrying details.status:"backgrounded", so
           // toolSuccess is true while the tool is still running. Mark it so
@@ -1611,6 +1680,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
+            ...processSessionObservation,
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
@@ -1652,6 +1722,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(resultDigest !== undefined && { resultDigest }),
             ...(webResultMeta?.resultCount !== undefined && { resultCount: webResultMeta.resultCount }),
             ...(webResultMeta?.domains !== undefined && { domains: webResultMeta.domains }),
+            ...(webResultMeta?.citationUrlDigest !== undefined && {
+              citationUrlDigest: webResultMeta.citationUrlDigest,
+            }),
           });
 
           // Skill-use attribution. A `read` whose path equals a frozen
@@ -1705,7 +1778,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             const stepCheck = checkStepLimit(deps.stepCounter, m.aborted);
             if (stepCheck.shouldAbort) {
               m.finishReason = stepCheck.finishReason!;
-              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+              m.abortResponse = buildAbortRedirectMessage(
+                deps.executionPlan?.current,
+                m.finishReason,
+                undefined,
+                { stepLimit: resolveStepLimitDetails(deps.stepCounter, deps.agentId) },
+              );
               m.aborted = true;
               emitStepLimitAbort(deps);
             }
@@ -2297,6 +2375,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     (assistantMsg as { errorMessage?: unknown } | undefined)?.errorMessage,
                   )
                 : undefined;
+            // Closed-enum classification of the provider error that ended this
+            // call. The raw body never leaves the logs; the category is what
+            // lets `obs.explain` name a repeated provider rejection instead of
+            // falling through to incidental evidence.
+            const modelErrorCategory =
+              m.lastStopReason === "error"
+                ? classifyModelErrorCategory(
+                    (assistantMsg as { errorMessage?: unknown } | undefined)?.errorMessage
+                      ?? m.lastLlmErrorMessage,
+                  )
+                : undefined;
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
               traceId: tryGetContext()?.traceId ?? deps.executionId,
@@ -2320,6 +2409,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               latencyMs: llmLatencyMs,
               cacheReadTokens,
               cacheWriteTokens,
+              // Already normalized above to sum EXACTLY to cacheWriteTokens, and
+              // already spent on the 1h cost correction — persisting it is what lets
+              // `comis cache stats` show the split without the provider's console.
+              ...(deps.ttlSplit && (deps.ttlSplit.cacheWrite5mTokens > 0 || deps.ttlSplit.cacheWrite1hTokens > 0)
+                ? { cacheWriteTtlSplit: {
+                    fiveMinuteTokens: deps.ttlSplit.cacheWrite5mTokens,
+                    oneHourTokens: deps.ttlSplit.cacheWrite1hTokens,
+                  } }
+                : {}),
               sessionKey: formatSessionKey(deps.sessionKey),
               savedVsUncached,
               cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,
@@ -2340,6 +2438,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               // Raw provider prose can contain request content. Persist only
               // the closed protocol classification needed for diagnosis.
               ...(providerErrorCode !== undefined && { providerErrorCode }),
+              // Spread so a non-error turn keeps the payload byte-for-byte
+              // unchanged (same no-shim discipline as providerErrorCode).
+              ...(modelErrorCategory !== undefined && { modelErrorCategory }),
               // Execution-level finish disposition. m.finishReason settles
               // LATER than turn_end (the safety guards set it),
               // so on a normal turn it is still the
@@ -2591,6 +2692,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     ? {
                         limb: rootGate.error.limb,
                         spent: rootGate.error.currentUsd,
+                        attempted: rootGate.error.estUsd,
                         cap: rootGate.error.capUsd,
                         unit: rootGate.error.unit ?? "usd",
                       }
@@ -2678,9 +2780,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
-          // Record successful LLM call in circuit breaker + provider health
-          deps.circuitBreaker.recordSuccess();
-          deps.providerHealth?.recordSuccess(deps.provider, deps.agentId);
+          // A `turn_end` event is not necessarily a successful provider call:
+          // pi-ai emits the same event with stopReason "error" for dependency
+          // failures and local pre-flight failures. Recording success here for
+          // an error turn resets the consecutive-failure count immediately
+          // before the error path records its failure, so a dead provider can
+          // retry forever without opening the circuit.
+          const turnEndedWithError = assistantMsg?.stopReason === "error";
+          if (!turnEndedWithError) {
+            deps.circuitBreaker.recordSuccess();
+            deps.providerHealth?.recordSuccess(deps.provider, deps.agentId);
+          }
 
           // SEP: Advance step status on turn completion
           m.turnCount++;
@@ -2939,7 +3049,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // so it is a resource condition, not a dependency error. The wire-diff
           // diagnostic below is a no-op for this message (its regex needs
           // thinking-block-replay tokens), so we let it fall through.
-          if (isContextExhaustionErrorMessage(m.lastLlmErrorMessage)) {
+          const localContextExhaustion = isContextExhaustionErrorMessage(m.lastLlmErrorMessage);
+          if (localContextExhaustion) {
             m.finishReason = "context_exhausted";
             deps.logger.warn(
               {
@@ -3097,17 +3208,24 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               });
             }
           }
-          deps.circuitBreaker.recordFailure();
-          deps.providerHealth?.recordFailure(deps.provider, deps.agentId);
-          // If circuit breaker just opened, abort mid-execution
-          // Delegated to bridge-safety-controls
-          {
-            const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
-            if (cbCheck.shouldAbort) {
-              m.finishReason = cbCheck.finishReason!;
-              m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
-              m.aborted = true;
-              emitCircuitBreakerAbort(deps);
+          // Only a provider/dependency error contributes to provider health.
+          // A local context-fit failure is already classified as a resource
+          // abort above; counting it here would poison an otherwise healthy
+          // provider's breaker.
+          if (!localContextExhaustion) {
+            deps.circuitBreaker.recordFailure();
+            deps.providerHealth?.recordFailure(deps.provider, deps.agentId);
+            // If circuit breaker just opened, abort mid-execution
+            // Delegated to bridge-safety-controls
+            {
+              const cbCheck = checkCircuitBreaker(deps.circuitBreaker, m.aborted);
+              if (cbCheck.shouldAbort) {
+                m.breakerTripCount++;
+                m.finishReason = cbCheck.finishReason!;
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                m.aborted = true;
+                emitCircuitBreakerAbort(deps);
+              }
             }
           }
         }

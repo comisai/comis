@@ -7,10 +7,17 @@ export {
   MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
   MAX_GROUP_HISTORY_CONTEXT_MESSAGES,
   GroupHistoryContextEntrySchema,
+  AutoReplyPolicyContextSchema,
+  ReplyContextSchema,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   LinkPrefetchReceiptSchema,
   SttPreprocessReceiptsSchema,
   VisionDirectPreprocessReceiptSchema,
+  MediaAttachmentPreprocessReceiptSchema,
+  MediaAttachmentPreprocessReceiptsSchema,
+  MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX,
+  MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY,
+  formatMediaAttachmentRejection,
   RuntimeActionEvidenceSchema,
   NormalizedMessageSchema,
   parseMessage,
@@ -22,14 +29,19 @@ export type {
   Attachment,
   VoiceMeta,
   GroupHistoryContextEntry,
+  AutoReplyPolicyContext,
+  ReplyContext,
   LinkPrefetchReceipt,
   SttPreprocessReceipt,
   SttPreprocessSelection,
   VisionDirectPreprocessReceipt,
+  MediaAttachmentPreprocessReceipt,
   RuntimeActionEvidence,
+  CitationEvidence,
   OriginalInboundMessage,
   NormalizedMessage,
 } from "./normalized-message.js";
+export { MediaResolutionError } from "./media-resolution-error.js";
 export { NormalizedReactionSchema, parseReaction } from "./normalized-reaction.js";
 export type { NormalizedReaction } from "./normalized-reaction.js";
 

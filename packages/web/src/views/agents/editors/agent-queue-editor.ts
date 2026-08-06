@@ -3,8 +3,8 @@
  * Queue / Overflow configuration sub-editor.
  *
  * Renders: Basic (enabled, maxConcurrentSessions, cleanupIdleMs, defaultMode),
- * Overflow (maxDepth, policy), Debounce Buffer (windowMs, maxBufferedMessages,
- * firstMessageImmediate), Follow-up (maxFollowupRuns, followupOnCompaction).
+ * Overflow (maxDepth, policy), collect-mode debounce, and Follow-up
+ * (maxFollowupRuns, followupOnCompaction).
  *
  * Emits `config-change` CustomEvent with { section: "queue", key, value }.
  * Parent shell handles the RPC call (config.patch).
@@ -132,7 +132,6 @@ export class IcAgentQueueEditor extends LitElement {
   override render() {
     const form = this.config as EditorForm;
     const overflow = (this.config.defaultOverflow as Record<string, unknown>) ?? {};
-    const debounce = (this.config.defaultDebounceBuffer as Record<string, unknown>) ?? {};
     const followup = (this.config.followup as Record<string, unknown>) ?? {};
 
     return html`
@@ -161,12 +160,8 @@ export class IcAgentQueueEditor extends LitElement {
       </div>
 
       <hr class="divider" />
-      <div class="section-title">Debounce Buffer</div>
-      <div class="field-row">
-        ${renderNumberField(debounce as EditorForm, "windowMs", "Window (ms)", (_k, v) => this._onNestedChange("defaultDebounceBuffer", "windowMs", v), { placeholder: "0" })}
-        ${renderNumberField(debounce as EditorForm, "maxBufferedMessages", "Max Buffered Messages", (_k, v) => this._onNestedChange("defaultDebounceBuffer", "maxBufferedMessages", v), { placeholder: "10" })}
-      </div>
-      ${renderCheckbox(debounce as EditorForm, "firstMessageImmediate", "First Message Immediate", (_k, v) => this._onNestedChange("defaultDebounceBuffer", "firstMessageImmediate", v))}
+      <div class="section-title">Collect Debounce</div>
+      ${renderNumberField(form, "defaultDebounceMs", "Debounce (ms)", this._onChange, { placeholder: "0" })}
 
       <hr class="divider" />
       <div class="section-title">Follow-up</div>

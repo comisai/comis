@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Normalize the jailed wake-gate runner into the strict cron runtime seam. */
-import { formatSessionKey, type SessionKey } from "@comis/core";
+import {
+  formatSessionKey,
+  type ClockPort,
+  type SessionKey,
+  type TypedEventBus,
+} from "@comis/core";
 import type { CronRuntimeExecutionInput } from "@comis/scheduler";
 import type { CronWakeGateExecution } from "./cron-agent-turn-executor.js";
 import type { WakeGateRunner } from "./wake-gate-runner.js";
@@ -9,6 +14,8 @@ type AgentTurnInput = Extract<CronRuntimeExecutionInput, { kind: "agent_turn" }>
 
 export interface CronWakeGateAdapterDeps {
   getRunner(): WakeGateRunner | undefined;
+  readonly eventBus: Pick<TypedEventBus, "emit">;
+  readonly clock: ClockPort;
 }
 
 export function createCronWakeGateAdapter(deps: CronWakeGateAdapterDeps) {
@@ -30,6 +37,17 @@ export function createCronWakeGateAdapter(deps: CronWakeGateAdapterDeps) {
     if ("runAsToday" in outcome) {
       return { status: "unavailable", reason: "wake_gate_unbound" };
     }
+    const wake = outcome.verdict.wake;
+    deps.eventBus.emit("scheduler:wake_gate", {
+      jobId: input.job.id,
+      agentId: input.job.agentId,
+      wake,
+      durationMs: outcome.durationMs,
+      toolCalls: outcome.toolCalls,
+      estTurnsSaved: wake ? 0 : 1,
+      failedOpen: outcome.failedOpen,
+      timestamp: deps.clock.now(),
+    });
     if (outcome.failedOpen) {
       return {
         status: "failed_open",

@@ -31,6 +31,11 @@ export interface RequestBodyInjectorConfig {
    *  breakpoints use this retention instead of getCacheRetention().
    *  Returns "short" for adaptive retention -- conversation content shifts every turn. */
   getMessageRetention?: () => CacheRetention | undefined;
+  /** Returns "none" when this turn must not invoke tools AND the resolved provider
+   *  enforces a tool-choice field. The tools stay in the payload so the cached
+   *  prefix is unchanged; the provider refuses the call. Undefined everywhere else —
+   *  tool assembly has then already shipped no tools (see tool-choice-policy.ts). */
+  getToolChoice?: () => "none" | undefined;
   /** When true, inject service_tier: "auto" for Responses API providers. */
   fastMode?: boolean;
   /** When true, inject store: true for Responses API providers. */

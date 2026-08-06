@@ -12,17 +12,15 @@
  *
  * @module
  */
-
 import type {
   AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
-  DeliveryOrigin, DeliveryService, DeliverToChannelOptions, DurableRunPort,
+  DeliveryService, DeliverToChannelOptions, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
-  SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef, ConversationScope,
-  ResolvedTurnScope,
-  MemoryWriteEntry, MemoryWriteScope,
+  SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef,
+  MemoryWriteEntry, MemoryWriteScope, CitationEvidence,
 } from "@comis/core";
 import {
-  createConversationRef, createResolvedRequestContext, DeliveryOriginSchema, formatSessionKey,
+  createConversationRef, createResolvedRequestContext,
   resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
@@ -42,6 +40,8 @@ import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
 import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
 import { createAnnouncementFailureNoticeRenderer } from "./announcement-failure-locale.js";
+import { resolvePreservedCrossSessionRoute } from "./cross-session-route.js";
+import { createInternalTurnScope } from "./internal-turn-scope.js";
 /** Silent fallback for test wiring that omits the production logger. */
 const NOOP_LOGGER: ComisLogger = {
   level: "silent",
@@ -54,27 +54,6 @@ const NOOP_LOGGER: ComisLogger = {
   audit: () => {},
   child: () => NOOP_LOGGER,
 };
-function createInternalTurnScope(conversation: ConversationScope): ResolvedTurnScope {
-  const partition = conversation.partition;
-  const reference = createConversationRef(conversation);
-  const endpoint = partition.kind === "endpoint-conversation"
-    || partition.kind === "endpoint-conversation-principal"
-    ? partition.endpoint
-    : {
-        channelType: partition.kind === "channel-principal" ? partition.channelType : "cross-session",
-        channelInstanceId: "runtime",
-        conversationId: reference.ok
-          ? reference.value
-          : conversation.agentId,
-        conversationKind: "direct" as const,
-      };
-  const principalId = partition.kind === "principal"
-    || partition.kind === "channel-principal"
-    || partition.kind === "endpoint-conversation-principal"
-    ? partition.principalId
-    : `cross-session:${conversation.agentId}`;
-  return { conversation, endpoint, principal: { principalId } };
-}
 /** All services produced by the cross-session messaging setup. */
 export interface CrossSessionResult {
   /** Cross-session message sender for agent-to-agent communication. */
@@ -86,7 +65,7 @@ export interface CrossSessionResult {
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string }) => Promise<string | undefined>;
+  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence }) => Promise<string | undefined>;
   /** Dead-letter queue for failed announcement persistence. */
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
@@ -211,26 +190,29 @@ export function setupCrossSession(deps: {
     sessionKey: SessionKey,
     conversation: ConversationLocator,
     text: string,
+    /** Tools to ship INSTEAD of assembling the agent's set. `undefined` = the normal
+     *  set; `[]` is taken literally and ships none, which drops the tools block from
+     *  the head of the provider cache prefix. For a turn that must not CALL tools,
+     *  pass `undefined` and set `noToolCalls`. */
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
     resolvedLanguage?: string,
     runtimeActionEvidence?: NormalizedMessage["metadata"]["runtimeActionEvidence"],
+    citationEvidence?: CitationEvidence,
+    /** This turn must not invoke tools — provider-enforced where possible, else by
+     *  shipping none. Keeps the cached prefix intact either way. */
+    noToolCalls?: boolean,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
     const targetSessionKey = { ...sessionKey, agentId };
-    const formattedTargetSessionKey = formatSessionKey(targetSessionKey);
     const ambientContext = tryGetContext();
-    const parsedOrigin = DeliveryOriginSchema.safeParse(ambientContext?.deliveryOrigin);
-    const candidateOrigin = parsedOrigin.success ? parsedOrigin.data : undefined;
-    const targetOrigin: DeliveryOrigin | undefined = candidateOrigin !== undefined
-      && ambientContext?.tenantId === sessionKey.tenantId
-      && ambientContext.userId === sessionKey.userId
-      && ambientContext.sessionKey === formattedTargetSessionKey
-      && ambientContext.channelType === candidateOrigin.channelType
-      && candidateOrigin.tenantId === sessionKey.tenantId
-      && candidateOrigin.userId === sessionKey.userId
-      && candidateOrigin.channelId === sessionKey.channelId
-      && candidateOrigin.threadId === sessionKey.threadId
-      ? Object.freeze(candidateOrigin)
-      : undefined;
+    const preservedRoute = resolvePreservedCrossSessionRoute({
+      ambientContext,
+      agentId,
+      sessionKey,
+      conversation,
+    });
+    const targetOrigin = preservedRoute?.origin;
+    const targetTurnScope = preservedRoute?.turnScope
+      ?? createInternalTurnScope(conversation.conversationScope);
     const targetContextResult = createResolvedRequestContext({
       tenantId: sessionKey.tenantId,
       userId: sessionKey.userId,
@@ -241,7 +223,7 @@ export function setupCrossSession(deps: {
       trustLevel: "guest",
       resolvedModel: undefined,
       resolvedLanguage,
-      turnScope: createInternalTurnScope(conversation.conversationScope),
+      turnScope: targetTurnScope,
       ...(targetOrigin !== undefined
         ? { channelType: targetOrigin.channelType, deliveryOrigin: targetOrigin }
         : {}),
@@ -257,10 +239,11 @@ export function setupCrossSession(deps: {
         text,
         timestamp: systemNowMs(),
         attachments: [],
-        metadata: { crossSession: true, ...(runtimeActionEvidence ? { runtimeActionEvidence } : {}) },
+        metadata: { crossSession: true, ...(runtimeActionEvidence ? { runtimeActionEvidence } : {}), ...(citationEvidence ? { citationEvidence } : {}) },
       };
       const tools = fixedTools ?? await assembleToolsForAgent(agentId);
-      const result = await getExecutor(agentId).execute(msg, targetSessionKey, tools, undefined, agentId);
+      const overrides = noToolCalls ? { operationType: "interactive" as const, toolChoice: "none" as const } : undefined;
+      const result = await getExecutor(agentId).execute(msg, targetSessionKey, tools, undefined, agentId, undefined, undefined, overrides);
       if (result.finishReason !== "stop") {
         // The sender already treats a rejected execute callback as a failed RPC
         // operation. Rejecting here preserves the executor's terminal outcome
@@ -324,7 +307,7 @@ export function setupCrossSession(deps: {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
   ): Promise<string | undefined> => {
     deps.logger?.debug({
       callerAgentId,
@@ -368,8 +351,14 @@ export function setupCrossSession(deps: {
         callerSessionKey,
         callerConversation,
         text,
-        [],
-        options?.resolvedLanguage, { kind: "background_completion" },
+        // Capability-free: the candidate REWRITE boundary for a background completion,
+        // not a work turn — it must not act on the evidence grounding it. Expressed
+        // as `noToolCalls`, not an empty tool array: tools are the FIRST element of
+        // the provider cache key, so emptying them re-wrote a ~200k prefix on the
+        // way in AND again on the way out.
+        undefined,
+        options?.resolvedLanguage, { kind: "background_completion" }, options?.citationEvidence,
+        true,
       );
       const trimmed = result.response.trim();
       const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");
@@ -547,7 +536,7 @@ export function setupCrossSession(deps: {
     materializeFullOutput,
     lifecycleHooks,
     deadLetterQueue,
-    deliveryDedup,
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}), deliveryDedup,
     ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
     clock: deps.clock,
     timers: deps.timers,

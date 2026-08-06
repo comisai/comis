@@ -77,6 +77,46 @@ export async function handleSignedReplay(
   const msgs: unknown[] = (session as any).messages ?? [];
   const { blocksRemoved, thoughtSignaturesStripped } = scrubSignedReplayStateInPlace(msgs);
 
+  // No-op scrub short-circuit. The self-heal's only lever is REMOVING stale
+  // signed state; when it removed nothing the retry replays a byte-identical
+  // request, so it is guaranteed to reproduce the same provider error. Retrying
+  // anyway burns a full extra LLM call and mislabels a deterministic
+  // provider-side rejection (e.g. an unsupported request parameter) as a
+  // recoverable replay failure. Same short-circuit rationale as the rate-limit
+  // branch below.
+  if (blocksRemoved === 0 && thoughtSignaturesStripped === 0) {
+    retryState.promptSucceeded = false;
+    const llmDetail = llmErrSource ? ` — ${llmErrSource}` : "";
+    retryState.promptError = new Error(
+      `Signed-replay self-heal skipped: no signed thinking state to scrub${llmDetail}`,
+    );
+
+    emitObservationalEventSafely(
+      { eventBus: deps.eventBus, logger: deps.logger },
+      "execution:signed_replay_recovered",
+      {
+        agentId: agentId ?? "default",
+        sessionKey: formatSessionKey(sessionKey),
+        blocksRemoved,
+        thoughtSignaturesStripped,
+        succeeded: false,
+        timestamp: deps.clock.now(),
+      },
+    );
+
+    deps.logger.warn(
+      {
+        blocksRemoved,
+        thoughtSignaturesStripped,
+        providerErrorPresent: llmErrSource.length > 0,
+        hint: "Classified as signed-replay but there was no signed thinking state to scrub — the provider rejected the request itself, not its stored thinking state. Check the model's supported request parameters (see the provider error in the trajectory).",
+        errorKind: "config" as ErrorKind,
+      },
+      "Signed-replay self-heal skipped — nothing to scrub",
+    );
+    return;
+  }
+
   deps.logger.info(
     {
       blocksRemoved,

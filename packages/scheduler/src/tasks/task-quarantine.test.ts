@@ -70,6 +70,7 @@ function rawRoot(taskOverrides: Record<string, unknown> = {}) {
         userId: "user-a",
       },
       traceId: "trace-a",
+      trustLevel: "user",
       responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
@@ -183,6 +184,31 @@ describe("follow-up task quarantine file inspection", () => {
     })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
     expect(await quarantineMalformedTerminalTaskGroups({
       raw: rawRoot({ status: "checking", activeAttemptId: undefined, terminalAttemptId: undefined, terminalAtMs: undefined }),
+      quarantinePath,
+      quarantinedAtMs: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await quarantineMalformedTerminalTaskGroups({
+      raw: rawRoot({ status: "delivered", text: "", terminalAttemptId: undefined }),
+      quarantinePath,
+      quarantinedAtMs: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("refuses malformed terminal groups with missing attempt or policy authority", async () => {
+    const quarantinePath = join(await directory(), "tasks-quarantine.jsonl");
+    expect(await quarantineMalformedTerminalTaskGroups({
+      raw: rawRoot({ status: "delivered", text: "", terminalAttemptId: "attempt-missing" }),
+      quarantinePath,
+      quarantinedAtMs: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    const missingPolicy = rawRoot({ text: "" });
+    expect(await quarantineMalformedTerminalTaskGroups({
+      raw: {
+        ...missingPolicy,
+        tasks: [{ ...missingPolicy.tasks[0]!, workspacePolicyHash: "e".repeat(64) }],
+        policySnapshots: [],
+      },
       quarantinePath,
       quarantinedAtMs: 1,
     })).toMatchObject({ ok: false, error: { code: "invalid_state" } });

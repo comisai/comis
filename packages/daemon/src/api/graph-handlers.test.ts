@@ -37,6 +37,7 @@ function createDeps(overrides?: Partial<GraphHandlerDeps>): GraphHandlerDeps {
   return {
     graphCoordinator: createMockCoordinator(),
     defaultAgentId: "default-agent",
+    schedulerNowMs: vi.fn().mockReturnValue(123),
     securityConfig: { agentToAgent: { enabled: true } },
     logger: {
       info: vi.fn(),
@@ -504,7 +505,10 @@ describe("graph-handlers", () => {
 
       await expect(
         handlers["graph.status"]!({ graphId: "non-existent" }),
-      ).rejects.toThrow("Graph not found");
+      ).rejects.toMatchObject({
+        name: "PreconditionError",
+        message: "Graph not found",
+      });
     });
 
     it("accepts graph_id (snake_case) as well as graphId", async () => {
@@ -531,15 +535,16 @@ describe("graph-handlers", () => {
   // -------------------------------------------------------------------------
 
   describe("graph.cancel", () => {
-    it("calls coordinator.cancel and returns result", async () => {
+    it("returns the exact number of running graph children cancelled by the coordinator", async () => {
       const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
-      mockCoord.cancel.mockReturnValue(true);
+      mockCoord.cancel.mockReturnValue({ cancelled: true, killed: 2 });
 
       const result = await handlers["graph.cancel"]!({ graphId: "graph-1" });
       const r = result as Record<string, unknown>;
 
       expect(r.cancelled).toBe(true);
       expect(r.graphId).toBe("graph-1");
+      expect(r.killed).toBe(2);
       expect(mockCoord.cancel).toHaveBeenCalledWith("graph-1");
     });
 
@@ -552,9 +557,9 @@ describe("graph-handlers", () => {
       ).rejects.toThrow("Agent-to-agent messaging is disabled by policy.");
     });
 
-    it("throws when graph not found (cancel returns false)", async () => {
+    it("throws when the coordinator reports that no live graph was cancelled", async () => {
       const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
-      mockCoord.cancel.mockReturnValue(false);
+      mockCoord.cancel.mockReturnValue({ cancelled: false, killed: 0 });
 
       await expect(
         handlers["graph.cancel"]!({ graphId: "graph-1" }),

@@ -43,6 +43,8 @@ interface MappedRowFields {
 interface RawRow {
   cache_read_tokens: number;
   cache_write_tokens: number;
+  cache_write_5m_tokens?: number;
+  cache_write_1h_tokens?: number;
   non_cached_input_tokens: number;
   output_tokens: number;
   turns: number;
@@ -144,6 +146,11 @@ export async function aggregateCacheStats(
     untilMs: until,
     cacheReadTokens: window.cache_read_tokens,
     cacheCreationTokens: window.cache_write_tokens,
+    // Per-TTL write split. A write is billed by its TTL, so this is the split that
+    // drives the bill; 0/0 means no row in the window recorded one (pre-existing
+    // rows, or a provider with a single write rate) — NOT that no writes happened.
+    cacheWrite5mTokens: window.cache_write_5m_tokens ?? 0,
+    cacheWrite1hTokens: window.cache_write_1h_tokens ?? 0,
     nonCachedInputTokens: window.non_cached_input_tokens,
     outputTokens: window.output_tokens,
     turns: window.turns,

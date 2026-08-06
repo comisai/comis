@@ -34,6 +34,7 @@ import {
   systemClearTimeout,
   type SystemTimeoutHandle,
   type EgressControlPort,
+  type ChannelEndpoint,
 } from "@comis/core";
 
 import {
@@ -226,6 +227,14 @@ export interface CreateRequest {
   durable?: boolean;
   /** The deterministic `comis-<sessionId>` tmux name — the re-attach key persisted in the descriptor + stamped on the handle for the liveness probe (the daemon supplies it with `durable:true`). */
   tmuxName?: string;
+  /**
+   * The conversation this drive is created FROM (the resolved turn scope's endpoint),
+   * captured by the tool from the request context — NEVER an agent-facing create param,
+   * exactly like `scope`. It rides the HANDLE + the durable descriptor, never the worker
+   * frame (the worker is origin-agnostic). Absent ⇒ the drive's notifications resolve
+   * through the shipped primaryChannel→recent-session chain, unchanged.
+   */
+  originEndpoint?: ChannelEndpoint;
 }
 
 // The `status` view + its pure composition live in the leaf `terminal-status-view.ts`
@@ -275,6 +284,7 @@ export interface TerminalSessionRegistry {
   /** Evict with an audited reason — owner-checked, then the single drop + cleanup + onCapForget + onEvict + WARN site that the reaper sweep and the max_interactions path both drive. */
   evict(sessionId: string, owner: SessionOwner, reason: EvictReason): Promise<void>;
   getOwner?(sessionId: string): SessionOwner | undefined; // Recovery seam (daemon-trusted, owner-agnostic): stamped owner by id — recovers the (userId,sessionKey) the worker→event re-publish drops so a detached drive's woken turns resolve the LIVE session, not drop cross-owner. Identity only; undefined iff absent.
+  getOriginEndpoint?(sessionId: string): ChannelEndpoint | undefined; // Origin seam beside getOwner (daemon-trusted, owner-agnostic): the conversation the drive was created from, so its outcome/escalation notifications resolve back to THAT thread instead of the most recent one. Delivery hint only — never consulted by the owner gate; undefined iff absent (routes as today).
   size(): number;
   cleanup(): Promise<void>;
 }
@@ -482,6 +492,11 @@ export function createTerminalSessionRegistry(
       // Stamp the origin (owner-scoped list/read/get/kill/send*). The owner rides
       // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
+      // Stamp the origin CONVERSATION beside the owner — same handle-only rule, same
+      // verbatim re-stamp on re-attach. It is what makes a backgrounded drive's outcome
+      // reach the thread that started it instead of the most recent one. Delivery only:
+      // it never enters the owner gate.
+      ...(req.originEndpoint !== undefined ? { originEndpoint: req.originEndpoint } : {}),
       // Stamp the durable marker + re-attach key (the durable-aware lost gate); absent for a spawn session. The registry DERIVES the deterministic comis-<sessionId> name (the tool cannot — sessionId is generated HERE), so durable engages without the caller supplying tmuxName.
       ...(req.durable
         ? {
@@ -500,7 +515,7 @@ export function createTerminalSessionRegistry(
     // Persist the durable descriptor at CREATE-time, BEFORE the create frame (no orphan window); non-durable persists nothing.
     if (req.durable && deps.durability?.descriptorStore !== undefined) {
       deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.tmuxSocketForSession?.(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope }),
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.tmuxSocketForSession?.(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope, originEndpoint: req.originEndpoint }),
       );
     }
 
@@ -815,5 +830,5 @@ export function createTerminalSessionRegistry(
       request(id, "reattach", { sessionId: id, cols, rows, allowId, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
     );
 
-  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, size, cleanup };
+  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, getOriginEndpoint: (sessionId: string): ChannelEndpoint | undefined => sessions.get(sessionId)?.originEndpoint, size, cleanup };
 }

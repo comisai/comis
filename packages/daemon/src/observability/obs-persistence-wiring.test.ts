@@ -24,6 +24,7 @@ import {
   orchestrateRunSummaryEventToRow,
   trajectoryDegradedEventToRow,
   backgroundRecoveryEventToRow,
+  backgroundRecoveryScanEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
@@ -886,6 +887,34 @@ describe("reflectFunnelEventToRow", () => {
     expect(d.singleOwnerCorroborated).toBe(1); // the single-owner repetition count rides the persisted row
     // Counts + the closed enum only — never a reflected doc body.
     expect(row.details).not.toMatch(/procedure|markdown|##/);
+  });
+
+  it("marks a partial reflection dependency failure as warning with content-free counters", () => {
+    const payload = {
+      agentId: "default",
+      synthesized: 4,
+      validated: 1,
+      admitted: 1,
+      maxClusterCardinality: 2,
+      singleOwnerCorroborated: 0,
+      distinctTopicKeys: 2,
+      untrustedDrops: 0,
+      nameLengthRejections: 0,
+      skipped: 1,
+      sourceTrajectoryCount: 4,
+      totalSourceChars: 170,
+      dependencyFailures: 1,
+      failedPasses: 0,
+      admissionOutcome: "admitted" as const,
+      timestamp: 4242,
+    };
+
+    const row = reflectFunnelEventToRow(payload);
+    const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
+
+    expect(row.severity).toBe("warning");
+    expect(details.dependencyFailures).toBe(1);
+    expect(details.failedPasses).toBe(0);
   });
 });
 
@@ -1826,6 +1855,39 @@ describe("backgroundRecoveryEventToRow", () => {
         toolName: "report",
       }),
     });
+  });
+});
+
+describe("background recovery scan diagnostics", () => {
+  it("maps protected scan state without persisting error bodies or absolute paths", () => {
+    const row = backgroundRecoveryScanEventToRow({
+      status: "failed",
+      failureCount: 1,
+      failureKinds: ["task_validation"],
+      recordRefs: ["default/task-a.json"],
+      timestamp: 10_003,
+    });
+
+    expect(row).toMatchObject({
+      category: "health_signal",
+      severity: "warning",
+      message: "background_task_recovery_scan",
+    });
+    expect(JSON.parse(row.details ?? "{}")).toEqual({
+      signal: "background_task_recovery_scan",
+      status: "failed",
+      failureCount: 1,
+      failureKinds: ["task_validation"],
+      recordRefs: ["default/task-a.json"],
+    });
+
+    expect(backgroundRecoveryScanEventToRow({
+      status: "healthy",
+      failureCount: 0,
+      failureKinds: [],
+      recordRefs: [],
+      timestamp: 10_004,
+    }).severity).toBe("info");
   });
 });
 

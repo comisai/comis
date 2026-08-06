@@ -2,6 +2,7 @@
 import { TypedEventBus } from "@comis/core";
 import { describe, expect, it, vi } from "vitest";
 import {
+  announcementQuarantineEventToRow,
   cronModelDriftEventToRow,
   cronStoreResetEventToRow,
   cronOwnershipReconciliationEventToRow,
@@ -223,7 +224,8 @@ describe("scheduler ownership diagnostic persistence", () => {
     });
     eventBus.emit("scheduler:task_extraction_failed", {
       agentId: "agent-a", rootRunId: "root-task-extract-b", itemCount: 1,
-      sourceExecutionIds: ["execution-b"], stage: "model", errorKind: "dependency",
+      sourceExecutionIds: ["execution-b"], stage: "model_output", errorKind: "validation",
+      outputErrorCode: "before_minimum_due",
       durationMs: 6, timestamp: 2_000,
     });
     eventBus.emit("scheduler:task_check_started", {
@@ -273,6 +275,10 @@ describe("scheduler ownership diagnostic persistence", () => {
     ]);
     expect(rows[0]).toMatchObject({ category: "health_signal", severity: "info", agentId: "agent-a" });
     expect(rows[1]).toMatchObject({ severity: "warning" });
+    expect(JSON.parse(rows[1].details)).toMatchObject({
+      signal: "task_extraction_failed",
+      outputErrorCode: "before_minimum_due",
+    });
     expect(rows[3]).toMatchObject({ severity: "warning" });
     expect(rows[6]).toMatchObject({ severity: "warning" });
     expect(rows.every((row) => !String(row.details).includes("archive"))).toBe(true);
@@ -282,5 +288,28 @@ describe("scheduler ownership diagnostic persistence", () => {
       recovery: "ownership_recovery",
       originTraceIds: ["trace-a"],
     });
+  });
+});
+
+describe("announcementQuarantineEventToRow", () => {
+  // Live: a sub-agent produced 5 charts, its parent turn died before it could
+  // decide whether the user had been told, and the completion parked in the
+  // dead-letter store. `drain()` never touches a parent-decision reservation, so
+  // the only trace was one daemon WARN — `comis system-health`, the documented
+  // first stop for triage, showed nothing and the user had to ask for the work.
+  it("reports a quarantined announcement as a warning-severity health signal", () => {
+    const row = announcementQuarantineEventToRow({ pendingCount: 1, timestamp: 1_700_000_000_000 });
+    expect(row.category).toBe("health_signal");
+    // Never "info": info-severity rows are excluded from findings by design.
+    expect(row.severity).toBe("warning");
+    expect(row.timestamp).toBe(1_700_000_000_000);
+  });
+
+  it("carries the closed signal label and the count, and no announcement text", () => {
+    const row = announcementQuarantineEventToRow({ pendingCount: 3, timestamp: 1 });
+    const details = JSON.parse(row.details) as Record<string, unknown>;
+    expect(details.signal).toBe("announcement_quarantine");
+    expect(details.pendingCount).toBe(3);
+    expect(Object.keys(details).sort()).toEqual(["pendingCount", "signal"]);
   });
 });

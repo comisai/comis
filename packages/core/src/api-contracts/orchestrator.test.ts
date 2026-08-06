@@ -476,6 +476,12 @@ describe("CronUpdateContract", () => {
     ).not.toThrow();
   });
 
+  it("rejects a selector-only request that would report an unchanged job as updated", () => {
+    expect(() =>
+      CronUpdateContract.request.parse({ jobName: "Saturday briefing" }),
+    ).toThrow(/at least one update field is required/i);
+  });
+
   it("response carries jobName + updated", () => {
     expect(() =>
       CronUpdateContract.response.parse({
@@ -757,9 +763,12 @@ describe("GraphCancelContract", () => {
   });
 
   it("accepts the canonical response shape", () => {
+    expect(
+      GraphCancelContract.response.parse({ cancelled: true, graphId: "g1", killed: 2 }),
+    ).toEqual({ cancelled: true, graphId: "g1", killed: 2 });
     expect(() =>
       GraphCancelContract.response.parse({ cancelled: true, graphId: "g1" }),
-    ).not.toThrow();
+    ).toThrow();
   });
 });
 

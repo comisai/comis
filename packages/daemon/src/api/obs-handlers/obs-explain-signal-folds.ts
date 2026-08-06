@@ -199,6 +199,16 @@ export function accumulateBackgroundTaskRecord(
     if (toolName !== undefined) acc.backgroundPromotionsByTask.set(taskId, toolName);
     return;
   }
+  if (type === "background_task.reentered") {
+    acc.backgroundReenteredTaskIds.add(taskId);
+    return;
+  }
+  if (type === "background_task.cancelled") {
+    if (acc.backgroundTerminalTaskIds.has(taskId)) return;
+    acc.backgroundTerminalTaskIds.add(taskId);
+    acc.backgroundCancelledTaskIds.add(taskId);
+    return;
+  }
   if (type === "background_task.completed") {
     if (acc.backgroundTerminalTaskIds.has(taskId)) return;
     acc.backgroundTerminalTaskIds.add(taskId);
@@ -243,9 +253,31 @@ export function accumulateBackgroundTaskRecord(
         "skill_import_incomplete",
         "mcp_connection_details_missing",
         "mcp_secret_reference_missing",
+        "mcp_call_deadline_exceeded",
+        "background_hard_timeout_exceeded",
       ] as const,
       data.failureCode,
     );
+    const configKey = asString(data.failureConfigKey);
+    const configuredMs = nonnegativeInteger(data.failureConfiguredMs);
+    const queueWaitedMs = nonnegativeInteger(data.failureQueueWaitedMs);
+    const requestBudgetMs = nonnegativeInteger(data.failureRequestBudgetMs);
+    const mcpDiagnosticPreview =
+      failureCode === "mcp_call_deadline_exceeded"
+      && configKey === "integrations.mcp.callToolTimeoutMs"
+      && configuredMs !== undefined
+      && queueWaitedMs !== undefined
+      && requestBudgetMs !== undefined
+        ? `${configKey}=${String(configuredMs)}ms; queueWaitedMs=${String(queueWaitedMs)}; `
+          + `requestBudgetMs=${String(requestBudgetMs)}`
+        : "";
+    const diagnosticPreview =
+      failureCode === "background_hard_timeout_exceeded"
+      && configKey !== undefined
+      && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(configKey)
+      && configuredMs !== undefined
+        ? `${configKey}=${String(configuredMs)}ms`
+        : mcpDiagnosticPreview;
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
     acc.failures.push({
       seq,
@@ -255,8 +287,8 @@ export function accumulateBackgroundTaskRecord(
       errorKind,
       ...(failureCode !== undefined ? { failureCode } : {}),
       resultDigest: fingerprint(`${taskId}:${toolName}:${errorKind}`),
-      resultBytes: 0,
-      errorPreview: "",
+      resultBytes: diagnosticPreview.length,
+      errorPreview: diagnosticPreview,
     });
     return;
   }
@@ -313,12 +345,15 @@ export function buildBackgroundTasksSignal(
     [...ids].filter((taskId) => promotedIds.has(taskId)).length;
   const completed = countPromoted(acc.backgroundCompletedTaskIds);
   const failed = countPromoted(acc.backgroundFailedTaskIds);
+  const cancelled = countPromoted(acc.backgroundCancelledTaskIds);
   return {
     promoted: promotedIds.size,
     completed,
     failed,
+    cancelled,
+    reentered: countPromoted(acc.backgroundReenteredTaskIds),
     accepted: countPromoted(acc.backgroundAcceptedTaskIds),
-    pending: Math.max(0, promotedIds.size - completed - failed),
+    pending: Math.max(0, promotedIds.size - completed - failed - cancelled),
   };
 }
 

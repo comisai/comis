@@ -2,15 +2,20 @@
 /**
  * MEDIA-03 — vision certification.
  *
- * `selectVisionProvider(registry, mediaType, preferredProvider?)` (from @comis/skills)
+ * `selectVisionProvider(registry, mediaType, explicitProvider?)` (from @comis/skills)
  * is the real, pure capability-routing function. Building a Map<string,VisionProvider>
  * of fake providers with declared `capabilities` lets us assert the exact routing
- * decision — fallback routing when the primary lacks vision — with no key,
- * no daemon. `createVisionProviderRegistry` proves the sandbox-honest path: no keys ⇒
- * empty registry ⇒ graceful degradation (undefined, no throw).
+ * decision — the auto order when no provider is named, and fail-closed when a named
+ * one cannot serve the request — with no key, no daemon. `createVisionProviderRegistry`
+ * proves the sandbox-honest path: no keys ⇒ empty registry ⇒ graceful degradation
+ * (undefined, no throw).
  *
- * Stage-A (always runs): selectVisionProvider routing (preferred-lacks-capability
- *   fallthrough, image order, video-only, graceful undefined).
+ * An explicitly named provider is an operator boundary, not a soft preference: when it
+ * is absent from the registry or lacks the media type, routing returns undefined rather
+ * than sending the user's media to a provider the operator did not name.
+ *
+ * Stage-A (always runs): selectVisionProvider routing (explicit-provider fail-closed,
+ *   image order, video-only, graceful undefined).
  * Stage-B (always runs, no daemon): createVisionProviderRegistry key-gating ⇒ empty
  *   registry ⇒ selectVisionProvider undefined.
  * Stage-C (it.skip, COMIS_LIVE + keys): real image-in analysis {openai,anthropic,google}
@@ -67,13 +72,15 @@ describe("VISION Stage-A — selectVisionProvider capability routing (no COMIS_L
     expect(selectVisionProvider(reg, "image", "openai")?.id).toBe("openai");
   });
 
-  it("preferred provider LACKING the capability ⇒ falls through to the openai→anthropic→google order", () => {
+  it("names a provider that is not registered ⇒ fails closed rather than substituting one", () => {
     const reg = new Map<string, VisionProvider>([
       ["openai", vp("openai", ["image"])],
       ["anthropic", vp("anthropic", ["image"])],
     ]);
-    // "nonexistent" is not registered ⇒ falls through; openai precedes anthropic in AUTO_IMAGE_PROVIDERS.
-    expect(selectVisionProvider(reg, "image", "nonexistent")?.id).toBe("openai");
+    // Both registered providers COULD serve this image. Routing still declines:
+    // the operator named "nonexistent", and silently substituting openai would
+    // send the media somewhere they did not choose.
+    expect(selectVisionProvider(reg, "image", "nonexistent")).toBeUndefined();
   });
 
   it("image fallback order: with openai absent, anthropic is chosen before google", () => {
@@ -92,13 +99,14 @@ describe("VISION Stage-A — selectVisionProvider capability routing (no COMIS_L
     expect(selectVisionProvider(reg, "video")?.id).toBe("google");
   });
 
-  it("preferred provider lacking the requested mediaType is skipped (video falls to a video-capable provider)", () => {
+  it("names a provider lacking the requested mediaType ⇒ fails closed even though another could serve it", () => {
     const reg = new Map<string, VisionProvider>([
       ["google", vp("google", ["image", "video"])],
       ["openai", vp("openai", ["image"])],
     ]);
-    // openai is preferred but lacks "video" ⇒ ignored; google (video-capable) is selected.
-    expect(selectVisionProvider(reg, "video", "openai")?.id).toBe("google");
+    // google IS video-capable and registered, so the old fall-through would have
+    // routed here. Naming openai — which cannot do video — declines instead.
+    expect(selectVisionProvider(reg, "video", "openai")).toBeUndefined();
   });
 
   it("returns undefined (graceful degradation, no throw) when no provider has the required capability", () => {

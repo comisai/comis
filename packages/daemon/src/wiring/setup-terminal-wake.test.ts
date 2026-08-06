@@ -66,7 +66,7 @@ function makeBus() {
  *  drive is stamped under (userId, nonEmptyKey)) and `get` is OWNER-STRICT against it (so a
  *  cross-owner wake owner resolves not-found); `getOwner` recovers it. Omitted ⇒ owner-agnostic
  *  (the default behavior). */
-function makeRegistry(opts: { screen: string; alive?: boolean; stampedOwner?: { agentId: string; sessionKey: string } }) {
+function makeRegistry(opts: { screen: string; alive?: boolean; stampedOwner?: { agentId: string; sessionKey: string }; originEndpoint?: Record<string, unknown> }) {
   // delivered:true mirrors the production registry's ok-reply path — a send that
   // round-trips a live worker is delivered, so the woken turn audits it as a real answer.
   const sendText = vi.fn(async () => ({ screen: opts.screen, cursor: { x: 0, y: 0 }, delivered: true }));
@@ -76,6 +76,9 @@ function makeRegistry(opts: { screen: string; alive?: boolean; stampedOwner?: { 
   return {
     sendText,
     getOwner: vi.fn(() => (opts.alive === false ? undefined : stamped)),
+    // The origin-recovery seam beside getOwner: the conversation the drive was created
+    // from, so a promoted drive's notifications go back to THAT thread. Absent ⇒ today's chain.
+    getOriginEndpoint: vi.fn(() => opts.originEndpoint),
     get: vi.fn((_id: string, o: { agentId?: string; sessionKey?: string }) =>
       opts.alive === false || !matches(o) ? undefined : ({ sessionId: "s", owner: stamped } as never)),
     status: vi.fn(async () => ({
@@ -116,9 +119,9 @@ interface Built {
   handle: ReturnType<typeof setupTerminalWake>;
 }
 
-function build(dataDir: string, opts: { screen: string; alive?: boolean; autoAnswer?: "none" | "safe-only" | "all"; hintPatterns?: string[]; stampedOwner?: { agentId: string; sessionKey: string } }): Built {
+function build(dataDir: string, opts: { screen: string; alive?: boolean; autoAnswer?: "none" | "safe-only" | "all"; hintPatterns?: string[]; stampedOwner?: { agentId: string; sessionKey: string }; originEndpoint?: Record<string, unknown> }): Built {
   const bus = makeBus();
-  const registry = makeRegistry({ screen: opts.screen, alive: opts.alive, ...(opts.stampedOwner ? { stampedOwner: opts.stampedOwner } : {}) });
+  const registry = makeRegistry({ screen: opts.screen, alive: opts.alive, ...(opts.stampedOwner ? { stampedOwner: opts.stampedOwner } : {}), ...(opts.originEndpoint ? { originEndpoint: opts.originEndpoint } : {}) });
   const logger = makeLogger();
   const notify = vi.fn(async () => undefined);
   const registries = new Map<string, ReturnType<typeof makeRegistry>>([["a", registry]]);
@@ -387,6 +390,39 @@ describe("setupTerminalWake — the subscribe + woken-turn driver", () => {
     expect(calls[0]!.message.toLowerCase()).toContain("background");
     // It is NOT an escalation — no terminal:escalated rides this path.
     expect(built.bus.emitted.find((e) => e.event === "terminal:escalated")).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Origin-bound delivery. Every drive notification resolves through
+  // explicit → platform-match → primaryChannel → recent-session, so WITHOUT an explicit
+  // endpoint a drive started in thread A reports to whatever conversation is most recent.
+  // With concurrent origins (several drives, a cron turn, a second thread) that silently delivers an
+  // escalation to the wrong place — and an escalation nobody sees parks the drive forever.
+  // The drive's ORIGIN endpoint must ride every notification it makes.
+  // -------------------------------------------------------------------------
+  const ORIGIN_A = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-A",
+    conversationKind: "direct" as const,
+  };
+
+  it("a promoted drive's notify carries the ORIGIN endpoint it was created from", async () => {
+    built = build(dataDir, { screen: "Building…", originEndpoint: ORIGIN_A });
+    built.bus.fireDrivePromoted("s-origin", "a", "producing");
+    await flush();
+
+    expect(built.notify).toHaveBeenCalledTimes(1);
+    expect(built.notify.mock.calls[0]![0]).toMatchObject({ destinationEndpoint: ORIGIN_A });
+  });
+
+  it("a drive with NO origin endpoint omits the field entirely (an API/cron drive resolves as today)", async () => {
+    built = build(dataDir, { screen: "Building…" });
+    built.bus.fireDrivePromoted("s-no-origin", "a", "producing");
+    await flush();
+
+    expect(built.notify).toHaveBeenCalledTimes(1);
+    expect(built.notify.mock.calls[0]![0]).not.toHaveProperty("destinationEndpoint");
   });
 
   it("promote-once: a SECOND terminal:drive_promoted for the SAME session fires NO second notify (the daemon dedupe)", async () => {

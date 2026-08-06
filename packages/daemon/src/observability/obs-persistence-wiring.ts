@@ -51,6 +51,7 @@ import {
   backgroundTaskSettlementEventToRow,
   trajectoryDegradedEventToRow,
   backgroundRecoveryEventToRow,
+  backgroundRecoveryScanEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   inboundPersistenceFailedEventToRow,
@@ -240,6 +241,7 @@ export {
   backgroundTaskSettlementEventToRow,
   trajectoryDegradedEventToRow,
   backgroundRecoveryEventToRow,
+  backgroundRecoveryScanEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   inboundPersistenceFailedEventToRow,
@@ -521,6 +523,9 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     if (payload.reason === "recovery_retry_required") {
       diagnosticBuffer.push(backgroundRecoveryEventToRow(payload));
     }
+  });
+  eventBus.on("background_task:recovery_scan", (payload) => {
+    diagnosticBuffer.push(backgroundRecoveryScanEventToRow(payload));
   });
 
   // Persist the high-value WARNs to obs_diagnostics

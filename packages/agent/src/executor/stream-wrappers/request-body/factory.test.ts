@@ -715,6 +715,44 @@ describe("createRequestBodyInjector", () => {
     expect(result.store).toBe(true);
   });
 
+  it("drops Responses tool outputs whose calls were removed during aborted-turn conversion", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      { getCacheRetention: () => undefined },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+
+    const model = {
+      id: "gpt-5.6-luna",
+      provider: "openai-codex",
+      api: "openai-codex-responses",
+    } as any;
+    wrappedFn(model, makeContext([]), {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
+    const result = await onPayload({
+      input: [
+        { role: "user", content: [{ type: "input_text", text: "cancel that" }] },
+        { type: "function_call_output", call_id: "call_aborted", output: "No result provided" },
+        { type: "function_call", call_id: "call_valid", name: "read", arguments: "{}" },
+        { type: "function_call_output", call_id: "call_valid", output: "ok" },
+        { type: "custom_tool_call_output", call_id: "custom_aborted", output: "No result provided" },
+        { type: "custom_tool_call", call_id: "custom_valid", name: "patch", input: "noop" },
+        { type: "custom_tool_call_output", call_id: "custom_valid", output: "ok" },
+      ],
+    }, model);
+
+    expect(result.input).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "cancel that" }] },
+      { type: "function_call", call_id: "call_valid", name: "read", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_valid", output: "ok" },
+      { type: "custom_tool_call", call_id: "custom_valid", name: "patch", input: "noop" },
+      { type: "custom_tool_call_output", call_id: "custom_valid", output: "ok" },
+    ]);
+  });
+
   it("does NOT inject store for non-Responses API provider", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
@@ -1447,7 +1485,7 @@ describe("Multi-block system prompt injection", () => {
     expect(system[2]!.text).toBe("my-dynamic");
   });
 
-  it("only last system block has cache_control after multi-block injection", async () => {
+  it("only the last stable system block has cache_control after multi-block injection", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -1467,11 +1505,13 @@ describe("Multi-block system prompt injection", () => {
     const system = result.system as Array<Record<string, unknown>>;
     expect(system).toHaveLength(3);
     expect(system[0]!.cache_control).toBeUndefined();
-    expect(system[1]!.cache_control).toBeUndefined();
-    expect(system[2]!.cache_control).toEqual({ type: "ephemeral" });
+    // Anchor sits on the last STABLE block; the volatile runtime preamble
+    // (system[2]) stays outside the cached prefix.
+    expect(system[1]!.cache_control).toEqual({ type: "ephemeral" });
+    expect(system[2]!.cache_control).toBeUndefined();
   });
 
-  it("when retention is 'long', only last system block gets 1h TTL", async () => {
+  it("when retention is 'long', only the last stable system block gets 1h TTL", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -1491,8 +1531,8 @@ describe("Multi-block system prompt injection", () => {
     const system = result.system as Array<Record<string, unknown>>;
     expect(system).toHaveLength(3);
     expect(system[0]!.cache_control).toBeUndefined();
-    expect(system[1]!.cache_control).toBeUndefined();
-    expect(system[2]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(system[1]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(system[2]!.cache_control).toBeUndefined();
   });
 
   it("breakpoint budget counts 1 system marker after consolidation", async () => {
@@ -1626,10 +1666,10 @@ describe("Multi-block system prompt injection", () => {
     expect(system[0]!.text).toBe("new-prefix" + SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
     expect(system[1]!.text).toBe("new-attribution");
     expect(system[2]!.text).toBe("new-body");
-    // Only last block should have cache_control
+    // Only the last STABLE block should have cache_control
     expect(system[0]!.cache_control).toBeUndefined();
-    expect(system[1]!.cache_control).toBeUndefined();
-    expect(system[2]!.cache_control).toBeDefined();
+    expect(system[1]!.cache_control).toBeDefined();
+    expect(system[2]!.cache_control).toBeUndefined();
   });
 
   it("structuredClone contract: original params.system not mutated after block replacement", async () => {
@@ -1680,7 +1720,7 @@ describe("Multi-block system prompt injection", () => {
     expect(system[0]!.text).toBe("Original single block");
   });
 
-  it("when retention is 'short', only last system block has cache_control without ttl", async () => {
+  it("when retention is 'short', only the last stable system block has cache_control without ttl", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(
       {
@@ -1701,10 +1741,12 @@ describe("Multi-block system prompt injection", () => {
     expect(system).toHaveLength(3);
     // Only last block has cache_control
     expect(system[0]!.cache_control).toBeUndefined();
-    expect(system[1]!.cache_control).toBeUndefined();
-    expect(system[2]!.cache_control).toEqual({ type: "ephemeral" });
-    // Specifically no ttl on the last block
-    expect((system[2]!.cache_control as any).ttl).toBeUndefined();
+    // Anchor sits on the last STABLE block; the volatile runtime preamble
+    // (system[2]) stays outside the cached prefix.
+    expect(system[1]!.cache_control).toEqual({ type: "ephemeral" });
+    expect(system[2]!.cache_control).toBeUndefined();
+    // Specifically no ttl on the anchored block
+    expect((system[1]!.cache_control as any).ttl).toBeUndefined();
   });
 });
 
@@ -3796,11 +3838,12 @@ describe("createRequestBodyInjector — session latches", () => {
     const onPayload1 = opts1.onPayload as (payload: any, model: any) => Promise<any>;
     const payload1 = makePayloadForLatch();
     const result1 = await onPayload1(payload1, model);
-    // Verify via last system block (only block with cache_control after consolidation).
-    // With "long" retention, last system block gets TTL 1h.
+    // Verify via the ANCHORED system block (the single block carrying
+    // cache_control after consolidation — the last stable one, not the volatile tail).
     const system1 = result1.system as Array<Record<string, unknown>>;
-    const lastBlock1 = system1[system1.length - 1]!;
-    expect(lastBlock1.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const anchored1 = system1.filter((block) => block.cache_control !== undefined);
+    expect(anchored1).toHaveLength(1);
+    expect(anchored1[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 
     // Change underlying retention to "short" -- latch should prevent downgrade
     retentionValue = "short";
@@ -3811,10 +3854,11 @@ describe("createRequestBodyInjector — session latches", () => {
     const onPayload2 = opts2.onPayload as (payload: any, model: any) => Promise<any>;
     const payload2 = makePayloadForLatch();
     const result2 = await onPayload2(payload2, model);
-    // Last system block should still have TTL 1h (latched to "long")
+    // The anchored system block should still have TTL 1h (latched to "long")
     const system2 = result2.system as Array<Record<string, unknown>>;
-    const lastBlock2 = system2[system2.length - 1]!;
-    expect(lastBlock2.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const anchored2 = system2.filter((block) => block.cache_control !== undefined);
+    expect(anchored2).toHaveLength(1);
+    expect(anchored2[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
     // Verify latch holds "long"
     expect(retentionLatch.get()).toBe("long");
   });
@@ -3881,8 +3925,9 @@ describe("createRequestBodyInjector — session latches", () => {
     const result1 = await onPayload1(makePayloadForLatch(), model);
     // Verify via last system block (the only block with cache_control after consolidation)
     const system1 = result1.system as Array<Record<string, unknown>>;
-    const lastBlock1 = system1[system1.length - 1]!;
-    expect(lastBlock1.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    const anchoredNoLatch = system1.filter((block) => block.cache_control !== undefined);
+    expect(anchoredNoLatch).toHaveLength(1);
+    expect(anchoredNoLatch[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 
     // Change retention to "short"
     retentionValue = "short";
@@ -3892,10 +3937,11 @@ describe("createRequestBodyInjector — session latches", () => {
     const opts2 = base.mock.calls[1][2] as Record<string, unknown>;
     const onPayload2 = opts2.onPayload as (payload: any, model: any) => Promise<any>;
     const result2 = await onPayload2(makePayloadForLatch(), model);
-    // Last system block should now have "ephemeral" without TTL
+    // The anchored system block should now have "ephemeral" without TTL
     const system2 = result2.system as Array<Record<string, unknown>>;
-    const lastBlock2 = system2[system2.length - 1]!;
-    expect(lastBlock2.cache_control).toEqual({ type: "ephemeral" });
+    const anchoredNoLatch2 = system2.filter((block) => block.cache_control !== undefined);
+    expect(anchoredNoLatch2).toHaveLength(1);
+    expect(anchoredNoLatch2[0]!.cache_control).toEqual({ type: "ephemeral" });
   });
 });
 

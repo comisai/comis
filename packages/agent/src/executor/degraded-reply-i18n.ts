@@ -2,6 +2,7 @@
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
 import type { ErrorKind } from "@comis/core";
 import { tryCatch } from "@comis/shared";
+import { NO_PROGRESS_LOOP_THRESHOLD } from "./turn-loop-detector.js";
 
 export const CAP_KNOB_BY_CLASS: Readonly<Record<string, string>> = {
   small: "contextEngine.budget.effectiveContextCapSmall",
@@ -30,6 +31,10 @@ export type LocaleMessageId =
   | "provider_requires_model"
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
+  | "runtime_self_report_evidence_missing"
+  | "scheduler_state_evidence_missing"
+  | "pending_scheduler_confirmation"
+  | "completion_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
   | "response_locale_unavailable"
@@ -65,9 +70,10 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   output_starved:
     "\n\n⚠️ My response was cut short by the model's output limit. Try a more focused request or choose a model with a larger output limit.",
   loop_detected:
-    "I stopped because I kept repeating an action that wasn't making progress "
-      + "(usually a tool that failed or was blocked) and didn't want to loop. The "
-      + "request may need a different approach, or that capability isn't available here.",
+    `I stopped at the governor limit of ${NO_PROGRESS_LOOP_THRESHOLD} consecutive `
+      + "no-progress tool results. This includes successful calls when the tool and "
+      + "its result stay unchanged, as well as failed or blocked calls. Try a different "
+      + "approach or change the condition before retrying.",
   tool_failure_notice:
     "\n\nNote: one of the tools I used reported an error, so part of this may be"
       + " incomplete — ",
@@ -95,6 +101,17 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   ongoing_work_evidence_missing:
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
+  runtime_self_report_evidence_missing:
+    "I could not verify my runtime activity in this turn. Work counts, failure causes, and cost "
+      + "require a current observability report, so I cannot provide those claims yet.",
+  scheduler_state_evidence_missing:
+    "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
+      + "say that it is set. I need to check the scheduler before confirming it.",
+  pending_scheduler_confirmation:
+    "Please confirm that you want me to remove the scheduled job. Nothing has been removed yet.",
+  completion_evidence_missing:
+    "I could not verify the request as complete because one or more tool steps still failed. "
+      + "Treat the result below as partial; any completion claim in it is unverified.",
   sender_authority_overclaim:
     "Your current trust does not authorize admin-only changes. I can use tools available at "
       + "your current trust level, but your approval cannot grant admin access. Installing "
@@ -388,6 +405,38 @@ export function selectOngoingWorkEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "ongoing_work_evidence_missing");
+}
+
+/** Honest replacement when a runtime self-report lacks current observability evidence. */
+export function selectRuntimeSelfReportEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "runtime_self_report_evidence_missing");
+}
+
+/** Honest replacement when current scheduler state lacks a current-turn receipt. */
+export function selectSchedulerStateEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "scheduler_state_evidence_missing");
+}
+
+/** Neutral confirmation request after a gated scheduler removal stops before mutation. */
+export function selectPendingSchedulerConfirmationReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "pending_scheduler_confirmation");
+}
+
+/** Honest replacement when affirmative completion prose contradicts failed tool evidence. */
+export function selectCompletionEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "completion_evidence_missing");
 }
 
 /** Honest replacement when a below-admin sender is described as the authority grantor. */

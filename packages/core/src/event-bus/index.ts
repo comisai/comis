@@ -17,10 +17,14 @@ export type { ModelEvents } from "./events-model.js";
 export type { OrchestrationEvents } from "./events-orchestration.js";
 export type { ChannelEvents } from "./events-channel.js";
 export type {
-  BackgroundTaskFailureCode,
   InfraEvents,
   WebhookFailureReason,
 } from "./events-infra.js";
+export type {
+  BackgroundRecoveryEvents,
+  BackgroundTaskRecoveryScanFailureKind,
+} from "./events-background-recovery.js";
+export type { BackgroundTaskFailureCode, BackgroundTaskFailureDiagnostic } from "./background-task-failure.js";
 export type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 // ReflectAdmissionOutcome — the closed content-free verdict enum on
 // reflect:funnel.admissionOutcome. Canonical in events-learning.ts

@@ -348,6 +348,94 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     expect(data.failureCode).toBe("mcp_connection_details_missing");
     expect(JSON.stringify(data)).not.toContain("sensitive context");
   });
+
+  it("failed: retains typed MCP deadline numbers without its error body", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "a1",
+      taskId: "t-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      error: "timeout body containing sensitive context",
+      errorKind: "dependency",
+      failureCode: "mcp_call_deadline_exceeded",
+      failureDiagnostic: {
+        kind: "mcp_call_deadline_exceeded",
+        configKey: "integrations.mcp.callToolTimeoutMs",
+        configuredMs: 120_000,
+        queueWaitedMs: 110_025,
+        requestBudgetMs: 9_975,
+      },
+      durationMs: 120_000,
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 302,
+    } as never);
+
+    expect(data).toEqual({
+      taskId: "t-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      durationMs: 120_000,
+      errorKind: "dependency",
+      failureCode: "mcp_call_deadline_exceeded",
+      failureConfigKey: "integrations.mcp.callToolTimeoutMs",
+      failureConfiguredMs: 120_000,
+      failureQueueWaitedMs: 110_025,
+      failureRequestBudgetMs: 9_975,
+    });
+    expect(JSON.stringify(data)).not.toContain("sensitive context");
+  });
+
+  it("failed: retains the background hard-duration key and configured limit", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "agent-1",
+      taskId: "t-hard-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      error: "timeout body containing sensitive context",
+      errorKind: "timeout",
+      failureCode: "background_hard_timeout_exceeded",
+      failureDiagnostic: {
+        kind: "background_hard_timeout_exceeded",
+        configKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+        configuredMs: 12_000,
+      },
+      durationMs: 12_007,
+      origin: { agentId: "agent-1", sessionKey: "k" },
+      timestamp: 303,
+    } as never);
+
+    expect(data).toEqual({
+      taskId: "t-hard-timeout",
+      toolName: "mcp__reports--slow_lookup",
+      durationMs: 12_007,
+      errorKind: "timeout",
+      failureCode: "background_hard_timeout_exceeded",
+      failureConfigKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+      failureConfiguredMs: 12_000,
+    });
+    expect(JSON.stringify(data)).not.toContain("sensitive context");
+  });
+
+  it("cancelled keeps only the task and tool identifiers", () => {
+    const data = translatePayload("background_task:cancelled" as never, {
+      agentId: "a1",
+      taskId: "t-cancelled",
+      toolName: "slow_report",
+      timestamp: 400,
+    });
+
+    expect(data).toEqual({ taskId: "t-cancelled", toolName: "slow_report" });
+  });
+
+  it("reentered keeps the task identifier and hop count", () => {
+    const data = translatePayload("background_task:reentered" as never, {
+      agentId: "a1",
+      taskId: "t-reentered",
+      sessionKey: "default:a1:telegram:chat-a:user_a",
+      hopCount: 2,
+      traceId: "trace-a",
+      timestamp: 500,
+    });
+
+    expect(data).toEqual({ taskId: "t-reentered", hopCount: 2 });
+  });
 });
 
 // The vision translators forward ONLY content-free

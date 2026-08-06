@@ -60,8 +60,12 @@ export function reconcilePendingBackgroundTurn(
   if (pending.length === 0) {
     return { response: input.response, finishReason: undefined, pendingCount: 0 };
   }
-  const labels = pending
-    .map((task) => `${backgroundToolLabel(task.toolName)} (${task.id})`)
+  // Human labels only. The task id used to ride along in parentheses, which put a raw
+  // internal UUID in front of the end user — noise they cannot act on, in a sentence that
+  // REPLACES the answer they were waiting for. Operators reach the same tasks through the
+  // trajectory and the obs surfaces, where the id is available and meaningful. Deduped
+  // because, without ids, two tasks on one tool would otherwise render the label twice.
+  const labels = [...new Set(pending.map((task) => backgroundToolLabel(task.toolName)))]
     .join(", ");
   const runningCount = pending.filter((task) => task.status === "running").length;
   // This notice is the AGENT'S OWN user-facing sentence, so it must speak the language of the answer

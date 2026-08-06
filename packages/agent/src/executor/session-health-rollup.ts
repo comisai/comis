@@ -17,7 +17,7 @@ import type { ErrorKind } from "@comis/core";
  *                       session.
  * - `toolStats`       — per-tool {ok, failed} counts; bounded by the distinct
  *                       tool count of one execution (small).
- * - `breakerTripCount`— how many times a tool circuit breaker opened.
+ * - `breakerTripCount`— how many times an execution failure breaker opened.
  * - `topErrorKinds`   — the top ErrorKinds by failure count, hard-capped at 3.
  *                       Keys are members of the closed `ErrorKind` union ONLY
  *                       (sourced from the per-tool `errorKind`), never free text.

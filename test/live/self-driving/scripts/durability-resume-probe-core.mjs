@@ -53,7 +53,7 @@ function callbackButtons(event) {
 /**
  * Select the signed approval control emitted for this probe's pipeline call.
  * The baseline watermark excludes stale controls from earlier turns. Requiring
- * the exact progress label prevents an unrelated pending approval from being
+ * the exact operation label prevents an unrelated pending approval from being
  * accepted by the durability harness.
  */
 export function selectPipelineApproval(events, afterMessageId) {
@@ -61,7 +61,8 @@ export function selectPipelineApproval(events, afterMessageId) {
     .filter((event) =>
       Number(event?.messageId) > afterMessageId
       && typeof event?.text === "string"
-      && event.text.trim().toLowerCase() === "approval required: pipeline\n(running 0 s)"
+      && event.text.trim().toLowerCase()
+        === "approval required: pipeline graph.execute\n(running 0 s)"
     )
     .map((event) => {
       const approvals = callbackButtons(event).filter((button) =>

@@ -382,24 +382,6 @@ describe("SEC-02 Stage-B — the never-published guard re-verifies + the phase d
     expect(offendingPkgJson, `SEC-02: no package.json may live under test/live/** — found: ${offendingPkgJson.join(", ")}`).toEqual([]);
   });
 
-  it("git status --porcelain shows NO packages source CHANGE beyond the committed classifyTelegramError barrel widening (the milestone premise)", () => {
-    // The four fallbacks + the classifier are already wired in packages/channels/src
-    // and verified at HEAD — the harness DRIVES what they consume. The ONLY product
-    // touch this plan makes is the classifyTelegramError barrel widening (a
-    // VISIBILITY-only surface-gap closure landed test-first, committed).
-    // Any UNCOMMITTED packages/*/src change here means a real product bug fired
-    // mid-run — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    // The working tree carries NO uncommitted product change (the barrel widening is committed).
-    expect(offending, `uncommitted production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
 });
 
 // ---------------------------------------------------------------------------

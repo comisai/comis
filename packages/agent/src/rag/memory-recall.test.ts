@@ -116,6 +116,10 @@ function makeResult(
     /** source.who — the AUTHOR (sender) that wrote the memory. Default follows userId
      *  (a memory a sender wrote is scoped to that sender), else "agent". */
     sourceWho?: string;
+    /** entry.visibility — default user-scoped ("principal"). Set
+     *  `{ kind: "agent-shared" }` for a memory deliberately shared across the
+     *  agent rather than owned by a sender. */
+    visibility?: { kind: string; principalId?: string };
   } = {},
 ): MemorySearchResult {
   const who = opts.sourceWho ?? opts.userId;
@@ -131,6 +135,7 @@ function makeResult(
         ? { who: who ?? "agent", sessionKey: opts.sessionKey }
         : { who: who ?? "agent" },
     tags: opts.tags ?? [],
+    visibility: opts.visibility ?? { kind: "principal", principalId: opts.userId ?? "user_a" },
     createdAt: opts.createdAt ?? NOW,
     // The temporal lane seeds on entry.occurredAt — set it only when provided so the
     // no-seed gate (occurredAt absent on every top hit) is exercisable.
@@ -1678,6 +1683,54 @@ describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => 
     expect(p.distinctSources).toBe(3);
     // still content-free: the raw user-ids / memory bodies never leave as content.
     expect(JSON.stringify(p)).not.toContain("content for");
+  });
+
+  it("does not count an agent-shared memory as cross-user injection", async () => {
+    // The signal answers "did one shared agent surface ANOTHER SENDER's memory
+    // into this turn?". An agent-shared memory has no sender owner — live, the
+    // memory-review cron writes facts about the user under its own synthetic
+    // principal ("scheduler-cron-<agent>"), so 4 of 5 recalls were flagged
+    // cross-user on a single-user deployment. A canary that always chirps is one
+    // you stop hearing.
+    const input = [
+      makeResult("own", { base: 0.95, userId: "user_a", sourceWho: "user_a" }),
+      makeResult("cronA", {
+        base: 0.9, userId: "scheduler-cron-default", sourceWho: "agent",
+        visibility: { kind: "agent-shared" },
+      }),
+      makeResult("cronB", {
+        base: 0.85, userId: "scheduler-cron-default", sourceWho: "agent",
+        visibility: { kind: "agent-shared" },
+      }),
+    ];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig({ includeTrustLevels: ["learned", "system", "external", "verified", "user"] as TrustLevel[] }),
+    );
+    await recall.recall("q", memoryScope("agent_z", "tenant_x"), SESSION_KEY_OBJ);
+    const p = emits.filter((e) => e.event === "memory:recalled")[0]?.payload as Record<string, unknown>;
+    expect(p.crossUserCount).toBe(0);
+  });
+
+  it("still counts another sender's user-scoped memory as cross-user injection", async () => {
+    // Regression lock: the agent-shared exemption must not blind the real leak.
+    const input = [
+      makeResult("own", { base: 0.95, userId: "user_a", sourceWho: "user_a" }),
+      makeResult("foreign", { base: 0.9, userId: "user_b", sourceWho: "user_b" }),
+      makeResult("shared", {
+        base: 0.85, userId: "scheduler-cron-default", sourceWho: "agent",
+        visibility: { kind: "agent-shared" },
+      }),
+    ];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig({ includeTrustLevels: ["learned", "system", "external", "verified", "user"] as TrustLevel[] }),
+    );
+    await recall.recall("q", memoryScope("agent_z", "tenant_x"), SESSION_KEY_OBJ);
+    const p = emits.filter((e) => e.event === "memory:recalled")[0]?.payload as Record<string, unknown>;
+    expect(p.crossUserCount).toBe(1);
   });
 
   it("crossUserCount is 0 when every recalled memory belongs to the requesting user (no cross-user injection)", async () => {

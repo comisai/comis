@@ -156,6 +156,14 @@ Three config keys carry the multilingual surface; all are documented in the
   metadata, not conversation truth: clear current-message prose wins even when it agrees with the
   device locale, so a deliberate language change can guide the next response.
 
+  When a turn coalesces several inbound messages, each one is qualified as a language signal **on
+  its own** and the most recent message carrying a signal decides the reply script. The prose
+  threshold asks whether a message is natural language at all, which is only meaningful per message:
+  scoring the concatenation would let several identifier-heavy fragments sum past a threshold none
+  of them clears, and would let bulk Latin configuration text outweigh a short sentence of real
+  prose sent alongside it. So pasting two install commands into a Hebrew conversation leaves the
+  Hebrew expectation standing rather than flipping the reply to Latin script.
+
   The explicit `agents.<id>.language` pin and a high-confidence script signal from clear
   current-request prose enforce the reply script. A final response whose script contradicts either
   enters bounded locale enforcement. Comis starts **at most one** tools-disabled repair turn, and
@@ -224,6 +232,11 @@ a language tag from script alone would misname real users. Pin a precise languag
 explicit `agents.<id>.language` key, or let the channel-supplied request locale (the user's own
 client setting) carry it. Clear current-request prose enforces the script-only expectation; the
 device-locale fallback guides the reply without policing it.
+
+**A script-only tag never licenses transliteration.** The instruction carrying the tag states that
+if the reply language is not normally written in that script, the model must write it in its own
+script. Without that clause, "Latin writing system" plus "keep speaking the user's language" is
+satisfiable by romanizing Hebrew into Latin letters — never what a script tag means.
 
 ## Summarizer language capability
 

@@ -27,6 +27,19 @@ describe("prompt assembly shared helpers", () => {
     })).toContain("current request takes precedence over earlier conversation turns");
   });
 
+  it("forbids satisfying a script tag by transliterating", () => {
+    // A script-only tag plus "use the same human language" is satisfiable by
+    // romanization, which is what a Hebrew conversation actually received once
+    // a Latin script tag was enforced. The tag must never license that.
+    const rendered = renderResponseLocalePolicy({
+      locale: "und-Latn",
+      source: "request",
+      enforceLocale: true,
+    });
+    expect(rendered).toContain("transliterate");
+    expect(rendered).toContain("its own script");
+  });
+
   it("computes stable hashes for identical feature inputs", () => {
     const input = { toolPolicy: { mode: "allowlist" }, tools: { enabledGroups: ["read"] } };
     expect(computeFeatureFlagHash(input)).toBe(computeFeatureFlagHash(input));

@@ -219,10 +219,11 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         const tempDir = sandboxConfig ? safePath(workspacePath, ".comis-tmp") : tmpdir();
         if (sandboxConfig) mkdirSync(tempDir, { recursive: true });
         if (input) logger?.debug({ toolName: "exec", stdinLength: input.length }, "Exec stdin write");
+        const ownerSessionKey = tryGetContext()?.sessionKey;
         if (background) {
-          return executeBackground(command, cwd, finalEnv as NodeJS.ProcessEnv, input, registry, logger, sandboxConfig, workspacePath, tempDir, description, pty, gate.decision ?? undefined, gate.mode);
+          return executeBackground(command, cwd, finalEnv as NodeJS.ProcessEnv, input, registry, logger, sandboxConfig, workspacePath, tempDir, description, pty, gate.decision ?? undefined, gate.mode, ownerSessionKey);
         }
-        const result = await executeForeground(command, cwd, finalEnv as NodeJS.ProcessEnv, timeoutMs, input, signal, onUpdate, logger, sandboxConfig, workspacePath, tempDir, registry, autoBackgroundMs, pty, description, toolCallId, getToolResultsDir, gate.decision ?? undefined, gate.mode);
+        const result = await executeForeground(command, cwd, finalEnv as NodeJS.ProcessEnv, timeoutMs, input, signal, onUpdate, logger, sandboxConfig, workspacePath, tempDir, registry, autoBackgroundMs, pty, description, toolCallId, getToolResultsDir, gate.decision ?? undefined, gate.mode, ownerSessionKey);
         if (breakSystemWarning && result.details) {
           const details = result.details as Record<string, unknown>;
           if (typeof details.stdout === "string") details.stdout = breakSystemWarning + details.stdout;

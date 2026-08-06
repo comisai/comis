@@ -285,6 +285,8 @@ export async function setupProactiveSchedulers(
   });
   const runWakeGate = createCronWakeGateAdapter({
     getRunner: () => runtime.wakeGateRunnerRef?.ref,
+    eventBus: runtime.container.eventBus,
+    clock: runtime.clock,
   });
   const cronAgentTurn = createCronAgentTurnExecutor({
     tenantId: runtime.container.config.tenantId,

@@ -77,6 +77,7 @@ import {
 import { maybeWireContextTools } from "./setup-context-tools.js";
 // Tool-audit DEBUG-line subscription extracted to setup-tool-audit.ts (file-size cap).
 import { setupToolAuditLogging } from "./setup-tool-audit.js";
+import { setupChildProcessCleanup } from "./setup-child-process-cleanup.js";
 // Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
@@ -132,6 +133,9 @@ export interface ToolsDeps {
   durableRuns?: DurableRunPort;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
+  /** Master cost-feature gate from `memory.enabled`. When false, cost-bearing
+   *  memory tools are removed even when their per-agent gate is enabled. */
+  memoryCostFeaturesEnabled: boolean;
   /** Resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
   getProviderCapabilityClass?: (provider: string | undefined) => CapabilityClass | undefined;
   /** Resolve a per-agent class-gated one-shot orchestrate repair seam (daemon-minted via
@@ -351,6 +355,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     return registry;
   }
 
+  setupChildProcessCleanup({
+    eventBus,
+    logger: skillsLogger,
+    getRegistry: (agentId) => processRegistries.get(agentId),
+  });
+
   /** Per-agent MediaPersistenceService for browser screenshot persistence. */
   const screenshotPersistenceServices = new Map<string, MediaPersistenceService>();
 
@@ -542,10 +552,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         ),
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
-        // Opt-out gate for the memory_ask (dialectic) tool. Parsed agent configs
-        // default this field ON; an explicit false filters the query-time LLM
-        // surface out before build.
-        dialecticEnabled: agentConfig?.dialectic?.enabled === true,
+        // Opt-out gates for the memory_ask (dialectic) tool. The master cost
+        // switch wins over the parsed per-agent default so the query-time LLM
+        // surface is filtered out before build when either gate is off.
+        dialecticEnabled:
+          deps.memoryCostFeaturesEnabled && agentConfig?.dialectic?.enabled === true,
         onConfigMutationStart: enterConfigMutationFence,
         onConfigMutationEnd: leaveConfigMutationFence,
         // After agents.create seeds the new workspace's template files

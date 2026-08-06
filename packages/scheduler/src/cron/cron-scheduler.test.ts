@@ -775,6 +775,43 @@ describe("durable cron scheduler lifecycle", () => {
     }));
   });
 
+  it("acknowledges a manual trigger after its durable start while execution continues", async () => {
+    let settleExecution!: (result: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    let runtimeInput!: CronRuntimeExecutionInput;
+    const built = await fixture({
+      seedJob: job("future", { kind: "at", atMs: NOW_MS + 10_000 }),
+      execute: (input) => {
+        runtimeInput = input;
+        return new Promise((resolve) => { settleExecution = resolve; });
+      },
+    });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+
+    await expect(built.scheduler.triggerJob("future")).resolves.toEqual(ok("execution_1"));
+    expect(settleExecution).toBeTypeOf("function");
+    const started = await built.tracker.readExecution("execution_1");
+    expect(started.ok && started.value?.start.executionId).toBe("execution_1");
+    expect(started.ok && started.value?.terminal).toBeUndefined();
+
+    settleExecution(ok(completed(runtimeInput)));
+    await built.scheduler.waitForIdle();
+    const terminal = await built.tracker.readExecution("execution_1");
+    expect(terminal).toMatchObject({ ok: true, value: { terminal: { outcome: { kind: "agent_turn" } } } });
+  });
+
+  it("refuses a manual trigger before the scheduler is accepting execution", async () => {
+    const built = await fixture({ seedJob: job() });
+    await built.scheduler.initialize();
+    // Deliberately NOT activated: the admission gate must reject before any
+    // execution id is minted, so no durable start row can exist to acknowledge.
+    await expect(built.scheduler.triggerJob("job_a")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "not_active", errorKind: "precondition" },
+    });
+    expect(await built.tracker.readExecution("execution_1")).toMatchObject({ ok: true, value: undefined });
+  });
+
   it("rejects activation when recurring stagger eligibility would overflow", async () => {
     const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
     recurring.lifecycle = {
@@ -919,6 +956,7 @@ describe("durable cron scheduler lifecycle", () => {
     await built.scheduler.initialize();
     expect(await built.scheduler.runMissedJobs()).toMatchObject({ ok: false, error: { code: "not_active" } });
     expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "not_active" } });
+    expect(await built.scheduler.triggerJob("job_a")).toMatchObject({ ok: false, error: { code: "not_active" } });
     built.scheduler.activate();
 
     vi.spyOn(built.store, "getSnapshot").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
@@ -928,6 +966,29 @@ describe("durable cron scheduler lifecycle", () => {
     expect(await built.scheduler.runJob("missing")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
     vi.spyOn(built.store, "claim").mockResolvedValueOnce(err({ code: "conflict", errorKind: "precondition", message: "expected" }));
     expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+  });
+
+  it("maps a rejected occurrence boundary to an internal scheduler failure", async () => {
+    const built = await fixture({ seedJob: job() });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    vi.spyOn(built.store, "listJobs").mockImplementationOnce(() => {
+      throw new Error("store adapter rejected");
+    });
+
+    expect(await built.scheduler.runJob("job_a")).toMatchObject({
+      ok: false,
+      error: { code: "operation_failed", errorKind: "internal" },
+    });
+    expect(built.logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: "execution_1",
+      jobId: "job_a",
+      step: "execution_boundary",
+      errorKind: "internal",
+    }), "Cron execution rejected outside its Result contract");
+    // The slot must be released on the non-Result path too, or the scheduler
+    // leaks a running entry and never reaches idle.
+    await expect(built.scheduler.waitForIdle()).resolves.toBeUndefined();
   });
 
   it("rejects duplicate active execution identifiers without invoking a second runtime", async () => {

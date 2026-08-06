@@ -37,6 +37,61 @@ describe("cron tool", () => {
     expect(mockRpcCall).toHaveBeenCalledWith("cron.list", {});
   });
 
+  it("list action keeps accumulated schedules compact without payload or route bodies", async () => {
+    const jobs = Array.from({ length: 20 }, (_, index) => ({
+      id: `job-${index}`,
+      name: `weekly-check-${index}`,
+      agentId: "default",
+      source: "authored",
+      schedule: { kind: "cron", expr: "0 7 * * 6", tz: "America/New_York" },
+      lifecycle: { status: "scheduled", nextRunAtMs: 1_900_000_000_000 + index },
+      payload: {
+        kind: "agent_turn",
+        message: `PRIVATE-PAYLOAD-${index}-` + "x".repeat(2_000),
+        model: "small-model",
+        timeoutSeconds: 30,
+      },
+      wakeGate: { script: `PRIVATE-SCRIPT-${index}-` + "y".repeat(2_000) },
+      deliveryTarget: {
+        conversation: { conversationRef: `PRIVATE-ROUTE-${index}` },
+      },
+      continuationMode: "none",
+    }));
+    const tool = createCronTool(vi.fn(async () => ({ resolvedAgentId: "default", jobs })));
+
+    const result = await tool.execute("call-list-many", { action: "list" } as never);
+    const text = (result.content[0] as { type: "text"; text: string }).text;
+    const parsed = JSON.parse(text) as {
+      jobs: Array<Record<string, unknown>>;
+      resolvedAgentId: string;
+    };
+
+    expect(text.length).toBeLessThan(12_000);
+    expect(text).toContain("PRIVATE-PAYLOAD-0");
+    expect(text).not.toContain("x".repeat(1_000));
+    expect(text).not.toContain("PRIVATE-SCRIPT");
+    expect(text).not.toContain("PRIVATE-ROUTE");
+    expect(parsed.resolvedAgentId).toBe("default");
+    expect(parsed.jobs).toHaveLength(20);
+    expect(parsed.jobs[0]).toEqual({
+      id: "job-0",
+      name: "weekly-check-0",
+      agentId: "default",
+      source: "authored",
+      schedule: { kind: "cron", expr: "0 7 * * 6", tz: "America/New_York" },
+      lifecycle: { status: "scheduled", nextRunAtMs: 1_900_000_000_000 },
+      payload: {
+        kind: "agent_turn",
+        messagePreview: "PRIVATE-PAYLOAD-0-" + "x".repeat(110),
+        model: "small-model",
+        timeoutSeconds: 30,
+      },
+      wakeGateConfigured: true,
+      deliveryBound: true,
+      continuationMode: "none",
+    });
+  });
+
   it("add action delegates to rpcCall (mutate gate, auto-approved)", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "cron.add") {

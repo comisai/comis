@@ -276,6 +276,22 @@ comis cache stats --since 7d --provider anthropic
 comis cache stats --format json
 ```
 
+A cache **write** is billed by its TTL -- on Anthropic a 1-hour write costs 2x base
+input and a 5-minute write 1.25x, against 0.1x to read a cache hit. On a cached
+workload writes therefore dominate the bill, and *which* TTL they used is the number
+that moves it. When the window contains rows that recorded a split, the report adds:
+
+| Field | Meaning |
+|-------|---------|
+| `cacheWrite1hTokens` | Write tokens billed at the extended (1h) TTL -- the expensive half |
+| `cacheWrite5mTokens` | Write tokens billed at the short (5m) TTL |
+
+Both lines are omitted when no row in the window recorded a split -- rows written
+before the split was stored, or a provider that prices every write the same. They are
+omitted rather than shown as zero because a flat `0` would read as "no writes
+happened", which is a different claim: `cacheCreationTokens` remains the authoritative
+write total, and the split never has to add up to it.
+
 ---
 
 ### `comis cron`
@@ -1301,7 +1317,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--write` | `boolean` | `false` | Append key to `~/.comis/.env` instead of printing to stdout |
+| `--write` | `boolean` | `false` | Append key to the `.env` of the selected data directory (`dataDir` from config, else `COMIS_DATA_DIR`, else `~/.comis`) instead of printing to stdout |
 
 #### `secrets set <name>`
 
@@ -1316,7 +1332,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--yes` | `boolean` | `false` | Skip confirmation prompt |
-| `--offline` | `boolean` | `false` | Read the local encrypted store directly (no daemon RPC). Needs `SECRETS_MASTER_KEY` in `~/.comis/.env`. Use when the daemon is down or the gateway token itself is the secret you need (`comis secrets get COMIS_GATEWAY_TOKEN --offline`) — daemon-side reads are audit-logged, so the RPC path stays the default |
+| `--offline` | `boolean` | `false` | Read the local encrypted store directly (no daemon RPC). Needs `SECRETS_MASTER_KEY` in the `.env` of the selected data directory (`dataDir` from config, else `COMIS_DATA_DIR`, else `~/.comis`). Use when the daemon is down or the gateway token itself is the secret you need (`comis secrets get COMIS_GATEWAY_TOKEN --offline`) — daemon-side reads are audit-logged, so the RPC path stays the default |
 
 #### `secrets list`
 
@@ -1334,7 +1350,7 @@ Encrypted secret management using AES-256-GCM. All operations work offline witho
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--file <path>` | `string` | `~/.comis/.env` | Source `.env` file path |
+| `--file <path>` | `string` | The selected data directory's `.env` | Source `.env` file path |
 
 #### `secrets audit`
 
@@ -1647,6 +1663,8 @@ When the session included a transcription or synthesis, the report carries a `vo
 When the session made capability-gated calls (an autonomous agent, or one that spawned children via `orchestrate`), the report carries a `spawnTree` block reconstructing the run's authorization topology — the **one call to root-cause an unattended run**. Each node is a `leaseId` (the in-process root groups under its synthetic `rootRunId`) and surfaces its `parentLeaseId` (the child→root edge; absent on the root), the `agentId`, the attenuated `caps` it held, the tool NAMES it invoked (`toolsInvoked`), and any capability it was DENIED (`denials` — each a `CapabilityDeniedError` cap). In the table view a node renders as `<leaseId> ←<parent>  caps=[…] tools=[…] DENIED=[…]`; `--format json` emits the full `spawnTree` array. The tree is reconstructed offline from the session's `capability.audited` trajectory records, so `--offline` shows it too. **Multi-agent graph (DAG) nodes appear as leaves too**: a graph node spawns in-process and never crosses the socket chokepoint that emits `capability.audited`, so each node also emits a `graph.node_spawned` record — reconstructed as a leaf keyed by `<graphId>:<nodeId>` (its stable node identity, not a socket lease), nested under the graph root via `parentLeaseId`, carrying its child `agentId` and `caps:["orch:graph"]` (without this the spawn-tree showed only the root while N graph children ran). Content-free — ids, caps, tool NAMES, and decision-derived denials only, never a tool argument, a message body, or a secret. Per-node remaining **budget** is *not* on the offline tree (it is live daemon state) — use `comis whoami` for an in-flight run's remaining budget; the spawn tree is the post-mortem topology.
 
 When a scheduled job's [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) **woke** the model, the report folds a content-free `cronWakeGate` fact for that fire — the job id, the `wake` verdict, the gate's `durationMs`, its tool-call count, and the model turns it saved (ids and counts only, never the gate's gathered finding). A **skipped** fire is different: it runs no model and opens no session, so it never reaches `comis explain`. The argument is a session key, trace ID, or `rootRunId` — **never a cron job id**. To inspect a job's skipped fires read its run history (`cron.runs`), and for the cross-job skip-rate and turns-saved use [`comis system-health`](#comis-system-health).
+
+When the session was a proactive check over [inferred follow-up tasks](/operations/scheduler#task-extraction), the report carries a content-free `taskCheck` block — the attempt's `rootRunId`, `attemptId`, and `correlationId`, its `lifecycle` (`started` / `terminal`), the terminal `outcome`, whether it ran `live` or through `ownership_recovery`, and the `deliveredChunks` / `failedChunks` / `ambiguousChunks` counts. A `dismissed` outcome also carries `suppressionReason`, so **"the check ran but the user got nothing"** is answered by the report instead of inferred from a silent success: `heartbeat_token` (the model declined with the bare `HEARTBEAT_OK` token), `ack_under_threshold` (`HEARTBEAT_OK` plus residual text within `ack_max_chars`), `empty_reply` (an empty reply or a `NO_REPLY` / `[SILENT]` marker), or `visibility_filter` (a non-critical alert withheld because `show_alerts` is off) — see the [heartbeat response rules](/agent-tools/scheduling#heartbeat-manage-agent-heartbeat) for the classifier those names come from. The table view renders the block as `Task check: <outcome, or the lifecycle when no outcome was reached> · attempt=… · correlation=… · root=… · delivered=… failed=… ambiguous=… · suppression=…`, with `suppression=none` when the attempt was not suppressed. Identifiers, labels, and counts only — never the task text, the check-in body, or the originating conversation.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|

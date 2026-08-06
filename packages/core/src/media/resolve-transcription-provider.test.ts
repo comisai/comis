@@ -70,6 +70,29 @@ describe("resolveTranscriptionProvider", () => {
     }
   });
 
+  it("names the exact secret knob for every explicit keyed provider without a key", () => {
+    const expectedSecrets = [
+      ["openai", "OPENAI_API_KEY"],
+      ["groq", "GROQ_API_KEY"],
+      ["deepgram", "DEEPGRAM_API_KEY"],
+    ] as const;
+
+    for (const [provider, secretName] of expectedSecrets) {
+      const selection = resolveTranscriptionProvider(
+        { provider },
+        "openai-codex",
+        LOCAL_OFF,
+        NO_AUDIO_KEY,
+      );
+      expect(selection.ok).toBe(false);
+      if (!selection.ok) {
+        expect(selection.errorKind).toBe("auth_required");
+        expect(selection.hint).toContain(secretName);
+        expect(selection.hint).toContain("integrations.media.transcription.provider");
+      }
+    }
+  });
+
   it("short-circuits the key gate for an explicit keyless provider (local) even on a codex main", () => {
     const sel = resolveTranscriptionProvider({ provider: "local" }, "openai-codex", LOCAL_OFF, NO_AUDIO_KEY);
     expect(sel).toMatchObject({ ok: true, provider: "local", keyless: true, source: "explicit" });

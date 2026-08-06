@@ -202,6 +202,7 @@ describe("wrapToolResultWithGuide -- SYSTEM_PROMPT_GUIDES", () => {
     expect(guideText).toContain("Sub-Agent Workspace Isolation");
     expect(guideText).toContain("Task Delegation");
     expect(guideText).toContain("MUST delegate");
+    expect(guideText).toContain("does not start a new child");
     expect(delivered.has("section:sessions_spawn")).toBe(true);
   });
 

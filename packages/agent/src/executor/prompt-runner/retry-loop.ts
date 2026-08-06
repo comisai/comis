@@ -334,6 +334,15 @@ async function detectSilentFailure(
         "Continuation turn failed; falling through to retry recovery",
       );
     }
+
+    // The continuation is a real provider turn and can trip a safety control.
+    // Re-read the bridge after it settles instead of classifying the stale
+    // pre-continuation snapshot and starting another recovery attempt.
+    if (params.bridge.getResult().abortResponse !== undefined) {
+      retryState.promptSucceeded = true;
+      retryState.promptError = undefined;
+      return true;
+    }
   }
 
   if (!silent02Recovered && !silentRetryAttempted) {
@@ -347,7 +356,12 @@ async function detectSilentFailure(
       await handleToolSchemaUnsupported(params, messageText, promptImages, earlyBridgeResult, retryState, invokeRetry);
     } else if (earlyClassification.category === "rate_limited") {
       handleRateLimited(params, earlyBridgeResult, retryState);
-    } else if (earlyClassification.category === "client_request") {
+    } else if (
+      earlyClassification.category === "client_request"
+      // Same deterministic short-circuit: the model refused a request
+      // parameter, so replaying the identical request cannot succeed.
+      || earlyClassification.category === "model_capability_unsupported"
+    ) {
       handleClientRequest(params, earlyBridgeResult, retryState);
     } else {
       await handleSilentRetryDefault(params, messageText, promptImages, earlyBridgeResult, retryState, invokeRetry);

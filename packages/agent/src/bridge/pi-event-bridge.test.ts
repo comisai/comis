@@ -774,6 +774,68 @@ describe("createPiEventBridge", () => {
       ]);
     });
 
+    it("retains only the confirmation-required boolean from a gated cron result", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "cron",
+        toolCallId: "tc-cron-remove",
+        args: { action: "remove", job_name: "synthetic scheduled job" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "cron",
+        "tc-cron-remove",
+        false,
+        {
+          content: [{ type: "text", text: "confirmation details" }],
+          details: {
+            requiresConfirmation: true,
+            actionType: "cron.remove",
+            hint: "untrusted model-visible prose",
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        requiresConfirmation?: boolean;
+      };
+      expect(record.requiresConfirmation).toBe(true);
+      expect(JSON.stringify(record)).not.toContain("confirmation details");
+      expect(JSON.stringify(record)).not.toContain("untrusted model-visible prose");
+    });
+
+    it("classifies current cron-list policy evidence without retaining task text", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "cron",
+        toolCallId: "tc-cron-list",
+        args: { action: "list" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "cron",
+        "tc-cron-list",
+        false,
+        {
+          content: [{ type: "text", text: "bounded current schedule inventory" }],
+          details: {
+            jobs: [
+              { payload: { kind: "agent_turn", messagePreview: "Skip federal holidays" } },
+              { payload: { kind: "delivery", textPreview: "Weekday summary" } },
+            ],
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        schedulerPolicyEvidence?: readonly string[];
+      };
+      expect(record.schedulerPolicyEvidence).toEqual(["holiday", "weekday"]);
+      expect(JSON.stringify(record)).not.toContain("Skip federal holidays");
+    });
+
     it("keeps an auto-background handoff neutral in breaker and execution outcome accounting", () => {
       const recordResult = vi.fn();
       const depsWithBreaker = createMockDeps({
@@ -808,6 +870,47 @@ describe("createPiEventBridge", () => {
           backgrounded: true,
         }),
       ]);
+    });
+
+    it("correlates an exec auto-background handoff with a later process terminal observation", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "exec",
+        toolCallId: "tc-exec",
+        args: { cmd: "long command" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("exec", "tc-exec", false, {
+        content: [{ type: "text", text: "moved to background" }],
+        details: { status: "backgrounded", sessionId: "proc-1" },
+      }) as any);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "process",
+        toolCallId: "tc-status",
+        args: { action: "status", sessionId: "proc-1" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("process", "tc-status", false, {
+        content: [{ type: "text", text: "completed" }],
+        details: { sessionId: "proc-1", status: "completed" },
+      }) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls
+        .filter((call) => call[0] === "tool:executed")
+        .map((call) => call[1]);
+      expect(calls).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: "tc-exec",
+          backgrounded: true,
+          processSessionId: "proc-1",
+          processSessionStatus: "running",
+        }),
+        expect.objectContaining({
+          toolCallId: "tc-status",
+          processSessionId: "proc-1",
+          processSessionStatus: "completed",
+        }),
+      ]));
     });
 
     it("emits tool:executed with success=false when isError", () => {
@@ -1847,6 +1950,22 @@ describe("createPiEventBridge", () => {
         expect(getResult().finishReason).toBe("context_exhausted");
       });
 
+      it("does not classify local context exhaustion as provider health", () => {
+        deps.providerHealth = {
+          recordSuccess: vi.fn(),
+          recordFailure: vi.fn(),
+          isDegraded: vi.fn(() => false),
+          getHealthSummary: vi.fn(() => new Map()),
+        };
+        const { listener } = createPiEventBridge(deps);
+        listener(makeErrorTurnEnd(new ContextExhaustionError(32000, 30525).message) as any);
+
+        expect(deps.circuitBreaker.recordSuccess).not.toHaveBeenCalled();
+        expect(deps.circuitBreaker.recordFailure).not.toHaveBeenCalled();
+        expect(deps.providerHealth?.recordSuccess).not.toHaveBeenCalled();
+        expect(deps.providerHealth?.recordFailure).not.toHaveBeenCalled();
+      });
+
       it("does NOT map a generic provider error to context_exhausted", () => {
         const { listener, getResult } = createPiEventBridge(deps);
         listener(makeErrorTurnEnd("503 upstream connect error") as any);
@@ -2171,6 +2290,33 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("circuit breaker mid-execution abort", () => {
+    it("preserves consecutive provider failures until the circuit opens", () => {
+      let consecutiveFailures = 0;
+      let open = false;
+      deps.circuitBreaker = {
+        isOpen: vi.fn(() => open),
+        recordSuccess: vi.fn(() => {
+          consecutiveFailures = 0;
+        }),
+        recordFailure: vi.fn(() => {
+          consecutiveFailures++;
+          if (consecutiveFailures >= 3) open = true;
+        }),
+        getState: vi.fn(() => open ? "open" as const : "closed" as const),
+        reset: vi.fn(),
+      };
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+      listener(makeTurnEndEvent({ stopReason: "error" }) as any);
+
+      expect(deps.circuitBreaker.recordSuccess).not.toHaveBeenCalled();
+      expect(deps.circuitBreaker.recordFailure).toHaveBeenCalledTimes(3);
+      expect(deps.onAbort).toHaveBeenCalledTimes(1);
+      expect(getResult().finishReason).toBe("circuit_open");
+    });
+
     it("triggers abort when circuit breaker opens after recordFailure", () => {
       // Circuit breaker opens after recordFailure is called
       (deps.circuitBreaker.isOpen as ReturnType<typeof vi.fn>)
@@ -2189,6 +2335,7 @@ describe("createPiEventBridge", () => {
 
       expect(deps.onAbort).toHaveBeenCalledTimes(1);
       expect(getResult().finishReason).toBe("circuit_open");
+      expect(getResult().breakerTripCount).toBe(1);
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           hint: expect.stringContaining("Circuit breaker opened"),
@@ -2220,6 +2367,7 @@ describe("createPiEventBridge", () => {
         sessionKey: deps.sessionKey,
         reason: "circuit_breaker",
         agentId: "test-agent",
+        provider: "anthropic",
         timestamp: expect.any(Number),
       }));
     });
@@ -7453,7 +7601,17 @@ describe("createPiEventBridge — per-root budget sibling", () => {
     expect(getResult().finishReason).toBe("spend_exceeded");
     expect(deps.onAbort).toHaveBeenCalled();
     const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
-    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({ reason: "spend_exceeded", agentId: "test-agent" }));
+    expect(emit).toHaveBeenCalledWith("execution:aborted", expect.objectContaining({
+      reason: "spend_exceeded",
+      agentId: "test-agent",
+      perRootBudget: {
+        limb: "tokens",
+        spent: 150,
+        attempted: 150,
+        cap: 250,
+        unit: "tokens",
+      },
+    }));
   });
 
   it("a ZERO-PRICE native-provider loop trips the WALL-CLOCK limb via the bridge once the FakeClock advances past the deadline", () => {

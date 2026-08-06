@@ -25,8 +25,6 @@ import { rethrowSessionReadRpcError } from "./session-read-tool-error.js";
 // -- Parameter Schema --------------------------------------------------------
 
 const SessionSearchParams = Type.Object({
-  tenant_id: Type.String({ description: "Tenant that owns the sessions" }),
-  agent_id: Type.String({ description: "Agent that owns the sessions" }),
   query: Type.Optional(
     Type.String({ description: "Search query -- one or more keywords. A message matches when ALL keywords appear in it (case-insensitive, order-independent); a single keyword matches as a substring. Omit for recent sessions metadata." }),
   ),
@@ -65,8 +63,6 @@ export function createSessionSearchTool(rpcCall: RpcCall): AgentTool<typeof Sess
       params: Record<string, unknown>,
     ): Promise<AgentToolResult<unknown>> {
       try {
-        const tenantId = readStringParam(params, "tenant_id");
-        const agentId = readStringParam(params, "agent_id");
         const query = readStringParam(params, "query", false);
         const scope = readStringParam(params, "scope", false) ?? "all";
         const limit = readNumberParam(params, "limit", false) ?? 10;
@@ -77,8 +73,6 @@ export function createSessionSearchTool(rpcCall: RpcCall): AgentTool<typeof Sess
           const sanitizedQuery = sanitizeFts5Query(query);
           const effectiveSummarize = summarize ?? true;
           const result = await rpcCall("session.search", {
-            tenant_id: tenantId,
-            agent_id: agentId,
             query: sanitizedQuery,
             scope,
             limit,
@@ -89,8 +83,6 @@ export function createSessionSearchTool(rpcCall: RpcCall): AgentTool<typeof Sess
 
         // Recent-sessions mode: no query, never summarize
         const result = await rpcCall("session.search", {
-          tenant_id: tenantId,
-          agent_id: agentId,
           scope,
           limit,
           summarize: false,

@@ -4,7 +4,6 @@ import {
   QueueModeSchema,
   OverflowPolicySchema,
   OverflowConfigSchema,
-  DebounceBufferConfigSchema,
   PerChannelQueueConfigSchema,
   FollowupConfigSchema,
   QueueConfigSchema,
@@ -78,32 +77,6 @@ describe("OverflowConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// DebounceBufferConfigSchema
-// ---------------------------------------------------------------------------
-
-describe("DebounceBufferConfigSchema", () => {
-  it("produces valid defaults", () => {
-    const result = DebounceBufferConfigSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.windowMs).toBe(0);
-      expect(result.data.maxBufferedMessages).toBe(10);
-      expect(result.data.firstMessageImmediate).toBe(true);
-    }
-  });
-
-  it("accepts windowMs=0 (disabled)", () => {
-    const result = DebounceBufferConfigSchema.safeParse({ windowMs: 0 });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects negative windowMs", () => {
-    const result = DebounceBufferConfigSchema.safeParse({ windowMs: -1 });
-    expect(result.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // PerChannelQueueConfigSchema
 // ---------------------------------------------------------------------------
 
@@ -148,6 +121,21 @@ describe("FollowupConfigSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("QueueConfigSchema", () => {
+  it("rejects removed ingress debounce keys instead of accepting inert configuration", () => {
+    expect(QueueConfigSchema.safeParse({
+      debounce: {
+        windowMs: 250,
+        maxBufferedMessages: 4,
+        firstMessageImmediate: false,
+      },
+    }).success).toBe(false);
+    expect(QueueConfigSchema.safeParse({
+      perChannelDebounce: {
+        telegram: { windowMs: 250 },
+      },
+    }).success).toBe(false);
+  });
+
   it("produces valid defaults from empty object", () => {
     const result = QueueConfigSchema.safeParse({});
     expect(result.success).toBe(true);
@@ -158,7 +146,6 @@ describe("QueueConfigSchema", () => {
       expect(result.data.defaultMode).toBe("steer+followup");
       expect(result.data.defaultDebounceMs).toBe(0);
       expect(result.data.perChannel).toEqual({});
-      expect(result.data.perChannelDebounce).toEqual({});
     }
   });
 
@@ -168,16 +155,6 @@ describe("QueueConfigSchema", () => {
     if (result.success) {
       expect(result.data.followup.maxFollowupRuns).toBe(3);
       expect(result.data.followup.followupOnCompaction).toBe(true);
-    }
-  });
-
-  it("includes debounce defaults", () => {
-    const result = QueueConfigSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.debounce.windowMs).toBe(0);
-      expect(result.data.debounce.maxBufferedMessages).toBe(10);
-      expect(result.data.debounce.firstMessageImmediate).toBe(true);
     }
   });
 

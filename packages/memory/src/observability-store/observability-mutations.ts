@@ -109,7 +109,7 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
   // The column list + placeholders + .run() args MUST stay in lockstep with the
   // obs_token_usage schema (schema.ts ensureObsTokenColumns). cache_retention was
   // DROPPED (dead); the 5 cost-correctness columns + the
-  // tool_tag column were added at the tail (25 cols / 25 placeholders / 25 args).
+  // tool_tag column were added at the tail (27 cols / 27 placeholders / 27 args).
   const insertTokenUsageStmt = db.prepare(`
     INSERT INTO obs_token_usage (
       timestamp, trace_id, agent_id, channel_id, session_key,
@@ -117,8 +117,9 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
       cache_read_tokens, cache_write_tokens, cost_input, cost_output, cost_total,
       cost_cache_read, cost_cache_write, cache_saved, latency_ms,
       warmup_turn, cache_eligible, cost_correction, pending_cache_investment_usd, pricing_state,
+      cache_write_5m_tokens, cache_write_1h_tokens,
       tool_tag
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertDeliveryStmt = db.prepare(`
@@ -182,6 +183,8 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
       entry.costCorrection ?? null,
       entry.pendingCacheInvestmentUsd ?? null,
       entry.pricingState ?? null,
+      entry.cacheWrite5mTokens ?? null,
+      entry.cacheWrite1hTokens ?? null,
       // The JSON-stringified DISTINCT tool array (content-free names);
       // NULL when the turn fired no tool. Already de-duped at the emit.
       entry.toolTag === undefined ? null : JSON.stringify(entry.toolTag),

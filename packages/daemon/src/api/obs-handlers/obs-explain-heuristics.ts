@@ -1,64 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs-explain-heuristics` — the deterministic root-cause heuristic registry.
- *
- * An ordered, first-match-wins `ReadonlyArray<(IncidentSignals) => RootCause |
- * null>`. PURE: no LLM, no I/O, no globals — a post-mortem reproduces the same
- * `likelyRootCause` from the same log evidence forever. The registry keys ONLY
- * on the derived booleans/strings `toIncidentSignals` already computed from log
- * evidence (the 678 fixture has ZERO provenance fields, so the
- * misclassification signal is derived from `success:true` + repeated
- * `"Tool execution failed"` + a status/200/403 token in a failure body — never
- * from `classifiedFailureBy`).
- *
- * ORDERING (load-bearing — pins BOTH frozen fixtures):
- *   1. content_heuristic_misclassification — the 678 ROOT cause. The breaker
- *      tripped on the MISCLASSIFIED successes ("DO NOT retry" is present too),
- *      so the misclassification must out-rank the breaker: it is upstream, the
- *      breaker is the downstream symptom.
- *   2. spend_exceeded — the dollars kill-switch is an
- *      ADMINISTRATIVE pre-emption that aborts at admission, causally INDEPENDENT
- *      of tool failures (tool FAILURES return ~0 bytes / ~$0 and cannot drive
- *      cumulative spend). A live VPS incident showed a spend-killed session
- *      root-causing to the chronic breaker below — masking the acute kill that
- *      now blocks every new turn. So it sits ABOVE the breaker/degradation
- *      heuristics but BELOW #1 (the frozen misclassification). Keyed on
- *      endReason "spend_exceeded" (frozen fixtures carry it not).
- *   3. execution_step_limit_reached — a local runtime guard exhausted the
- *      configured call budget. It must out-rank repeated-failure inference
- *      because each blocked call is recorded as a failure even though no
- *      provider request was attempted.
- *   4. breaker_opened_repeated_failure — the 503 root cause: a real transport
- *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
- *      opened. The 503 has NO misclassification signal, so it falls through to
- *      here.
- *   5. tool_schema_unsupported — an acute, deterministic
- *      provider-schema rejection: upstream of any terminal state (out-ranks
- *      context_exhausted/output_starved) but downstream of the two established
- *      codes, whose fixtures carry no schema-rejection records (cannot
- *      regress them). Fires only when the one-shot strip-retry did NOT
- *      recover — a recovered repair is evidence, not a verdict.
- *   6. context_bloat / exec_dependency / provider_timeout — three low-risk
- *      "insurance" codes that broaden corpus coverage. They never fire on
- *      the two frozen fixtures (the two above match first), so they cannot
- *      regress them.
- *   7. context_exhausted / output_starved — the two NAMED terminal-state
- *      degradation causes. They key on the
- *      metadata-derived `endReason` (threaded onto the signals by the handler),
- *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
- *      the terminal state and out-ranks them. They fire only when the run's
- *      mapped endReason IS the cause, and never on a clean session.
- *   8. prompt_timeout / spend_exceeded —
- *      the NAMED terminal latency + SPEND causes, keyed on endReason "timeout" /
- *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
- *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
- *      numbers-backed from the enriched signal when present; spend_exceeded lives
- *      in the sibling obs-explain-spend-verdict.ts. The established cost and breaker fixtures
- *      carry neither endReason — cannot regress them.
- *
- * The established cost and breaker fixtures pin the first two verdicts; every later rule must leave
- * their verdicts unchanged.
- *
+ * Deterministic, first-match root-cause registry. It consumes only normalized
+ * `IncidentSignals`, performs no I/O, and must reproduce a verdict from the same
+ * evidence. Ordering is causal and load-bearing: misclassification precedes its
+ * breaker symptom; administrative spend and local step ceilings precede repeated
+ * failures; tool/schema/dependency causes precede terminal degradation; named
+ * terminal causes remain last. Frozen cost and breaker fixtures pin that order.
  * @module
  */
 
@@ -68,23 +15,25 @@ import {
   CONTEXT_BLOAT_MIN_OFFLOADS,
   TOKEN_SPIKE_CHARS,
   MODULE_NOT_FOUND_MARKERS,
+  boundedConfigKey,
   breakerTool,
   hasModuleNotFound,
 } from "./obs-explain-heuristics-helpers.js";
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
-import {
-  subagentDeliverySkippedVerdict,
-  subagentFailedVerdict,
-  subagentStuckKilledVerdict,
-} from "./obs-explain-subagent-killed-verdict.js";
+import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 import {
   backgroundPendingVerdict,
   backgroundRecoveryVerdict,
 } from "./obs-explain-background-pending-verdict.js";
-import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
+import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
+import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
+import {
+  executionAuthFailureVerdict,
+  recallMissVerdict,
+} from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
 import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -108,28 +57,6 @@ export interface RootCause {
   code: string;
   detail: string;
   suggestedNextSteps: string[];
-}
-
-function boundedConfigKey(value: string | undefined): string | undefined {
-  if (value === undefined || value.length === 0 || value.length > 256) {
-    return undefined;
-  }
-  const segments = value.split(".");
-  if (segments.length < 2 || segments.length > 9) return undefined;
-  for (const segment of segments) {
-    if (segment.length === 0) return undefined;
-    for (const character of segment) {
-      const code = character.charCodeAt(0);
-      const allowed =
-        (code >= 65 && code <= 90)
-        || (code >= 97 && code <= 122)
-        || (code >= 48 && code <= 57)
-        || character === "_"
-        || character === "-";
-      if (!allowed) return undefined;
-    }
-  }
-  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +116,9 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
+  // The unresolved child process is upstream of a missing control-plane delivery route.
+  subagentBackgroundProcessesAbandonedVerdict,
+
   subagentDeliverySkippedVerdict,
 
   subagentFailedVerdict,
@@ -247,15 +177,44 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
         candidate.classifiedFailureBy === "runtime_guard" && candidate.matchedRule === "step_limit",
     );
     if (failure === undefined && s.endReason !== "max_steps") return null;
+    const stepLimit = s.stepLimit;
+    const bindingDetail = stepLimit === undefined
+      ? `endReason=${s.endReason ?? "max_steps"}`
+      : `${stepLimit.bindingKnob}=${String(stepLimit.cap)} stopped at `
+        + `${String(stepLimit.stepsExecuted)} tool-execution steps`;
     return {
       code: "execution_step_limit_reached",
       detail:
-        "the local execution step limit blocked additional tool calls (endReason=" +
-        (s.endReason ?? "max_steps") +
-        "); no provider request was attempted for the guarded calls",
+        `the local execution step limit (${bindingDetail}) blocked additional tool calls; `
+        + "no provider request was attempted for the guarded calls",
       suggestedNextSteps: [
         "simplify the workflow or use a composite tool that performs the bounded operation in one call",
-        "increase max_steps only when the task legitimately requires more independent calls",
+        stepLimit === undefined
+          ? "increase agents.<agentId>.maxSteps only when the task legitimately requires more independent calls"
+          : `increase ${stepLimit.bindingKnob} above ${String(stepLimit.cap)} only when the task legitimately requires more independent calls`,
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // A background MCP call may spend most of its fixed deadline waiting for a
+  // per-server concurrency slot. The terminal event retains only the trusted
+  // config key and timing numbers, so this verdict can name the binding value
+  // without persisting the external error body.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) => candidate.failureCode === "mcp_call_deadline_exceeded",
+    );
+    if (failure === undefined) return null;
+    const detail = failure.errorPreview.length > 0
+      ? failure.errorPreview
+      : "integrations.mcp.callToolTimeoutMs expired; timing details were unavailable";
+    return {
+      code: "mcp_background_call_deadline_exceeded",
+      detail: `${failure.toolName} exceeded its background MCP call deadline (${detail})`,
+      suggestedNextSteps: [
+        "reduce per-server queue contention; raise maxConcurrency only when the MCP server supports parallel tool calls",
+        "otherwise narrow or split the MCP request so it finishes within integrations.mcp.callToolTimeoutMs",
         "obs.explain depth=full",
       ],
     };
@@ -448,6 +407,29 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // outranks retained breaker noise from earlier turns.
   toolInvocationStallVerdict,
 
+  backgroundHardTimeoutVerdict, // runtime hard limit causes any breaker it trips
+
+  // A model-provider circuit breaker is independent of the per-tool retry
+  // breaker below. The terminal abort is the authoritative signal; the
+  // provider-prefixed timeline entry attributes it without retaining an error
+  // body or credential material.
+  (s) => {
+    if (s.abortReason !== "circuit_breaker" && s.endReason !== "circuit_open") return null;
+    const providerEvent = s.breakerEvents.find(
+      (event) => event.event === "opened" && event.toolName.startsWith("provider:"),
+    );
+    const provider = providerEvent?.toolName.slice("provider:".length) || "the configured provider";
+    return {
+      code: "provider_circuit_open",
+      detail: `the model provider circuit breaker opened for ${provider} after repeated request failures`,
+      suggestedNextSteps: [
+        `check credentials, endpoint connectivity, and provider configuration for ${provider}`,
+        "retry after the provider recovers or the configured breaker cooldown expires",
+        "obs.explain depth=full for the breaker timeline",
+      ],
+    };
+  },
+
   // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;
@@ -552,7 +534,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 6) provider_timeout (insurance — any timeout-kind failure).
+  // 6) provider_timeout (insurance — any remaining timeout-kind failure).
   (s) => {
     const failure = s.failures.find((f) => f.errorKind === "timeout");
     if (failure === undefined) return null;
@@ -779,6 +761,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
+  // 9b-bis) provider_rejected_request. The provider refused the request itself, so the
+  //     model never ran and any tool/recall evidence is downstream — hence above
+  //     recall_miss and the catch-all. See obs-explain-provider-rejection-verdict.ts.
+  providerRejectedRequestVerdict,
+
   // 9c) background_pending. The foreground turn deliberately deferred its
   //     terminal outcome to promoted work, so incidental recall evidence must
   //     not replace the pending completion lifecycle as the primary diagnosis.
@@ -791,6 +778,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     NO tool failures (mutually exclusive with the catch-all) + the
   //     authoritative `degraded` flag (full rationale in the sibling
   //     obs-explain-recall-verdict.ts module doc).
+  executionAuthFailureVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened

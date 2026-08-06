@@ -829,6 +829,7 @@ function buildRpcDispatchDeps(deps: {
       : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
+    resolveMessageEndpoint: (agentId, channelType, conversationId) => c.notificationContext.sessionTracker.findUniqueEndpoint(agentId, channelType, conversationId),
     getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,
     mediaConfig: c.container.config.integrations.media, ttsAdapter: c.ttsAdapter, linkRunner: c.linkRunner,
@@ -2059,6 +2060,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
 
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
+    memoryCostFeaturesEnabled: container.config.memory.enabled !== false,
     // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),

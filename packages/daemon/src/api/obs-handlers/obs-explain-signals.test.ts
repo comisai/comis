@@ -27,6 +27,9 @@ import type { IncidentSignals } from "@comis/core";
 import { rootCause } from "./obs-explain-heuristics.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 
+const MEDIA_LIMIT_CONFIG_KEY =
+  "integrations.media.infrastructure.maxRemoteFetchBytes";
+
 // ---------------------------------------------------------------------------
 // Fixture-shaped record builders (mirror the VERIFIED on-disk shapes).
 // ---------------------------------------------------------------------------
@@ -41,6 +44,77 @@ function log678Success(): Record<string, unknown> {
     msg: 'Tool audit: web_fetch succeeded (506ms) — {"url":"https://example.com/q","extractMode":"text"}',
   };
 }
+
+describe("attachment rejection trajectory normalization", () => {
+  it("selects the rejection immediately preceding the latest prompt", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "media.attachment.rejected",
+        seq: 1,
+        data: {
+          attachmentIndex: 0,
+          reason: "size_exceeded",
+          sizeBytes: 30_000_000,
+          maxBytes: 20_000_000,
+          configKey: MEDIA_LIMIT_CONFIG_KEY,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 2,
+        data: {},
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "media.attachment.rejected",
+        seq: 3,
+        data: {
+          attachmentIndex: 1,
+          reason: "size_exceeded",
+          sizeBytes: 57_671_680,
+          maxBytes: 26_214_400,
+          configKey: MEDIA_LIMIT_CONFIG_KEY,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 4,
+        data: {},
+      },
+    ]);
+
+    expect(signals.mediaAttachmentRejections).toEqual([{
+      attachmentIndex: 1,
+      reason: "size_exceeded",
+      sizeBytes: 57_671_680,
+      maxBytes: 26_214_400,
+      configKey: MEDIA_LIMIT_CONFIG_KEY,
+    }]);
+  });
+});
+
+describe("provider breaker trajectory normalization", () => {
+  it("turns a provider circuit-breaker abort into an opened breaker timeline entry", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "execution.aborted",
+      seq: 12,
+      data: {
+        reason: "circuit_breaker",
+        provider: "test-provider",
+      },
+    }]);
+
+    expect(signals.breakerEvents).toContainEqual({
+      seq: 12,
+      event: "opened",
+      toolName: "provider:test-provider",
+    });
+  });
+});
 
 // 678 log-shaped failure: errorText carries the injection block AND a
 // `"status": 200` substring (escaped, exactly as in the fixture). The block
@@ -296,6 +370,16 @@ describe("toIncidentSignals — response locale decision", () => {
       actualScript: "Hebr",
       unrecoveredToolFailureCount: 1,
     });
+  });
+
+  it("retains closed terminal error kinds from the session summary", () => {
+    const signals = toIncidentSignals([
+      event("session.summary", 1, {
+        topErrorKinds: { auth: 1, dependency: 2, invented_kind: 99 },
+      }),
+    ]) as IncidentSignals & { summaryTopErrorKinds?: Record<string, number> };
+
+    expect(signals.summaryTopErrorKinds).toEqual({ auth: 1, dependency: 2 });
   });
 
   it("retains the latest normalized inbound kind", () => {
@@ -904,6 +988,10 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
         runId: "old-failed-child",
         reason: "no_origin",
       }),
+      event("subagent.background_processes_abandoned", 4.5, {
+        runId: "old-failed-child",
+        count: 1,
+      }),
       event("subagent.budget_exceeded", 5, {
         nodeId: "old-budget-node",
         capSource: "node",
@@ -926,6 +1014,7 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
     expect(s.nodeBudgetBreaches).toEqual([]);
     expect(s.subagentCompletions).toBeUndefined();
     expect(s.subagentDeliverySkipped).toBeUndefined();
+    expect(s.subagentBackgroundProcessesAbandoned).toBeUndefined();
     expect(rootCause({ ...s, endReason: "success", degraded: false })).toBeNull();
   });
 
@@ -1750,6 +1839,62 @@ describe("toolStats fidelity", () => {
     ]);
   });
 
+  it("retains MCP background deadline diagnostics as a bounded failure preview", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-mcp-timeout",
+          toolName: "mcp__reports--slow_lookup",
+          errorKind: "dependency",
+          failureCode: "mcp_call_deadline_exceeded",
+          failureConfigKey: "integrations.mcp.callToolTimeoutMs",
+          failureConfiguredMs: 120_000,
+          failureQueueWaitedMs: 110_025,
+          failureRequestBudgetMs: 9_975,
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp__reports--slow_lookup",
+        failureCode: "mcp_call_deadline_exceeded",
+        errorPreview:
+          "integrations.mcp.callToolTimeoutMs=120000ms; queueWaitedMs=110025; requestBudgetMs=9975",
+      }),
+    ]);
+  });
+
+  it("retains background hard-duration diagnostics as a bounded failure preview", () => {
+    const s = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "background_task.failed",
+        seq: 1,
+        data: {
+          taskId: "task-hard-timeout",
+          toolName: "mcp__reports--slow_lookup",
+          errorKind: "timeout",
+          failureCode: "background_hard_timeout_exceeded",
+          failureConfigKey: "agents.agent-1.backgroundTasks.maxBackgroundDurationMs",
+          failureConfiguredMs: 12_000,
+        },
+      },
+    ]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp__reports--slow_lookup",
+        failureCode: "background_hard_timeout_exceeded",
+        errorPreview:
+          "agents.agent-1.backgroundTasks.maxBackgroundDurationMs=12000ms",
+      }),
+    ]);
+  });
+
   it("replaces a promoted success with a degraded runtime-only background completion", () => {
     const s = toIncidentSignals([
       {
@@ -2330,5 +2475,28 @@ describe("toIncidentSignals — subagent.killed (attributed kill signal)", () =>
 
   it("is ABSENT (undefined, not {}) when no kill fired", () => {
     expect(toIncidentSignals([event("session.started", 0, {})]).subagentKilled).toBeUndefined();
+  });
+});
+
+describe("toIncidentSignals — abandoned sub-agent background processes", () => {
+  it("sums process counts and keeps the latest owning run identifier", () => {
+    const s = toIncidentSignals([
+      event("subagent.background_processes_abandoned", 1, { runId: "run-a", count: 1 }),
+      event("subagent.background_processes_abandoned", 2, { runId: "run-b", count: 2 }),
+    ]);
+
+    expect(s.subagentBackgroundProcessesAbandoned).toEqual({
+      count: 3,
+      lastRunId: "run-b",
+    });
+  });
+
+  it("omits malformed or zero-count abandoned-process records", () => {
+    const s = toIncidentSignals([
+      event("subagent.background_processes_abandoned", 1, { runId: "run-a", count: 0 }),
+      event("subagent.background_processes_abandoned", 2, { count: 2 }),
+    ]);
+
+    expect(s.subagentBackgroundProcessesAbandoned).toBeUndefined();
   });
 });

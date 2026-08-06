@@ -20,6 +20,7 @@
 import type { DiagnosticRow } from "@comis/memory";
 import type { PipelineAuthoringAggregate } from "@comis/observability";
 import {
+  backgroundRecoveryScanFromRow,
   chimericModelFromRow,
   cronOwnershipFailureFromRow,
   cronTimerDegradationFromRow,
@@ -49,6 +50,36 @@ import { buildAutonomyFindings } from "./system-autonomy.js";
 // `system-autonomy.ts` sibling can import it without a cycle) and re-exported here
 // for this module's existing consumers (system-health.ts imports `type Finding`).
 export type { Finding };
+
+function latestBackgroundRecoveryScan(
+  rows: readonly DiagnosticRow[],
+): ReturnType<typeof backgroundRecoveryScanFromRow> {
+  let latestRow: DiagnosticRow | undefined;
+  for (const row of rows) {
+    if (
+      healthSignalLabel(row) === "background_task_recovery_scan"
+      && (latestRow === undefined || row.timestamp >= latestRow.timestamp)
+    ) {
+      latestRow = row;
+    }
+  }
+  return latestRow === undefined ? null : backgroundRecoveryScanFromRow(latestRow);
+}
+
+/** Count active warning state, folding recovery scans by their latest status. */
+export function activeHealthSignalWarningCount(rows: readonly DiagnosticRow[]): number {
+  const nonScanWarningCount = rows.filter(
+    (row) => row.severity !== "info" && healthSignalLabel(row) !== "background_task_recovery_scan",
+  ).length;
+  const scanRows = rows.filter(
+    (row) => healthSignalLabel(row) === "background_task_recovery_scan",
+  );
+  const latestScan = latestBackgroundRecoveryScan(scanRows);
+  if (latestScan === null) {
+    return nonScanWarningCount + scanRows.filter((row) => row.severity !== "info").length;
+  }
+  return nonScanWarningCount + (latestScan.status === "failed" ? 1 : 0);
+}
 
 /**
  * The pipeline-authoring aggregate the authoring gate
@@ -188,6 +219,38 @@ export function buildFindings(
       hint: label === "inbound_persistence_failed"
         ? "This failure occurred before session creation; inspect the normalized message bound and channel envelope before retrying."
         : "run `comis explain` on an affected session; inspect the recurring health WARNs",
+    });
+  }
+
+  const recoveryScanRows = healthSignals.filter(
+    (row) => healthSignalLabel(row) === "background_task_recovery_scan",
+  );
+  const latestRecoveryScan = latestBackgroundRecoveryScan(recoveryScanRows);
+  if (latestRecoveryScan?.status === "failed") {
+    const failureKinds = latestRecoveryScan.failureKinds.length === 0
+      ? "unknown"
+      : latestRecoveryScan.failureKinds.join(", ");
+    const protectedRecords = latestRecoveryScan.recordRefs.map(
+      (recordRef) => `background-tasks/${recordRef}`,
+    );
+    findings.push({
+      code: "background_task_recovery_scan_failed",
+      detail: `${latestRecoveryScan.failureCount} protected background-task record failure(s) in the latest scan (${failureKinds})`,
+      count: latestRecoveryScan.failureCount,
+      hint: protectedRecords.length === 0
+        ? "inspect the background-tasks data root and the recovery WARN; the daemon retries the scan automatically"
+        : `inspect and repair protected record(s): ${protectedRecords.join(", ")}; the daemon retries the scan automatically`,
+    });
+  } else if (
+    latestRecoveryScan === null
+    && recoveryScanRows.some((row) => row.severity !== "info")
+  ) {
+    const count = recoveryScanRows.filter((row) => row.severity !== "info").length;
+    findings.push({
+      code: "background_task_recovery_scan_failed",
+      detail: `${count} unreadable background-task recovery scan signal(s) in the window`,
+      count,
+      hint: "inspect the background-tasks data root and the recovery WARN; the stored scan diagnostic is malformed",
     });
   }
 
@@ -669,21 +732,35 @@ export function buildFindings(
     }
     let admittedSum = 0;
     let untrustedSum = 0;
+    let dependencyFailureSum = 0;
+    let failedPassSum = 0;
+    let failedRuns = 0;
     for (const row of learningHealth) {
       const d = parseDetailsObject(row.details);
       if (typeof d.admitted === "number") admittedSum += d.admitted;
       if (typeof d.untrustedDrops === "number") untrustedSum += d.untrustedDrops;
+      const dependencyFailures = typeof d.dependencyFailures === "number" ? d.dependencyFailures : 0;
+      const failedPasses = typeof d.failedPasses === "number" ? d.failedPasses : 0;
+      dependencyFailureSum += dependencyFailures;
+      failedPassSum += failedPasses;
+      if (dependencyFailures > 0 || failedPasses > 0) failedRuns += 1;
     }
     const ld = parseDetailsObject(latest.details);
     const latestOutcome =
       typeof ld.admissionOutcome === "string" && REFLECT_ADMISSION_OUTCOMES.has(ld.admissionOutcome)
         ? ld.admissionOutcome
         : "unknown";
+    const latestFailed =
+      (typeof ld.dependencyFailures === "number" && ld.dependencyFailures > 0)
+      || (typeof ld.failedPasses === "number" && ld.failedPasses > 0);
+    const latestTerminal = latestFailed
+      ? "latest status=failed, errorKind=dependency"
+      : "latest status=completed";
     findings.push({
       code: "learning_health",
-      detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
+      detail: `${learningHealth.length} reflection run(s) in the window; ${latestTerminal}, latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}, failedRuns=${failedRuns}, dependencyFailures=${dependencyFailureSum}, failedPasses=${failedPassSum}`,
       count: learningHealth.length,
-      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. Use `comis cron runs "Memory review" --agent <agentId>` for the per-run funnel; these summed counts are the deployment-wide surface. If outcome COVERAGE is low, also check the boot log for `outcome judge unavailable` / `correction detector unavailable` — without a cheap-model key both silently no-op while learning events keep firing, so the funnel starves upstream of admission.',
+      hint: 'failedRuns/dependencyFailures above zero means reflection only partially completed; check provider credentials, quota, and availability, then use `comis cron runs "Reflection" --agent <agentId>` for the exact failed execution. admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. If outcome COVERAGE is low, also check the boot log for `outcome judge unavailable` / `correction detector unavailable` — without a cheap-model key both silently no-op while learning events keep firing, so the funnel starves upstream of admission.',
     });
   }
 

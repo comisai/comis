@@ -189,7 +189,7 @@ fi
 # a tmux pane on Linux. macOS cannot materialize that jail, so bwrap is an
 # explicit NO-ACCESS coverage gap rather than a false local-rig blocker.
 for bin in bwrap tmux node; do
-  if rig_is_local && [ "$bin" = "bwrap" ]; then
+  if rig_is_local && [ "$(uname -s)" = "Darwin" ] && [ "$bin" = "bwrap" ]; then
     warn "jail-dep:$bin" "NO-ACCESS on the local macOS rig — prove containment on Linux"
   elif command -v "$bin" >/dev/null 2>&1; then pass "jail-dep:$bin" "$(command -v "$bin")"
   else fail "jail-dep:$bin" "not on PATH — the bwrap/tmux jail cannot launch"; fi

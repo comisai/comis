@@ -160,6 +160,12 @@ export function normalizeOpenAICompatBaseUrl(
   return `${parsed.origin}/v1`;
 }
 
+/**
+ * A single entry from pi-ai's native catalog. Carries the capability metadata
+ * (`compat`, `thinkingLevelMap`) that selects the provider wire shape.
+ */
+type CatalogModel = ReturnType<typeof getModels>[number];
+
 function getBuiltInModelIds(type: string): Set<string> {
   if (!_builtInProviders.has(type)) return new Set();
   return new Set(getModels(type as BuiltinProvider).map((m) => m.id));
@@ -267,6 +273,8 @@ export function registerCustomProviders(
       reasoning?: boolean;
       input?: ReadonlyArray<"text" | "image">;
       cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+      thinkingLevelMap?: CatalogModel["thinkingLevelMap"];
+      compat?: CatalogModel["compat"];
     }>;
 
     if (shouldInheritCatalog) {
@@ -280,6 +288,13 @@ export function registerCustomProviders(
         reasoning: m.reasoning,
         input: m.input,
         cost: m.cost,
+        // Capability metadata decides the WIRE SHAPE pi-ai emits, so it must
+        // survive re-registration. Dropping `compat` made pi-ai fall back to
+        // the legacy `thinking:{type:"enabled",budget_tokens}` request for
+        // models that only accept `thinking:{type:"adaptive"}`, which the
+        // provider rejects with a hard 400 on every thinking-enabled turn.
+        thinkingLevelMap: m.thinkingLevelMap,
+        compat: m.compat,
       }));
       logger.debug(
         { providerName, type: entry.type, inherited: workingModels.length },
@@ -308,6 +323,11 @@ export function registerCustomProviders(
           maxTokens: m.maxTokens ?? cat.maxTokens,
           reasoning: m.reasoning ?? cat.reasoning,
           input: m.input ?? cat.input,
+          // Capability metadata has no user-supplied counterpart in
+          // `providers.entries.*.models[]`, so it always comes from the
+          // catalog. See the inherit branch above for why it must survive.
+          thinkingLevelMap: cat.thinkingLevelMap,
+          compat: cat.compat,
           cost: {
             input: m.cost?.input ?? cat.cost?.input,
             output: m.cost?.output ?? cat.cost?.output,
@@ -390,6 +410,10 @@ export function registerCustomProviders(
               maxTokens: m.maxTokens ?? 4_096,
               reasoning: m.reasoning ?? false,
               input: m.input ? [...m.input] : ["text"],
+              // Undefined for genuinely custom models (no catalog entry) --
+              // pi-ai then applies its own per-api defaults, as before.
+              thinkingLevelMap: m.thinkingLevelMap,
+              compat: m.compat,
               cost: {
                 input: m.cost?.input ?? 0,
                 output: m.cost?.output ?? 0,

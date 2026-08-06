@@ -106,6 +106,17 @@ export interface AgentEvents {
      * `background_task:{completed,failed}` terminal event instead.
      */
     backgrounded?: boolean;
+    /**
+     * Process-registry session identity for an exec auto-background handoff or
+     * a later process-tool observation. Content-free opaque id only.
+     */
+    processSessionId?: string;
+    /**
+     * Closed process-registry state paired with `processSessionId`. An exec
+     * auto-background handoff is reported as `running`; process.status/kill
+     * supplies the later terminal observation.
+     */
+    processSessionStatus?: "running" | "completed" | "failed" | "killed";
     userId?: string;
     traceId?: string;
     agentId?: string;
@@ -160,6 +171,9 @@ export interface AgentEvents {
     /** The source HOSTS the web result came from (e.g. ["example.com"]) —
      *  hosts ONLY, never full URLs with paths/queries, never bodies. */
     domains?: string[];
+    /** SHA-256 of the exact final URL for a successful web_fetch. This is
+     *  relay-only citation evidence: never the URL, path, query, or body. */
+    citationUrlDigest?: string;
   };
 
   /** Tools filtered out by policy before execution (debugging/audit) */
@@ -300,6 +314,16 @@ export interface AgentEvents {
     cacheReadTokens: number;
     /** Tokens written to provider cache. 0 if not applicable. */
     cacheWriteTokens: number;
+    /**
+     * How `cacheWriteTokens` split across the provider's write TTLs, normalized to
+     * sum EXACTLY to it. Absent where the provider prices writes at one rate, or
+     * where no split could be estimated.
+     *
+     * A write is billed by its TTL (Anthropic: 1h at 2x base, 5m at 1.25x, against
+     * 0.1x to read), so on a cached workload this split is what actually drives the
+     * bill — and without it the only place to read it is the provider's console.
+     */
+    cacheWriteTtlSplit?: { fiveMinuteTokens: number; oneHourTokens: number };
     /** Session key for per-session aggregation. Forwarded from execution context. */
     sessionKey: string;
     /** Net $ saved vs if all cached tokens were charged at regular input rate.
@@ -345,6 +369,16 @@ export interface AgentEvents {
     /** Content-free provider protocol classification. The raw provider error
      *  stays out of durable observability records. */
     providerErrorCode?: "invalid_tool_identity";
+    /**
+     * The classified category of the provider error that ended this call
+     * (`ErrorCategory` from the agent's error classifier — a closed enum, so
+     * raw provider prose stays out of durable records). Present only when the
+     * call ended in an error. Without it a hard, repeated provider rejection
+     * left no trace on the IncidentReport beyond `stopReason:"error"`, so
+     * `likelyRootCause` ranked incidental evidence (a zero-hit recall) over the
+     * acute cause.
+     */
+    modelErrorCategory?: string;
     /** Execution-level finish disposition (e.g. "stop"|"loop_detected"|"budget_exceeded").
      *  Best-effort at the per-turn emit — m.finishReason settles LATER than turn_end,
      *  so treat this as the init-default "stop"; the flight-recorder's

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { DiagnosticRow } from "@comis/memory";
-import { buildFindings, pipelineAuthoringAggregateFromRows } from "./system-findings.js";
+import {
+  activeHealthSignalWarningCount,
+  buildFindings,
+  pipelineAuthoringAggregateFromRows,
+} from "./system-findings.js";
 import { orchestrateEfficiencyFromRow, pricingGapFromRow } from "./system-findings-extractors.js";
 
 // ---------------------------------------------------------------------------
@@ -925,6 +929,100 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
 describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("names the protected record for an active background recovery scan failure", () => {
+    const finding = buildFindings(
+      [{
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "failed",
+          failureCount: 1,
+          failureKinds: ["task_validation"],
+          recordRefs: ["default/task-a.json"],
+        }),
+      }],
+      [],
+      [],
+    ).find((candidate) => candidate.code === "background_task_recovery_scan_failed");
+
+    expect(finding?.detail).toContain("task_validation");
+    expect(finding?.hint).toContain("background-tasks/default/task-a.json");
+    expect(finding?.hint).not.toMatch(/comis explain/i);
+  });
+
+  it("clears the background recovery finding after the latest healthy scan", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "failed",
+          failureCount: 1,
+          failureKinds: ["task_validation"],
+          recordRefs: ["default/task-a.json"],
+        }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "info",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "healthy",
+          failureCount: 0,
+          failureKinds: [],
+          recordRefs: [],
+        }),
+      },
+    ];
+
+    expect(buildFindings(rows, [], []).some(
+      (candidate) => candidate.code === "background_task_recovery_scan_failed",
+    )).toBe(false);
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(0);
+  });
+
+  it("keeps unrelated warnings active after a healthy background recovery scan", () => {
+    const rows: DiagnosticRow[] = [
+      {
+        timestamp: 1_000,
+        category: "health_signal",
+        severity: "info",
+        message: "background_task_recovery_scan",
+        details: JSON.stringify({
+          signal: "background_task_recovery_scan",
+          status: "healthy",
+          failureCount: 0,
+          failureKinds: [],
+          recordRefs: [],
+        }),
+      },
+      {
+        timestamp: 2_000,
+        category: "health_signal",
+        severity: "warning",
+        message: "mcp_reconnect_failed",
+        details: JSON.stringify({
+          signal: "mcp_reconnect_failed",
+          reason: "transport_error",
+        }),
+      },
+    ];
+
+    expect(activeHealthSignalWarningCount(rows)).toBe(1);
+    expect(buildFindings(rows, [], []).some(
+      (candidate) => candidate.code === "health_signal:mcp_reconnect_failed",
+    )).toBe(true);
+  });
+
   it("makes pre-session inbound persistence failures actionable without explain", () => {
     const finding = buildFindings(
       [{
@@ -1236,6 +1334,24 @@ describe("buildFindings — learning_health (reflection funnel rollup)", () => {
     ]);
     expect(findings.find((finding) => finding.code === "learning_health")?.hint)
       .toContain("comis cron runs");
+  });
+
+  it("surfaces partial reflection dependency failures in the daemon-wide finding", () => {
+    const row = learningHealthRow(1_000, { admissionOutcome: "admitted", admitted: 1 });
+    row.details = JSON.stringify({
+      admissionOutcome: "admitted",
+      admitted: 1,
+      untrustedDrops: 0,
+      dependencyFailures: 1,
+      failedPasses: 0,
+    });
+
+    const finding = buildFindings([], [], [], [row]).find((item) => item.code === "learning_health");
+
+    expect(finding?.detail).toContain("latest status=failed");
+    expect(finding?.detail).toContain("errorKind=dependency");
+    expect(finding?.detail).toContain("failedRuns=1");
+    expect(finding?.detail).toContain("dependencyFailures=1");
   });
 
   it("no learning_health finding when there are no reflection rows (callers omitting the argument are unchanged)", () => {

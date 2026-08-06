@@ -7,28 +7,47 @@
 // in this process. Output contains names, file categories, and match counts;
 // it never prints a value or matching bytes. Exit 1 means plaintext residency.
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { ensureRpcEnv, importCli, rig } from "./_rig.mjs";
+import { comisDist, ensureRpcEnv, importCli, rig } from "./_rig.mjs";
 
 const secretNames = process.argv.slice(2);
 if (secretNames.length === 0) {
   console.error("secret-residency.mjs: pass at least one secret name");
   process.exit(2);
 }
-if (secretNames.some((name) => !/^[A-Z][A-Z0-9_]*$/.test(name))) {
-  console.error("secret-residency.mjs: secret names must use uppercase letters, digits, and underscores");
+if (secretNames.some((name) => name.length > 256 || !/^[A-Za-z][A-Za-z0-9_.-]*$/.test(name))) {
+  console.error("secret-residency.mjs: secret names must be safe identifiers no longer than 256 characters");
   process.exit(2);
 }
 
 ensureRpcEnv();
 const { withClient } = await importCli("client/rpc-client.js");
-const secretResults = await Promise.all(secretNames.map((name) =>
-  withClient((client) => client.call("secrets.get", { name }))));
+const rpcSecretNamePattern = /^[A-Z][A-Z0-9_]*$/;
+const secretResults = await Promise.all(secretNames.map(async (name) => {
+  if (rpcSecretNamePattern.test(name)) {
+    const result = await withClient((client) => client.call("secrets.get", { name }));
+    if (result?.exists === true && typeof result.value === "string" && result.value.length > 0) {
+      return { ...result, retrievalSource: "secret-rpc" };
+    }
+  } else {
+    const { offlineSecretGet } = await import(comisDist("memory", "dist/index.js"));
+    const result = offlineSecretGet({
+      name,
+      dataDir: rig.dataDir,
+      envFilePath: `${rig.dataDir}/.env`,
+    });
+    if (!result.ok) throw result.error;
+    if (typeof result.value === "string" && result.value.length > 0) {
+      return { exists: true, value: result.value, retrievalSource: "encrypted-store" };
+    }
+  }
+  return { exists: false };
+}));
 const secrets = secretResults.map((result, index) => {
   if (result?.exists === true && typeof result.value === "string" && result.value.length > 0) {
     return {
       name: secretNames[index],
       bytes: Buffer.from(result.value, "utf8"),
-      source: "secret-rpc",
+      source: result.retrievalSource,
     };
   }
   const envValue = process.env[secretNames[index]];

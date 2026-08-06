@@ -65,6 +65,56 @@ export interface AdaptiveCacheRetention {
   recordCacheReadForStability(cacheReadTokens: number, baselineTokens: number): boolean;
 }
 
+/**
+ * Cold-start retention for a configured warm target.
+ *
+ * The ladder only functions when cold and warm DIFFER: `tryEscalate` returns
+ * early on `currentRetention === config.warmRetention`, so supplying the same
+ * value for both pins `escalated` false for the life of the session. That
+ * silently disables three things at once — the escalation itself, the
+ * `onEscalated` warm-state callback, and the prefix-instability downgrade
+ * (which steps back to `coldStartRetention`, i.e. to the very value it was
+ * meant to escape).
+ *
+ * Starting cold at 5m makes the FIRST write of a session cheap, and the >20K
+ * fast path promotes on turn 2 — so a large system prompt reaches 1h TTL as
+ * soon as it has proven it is read at all, instead of paying the 2x 1h write
+ * premium before any evidence the cache will be used.
+ */
+export function coldStartRetentionFor(warmRetention: CacheRetention): CacheRetention {
+  return warmRetention === "long" ? "short" : warmRetention;
+}
+
+/**
+ * Where a session's ladder should START.
+ *
+ * The ladder is rebuilt per EXECUTION, not per session, so "cold start" is only
+ * true the first time. A session that has already escalated has its prefix cached
+ * at the warm TTL; starting it cold again writes the entire prefix at 5m and then
+ * re-writes it at 1h on re-escalation — `6.25N + 10N` where `10N` would have done,
+ * and again on the next execution. Changing the TTL of a cache_control entry does
+ * not retag the existing one, it creates another, so the ladder cannot be climbed
+ * for free.
+ *
+ * Live, that was `reason=retention_changed` dropping 627,920 tokens in ~9.5h. The
+ * escalation already recorded the warm state via `onEscalated` — nothing ever read
+ * it back (`getCacheWarm` had exactly one reference in the repository: its own
+ * definition).
+ *
+ * A genuinely cold prefix is unchanged: no evidence the cache will be read yet, so
+ * it still starts cheap rather than paying the 2x premium up front.
+ *
+ * @param warmRetention - The session's configured (warm) retention.
+ * @param sessionAlreadyWarm - Whether this session has previously escalated.
+ * @returns The retention the ladder should begin this execution at.
+ */
+export function resolveColdStartRetention(
+  warmRetention: CacheRetention,
+  sessionAlreadyWarm: boolean | undefined,
+): CacheRetention {
+  return sessionAlreadyWarm === true ? warmRetention : coldStartRetentionFor(warmRetention);
+}
+
 export function createAdaptiveCacheRetention(
   config: AdaptiveCacheRetentionConfig,
 ): AdaptiveCacheRetention {

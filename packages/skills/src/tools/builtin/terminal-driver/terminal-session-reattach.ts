@@ -185,6 +185,10 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
     lastActivity: nowMs,
     startedAt: d.createdAt,
     owner: d.owner,
+    // Re-stamp the origin conversation VERBATIM (the same WHERE-not-WHAT discipline as
+    // owner/allowId/scope): a drive resumed after a daemon restart must still report its
+    // outcome to the thread that started it, not to whatever is most recent by then.
+    ...(d.originEndpoint !== undefined ? { originEndpoint: d.originEndpoint } : {}),
     // The two durability handle fields: the durable marker + the re-attach key the
     // durable-aware markRunningSessionsLost consults (a durable + tmux-alive session
     // is NOT flipped lost on a worker close).
@@ -242,6 +246,9 @@ export interface DurableCreateInputs {
   rows: number;
   createdAt: number;
   scope?: SessionDescriptor["scope"];
+  /** The conversation the drive was created from — persisted so a re-attached durable drive
+   *  still reports its outcome to that thread. Absent for a non-channel (API/cron) drive. */
+  originEndpoint?: SessionDescriptor["originEndpoint"];
 }
 
 /**
@@ -263,6 +270,7 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
   };
   if (i.scope !== undefined) descriptor.scope = i.scope;
   if (i.tmuxSocket !== undefined) descriptor.tmuxSocket = i.tmuxSocket;
+  if (i.originEndpoint !== undefined) descriptor.originEndpoint = i.originEndpoint;
   return descriptor;
 }
 

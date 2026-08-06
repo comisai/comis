@@ -21,6 +21,7 @@ import type {
   OrchestrateRun,
 } from "./incident-report-sections.js";
 import type { ResponseLocaleRepairSkipped } from "../domain/response-locale-policy.js";
+import type { ErrorKind } from "../logging/log-fields.js";
 
 /**
  * A single normalized failure entry the assembler emits (and the bounding
@@ -62,7 +63,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 27 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 29 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -117,6 +118,18 @@ export interface IncidentSignals {
   /** The terminal provider rejected a persisted structured protocol identity
    *  before generation. Content-free; raw provider prose is never retained. */
   providerErrorCode?: "invalid_tool_identity";
+  /**
+   * Tally of the LLM calls the provider REJECTED this session, keyed by the
+   * closed `ErrorCategory` enum (dominant category first). Absent ⇒ no errored
+   * model call in the trajectory.
+   *
+   * Lets `likelyRootCause` name a hard, repeated provider rejection. Without it
+   * such a session carried no failure signal at all — `failures[]` is
+   * tool-boundary-shaped, so a provider-side rejection left only
+   * `stopReason:"error"` and the verdict fell through to incidental evidence
+   * (a zero-hit recall on a fresh install with an empty memory store).
+   */
+  modelErrors?: { total: number; byCategory: Record<string, number> };
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;
@@ -164,6 +177,13 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Child runs that returned before their auto-backgrounded process sessions
+   * reached terminal state. Folded from
+   * `subagent.background_processes_abandoned`; counts and run ids only. */
+  subagentBackgroundProcessesAbandoned?: {
+    count: number;
+    lastRunId: string;
+  };
   /** Completed sub-agent results that had no authenticated completion route.
    * Folded from `subagent.delivery_skipped`; counts and stable identifiers only. */
   subagentDeliverySkipped?: {
@@ -191,6 +211,8 @@ export interface IncidentSignals {
     promoted: number;
     completed: number;
     failed: number;
+    cancelled: number;
+    reentered: number;
     accepted: number;
     pending: number;
   };
@@ -209,6 +231,14 @@ export interface IncidentSignals {
     capped: number;
     durationMs: number;
   };
+  /** Current-turn attachment guards reconstructed from pre-prompt receipts. */
+  mediaAttachmentRejections?: Array<{
+    attachmentIndex: number;
+    reason: "size_exceeded";
+    sizeBytes: number;
+    maxBytes: number;
+    configKey: "integrations.media.infrastructure.maxRemoteFetchBytes";
+  }>;
   failures: IncidentFailure[]; // normalized, newest-first
   breakerEvents: Array<{
     seq: number;
@@ -391,7 +421,9 @@ export interface IncidentSignals {
    * `autonomy.budget.<limb>`. Lets the spend verdict name the exact limb. Absent ⇒
    * not a per-root spend-abort.
    */
-  perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+  perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
+  /** Exact configured step ceiling from a terminal max-steps abort. */
+  stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   /**
    * The LAST `activity.turn_finalized` record — the terminal user-surface
    * state the renderer painted (closed outcome kind + closed ErrorKind + a
@@ -450,6 +482,9 @@ export interface IncidentSignals {
    * last-write-wins rollup turnCount. Absent ⇒ no summary records.
    */
   summaryTurnCount?: number;
+  /** Closed operational failure kinds accumulated from `session.summary`.
+   * This covers terminal model/envelope failures that have no tool-result row. */
+  summaryTopErrorKinds?: Partial<Record<ErrorKind, number>>;
   /**
    * Σ of the session's `session.summary` records' `costUsd` — the
    * trajectory-derived session cost. Each summary record carries ONE

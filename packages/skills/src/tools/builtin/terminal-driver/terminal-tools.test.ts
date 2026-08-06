@@ -28,6 +28,7 @@ import {
   createTerminalSessionResizeTool,
   createTerminalSessionWaitTool,
   resolveOwner,
+  resolveOriginEndpoint,
   type TerminalToolDeps,
   type TerminalEventBus,
   type TerminalInputNeededEvent,
@@ -297,6 +298,54 @@ function baseDeps(
   };
 }
 
+// The drive's ORIGIN conversation, captured server-side from the resolved turn scope so a
+// backgrounded drive's outcome/escalation returns to the thread that started it. It is
+// deliberately NOT a create param: an agent-supplied endpoint would let a prompt-injected
+// drive redirect its own escalations into another conversation (the same rule that keeps
+// `scope` sourced exclusively from the operator's allow entry).
+describe("terminal session origin endpoint", () => {
+  const ENDPOINT = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-A",
+    conversationKind: "direct" as const,
+  };
+  const ctxWithScope = (): RequestContext => ({
+    tenantId: "default",
+    userId: "human-user",
+    agentId: "resolved-agent",
+    sessionKey: "default:human-user:telegram",
+    traceId: "30000000-0000-4000-8000-000000000004",
+    startedAt: 1,
+    trustLevel: "admin",
+    turnScope: {
+      conversation: { partition: { kind: "endpoint-conversation", endpoint: ENDPOINT } },
+      principal: { principalId: "human-user" },
+      endpoint: ENDPOINT,
+    },
+  } as unknown as RequestContext);
+
+  it("resolves the origin endpoint from the turn scope", () => {
+    expect(runWithContext(ctxWithScope(), () => resolveOriginEndpoint())).toEqual(ENDPOINT);
+  });
+
+  it("is undefined with no request context or no turn scope (an API/cron drive routes as today)", () => {
+    expect(resolveOriginEndpoint()).toBeUndefined();
+    expect(runWithContext(
+      {
+        tenantId: "default",
+        userId: "human-user",
+        agentId: "resolved-agent",
+        sessionKey: "default:human-user:telegram",
+        traceId: "30000000-0000-4000-8000-000000000005",
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => resolveOriginEndpoint(),
+    )).toBeUndefined();
+  });
+});
+
 describe("terminal session owner identity", () => {
   it("uses the resolved agent instead of the human user", () => {
     const deps = baseDeps(makeFakeRegistry());
@@ -429,6 +478,27 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
     expect(registry.createCalls).toHaveLength(1);
     expect(registry.createCalls[0]!.durable, "drive.durable:true must thread to req.durable").toBe(true);
+  });
+
+  // The origin conversation comes from the RESOLVED CONTEXT, never from params. `CreateParams`
+  // is not `additionalProperties:false`, so the guarantee is that the handler builds its
+  // CreateRequest from named locals and never reads an origin off `params` — a future refactor
+  // that spread `...params` into the request would let a prompt-injected agent redirect its own
+  // escalations into another conversation. This pins that it cannot.
+  it("ignores an agent-supplied originEndpoint in params (the origin is context-sourced only)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+
+    await tool.execute("call-1", {
+      allowId: "bash",
+      command: realBashPath(),
+      originEndpoint: { channelType: "telegram", channelInstanceId: "attacker", conversationId: "chat-evil", conversationKind: "direct" },
+      destinationEndpoint: { channelType: "telegram", channelInstanceId: "attacker", conversationId: "chat-evil", conversationKind: "direct" },
+    } as never);
+
+    expect(registry.createCalls).toHaveLength(1);
+    // No ambient turn scope in this test ⇒ no origin at all, and certainly not the supplied one.
+    expect(registry.createCalls[0]!.originEndpoint).toBeUndefined();
   });
 
   it("a non-durable create tool leaves req.durable unset (today's spawn session)", async () => {
@@ -1484,7 +1554,7 @@ function makeTerminalApprovalContext(): RequestContext {
       },
     },
     deliveryOrigin: Object.freeze({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelId: "chat-1",
     }),
   };
 }
@@ -1627,7 +1697,7 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     expect(call.conversationRef).toMatch(/^cv_/);
     expect(call.resolvingPrincipalId).toBe("principal-test-user");
     expect(call.callbackOwner).toEqual({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+      tenantId: "default", userId: "principal-test-user", channelType: "telegram", channelKey: "chat-1",
     });
     expect(call.trustLevel).toBe("guest");
   });

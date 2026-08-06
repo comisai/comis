@@ -74,6 +74,22 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     });
   });
 
+  it("retains bounded content-free attachment rejection evidence", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      mediaAttachmentRejections: [{
+        attachmentIndex: 0,
+        reason: "size_exceeded",
+        sizeBytes: 57_671_680,
+        maxBytes: 26_214_400,
+        configKey: "integrations.media.infrastructure.maxRemoteFetchBytes",
+      }],
+    });
+
+    expect(parsed.mediaAttachmentRejections).toHaveLength(1);
+    expect(parsed.mediaAttachmentRejections?.[0]?.sizeBytes).toBe(57_671_680);
+  });
+
   it("retains the content-free locale repair skip diagnosis", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
@@ -350,6 +366,7 @@ describe("IncidentReportSchema task-check lifecycle section", () => {
         lifecycle: "terminal",
         outcome: "delivered",
         recovery: "live",
+        suppressionReason: "heartbeat_token",
         deliveredChunks: 1,
         failedChunks: 0,
         ambiguousChunks: 0,
@@ -364,6 +381,7 @@ describe("IncidentReportSchema task-check lifecycle section", () => {
       lifecycle: "terminal",
       outcome: "delivered",
       recovery: "live",
+      suppressionReason: "heartbeat_token",
       deliveredChunks: 1,
       failedChunks: 0,
       ambiguousChunks: 0,
@@ -405,6 +423,29 @@ describe("IncidentReportSchema spend? section", () => {
   it("rejects a spend section missing capUsd (the shape is enforced)", () => {
     const report = { ...baseReport(), spend: { scope: "global", totalUsd: 5 } };
     expect(() => IncidentReportSchema.parse(report)).toThrow();
+  });
+});
+
+describe("IncidentReportSchema perRootBudget section", () => {
+  it("preserves the rejected attempted amount needed to explain a pre-reserve breach", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      perRootBudget: {
+        limb: "tokens",
+        spent: 25293,
+        attempted: 26326,
+        cap: 30000,
+        unit: "tokens",
+      },
+    });
+
+    expect(parsed.perRootBudget).toEqual({
+      limb: "tokens",
+      spent: 25293,
+      attempted: 26326,
+      cap: 30000,
+      unit: "tokens",
+    });
   });
 });
 

@@ -24,6 +24,23 @@ export const GroupHistoryContextEntrySchema = z.strictObject({
 
 export type GroupHistoryContextEntry = z.infer<typeof GroupHistoryContextEntrySchema>;
 
+/** Runtime-owned auto-reply policy applied to the current activated group turn. */
+export const AutoReplyPolicyContextSchema = z.strictObject({
+  groupActivation: z.enum(["always", "mention-gated", "custom"]),
+  historyInjection: z.boolean(),
+});
+
+export type AutoReplyPolicyContext = z.infer<typeof AutoReplyPolicyContextSchema>;
+
+/** One platform message explicitly referenced by the current inbound reply. */
+export const ReplyContextSchema = z.strictObject({
+  messageId: z.string().min(1),
+  senderKind: z.enum(["agent", "user", "unknown"]),
+  text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS).optional(),
+});
+
+export type ReplyContext = z.infer<typeof ReplyContextSchema>;
+
 /**
  * Voice-specific metadata for voice notes and audio messages.
  */
@@ -182,6 +199,47 @@ export type VisionDirectPreprocessReceipt = z.infer<
   typeof VisionDirectPreprocessReceiptSchema
 >;
 
+/** The operator-facing limit that bounds remote attachment downloads. */
+export const MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY =
+  "integrations.media.infrastructure.maxRemoteFetchBytes" as const;
+
+/**
+ * Content-free evidence that one current attachment was rejected before its
+ * bytes entered the workspace or model context.
+ */
+/** Bound on the trusted rejection evidence carried on one turn's metadata. */
+export const MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX = 16;
+
+export const MediaAttachmentPreprocessReceiptSchema = z.strictObject({
+  attachmentIndex: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX - 1),
+  outcome: z.literal("rejected"),
+  reason: z.literal("size_exceeded"),
+  sizeBytes: z.number().int().nonnegative(),
+  maxBytes: z.number().int().nonnegative(),
+  configKey: z.literal(MEDIA_REMOTE_FETCH_LIMIT_CONFIG_KEY),
+});
+
+export const MediaAttachmentPreprocessReceiptsSchema = z
+  .array(MediaAttachmentPreprocessReceiptSchema)
+  .max(MEDIA_ATTACHMENT_PREPROCESS_RECEIPT_MAX);
+
+export type MediaAttachmentPreprocessReceipt = z.infer<
+  typeof MediaAttachmentPreprocessReceiptSchema
+>;
+
+/** Render trusted current-attachment status without including names, URLs, or content. */
+export function formatMediaAttachmentRejection(
+  receipt: MediaAttachmentPreprocessReceipt,
+): string {
+  return `<attachment-status attachment-index="${receipt.attachmentIndex + 1}" outcome="rejected" reason="size_exceeded" size-bytes="${receipt.sizeBytes}" max-bytes="${receipt.maxBytes}" config-key="${receipt.configKey}">
+The current attachment was not downloaded or persisted because it exceeds the configured remote-fetch limit. Do not claim to have read it. Do not substitute an earlier attachment or workspace file. Ask for a smaller file, or report the exact config key and byte values above.
+</attachment-status>`;
+}
+
 /**
  * Content-free proof that the internal completion relay is rewriting a
  * runtime-settled action result rather than handling ordinary cross-session
@@ -194,6 +252,18 @@ export const RuntimeActionEvidenceSchema = z.strictObject({
 export type RuntimeActionEvidence = z.infer<
   typeof RuntimeActionEvidenceSchema
 >;
+
+/**
+ * Runtime-owned proof that a background result observed successful web fetches.
+ * Only exact SHA-256 URL digests cross the relay boundary: fetched URLs, page
+ * content, titles, and snippets remain out of metadata and telemetry.
+ */
+export const CitationEvidenceSchema = z.strictObject({
+  kind: z.literal("web_fetch"),
+  urlDigests: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).max(100),
+});
+
+export type CitationEvidence = z.infer<typeof CitationEvidenceSchema>;
 
 export interface SttPreprocessSelection {
   readonly provider: string;
@@ -244,13 +314,21 @@ export const NormalizedMessageSchema = z.strictObject({
       sttPreprocess: SttPreprocessReceiptsSchema.optional(),
       /** Trusted, content-free direct model-vision preprocessing receipt. */
       visionPreprocess: VisionDirectPreprocessReceiptSchema.optional(),
+      /** Trusted, content-free current-attachment rejection receipts. */
+      mediaAttachmentPreprocess: MediaAttachmentPreprocessReceiptsSchema.optional(),
       /** Runtime-owned current-action receipt for internal completion rewrites. */
       runtimeActionEvidence: RuntimeActionEvidenceSchema.optional(),
+      /** Runtime-owned exact-URL digests from successful background web fetches. */
+      citationEvidence: CitationEvidenceSchema.optional(),
       /** Trusted projection of earlier group chatter, rendered as untrusted prompt context. */
       groupHistoryContext: z
         .array(GroupHistoryContextEntrySchema)
         .max(MAX_GROUP_HISTORY_CONTEXT_MESSAGES)
         .optional(),
+      /** Runtime-owned group activation policy used for this turn. */
+      autoReplyPolicyContext: AutoReplyPolicyContextSchema.optional(),
+      /** Bounded content and attribution for the platform message explicitly replied to. */
+      replyContext: ReplyContextSchema.optional(),
     }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),

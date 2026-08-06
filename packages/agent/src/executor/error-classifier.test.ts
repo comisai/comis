@@ -48,6 +48,13 @@ describe("classifyError", () => {
     expect(result.userMessage).not.toContain("401");
   });
 
+  it("classifies a missing provider API key as an authentication failure", () => {
+    const result = classifyError(new Error("No API key found for anthropic."));
+
+    expect(result.category).toBe("auth_invalid");
+    expect(errorKindForCategory(result.category)).toBe("auth");
+  });
+
   it.each([
     ["UnrecognizedClientException", "aws_auth_invalid", "AWS_BEARER_TOKEN_BEDROCK"],
     ["InvalidSignatureException", "aws_auth_invalid", "access keys"],
@@ -112,6 +119,35 @@ describe("classifyError", () => {
     expect(result.userMessage).not.toContain("400");
     // Self-heal messaging emphasizes automatic recovery, not reset.
     expect(result.userMessage.toLowerCase()).toContain("automatically");
+  });
+
+  it("classifies the adaptive-thinking capability rejection as model_capability_unsupported", () => {
+    // Verbatim wire error from the production incident. It must NOT land in
+    // client_request_signed_replay (whose user message promises an automatic
+    // retry that cannot possibly help) nor in plain client_request (whose
+    // message blames "formatting" and suggests resetting the conversation).
+    const error = new Error(
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"\\"thinking.type.enabled\\" is not supported for this model. Use \\"thinking.type.adaptive\\" and \\"output_config.effort\\" to control thinking behavior."},"request_id":"req_011CdiFuZtawr8drzdBmCtx9"}'
+    );
+    const result = classifyError(error);
+    expect(result.category).toBe("model_capability_unsupported");
+    // Deterministic: the same request always fails, so never retryable.
+    expect(result.retryable).toBe(false);
+    // The hint must name the knob an operator actually turns.
+    expect(result.hint).toContain("providers.entries");
+    // userMessage must not leak raw provider internals.
+    expect(result.userMessage).not.toContain("thinking.type.enabled");
+    expect(result.userMessage).not.toContain("invalid_request_error");
+    expect(result.userMessage).not.toContain("400");
+    // It is an operator problem, not something the user can fix by rephrasing.
+    expect(result.userMessage.toLowerCase()).toContain("administrator");
+  });
+
+  it("classifies an unsupported-parameter rejection as model_capability_unsupported", () => {
+    const error = new Error('400 invalid_request_error: unsupported parameter "top_k"');
+    const result = classifyError(error);
+    expect(result.category).toBe("model_capability_unsupported");
+    expect(result.retryable).toBe(false);
   });
 
   it('classifies bare "cannot be modified" without signature noun as client_request', () => {

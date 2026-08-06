@@ -67,6 +67,8 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     3. **honest "unavailable"** -- when no tier can serve, the tool reports an unavailable result with an error kind and a hint naming the knob to set, never a crash or a misroute to the wrong provider.
 
     An explicit `integrations.media.vision.defaultProvider` in `config.yaml` **overrides** main-first (explicit operator config wins) -- the registry tier serves that provider directly.
+
+    A named provider is a boundary, not a preference: if it is not configured, or cannot handle the media type in question (for example a video sent to an image-only provider), vision reports the honest "unavailable" result. It does **not** fall through to another provider in the chain, even when one could serve the request -- naming a provider is how an operator controls where user media is sent, so substituting a different one would defeat the setting.
   </Accordion>
 
   <Accordion title="tts_synthesize -- Generate spoken audio from text" icon="volume-high">
@@ -130,7 +132,7 @@ For per-provider setup, model defaults, and configuration, see the [Media & Voic
     2. The raw video buffer is sent to a **video-capable** vision provider for analysis.
     3. The provider returns a description of the video content.
 
-    **Raw video is Gemini-only.** Unlike `image_analyze`, `describe_video` does **not** route through an arbitrary main model -- only Gemini accepts the raw video buffer (there is no frame extraction in this release). So `describe_video` goes straight to the **gemini-video** tier (via the vision registry's Google provider); if no video-capable provider is configured, the tool reports an honest "unavailable" result with a hint to configure Gemini, never a crash. A non-Gemini main model does not change this -- the main-provider vision path applies to `image_analyze`, not raw video.
+    **Raw video is Gemini-only.** Unlike `image_analyze`, `describe_video` does **not** route through an arbitrary main model -- only Gemini accepts the raw video buffer (there is no frame extraction in this release). So `describe_video` goes straight to the **gemini-video** tier (via the vision registry's Google provider); if no video-capable provider is configured -- or `integrations.media.vision.defaultProvider` pins a provider that cannot serve video -- the tool reports an honest "unavailable" result with a hint to configure Gemini, never a crash. A non-Gemini main model does not change this -- the main-provider vision path applies to `image_analyze`, not raw video.
 
     **Example usage:**
     When a user shares a video clip, the agent can describe what is happening:
@@ -293,7 +295,7 @@ Media tools route to providers based on the credentials present in your secret s
 
 | Capability | Available providers | Auto-selection order | Required env keys |
 |------------|--------------------|--------------------|-------------------|
-| Vision -- `image_analyze` | **Follows the agent's main provider** when it is vision-capable (Claude / GPT-4o / Gemini and other image-accepting models), reusing its key; else the independent vision registry (OpenAI / Anthropic / Google) | main-vision -> registry (OpenAI -> Anthropic -> Google, first available) -> honest unavailable; an explicit `defaultProvider` overrides main-first | **None in the main-vision case** (reuses the main provider's key / Codex OAuth profile). The registry fallback uses `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one). |
+| Vision -- `image_analyze` | **Follows the agent's main provider** when it is vision-capable (Claude / GPT-4o / Gemini and other image-accepting models), reusing its key; else the independent vision registry (OpenAI / Anthropic / Google) | main-vision -> registry (OpenAI -> Anthropic -> Google, first available) -> honest unavailable; an explicit `defaultProvider` overrides main-first and is served or declined, never substituted | **None in the main-vision case** (reuses the main provider's key / Codex OAuth profile). The registry fallback uses `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one). |
 | Vision -- `describe_video` (raw video) | **Gemini only** (raw video buffer; no frame extraction this release) | gemini-video -> honest unavailable | `GOOGLE_API_KEY` (the vision registry's Google provider) |
 | TTS (`tts_synthesize`) | OpenAI TTS, ElevenLabs, Edge | Configured order; `auto-tts` heuristic decides when to use voice | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` (Edge is free) |
 | STT (`transcribe_audio`) | OpenAI Whisper (gpt-4o-mini-transcribe), Groq Whisper, Deepgram nova-3 | Fallback chain in declared order | `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPGRAM_API_KEY` (at least one) |

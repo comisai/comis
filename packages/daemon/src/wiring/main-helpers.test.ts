@@ -338,6 +338,46 @@ describe("createBgNotifyFn", () => {
     }));
   });
 
+  // A backgrounded drive must report back to the conversation that STARTED it. The
+  // resolution chain is explicit → platform-match → primaryChannel → recent-session, so an
+  // explicit destinationEndpoint is the ONLY rung that pins the origin; without it a drive
+  // started in thread A notifies whichever session is most recent (thread B, a cron turn).
+  it("forwards an explicit destinationEndpoint into resolveDestination (the origin-bound rung)", async () => {
+    const origin = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-main",
+      conversationId: "chat-A",
+      conversationKind: "direct" as const,
+    };
+    const authority = { tenantId: "t", agentId: "agent-1", conversationRef: "cv_a" };
+    const notifyUser = vi.fn().mockResolvedValue({ ok: true, value: "n-1" });
+    const service = {
+      resolveDestination: vi.fn().mockReturnValue({ ok: true, value: { authority, destinationEndpoint: origin } }),
+      notifyUser,
+    };
+    const { createBgNotifyFn } = await import("./main-helpers.js");
+
+    await createBgNotifyFn({ ref: service as never })({ ...OPTS, destinationEndpoint: origin });
+
+    expect(service.resolveDestination).toHaveBeenCalledWith({ agentId: "agent-1", destinationEndpoint: origin });
+    expect(notifyUser).toHaveBeenCalledWith(expect.objectContaining({ destinationEndpoint: origin }));
+  });
+
+  // The absent case must stay byte-identical to today: no endpoint key at all (not an
+  // explicit `undefined`), so a non-channel origin (API/cron drive) resolves exactly as before.
+  it("omits destinationEndpoint entirely when the caller has no origin (today's chain, unchanged)", async () => {
+    const service = {
+      resolveDestination: vi.fn().mockReturnValue({ ok: true, value: { authority: {}, destinationEndpoint: {} } }),
+      notifyUser: vi.fn().mockResolvedValue({ ok: true, value: "n" }),
+    };
+    const { createBgNotifyFn } = await import("./main-helpers.js");
+
+    await createBgNotifyFn({ ref: service as never })(OPTS);
+
+    expect(service.resolveDestination).toHaveBeenCalledWith({ agentId: "agent-1" });
+    expect(Object.keys(service.resolveDestination.mock.calls[0]![0] as object)).toEqual(["agentId"]);
+  });
+
   it("drops non-fatally when the service is not yet wired or no channel resolves", async () => {
     const { createBgNotifyFn } = await import("./main-helpers.js");
     await expect(createBgNotifyFn({}) (OPTS)).resolves.toBeUndefined();

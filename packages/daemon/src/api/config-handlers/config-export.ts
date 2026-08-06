@@ -46,6 +46,7 @@ import {
 import { runCommittedConfigLifecycle } from "./config-lifecycle.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
 import type { PatchBucket } from "./config-write.js";
+import { commitConfigVersionBestEffort } from "../shared/config-git-commit.js";
 
 /**
  * Bind the config.apply + config.rollback + config.gc + gateway.restart
@@ -174,18 +175,18 @@ export function bindConfigExportHandlers(
 
         // Best-effort git commit
         if (deps.configGitManager) {
-          const gitStart = systemNowMs();
-          await deps.configGitManager.commit({
-            section,
-            agent: ctx?.agentId ?? (rawParams._agentId as string | undefined),
-            user: ctx?.userId ?? (rawParams._userId as string | undefined),
-            traceId: ctx?.traceId ?? (rawParams._traceId as string | undefined),
-            summary: `Replaced ${section} section`,
-          }).then(() => {
-            deps.logger.debug({ method: "config.apply", durationMs: systemNowMs() - gitStart, outcome: "success", section }, "Git commit recorded");
-          }).catch((gitErr: unknown) => {
-            deps.logger.debug({ method: "config.apply", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, section }, "Git commit failed (best-effort)");
-          });
+          await commitConfigVersionBestEffort(
+            deps.configGitManager,
+            {
+              section,
+              agent: ctx?.agentId ?? (rawParams._agentId as string | undefined),
+              user: ctx?.userId ?? (rawParams._userId as string | undefined),
+              traceId: ctx?.traceId ?? (rawParams._traceId as string | undefined),
+              summary: `Replaced ${section} section`,
+            },
+            deps.logger,
+            { method: "config.apply", section },
+          );
         }
 
         const durationMs = systemNowMs() - startMs;

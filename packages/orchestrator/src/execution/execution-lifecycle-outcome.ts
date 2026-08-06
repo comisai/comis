@@ -52,8 +52,25 @@ export function classifyExecutionFinishReason(
       return { status: "filtered" };
     case "input_too_large":
       return { status: "error", failureStage: "execution", errorKind: "validation" };
-    case "error":
+    // NOT an execution failure. The name is literal: the turn COMPLETED and
+    // delivered a reply; a tool errored somewhere along the way, which the tool
+    // stats, the normalized `failures[]` and the session rollup's `degraded`
+    // flag all already record. Classified as `error` + `failureStage:
+    // "execution"` it was indistinguishable from a turn that produced nothing,
+    // so the Verified Learning pipeline banked a deterministic `failure` at 0.9
+    // confidence against a correct answer (live: one attachment-validation
+    // error the agent retried successfully in the same turn), and the delivery
+    // took the "agent-runtime-failure" origin for a reply the agent genuinely
+    // wrote. `errorKind` is retained so the tool fault stays diagnosable.
+    // Same carve-out, and the same reasoning, as `background_pending` above.
     case "completed_with_tool_errors":
+      return {
+        status: "success",
+        ...(result.terminalErrorKind === undefined
+          ? {}
+          : { errorKind: result.terminalErrorKind }),
+      };
+    case "error":
       return {
         status: "error",
         failureStage: "execution",

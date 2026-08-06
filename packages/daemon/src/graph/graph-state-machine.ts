@@ -468,6 +468,8 @@ function createGraphStateMachineFromState(
     }
     state.status = "completed";
     state.output = output;
+    state.error = undefined;
+    state.priorConversation = undefined;
     state.completedAt = systemNowMs();
 
     // Evaluate barriers for dependents

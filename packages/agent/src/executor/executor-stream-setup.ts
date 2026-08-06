@@ -33,6 +33,7 @@ import {
   type PerAgentConfig,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
+import { resolveToolChoiceEnforcement } from "./tool-choice-policy.js";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { StreamFnWrapper } from "./stream-wrappers/index.js";
 import {
@@ -421,6 +422,17 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         storeCompletions: config.storeCompletions,
         getMinTokensOverride: getExecutionMinTokensOverride,
         cacheBreakpointStrategy: config.cacheBreakpointStrategy,
+        // Declared no-tool-calls: the tools stay on the wire so the conversation's
+        // cached prefix is unchanged, and the provider is told to call none of them.
+        // Resolved here rather than at the call site because only the executor knows
+        // which provider the turn actually landed on; where none enforces it, tool
+        // assembly already shipped no tools and this stays undefined.
+        getToolChoice: () => (
+          executionOverrides?.toolChoice === "none"
+            && resolveToolChoiceEnforcement(params.resolvedModel?.provider) === "declared"
+            ? "none" as const
+            : undefined
+        ),
         skipCacheWrite: !!executionOverrides?.spawnPacket,
         cacheWriteTimestamp: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheWriteTimestamp,
         parentCacheRetention: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheRetention,

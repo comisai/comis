@@ -89,6 +89,10 @@ export interface ToolDefinition {
  *     placeholder buys NO delivery and only tricks the model into polling for
  *     an already-in-flight result. Excluded so the turn awaits the tool inline
  *     and delivers once, cleanly.
+ *   - `tokens_manage` — create/rotate return a credential exactly once. Moving
+ *     the approval wait into a durable background task would persist that
+ *     credential in the task result and completion re-entry before it reaches
+ *     the authenticated caller.
  *
  * `exec` is excluded separately (below) for a DIFFERENT reason — it owns its
  * own escalation path, so the generic wrapper would double-promote.
@@ -100,6 +104,7 @@ const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
   "image_generate",
   "video_generate",
   "discover_tools",
+  "tokens_manage",
 ]);
 
 export function wrapToolForAutoBackground(

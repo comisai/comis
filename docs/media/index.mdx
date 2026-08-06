@@ -70,6 +70,18 @@ what happens step by step when someone sends a message with media attached:
   </Step>
 </Steps>
 
+<Note>
+**An attachment that is too large is reported, not silently skipped.** When a
+file exceeds the remote-fetch limit
+(`integrations.media.infrastructure.maxRemoteFetchBytes`), Comis does not
+download or store it -- and the agent is told so explicitly, with the actual and
+maximum byte counts and the config key, plus an instruction not to claim it read
+the file or to substitute an earlier attachment. So the reply names the real
+reason instead of inventing a description. The same rejection appears in
+`comis explain` for that session, so an operator can see which attachment was
+refused and at which limit.
+</Note>
+
 ## What Happens Without Configuration
 
 Even if you have not configured any media providers, Comis still handles

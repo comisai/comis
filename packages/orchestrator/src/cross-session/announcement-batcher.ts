@@ -9,7 +9,7 @@
  * @module
  */
 
-import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
+import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type CitationEvidence, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import {
   buildAnnouncementRewriteInput,
@@ -49,6 +49,7 @@ export interface QueuedAnnouncement {
   destinationEndpoint: ChannelEndpoint;
   /** Response locale resolved for the originating user turn. */
   resolvedLanguage?: string;
+  citationEvidence?: CitationEvidence;
   /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
   terminalOutcome: AnnouncementTerminalOutcome;
   runId: string;
@@ -65,7 +66,7 @@ export interface AnnouncementBatcherDeps {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string; resolvedLanguage?: string },
+    options?: { threadId?: string; resolvedLanguage?: string; citationEvidence?: CitationEvidence },
   ) => Promise<string | undefined>;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string; extra?: Record<string, unknown> }) => Promise<boolean>;
   logger?: {
@@ -593,10 +594,25 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               ? buildAnnouncementRewriteInput(base, failedOutcome)
               : base;
           })();
-      const parentOptions = first.announceThreadId || first.resolvedLanguage
+      const citationEvidenceItems = items.filter(
+        (item) => item.citationEvidence !== undefined,
+      );
+      const combinedCitationEvidence: CitationEvidence | undefined =
+        citationEvidenceItems.length === 0
+          ? undefined
+          : {
+              kind: "web_fetch",
+              urlDigests: [...new Set(
+                citationEvidenceItems.flatMap(
+                  (item) => item.citationEvidence?.urlDigests ?? [],
+                ),
+              )].slice(0, 100),
+            };
+      const parentOptions = first.announceThreadId || first.resolvedLanguage || combinedCitationEvidence
         ? {
             ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
             ...(first.resolvedLanguage ? { resolvedLanguage: first.resolvedLanguage } : {}),
+            ...(combinedCitationEvidence ? { citationEvidence: combinedCitationEvidence } : {}),
           }
         : undefined;
       try {

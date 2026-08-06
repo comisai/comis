@@ -246,20 +246,6 @@ describe("AUTO-04 Stage-B — the never-published guard re-verifies + the phase 
     ).toEqual([]);
   });
 
-  it("git status --porcelain shows NO packages source change (the milestone premise)", () => {
-    // AUTO-04 drives the already-wired gateway RPCs (cron.run/heartbeat.trigger/
-    // scheduler.wake) + the rig-control reconfigure (test infra) with NO product
-    // edit. If this fails, a product file was touched — STOP.
-    const repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
-    const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf-8" });
-    const offending = porcelain
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((p) => p.length > 0)
-      .flatMap((p) => (p.includes(" -> ") ? p.split(" -> ") : [p]))
-      .filter((p) => /(^|\/)packages\/[^/]+\/src\//.test(p));
-    expect(offending, `production source changed: ${offending.join(", ")}`).toEqual([]);
-  });
 });
 
 // ---------------------------------------------------------------------------

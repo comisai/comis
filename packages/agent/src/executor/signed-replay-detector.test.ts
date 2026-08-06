@@ -141,6 +141,38 @@ describe("isSignedReplayError", () => {
     expect(isSignedReplayError(msg)).toBe(false);
   });
 
+  // Capability/parameter rejections: the provider is refusing the SHAPE of the
+  // request for this model, not the signed state carried in it. Scrub-and-retry
+  // cannot fix these, so classifying them as signed-replay burns an extra LLM
+  // call and reports a "formatting issue" instead of the real cause.
+  it("does not match the adaptive-thinking capability rejection", () => {
+    // Verbatim wire error from the production incident: the generic
+    // `invalid_request_error` envelope supplied the "invalid" verb while the
+    // parameter name `thinking.type.enabled` supplied the "thinking" noun.
+    const msg =
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"\\"thinking.type.enabled\\" is not supported for this model. Use \\"thinking.type.adaptive\\" and \\"output_config.effort\\" to control thinking behavior."},"request_id":"req_011CdiFuZtawr8drzdBmCtx9"}';
+    expect(isSignedReplayError(msg)).toBe(false);
+  });
+
+  it("does not match an unsupported-parameter rejection naming a signature noun", () => {
+    const msg =
+      '400 invalid_request_error: unsupported parameter "thinking" for this model';
+    expect(isSignedReplayError(msg)).toBe(false);
+  });
+
+  it("does not match an unrecognized-field rejection naming a signature noun", () => {
+    const msg =
+      '400 invalid_request_error: unrecognized field "reasoning_id" in request body';
+    expect(isSignedReplayError(msg)).toBe(false);
+  });
+
+  it("does not treat the generic invalid_request_error envelope as a rejection verb", () => {
+    // Envelope + signature noun only — no verb describing the signed state.
+    const msg =
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"thinking budget must be at least 1024 tokens"}}';
+    expect(isSignedReplayError(msg)).toBe(false);
+  });
+
   it("does not match empty string", () => {
     expect(isSignedReplayError("")).toBe(false);
   });

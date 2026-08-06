@@ -32,6 +32,7 @@ function makeOrigin(overrides: Record<string, unknown> = {}) {
       tenantId: "tenant-1",
     },
     traceId: "abc-123",
+    trustLevel: "admin",
     backgroundHopCount: 0,
     responseLocalePolicy: {
       locale: "he",
@@ -49,6 +50,24 @@ describe("BackgroundTaskOriginSchema", () => {
 
   it("accepts a nullable trace identifier", () => {
     expect(BackgroundTaskOriginSchema.parse(makeOrigin({ traceId: null })).traceId).toBeNull();
+  });
+
+  it("preserves the authenticated trust snapshot for delayed re-entry", () => {
+    expect(BackgroundTaskOriginSchema.parse(makeOrigin()).trustLevel).toBe("admin");
+  });
+
+  it("rejects a promotion that carries no trust snapshot", () => {
+    // Promotion is the authoritative moment: the turn's trust is knowable only
+    // here, so an origin reaching this schema without one is a bug in the
+    // promote path and must fail loudly. Were this defaulted, that bug would
+    // instead run silently at some trust nobody resolved.
+    //
+    // Tolerance for a record written before the field existed lives on the READ
+    // path only — `PersistedOriginSchema` in the agent package fills an absent
+    // field with LEAST privilege so a task in flight across an upgrade is
+    // recoverable but never inherits authority.
+    const { trustLevel: _trustLevel, ...originWithoutTrust } = makeOrigin();
+    expect(BackgroundTaskOriginSchema.safeParse(originWithoutTrust).success).toBe(false);
   });
 
   it("defaults the background hop count to zero", () => {

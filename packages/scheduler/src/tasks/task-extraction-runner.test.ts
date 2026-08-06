@@ -50,6 +50,7 @@ function item(): TaskExtractionItem {
         userId: "user-a",
       },
       traceId: "trace-a",
+      trustLevel: "user",
       responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
@@ -263,6 +264,33 @@ describe("governed task extraction runner", () => {
       status: "dropped",
       stage: "model_output",
       errorKind: "validation",
+      outputErrorCode: "output_too_large",
+    }));
+  });
+
+  it("reports the final closed parser error code for a dropped repaired response", async () => {
+    const data = setup();
+    const beforeMinimum = JSON.stringify({
+      candidates: [{
+        itemId: "item-a",
+        text: "Check the outcome",
+        dueInSecondsEarliest: 30,
+        confidence: 0.9,
+      }],
+    });
+    data.modelRun
+      .mockResolvedValueOnce(ok({ raw: "{invalid" }))
+      .mockResolvedValueOnce(ok({ raw: beforeMinimum }));
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await data.runner.waitForIdle();
+
+    expect(data.persistCandidates).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "model_output",
+      errorKind: "validation",
+      outputErrorCode: "before_minimum_due",
     }));
   });
 
@@ -288,6 +316,28 @@ describe("governed task extraction runner", () => {
     }));
   });
 
+  it("maps an unexpected operation rejection to one internal dropped outcome", async () => {
+    const data = setup({
+      timers: {
+        setTimeout: () => ({
+          unref() {},
+          cancel() { throw new Error("timer cancellation unavailable"); },
+        }),
+      },
+    });
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await data.runner.waitForIdle();
+
+    expect(data.persistCandidates).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "internal",
+      errorKind: "internal",
+      sourceExecutionIds: ["execution-a"],
+    }));
+  });
+
   it("retires one agent without closing admission for the remaining runtime", async () => {
     let resolveModel: ((value: ReturnType<typeof ok<{ raw: string }>>) => void) | undefined;
     const data = setup();
@@ -299,6 +349,7 @@ describe("governed task extraction runner", () => {
       retireAgent(agentId: string): { readonly activeCount: number };
     }).retireAgent;
 
+    expect(retireAgent("agent-missing")).toEqual({ activeCount: 0 });
     expect(retireAgent("agent-a")).toEqual({ activeCount: 1 });
     expect(data.withModelSession.mock.calls[0]![0].signal.aborted).toBe(true);
     expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 1 });
@@ -312,6 +363,27 @@ describe("governed task extraction runner", () => {
       errorKind: "precondition",
     }));
     expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 0 });
+  });
+
+  it("closes the persistence fence while root registration is pending", async () => {
+    let resolveRegistration: ((value: ReturnType<typeof ok<void>>) => void) | undefined;
+    const data = setup({
+      registerRoot: () => new Promise((resolve) => { resolveRegistration = resolve; }),
+    });
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    await vi.waitFor(() => expect(resolveRegistration).toBeTypeOf("function"));
+
+    expect(data.runner.retireAgent("agent-a")).toEqual({ activeCount: 1 });
+    resolveRegistration?.(ok(undefined));
+    await data.runner.waitForIdle();
+
+    expect(data.withModelSession).not.toHaveBeenCalled();
+    expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "persistence_fence",
+      errorKind: "precondition",
+    }));
   });
 
   it("reports rejected and explicit root registration failures without model access", async () => {

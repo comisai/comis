@@ -44,6 +44,8 @@ export interface ExecRecoveryIdentity {
 
 export type ToolRecoveryIdentity = MessageRecoveryIdentity | ExecRecoveryIdentity;
 
+export type SchedulerPolicyEvidence = "holiday" | "weekday" | "weekend";
+
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
   /** Bounded structured action discriminator from the tool arguments. */
@@ -53,6 +55,8 @@ export interface ToolExecutionResultRecord {
   readonly changed?: boolean;
   /** True when this record is a non-terminal background handoff placeholder. */
   readonly backgrounded?: boolean;
+  /** True when the trusted tool boundary stopped before a gated side effect. */
+  readonly requiresConfirmation?: boolean;
   readonly durationMs: number;
   readonly invocationSequence?: number;
   readonly errorText?: string;
@@ -62,6 +66,10 @@ export interface ToolExecutionResultRecord {
   /** Trusted, bounded adapter classification; never raw tool/provider prose. */
   readonly failureDisclosure?: ToolFailureDisclosure;
   readonly recoveryIdentity?: ToolRecoveryIdentity;
+  /** SHA-256 of the exact final URL for a successful web_fetch. */
+  readonly citationUrlDigest?: string;
+  /** Closed, content-free policy classifications from a current cron-list receipt. */
+  readonly schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
 }
 
 export interface ToolFailureRecoveryClassification {

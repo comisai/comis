@@ -139,6 +139,10 @@ export interface MessagingEvents {
     cacheReadTokens?: number;
     /** Cache write tokens for this run. */
     cacheWriteTokens?: number;
+    /** Unresolved exec auto-background sessions at provider return. */
+    unresolvedBackgroundProcesses?: number;
+    /** Auto-background sessions observed in a failed or killed state. */
+    failedBackgroundProcesses?: number;
   };
 
   /** A synchronous parent wait observed a child's terminal outcome. */
@@ -646,12 +650,14 @@ export interface MessagingEvents {
    *  `denial_breaker` is the denial-limit breaker abort —
    *  N consecutive floor-blocks tripped the per-rootRunId breaker, so the run
    *  aborts + escalates instead of retry-looping (the "never loop" guarantee).
-   *  Distinct from `circuit_breaker`, which is the TOOL-FAILURE breaker
-   *  (provider cascade) — this is the CAPABILITY-DENIAL breaker. */
+   *  Distinct from `circuit_breaker`, which is the model-provider failure
+   *  breaker — this is the CAPABILITY-DENIAL breaker. */
   "execution:aborted": {
     sessionKey: SessionKey;
     reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
     agentId: string;
+    /** Model provider whose request failures opened the circuit breaker. */
+    provider?: string;
     timestamp: number;
     /** On a per-ROOT autonomy.budget abort, the exact tripped limb + its
      *  numbers in their own unit (token/wall-clock breaches carry tokens/ms, NOT
@@ -659,7 +665,9 @@ export interface MessagingEvents {
      *  `explain` name the exact knob ("token limb: 30640/60000") instead of an
      *  operator grepping the "Per-root … budget exceeded" daemon-log line. Absent
      *  for non-spend aborts and for the priced $-ceiling path. */
-    perRootBudget?: { limb: string; spent: number; cap: number; unit: string };
+    perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
+    /** Exact agent step ceiling that stopped this execution. */
+    stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
   };
 
   /** Budget trajectory warning: approaching token budget exhaustion */
@@ -749,7 +757,13 @@ export interface MessagingEvents {
    *  they could authorize admin-only changes), or
    *  `agent_update_noop_grounding` (an unchanged successful agent update was
    *  contradicted by the final prose), or `missing_ongoing_work_evidence`
-   *  (terminal prose promised continued work without a background receipt).
+   *  (terminal prose promised continued work without a background receipt), or
+   *  `unrecovered_tool_failure_completion_claim` (affirmative completion prose
+   *  contradicted the recovery-aware failed-tool inventory).
+   *  `missing_scheduler_state_evidence` means affirmative reminder state was
+   *  replaced because no current-turn scheduler receipt supported it;
+   *  `pending_scheduler_confirmation` means a gated removal stopped before
+   *  mutation and an overclaim was replaced with a neutral confirmation ask.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -765,7 +779,11 @@ export interface MessagingEvents {
       | "locale_fidelity"
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
-      | "missing_ongoing_work_evidence";
+      | "missing_ongoing_work_evidence"
+      | "missing_runtime_self_report_evidence"
+      | "missing_scheduler_state_evidence"
+      | "pending_scheduler_confirmation"
+      | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;
   };
@@ -803,6 +821,23 @@ export interface MessagingEvents {
     runId: string;
     channelType: string;
     reason: string;
+    timestamp: number;
+  };
+
+  /**
+   * A STANDING count of background-task announcements held in the dead-letter
+   * store, emitted on each non-zero transition of the health tick.
+   *
+   * Distinct from `announcement:dead_lettered`, which fires once per failed
+   * DELIVERY. A parent-decision reservation — written when the parent turn that
+   * should adjudicate a completion dies before deciding — is never enqueued and
+   * never drained, so it produced no event at all. Live, a user's completed
+   * chart set sat in that state and the only trace was one daemon WARN; the
+   * system-health view, the documented first stop for triage, was structurally
+   * blind to it. Counts only.
+   */
+  "announcement:quarantine_pending": {
+    pendingCount: number;
     timestamp: number;
   };
 

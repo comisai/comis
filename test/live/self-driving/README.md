@@ -15,7 +15,7 @@
 > **How to invoke it (the user):** *"Live-test `<target>` using `test/live/self-driving/` — drive it end to end."*
 > The agent then follows **`00-MISSION.md`**.
 
-This kit **compiles** the full live-test protocol — the comprehensive Tracks A–L, the 30-UC catalog, the
+This kit **compiles** the full live-test protocol — the comprehensive Tracks A–L, the UC catalog, the
 emulator-harness design, the FINDINGS lessons, the config-map, and the milestone-coverage and verify audits,
 plus the local and VPS runbooks + scripts — into one followable kit. It is the **canonical** entry point.
 
@@ -29,7 +29,7 @@ plus the local and VPS runbooks + scripts — into one followable kit. It is the
 | **`02-DISCIPLINE.md`** | Prime directives + the per-issue fix-verify loop + 3-way scoring + the stop condition. The non-negotiables. |
 | **`03-OBSERVABILITY.md`** | Ground-truth read-order, the dual oracle, logging, troubleshooting, and the three mandatory improvement loops (obs + emulator + framework). The fourth — the shipped-DEFAULTS review — is `00-MISSION.md` STEP 4.6. |
 | **`04-DERIVE-TESTS.md`** | The generic method: turn ANY target (use case / milestone / spec / design doc / user story / bare prompt) into a **comprehensive** test matrix — real-world + edge + deep + broad, covering the whole scenario — **planned in full before any driving** (the §D gate). |
-| **`05-CATALOG.md`** | The reusable test inventory: capability domains, the P-phase structure, Track K/L/M, the 30 UCs, the HARD security oracles, the config-combination classes. |
+| **`05-CATALOG.md`** | The reusable test inventory: capability domains, the P-phase structure, Track K/L/M, the UC catalog, the HARD security oracles, the config-combination classes. |
 | **`scripts/`** | Copy-paste helpers, **mode-aware** (`RIG_MODE=remote` the VPS production install · `RIG_MODE=local` this machine): `init-local-config.sh` + `local-up.sh` (isolated local bootstrap and bring-up), `install-vps.sh` (installer-first (re)install of THIS checkout), `init-config.mjs` (fresh-box VPS bootstrap), `deploy-dist.sh`, `deploy-scripts.sh`, `deploy-emu.sh`, `setup-vps.sh`, `rig-doctor.sh` + `verify-build.sh` (pre-drive gates), `restart-daemon.sh`, `clean-restart.sh`, `wire-emu.mjs`, `drive.mjs`, `revoke.mjs`, `db.mjs` (DB oracle), `models-sweep.sh`, `config.example.yaml`, plus the mode/portability layer `_rig.sh` + `_rig.mjs`. See `scripts/README.md`. |
 | **`templates/`** | `TEST-PLAN.template.md`, `RESULTS-LOG.template.md`, `FIX-VERIFY-LOG.template.md` — copy per run into `runs/<target>-<date>/`. |
 | **`targets/`** | Domain-neutral worked examples and the generic-runtime acceptance campaign. Application-specific campaigns live with their owning application or skill. |

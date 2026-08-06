@@ -10,7 +10,6 @@
  *
  * @module
  */
-
 import type { Result } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -393,6 +392,7 @@ export interface McpClientManager {
   callTool(
     qualifiedName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<Result<McpToolCallResult, Error>>;
   reconnect(name: string, credentials?: McpReconnectCredentials): Promise<Result<McpConnection, Error>>;
 }
