@@ -208,6 +208,7 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "image_generate", category: "media", conditional: (ctx: any) => ctx.imageGenProvider !== undefined, build: (ctx: any) => mockCreateImageGenerateTool(ctx.rpcCall) },
     { name: "transcribe_audio", category: "media", build: (ctx: any) => mockCreateTranscribeAudioTool(ctx.rpcCall) },
     { name: "tts", category: "media", build: (ctx: any) => mockCreateTTSTool(ctx.rpcCall) },
+    { name: "memory_ask", category: "memory", conditional: (ctx: any) => ctx.dialecticEnabled === true, build: (_ctx: any) => ({ name: "memory_ask" }) },
     { name: "memory_get", category: "memory", build: (_ctx: any) => ({ name: "memory_get" }) },
     { name: "memory_manage", category: "memory", build: (_ctx: any) => ({ name: "memory_manage" }) },
     { name: "memory_search", category: "memory", build: (_ctx: any) => ({ name: "memory_search" }) },
@@ -618,6 +619,32 @@ describe("setupTools", () => {
     const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).not.toContain("browser");
+  });
+
+  it("master memory cost switch removes dialectic while preserving offline recall", async () => {
+    const deps = createMinimalDeps({
+      agents: {
+        "agent-1": {
+          dialectic: { enabled: true },
+          skills: {
+            builtinTools: { browser: false, exec: false, process: false },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    Object.assign(deps, { memoryCostFeaturesEnabled: false });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1");
+
+    const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    const toolNames = tools.map((tool: { name: string }) => tool.name);
+    expect(toolNames).not.toContain("memory_ask");
+    expect(toolNames).toContain("memory_search");
   });
 
   // -------------------------------------------------------------------------
