@@ -139,6 +139,17 @@ function resolveGatewaySecretRef(ref: SecretRef, dataDir: string): string | unde
   return resolved.ok ? resolved.value : undefined;
 }
 
+function normalizeConfigIndentation(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => {
+      let tabCount = 0;
+      while (line.charAt(tabCount) === "\t") tabCount += 1;
+      return tabCount === 0 ? line : "  ".repeat(tabCount) + line.slice(tabCount);
+    })
+    .join("\n");
+}
+
 /**
  * Resolve gateway URL, token, and TLS status from config file on disk.
  *
@@ -173,7 +184,7 @@ function resolveFromConfig(): { url: string; token: string | undefined; tls: boo
 
   try {
     const content = readFileSync(configPath, "utf-8");
-    const parsed: unknown = parseYaml(content);
+    const parsed: unknown = parseYaml(normalizeConfigIndentation(content));
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       return { url: FALLBACK_GATEWAY_URL, token: undefined, tls: false };
     }
