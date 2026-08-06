@@ -20,9 +20,11 @@ import {
   attributeBurst,
   burstVerdict,
   filterRecordsWindow,
+  openTrajectoryTraceIds,
   overlapReport,
   parseJsonlRecords,
   recordTimeMs,
+  shouldSettleBurstEvidence,
   wireReconciliation,
 } from "./concurrency-oracle.mjs";
 
@@ -55,6 +57,53 @@ const trajectoryRecord = (
   ts: string,
   type = "model.completed",
 ): Record<string, unknown> => ({ type, traceId, ts, sessionId: "s1", seq: 1 });
+
+describe("burst settling — unresolved live work stays open", () => {
+  const activeRecords = [
+    trajectoryRecord("trace-live", "2026-08-06T10:00:00.000Z", "queue.enqueued"),
+    trajectoryRecord("trace-live", "2026-08-06T10:00:01.000Z", "queue.dequeued"),
+    trajectoryRecord("trace-live", "2026-08-06T10:00:02.000Z", "prompt.submitted"),
+  ];
+
+  it("does not convert a quiet long model call into a lost reply while the daemon is reachable", () => {
+    expect(openTrajectoryTraceIds(activeRecords)).toEqual(["trace-live"]);
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: false,
+      evidenceQuiet: true,
+      openTraceCount: 1,
+      gatewayReachable: true,
+    })).toBe(false);
+  });
+
+  it("settles the stopped-daemon lost-reply negative control after evidence goes quiet", () => {
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: false,
+      evidenceQuiet: true,
+      openTraceCount: 1,
+      gatewayReachable: false,
+    })).toBe(true);
+  });
+
+  it("settles terminal or fully answered evidence without waiting for more growth", () => {
+    const terminalRecords = [
+      ...activeRecords,
+      trajectoryRecord("trace-live", "2026-08-06T10:00:30.000Z", "session.summary"),
+    ];
+    expect(openTrajectoryTraceIds(terminalRecords)).toEqual([]);
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: false,
+      evidenceQuiet: true,
+      openTraceCount: 0,
+      gatewayReachable: true,
+    })).toBe(true);
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: true,
+      evidenceQuiet: false,
+      openTraceCount: 1,
+      gatewayReachable: true,
+    })).toBe(true);
+  });
+});
 
 describe("burst attribution — the honest pass", () => {
   it("binds every reply to its own inbound when the runtime serialized the turns", () => {
