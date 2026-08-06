@@ -40,6 +40,14 @@ const INSTALL_VPS = resolve(HERE, "install-vps.sh");
 const MEDIA_DRIVE = resolve(HERE, "media-drive.mjs");
 const temporaryDirectories: string[] = [];
 
+// `local-config.mjs validate` must work from a plain in-repo run with NO rig env — that is the
+// contract these gates pin, so they must not inherit whichever .rig-env the developer happens to
+// have rendered in the scripts directory. RIG_ENV points at a path that cannot exist so _rig.mjs
+// falls back to its own defaults (mode "remote") on every box, CI included. Reading the ambient
+// file made these gates pass locally while CI failed them: a rendered RIG_MODE=local silently
+// supplied the code root the validator was wrongly depending on.
+const NO_RIG_ENV = { ...process.env, RIG_ENV: resolve(HERE, ".rig-env-absent") } as NodeJS.ProcessEnv;
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -592,7 +600,7 @@ describe("local rig mode", () => {
 
     const validated = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, data, "4881"], {
       encoding: "utf8",
-      env: { ...process.env },
+      env: NO_RIG_ENV,
     });
     expect(validated.status, `${validated.stdout}${validated.stderr}`).toBe(0);
   });
@@ -621,7 +629,7 @@ describe("local rig mode", () => {
     );
     const wrongRoot = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, directory, "4882"], {
       encoding: "utf8",
-      env: { ...process.env },
+      env: NO_RIG_ENV,
     });
     expect(wrongRoot.status).not.toBe(0);
     expect(`${wrongRoot.stdout}${wrongRoot.stderr}`).toContain("config dataDir must be exactly");
@@ -629,7 +637,7 @@ describe("local rig mode", () => {
     writeFileSync(configPath, `dataDir: ${directory}\ngateway:\n  port: 4766\n`);
     const wrongPort = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, directory, "4882"], {
       encoding: "utf8",
-      env: { ...process.env },
+      env: NO_RIG_ENV,
     });
     expect(wrongPort.status).not.toBe(0);
     expect(`${wrongPort.stdout}${wrongPort.stderr}`).toContain(
@@ -652,7 +660,7 @@ describe("local rig mode", () => {
     const wrongTrajectory = spawnSync(
       "node",
       [LOCAL_CONFIG, "validate", configPath, directory, "4882"],
-      { encoding: "utf8", env: { ...process.env } },
+      { encoding: "utf8", env: NO_RIG_ENV },
     );
     expect(wrongTrajectory.status).not.toBe(0);
     expect(`${wrongTrajectory.stdout}${wrongTrajectory.stderr}`).toContain(
@@ -674,7 +682,7 @@ describe("local rig mode", () => {
     const wrongObservabilityTrajectory = spawnSync(
       "node",
       [LOCAL_CONFIG, "validate", configPath, directory, "4882"],
-      { encoding: "utf8", env: { ...process.env } },
+      { encoding: "utf8", env: NO_RIG_ENV },
     );
     expect(wrongObservabilityTrajectory.status).not.toBe(0);
     expect(
