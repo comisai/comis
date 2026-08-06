@@ -60,6 +60,15 @@ export const UserModelSchema = z.strictObject({
   comisCompat: ModelCompatConfigSchema.optional(),
   /** SDK pass-through overrides (loose validation for forward-compatibility). */
   sdkCompat: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Sampling parameters merged into the request body as-is, after the named
+   * request fields. Lets OpenAI-compatible servers (vLLM, llama.cpp, SGLang,
+   * …) receive knobs the SDK does not model as named fields — `top_p`,
+   * `top_k`, `min_p`, `repetition_penalty`. Loose validation for the same
+   * forward-compatibility reason as `sdkCompat`; only OpenAI-compatible
+   * adapters apply it, other APIs ignore it.
+   */
+  samplingParams: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Inferred user model type. */

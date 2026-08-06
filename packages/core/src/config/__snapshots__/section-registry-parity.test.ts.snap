@@ -26017,6 +26017,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("pro
                   "default": false,
                   "type": "boolean"
                 },
+                "samplingParams": {
+                  "additionalProperties": {},
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
                 "sdkCompat": {
                   "additionalProperties": {},
                   "propertyNames": {
@@ -39573,6 +39580,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "reasoning": {
                       "default": false,
                       "type": "boolean"
+                    },
+                    "samplingParams": {
+                      "additionalProperties": {},
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
                     },
                     "sdkCompat": {
                       "additionalProperties": {},

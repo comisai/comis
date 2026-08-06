@@ -2452,6 +2452,7 @@ LLM provider configuration. API keys are referenced by SecretManager key name, n
 | `cost` | `ModelCost` | _(unset)_ | Token cost rates for budget tracking. See sub-schema below. |
 | `comisCompat` | `ModelCompatConfig` | _(unset)_ | Comis-specific compatibility flags. See sub-schema below. |
 | `sdkCompat` | `Record<string, unknown>` | _(unset)_ | Pass-through SDK compatibility overrides (provider-specific) |
+| `samplingParams` | `Record<string, unknown>` | _(unset)_ | Sampling knobs merged into the request body as-is, after the named request fields (so keys here win). For OpenAI-compatible servers that accept parameters the SDK does not model — `top_p`, `top_k`, `min_p`, `repetition_penalty`. Merged per key over any catalog defaults for the same model; ignored by non-OpenAI-compatible APIs. |
 
 **ModelCompatConfig (providers.entries.{name}.models[].comisCompat)**
 
