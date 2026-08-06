@@ -68,6 +68,13 @@ describe("self-driving kit references", () => {
         const cited = match[0];
         // Placeholders are instructions to the reader, not paths.
         if (/[*<>‹…]/u.test(cited)) continue;
+        // Per-run output is LOCAL-ONLY by contract — `runs/.gitignore` is `*`, so
+        // nothing under it is ever committed and a citation into that tree cannot
+        // resolve in a clean checkout. This is the same reason SKIP_DIRS keeps
+        // `runs` out of the walk, applied to the resolving side: a campaign prompt
+        // legitimately points the driver at its own TEST-PLAN, and requiring that
+        // to exist would assert something the repository guarantees is false.
+        if (/(?:^|\/)runs\//.test(cited)) continue;
         const candidates = [cited, `${KIT}/${cited}`, `${dirname(doc)}/${cited}`, `test/live/${cited}`];
         if (!candidates.some((c) => existsSync(resolve(REPO_ROOT, c)))) {
           violations.push(`${doc}: ${cited}`);
