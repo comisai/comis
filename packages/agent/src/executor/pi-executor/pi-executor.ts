@@ -139,6 +139,7 @@ import {
   setDeliveredGuides,
   setBreakpointIndex,
   clearSessionCacheWarm,
+  clearSessionCacheEscalationProgress,
   setEvictionCooldown,
   decrementEvictionCooldown as decrementEvictionCooldownForSession,
   recordCacheSavings,
@@ -2757,6 +2758,7 @@ async function runSessionLocked(
           if (event.reason === "likely_server_eviction" || event.reason === "server_eviction") {
             capturedBridgeRetention.reset();
             clearSessionCacheWarm(formattedKey);
+            clearSessionCacheEscalationProgress(formattedKey);
             setEvictionCooldown(formattedKey, EVICTION_COOLDOWN_TURNS);
             clearSessionBlockStability(formattedKey);
             clearSessionCacheSavings(formattedKey);

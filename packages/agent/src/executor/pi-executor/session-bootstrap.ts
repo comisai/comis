@@ -33,7 +33,12 @@ import {
   createStaticRetention,
   resolveColdStartRetention,
 } from "../adaptive-cache-retention.js";
-import { getCacheWarm, setCacheWarm } from "../executor-session-state.js";
+import {
+  getCacheWarm,
+  setCacheWarm,
+  getCacheEscalationProgress,
+  setCacheEscalationProgress,
+} from "../executor-session-state.js";
 import type { PerAgentConfig } from "@comis/core";
 
 /**
@@ -262,6 +267,7 @@ export function decodeExecutionOverrides(
     // they never escalate but get 1h TTL. Non-graph subagents get static "short".
     // Parent agents use turn-based escalation (3+ turns required).
     const configRetentionForSubagent = (overrides?.cacheRetention ?? "short") as CacheRetention;
+    const carriedRetentionProgress = getCacheEscalationProgress(formattedKeyForRetention);
     const adaptiveRetention = isSubAgent
       ? createStaticRetention(configRetentionForSubagent)
       : createAdaptiveCacheRetention({
@@ -279,6 +285,17 @@ export function decodeExecutionOverrides(
           ),
           warmRetention: configRetention,
           escalationThreshold: 1000,
+          // The turn counter advances per MODEL CALL, so a cheap single-call
+          // turn tops out at 1 and can never reach the gate. Seed from this
+          // session's carried counters so the 3-turn heuristic measures turns
+          // of the CONVERSATION, as it was written to.
+          ...(carriedRetentionProgress !== undefined && {
+            initialTurnCount: carriedRetentionProgress.turns,
+            initialCacheReads: carriedRetentionProgress.reads,
+            initialLastCacheWriteTokens: carriedRetentionProgress.lastCacheWriteTokens,
+          }),
+          onProgress: (progress) =>
+            setCacheEscalationProgress(formattedKeyForRetention, progress),
           onEscalated: () => setCacheWarm(formattedKeyForRetention, true),
         });
     ctx.adaptiveRetentionRef.set(adaptiveRetention);

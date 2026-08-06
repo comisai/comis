@@ -65,6 +65,7 @@ import { extractAnthropicPromptState, extractGeminiPromptState } from "./cache-d
 import { createBlockStabilityTracker } from "./block-stability-tracker.js";
 import {
   clearSessionCacheWarm,
+  clearSessionCacheEscalationProgress,
   getOrCreateSessionLatches,
   clearSessionLatches,
   getCacheBreakDetector,
@@ -344,6 +345,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     // Four coordinated resets on TTL expiry
     capturedRetention?.reset();                         // 1. Reset adaptive retention to cold-start
     clearSessionCacheWarm(formattedKey);                // 2. Clear session warm state
+    clearSessionCacheEscalationProgress(formattedKey);  //    …and its carried escalation counters
     cacheBreakDetector.notifyTtlExpiry(formattedKey);   // 3. Notify detector
     clearSessionLatches(formattedKey);                  // 4. SESS-LATCH: Reset latches for fresh cache cycle
     // Latch idle thinking clear when elapsed > 1h

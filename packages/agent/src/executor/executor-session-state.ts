@@ -19,6 +19,7 @@ import type { ClockPort } from "@comis/core";
 import { createSessionLatch } from "./session-latch.js";
 import type { SessionLatch } from "./session-latch.js";
 import { createCacheBreakDetector } from "./cache-detection/index.js";
+import type { CacheRetentionProgress } from "./adaptive-cache-retention.js";
 
 // ---------------------------------------------------------------------------
 // Module-level clock provider
@@ -472,6 +473,32 @@ export function setCacheWarm(sessionKey: string, value: boolean): void {
  *  (co-located with clearSessionBreakpointIndex, clearSessionDeliveredGuides). */
 export function clearSessionCacheWarm(sessionKey: string): void {
   sessionCacheWarm.delete(sessionKey);
+}
+
+/** Session-scoped adaptive-retention escalation counters.
+ *
+ *  The retention ladder is rebuilt on every execute() call while its turn
+ *  counter advances per MODEL CALL, so a conversation of cheap single-call
+ *  turns never reaches the escalation gate and stays pinned at the 5m cold
+ *  rate — re-buying its whole cached prefix on every inter-turn gap longer
+ *  than 5 minutes. Carrying the counters here restores the cross-turn
+ *  accumulation the gate was designed around. */
+const sessionCacheEscalationProgress = createBoundedSessionMap<CacheRetentionProgress>();
+
+/** Get carried escalation counters for this session, if any. */
+export function getCacheEscalationProgress(sessionKey: string): CacheRetentionProgress | undefined {
+  return sessionCacheEscalationProgress.get(sessionKey);
+}
+
+/** Persist escalation counters for the next execution's ladder. */
+export function setCacheEscalationProgress(sessionKey: string, progress: CacheRetentionProgress): void {
+  sessionCacheEscalationProgress.set(sessionKey, progress);
+}
+
+/** Clear carried escalation counters. Paired with every clearSessionCacheWarm
+ *  call site: a coordinated cold-start reset must not leave progress behind. */
+export function clearSessionCacheEscalationProgress(sessionKey: string): void {
+  sessionCacheEscalationProgress.delete(sessionKey);
 }
 
 // ---------------------------------------------------------------------------
