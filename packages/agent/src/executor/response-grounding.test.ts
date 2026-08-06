@@ -20,6 +20,27 @@ interface SchedulerStateEvidenceGuardResult {
   reason?: "missing_scheduler_state_evidence" | "pending_scheduler_confirmation";
 }
 
+interface RuntimeSelfReportEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_runtime_self_report_evidence";
+}
+
+function runtimeSelfReportEvidenceGuard(): (params: {
+  request: string;
+  response: string;
+  toolExecResults?: readonly {
+    toolName: string;
+    success: boolean;
+  }[];
+  honestResponse: string;
+}) => RuntimeSelfReportEvidenceGuardResult {
+  const candidate = (responseGrounding as Record<string, unknown>)
+    .enforceRuntimeSelfReportEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ReturnType<typeof runtimeSelfReportEvidenceGuard>;
+}
+
 function schedulerStateEvidenceGuard(): (params: {
   response: string;
   toolExecResults?: readonly {
@@ -52,6 +73,60 @@ function completionEvidenceGuard(): (params: {
 
 
 describe("response grounding module", () => {
+  it("rejects a weekly runtime-work report without current observability evidence", () => {
+    const honestResponse =
+      "I could not verify my runtime activity for that period in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "what did you even do this week",
+      response:
+        "This week I set up a schedule, checked its history, and answered a few messages.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("keeps a runtime self-report grounded by a current obs_query receipt", () => {
+    const response = "The current report shows 45 sessions and 1,228 model calls.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "what did you even do this week",
+      response,
+      toolExecResults: [{ toolName: "obs_query", success: true }],
+      honestResponse: "I could not verify runtime activity.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not treat a failed observability query as self-report evidence", () => {
+    const honestResponse = "I could not verify runtime cost in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "how much have you cost me",
+      response: "I cost about five dollars.",
+      toolExecResults: [{ toolName: "obs_query", success: false }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("leaves unrelated reports outside the runtime self-report guard", () => {
+    const response = "The weekly project report has three sections.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "what did the project report cover this week",
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify runtime activity.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("rejects an already-set reminder claim without current scheduler evidence", () => {
     const honestResponse =
       "I did not verify the current reminder state in this turn, so I cannot say that it is set.";

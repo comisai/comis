@@ -25,6 +25,12 @@ describe("MessagingEvents payload structure", () => {
     expect(source).toContain('| "unrecovered_tool_failure_completion_claim"');
   });
 
+  it("keeps missing runtime self-report evidence in the closed recovery reason union", () => {
+    const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('| "missing_runtime_self_report_evidence"');
+  });
+
   it("execution recovery can identify a sender-authority grounding correction", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

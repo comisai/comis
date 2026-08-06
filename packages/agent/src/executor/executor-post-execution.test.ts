@@ -1150,6 +1150,19 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — runtime self-reports require current observability evidence before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceRuntimeSelfReportEvidence\(/);
+    expect(stripped).toMatch(/buildRuntimeSelfReportEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.runtime_self_report_evidence_guard/);
+    expect(stripped).toMatch(
+      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceRuntimeSelfReportEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — final model-status grounding reconciles locale failure before terminal classification", () => {
     const stripped = readPostExecStripped();
     const guardIndex = stripped.indexOf("enforceActiveModelSelfStatus(");

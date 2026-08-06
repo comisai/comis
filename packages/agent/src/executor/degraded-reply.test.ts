@@ -471,6 +471,19 @@ describe("scheduler state evidence missing reply", () => {
   });
 });
 
+describe("runtime self-report evidence missing reply", () => {
+  it("states that runtime work, cause, and spend require a current diagnostic receipt", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildRuntimeSelfReportEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/could not verify.*runtime activity/iu);
+    expect(reply).toMatch(/work counts?.*cause.*cost/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("runtime_self_report_evidence_missing");
+  });
+});
+
 describe("pending scheduler confirmation reply", () => {
   it("asks for removal confirmation without asserting that the job exists", () => {
     const candidate = (degradedReply as Record<string, unknown>)
