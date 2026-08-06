@@ -626,7 +626,9 @@ export function createWebFetchTool(
     name: "web_fetch",
     label: "Web Fetch",
     description:
-      "Fetch and extract readable content from a URL (HTML -> markdown/text). Use for lightweight page access without browser automation.",
+      "Fetch and extract readable content from a URL (HTML -> markdown/text). "
+      + "When the user asks to read, summarize, compare, or answer about a supplied URL, call this before answering; do not rely on prior knowledge. "
+      + "Use for lightweight page access without browser automation.",
     parameters: WebFetchParams,
 
     async execute(

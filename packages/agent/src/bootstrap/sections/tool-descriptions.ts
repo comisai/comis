@@ -131,7 +131,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Web -----
   web_search: "Search the web for current information. May return partial results — retry with refined query if needed.",
-  web_fetch: "Fetch content from URL (HTML, PDF, JSON auto-detected). Readable extraction. Use this, not exec curl/wget.",
+  web_fetch: "Fetch content from URL (HTML, PDF, JSON auto-detected). When the user asks to read, summarize, compare, or answer about a supplied URL, call this before answering; do not rely on prior knowledge. Use this, not exec curl/wget.",
 
   // ----- Memory (confusable pair: memory_search / session_search) -----
   memory_search: "Search stored facts and preferences. Returns empty if no match — not an error. For session history, use session_search.",
