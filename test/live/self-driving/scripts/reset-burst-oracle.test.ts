@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { scoreResetBurst } from "./reset-burst-oracle.mjs";
+import {
+  scoreResetBurst,
+  selectResetBurstTrajectoryRecords,
+} from "./reset-burst-oracle.mjs";
 
 const injects = Array.from({ length: 10 }, (_, index) => ({
   index,
@@ -54,6 +57,41 @@ const wire = (): Array<Record<string, unknown>> => terms.map((term) => ({
 }));
 
 describe("session-reset burst ground-truth oracle", () => {
+  it("selects prompt bases and SDK steer dispositions as ten accepted owners", () => {
+    const records = injects.flatMap((_, index) => index === 0 || index === 5
+      ? [record("prompt.submitted", `trace-${index}`, 1_000 + index)]
+      : [record("queue.steer_injected", `trace-${index}`, 1_000 + index)]);
+
+    const selected = selectResetBurstTrajectoryRecords(records, {
+      fromMs: 1_000,
+      expectedTraceCount: 10,
+    });
+
+    expect([...new Set(selected.map((entry) => entry.traceId))]).toHaveLength(10);
+  });
+
+  it("accounts for steered physical messages through their accepted dispositions", () => {
+    const records = injects.flatMap((_, index) => index === 0 || index === 5
+      ? [
+          record("prompt.submitted", `trace-${index}`, 1_000 + index),
+          record("session.summary", `trace-${index}`, 2_000 + index),
+        ]
+      : [record("queue.steer_injected", `trace-${index}`, 1_000 + index)]);
+    const scored = scoreResetBurst({
+      injects,
+      transcriptSources: [provenance([injects[0]!]), provenance([injects[5]!])],
+      trajectoryRecords: records,
+      wire: wire(),
+      expectedAnswerTerms: terms,
+      successfulResets: 2,
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.reset.provenanceAccounted).toBe(2);
+    expect(scored.reset.forwardedAccounted).toBe(8);
+    expect(scored.reset.sourceMessagesAccounted).toBe(10);
+  });
+
   it("accepts two reset segments with durable recall and terminal ownership", () => {
     const scored = scoreResetBurst({
       injects,
@@ -74,6 +112,8 @@ describe("session-reset burst ground-truth oracle", () => {
     expect(scored.reset).toEqual({
       successfulResets: 2,
       provenanceAccounted: 10,
+      forwardedAccounted: 0,
+      sourceMessagesAccounted: 10,
       ownedTraces: 10,
       terminalTraces: 10,
       costUsd: 0.1,
