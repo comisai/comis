@@ -478,6 +478,8 @@ Each sub-agent has an isolated workspace at ~/.comis/workspace-{agentId}/. Do NO
   gateway: `## Gateway Security
 CRITICAL: Security-sensitive paths (security, gateway.tls, gateway.tokens) CANNOT be patched -- attempts will be rejected. Restart, patch, apply, rollback, and env_set require confirmation. Config changes go through schema validation, git-backed versioning, and audit logging.
 IMPORTANT: Never modify config YAML files directly -- always use gateway tool actions.
+## Restart Boundary
+A successful result with \`restarting:true\` means the restart is scheduled, not completed. End the turn after that result without calling read or management tools to verify the new state: the current process can still expose stale in-memory configuration. Tell the user the change was persisted and that verification must happen in a later turn after restart. Do not claim the restart completed in the mutation turn.
 ## Credential Discovery
 When the user asks to install, configure, or connect something that requires an API key, token, secret, or credential: call gateway(action:"env_list", filter:"<PATTERN>*") BEFORE asking the user. env_list returns only NAMES (never values), so it is safe to call proactively. Only ask the user for the credential if env_list returns no matching name. Use filter patterns like "GEMINI*", "OPENAI*", or "*_API_KEY" to narrow the search.
 ## MCP Output Directory
