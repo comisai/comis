@@ -143,6 +143,21 @@ describe("buildInboundMetadataSection", () => {
     expect(joined).toMatch(/do not ask.*recipient.*explicit send request/iu);
   });
 
+  it("binds terse revision turns to the latest draft instead of commentary", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-revision",
+      senderId: "user_a",
+      chatId: "chat_a",
+      channel: "telegram",
+      chatType: "dm",
+      flags: {},
+    };
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toMatch(/drafting exchange.*terse revision.*latest draft.*not.*commentary/iu);
+  });
+
   it("includes SCHEDULED REMINDER block when flags.isScheduled is true", () => {
     const meta: InboundMetadata = {
       messageId: "msg-1",
