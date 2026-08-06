@@ -98,7 +98,7 @@ describe("burst settling — unresolved live work stays open", () => {
     })).toBe(true);
   });
 
-  it("settles terminal or fully answered evidence without waiting for more growth", () => {
+  it("settles terminal evidence but keeps fully answered work open until its trace closes", () => {
     const terminalRecords = [
       ...activeRecords,
       trajectoryRecord("trace-live", "2026-08-06T10:00:30.000Z", "session.summary"),
@@ -115,7 +115,35 @@ describe("burst settling — unresolved live work stays open", () => {
       evidenceQuiet: false,
       openTraceCount: 1,
       gatewayReachable: true,
-    })).toBe(true);
+    })).toBe(false);
+  });
+
+  it("keeps a terminal parent open while its spawned child can still deliver", () => {
+    const spawned = {
+      ...trajectoryRecord("trace-live", "2026-08-06T10:00:03.000Z", "subagent.spawned"),
+      data: { runId: "child-1" },
+    };
+    const terminalWithChild = [
+      ...activeRecords,
+      spawned,
+      trajectoryRecord("trace-live", "2026-08-06T10:00:04.000Z", "session.summary"),
+    ];
+
+    expect(openTrajectoryTraceIds(terminalWithChild)).toEqual(["trace-live"]);
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: true,
+      evidenceQuiet: true,
+      openTraceCount: 1,
+      gatewayReachable: true,
+    })).toBe(false);
+
+    expect(openTrajectoryTraceIds([
+      ...terminalWithChild,
+      {
+        ...trajectoryRecord("trace-live", "2026-08-06T10:00:40.000Z", "subagent.completed"),
+        data: { runId: "child-1" },
+      },
+    ])).toEqual([]);
   });
 });
 
