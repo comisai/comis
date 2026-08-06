@@ -20,7 +20,6 @@
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
 import { readFileSync, readdirSync, statSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { createInterface } from 'node:readline';
 import { comisDist, rig } from './_rig.mjs';
 import {
   directConversationFinished,
@@ -28,6 +27,7 @@ import {
   findAssistantReplyAfterInbound,
   findTelegramConversationWireAnswer,
   isDriveProgressText,
+  normalizeDriveStdinText,
   normalizedInboundTextError,
   outboundVisibleText,
   reconcileDriveOutbound,
@@ -42,16 +42,16 @@ import {
 } from './drive-session-oracle.mjs';
 const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 
-const readStdinLine = async () => {
-  const lines = createInterface({ input: process.stdin, terminal: false });
-  const next = await lines[Symbol.asyncIterator]().next();
-  lines.close();
-  return next.done ? '' : next.value;
+const readStdinText = async () => {
+  process.stdin.setEncoding("utf8");
+  let source = "";
+  for await (const chunk of process.stdin) source += chunk;
+  return normalizeDriveStdinText(source);
 };
 
 const textFilePath = driveTextFilePath(textArg);
 const text = textArg === '-'
-  ? await readStdinLine()
+  ? await readStdinText()
   : textFilePath !== undefined
     ? readFileSync(textFilePath, 'utf8')
     : textArg;
