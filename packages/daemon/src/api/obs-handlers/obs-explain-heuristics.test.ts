@@ -1141,6 +1141,20 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/model|provider/i);
   });
 
+  it("explains terminal signed replay without requiring raw logs", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        modelErrors: { total: 3, byCategory: { client_request_signed_replay: 3 } },
+      }),
+    );
+
+    expect(r?.code).toBe("provider_rejected_request");
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/signed|reasoning|conversation/i);
+    expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/daemon log|raw body/i);
+  });
+
   it("recall_miss still fires when no model call was rejected", () => {
     // Regression guard: the new gate must not swallow the genuine recall_miss.
     const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
