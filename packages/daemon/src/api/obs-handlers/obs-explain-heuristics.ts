@@ -1,64 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `obs-explain-heuristics` — the deterministic root-cause heuristic registry.
- *
- * An ordered, first-match-wins `ReadonlyArray<(IncidentSignals) => RootCause |
- * null>`. PURE: no LLM, no I/O, no globals — a post-mortem reproduces the same
- * `likelyRootCause` from the same log evidence forever. The registry keys ONLY
- * on the derived booleans/strings `toIncidentSignals` already computed from log
- * evidence (the 678 fixture has ZERO provenance fields, so the
- * misclassification signal is derived from `success:true` + repeated
- * `"Tool execution failed"` + a status/200/403 token in a failure body — never
- * from `classifiedFailureBy`).
- *
- * ORDERING (load-bearing — pins BOTH frozen fixtures):
- *   1. content_heuristic_misclassification — the 678 ROOT cause. The breaker
- *      tripped on the MISCLASSIFIED successes ("DO NOT retry" is present too),
- *      so the misclassification must out-rank the breaker: it is upstream, the
- *      breaker is the downstream symptom.
- *   2. spend_exceeded — the dollars kill-switch is an
- *      ADMINISTRATIVE pre-emption that aborts at admission, causally INDEPENDENT
- *      of tool failures (tool FAILURES return ~0 bytes / ~$0 and cannot drive
- *      cumulative spend). A live VPS incident showed a spend-killed session
- *      root-causing to the chronic breaker below — masking the acute kill that
- *      now blocks every new turn. So it sits ABOVE the breaker/degradation
- *      heuristics but BELOW #1 (the frozen misclassification). Keyed on
- *      endReason "spend_exceeded" (frozen fixtures carry it not).
- *   3. execution_step_limit_reached — a local runtime guard exhausted the
- *      configured call budget. It must out-rank repeated-failure inference
- *      because each blocked call is recorded as a failure even though no
- *      provider request was attempted.
- *   4. breaker_opened_repeated_failure — the 503 root cause: a real transport
- *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
- *      opened. The 503 has NO misclassification signal, so it falls through to
- *      here.
- *   5. tool_schema_unsupported — an acute, deterministic
- *      provider-schema rejection: upstream of any terminal state (out-ranks
- *      context_exhausted/output_starved) but downstream of the two established
- *      codes, whose fixtures carry no schema-rejection records (cannot
- *      regress them). Fires only when the one-shot strip-retry did NOT
- *      recover — a recovered repair is evidence, not a verdict.
- *   6. context_bloat / exec_dependency / provider_timeout — three low-risk
- *      "insurance" codes that broaden corpus coverage. They never fire on
- *      the two frozen fixtures (the two above match first), so they cannot
- *      regress them.
- *   7. context_exhausted / output_starved — the two NAMED terminal-state
- *      degradation causes. They key on the
- *      metadata-derived `endReason` (threaded onto the signals by the handler),
- *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
- *      the terminal state and out-ranks them. They fire only when the run's
- *      mapped endReason IS the cause, and never on a clean session.
- *   8. prompt_timeout / spend_exceeded —
- *      the NAMED terminal latency + SPEND causes, keyed on endReason "timeout" /
- *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
- *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
- *      numbers-backed from the enriched signal when present; spend_exceeded lives
- *      in the sibling obs-explain-spend-verdict.ts. The established cost and breaker fixtures
- *      carry neither endReason — cannot regress them.
- *
- * The established cost and breaker fixtures pin the first two verdicts; every later rule must leave
- * their verdicts unchanged.
- *
+ * Deterministic, first-match root-cause registry. It consumes only normalized
+ * `IncidentSignals`, performs no I/O, and must reproduce a verdict from the same
+ * evidence. Ordering is causal and load-bearing: misclassification precedes its
+ * breaker symptom; administrative spend and local step ceilings precede repeated
+ * failures; tool/schema/dependency causes precede terminal degradation; named
+ * terminal causes remain last. Frozen cost and breaker fixtures pin that order.
  * @module
  */
 
