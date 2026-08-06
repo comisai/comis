@@ -36,6 +36,14 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     expect(description).toMatch(/not.*workspace (file|artifact)/isu);
     expect(description).toMatch(/log.*track.*file tools/isu);
   });
+
+  it("keeps ordinary corrections non-destructive unless the user asks to forget", () => {
+    const description = LEAN_TOOL_DESCRIPTIONS.memory_store;
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/correction.*store.*new current fact/isu);
+    expect(description).toMatch(/do not.*(?:forget|delete).*unless.*explicitly asks/isu);
+  });
 });
 
 describe("TOOL_SUMMARIES", () => {
