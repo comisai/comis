@@ -54,6 +54,36 @@ describe("classifyPrefixMutation — diagnostic honesty", () => {
     const cls = classifyPrefixMutation(msg, "assistant|b2|t0|r0|len100", "assistant|b2|t0|r0|len100");
     expect(cls).not.toContain("block-count-changed");
   });
+  // A STANDALONE "datetime-preamble" class is diagnostic, not cosmetic. It means a
+  // CACHED message kept its role, its block count, its thinking count and its
+  // length, and still diverged — which for a message carrying
+  // "## Current Date & Time" means the timestamp text itself ticked. A later
+  // minute is the same length, so no structural class fires and this is the only
+  // signal left.
+  //
+  // The cache anchor was deliberately moved off the volatile datetime block so a
+  // 1-character date delta could not drop the prefix (breakpoint-orchestration.ts
+  // documents that fix and the 56,276-token loss that motivated it). This class
+  // appearing at all therefore says a per-call-rendered datetime is sitting INSIDE
+  // the cache fence on some path — measured live on comis-moshe 2026-08-06, twice
+  // in one campaign window.
+  //
+  // Pinned so the classifier keeps reporting it distinguishably: if a future
+  // change folds it into "unknown" or into a structural class, the one signal that
+  // localises this regression disappears.
+  it("reports a same-shape divergence of a cached datetime message as datetime-preamble", () => {
+    const msg = {
+      role: "user",
+      content: [{ type: "text", text: "## Current Date & Time\n2026-08-06 10:07 UTC\n\nstatus?" }],
+    };
+    // Same role, same block count, same thinking count, identical length — only
+    // the minute moved, which is exactly what a re-rendered preamble looks like.
+    const cls = classifyPrefixMutation(msg, "user|b1|t0|r0|len52", "user|b1|t0|r0|len52");
+
+    expect(cls).toBe("datetime-preamble");
+    expect(cls).not.toBe("unknown");
+  });
+
   it("labels a ROLE CHANGE (assistant→user) as a structural index-shift, not datetime-preamble", () => {
     // The exact comis-harel sig: an empty assistant tool-use turn at an index
     // becomes a user turn carrying the dynamic preamble (which contains the
