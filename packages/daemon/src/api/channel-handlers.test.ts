@@ -48,6 +48,12 @@ function makeDeps(overrides?: Partial<ChannelHandlerDeps>): ChannelHandlerDeps {
   };
 }
 
+function makeDepsWithDisableFallback(overrides?: Partial<ChannelHandlerDeps>): ChannelHandlerDeps {
+  const deps = makeDeps(overrides);
+  deps.adaptersByType.set("discord", makeMockAdapter({ channelId: "discord-123" }));
+  return deps;
+}
+
 function makePersistDeps(): PersistToConfigDeps {
   return {
     container: {
@@ -319,7 +325,7 @@ describe("createChannelHandlers - channel management", () => {
     });
 
     it("calls adapter.stop() and returns success", async () => {
-      const deps = makeDeps();
+      const deps = makeDepsWithDisableFallback();
       const handlers = createChannelHandlers(deps);
 
       const result = (await handlers["channels.disable"]!({
@@ -351,6 +357,7 @@ describe("createChannelHandlers - channel management", () => {
       const adapter = makeMockAdapter({ stop: failStop });
       const adaptersByType = new Map();
       adaptersByType.set("telegram", adapter);
+      adaptersByType.set("discord", makeMockAdapter({ channelId: "discord-123" }));
 
       const deps = makeDeps({ adaptersByType });
       const handlers = createChannelHandlers(deps);
@@ -457,7 +464,7 @@ describe("createChannelHandlers - channel management", () => {
 
     it("channels.disable calls persistToConfig with enabled: false patch", async () => {
       const persistDeps = makePersistDeps();
-      const deps = makeDeps({ persistDeps });
+      const deps = makeDepsWithDisableFallback({ persistDeps });
       const handlers = createChannelHandlers(deps);
 
       await handlers["channels.disable"]!({ channel_type: "telegram", _trustLevel: "admin" });
@@ -701,7 +708,7 @@ describe("createChannelHandlers - channel management", () => {
         removeAdapter: vi.fn(),
       };
 
-      const deps = makeDeps({ healthMonitor: mockHealthMonitor as never });
+      const deps = makeDepsWithDisableFallback({ healthMonitor: mockHealthMonitor as never });
       const handlers = createChannelHandlers(deps);
 
       await handlers["channels.disable"]!({ channel_type: "telegram", _trustLevel: "admin" });
@@ -723,7 +730,7 @@ describe("createChannelHandlers - channel management", () => {
     });
 
     it("channels.disable works without healthMonitor (no removeAdapter call)", async () => {
-      const deps = makeDeps(); // no healthMonitor
+      const deps = makeDepsWithDisableFallback(); // no healthMonitor
       const handlers = createChannelHandlers(deps);
 
       const result = (await handlers["channels.disable"]!({

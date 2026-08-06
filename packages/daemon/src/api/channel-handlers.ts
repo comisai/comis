@@ -19,7 +19,7 @@
  * @module
  */
 
-import { AuthorizationError } from "./errors.js";
+import { AuthorizationError, PreconditionError } from "./errors.js";
 import {
   ChannelsHealthContract,
   DeliveryQueueStatusContract,
@@ -276,6 +276,21 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
       const adapter = deps.adaptersByType.get(channelType);
       if (!adapter) {
         throw new Error("Channel type not found or not configured");
+      }
+
+      if (deps.adaptersByType.size === 1) {
+        const message = `Cannot disable the last running channel: ${channelType}. ` +
+          "Enable another channel first, or stop the daemon from the operator control plane.";
+        deps.persistDeps?.container.eventBus.emit("audit:event", {
+          timestamp: systemNowMs(),
+          agentId: (rawParams._agentId as string | undefined) ?? "system",
+          tenantId: deps.persistDeps.container.config.tenantId,
+          actionType: "channels.disable",
+          classification: "destructive" as const,
+          outcome: "failure" as const,
+          metadata: { channelType, error: "last_running_channel" },
+        });
+        throw new PreconditionError(message);
       }
 
       const stopResult = await adapter.stop();
