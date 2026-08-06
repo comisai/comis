@@ -51,6 +51,7 @@ describe("SDK steering burst ground-truth oracle", () => {
       record("queue.dequeued", "base-trace", 1_020),
       record("queue.steer_injected", "follow-trace", 13_010),
       record("session.summary", "base-trace", 18_000),
+      record("delivery.dispatched", "base-trace", 18_100),
     ];
 
     const scored = scoreSdkSteeringBurst({
@@ -92,6 +93,7 @@ describe("SDK steering burst ground-truth oracle", () => {
       record("queue.enqueued", "base-trace", 1_010),
       record("queue.steer_injected", "follow-trace", 13_010),
       record("session.summary", "base-trace", 18_000),
+      record("delivery.dispatched", "base-trace", 18_100),
     ];
 
     const scored = scoreSdkSteeringBurst({
@@ -140,11 +142,57 @@ describe("SDK steering burst ground-truth oracle", () => {
         record("queue.enqueued", "base-trace", 1_010),
         record("queue.steer_injected", "follow-trace", 13_010),
         record("session.summary", "base-trace", 18_000),
+        record("delivery.dispatched", "base-trace", 18_100),
+        record("delivery.dispatched", "base-trace", 18_200),
       ],
       wire: [
         { method: "sendMessage", text: "the combined answer" },
         { method: "sendMessage", text: "a late answer to the old goal" },
       ],
+    });
+
+    expect(scored.verdict.verdict).toBe("fail");
+    expect(scored.verdict.hard.map((violation) => violation.kind)).toContain(
+      "unexpected-steering-delivery",
+    );
+  });
+
+  it("ignores an unrelated future wire send after one scoped steer delivery", () => {
+    const scored = scoreSdkSteeringBurst({
+      injects,
+      transcriptSource: [
+        userRecord(BASE_GUID, "write a long report"),
+        assistantRecord("the combined answer"),
+      ].join("\n"),
+      trajectoryRecords: [
+        record("queue.enqueued", "base-trace", 1_010),
+        record("queue.steer_injected", "follow-trace", 13_010),
+        record("session.summary", "base-trace", 18_000),
+        record("delivery.dispatched", "base-trace", 18_100),
+      ],
+      wire: [
+        { method: "sendMessage", text: "the combined answer" },
+        { method: "sendMessage", text: "a future turn answer" },
+      ],
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.wire.unattributedOutbound).toBe(1);
+  });
+
+  it("fails when an injected steer has no scoped delivery dispatch", () => {
+    const scored = scoreSdkSteeringBurst({
+      injects,
+      transcriptSource: [
+        userRecord(BASE_GUID, "write a long report"),
+        assistantRecord("the combined answer"),
+      ].join("\n"),
+      trajectoryRecords: [
+        record("queue.enqueued", "base-trace", 1_010),
+        record("queue.steer_injected", "follow-trace", 13_010),
+        record("session.summary", "base-trace", 18_000),
+      ],
+      wire: [{ method: "sendMessage", text: "the combined answer" }],
     });
 
     expect(scored.verdict.verdict).toBe("fail");
