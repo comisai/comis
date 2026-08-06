@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  scoreCommandSteeringBurst,
   scoreSdkSteeringBurst,
   selectSdkSteeringTrajectoryRecords,
 } from "./steering-oracle.mjs";
@@ -13,10 +14,16 @@ const injects = [
   { index: 1, inboundGuid: FOLLOW_GUID, sentAtMs: 13_000 },
 ];
 
-const record = (type: string, traceId: string, atMs: number): Record<string, unknown> => ({
+const record = (
+  type: string,
+  traceId: string,
+  atMs: number,
+  data?: Record<string, unknown>,
+): Record<string, unknown> => ({
   type,
   traceId,
   ts: new Date(atMs).toISOString(),
+  ...(data === undefined ? {} : { data }),
 });
 
 const userRecord = (guid: string, text: string): string => JSON.stringify({
@@ -249,5 +256,89 @@ describe("SDK steering burst ground-truth oracle", () => {
       "answered",
       "answered",
     ]);
+  });
+});
+
+describe("command-queue steering ground-truth oracle", () => {
+  const commandSteerRecords = [
+    record("prompt.submitted", "base-trace", 1_010),
+    record("queue.enqueued", "follow-trace", 13_010, { mode: "steer" }),
+    record("model.completed", "base-trace", 13_020, { stopReason: "aborted" }),
+    record("session.summary", "base-trace", 13_030),
+    record("activity.turn_finalized", "base-trace", 13_040, { outcome: "aborted" }),
+    record("queue.coalesced", "follow-trace", 13_050, { messageCount: 1 }),
+    record("queue.dequeued", "follow-trace", 13_060),
+    record("model.completed", "follow-trace", 17_000, { stopReason: "stop" }),
+    record("session.summary", "follow-trace", 17_010),
+    record("delivery.dispatched", "follow-trace", 17_020),
+  ];
+
+  it("accounts for the aborted draft and binds only the replacement delivery", () => {
+    const scored = scoreCommandSteeringBurst({
+      injects,
+      transcriptSource: [
+        userRecord(BASE_GUID, "write a long report"),
+        assistantRecord("an internal draft from the aborted turn"),
+        userRecord(FOLLOW_GUID, "make it three bullets"),
+        assistantRecord("the delivered replacement"),
+      ].join("\n"),
+      trajectoryRecords: commandSteerRecords,
+      wire: [{ method: "sendMessage", text: "the delivered replacement" }],
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.attribution.bindings.map((binding) => binding.status)).toEqual([
+      "aborted",
+      "answered",
+    ]);
+    expect(scored.attribution.bindings[1].answer).toBe("the delivered replacement");
+    expect(scored.steering).toMatchObject({
+      disposition: "abort_and_restart",
+      baseTraceId: "base-trace",
+      replacementTraceId: "follow-trace",
+    });
+    expect(scored.verdict.hard).toEqual([]);
+  });
+
+  it("fails when steer mode does not prove the original execution aborted", () => {
+    const scored = scoreCommandSteeringBurst({
+      injects,
+      transcriptSource: [
+        userRecord(BASE_GUID, "write a long report"),
+        userRecord(FOLLOW_GUID, "make it three bullets"),
+        assistantRecord("the delivered replacement"),
+      ].join("\n"),
+      trajectoryRecords: commandSteerRecords.filter(
+        (entry) => entry.type !== "model.completed" || entry.traceId !== "base-trace",
+      ).filter(
+        (entry) => entry.type !== "activity.turn_finalized" || entry.traceId !== "base-trace",
+      ),
+      wire: [{ method: "sendMessage", text: "the delivered replacement" }],
+    });
+
+    expect(scored.verdict.verdict).toBe("fail");
+    expect(scored.verdict.hard.map((violation) => violation.kind)).toContain(
+      "missing-command-steer-abort",
+    );
+  });
+
+  it("fails when the replacement trace dispatch count is not exactly one", () => {
+    const scored = scoreCommandSteeringBurst({
+      injects,
+      transcriptSource: [
+        userRecord(BASE_GUID, "write a long report"),
+        userRecord(FOLLOW_GUID, "make it three bullets"),
+        assistantRecord("the delivered replacement"),
+      ].join("\n"),
+      trajectoryRecords: commandSteerRecords.filter(
+        (entry) => entry.type !== "delivery.dispatched",
+      ),
+      wire: [{ method: "sendMessage", text: "the delivered replacement" }],
+    });
+
+    expect(scored.verdict.verdict).toBe("fail");
+    expect(scored.verdict.hard.map((violation) => violation.kind)).toContain(
+      "unexpected-command-steer-delivery",
+    );
   });
 });
