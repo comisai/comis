@@ -48,8 +48,16 @@ const SessionsSpawnParams = Type.Object({
   ),
   expected_outputs: Type.Optional(
     Type.Array(
-      Type.String({ description: "Expected output file path" }),
-      { description: "File paths to validate after sub-agent execution completes" },
+      Type.String({ description: "Absolute path of one file the sub-agent must produce" }),
+      {
+        description:
+          "File paths the sub-agent is expected to produce. Declaring them is what DELIVERS them: "
+          + "each declared path that exists when the run ends is attached to the completion and sent "
+          + "to the requester. Omit them and a file the sub-agent writes will NOT be delivered — the "
+          + "run reports success, the file stays on disk, and the requester receives text only. "
+          + "Always declare them for a task whose result is a file (report, spreadsheet, chart, export). "
+          + "The paths are also given to the sub-agent as its output contract and validated after it finishes.",
+      },
     ),
   ),
   artifact_refs: Type.Optional(
