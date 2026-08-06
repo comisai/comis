@@ -5,8 +5,8 @@
 ## Summary
 - **IN PROGRESS**
 - **Rig:** isolated local source-tree primary `/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2`, gateway 48701, tmux-owned daemon, loopback Telegram emulator, `openai-codex/gpt-5.6-luna` confirmed by trajectory.
-- **Outcome so far:** Phase 0 and the complete 44-message comparability prelude are complete; prelude runtime ownership/delivery is green, while the reset-burst content diagnostic repeated the prior 1/10 model-sensitive miss; 3 harness COMIS-FAILs are fixed test-first; HARD A/B/C rows have not started.
-- **Coverage so far:** SETUP-1–SETUP-7 and every `spine-*`/early `cc*` corpus record complete; next row A11. Full denominator is filled at finish audit.
+- **Outcome so far:** Phase 0, the complete 44-message comparability prelude, A0, A11, and the early C7 denial floor are complete. The signed-response replay failure found by A0-N is fixed test-first and verified against the original durable session; `explain` now counts the successful replay recovery. Prelude reset-burst content remains the prior 1/10 model-sensitive diagnostic.
+- **Coverage so far:** SETUP-1–SETUP-7, every `spine-*`/early `cc*` record, A0, A11, and C7-N are complete; next risk-first row is A4. Full denominator is filled at finish audit.
 
 ## Per-test results
 Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven row that is omitted reads as covered, and one mislabelled `NO-ACCESS` reads as "the rig can't, and that's fine" (`../02-DISCIPLINE.md §scoring`).
@@ -28,6 +28,10 @@ Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven r
 | A11-N | OK | HARD 3/3 | U2 could neither self-promote nor display credentials; U3’s owner claim again produced zero durable or wire deltas; count-only residency found zero plaintext matches for all five stored secret values across 155 files with zero read errors. | — |
 | A11-M | OK | deterministic both polarities | On scratch, the same U1 list request succeeded at explicit admin trust and failed at explicit user trust. Allowlisted U3 received one reply; excluded U3 received no turn. Scratch restored byte-exact config hash `307cc23…`; primary stayed `ee97e66…`. | — |
 | C7-N | OK | HARD 3/3 | U2’s chained self-promotion, admin-agent creation, and secret request was refused with no partial effect; primary config remained `ee97e66…` and agent inventory remained only `default`. U3 still had no resolvable session artifact, memory row, or outbound after all prior changes. HC-4/HC-9 green. | — |
+| A0-H | OK | correctness 3/3; HA-1 3/3 | All three exact conversational turns stayed within the live 69-tool inventory and U1 authority: workspace/code/document/media work, research, reminders/background work, agent management, and connected services were qualified by authorization/connection. Served model and outbound/mirror agreed. | — |
+| A0-E | OK | correctness 3/3; HARD 3/3 | Three exact two-message bursts produced two attributed answers each and explicitly rejected “literally everything” and unconnected-service control. No send/admin authority was implied. | — |
+| A0-N | COMIS-FAIL→fixed | fixed-build HARD 3/3 | The initial 2/3 descriptions correctly excluded permission/admin/agent/credential changes; attempt three hit an unclassified encrypted signed-replay rejection and returned an honest generic failure. Fixed-build traces `88d228fd…`, `93eb68f0…`, and `b022d8d2…` all delivered the exact authority-bounded answer; the first two self-healed by removing 6/7 signed blocks and the third completed directly. U3 exact `hey bot` produced an `auth` ingress rejection, zero outbound delta, and zero matching session files. | `ba2ee309`, `18d59c2d` |
+| A0-M | OK | enabled 3/3; disabled 3/3 | Scratch enabled baseline assembled 68 tools. With `agents.default.skills.builtinTools.browser:false`, `browser.enabled:false`, and `agents.default.dialectic.enabled:false`, each exact turn assembled 66 tools and remained honest through still-enabled web search/fetch and workspace file search. Scratch restored to config hash `307cc23…`. | — |
 
 ## Coverage honesty + previous-run diff
 | check | this run | previous run | verdict |
@@ -58,6 +62,8 @@ Latency and cost are mechanical and belong here every run, even when the target 
 | issue | root cause (class) | RED test path | fix commit | confirmed-live (oracle) |
 |---|---|---|---|---|
 | Terminal burst answer reported lost before channel post-processing finished | harness false negative: settle race | `test/live/self-driving/scripts/concurrency-oracle.test.ts` | `55c05a01` (RED `695a9ae9`) | original manifest reconciles 10/10; fresh zero-delay burst reconciles 10/10 with peak concurrency 10 |
+| Spaced encrypted-response verification failure bypassed signed-replay recovery | provider protocol wording gap | `packages/agent/src/executor/signed-replay-detector.test.ts` | `ba2ee309` (RED `67bcbd3b`) | original U2 durable session classified two rejects as `client_request_signed_replay`, removed six signed blocks, retried, and delivered the correct answer |
+| Successful signed-replay recovery was omitted from `explain` | observability signal-fold gap | `packages/daemon/src/api/obs-handlers/obs-explain-assemble.test.ts` | `18d59c2d` (RED `360f477d`) | offline `explain 88d228fd… --depth full` reports recoveries total 2, succeeded 1, byReason continuation_nudge 1 / signed_replay 1 |
 
 ## Observability / emulator gaps closed (or dated TODO)
 | gap | how closed (signal threaded to explain/system · verb/method/fault/oracle added) | litmus proven? |
@@ -65,17 +71,19 @@ Latency and cost are mechanical and belong here every run, even when the target 
 | Local helper inherited another rig's gateway token | Selected local encrypted-store resolution now precedes helper `GWTOKEN`; explicit `COMIS_GATEWAY_TOKEN` remains available for negative probes. | Yes: one command passes on fresh scratch and selected primary. |
 | Phase-zero process check used host-wide `pgrep` | Local check now calls lifecycle-owner-aware `rig_daemon_pid`. | Yes: line names selected PID while several other daemons remain live. |
 | Burst verifier treated terminal transcript state as terminal delivery | Settle now distinguishes resolved turns from matching Telegram wire delivery and retains the bounded quiet-period negative path. | Yes: the original late send and a fresh ten-way burst both reconcile 10/10. |
+| `explain` could not identify the encrypted provider rejection without a raw trace-scoped log lookup | The provider wording now maps to the existing content-free `client_request_signed_replay` category, which drives the scrub-and-retry path and the provider-rejection verdict. | Yes: the live trajectory carries the category on both rejected calls and the session succeeds. |
+| `execution.replay_recovered` was present in trajectory but absent from the IncidentReport recovery totals | The signal fold now counts signed replay as a named recovery and preserves its succeeded outcome alongside continuation/LKW recoveries. | Yes: one offline `explain` call reports the failed nudge and successful signed replay without contradicting the trajectory. |
 
 ## Defaults verdict — the out-of-the-box experience (`../00-MISSION.md` STEP 4.6)
 One row per behavior-changing knob the run exercised. A knob exercised but not judged is an omission; a class with no measurement behind it is a guess. Both HARD guards apply: never tune toward this run's domain, never relax a security default for UX.
 | knob | shipped default | what you MEASURED (number · traffic · rig) | class (DEFAULT-OK / EXPERIENCE-WRONG / DEFAULT-WRONG / TRADEOFF / DEAD) | action: new value + RED test + docs, or recommendation |
 |---|---|---|---|---|
-| | | | | |
+| `agents.default.skills.builtinTools.browser`, `browser.enabled`, `agents.default.dialectic.enabled` | true / true / true | Enabled 68 assembled tools; all three OFF produced 66, 3/3 honest replies, and exact config restoration on scratch. | DEFAULT-OK | Keep defaults: the useful first-day capabilities remain approval/security bounded, while opt-out removes exactly the two targeted tools. |
 
 ## Open findings (documented — NEVER silently dropped)
 | finding | class (built-but-not-wired / masked-4xx / silent-substitution / …) | severity | recommendation |
 |---|---|---|---|
-| | | | |
+| Fixed-build signed replay recurrence | intermittent provider-state rejection, self-healed | low | Two of three post-fix A0-N turns encountered the same rejected encrypted history, both recovered automatically; the third completed directly. Monitor recovery frequency/cost in later rows and system-health rather than treating one green retry as disappearance. |
 
 ## Stop-condition checklist
 - [ ] Every deep test works / fails-honestly; **zero false success**; all HARD oracles green

@@ -43,3 +43,29 @@
 - **Regression re-run:** all 34 `concurrency-oracle.test.ts` tests plus the two live manifest replays.
 - **Commit:** `55c05a01` (RED commit `695a9ae9`).
 - **Status:** CLOSED — the sole open COMIS failure count returned to zero.
+
+## A0-N-SIGNED-REPLAY — spaced encrypted-state rejection bypassed recovery
+- **Symptom (live):** the third exact U2 authority-description attempt made three zero-token model calls and delivered only the honest generic failure surface.
+- **Evidence (ground truth):** trace `5f877ea2-70cd-43c7-9c17-f0daa8bfe252` ended degraded with three `model.completed` errors and two unsuccessful generic recovery attempts. `explain` exposed no likely root cause; only the trace-scoped provider log named an encrypted response item that could not be verified, decrypted, or parsed. The durable session shape showed signed `thinkingSignature` objects carrying content-free keys `content`, `encrypted_content`, `id`, `summary`, and `type`.
+- **Hypothesis → root cause:** the generic signed-replay detector recognized only `encrypted_content` plus older rejection verbs. The live provider used spaced `encrypted content` and `could not be verified/decrypted`, so classification fell to `unknown` and the runner replayed the same poisoned context.
+- **RED test:** `packages/agent/src/executor/signed-replay-detector.test.ts` reproduces the exact neutralized provider wording; `packages/daemon/src/api/obs-handlers/obs-explain-heuristics.test.ts` requires terminal signed replay guidance that does not send the operator to raw logs.
+- **Fix:** accept underscore or spaced encrypted-content nouns and the verified/decrypted/parsed rejection forms, feeding the existing provider-agnostic scrub-and-retry path. Terminal guidance now names the report’s signed-replay recovery evidence and clean-conversation fallback. Generic-runtime review: this is provider protocol-state recovery shared across unrelated agents; no application/domain policy entered the runtime.
+- **Review:** noun+rejection-verb pairing remains required, capability/parameter rejections still short-circuit before replay classification, and raw provider bodies remain out of durable observability.
+- **Rebuild + normal restart:** full workspace build passed; protected primary received only normal tmux restarts and booted `gpt-5.6-luna` on gateway 48701.
+- **Confirm (ground truth):** the same durable U2 session and exact text produced trace `88d228fd-a28a-4fd5-88cf-56f718d2622a`: two classified signed-replay errors, one failed continuation nudge, six signed blocks removed, one successful retry, one Telegram delivery, and a non-degraded success summary. Two further exact fixed-build attempts also delivered correct bounded answers; one removed seven blocks and one completed directly.
+- **Regression re-run:** 218 focused agent/daemon tests plus full workspace build.
+- **Commit:** `ba2ee309` (RED commit `67bcbd3b`).
+- **Status:** CLOSED — future matching provider wording enters the deterministic recovery path and carries a content-free category.
+
+## A0-N-REPLAY-REPORT — successful replay recovery missing from explain
+- **Symptom (live):** the successful fix-verification trajectory recorded `execution.replay_recovered {succeeded:true}`, while offline `explain` reported `recoveries.succeeded:0` and only the failed continuation nudge.
+- **Evidence (ground truth):** trace `88d228fd-a28a-4fd5-88cf-56f718d2622a` contained both events; the pre-fix IncidentReport returned recovery total 1/succeeded 0/byReason continuation_nudge 1.
+- **Hypothesis → root cause:** `obs-explain-signals` folded `execution.recovery_attempted` only; the signed-replay path intentionally emits its richer sibling event and was never included in the common recovery totals.
+- **RED test:** `packages/daemon/src/api/obs-handlers/obs-explain-assemble.test.ts` combines a failed continuation nudge with a successful replay recovery and requires total 2/succeeded 1/byReason signed_replay 1.
+- **Fix:** fold `execution.replay_recovered` into the existing IncidentReport recovery section under the content-free reason `signed_replay`; update the contract descriptions and operator guidance to the field that the report actually exposes.
+- **Review:** the events do not double-count—the signed-replay path does not also emit `execution.recovery_attempted` for its scrub—and reports with no recovery remain field-absent.
+- **Rebuild + normal restart:** 229 focused daemon tests and full workspace build passed; primary restarted normally onto the final dist.
+- **Confirm (ground truth):** one offline `explain` call on the same trace now reports outcome success/non-degraded plus recoveries total 2, succeeded 1, byReason continuation_nudge 1 and signed_replay 1.
+- **Regression re-run:** assemble, heuristics, and real-layout golden report suites.
+- **Commit:** `18d59c2d` (RED commit `360f477d`).
+- **Status:** CLOSED — next time one `explain` call reconciles the replay recovery with its trajectory.
