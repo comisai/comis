@@ -27,6 +27,13 @@
  * registers no dist aliases on purpose, so it runs in the unit tier without a
  * `pnpm build` and a stale `dist/` cannot mask a `src/` change.
  *
+ * `exclude` is that contract enforced rather than merely stated: a kit test
+ * that genuinely needs a built package belongs to the integration tier, whose
+ * config aliases every `@comis/*` to `packages/<pkg>/dist`. Collecting one here
+ * cannot work — the repo root declares only `@comis/core`, so `@comis/memory`
+ * resolves nowhere and the FILE fails to load, which reds the whole unit gate
+ * regardless of whether a `dist/` exists.
+ *
  * @module
  */
 import { defineConfig } from "vitest/config";
@@ -35,6 +42,10 @@ export default defineConfig({
   test: {
     name: "live-kit",
     include: ["**/*.test.ts"],
+    // Needs AppConfigSchema + offlineSecretGet to prove the generated config
+    // validates and the gateway token really landed in the encrypted store.
+    // Runs in the integration tier's aliased `live-scenarios` project instead.
+    exclude: ["remote-root.test.ts"],
     pool: "threads",
     passWithNoTests: true,
   },
