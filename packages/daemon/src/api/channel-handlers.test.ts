@@ -285,6 +285,21 @@ describe("createChannelHandlers - channel management", () => {
   // -------------------------------------------------------------------------
 
   describe("channels.disable", () => {
+    it("refuses to stop the last running channel before any side effect", async () => {
+      const adapter = makeMockAdapter();
+      const adaptersByType = new Map([["telegram", adapter]]);
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ adaptersByType, persistDeps });
+      const handlers = createChannelHandlers(deps);
+
+      await expect(
+        handlers["channels.disable"]!({ channel_type: "telegram", _trustLevel: "admin" }),
+      ).rejects.toThrow(/last running channel/iu);
+
+      expect(adapter.stop).not.toHaveBeenCalled();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
     it("rejects channels.disable without admin trust level", async () => {
       const deps = makeDeps();
       const handlers = createChannelHandlers(deps);
