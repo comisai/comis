@@ -195,6 +195,11 @@ describe("cron governed agent-turn executor", () => {
       content: "Inspect the queue",
       source: "api",
     });
+    expect(message.metadata).toMatchObject({
+      isCronAgentTurn: true,
+      cronJobId: "job-a",
+      cronExecutionId: EXECUTION_ID,
+    });
     expect(agentId).toBe("agent-a");
     expect(tools?.map((tool) => tool.name)).toEqual(["read"]);
     expect(overrides).toMatchObject({
