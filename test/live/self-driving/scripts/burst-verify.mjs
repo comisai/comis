@@ -19,6 +19,7 @@
 //     --max-ms <n>         hard ceiling on settling (default 300000)
 //     --no-expect-overlap  for a steering/sequential row, where one trace is the correct shape
 //     --sdk-steering       score the second inbound from SDK steer/follow-up disposition events
+//     --command-steering   score bare steer mode's abort-and-restart lifecycle
 //     --data <path>        override the manifest's data dir
 //     --format json|text   default text (json prints the full report)
 //
@@ -37,6 +38,7 @@ import {
   wireReconciliation,
 } from './concurrency-oracle.mjs';
 import {
+  scoreCommandSteeringBurst,
   scoreSdkSteeringBurst,
   selectSdkSteeringTrajectoryRecords,
 } from './steering-oracle.mjs';
@@ -48,12 +50,13 @@ for (let index = 0; index < argv.length; index += 1) {
   const token = argv[index];
   if (token === '--no-expect-overlap') { flags.set('no-expect-overlap', true); continue; }
   if (token === '--sdk-steering') { flags.set('sdk-steering', true); continue; }
+  if (token === '--command-steering') { flags.set('command-steering', true); continue; }
   if (token.startsWith('--')) { flags.set(token.slice(2), argv[index + 1]); index += 1; continue; }
   positional.push(token);
 }
 const manifestPath = positional[0];
 if (!manifestPath) {
-  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering] [--data path] [--format json|text]');
+  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering|--command-steering] [--data path] [--format json|text]');
   process.exit(2);
 }
 let manifest;
@@ -72,7 +75,13 @@ if (!Number.isFinite(settleMs) || !Number.isFinite(maxMs)) {
 const dataDir = flags.get('data') || manifest.dataDir || rig.dataDir;
 const format = flags.get('format') || 'text';
 const sdkSteering = flags.get('sdk-steering') === true;
-const expectOverlap = !sdkSteering && flags.get('no-expect-overlap') !== true;
+const commandSteering = flags.get('command-steering') === true;
+if (sdkSteering && commandSteering) {
+  console.error('burst-verify.mjs: choose only one of --sdk-steering or --command-steering');
+  process.exit(2);
+}
+const steeringMode = sdkSteering || commandSteering;
+const expectOverlap = !steeringMode && flags.get('no-expect-overlap') !== true;
 const injects = (manifest.injects ?? []).filter((inject) => inject.ok && inject.inboundGuid);
 if (injects.length === 0) {
   console.error('burst-verify.mjs: the manifest carries no accepted injects — nothing to verify');
@@ -199,6 +208,14 @@ const score = (state) => {
       wire: state.wire,
     });
   }
+  if (commandSteering) {
+    return scoreCommandSteeringBurst({
+      injects,
+      transcriptSource: state.transcript?.source ?? '',
+      trajectoryRecords: state.trajectoryRecords,
+      wire: state.wire,
+    });
+  }
   const attribution = attributeBurst({
     injects,
     transcriptSource: state.transcript?.source ?? '',
@@ -224,9 +241,17 @@ let fingerprint = '';
 let quietSinceMs = Date.now();
 let settled = false;
 while (Date.now() - startedAtMs < maxMs) {
-  const steeringEvidencePending = sdkSteering && scored.verdict.hard.some(
-    (violation) => violation.kind === 'missing-steering-disposition'
-      || violation.kind === 'steered-turn-not-terminal',
+  const steeringEvidencePending = steeringMode && scored.verdict.hard.some(
+    (violation) => [
+      'missing-steering-disposition',
+      'steered-turn-not-terminal',
+      'missing-command-steer-replacement',
+      'missing-command-steer-base',
+      'missing-command-steer-abort',
+      'missing-command-steer-coalesce',
+      'command-steer-replacement-not-terminal',
+      'unexpected-command-steer-delivery',
+    ].includes(violation.kind),
   );
   const resolvedAll = scored.attribution.counts.unanswered === 0
     && scored.attribution.counts.ambiguous === 0
@@ -294,6 +319,8 @@ if (format === 'json') {
       ? binding.answer
       : binding.status === 'steered'
         ? `forwarded via ${scored.steering?.disposition ?? 'SDK steering'}`
+      : binding.status === 'aborted'
+        ? 'superseded by command steer'
       : binding.status === 'ambiguous'
         ? `ambiguous with [${binding.ambiguousWith.join(', ')}]`
         : binding.inboundSeen ? 'NO REPLY' : 'NEVER INGESTED';
