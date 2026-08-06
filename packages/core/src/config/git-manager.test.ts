@@ -249,6 +249,9 @@ function createMockDeps(opts?: {
         if (!repo.initialized) {
           return err("fatal: not a git repository");
         }
+        if (args.includes("--cached") && args.includes("--name-only")) {
+          return ok(repo.dirty ? "config.yaml\n" : "");
+        }
         // Return a mock unified diff
         return ok(
           "--- a/config.yaml\n+++ b/config.yaml\n@@ -1,3 +1,3 @@\n setting: old\n-value: before\n+value: after\n other: same\n",
@@ -276,10 +279,12 @@ function createMockDeps(opts?: {
         const commit = repo.commits.find((c) => c.sha === sha);
         if (commit) {
           // Restore files from that commit
+          let changed = false;
           for (const [name, content] of commit.files) {
+            if (repo.workingTree.get(name) !== content) changed = true;
             repo.workingTree.set(name, content);
           }
-          repo.dirty = true;
+          repo.dirty = repo.dirty || changed;
           return ok("");
         }
         return err(`error: pathspec '${sha}' did not match any file(s) known to git`);

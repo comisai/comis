@@ -581,6 +581,25 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       await execWithReinit(["add", "*.yaml"]);
       await execWithReinit(["add", "*.yml"]);
 
+      // Detect an already-current target before committing. Production
+      // execFile errors do not reliably include Git's stdout text for a
+      // no-op commit, so parsing "nothing to commit" is not a portable
+      // idempotency check.
+      const stagedResult = await execWithReinit([
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        "*.yaml",
+        "*.yml",
+      ]);
+      if (!stagedResult.ok) {
+        return err(`Failed to inspect staged rollback: ${stagedResult.error}`);
+      }
+      if (stagedResult.value.trim().length === 0) {
+        return ok("");
+      }
+
       // Create forward rollback commit
       const shortSha = sha.slice(0, 7);
       const message = [
