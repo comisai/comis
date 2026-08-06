@@ -46,13 +46,29 @@ if (!YAML) {
   );
 }
 
-let offlineSecretSet;
-try {
-  const { comisDist } = await import("./_rig.mjs");
-  ({ offlineSecretSet } = await import(comisDist("memory", "dist/index.js")));
-} catch {
-  fail(
-    "the encrypted secret-store adapter is unavailable from the resolved code root; build or install Comis before initializing the rig",
+// Resolved the same two ways as `yaml` above, and for the same reason: the checkout-relative anchor
+// first so a plain in-repo run works with no rig env at all, then the resolved code root for a
+// DEPLOYED kit whose helpers sit outside any checkout. Going through the code root ALONE made a
+// no-rig-env run resolve against a non-existent global install, so the module aborted claiming the
+// adapter was missing while the freshly-built dist sat in the checkout beside it.
+//
+// Loaded lazily, not at module load: only `init` persists a generated token, so `validate` must not
+// inherit a dependency it never uses. A top-level import made every `validate` abort with this
+// adapter error instead of reporting the config defect it was called to find.
+async function loadOfflineSecretSet() {
+  for (const load of [
+    () => import(resolve(repo, "packages/memory/dist/index.js")),
+    async () => import((await import("./_rig.mjs")).comisDist("memory", "dist/index.js")),
+  ]) {
+    try {
+      const { offlineSecretSet } = await load();
+      if (offlineSecretSet) return offlineSecretSet;
+    } catch {
+      /* try the next resolution strategy */
+    }
+  }
+  return fail(
+    "the encrypted secret-store adapter is unavailable from either the checkout or the resolved code root; build or install Comis before initializing the rig",
   );
 }
 
@@ -185,7 +201,7 @@ function ensureMasterKey(dataDir) {
   return { envPath, created: true };
 }
 
-function initialize(configPath, dataDir, portInput, chatId) {
+async function initialize(configPath, dataDir, portInput, chatId) {
   assertLocalInitSelection(configPath, dataDir, portInput);
   if (existsSync(configPath)) {
     fail(`${configPath} already exists; local initialization never overwrites it`);
@@ -209,6 +225,7 @@ function initialize(configPath, dataDir, portInput, chatId) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   chmodSync(dataDir, 0o700);
   const masterKey = ensureMasterKey(dataDir);
+  const offlineSecretSet = await loadOfflineSecretSet();
   const stored = offlineSecretSet({
     name: "COMIS_GATEWAY_TOKEN",
     value: token,
@@ -239,5 +256,5 @@ if (!command || !configPath || !dataDir || !portInput) {
 }
 
 if (command === "validate") validate(configPath, dataDir, portInput);
-else if (command === "init") initialize(configPath, dataDir, portInput, chatId);
+else if (command === "init") await initialize(configPath, dataDir, portInput, chatId);
 else fail(`unknown local config command '${command}'`);
