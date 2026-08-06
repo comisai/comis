@@ -659,8 +659,9 @@ export const IncidentReportSchema = z.object({
     })
     .optional(),
   /** Runtime recovery attempts folded from the session's
-   *  `execution.recovery_attempted` records — model re-entries and deterministic
-   *  response-grounding corrections that would otherwise be log-only.
+   *  `execution.recovery_attempted` and `execution.replay_recovered` records —
+   *  model re-entries and deterministic response-grounding corrections that
+   *  would otherwise be log-only.
    *  `total` attempts, `succeeded` count, and per-reason counts.
    *  Absent ⇒ no recovery attempts this session. */
   recoveries: z

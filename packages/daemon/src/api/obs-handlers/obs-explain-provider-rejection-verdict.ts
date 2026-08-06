@@ -53,7 +53,7 @@ const DETERMINISTIC_REJECTIONS = new Set([
 /** Per-category operator guidance. Falls back to a generic step when unlisted. */
 const NEXT_STEPS: Record<string, string[]> = {
   client_request_signed_replay: [
-    "check this report for `execution.replay_recovered`; its scrub counters show whether Comis removed persisted signed reasoning state before retrying",
+    "check `recoveries.byReason.signed_replay` and `recoveries.succeeded` in this report to confirm whether Comis removed persisted signed reasoning state and recovered",
     "if automatic replay recovery failed, start a new conversation so the provider receives no rejected signed reasoning history",
   ],
   model_capability_unsupported: [

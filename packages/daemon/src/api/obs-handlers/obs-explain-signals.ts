@@ -518,6 +518,17 @@ function handleEventRecord(
       acc.recoveries = prev;
       return;
     }
+    case "execution.replay_recovered": {
+      // The signed-replay path has its own trajectory event because it also
+      // carries content-free scrub counters. Count its terminal outcome in the
+      // same report section as the other model re-entry recoveries.
+      const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
+      prev.total += 1;
+      if (data.succeeded === true) prev.succeeded += 1;
+      prev.byReason.signed_replay = (prev.byReason.signed_replay ?? 0) + 1;
+      acc.recoveries = prev;
+      return;
+    }
     case "session.summary": {
       // Sums cost/turn counts and keeps only this latest summary's locale skip.
       accumulateSessionSummaryRecord(acc, data);

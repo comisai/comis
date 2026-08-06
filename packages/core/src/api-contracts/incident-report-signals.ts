@@ -471,9 +471,10 @@ export interface IncidentSignals {
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /**
-   * Runtime-recovery fold from `execution.recovery_attempted` records: total +
-   * succeeded tally + per-reason counts. Includes model re-entry and
-   * deterministic response-grounding corrections. Absent ⇒ no recovery attempts.
+   * Runtime-recovery fold from `execution.recovery_attempted` and
+   * `execution.replay_recovered` records: total + succeeded tally + per-reason
+   * counts. Includes model re-entry and deterministic response-grounding
+   * corrections. Absent ⇒ no recovery attempts.
    */
   recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /**

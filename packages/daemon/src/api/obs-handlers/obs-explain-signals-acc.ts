@@ -222,9 +222,10 @@ export interface Acc {
   deliveryAborts?: { events: number; chunksNotSent: number };
   /** The LAST valid `delivery.dispatched` terminal outcome. */
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
-  /** Runtime-recovery fold from `execution.recovery_attempted` records:
-   *  model re-entries and deterministic response corrections, summarized as
-   *  total + succeeded tally + per-reason counts. */
+  /** Runtime-recovery fold from `execution.recovery_attempted` and
+   *  `execution.replay_recovered` records: model re-entries and deterministic
+   *  response corrections, summarized as total + succeeded tally + per-reason
+   *  counts. */
   recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /** Σ of the session's `session.summary` records' costUsd (one record per
    *  execution) — the trajectory-derived session cost the assembler prefers
