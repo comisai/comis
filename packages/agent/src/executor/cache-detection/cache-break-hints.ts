@@ -79,3 +79,35 @@ export function cacheBreakLogFields(event: {
     modelChanged: event.changes.modelChanged,
   };
 }
+
+/**
+ * Field bag for the cold-prefix line.
+ *
+ * A first call with no prior detector state is NOT a break — nothing existed to
+ * break from — but a first call that reads nothing and writes a large prefix is
+ * the most expensive cache event there is, and it used to emit no countable line
+ * at all. Kept beside `cacheBreakLogFields` so the detector stays inside its
+ * subdirectory line cap.
+ */
+const COLD_PREFIX_WRITE_MIN_TOKENS = 50_000;
+
+export function logColdPrefixWrite(
+  logger: { info: (...args: unknown[]) => void },
+  input: { sessionKey: string; provider: string; cacheReadTokens: number; cacheWriteTokens: number },
+  agentId: string,
+  ttlCategory: string | undefined,
+): void {
+  if (input.cacheReadTokens !== 0 || input.cacheWriteTokens < COLD_PREFIX_WRITE_MIN_TOKENS) return;
+  logger.info(
+    {
+      sessionKey: input.sessionKey,
+      agentId,
+      provider: input.provider,
+      cacheReadTokens: input.cacheReadTokens,
+      cacheWriteTokens: input.cacheWriteTokens,
+      ttlCategory,
+      hint: "First call of this session's detector state bought the whole prefix (no cache read). Expected after a daemon restart or on a genuinely new session; if it recurs on an established conversation the prefix is not surviving between turns — compare cache_read against cache_write on obs_token_usage rather than counting cache breaks.",
+    },
+    "Cold cache prefix written",
+  );
+}

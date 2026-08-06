@@ -690,6 +690,30 @@ describe("local rig mode", () => {
     ).toContain("observability.trajectory.dirOverride must stay inside the isolated data root");
   });
 
+  // `validate` reads a config and persists no secret, so it must not require a
+  // built `packages/memory/dist`. Resolving the encrypted-store adapter at MODULE
+  // load made every subcommand need one: on a box whose code root falls through
+  // to a global `comisai` install that is not there, `validate` aborted reporting
+  // a secret-store problem for an operation that touches no secret — and the
+  // kit's unit project is contracted to run WITHOUT a `pnpm build`
+  // (`vitest.config.ts`), so a load-time dist import reintroduced the stale-dist
+  // coupling that contract forbids. Pinned with a code root that deliberately has
+  // no dist: the adapter stays a lazy dependency of `init` alone.
+  it("validates a config without requiring a built secret-store adapter", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-config-nodist-");
+    const configPath = resolve(directory, "config.yaml");
+    writeFileSync(configPath, `dataDir: ${directory}\ngateway:\n  port: 4882\n`);
+
+    const validated = spawnSync("node", [LOCAL_CONFIG, "validate", configPath, directory, "4882"], {
+      encoding: "utf8",
+      env: { ...process.env, PKG: "/nonexistent-code-root" },
+    });
+
+    const output = `${validated.stdout}${validated.stderr}`;
+    expect(validated.status, output).toBe(0);
+    expect(output).not.toContain("secret-store adapter");
+  });
+
   it("loads the rendered rig selection in every standalone local gate", () => {
     for (const script of [DEPLOY_EMULATOR, RIG_DOCTOR, VERIFY_BUILD]) {
       const source = readFileSync(script, "utf8");

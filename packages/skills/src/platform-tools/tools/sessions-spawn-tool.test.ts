@@ -151,4 +151,29 @@ describe("sessions_spawn tool", () => {
       tool.execute("call-4", { task: "do stuff" } as never),
     ).rejects.toThrow("spawn failed");
   });
+
+  // Declaring expected_outputs is the ONLY thing that makes a file the sub-agent
+  // produced reach the requester: post-run validation turns each existing declared
+  // path into a completion attachment, and the governed announcement delivers it.
+  // Describing the field as post-hoc "validation" gave a caller no reason to
+  // declare it for a file-producing task, so the file was written and never sent.
+  //
+  // Measured live on comis-moshe: three report requests were answered with
+  // "working on it, I'll send the file", the files were produced in the workspace,
+  // and the wire carried ZERO document sends across the whole campaign because no
+  // spawn declared an output. The schema must state the consequence, not just the
+  // check.
+  it("tells the caller that declaring expected_outputs is what delivers the file", () => {
+    const tool = createSessionsSpawnTool(vi.fn(async () => ({ ok: true })) as RpcCall);
+    const schema = (tool as unknown as {
+      parameters: { properties: { expected_outputs?: { description?: string } } };
+    }).parameters;
+    const description = String(schema.properties.expected_outputs?.description ?? "");
+
+    expect(description.length).toBeGreaterThan(0);
+    // Names the outcome (the file is sent), not merely that paths are checked.
+    expect(description).toMatch(/deliver|attach|sent/i);
+    // Names the cost of omitting it, so the default is an informed choice.
+    expect(description).toMatch(/not be (delivered|sent|attached)|never (delivered|sent)/i);
+  });
 });

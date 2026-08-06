@@ -806,6 +806,83 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(restarted.size()).toBe(1);
   });
 
+  // `adjudicateReservations` is fail-safe: a reservation with no ledger tree root
+  // cannot be settled, because there is no tree to ask for the step the send
+  // WOULD have used. That skip was SILENT, so a permanently unrecoverable
+  // reservation looked identical to a transient one — live on comis-moshe, two
+  // sat parked for over 24h while the only signal was a count, and a real user
+  // never received the chart set a sub-agent had already produced.
+  it("warns, naming the missing ledger root, when a reservation can never be adjudicated", async () => {
+    const logger = createMockLogger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger,
+      outwardLedger: {
+        allocateStep: vi.fn(),
+        recordState: vi.fn(),
+        findByOperation: vi.fn(),
+      } as unknown as OutwardSendLedgerPort,
+    });
+
+    await queue.reserveDecision(decisionInput({ rootRunId: undefined }));
+    // Drain three times: an unadjudicable reservation is re-reached on every
+    // sweep, and re-warning each pass is the same unbounded-volume defect the
+    // ledger-failure path was fixed for. Live, this line fired 4x across 2 sweeps.
+    await queue.drain(vi.fn().mockResolvedValue(true));
+    await queue.drain(vi.fn().mockResolvedValue(true));
+    await queue.drain(vi.fn().mockResolvedValue(true));
+
+    const warnings = (logger.warn as unknown as { mock: { calls: [Record<string, unknown>, string][] } })
+      .mock.calls.filter(([, msg]) => /never be adjudicated|cannot be adjudicated/i.test(msg));
+    expect(warnings).toHaveLength(1);
+    const warned = warnings[0];
+    expect(warned?.[0]).toMatchObject({ runId: "run-parent-1", errorKind: "internal" });
+    expect(String(warned?.[0].hint)).toMatch(/rootRunId/);
+    // Fail-safe: it must still be retained, never discarded on the strength of
+    // being unrecoverable.
+    expect(queue.size()).toBe(1);
+  });
+
+  // A governed entry the ledger cannot complete is RETAINED on purpose and never
+  // replayed automatically, so every 5-minute drain re-reaches it. Re-logging its
+  // standing condition at ERROR each pass turns one stuck entry into unbounded
+  // ERROR volume that buries genuinely new failures: measured live on
+  // comis-moshe, a single entry emitted an ERROR on every sweep indefinitely
+  // (10:16:38, 10:17:57, 10:23:16, 10:28:16, …). Log the TRANSITION into the
+  // condition, not the condition — the same treatment the quarantine WARN already
+  // gets in health-metrics.
+  it("logs a stuck governed entry once, not on every sweep", async () => {
+    const logger = createMockLogger();
+    const ledger = {
+      // Definitive absent lookup, so the drain proceeds to the transport check.
+      lookup: vi.fn(async () => ok(undefined)),
+      allocateStep: vi.fn(async () => ok({ ok: true, value: { stepIndex: 1 } })),
+      recordState: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+    } as unknown as OutwardSendLedgerPort;
+    // No governedSendToChannel: the receipt-aware transport is unavailable, which
+    // is a precondition failure the entry cannot resolve on its own.
+    const queue = createAnnouncementDeadLetterQueue({
+      // retryIntervalMs 0: `lastAttemptAt` is stamped at enqueue, so the default
+      // 60s interval would skip every drain in this test and the entry would
+      // never reach the governed path at all.
+      filePath, eventBus: createMockEventBus(), logger, outwardLedger: ledger, retryIntervalMs: 0,
+    });
+    await queue.enqueue(makeEntry({ agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 }));
+
+    const send = vi.fn().mockResolvedValue(true);
+    await queue.drain(send);
+    await queue.drain(send);
+    await queue.drain(send);
+
+    const stuck = (logger.error as unknown as { mock: { calls: [unknown, string][] } })
+      .mock.calls.filter(([, msg]) => /cannot provide a platform receipt/.test(String(msg)));
+    expect(stuck).toHaveLength(1);
+    // Fail-safe unchanged: still retained, never dropped for being noisy.
+    expect(queue.size()).toBe(1);
+  });
+
   it("removes a parent decision only through an explicit terminal resolution", async () => {
     const queue = createAnnouncementDeadLetterQueue({
       filePath,

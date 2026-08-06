@@ -119,6 +119,43 @@ describe("recordPromptState", () => {
     }
   });
 
+  // A cold start has no prior snapshot, so there is nothing to diff and no break
+  // is emitted — correctly, it is not a break. But it is the MOST EXPENSIVE cache
+  // event there is: the whole prefix is bought again. Live on comis-moshe the
+  // campaign logged ZERO "Cache break detected" lines while six full-prefix
+  // re-writes happened (cache_read 0 with >50k written, 141k each), so an
+  // operator counting breaks saw 0 and concluded the prefix had survived.
+  it("logs a countable line when a first call buys the whole prefix cold", () => {
+    const spyLogger = { debug: vi.fn(), info: vi.fn() };
+    detector = createCacheBreakDetector(spyLogger, { clock: testClock });
+    detector.recordPromptState(makeBaseInput());
+
+    const event = detector.checkResponseForCacheBreak({
+      sessionKey: "test-session", provider: "anthropic",
+      cacheReadTokens: 0, cacheWriteTokens: 141_074, totalInputTokens: 141_084,
+    });
+
+    // Still not a break — there is no previous state to have broken.
+    expect(event).toBeNull();
+    const cold = spyLogger.info.mock.calls.find(([, msg]) => /cold/i.test(String(msg)));
+    expect(cold).toBeDefined();
+    expect(cold?.[0]).toMatchObject({ cacheWriteTokens: 141_074, cacheReadTokens: 0 });
+  });
+
+  it("does not log a cold-prefix line when the first call reads an existing prefix", () => {
+    const spyLogger = { debug: vi.fn(), info: vi.fn() };
+    detector = createCacheBreakDetector(spyLogger, { clock: testClock });
+    detector.recordPromptState(makeBaseInput());
+
+    detector.checkResponseForCacheBreak({
+      sessionKey: "test-session", provider: "anthropic",
+      cacheReadTokens: 140_000, cacheWriteTokens: 300, totalInputTokens: 140_310,
+    });
+
+    const cold = spyLogger.info.mock.calls.find(([, msg]) => /cold/i.test(String(msg)));
+    expect(cold).toBeUndefined();
+  });
+
   it("second call with changed system hash shows systemChanged = true", () => {
     detector.recordPromptState(makeBaseInput());
     detector.recordPromptState(makeBaseInput({ systemHash: 99999 }));

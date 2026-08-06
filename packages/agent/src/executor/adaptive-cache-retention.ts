@@ -28,6 +28,32 @@ export interface AdaptiveCacheRetentionConfig {
   onEscalated?: () => void;
   /** Minimum turns before escalation. Default: 3. */
   escalationTurnThreshold?: number;
+  /**
+   * Turns this session already accumulated in earlier executions.
+   *
+   * The ladder is rebuilt per execution while the bridge increments the turn
+   * counter per MODEL CALL, so a cheap conversational turn (a greeting, a
+   * status poll, a short answer) is one call and a per-instance counter tops
+   * out at 1 — never reaching the >=2/>=3 gate the escalation was designed
+   * around. Seeding restores the cross-turn counter that gate assumes.
+   */
+  initialTurnCount?: number;
+  /** Cumulative cache-read tokens this session already accumulated. */
+  initialCacheReads?: number;
+  /** First-turn cache write carried across executions, for the fast path. */
+  initialLastCacheWriteTokens?: number;
+  /**
+   * Called whenever the escalation counters advance, so the caller can persist
+   * them for the next execution's ladder.
+   */
+  onProgress?: (progress: CacheRetentionProgress) => void;
+}
+
+/** Escalation counters that must outlive one execution's ladder. */
+export interface CacheRetentionProgress {
+  readonly turns: number;
+  readonly reads: number;
+  readonly lastCacheWriteTokens: number;
 }
 
 /** Threshold for consecutive baseline-only cache reads
@@ -120,11 +146,15 @@ export function createAdaptiveCacheRetention(
 ): AdaptiveCacheRetention {
   const turnThreshold = config.escalationTurnThreshold ?? 3;  // require 3+ turns before escalation
 
-  let totalCacheReads = 0;
-  let turnCount = 0;
-  let lastCacheWriteTokens = 0;
+  let totalCacheReads = config.initialCacheReads ?? 0;
+  let turnCount = config.initialTurnCount ?? 0;
+  let lastCacheWriteTokens = config.initialLastCacheWriteTokens ?? 0;
   let currentRetention = config.coldStartRetention;
   let escalated = false;
+
+  function publishProgress(): void {
+    config.onProgress?.({ turns: turnCount, reads: totalCacheReads, lastCacheWriteTokens });
+  }
   let costGateOpen = true; // default open (no extra turns needed)
   let consecutiveBaselineReads = 0; // prefix instability counter
   let prefixInstabilityActive = false; // forced "short" state
@@ -132,9 +162,15 @@ export function createAdaptiveCacheRetention(
   function tryEscalate(): void {
     if (escalated || currentRetention === config.warmRetention) return;
 
+    // The documented gate: cumulative cache READS are the evidence that the
+    // prefix is actually being reused and therefore worth the 2x 1h write.
+    // A single cached token is not that evidence, so `> 0` was too weak and left
+    // `escalationThreshold` — the knob an operator would reach for — inert.
+    if (totalCacheReads < config.escalationThreshold) return;
+
     // Fast-path -- large first-turn cache write means big system prompt.
     // Escalate on turn 2 instead of waiting for turnThreshold (3).
-    if (turnCount >= 2 && lastCacheWriteTokens > FAST_PATH_CACHE_WRITE_THRESHOLD && totalCacheReads > 0) {
+    if (turnCount >= 2 && lastCacheWriteTokens > FAST_PATH_CACHE_WRITE_THRESHOLD) {
       currentRetention = config.warmRetention;
       escalated = true;
       config.onEscalated?.();
@@ -142,7 +178,7 @@ export function createAdaptiveCacheRetention(
     }
     // Standard path: require N turns (+2 when gate closed)
     const effectiveThreshold = costGateOpen ? turnThreshold : turnThreshold + 2;
-    if (turnCount >= effectiveThreshold && totalCacheReads > 0) {
+    if (turnCount >= effectiveThreshold) {
       currentRetention = config.warmRetention;
       escalated = true;
       config.onEscalated?.();
@@ -158,10 +194,12 @@ export function createAdaptiveCacheRetention(
     recordCacheReads(tokens: number): void {
       totalCacheReads += tokens;
       tryEscalate();
+      publishProgress();
     },
     recordTurn(): void {
       turnCount++;
       tryEscalate();
+      publishProgress();
     },
     recordTurnWithCacheWrite(cacheWriteTokens: number): void {
       if (turnCount === 0) {
@@ -170,6 +208,7 @@ export function createAdaptiveCacheRetention(
       }
       turnCount++;
       tryEscalate();
+      publishProgress();
     },
     getMessageRetention(): CacheRetention {
       // After escalation, semi-stable/mid zones deserve 1h TTL.
@@ -188,6 +227,10 @@ export function createAdaptiveCacheRetention(
       costGateOpen = true; // reset to default open
       consecutiveBaselineReads = 0; // reset instability counter
       prefixInstabilityActive = false; // clear forced "short"
+      // A reset means the prefix genuinely went (TTL expiry / server eviction),
+      // so the carried counters must go too — otherwise the next execution
+      // seeds from stale progress and re-escalates straight back to 1h.
+      publishProgress();
     },
     setCostGateOpen(open: boolean): void {
       costGateOpen = open;

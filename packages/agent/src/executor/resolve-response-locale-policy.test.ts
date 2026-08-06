@@ -86,6 +86,38 @@ describe("resolveResponseLocalePolicy", () => {
     expect(JSON.stringify(finding)).not.toContain("This response uses a different script.");
   });
 
+  // A response with NO script-bearing characters cannot satisfy ANY script
+  // requirement, so enforcing one throws away a correct answer. `dominantScript`
+  // defaults to "latin" when the share map is empty, so a bare number reads as
+  // Latin and fails a Hebrew/Greek/Arabic target on every repair attempt.
+  //
+  // Measured live on comis-moshe (claude-opus-5): asked "give me one number: how
+  // many vehicles in total?", the agent answered with the number and the user
+  // received "I couldn't produce an answer in the requested language and script…
+  // choose a model that supports it" instead. Log:
+  // locale=und-Hebr expectedScript=Hebr actualScript=Latn, after a failed repair.
+  it("does not enforce a script on a response that carries no script at all", () => {
+    for (const response of ["161", "  161  ", "<b>161</b> 🚗", "162 / 161 = 1.006", "42%"]) {
+      expect(
+        evaluateResponseLocale({ locale: "und-Hebr", source: "request", enforceLocale: true }, response),
+        `script-free response must be exempt: ${response}`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("still enforces the script once the response carries real prose", () => {
+    // Negative control: the exemption must not become a blanket bypass — a
+    // numeric answer WITH Latin prose is a genuine mismatch against Hebrew.
+    expect(evaluateResponseLocale(
+      { locale: "und-Hebr", source: "request", enforceLocale: true },
+      "161 vehicles are currently moving.",
+    )).toEqual(expect.objectContaining({
+      kind: "locale_script_mismatch",
+      expectedScript: "Hebr",
+      actualScript: "Latn",
+    }));
+  });
+
   it("enforces a validated request locale while allowing matching mixed-script prose", () => {
     expect(evaluateResponseLocale(
       { locale: "ar-EG", source: "request", enforceLocale: true },

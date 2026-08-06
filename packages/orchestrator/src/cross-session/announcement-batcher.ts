@@ -56,6 +56,18 @@ export interface QueuedAnnouncement {
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
   attachments?: CompletionAttachmentRef[];
+  /**
+   * Outward-ledger tree root, resolved by the caller, stamped onto the parked
+   * decision reservation.
+   *
+   * Load-bearing for recovery, not bookkeeping: `adjudicateReservations` settles
+   * a parked reservation by asking the ledger for the step the send WOULD have
+   * used (`allocateStep(rootRunId, operationId)`). With no root there is nothing
+   * to ask, and the reservation stays parked forever — so a finished
+   * sub-agent's result is never delivered and nothing drains it. Absent when the
+   * caller could not resolve one; it is then omitted rather than guessed.
+   */
+  reservationRootRunId?: string | undefined;
 }
 
 export interface AnnouncementBatcherDeps {
@@ -748,6 +760,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         channelType: params.announceChannelType,
         channelId: params.announceChannelId,
         failedAt: systemNowMs(),
+        // Without this the reservation is undrainable — adjudication has no
+        // ledger tree to ask, so a parked completion is never recovered.
+        ...(params.reservationRootRunId ? { rootRunId: params.reservationRootRunId } : {}),
         ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
       }));
       if (!boundary.ok) {

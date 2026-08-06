@@ -1,0 +1,4 @@
+
+# Rendered per-box rig env — carries a resolved gateway token.
+.rig-env
+.rig-env.*

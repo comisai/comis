@@ -306,6 +306,15 @@ export function evaluateResponseLocale(
   const localeResult = tryCatch(() => new Intl.Locale(locale).maximize());
   if (!localeResult.ok || localeResult.value.script === undefined) return undefined;
   const expectedClass = scriptClassForIsoScript(localeResult.value.script);
+  // A response carrying NO script-bearing characters — a bare number, a
+  // percentage, a formatted figure with markup and an emoji — cannot satisfy ANY
+  // script requirement, so enforcing one can only discard a correct answer.
+  // `dominantScript` defaults to "latin" on an empty share map, so such a
+  // response reads as Latin and fails a non-Latin target on every repair
+  // attempt. Live: "give me one number: how many vehicles in total?" was
+  // answered correctly and the user received "choose a model that supports it"
+  // instead (locale und-Hebr, expected Hebr, actual Latn, after a failed repair).
+  if (scriptShares(response).size === 0) return undefined;
   const actualClass = dominantScript(response);
   if (expectedClass === undefined || actualClass === "other") {
     return undefined;

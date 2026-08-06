@@ -17,7 +17,7 @@ export default defineConfig({
     // rot silently. Daemon-booting live scenarios stay OUT of this list —
     // they belong to `test/live/vitest.config.ts` (dist aliases + sequential
     // pool).
-    projects: ["packages/*", "test/architecture", "scripts/contracts", "test/live/bin"],
+    projects: ["packages/*", "test/architecture", "scripts/contracts", "test/live/bin", "test/live/self-driving/scripts"],
     // Coverage instrumentation transforms several large workspace graphs at
     // once. Deriving the worker count from every host CPU can saturate that
     // transform pipeline so thoroughly that otherwise millisecond-scale tests

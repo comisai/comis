@@ -28,6 +28,7 @@ const mockClearSessionCacheSavings = vi.hoisted(() => vi.fn());
 const mockClearSessionReactiveSchemaStrip = vi.hoisted(() => vi.fn());
 const mockClearWindowReconcileLogged = vi.hoisted(() => vi.fn());
 const mockClearSessionCompactionBand = vi.hoisted(() => vi.fn());
+const mockClearSessionCacheEscalationProgress = vi.hoisted(() => vi.fn());
 
 vi.mock("./prompt-assembly.js", () => ({
   clearSessionToolNameSnapshot: mockClearSessionToolNameSnapshot,
@@ -43,6 +44,7 @@ vi.mock("./executor-session-state.js", () => ({
   clearSessionToolSchemaSnapshotHash: mockClearSessionToolSchemaSnapshotHash,
   clearSessionBreakpointIndex: mockClearSessionBreakpointIndex,
   clearSessionCacheWarm: mockClearSessionCacheWarm,
+  clearSessionCacheEscalationProgress: mockClearSessionCacheEscalationProgress,
   clearSessionLatches: mockClearSessionLatches,
   clearSessionEvictionCooldown: mockClearSessionEvictionCooldown,
   clearSessionCacheSavings: mockClearSessionCacheSavings,
@@ -133,6 +135,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionToolSchemaSnapshotHash).toHaveBeenCalledWith(key);
       expect(mockClearSessionBreakpointIndex).toHaveBeenCalledWith(key);
       expect(mockClearSessionCacheWarm).toHaveBeenCalledWith(key);
+      expect(mockClearSessionCacheEscalationProgress).toHaveBeenCalledWith(key);
       expect(mockClearSessionTracker).toHaveBeenCalledWith(key);
       expect(mockClearDiscoveryTracker).toHaveBeenCalledWith(key);
       expect(mockClearCacheBreakDetectorSession).toHaveBeenCalledWith(key);
@@ -167,6 +170,7 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionToolSchemaSnapshotHash).toHaveBeenCalledTimes(1);
       expect(mockClearSessionBreakpointIndex).toHaveBeenCalledTimes(1);
       expect(mockClearSessionCacheWarm).toHaveBeenCalledTimes(1);
+      expect(mockClearSessionCacheEscalationProgress).toHaveBeenCalledTimes(1);
       expect(mockClearSessionTracker).toHaveBeenCalledTimes(1);
       expect(mockClearDiscoveryTracker).toHaveBeenCalledTimes(1);
       expect(mockClearCacheBreakDetectorSession).toHaveBeenCalledTimes(1);

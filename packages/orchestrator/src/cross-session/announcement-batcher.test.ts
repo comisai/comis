@@ -433,6 +433,51 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent).toHaveBeenCalledOnce();
   });
 
+  // A reservation is only recoverable through `adjudicateReservations`, which
+  // resolves the step a send WOULD have used via
+  // `allocateStep(rootRunId, operationId)`. It is fail-safe: a reservation with
+  // no `rootRunId` stays parked FOREVER (see `reservation-root.ts` — "A
+  // reservation without a root is undrainable").
+  //
+  // The batched path reserved without stamping the root, so every parked
+  // reservation it created was permanently unadjudicable. Live on comis-moshe:
+  // a real user asked for a chart set at 08:28, the sub-agent produced it,
+  // the reservation was written at 08:34:27 with no rootRunId, and the user
+  // chased "what's the status of the graphs?" at 08:37 and never received them.
+  // Two such reservations sat in dead-letters.jsonl for over 24h.
+  it("stamps the ledger tree root on a reserved decision so it stays adjudicable", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "decision-root-1",
+      reservationRootRunId: "root-session-abc",
+    }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "decision-root-1",
+      rootRunId: "root-session-abc",
+    }));
+  });
+
+  it("omits rootRunId rather than inventing one when the caller resolved none", async () => {
+    // Fail-safe: an absent root must not become an empty string or a guess —
+    // `adjudicateReservations` treats a zero-length root as unresolvable anyway,
+    // and a wrong root would ask the ledger about the wrong tree.
+    const deadLetterQueue = makeDecisionQueue();
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-root-2" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    const [entry] = deadLetterQueue.reserveDecision.mock.calls.at(-1) as [Record<string, unknown>];
+    expect(entry.idempotencyKey).toBe("decision-root-2");
+    expect("rootRunId" in entry).toBe(false);
+  });
+
   it("suppresses a restarted decision when its durable reservation exists", async () => {
     const deadLetterQueue = makeDecisionQueue();
     deadLetterQueue.reserveDecision.mockResolvedValue(ok({ created: false }));

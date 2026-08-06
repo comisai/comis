@@ -19,12 +19,41 @@ export function outboundVisibleText(outbound) {
   return typeof outbound?.caption === "string" ? outbound.caption : "";
 }
 
-/** Match the progress-only frames emitted by the live activity renderer. */
+/**
+ * Whether a `✓`/`❌`-led line is a progress FRAME rather than an answer that
+ * merely opens with the marker.
+ *
+ * The activity renderer emits plain status frames (`✓ done`,
+ * `❌ managing skills`, `❌ dependency — a step failed outside the tool
+ * timeline`). But the agent also OPENS real answers with the same markers — its
+ * Hebrew acknowledgement style is `✓ <b>הובן.</b> …`. Treating every marker-led
+ * line as progress made the drive discard the answer, wait out its window and
+ * report `[NO SUBSTANTIVE ANSWER]` for a turn the wire shows was answered — a
+ * FALSE FAILURE, which costs a campaign exactly what a false success does
+ * (measured live: 3 of 7 corpus rows, comis-moshe 2026-08-06).
+ *
+ * A delivered answer is rendered through the channel's markdown-IR formatter
+ * and carries markup; a status frame is plain text. Length does NOT separate
+ * them — the `dependency` frame above is longer than several real answers.
+ *
+ * Residual limitation: a marker-led answer containing NO markup at all still
+ * reads as progress. Text is the only input here, and markup is the strongest
+ * signal it carries.
+ */
+function isMarkerLedProgressFrame(text) {
+  const remainder = text.replace(/^(?:✓|❌)\s*/u, "").trim();
+  if (remainder.length === 0) return true;
+  return !/<[a-z/]/i.test(remainder); // markup ⇒ rendered answer, not a frame
+}
+
 export function isDriveProgressText(text) {
+  if (!text) return true;
+  // 🔧/🤖/⏳ are pure tool/agent status markers — the agent never opens an
+  // answer with them, so they stay unconditional.
+  if (/^(🔧|🤖|⏳)/u.test(text)) return true;
+  if (/^(?:✓|❌)/u.test(text)) return isMarkerLedProgressFrame(text);
   return (
-    !text
-    || /^(🔧|✓|🤖|❌|⏳)/.test(text)
-    || /^(?:Approved|Denied):\s/.test(text)
+    /^(?:Approved|Denied):\s/.test(text)
     || /\(running/.test(text)
     || /reading ~/.test(text)
     || /^\s*\[[ x~]\]/.test(text)

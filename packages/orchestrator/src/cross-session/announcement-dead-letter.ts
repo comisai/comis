@@ -225,6 +225,19 @@ export function createAnnouncementDeadLetterQueue(
     );
   }
 
+  /** Ledger-failure conditions already reported, keyed by entry + message.
+   *
+   *  A retained entry is re-reached on EVERY drain, so re-logging its standing
+   *  condition at ERROR each pass turns one stuck entry into unbounded ERROR
+   *  volume and buries genuinely new failures. Report the transition INTO the
+   *  condition once; later passes stay at DEBUG. Keyed by the entry's unique id,
+   *  so a re-enqueued run is a different key and reports again. Bounded by a
+   *  wholesale reset rather than per-entry pruning: the worst case is one
+   *  duplicate ERROR after a reset, which is self-healing, whereas an unpruned
+   *  set would grow for the daemon's lifetime. */
+  const MAX_REPORTED_LEDGER_FAILURES = 512;
+  const reportedLedgerFailures = new Set<string>();
+
   function logLedgerFailure(
     entry: DeadLetterEntry,
     transition: string,
@@ -232,6 +245,16 @@ export function createAnnouncementDeadLetterQueue(
     hint: string,
     message: string,
   ): void {
+    const conditionKey = `${entry.id}\u0000${message}`;
+    if (reportedLedgerFailures.has(conditionKey)) {
+      logger?.debug(
+        { runId: entry.runId, transition, step: "dead-letter-outward-ledger", alreadyReported: true },
+        message,
+      );
+      return;
+    }
+    if (reportedLedgerFailures.size >= MAX_REPORTED_LEDGER_FAILURES) reportedLedgerFailures.clear();
+    reportedLedgerFailures.add(conditionKey);
     logger?.error(
       {
         runId: entry.runId,
@@ -708,7 +731,28 @@ export function createAnnouncementDeadLetterQueue(
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
     for (const reservation of [...decisionReservations]) {
-      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) continue;
+      if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) {
+        // Standing condition, re-reached on every sweep — report the transition
+        // into it once, exactly as logLedgerFailure does, or one unadjudicable
+        // reservation emits a WARN per sweep for the daemon's lifetime.
+        if (reportedLedgerFailures.has(`${reservation.id}\u0000unadjudicable`)) continue;
+        reportedLedgerFailures.add(`${reservation.id}\u0000unadjudicable`);
+        // PERMANENT, unlike the ledger-error skip below: with no tree root there
+        // is nothing to ask the ledger, so this reservation can never settle and
+        // the completion behind it is never delivered. Silence here made a
+        // permanently-lost result indistinguishable from a transient one.
+        logger?.warn(
+          {
+            runId: reservation.runId,
+            agentId: reservation.agentId,
+            channelType: reservation.channelType,
+            hint: "This parked completion can never be adjudicated: the reservation carries no rootRunId, so the outward ledger cannot be asked whether the announcement was sent. Deliver or discard it by hand, and ensure the reserving path stamps rootRunId.",
+            errorKind: "internal" as const,
+          },
+          "Parent decision reservation can never be adjudicated (no ledger root)",
+        );
+        continue;
+      }
       const step = await fromPromise(
         ledger.allocateStep(reservation.rootRunId, reservation.idempotencyKey),
       );

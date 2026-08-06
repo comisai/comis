@@ -129,7 +129,7 @@ describe("createAdaptiveCacheRetention", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
     retention.recordTurn();
-    retention.recordCacheReads(500);
+    retention.recordCacheReads(1_500);
 
     expect(retention.hasEscalated()).toBe(false);
   });
@@ -488,7 +488,9 @@ describe("createAdaptiveCacheRetention turn-based escalation", () => {
 // ---------------------------------------------------------------------------
 
 describe("Fast-path escalation", () => {
-  it("fast-path: escalates on turn 2 when first turn wrote >20K tokens and cache reads > 0", () => {
+  // Reads must MEET escalationThreshold (1000), not merely be non-zero — a single
+  // cached token is not evidence a large prefix is being reused.
+  it("fast-path: escalates on turn 2 when the first turn wrote >20K and reads meet the threshold", () => {
     const onEscalated = vi.fn();
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
       onEscalated,
@@ -499,7 +501,7 @@ describe("Fast-path escalation", () => {
     expect(retention.hasEscalated()).toBe(false);
 
     // Turn 2: cache reads confirm content is being reused, then turn completes
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(true);
     expect(retention.getRetention()).toBe("long");
@@ -517,7 +519,7 @@ describe("Fast-path escalation", () => {
     expect(retention.hasEscalated()).toBe(false);
 
     // Turn 2: cache reads + turn end
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
     expect(onEscalated).not.toHaveBeenCalled();
@@ -541,15 +543,15 @@ describe("Fast-path escalation", () => {
     }));
 
     // 3 turns with small writes and cache reads -- standard threshold
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
 
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
 
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(true);
     expect(onEscalated).toHaveBeenCalledOnce();
@@ -560,13 +562,13 @@ describe("Fast-path escalation", () => {
 
     // Turn 1: large write
     retention.recordTurnWithCacheWrite(25_000);
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
 
     // Reset before turn 2 -- fast-path state should be cleared
     retention.reset();
 
     // Turn 2: the previous large write should no longer trigger fast-path
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
   });
@@ -648,7 +650,7 @@ describe("cost-aware TTL gating", () => {
     expect(retention.hasEscalated()).toBe(false);
 
     // Turn 2: cache reads confirm content is being reused, then turn completes
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(true);
     expect(retention.getRetention()).toBe("long");
@@ -888,5 +890,131 @@ describe("prefix instability detection", () => {
     const retention = createStaticRetention("long");
     expect(retention.recordCacheReadForStability(100, 100)).toBe(false);
     expect(retention.getRetention()).toBe("long");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-execution escalation progress
+//
+// The ladder is rebuilt per EXECUTION (session-bootstrap.ts), and `turnCount`
+// is incremented per MODEL CALL by the bridge. A cheap conversational turn --
+// a greeting, a status poll, a short answer -- is exactly ONE model call, so a
+// per-instance counter tops out at 1 and can never reach the >=2/>=3 gate.
+// Escalation is the only caller of setCacheWarm(true), so such a conversation
+// stays pinned at the 5m cold rate forever and re-buys its whole cached prefix
+// on every inter-turn gap longer than 5 minutes.
+//
+// Measured live on comis-moshe (2026-08-06, claude-haiku-4-5): three cheap
+// turns after a restart all shipped retention "short"; turn 2 arrived 9m47s
+// after turn 1 and re-wrote the full prefix (141,074 then 141,103 tokens,
+// cache_read 0 both times) because the 5m TTL had expired.
+//
+// The designed 3-turn heuristic is kept -- the counter it was written for must
+// simply survive the per-execution rebuild.
+// ---------------------------------------------------------------------------
+
+describe("createAdaptiveCacheRetention cross-execution progress", () => {
+  /** One execution's ladder, wired the way session-bootstrap wires it. */
+  function ladderForExecution(state: {
+    warm?: boolean;
+    progress?: { turns: number; reads: number };
+  }) {
+    return createAdaptiveCacheRetention({
+      coldStartRetention: resolveColdStartRetention("long", state.warm),
+      warmRetention: "long",
+      escalationThreshold: 1000,
+      ...(state.progress !== undefined && {
+        initialTurnCount: state.progress.turns,
+        initialCacheReads: state.progress.reads,
+      }),
+      onProgress: (progress) => { state.progress = progress; },
+      onEscalated: () => { state.warm = true; },
+    });
+  }
+
+  it("escalates a conversation of cheap single-model-call turns by the third turn", () => {
+    const state: { warm?: boolean; progress?: { turns: number; reads: number } } = {};
+
+    // Turn 1: cold. Full prefix write, nothing cached yet to read.
+    const first = ladderForExecution(state);
+    expect(first.getRetention()).toBe("short");
+    first.recordTurnWithCacheWrite(141_074);
+    first.recordCacheReads(0);
+
+    // Turn 2: the prefix is live now, so this turn reads it.
+    const second = ladderForExecution(state);
+    second.recordTurnWithCacheWrite(4_255);
+    second.recordCacheReads(136_909);
+
+    // Turn 3: the session has now shown three turns and real reads. The 1h TTL
+    // has been earned -- without this the session writes at 5m indefinitely.
+    const third = ladderForExecution(state);
+    third.recordTurnWithCacheWrite(4_255);
+    third.recordCacheReads(136_909);
+
+    expect(state.warm).toBe(true);
+    expect(ladderForExecution(state).getRetention()).toBe("long");
+  });
+
+  it("carries accumulated reads across executions so a missed turn cannot withhold escalation", () => {
+    // Both escalation paths require totalCacheReads > 0. A gap-turn whose 5m
+    // prefix expired reads 0, so a per-instance counter lets the miss withhold
+    // the escalation that would have prevented it. Accumulated reads break that
+    // self-reinforcing loop.
+    const state: { warm?: boolean; progress?: { turns: number; reads: number } } = {};
+
+    const first = ladderForExecution(state);
+    first.recordTurnWithCacheWrite(141_074);
+    first.recordCacheReads(136_909);
+
+    const second = ladderForExecution(state);
+    second.recordTurnWithCacheWrite(141_103);
+    second.recordCacheReads(0); // 5m TTL expired during the user's think-time
+
+    const third = ladderForExecution(state);
+    third.recordTurnWithCacheWrite(0);
+    third.recordCacheReads(0);
+
+    expect(state.warm).toBe(true);
+  });
+
+  // `escalationThreshold` is documented "Minimum cumulative cacheRead tokens
+  // before escalating. Default: 1000" and session-bootstrap passes 1000, but the
+  // implementation gated on `totalCacheReads > 0` and never read the field — so
+  // the knob an operator would reach for did nothing, and a single cached token
+  // counted as proof the prefix was worth 1h.
+  it("honours escalationThreshold instead of escalating on any non-zero read", () => {
+    const belowThreshold = createAdaptiveCacheRetention(createDefaultConfig({
+      coldStartRetention: "short", warmRetention: "long", escalationThreshold: 1000,
+    }));
+    for (let i = 0; i < 4; i++) {
+      belowThreshold.recordTurn();
+      belowThreshold.recordCacheReads(100); // 400 total — under 1000
+    }
+    expect(belowThreshold.getRetention()).toBe("short");
+    expect(belowThreshold.hasEscalated()).toBe(false);
+
+    const atThreshold = createAdaptiveCacheRetention(createDefaultConfig({
+      coldStartRetention: "short", warmRetention: "long", escalationThreshold: 1000,
+    }));
+    for (let i = 0; i < 4; i++) {
+      atThreshold.recordTurn();
+      atThreshold.recordCacheReads(250); // 1000 total — meets the threshold
+    }
+    expect(atThreshold.getRetention()).toBe("long");
+  });
+
+  it("still pays the cheap 5m rate on a genuinely new session's first turn", () => {
+    // The ladder exists so a cold start does not pay the 2x 1h write premium.
+    // Seeding must not defeat that: with no prior progress and no reads yet,
+    // turn 1 stays "short".
+    const state: { warm?: boolean; progress?: { turns: number; reads: number } } = {};
+    const first = ladderForExecution(state);
+
+    expect(first.getRetention()).toBe("short");
+    first.recordTurnWithCacheWrite(141_074);
+    first.recordCacheReads(0);
+    expect(first.getRetention()).toBe("short");
+    expect(state.warm).toBeUndefined();
   });
 });

@@ -10,7 +10,7 @@
  * @module
  */
 
-import { cacheBreakLogFields } from "./cache-break-hints.js";
+import { cacheBreakLogFields, logColdPrefixWrite } from "./cache-break-hints.js";
 import {
   CACHE_BREAK_RELATIVE_THRESHOLD,
   CACHE_BREAK_ABSOLUTE_THRESHOLD,
@@ -179,9 +179,9 @@ export function createCacheBreakDetector(
         return null;
       }
 
-      // First call: record baseline, return null
       if (state.previousCacheReadTokens === null) {
         state.previousCacheReadTokens = input.cacheReadTokens;
+        logColdPrefixWrite(logger, input, state.agentId, deriveTtlCategory(state.currentSnapshot?.retention));
         return null;
       }
 

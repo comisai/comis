@@ -71,8 +71,7 @@ import {
   buildFailureArgsPreview,
   extractMcpFailureCode,
   sanitizeToolArgs,
-  extractErrorText,
-} from "./bridge-event-handlers.js";
+  extractErrorText, llmErrorHint } from "./bridge-event-handlers.js";
 
 /**
  * Bracketed `[error_code]` prefixes that mean the tool's OWN IO failed (disk,
@@ -248,6 +247,7 @@ import {
 import { extractProcessSessionObservation } from "./process-session-observation.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
 import { citationUrlDigest } from "../executor/citation-evidence.js";
+import { backgroundFailureCause } from "../background/background-failure-cause.js";
 
 // ---------------------------------------------------------------------------
 // Module-level one-shot latches
@@ -1406,6 +1406,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 toolCallId: endEvent.toolCallId,
                 durationMs,
                 ...(errorText && { errorText: sanitizeLogString(errorText).slice(0, 1500) }),
+                // An MCP/external tool result arrives banner-wrapped, so
+                // `errorText` opens with the SECURITY NOTICE and the actual
+                // cause sits inside the <<<UNTRUSTED_…>>> fence at the end.
+                // Grouping by the head of errorText then makes every distinct
+                // failure look identical — and look like an injection notice
+                // rather than the schema rejection it is. Surface the unwrapped,
+                // one-line, secret-scrubbed cause as its own greppable field.
+                ...(() => {
+                  const cause = errorText === undefined ? undefined : backgroundFailureCause(errorText);
+                  return cause === undefined ? {} : { failureCause: cause };
+                })(),
                 argumentCount: sanitizedArgs === undefined ? 0 : Object.keys(sanitizedArgs).length,
                 ...(mcpServer !== undefined && runtimeToolGuard === undefined && {
                   mcpServer,
@@ -1494,6 +1505,21 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // opened transition increments — a reset must not (the rollup
                 // wants total trips this execution, not net breaker state).
                 m.breakerTripCount++;
+                // The trip was event-only, so nothing reached the daemon log and a
+                // grep for the breaker returned only the boot lines announcing it
+                // ARMED — never the firing. A rollup count with no greppable line
+                // gives an operator no path from "N trips" to the tool that tripped.
+                deps.logger.warn(
+                  {
+                    toolName: transition.toolName,
+                    consecutiveFailures: transition.consecutiveFailures,
+                    errorTag: transition.errorTag,
+                    reason: transition.reason,
+                    hint: `Tool ${transition.toolName} is now short-circuited after ${transition.consecutiveFailures} consecutive failures (${transition.errorTag}); later calls to it are blocked for this execution. Fix the underlying tool failure — the breaker is the symptom.`,
+                    errorKind: "dependency" as const,
+                  },
+                  "Tool retry breaker opened",
+                );
               } else {
                 deps.eventBus.emit("tool:breaker_reset", {
                   toolName: transition.toolName,
@@ -2214,6 +2240,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 const norm5m = Math.round(deps.ttlSplit.cacheWrite5mTokens * scale);
                 deps.ttlSplit.cacheWrite5mTokens = norm5m;
                 deps.ttlSplit.cacheWrite1hTokens = cacheWriteTokens - norm5m; // remainder ensures exact sum
+              } else if (cacheWriteTokens === 0) {
+                // No write happened, so there is nothing to attribute to a TTL. The
+                // guard above skipped normalization in this case and let the raw
+                // injector estimate survive, which broke the very invariant the
+                // split is documented to hold (sums exactly to the write total) and
+                // made the total under-report against its own breakdown.
+                deps.ttlSplit.cacheWrite5mTokens = 0;
+                deps.ttlSplit.cacheWrite1hTokens = 0;
               }
             }
 
@@ -3061,10 +3095,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               "Context exhausted mid-turn — mapped to finishReason",
             );
           } else {
+            // Branch the hint by failure class. A 4xx invalid_request_error means
+            // the request WE built was rejected — nothing is wrong with the
+            // provider, so "check provider status" sends the operator to a status
+            // page while the fault sits in our payload. Live, five consecutive
+            // `400 … Invalid \`signature\` in \`thinking\` block` each carried that
+            // hint, and the fifth tripped the provider circuit breaker, so the
+            // visible symptom became "provider_degraded" on a healthy provider.
             deps.logger.warn(
               {
                 err: m.lastLlmErrorMessage,
-                hint: "Check LLM provider status",
+                hint: llmErrorHint(m.lastLlmErrorMessage),
                 errorKind: "dependency" as const,
               },
               "LLM call returned error",

@@ -265,3 +265,32 @@ function boundErrorText(raw: string): string {
   if (raw.length <= MAX_ERROR_TEXT_CHARS) return raw;
   return `${raw.slice(0, MAX_ERROR_TEXT_CHARS)}…[+${raw.length - MAX_ERROR_TEXT_CHARS} chars, digest:${fingerprint(raw)}]`;
 }
+
+/**
+ * Operator instruction that fits the LLM failure class.
+ *
+ * "Check LLM provider status" is right for a transport or 5xx failure and WRONG
+ * for a 4xx: an `invalid_request_error` means the provider rejected the request
+ * WE built, so a status page tells the operator nothing. The signed-thinking
+ * replay rejection is called out by name because it is the one that recurs — a
+ * stored thinking block replayed with a stale signature produces a hard 400, and
+ * enough of them in a row trip the provider circuit breaker, which then presents
+ * as a degraded provider that is in fact healthy.
+ *
+ * @param error - the raw LLM error text (never leaked to a user).
+ * @returns the hint to ride the WARN line.
+ */
+export function llmErrorHint(error: string | undefined): string {
+  const text = error ?? "";
+  if (/invalid `?signature`?|thought_signature|reasoning_item not found|reasoning_id expired/i.test(text)) {
+    return "The provider rejected REPLAYED signed reasoning state, not the provider's health: a stored "
+      + "thinking/reasoning block was re-sent with a signature it no longer accepts. Inspect the "
+      + "message index the error names and the thinking-block replay path; retrying the same payload "
+      + "reproduces it. Do NOT read this as a provider outage.";
+  }
+  if (/\b4\d\d\b|invalid_request_error|invalid request/i.test(text)) {
+    return "The provider rejected the request WE built (4xx), so this is not a provider-status problem: "
+      + "inspect the request payload at the index the error names. Retrying unchanged reproduces it.";
+  }
+  return "Check LLM provider status";
+}
