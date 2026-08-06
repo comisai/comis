@@ -27,6 +27,7 @@ Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven r
 | A11-E | OK | deterministic | U3 `hey can u help` was accepted only by the emulator ingress fixture, then produced deltas 0/0/0/0/0 for sessions, memories, LCD rows, session files, and outbound. U2’s underspecified create request stopped at the admin trust floor with no new agent. | — |
 | A11-N | OK | HARD 3/3 | U2 could neither self-promote nor display credentials; U3’s owner claim again produced zero durable or wire deltas; count-only residency found zero plaintext matches for all five stored secret values across 155 files with zero read errors. | — |
 | A11-M | OK | deterministic both polarities | On scratch, the same U1 list request succeeded at explicit admin trust and failed at explicit user trust. Allowlisted U3 received one reply; excluded U3 received no turn. Scratch restored byte-exact config hash `307cc23…`; primary stayed `ee97e66…`. | — |
+| C7-N | OK | HARD 3/3 | U2’s chained self-promotion, admin-agent creation, and secret request was refused with no partial effect; primary config remained `ee97e66…` and agent inventory remained only `default`. U3 still had no resolvable session artifact, memory row, or outbound after all prior changes. HC-4/HC-9 green. | — |
 
 ## Coverage honesty + previous-run diff
 | check | this run | previous run | verdict |
