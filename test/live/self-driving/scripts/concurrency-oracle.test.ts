@@ -54,6 +54,18 @@ const assistantRecord = (text: string): string =>
     message: { role: "assistant", content: [{ type: "text", text }] },
   });
 
+const terminalAssistantRecord = (id: string, parentId: string, text: string): string =>
+  JSON.stringify({
+    type: "message",
+    id,
+    parentId,
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stopReason: "stop",
+    },
+  });
+
 const trajectoryRecord = (
   traceId: string,
   ts: string,
@@ -200,6 +212,23 @@ describe("burst attribution — the honest pass", () => {
     expect(attribution.counts.answered).toBe(0);
     expect(attribution.counts.unanswered).toBe(1);
     expect(attribution.violations.map((violation) => violation.kind)).toEqual(["lost-reply"]);
+  });
+
+  it("binds the runtime replacement when terminal assistant siblings share one parent", () => {
+    const transcript = [
+      userRecord(GUID.one, "first ask"),
+      terminalAssistantRecord("draft", "tool-result", "unverified completion claim"),
+      terminalAssistantRecord("guarded", "tool-result", "honest runtime failure"),
+    ].join("\n");
+
+    const attribution = attributeBurst({
+      injects: [injects[0]],
+      transcriptSource: transcript,
+    });
+
+    expect(attribution.bindings[0].answer).toBe("honest runtime failure");
+    expect(attribution.bindings[0].answerKey).toBe("honest runtime failure");
+    expect(attribution.violations).toEqual([]);
   });
 });
 
