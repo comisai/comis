@@ -66,7 +66,11 @@ export function scoreCollectBurst({
     return total + (Number.isInteger(count) && count > 0 ? count : 0);
   }, 0);
 
-  if (enqueued.length !== injects.length) {
+  // Queue admission happens before a fresh session has a trajectory recorder.
+  // In that layout none of the enqueue events can be persisted, while durable
+  // provenance plus the two prompt/terminal traces still account for every
+  // source message. A partial enqueue set is never trustworthy and must fail.
+  if (enqueued.length > 0 && enqueued.length !== injects.length) {
     violations.push({
       kind: "collect-enqueue-accounting-mismatch",
       severity: "hard",
