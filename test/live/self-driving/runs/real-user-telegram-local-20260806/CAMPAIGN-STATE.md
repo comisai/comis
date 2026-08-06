@@ -1,0 +1,30 @@
+# CAMPAIGN STATE — real-user Telegram local — 2026-08-06
+
+- Scope: full A0–A13, B1–B15, C1–C7, Track CC1–CC7, capability matrix, Track K/L/M slices, defaults review, fifth-axis metrics, and finish audit.
+- Branch: `feature/real-user-telegram-campaign-20260806`.
+- Initial campaign HEAD: `a510a4c8f5b0db0ed39473dfa8cc4d7649046799`.
+- Current stage: source verification and frozen plan/corpus gate complete. No setup helper or scored inject has run.
+- Next row: commit the frozen plan/corpus artifacts, then `SETUP-1`.
+- Open COMIS-FAIL count: 0.
+- Open carried finding count: 4 — Reflection dependency detail (OF-01), Track CC fan-out/content (OF-02), default steering behavior (OF-03), and reset-burst content (OF-04).
+- Primary tuple: `RIG_MODE=local`, `DATA=/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2`, `RIG_ENV=/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2/.rig-env`, `GW_PORT=48701`, `SERVICE=comis-live-real-user-20260806-primary`.
+- Scratch tuple: `RIG_MODE=local`, `DATA=/home/ubuntu/.comis-live-real-user-telegram-local-20260806-scratch-v2`, `RIG_ENV=/home/ubuntu/.comis-live-real-user-telegram-local-20260806-scratch-v2/.rig-env`, `GW_PORT=48702`, `SERVICE=comis-live-real-user-20260806-scratch`.
+- Intended supervisor ownership: tmux sessions derived from each distinct service and data root; no systemd and no service named `comis`.
+- Trajectory ownership: each launch must pin `COMIS_TRAJECTORY_DIR` to the canonical `trajectories` directory under its selected data root.
+- Telegram fixtures: U1/admin `678314278`; U2/user `678314279`; U3/unallowlisted `678314299`; G1 forum group `-1001234567890` with U1, U2, and emulator bot present at launch.
+- Provider/model target: `openai-codex` / `gpt-5.6-luna`, pending boot and trajectory confirmation.
+- Credential boundary: reuse only the opaque encrypted store and matching mode-0600 master-key file from the prior isolated Track CC root; never print or copy credential values through argv, logs, prompts, run artifacts, or commits.
+- New-root preflight: both canonical roots absent; ports 48701 and 48702 free; both tmux and pm2 service names absent; push URL remains `no-push://disabled`.
+- Everyday baseline: `comis.service` active with PID 610; config SHA-256 `e972d2b0ef644525d1e73d009a105ebf538cc8f0656ecfc9de60826648a00fdc`; master-key file SHA-256 `15a21df6396070f5053120d0460e9814d0428babc3260397c0a1974c028a0f12`; encrypted store SHA-256 `6a7c1281558fab14dffb72d4c48fb096133eba8ae87a461fa9daa552a58985c3`.
+- Prior full-campaign baseline: data root `/home/ubuntu/.comis-live-real-user-telegram-local-20260804`, gateway 48671, healthy and out of scope; config SHA-256 `eadaac24c45675030dbeafde599c25528f73f718f4613224389cdc34beda4e38`.
+- Prior Track CC baseline: data root `/home/ubuntu/.comis-track-cc-local-20260806`, gateway 48681, healthy and out of scope; config SHA-256 `d9cfd60a59d9fdb326267377f684a21e71c51a307b9bdd7de61391b48dbdcfb0`.
+- Corpus identity: first 44 lines copied byte-for-byte from the Track CC frozen corpus; A/B/C additions and the late identical-text `ccr*` scoring block are append-only and frozen before the first scored inject.
+
+## Resume invariants
+
+- Assert the complete explicit tuple before every mutating helper or oracle.
+- Never use the checkout-level `.rig-env`; it belongs to another isolated root.
+- Never clean-restart the continuity-protected primary after its initial protected wipe.
+- Stop at the first COMIS-FAIL and keep at most one open failure.
+- Never build, validate, or run Vitest concurrently with a scored live drive.
+- Preserve the everyday, prior broad, and prior Track CC daemons, emulators, configs, encrypted stores, and supervisor ownership.
