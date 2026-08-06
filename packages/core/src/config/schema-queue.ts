@@ -2,25 +2,6 @@
 import { z } from "zod";
 
 /**
- * Debounce buffer configuration for ingress-layer message coalescing.
- *
- * Sits BEFORE the CommandQueue to coalesce rapid successive messages from the
- * same user within a configurable time window, preventing duplicate agent
- * invocations. This is different from the collect-mode debounce which operates
- * during execution.
- */
-export const DebounceBufferConfigSchema = z.strictObject({
-  /** Per-channel debounce window in milliseconds. 0 = disabled. */
-  windowMs: z.number().int().nonnegative().default(0),
-  /** Maximum messages to buffer per session before forced flush */
-  maxBufferedMessages: z.number().int().positive().default(10),
-  /** First message in burst triggers immediately (skip debounce) */
-  firstMessageImmediate: z.boolean().default(true),
-});
-
-export type DebounceBufferConfig = z.infer<typeof DebounceBufferConfigSchema>;
-
-/**
  * Queue mode determines how rapid messages during active execution are handled.
  *
  * - `followup`: Enqueue as separate turn (simplest)
@@ -102,10 +83,6 @@ export const QueueConfigSchema = z.strictObject({
     defaultDebounceMs: z.number().int().nonnegative().default(0),
     /** Per-channel-type queue configuration overrides */
     perChannel: z.record(z.string(), PerChannelQueueConfigSchema).default({}),
-    /** Global debounce buffer configuration (ingress-layer coalescing before queue entry) */
-    debounce: DebounceBufferConfigSchema.default(() => DebounceBufferConfigSchema.parse({})),
-    /** Per-channel-type debounce buffer overrides */
-    perChannelDebounce: z.record(z.string(), DebounceBufferConfigSchema).default({}),
     /** Follow-up trigger configuration for continuation runs */
     followup: FollowupConfigSchema.default(() => FollowupConfigSchema.parse({})),
   });

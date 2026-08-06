@@ -109,7 +109,6 @@ export type {
   QueueMode,
   OverflowPolicy,
   OverflowConfig,
-  DebounceBufferConfig,
   FollowupConfig,
 } from "./schema-queue.js";
 export type {

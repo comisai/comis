@@ -73,7 +73,7 @@ making room for the new one without losing the gist of what was said.
 | `queue.defaultMode` | string | `"steer+followup"` | How new messages are handled during active processing |
 | `queue.defaultOverflow.maxDepth` | number | `20` | Maximum queued messages per conversation before overflow |
 | `queue.defaultOverflow.policy` | string | `"drop-new"` | What to do when the queue is full |
-| `queue.debounce.windowMs` | number | `0` | Debounce window in milliseconds (0 = disabled) |
+| `queue.defaultDebounceMs` | number | `0` | Delay before pending messages are coalesced in `collect` mode; the first message still starts immediately |
 
 ```yaml title="~/.comis/config.yaml"
 queue:
@@ -83,8 +83,7 @@ queue:
   defaultOverflow:
     maxDepth: 20
     policy: "drop-new"
-  debounce:
-    windowMs: 0
+  defaultDebounceMs: 0
 ```
 
 <Tip>
