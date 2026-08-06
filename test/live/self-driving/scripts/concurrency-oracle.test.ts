@@ -472,6 +472,25 @@ describe("wire reconciliation — negative control 3: duplicate delivery must fa
     ]);
   });
 
+  it("separates an unrelated later delivery from the burst answer count", () => {
+    const reconciliation = wireReconciliation({
+      wire: [
+        { method: "sendMessage", messageId: 1, text: "answer-a" },
+        { method: "sendMessage", messageId: 2, text: "answer-b" },
+        { method: "sendMessage", messageId: 3, text: "a later scheduled reminder" },
+      ],
+      bindings: [
+        { index: 0, status: "answered", answerKey: "answer-a" },
+        { index: 1, status: "answered", answerKey: "answer-b" },
+      ],
+    });
+
+    expect(reconciliation.substantiveOutbound).toBe(2);
+    expect(reconciliation.rawSubstantiveOutbound).toBe(3);
+    expect(reconciliation.unattributedOutbound).toBe(1);
+    expect(reconciliation.violations).toEqual([]);
+  });
+
   it("counts an attachment caption as a substantive delivery", () => {
     const reconciliation = wireReconciliation({
       wire: [{ method: "sendDocument", messageId: 1, caption: "the report is attached" }],
