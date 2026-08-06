@@ -788,6 +788,14 @@ describe("local rig mode", () => {
     expect(launcher).toContain('process.env["EMU_JSON"] ?? "/tmp/comis-emu.json"');
   });
 
+  it("scopes the local phase-zero daemon probe to the selected lifecycle owner", () => {
+    const source = readFileSync(PHASE_ZERO_CHECK, "utf8");
+
+    expect(source).toContain('daemon_pid="$(rig_daemon_pid)"');
+    expect(source).toContain('pass "daemon-process" "selected daemon process is running (pid $daemon_pid)"');
+    expect(source).not.toContain("pid $(pgrep -f 'node.*daemon\\.js' | head -1)");
+  });
+
   it("keeps the local rig shell entry points syntactically valid", () => {
     for (const script of [
       RIG_HELPER,
