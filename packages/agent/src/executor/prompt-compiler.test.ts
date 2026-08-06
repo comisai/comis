@@ -123,6 +123,16 @@ describe("compileExecutionPrompt", () => {
     expect(result.stableEnginePrefix).toMatch(/omit.*not supported/iu);
   });
 
+  it("keeps quoted correspondence in draft mode across every prompt mode", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(/forwarded correspondence.*quoted context/iu);
+      expect(kernel).toMatch(/whether or how to reply.*grounded draft/iu);
+      expect(kernel).toMatch(/do not send.*exact recipient.*delivery authority/iu);
+    }
+  });
+
   it("separates trusted operator policy from untrusted agent state", () => {
     const result = compileExecutionPrompt(makeInput({
       operatorPolicy: [{
