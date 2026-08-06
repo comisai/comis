@@ -160,12 +160,33 @@ if (process.argv.includes("--check-matrix")) {
 }
 
 // ---------------------------------------------------------------------------
+// --report-only flag
+//
+// Analyze a report this process did NOT produce, then exit on its verdict.
+//
+// The command below is `npx vitest run --config test/vitest.config.ts` with no
+// filter — byte-for-byte what `pnpm test:integration` runs. A CI job that ran
+// orchestrate therefore executed the whole integration tier a SECOND time
+// (both jobs reported `341 files / 3460 tests`; the duplicate cost 22m24s of a
+// 31-min wall clock). Since the only post-run input is RESULTS_FILE — one
+// `readFileSync`, no daemon logs — the analysis is portable: let the job that
+// already ran the suite emit the JSON report, then summarize it here.
+//
+// This is also what makes the tier shardable. Each shard writes its own report
+// and summarizes its own slice; nothing needs a merged report, because the
+// coverage gate merges blobs separately and vitest's own exit code already
+// failed the step.
+// ---------------------------------------------------------------------------
+
+const reportOnly = process.argv.includes("--report-only");
+
+// ---------------------------------------------------------------------------
 // Banner
 // ---------------------------------------------------------------------------
 
 console.log("");
 console.log("=".repeat(60));
-console.log("  Comis E2E Test Orchestration");
+console.log(`  Comis E2E Test ${reportOnly ? "Report Analysis" : "Orchestration"}`);
 console.log(`  Started: ${new Date().toISOString()}`);
 console.log("=".repeat(60));
 console.log("");
@@ -183,26 +204,30 @@ const cmd = [
 
 let testsFailed = false;
 
-try {
-  execSync(cmd, {
-    cwd: PROJECT_ROOT,
-    stdio: "inherit",
-    // The daemon-backed suite initializes real local models in isolated
-    // subprocesses. Keep a finite ceiling while allowing cold CI runners to
-    // finish the full suite and emit the JSON report consumed below.
-    timeout: TEST_RUN_TIMEOUT_MS,
-  });
-} catch (error) {
-  // Non-zero exit code means test failures -- continue to parse results
-  testsFailed = true;
-  if (
-    error instanceof Error &&
-    "code" in error &&
-    error.code === "ETIMEDOUT"
-  ) {
-    console.error(
-      `ERROR: Vitest exceeded the ${TEST_RUN_TIMEOUT_MS / 60_000}-minute orchestration timeout.`,
-    );
+// In report-only mode the suite has already run elsewhere and its own exit code
+// already gated that step, so skip the run and go straight to the analysis.
+if (!reportOnly) {
+  try {
+    execSync(cmd, {
+      cwd: PROJECT_ROOT,
+      stdio: "inherit",
+      // The daemon-backed suite initializes real local models in isolated
+      // subprocesses. Keep a finite ceiling while allowing cold CI runners to
+      // finish the full suite and emit the JSON report consumed below.
+      timeout: TEST_RUN_TIMEOUT_MS,
+    });
+  } catch (error) {
+    // Non-zero exit code means test failures -- continue to parse results
+    testsFailed = true;
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ETIMEDOUT"
+    ) {
+      console.error(
+        `ERROR: Vitest exceeded the ${TEST_RUN_TIMEOUT_MS / 60_000}-minute orchestration timeout.`,
+      );
+    }
   }
 }
 
@@ -217,7 +242,16 @@ console.log("-".repeat(60));
 console.log("");
 
 if (!existsSync(RESULTS_FILE)) {
-  if (testsFailed) {
+  if (reportOnly) {
+    // The report is the ONLY evidence this mode has — it ran no tests itself.
+    // Passing here would report success for a suite nobody observed, so a
+    // missing report is a hard failure, not the warning the run-it-here path
+    // can afford.
+    console.log("ERROR: --report-only found no JSON results file to analyze.");
+    console.log(`Expected results at: ${RESULTS_FILE}`);
+    console.log("The step that ran the suite must emit --outputFile.json to that path.");
+    process.exitCode = 1;
+  } else if (testsFailed) {
     console.log("ERROR: Tests failed and no JSON results file was produced.");
     console.log(`Expected results at: ${RESULTS_FILE}`);
     process.exitCode = 1;

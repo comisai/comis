@@ -14,11 +14,30 @@ concurrency:
 # dominant costs — unit+coverage (~23 min) and integration (~18 min) — used to
 # run back-to-back on one 2-vCPU runner; ~90% of wall-clock was those two steps.
 # Now: `build` runs the deterministic gates once and publishes `dist` as an
-# artifact; `unit` fans out across 4 file-shards (vitest --shard, blob reporter)
-# while `integration` / `e2e` / `tarball` / `audit` run concurrently; `coverage`
-# merges the shard blobs and enforces the per-package floors; `ci-success`
-# aggregates everything into one required green check. Critical path drops from
-# the SUM of the two big steps to roughly max(slowest shard, integration).
+# artifact; `unit` and `integration` each fan out across 4 file-shards (vitest
+# --shard, blob reporter) while `e2e` / `tarball` / `audit` run concurrently;
+# `coverage` and `integration-coverage` merge their tier's shard blobs and
+# enforce its thresholds; `ci-success` aggregates everything into one required
+# green check.
+#
+# Both heavy tiers are sharded because both were measured, not assumed. On run
+# 31112678958 (all green, 31-min wall clock, 95 min of runner time):
+#
+#   integration 28.2m · e2e 23.4m · unit 8.6-10.3m x4 · build 2.7m · rest <2m
+#
+# Two findings came out of that. (1) `e2e` ran `pnpm test:orchestrate`, which is
+# `vitest run --config test/vitest.config.ts` with no filter — the same command
+# as `pnpm test:integration`. Both jobs reported an identical `341 files /
+# 3460 tests`: the tier ran TWICE, and the copy cost 22m24s. `e2e` is now the
+# static flow-matrix gate, and the report analysis moved into `integration` via
+# `orchestrate --report-only`. (2) `integration` summed 30.7 min of per-file time
+# against a 26m50s wall clock — ~1.15x effective parallelism, because
+# `live-scenarios` is fileParallelism:false and coverage instrumentation
+# saturates a 4-vCPU runner. Only splitting files across runners helps, so it
+# shards like `unit` does.
+#
+# Critical path is now roughly max(slowest unit shard, slowest integration shard)
+# plus the merges, instead of the single 28-min integration job.
 jobs:
   # ---------------------------------------------------------------------------
   # build — deterministic gates (docs/build/cycles/lint) + publish dist
@@ -195,6 +214,12 @@ jobs:
   integration:
     needs: build
     runs-on: ubuntu-latest
+    strategy:
+      # fail-fast off: one shard's failure must not cancel the others, or a
+      # single red slice hides every other slice's result.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -244,16 +269,67 @@ jobs:
       - name: Extract dist
         run: tar -xzf /tmp/comis-dist.tgz
 
-      - name: Integration tests with coverage
-        run: pnpm test:integration --coverage
+      - name: Integration tests with coverage (shard ${{ matrix.shard }}/4)
+        # Sharded for the same reason `unit` is: this tier summed 30.7 min of
+        # per-file time against a 26m50s single-job wall clock — effective
+        # parallelism of ~1.15x, because `live-scenarios` is fileParallelism:false
+        # and coverage instrumentation saturates the rest of a 4-vCPU runner.
+        # Splitting by file across runners is the only lever that helps.
+        #
+        # VITEST_SHARD_COLLECT_ONLY=1: this shard collects its coverage slice into
+        # the blob WITHOUT enforcing the tier's run-level line threshold, which no
+        # single slice can meet (test/vitest.config.ts gates the threshold on this
+        # env). The `integration-coverage` merge job below is the gate.
+        #
+        # `default` alongside `blob` so a FAILING test prints its name to the job
+        # log — blob alone is silent on failure and is not uploaded on a red step.
+        # `json` writes the report the orchestrate analysis below consumes.
+        env:
+          VITEST_SHARD_COLLECT_ONLY: "1"
+        run: |
+          pnpm exec vitest run \
+            --config test/vitest.config.ts \
+            --shard=${{ matrix.shard }}/4 \
+            --coverage \
+            --reporter=blob \
+            --reporter=default \
+            --reporter=json \
+            --outputFile.json=test/.test-results.json
+
+      - name: E2E orchestrate analysis (shard ${{ matrix.shard }}/4)
+        # The analysis half of `test:orchestrate`, run where the suite actually
+        # ran. Orchestrate's only post-run input is that JSON report (one
+        # readFileSync, no daemon logs), so it needs no second execution — which
+        # is what the old `e2e` job did, re-running all 3460 tests for 22m24s.
+        run: npx tsx test/orchestrate.ts --report-only
 
       - name: Test (deterministic integration CI gates)
+        # Re-runs three files in isolation, WITHOUT coverage instrumentation, to
+        # prove they pass free of cross-file interference. Shard 1 only: it is a
+        # fixed set, so running it on all four shards would just repeat it.
+        if: matrix.shard == 1
         run: |
           npx vitest run \
             --config test/vitest.config.ts \
             test/integration/install-detour-soft-stop-e2e.test.ts \
             test/integration/install-detour-advise-e2e.test.ts \
             test/integration/tooling-fixture-render.test.ts
+
+      - name: Upload integration coverage blob
+        # always(): keep the blob even when this shard's tests FAIL, so the
+        # failure stays reconstructable.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: integration-blob-${{ matrix.shard }}
+          path: .vitest-reports/
+          # `.vitest-reports/` is a DOTFILE dir; upload-artifact@v4+ drops hidden
+          # paths unless this is set, and then fails `if-no-files-found: error`
+          # even though the log shows the blob was written. Enforced for every
+          # workflow by test/architecture/ci-upload-artifact-hidden-files.test.ts.
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Check embedding model completeness (guards the cache save)
         id: model-cache-complete
@@ -268,17 +344,75 @@ jobs:
 
       # Save even when the job failed — a slow-registry run that still finished
       # the download banks the model for every later run.
+      #
+      # Shard 1 only. All four shards restore the same key, so without this the
+      # four of them race to upload the same ~635 MB directory; three lose the
+      # reservation and the winner's upload is pure duplicate transfer on the
+      # critical path. Tradeoff: if shard 1 alone fails to complete the download
+      # the run banks nothing and the next run retries — cheaper than paying 4x.
       - name: Save local embedding models cache
-        if: always() && steps.model-cache-complete.outputs.complete == 'true'
+        if: always() && matrix.shard == 1 && steps.model-cache-complete.outputs.complete == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
           key: embedding-models-bge-m3-Q8_0
 
   # ---------------------------------------------------------------------------
-  # e2e — orchestrate driver + flow-matrix gate (boots the daemon)
+  # integration-coverage — merge the integration shard blobs and enforce the
+  # tier's run-level line threshold on the FULL picture
+  # ---------------------------------------------------------------------------
+  integration-coverage:
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download all integration coverage blobs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: integration-blob-*
+          path: .vitest-reports/
+          merge-multiple: true
+
+      - name: Merge coverage + enforce integration threshold
+        # No VITEST_SHARD_COLLECT_ONLY here — that is the whole point. The shards
+        # collect with thresholds disabled; this step re-derives the report from
+        # the union of their blobs and applies the tier's line floor from
+        # test/vitest.config.ts. It is the gate that used to live inline in the
+        # single `pnpm test:integration --coverage` step.
+        run: pnpm exec vitest run --config test/vitest.config.ts --merge-reports --coverage
+
+  # ---------------------------------------------------------------------------
+  # e2e — flow-matrix gate (static; the suite itself runs in `integration`)
   # ---------------------------------------------------------------------------
   e2e:
+    # Static gate only — it boots nothing and runs no tests.
+    #
+    # This job used to run `pnpm test:orchestrate`, which shells out to
+    # `npx vitest run --config test/vitest.config.ts` with NO filter: the exact
+    # command `pnpm test:integration` runs. So it executed the whole integration
+    # tier a second time — both jobs reported `341 files / 3460 tests` — for
+    # 22m24s of a 31-min wall clock (run 31112678958). The suite now runs once,
+    # sharded, in `integration`, which also performs orchestrate's report
+    # analysis via `--report-only` right where the report is produced.
+    #
+    # What remains is `--check-matrix`, which by design never spawns vitest: it
+    # imports test/e2e/flow-matrix.ts and fails on an unsettled cell. That needs
+    # no dist, no ffmpeg/bubblewrap, no embedding model and no git identity, so
+    # every one of those setup steps is gone with the duplicate run.
+    #
+    # Kept as its own job rather than folded away: it is a required leg of
+    # `ci-success`, and the matrix invariant is deliberately enforced twice —
+    # here and in test/architecture/e2e-matrix.test.ts — so removing one path
+    # still leaves the other.
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -289,67 +423,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install system dependencies (ffmpeg, bubblewrap)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg bubblewrap
-
-      - name: Allow unprivileged user namespaces (bubblewrap sandbox tests)
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
-      - name: Configure git identity for daemon config-versioning tests
-        run: |
-          git config --global user.email "ci@comis.local"
-          git config --global user.name "Comis CI"
-
-      # The integration/e2e daemons boot a LOCAL embedding model; global test
-      # setup downloads the ~635 MB GGUF once from Hugging Face and per-fork
-      # boots hard-link it. When HF is slow or throttled that download blows
-      # the cap and 40+ daemon boots cold-download in parallel straight into
-      # the 60s hook timeout. Persist the model across runs so HF is never
-      # on the boot path. Key must track DEFAULT_EMBEDDING_MODEL_URI
-      # (test/support/model-cache.ts).
-      - name: Cache local embedding models
-        id: model-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.comis/models
-          key: embedding-models-bge-m3-Q8_0
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download dist artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: comis-dist
-          path: /tmp
-      - name: Extract dist
-        run: tar -xzf /tmp/comis-dist.tgz
-
-      - name: E2E orchestrate
-        run: pnpm test:orchestrate
-
       - name: E2E flow-matrix gate
         run: pnpm test:orchestrate --check-matrix
-
-      - name: Check embedding model completeness (guards the cache save)
-        id: model-cache-complete
-        if: always() && steps.model-cache.outputs.cache-hit != 'true'
-        run: |
-          rm -f ~/.comis/models/*.ipull* 2>/dev/null || true
-          if ls ~/.comis/models/*bge-m3*.gguf >/dev/null 2>&1; then
-            echo "complete=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "complete=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Save even when the job failed — a slow-registry run that still finished
-      # the download banks the model for every later run.
-      - name: Save local embedding models cache
-        if: always() && steps.model-cache-complete.outputs.complete == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.comis/models
-          key: embedding-models-bge-m3-Q8_0
 
   # ---------------------------------------------------------------------------
   # tarball — published-package smoke (pnpm pack + install)
@@ -414,7 +492,7 @@ jobs:
     # and only a force-cancel clears it. Skipping the aggregator on cancellation
     # lets the run finish and releases the group.
     if: ${{ !cancelled() }}
-    needs: [build, unit, coverage, integration, e2e, tarball, audit]
+    needs: [build, unit, coverage, integration, integration-coverage, e2e, tarball, audit]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs succeeded
