@@ -35,7 +35,13 @@ export function selectSdkSteeringTrajectoryRecords(
   { fromMs, followSentAtMs },
 ) {
   const windowed = filterRecordsWindow(records, { fromMs });
-  const baseTraceId = windowed.find((record) => record?.type === "queue.enqueued")?.traceId;
+  const baseTraceId = windowed.find((record) => record?.type === "queue.enqueued")?.traceId
+    ?? windowed.find((record) => {
+      const atMs = recordTimeMs(record);
+      return record?.type === "prompt.submitted"
+        && atMs !== null
+        && atMs < followSentAtMs;
+    })?.traceId;
   const dispositionTraceId = windowed.find((record) => (
     recordTimeMs(record) >= followSentAtMs
     && SDK_DISPOSITION_TYPES.has(record?.type)
@@ -333,6 +339,8 @@ export function scoreSdkSteeringBurst({
   // execution whose live input changed in flight.
   const baseTraceId = trajectoryRecords.find(
     (record) => record?.type === "queue.enqueued",
+  )?.traceId ?? trajectoryRecords.find(
+    (record) => record?.type === "prompt.submitted",
   )?.traceId;
   const executionRecords = baseTraceId === undefined
     ? trajectoryRecords
