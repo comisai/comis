@@ -54,6 +54,15 @@ export function parseJsonlRecords(source) {
   return records;
 }
 
+/** True only for an assistant conversation transcript, never a provenance ledger or sidecar. */
+export function isBurstTranscriptFile(name) {
+  return typeof name === "string"
+    && name.endsWith(".jsonl")
+    && !name.endsWith(".trajectory.jsonl")
+    && !name.endsWith("_session-metadata.jsonl")
+    && !name.endsWith("~ledger~inbound.jsonl");
+}
+
 /** Trim reply prose for a verdict without losing its identity. */
 export function replyPreview(text) {
   const collapsed = String(text ?? "").replace(/\s+/g, " ").trim();

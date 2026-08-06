@@ -27,6 +27,7 @@ import { rig } from './_rig.mjs';
 import {
   attributeBurst,
   burstVerdict,
+  isBurstTranscriptFile,
   openTrajectoryTraceIds,
   overlapReport,
   parseJsonlRecords,
@@ -94,11 +95,7 @@ const transcriptFiles = () => {
     for (const entry of entries) {
       const path = `${current}/${entry.name}`;
       if (entry.isDirectory()) { visit(path); continue; }
-      if (
-        entry.name.endsWith('.jsonl')
-        && !entry.name.endsWith('.trajectory.jsonl')
-        && !entry.name.endsWith('_session-metadata.jsonl')
-      ) files.push(path);
+      if (isBurstTranscriptFile(entry.name)) files.push(path);
     }
   };
   visit(`${dataDir}/workspace/sessions`);
