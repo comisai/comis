@@ -106,6 +106,7 @@ import { summaryRefToMessage } from "./lcd-summary-render.js";
 import { createRehydrationLayer } from "./rehydration.js";
 import { evictHistoryUnderBudget, type BudgetItem } from "./lcd-budget-eviction.js";
 import { evictUnderArbiter, emitEvictedEvent } from "./lcd-arbiter-seam.js";
+import { quantizeHistoryBudget } from "./lcd-history-horizon.js";
 import {
   computeFreshTailCapChars,
   boundFreshTailMessages,
@@ -562,7 +563,13 @@ export function createLcdContextEngine(
         0,
         budget.windowTokens - evictOutputHeadroom - S - freshTailPreambleTokens,
       );
-      const shipHistoryBudget = Math.min(budget.availableHistoryTokens, preflightHistoryResidual);
+      // Quantized so the per-call jitter in S and freshTailPreambleTokens cannot
+      // move the oldest kept step. That step is message[0] of the shipped prompt,
+      // and moving it invalidates the provider's ENTIRE cached prefix — measured as
+      // cacheRead 0 with a full cold write on the first call of every turn while
+      // the calls within a turn hit at 100%. Flooring keeps it a ceiling.
+      const rawShipHistoryBudget = Math.min(budget.availableHistoryTokens, preflightHistoryResidual);
+      const shipHistoryBudget = quantizeHistoryBudget(rawShipHistoryBudget);
       const budgeted: AgentMessage[] =
         deps.relevanceFirst === true
           ? evictUnderArbiter(deps, evictable, shipHistoryBudget, liveMessages, startMs).budgeted
@@ -577,6 +584,9 @@ export function createLcdContextEngine(
           // window (the loose H) and misleads a diagnosis. availableHistoryTokens is
           // kept as a separate field so both are visible.
           shipHistoryBudget,
+          // The pre-quantization value, so a horizon that DID move is attributable
+          // to real growth rather than to jitter the grid was meant to absorb.
+          rawShipHistoryBudget,
           availableHistoryTokens: budget.availableHistoryTokens,
           windowTokens: budget.windowTokens,
           systemTokens: S,

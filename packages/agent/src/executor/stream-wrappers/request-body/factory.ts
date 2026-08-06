@@ -18,6 +18,7 @@
  *   - skip-cache-write-marker.ts   (shared-prefix anchor)
  *   - kill-switch.ts          (retention="none" strip)
  *   - ttl-split-estimation.ts (per-TTL token attribution)
+ *   - output-budget-repair.ts (restore an SDK-clamped output cap; last)
  *
  * `createRequestBodyInjector` returns a `requestBodyInjector` named
  * StreamFnWrapper.
@@ -33,13 +34,10 @@ import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/c
 import type { RequestBodyInjectorConfig } from "./types.js";
 import { getMinCacheableTokens, sortToolsForCacheStability, maybePromoteBreakpoints } from "./cache-breakpoints.js";
 import { applyToolChoice } from "./tool-choice-payload.js";
-import {
-  CONTEXT_1M_BETA,
-  parseHeaderList,
-  sessionBetaHeaderLatches,
-} from "./context-window.js";
+import { CONTEXT_1M_BETA, parseHeaderList, sessionBetaHeaderLatches } from "./context-window.js";
 import { isResponsesApiProvider, usesResponsesInputApi, injectStoreFlag } from "./store-flag.js";
 import { injectServiceTier } from "./service-tier.js";
+import { repairPayloadOutputBudget } from "./output-budget-repair.js";
 import {
   separateRecallBeforeCurrentResponsesItem,
   deferRecallToUncachedTail,
@@ -588,8 +586,7 @@ export function createRequestBodyInjector(
               );
             }
           }
-
-          return result;
+          return repairPayloadOutputBudget(result, options, model, logger);
         },
       };
 

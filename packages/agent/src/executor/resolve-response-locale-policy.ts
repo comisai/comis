@@ -150,6 +150,16 @@ function withoutProtectedResponseSpans(text: string): string {
     if (text.startsWith("```", cursor)) {
       const close = text.indexOf("```", cursor + 3);
       if (close !== -1) end = close + 3;
+    } else if (lower.startsWith("<pre", cursor) || lower.startsWith("<code", cursor)) {
+      // HTML code spans, which is how a rich channel renders a table. Stripping
+      // only markdown fences left these counted as prose: a Hebrew answer built
+      // around a `<pre><code>` table of identifiers and English column names read
+      // as Latin, failed an enforced Hebrew locale on every repair attempt, and
+      // the user got "I could not produce a response in the requested language"
+      // in place of a correct answer.
+      const tag = lower.startsWith("<pre", cursor) ? "</pre>" : "</code>";
+      const close = lower.indexOf(tag, cursor);
+      if (close !== -1) end = close + tag.length;
     } else if (text[cursor] === "`") {
       const close = text.indexOf("`", cursor + 1);
       if (close !== -1 && !text.slice(cursor + 1, close).includes("\n")) end = close + 1;
@@ -314,8 +324,15 @@ export function evaluateResponseLocale(
   // attempt. Live: "give me one number: how many vehicles in total?" was
   // answered correctly and the user received "choose a model that supports it"
   // instead (locale und-Hebr, expected Hebr, actual Latn, after a failed repair).
-  if (scriptShares(response).size === 0) return undefined;
-  const actualClass = dominantScript(response);
+  // Dominance is judged over PROSE, with code spans, links and URLs removed. They
+  // carry no language signal — a table of identifiers is the same bytes whatever
+  // the answer's language — and counting them let a large ASCII table outvote the
+  // Hebrew sentences wrapped around it. `substantialForeignScript` below already
+  // reasons over this same candidate; judging the top-level class on the raw text
+  // meant the two disagreed, and the raw one rejected the response first.
+  const prose = withoutProtectedResponseSpans(response);
+  if (scriptShares(prose).size === 0) return undefined;
+  const actualClass = dominantScript(prose);
   if (expectedClass === undefined || actualClass === "other") {
     return undefined;
   }

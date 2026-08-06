@@ -813,6 +813,37 @@ const TERMINAL_OUTPUT_STARVED_STOP_REASONS: ReadonlySet<string> = new Set([
  *   (already reconciled for tool failures → completed_with_tool_errors).
  * @param lastStopReason - the bridge's terminal `AssistantMessage.stopReason`.
  */
+/**
+ * Operator instruction for an `output_starved` terminal, branched on whether the
+ * model actually produced anything.
+ *
+ * The verdict names the output CAP, so every hint pointed at `maxTokens`. That is
+ * right only when a real answer was cut off mid-flight. Measured live: the cap
+ * sent was 32,768 with 65,853 tokens of remaining room and the model returned a
+ * single token — it emitted NOTHING, so raising the cap could not have helped,
+ * and the turn still billed a full cold prefix write. On a thinking-capable model
+ * the usual cause of that shape is the thinking budget consuming the whole output
+ * allowance, which is a different knob entirely.
+ *
+ * @param evidence - terminal stop reason and whether visible text was emitted.
+ * @returns the hint to ride the WARN line.
+ */
+export function outputStarvedHint(evidence: {
+  textEmitted?: boolean;
+  lastStopReason?: string;
+}): string {
+  if (evidence.textEmitted === true) {
+    return "The terminal turn was cut off at the output cap after emitting text: raise the agent's "
+      + "maxTokens, or enable contextEngine.outputEscalation so a capped turn retries with a larger "
+      + "output budget.";
+  }
+  return "The terminal turn stopped at the output cap having emitted NO visible output, so the cap "
+    + "was not the binding constraint and raising maxTokens will not help. On a thinking-capable "
+    + "model the usual cause is the thinking budget consuming the whole output allowance — compare "
+    + "the request's thinking budget against max_tokens, and check the completion token count "
+    + "before treating this as a truncated answer.";
+}
+
 export function promoteOutputStarved(
   effectiveFinishReason: string,
   lastStopReason: string | undefined,
@@ -2165,8 +2196,21 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   }
   if (effectiveFinishReason === "output_starved") {
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage, localeCatalog);
+    // Carry the evidence the verdict is DERIVED from. The line used to say only
+    // "annotation appended", so an operator could not tell a genuinely truncated
+    // answer from a completion that emitted nothing — and the generic advice
+    // ("raise maxTokens") is actively wrong for the second shape.
     deps.logger.warn(
-      { step: "degraded-reply", errorKind: "resource" as const, hint: "output_starved annotation appended" },
+      {
+        step: "degraded-reply",
+        errorKind: "resource" as const,
+        lastStopReason: bridgeResult.lastStopReason,
+        textEmitted: bridgeResult.textEmitted === true,
+        hint: outputStarvedHint({
+          ...(bridgeResult.textEmitted !== undefined ? { textEmitted: bridgeResult.textEmitted } : {}),
+          ...(bridgeResult.lastStopReason !== undefined ? { lastStopReason: bridgeResult.lastStopReason } : {}),
+        }),
+      },
       "output_starved — annotated truncated reply",
     );
   }
