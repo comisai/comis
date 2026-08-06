@@ -714,6 +714,39 @@ describe("promoteOutputStarved — conservative terminal-truncation promotion", 
     expect(emptyCompletion).toMatch(/thinking/i);
   });
 
+  // A length stop that ended BELOW the cap we asked for is a third shape, and
+  // the only one whose remedy is neither knob: the provider truncated early
+  // under context pressure. The SDK detects it (`isRecoverableLength`) and its
+  // AgentSession compacts + retries once, so a hint naming maxTokens sends the
+  // operator to a knob that was never binding AND hides that a compaction
+  // already ran for this turn.
+  it("names context pressure — not a cap knob — when output ended below the requested cap", () => {
+    const belowCap = outputStarvedHint({
+      textEmitted: true,
+      lastStopReason: "length",
+      recoverableLength: true,
+    });
+    expect(belowCap).not.toMatch(/raise .*maxTokens/i);
+    expect(belowCap).toMatch(/below/i);
+    expect(belowCap).toMatch(/compact/i);
+  });
+
+  it("keeps the cap remedy when output consumed the whole requested allowance", () => {
+    const atCap = outputStarvedHint({
+      textEmitted: true,
+      lastStopReason: "length",
+      recoverableLength: false,
+    });
+    expect(atCap).toMatch(/maxTokens|outputEscalation/);
+  });
+
+  it("falls back to the textEmitted branches when recoverability is unknown", () => {
+    // No model cap on the metrics (older bridge result / non-length terminal):
+    // the hint must not claim a below-cap truncation it cannot substantiate.
+    const unknown = outputStarvedHint({ textEmitted: true, lastStopReason: "length" });
+    expect(unknown).toMatch(/maxTokens|outputEscalation/);
+  });
+
   it("does NOT flag a benign continued/non-terminal length-stop — a clean terminal stays success", () => {
     // The load-bearing guard against flagging healthy sessions. A long answer that
     // hit the cap mid-run but the agent CONTINUED past (output escalation re-ran,

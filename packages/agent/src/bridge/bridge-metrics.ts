@@ -117,6 +117,12 @@ export interface BridgeMetricsState {
   // Stop reason for output escalation
   lastStopReason: string | undefined;
 
+  /** Whether the terminal `length` stop ended BELOW the model's own output
+   *  ceiling — a provider-side truncation rather than a spent allowance.
+   *  `undefined` when the model cap was unavailable, so consumers can tell
+   *  "not applicable" from "measured false". */
+  lastLengthStopRecoverable: boolean | undefined;
+
   // Ghost cost tracking (timed-out requests)
   ghostCostUsd: number;
   timedOutRequests: number;
@@ -255,6 +261,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     agentStartMs: undefined,
     compactionStartMs: 0,
     lastStopReason: undefined,
+    lastLengthStopRecoverable: undefined,
     ghostCostUsd: 0,
     timedOutRequests: 0,
     executionCostUsd: 0,
@@ -303,6 +310,7 @@ export function buildBridgeResult(
   breakerTripCount?: number;
   turnCount?: number;
   lastStopReason?: string;
+  lastLengthStopRecoverable?: boolean;
   cacheWrite5mTokens?: number;
   cacheWrite1hTokens?: number;
   executionCostUsd?: number;
@@ -355,6 +363,7 @@ export function buildBridgeResult(
     breakerTripCount: metrics.breakerTripCount,
     turnCount: metrics.turnCount,
     lastStopReason: metrics.lastStopReason,
+    lastLengthStopRecoverable: metrics.lastLengthStopRecoverable,
     cacheWrite5mTokens: metrics.totalCacheWrite5mTokens,
     cacheWrite1hTokens: metrics.totalCacheWrite1hTokens,
     // Session-cumulative cost fields
