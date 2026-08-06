@@ -20,6 +20,7 @@ import {
   attributeBurst,
   burstVerdict,
   filterRecordsWindow,
+  isBurstTranscriptFile,
   openTrajectoryTraceIds,
   overlapReport,
   parseJsonlRecords,
@@ -127,6 +128,15 @@ describe("burst trajectory selection — continuing relationships stay scoped", 
       "burst-a",
       "burst-b",
     ]);
+  });
+});
+
+describe("burst transcript selection — provenance ledgers are not conversations", () => {
+  it("accepts the session transcript and rejects ledger and sidecar files", () => {
+    expect(isBurstTranscriptFile("principal~peer~principal.jsonl")).toBe(true);
+    expect(isBurstTranscriptFile("principal~peer~principal~ledger~inbound.jsonl")).toBe(false);
+    expect(isBurstTranscriptFile("principal.jsonl.trajectory.jsonl")).toBe(false);
+    expect(isBurstTranscriptFile("principal_session-metadata.jsonl")).toBe(false);
   });
 });
 
