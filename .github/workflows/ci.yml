@@ -5,6 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual re-dispatch. A `push`/`pull_request` run exists only once GitHub
+  # delivers the webhook, and GitHub throttles those deliveries to shed load:
+  # an event may arrive tens of minutes late, or never, with nothing visible
+  # from the outside to tell the two apart. A commit with no run reads as
+  # "queued somewhere" rather than "will never start". Since `ci-success` is
+  # the required check, such a commit can neither merge nor be re-triggered —
+  # a `push` on the same SHA is a no-op and the only other lever is an empty
+  # commit. This trigger creates the run over the REST API instead:
+  #   gh workflow run ci.yml --ref <branch>
+  # No job here branches on `github.event_name`, so a dispatched run is
+  # identical to the webhook-driven one.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
