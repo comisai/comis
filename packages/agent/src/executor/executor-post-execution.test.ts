@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, isPairedMemoryEligibleOutcome, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, isPairedMemoryEligibleOutcome, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, outputStarvedHint, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
@@ -694,6 +694,24 @@ describe("promoteOutputStarved — conservative terminal-truncation promotion", 
     expect(promoteOutputStarved("stop", "maxTokens")).toBe("output_starved");
     // And the promoted reason maps to the named cause end-to-end.
     expect(END_REASON_MAP[promoteOutputStarved("stop", "length")]).toBe("output_starved");
+  });
+
+  // The verdict names the output CAP, and every hint told the operator to raise
+  // maxTokens. Measured live on comis-moshe (real user, real Telegram, 17:22):
+  // the cap sent was 32,768 with 65,853 tokens of remaining room and the model
+  // returned completion_tokens=1 — it produced NOTHING. Raising maxTokens could
+  // not have helped, and the turn still cost $0.41. Distinguish the two shapes so
+  // the instruction fits the failure.
+  it("names the truncation remedy only when the model actually emitted output", () => {
+    const truncated = outputStarvedHint({ textEmitted: true, lastStopReason: "length" });
+    expect(truncated).toMatch(/maxTokens|outputEscalation/);
+
+    const emptyCompletion = outputStarvedHint({ textEmitted: false, lastStopReason: "length" });
+    // Must NOT send the operator to the output cap — it was not the constraint.
+    expect(emptyCompletion).not.toMatch(/raise .*maxTokens/i);
+    // Must say the model produced nothing, and point at the real suspect.
+    expect(emptyCompletion).toMatch(/no visible output|emitted nothing/i);
+    expect(emptyCompletion).toMatch(/thinking/i);
   });
 
   it("does NOT flag a benign continued/non-terminal length-stop — a clean terminal stays success", () => {
