@@ -24,6 +24,7 @@ import {
   overlapReport,
   parseJsonlRecords,
   recordTimeMs,
+  selectBurstTrajectoryRecords,
   shouldSettleBurstEvidence,
   wireReconciliation,
 } from "./concurrency-oracle.mjs";
@@ -102,6 +103,30 @@ describe("burst settling — unresolved live work stays open", () => {
       openTraceCount: 1,
       gatewayReachable: true,
     })).toBe(true);
+  });
+});
+
+describe("burst trajectory selection — continuing relationships stay scoped", () => {
+  it("keeps only the expected queue-enqueued trace identities after the manifest start", () => {
+    const records = [
+      trajectoryRecord("prior-trace", "2026-08-06T10:00:00.100Z", "learning.outcome_observed"),
+      trajectoryRecord("burst-a", "2026-08-06T10:00:00.200Z", "queue.enqueued"),
+      trajectoryRecord("burst-b", "2026-08-06T10:00:00.210Z", "queue.enqueued"),
+      trajectoryRecord("burst-a", "2026-08-06T10:00:04.000Z", "session.summary"),
+      trajectoryRecord("burst-b", "2026-08-06T10:00:05.000Z", "session.summary"),
+      trajectoryRecord("future-trace", "2026-08-06T10:01:00.000Z", "queue.enqueued"),
+      trajectoryRecord("future-trace", "2026-08-06T10:01:04.000Z", "session.summary"),
+    ];
+
+    const selected = selectBurstTrajectoryRecords(records, {
+      fromMs: Date.parse("2026-08-06T10:00:00.000Z"),
+      expectedTraceCount: 2,
+    });
+
+    expect([...new Set(selected.map((record) => record.traceId))]).toEqual([
+      "burst-a",
+      "burst-b",
+    ]);
   });
 });
 
