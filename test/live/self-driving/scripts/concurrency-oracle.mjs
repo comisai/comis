@@ -96,6 +96,31 @@ export function filterRecordsWindow(records, { fromMs, toMs } = {}) {
   });
 }
 
+/**
+ * Select the trajectory traces owned by one accepted burst.
+ *
+ * A continuing session keeps appending after verification. A timestamp-only
+ * lower bound eventually admits trailing records from an earlier trace and
+ * future turns, inflating `maxConcurrent` on replay. Each accepted channel
+ * inbound emits its own `queue.enqueued`; the first N distinct enqueue trace
+ * ids after injection are therefore the stable burst identity set.
+ */
+export function selectBurstTrajectoryRecords(records, { fromMs, expectedTraceCount }) {
+  const windowed = filterRecordsWindow(records, { fromMs });
+  const selectedTraceIds = [];
+  const seen = new Set();
+  for (const record of windowed) {
+    if (record?.type !== "queue.enqueued") continue;
+    const traceId = record.traceId;
+    if (typeof traceId !== "string" || traceId === "" || seen.has(traceId)) continue;
+    seen.add(traceId);
+    selectedTraceIds.push(traceId);
+    if (selectedTraceIds.length >= expectedTraceCount) break;
+  }
+  const selected = new Set(selectedTraceIds);
+  return windowed.filter((record) => selected.has(record?.traceId));
+}
+
 const TURN_START_TYPES = new Set([
   "queue.enqueued",
   "queue.dequeued",

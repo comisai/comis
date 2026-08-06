@@ -27,10 +27,10 @@ import { rig } from './_rig.mjs';
 import {
   attributeBurst,
   burstVerdict,
-  filterRecordsWindow,
   openTrajectoryTraceIds,
   overlapReport,
   parseJsonlRecords,
+  selectBurstTrajectoryRecords,
   shouldSettleBurstEvidence,
   wireReconciliation,
 } from './concurrency-oracle.mjs';
@@ -171,9 +171,9 @@ const evidence = async () => {
   let trajectoryRecords = [];
   if (trajectoryPath) {
     try {
-      trajectoryRecords = filterRecordsWindow(
+      trajectoryRecords = selectBurstTrajectoryRecords(
         parseJsonlRecords(readFileSync(trajectoryPath, 'utf8')),
-        { fromMs: manifest.startedAtMs },
+        { fromMs: manifest.startedAtMs, expectedTraceCount: injects.length },
       );
     } catch { /* mid-write or absent — retried on the next poll */ }
   }
