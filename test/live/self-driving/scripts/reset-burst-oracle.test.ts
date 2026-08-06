@@ -158,4 +158,24 @@ describe("session-reset burst ground-truth oracle", () => {
       "reset-burst-trace-not-terminal",
     );
   });
+
+  it("reports live model token fields as content-free context counts", () => {
+    const records = trajectory();
+    records.push(record("model.completed", "trace-0", 3_000, {
+      inputTokens: 100,
+      outputTokens: 25,
+      cacheReadTokens: 50,
+      cacheCreationTokens: 0,
+    }));
+    const scored = scoreResetBurst({
+      injects,
+      transcriptSources: [provenance(injects)],
+      trajectoryRecords: records,
+      wire: wire(),
+      expectedAnswerTerms: terms,
+      successfulResets: 2,
+    });
+
+    expect(scored.reset.totalTokens).toBe(1175);
+  });
 });
