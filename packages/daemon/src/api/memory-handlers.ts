@@ -108,7 +108,12 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       if (!agentId) {
         throw new AuthorizationError("Memory search requires explicit agent authority");
       }
-      const scope = resolveRequestMemoryRecallScope(tenantId, agentId, true);
+      const scope = resolveRequestMemoryRecallScope(
+        tenantId,
+        agentId,
+        true,
+        rawParams._trustLevel === "admin",
+      );
       if (!scope.ok) throw new AuthorizationError(scope.error.message);
       const results = await deps.memoryApi.search(params.query, {
         limit,
