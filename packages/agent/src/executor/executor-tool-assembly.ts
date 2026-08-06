@@ -152,6 +152,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     const uniqueConverted = converted.filter(t => !existingNames.has(t.name));
     mergedCustomTools = [...deps.customTools, ...uniqueConverted];
   }
+  if (msg.metadata?.isCronAgentTurn === true) {
+    mergedCustomTools = mergedCustomTools.filter((tool) => tool.name !== "sessions_spawn");
+  }
 
   // -------------------------------------------------------------------
   // 2. Create SettingsManager -- prefer file-based for persistent SDK settings
