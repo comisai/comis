@@ -6,9 +6,17 @@ import {
   filterRecordsWindow,
   openTrajectoryTraceIds,
   overlapReport,
+  parseJsonlRecords,
   recordTimeMs,
+  replyPreview,
   wireReconciliation,
 } from "./concurrency-oracle.mjs";
+import {
+  isDriveProgressText,
+  normalizeWireText,
+  outboundVisibleText,
+  transcriptMessageText,
+} from "./drive-session-oracle.mjs";
 
 const SDK_DISPOSITION_TYPES = new Set([
   "queue.steer_injected",
@@ -41,6 +49,92 @@ export function selectSdkSteeringTrajectoryRecords(
 
 function hardViolation(kind, detail) {
   return { kind, severity: "hard", detail };
+}
+
+/** Bind the terminal assistant response that the channel actually selected. */
+function attributeInjectedSteeringReply({
+  baseInject,
+  transcriptSource,
+  trajectoryRecords,
+  wire,
+}) {
+  const violations = [];
+  const terminalAtMs = trajectoryRecords
+    .filter((record) => record?.type === "session.summary")
+    .map(recordTimeMs)
+    .filter((atMs) => atMs !== null)
+    .reduce((latest, atMs) => Math.max(latest, atMs), Number.NEGATIVE_INFINITY);
+  const wireKeys = new Set(
+    wire
+      .map(outboundVisibleText)
+      .filter((text) => text && !isDriveProgressText(text))
+      .map(normalizeWireText),
+  );
+  let inboundSeen = false;
+  const candidates = [];
+  for (const record of parseJsonlRecords(transcriptSource)) {
+    if (record?.type !== "message") continue;
+    const recordAtMs = typeof record.timestamp === "string"
+      ? Date.parse(record.timestamp)
+      : null;
+    if (
+      Number.isFinite(terminalAtMs)
+      && recordAtMs !== null
+      && Number.isFinite(recordAtMs)
+      && recordAtMs > terminalAtMs
+    ) {
+      continue;
+    }
+    if (record.message?.role === "user") {
+      if (
+        typeof baseInject?.inboundGuid === "string"
+        && transcriptMessageText(record.message).includes(baseInject.inboundGuid)
+      ) {
+        inboundSeen = true;
+        candidates.length = 0;
+      }
+      continue;
+    }
+    if (!inboundSeen || record.message?.role !== "assistant") continue;
+    const text = transcriptMessageText(record.message).trim();
+    if (!text || isDriveProgressText(text)) continue;
+    candidates.push({ text, answerKey: normalizeWireText(text) });
+  }
+  const matching = candidates.filter((candidate) => wireKeys.has(candidate.answerKey));
+  const selected = matching.at(-1) ?? candidates.at(-1) ?? null;
+  if (!inboundSeen) {
+    violations.push(hardViolation(
+      "inbound-never-ingested",
+      "the base inbound never appeared in the selected transcript",
+    ));
+  } else if (selected === null) {
+    violations.push(hardViolation(
+      "lost-reply",
+      "the base inbound reached the transcript but no terminal assistant response followed",
+    ));
+  }
+  const binding = {
+    index: baseInject?.index ?? 0,
+    inboundGuid: baseInject?.inboundGuid ?? "",
+    status: selected === null ? "unanswered" : "answered",
+    inboundSeen,
+    answer: selected === null ? null : replyPreview(selected.text),
+    answerKey: selected?.answerKey ?? null,
+    progressReplies: 0,
+    ambiguousWith: [],
+  };
+  return {
+    shape: "serialized",
+    bindings: [binding],
+    ambiguousAnswers: [],
+    violations,
+    counts: {
+      injected: 1,
+      answered: selected === null ? 0 : 1,
+      ambiguous: 0,
+      unanswered: selected === null ? 1 : 0,
+    },
+  };
 }
 
 /**
@@ -104,10 +198,17 @@ export function scoreSdkSteeringBurst({
     ));
   }
 
-  const baseAttribution = attributeBurst({
-    injects: baseInject === undefined ? [] : [baseInject],
-    transcriptSource,
-  });
+  const baseAttribution = disposition === "steer_injected"
+    ? attributeInjectedSteeringReply({
+        baseInject,
+        transcriptSource,
+        trajectoryRecords,
+        wire,
+      })
+    : attributeBurst({
+        injects: baseInject === undefined ? [] : [baseInject],
+        transcriptSource,
+      });
   let attribution;
   let wireReport;
   if (disposition === "followup_queued") {
