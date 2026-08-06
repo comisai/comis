@@ -16,7 +16,7 @@
  * - Google Gemini / Vertex / Gemini-CLI: `thought_signature` mismatch /
  *   verification failed / not found.
  * - OpenAI Responses (o-series): `reasoning_item` not found / invalid /
- *   expired / mismatch.
+ *   expired / mismatch, or spaced `encrypted content` verification failures.
  * - OpenAI Completions reasoning: `reasoning_id` not found / expired.
  * - Mistral: `encrypted_content` mismatch / verification failed / tampered.
  *
@@ -38,7 +38,7 @@
  * providers without leaking unrelated false positives.
  */
 const SIGNATURE_NOUN =
-  /thinking|redacted_thinking|reasoning_item|encrypted_content|thought_signature|reasoning_id/i;
+  /thinking|redacted_thinking|reasoning_item|encrypted[_ ]content|thought_signature|reasoning_id/i;
 
 /**
  * Rejection-verb regex: matches any of the verbs providers use to reject
@@ -47,7 +47,7 @@ const SIGNATURE_NOUN =
  * not found).
  */
 const REJECTION_VERB =
-  /cannot be modified|not found|invalid|mismatch|verification failed|expired|tampered|stale/i;
+  /cannot be modified|not found|invalid|mismatch|verification failed|could not be (?:verified|decrypted|parsed)|expired|tampered|stale/i;
 
 /**
  * Anthropic JSON-path fast-path: matches the canonical Anthropic 400 error

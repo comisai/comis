@@ -52,6 +52,10 @@ const DETERMINISTIC_REJECTIONS = new Set([
 
 /** Per-category operator guidance. Falls back to a generic step when unlisted. */
 const NEXT_STEPS: Record<string, string[]> = {
+  client_request_signed_replay: [
+    "check this report for `execution.replay_recovered`; its scrub counters show whether Comis removed persisted signed reasoning state before retrying",
+    "if automatic replay recovery failed, start a new conversation so the provider receives no rejected signed reasoning history",
+  ],
   model_capability_unsupported: [
     "check the resolved model id under `agents.<id>.model` against the provider's supported request parameters",
     "a `providers.entries.*` entry that re-declares built-in catalog models can drop the capability metadata that selects the request shape — remove the redundant entry or list the model explicitly",
