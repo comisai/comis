@@ -35,6 +35,7 @@ describe("drive outbound visibility", () => {
       "<b>Verification Report</b>",
       "",
       "<pre><code>Item       Value",
+      "---------- -------",
       "Box count  12</code></pre>",
     ].join("\n");
 
