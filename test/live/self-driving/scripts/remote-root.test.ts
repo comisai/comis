@@ -15,6 +15,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
+import { offlineSecretGet } from "@comis/memory";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELPER = resolve(HERE, "_remote-root.sh");
@@ -147,6 +148,13 @@ describe("sudo-aware live rig transport", () => {
     );
     expect(source).not.toContain('&& ! rig_is_local; then');
     expect(source).not.toContain("Authorization: Bearer $GWTOKEN");
+  });
+
+  it("does not persist the selected gateway token in a local rendered rig env", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    expect(source).toContain('if rig_is_local; then rendered_gateway_token=""; fi');
+    expect(source).toContain('export GWTOKEN="\${GWTOKEN:-${rendered_gateway_token:-}}"');
   });
 
   it("uses service-none mode when a deployed build must remain stopped", () => {
@@ -554,14 +562,22 @@ describe("local rig mode", () => {
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     const config = readFileSync(configPath, "utf8");
     const envFile = readFileSync(resolve(data, ".env"), "utf8");
-    const token = config.match(/secret:\s+([a-f0-9]{48})/u)?.[1];
     const masterKey = envFile.match(/^SECRETS_MASTER_KEY=([a-f0-9]{64})$/mu)?.[1];
-    expect(token).toBeDefined();
+    expect(config).toContain('secret: ${COMIS_GATEWAY_TOKEN}');
     expect(masterKey).toBeDefined();
-    if (token === undefined || masterKey === undefined) {
+    if (masterKey === undefined) {
       throw new Error("initializer omitted generated credentials");
     }
-    expect(result.stdout).not.toContain(token);
+    const stored = offlineSecretGet({
+      name: "COMIS_GATEWAY_TOKEN",
+      dataDir: data,
+      envFilePath: resolve(data, ".env"),
+    });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) throw stored.error;
+    expect(stored.value).toMatch(/^[a-f0-9]{48}$/u);
+    expect(config).not.toContain(stored.value);
+    expect(result.stdout).not.toContain(stored.value);
     expect(result.stdout).not.toContain(masterKey);
     expect(statSync(configPath).mode & 0o777).toBe(0o600);
     expect(statSync(resolve(data, ".env")).mode & 0o777).toBe(0o600);
