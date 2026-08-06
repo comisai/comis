@@ -190,6 +190,16 @@ describe("response grounding module", () => {
     });
   });
 
+  it("does not classify an ordinary remembered weekday correction as scheduler state", () => {
+    const response = "Updated — your test runs are Wednesday mornings now.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify a scheduled job.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("does not classify an ordinary promise to omit prose as scheduler state", () => {
     const response = "I will skip that section in the draft.";
 
