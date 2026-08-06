@@ -126,6 +126,23 @@ describe("buildInboundMetadataSection", () => {
     expect(joined).toContain('"hasAttachments": true');
   });
 
+  it("renders current forwarded correspondence as draft-only context", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-forwarded",
+      senderId: "user_a",
+      chatId: "chat_a",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isForwarded: true },
+    };
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toMatch(/current message.*forwarded correspondence/iu);
+    expect(joined).toMatch(/triage.*grounded draft/iu);
+    expect(joined).toMatch(/do not ask.*recipient.*explicit send request/iu);
+  });
+
   it("includes SCHEDULED REMINDER block when flags.isScheduled is true", () => {
     const meta: InboundMetadata = {
       messageId: "msg-1",
