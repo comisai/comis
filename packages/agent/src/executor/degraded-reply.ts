@@ -37,6 +37,7 @@ import {
   selectAgentUpdateNoOpReply,
   selectOngoingWorkEvidenceMissingReply,
   selectSchedulerStateEvidenceMissingReply,
+  selectPendingSchedulerConfirmationReply,
   selectCompletionEvidenceMissingReply,
   selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
@@ -259,6 +260,14 @@ export function buildSchedulerStateEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectSchedulerStateEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Neutral confirmation request after a gated scheduler removal stops before mutation. */
+export function buildPendingSchedulerConfirmationReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectPendingSchedulerConfirmationReply(language, localeCatalog);
 }
 
 /** Honest replacement when unrecovered tool evidence contradicts a completion claim. */

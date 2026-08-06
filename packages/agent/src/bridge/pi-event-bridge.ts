@@ -1512,6 +1512,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             typeof resultDetails?.changed === "boolean"
               ? resultDetails.changed
               : undefined;
+          const requiresConfirmation = resultDetails?.requiresConfirmation === true;
           const webResultMeta = toolSuccess
             ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
             : undefined;
@@ -1533,6 +1534,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             success: toolSuccess,
             ...(toolChanged === undefined ? {} : { changed: toolChanged }),
             ...(resultBackgrounded ? { backgrounded: true } : {}),
+            ...(requiresConfirmation ? { requiresConfirmation: true } : {}),
             durationMs,
             ...(invocationSequence === undefined ? {} : { invocationSequence }),
             ...(recoveryIdentity === undefined ? {} : { recoveryIdentity }),

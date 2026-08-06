@@ -55,6 +55,8 @@ export interface ToolExecutionResultRecord {
   readonly changed?: boolean;
   /** True when this record is a non-terminal background handoff placeholder. */
   readonly backgrounded?: boolean;
+  /** True when the trusted tool boundary stopped before a gated side effect. */
+  readonly requiresConfirmation?: boolean;
   readonly durationMs: number;
   readonly invocationSequence?: number;
   readonly errorText?: string;

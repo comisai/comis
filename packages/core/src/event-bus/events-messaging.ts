@@ -761,7 +761,9 @@ export interface MessagingEvents {
    *  `unrecovered_tool_failure_completion_claim` (affirmative completion prose
    *  contradicted the recovery-aware failed-tool inventory).
    *  `missing_scheduler_state_evidence` means affirmative reminder state was
-   *  replaced because no current-turn scheduler receipt supported it.
+   *  replaced because no current-turn scheduler receipt supported it;
+   *  `pending_scheduler_confirmation` means a gated removal stopped before
+   *  mutation and an overclaim was replaced with a neutral confirmation ask.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -779,6 +781,7 @@ export interface MessagingEvents {
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
       | "missing_scheduler_state_evidence"
+      | "pending_scheduler_confirmation"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;

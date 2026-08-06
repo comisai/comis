@@ -1144,7 +1144,7 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/pending_scheduler_confirmation/);
     expect(stripped).toMatch(/response\.scheduler_state_evidence_guard/);
     expect(stripped).toMatch(
-      /schedulerStateGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_scheduler_state_evidence"[\s\S]*?succeeded:\s*true/,
+      /schedulerStateGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:[\s\S]*?"pending_scheduler_confirmation"[\s\S]*?"missing_scheduler_state_evidence"[\s\S]*?succeeded:\s*true/,
     );
     expect(stripped.indexOf("enforceSchedulerStateEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));

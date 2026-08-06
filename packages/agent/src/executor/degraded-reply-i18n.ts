@@ -32,6 +32,7 @@ export type LocaleMessageId =
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
   | "scheduler_state_evidence_missing"
+  | "pending_scheduler_confirmation"
   | "completion_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
@@ -102,6 +103,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   scheduler_state_evidence_missing:
     "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
       + "say that it is set. I need to check the scheduler before confirming it.",
+  pending_scheduler_confirmation:
+    "Please confirm that you want me to remove the scheduled job. Nothing has been removed yet.",
   completion_evidence_missing:
     "I could not verify the request as complete because one or more tool steps still failed. "
       + "Treat the result below as partial; any completion claim in it is unverified.",
@@ -406,6 +409,14 @@ export function selectSchedulerStateEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "scheduler_state_evidence_missing");
+}
+
+/** Neutral confirmation request after a gated scheduler removal stops before mutation. */
+export function selectPendingSchedulerConfirmationReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "pending_scheduler_confirmation");
 }
 
 /** Honest replacement when affirmative completion prose contradicts failed tool evidence. */

@@ -123,7 +123,7 @@ export interface OngoingWorkEvidenceGuardResult {
 export interface SchedulerStateEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_scheduler_state_evidence";
+  reason?: "missing_scheduler_state_evidence" | "pending_scheduler_confirmation";
 }
 
 const SCHEDULER_STATE_SUBJECTS = [
@@ -201,9 +201,11 @@ export function enforceSchedulerStateEvidence(params: {
     toolName: string;
     action?: string;
     success: boolean;
+    requiresConfirmation?: boolean;
     schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
   }>;
   honestResponse: string;
+  pendingConfirmationResponse?: string;
 }): SchedulerStateEvidenceGuardResult {
   const normalizedResponse = normalizedEvidenceText(params.response);
   const explicitStateClaim = SCHEDULER_STATE_SUBJECTS.some(
@@ -228,6 +230,20 @@ export function enforceSchedulerStateEvidence(params: {
     || policyClaims.length > 0;
   if (!claimsCurrentSchedulerState) {
     return { response: params.response, corrected: false };
+  }
+  const pendingRemovalConfirmation = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "cron"
+      && result.action === "remove"
+      && result.success
+      && result.requiresConfirmation === true,
+  );
+  if (pendingRemovalConfirmation) {
+    return {
+      response: params.pendingConfirmationResponse ?? params.honestResponse,
+      corrected: true,
+      reason: "pending_scheduler_confirmation",
+    };
   }
   const stateReceipts = (params.toolExecResults ?? []).filter(
     (result) =>

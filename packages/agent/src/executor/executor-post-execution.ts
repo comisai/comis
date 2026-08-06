@@ -132,7 +132,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
@@ -1645,18 +1645,28 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       replyLanguage,
       localeCatalog,
     ),
+    pendingConfirmationResponse: buildPendingSchedulerConfirmationReply(
+      replyLanguage,
+      localeCatalog,
+    ),
   });
   if (schedulerStateGrounding.corrected) {
     result.response = schedulerStateGrounding.response;
+    const pendingConfirmation =
+      schedulerStateGrounding.reason === "pending_scheduler_confirmation";
     deps.logger.warn(
       {
         step: "response-honesty",
         errorKind: "precondition" as const,
-        hint:
-          "Inspect the current-turn cron receipts in comis explain and call cron list or status "
-          + "before confirming that a reminder or scheduled job still exists.",
+        hint: pendingConfirmation
+          ? "The current cron.remove receipt requires user confirmation and did not mutate state; "
+            + "re-call cron.remove with _confirmed:true only after an explicit confirmation."
+          : "Inspect the current-turn cron receipts in comis explain and call cron list or status "
+            + "before confirming that a reminder or scheduled job still exists.",
       },
-      "Unsupported scheduler state claim replaced with runtime truth",
+      pendingConfirmation
+        ? "Pending scheduler removal overclaim replaced with confirmation request"
+        : "Unsupported scheduler state claim replaced with runtime truth",
     );
     deps.eventBus.emit("audit:event", {
       timestamp: deps.clock.now(),
@@ -1666,7 +1676,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       kind: "audit",
       outcome: "denied",
       metadata: {
-        claimKind: "scheduler_state",
+        claimKind: pendingConfirmation ? "scheduler_confirmation" : "scheduler_state",
         reason: schedulerStateGrounding.reason,
         requiredTool: "cron",
       },
@@ -1674,7 +1684,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     deps.eventBus.emit("execution:recovery_attempted", {
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
-      reason: "missing_scheduler_state_evidence",
+      reason: pendingConfirmation
+        ? "pending_scheduler_confirmation"
+        : "missing_scheduler_state_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),
