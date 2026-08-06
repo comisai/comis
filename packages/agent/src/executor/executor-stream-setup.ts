@@ -64,7 +64,6 @@ import type { GeminiCacheManager } from "./gemini-cache-manager.js";
 import { extractAnthropicPromptState, extractGeminiPromptState } from "./cache-detection/index.js";
 import { createBlockStabilityTracker } from "./block-stability-tracker.js";
 import {
-  clearSessionCacheWarm,
   clearSessionCacheEscalationProgress,
   getOrCreateSessionLatches,
   clearSessionLatches,
@@ -342,10 +341,25 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
 
   // TTL guard is outermost wrapper
   const onTtlExpiry = () => {
-    // Four coordinated resets on TTL expiry
+    // Coordinated resets on TTL expiry.
+    //
+    // The session's WARM flag is deliberately PRESERVED. A TTL expiring on a
+    // session that is still in use is positive evidence that the retention band
+    // was too SHORT for this conversation's cadence — precisely the condition
+    // under which the longer TTL pays. Clearing it demoted the session to cold,
+    // so the next resolution re-latched the short band (the retention value that
+    // reaches cache_control is set-once per latch cycle), which expired again,
+    // forever: measured live, two consecutive greetings 9m47s apart each
+    // re-wrote the whole ~141k prefix, and 100 of 114 calls over a corpus replay
+    // shipped the short band. On the slower model it was 106 of 106, because a
+    // long turn outlives the short TTL mid-turn.
+    //
+    // Preserving it is bounded in the other direction: a session that dies right
+    // after an expiry pays one long-band write (2x a short one) and never reuses
+    // it. The behaviour it replaces paid a full prefix re-write on every turn
+    // spaced beyond the short band.
     capturedRetention?.reset();                         // 1. Reset adaptive retention to cold-start
-    clearSessionCacheWarm(formattedKey);                // 2. Clear session warm state
-    clearSessionCacheEscalationProgress(formattedKey);  //    …and its carried escalation counters
+    clearSessionCacheEscalationProgress(formattedKey);  // 2. Clear the carried escalation counters
     cacheBreakDetector.notifyTtlExpiry(formattedKey);   // 3. Notify detector
     clearSessionLatches(formattedKey);                  // 4. SESS-LATCH: Reset latches for fresh cache cycle
     // Latch idle thinking clear when elapsed > 1h
