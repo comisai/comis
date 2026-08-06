@@ -440,6 +440,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
   };
   return {
     rpcCall: vi.fn(async () => ({})),
+    memoryCostFeaturesEnabled: true,
     agents: {
       "agent-1": {
         skills: {

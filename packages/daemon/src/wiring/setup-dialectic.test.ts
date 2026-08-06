@@ -237,7 +237,7 @@ describe("buildDialecticWiring (the dialectic seam + recall builder)", () => {
 
   it("Test 6 (kill switch): costFeaturesEnabled:false force-disables memory_ask wiring even when an agent has dialectic.enabled", () => {
     // The master cost-feature kill switch (opt-out posture): when the
-    // operator sets memory.costFeatures.enabled:false, the dialectic (memory_ask) is the
+    // operator sets memory.enabled:false, the dialectic (memory_ask) is the
     // ONE query-time LLM tool and is a cost-bearing feature — so the wiring must return the
     // dead {} (no seam, no recall builder ⇒ the handler abstains, the tool is not exposed)
     // EVEN THOUGH the agent's own dialectic.enabled is true. The cost switch wins over the
