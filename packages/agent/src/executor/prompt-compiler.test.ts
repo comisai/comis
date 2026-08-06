@@ -133,6 +133,13 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("defers recipient discovery until a forwarded draft becomes a send request", () => {
+    const kernel = compileExecutionPrompt(makeInput({ mode: "none" })).stableEnginePrefix;
+
+    expect(kernel).toMatch(/forwarded correspondence.*default to.*grounded draft/iu);
+    expect(kernel).toMatch(/do not ask.*recipient.*until.*explicit send request/iu);
+  });
+
   it("separates trusted operator policy from untrusted agent state", () => {
     const result = compileExecutionPrompt(makeInput({
       operatorPolicy: [{
