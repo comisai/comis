@@ -69,3 +69,17 @@
 - **Regression re-run:** assemble, heuristics, and real-layout golden report suites.
 - **Commit:** `18d59c2d` (RED commit `360f477d`).
 - **Status:** CLOSED — next time one `explain` call reconciles the replay recovery with its trajectory.
+
+## A4-H-LINK-PREFETCH — automatic source receipt was mistaken for missing tool use
+- **Symptom (live):** three exact benign URL bursts returned correct Example Domain summaries but contained no model-invoked `web_fetch` tool result, so the first review incorrectly called them ungrounded.
+- **Evidence (ground truth):** each URL trace already carried a successful counts-only `link.prefetch` event, and the corresponding session user turn contained guarded `Source: Web Fetch` Linked Content with the real page text. Offline `explain` exposes the same receipt under `linkPrefetch`.
+- **Hypothesis → root cause:** oracle/layer mismatch, not a missing fetch. Automatic inbound URL resolution runs before the model and is deliberately not represented as a model tool call. Two advisory description iterations could not create a tool receipt because one was neither needed nor desirable.
+- **RED test:** `packages/agent/src/bootstrap/sections/tool-descriptions.test.ts` and `packages/skills/src/tools/builtin/web-fetch-tool.test.ts` require URL guidance to reuse already-present Linked Content and call `web_fetch` only when source content is absent.
+- **Fix:** preserve grounding guidance while making automatic Linked Content the first receipt and preventing duplicate network work. Generic-runtime review: this describes the domain-neutral web adapter's existing mechanism; it adds no application policy. Earlier advisory commits `e1d2795d` and `31385762` are superseded by the receipt-aware wording.
+- **Review:** the instruction still forbids prior-knowledge claims when neither Linked Content nor a current fetch exists; it does not weaken SSRF validation or external-content framing.
+- **Rebuild + normal restart:** 122 focused tests and the full workspace build passed; continuity-protected primary received only a normal tmux restart and booted `gpt-5.6-luna` on gateway 48701.
+- **Confirm (ground truth):** final exact burst reconciled 3/3 answers with peak concurrency 2. URL trace `c3978770-c55e-49f2-aafe-f8279c2d200d` has exactly one successful prefetch (`fetched=1`, 181 ms), no duplicate `web_fetch` tool result, success/non-degraded outcome, and a matching source block in the durable session.
+- **Observability gap closed:** no new signal was needed; the investigation now uses `IncidentReport.linkPrefetch` before falling back to transcript inspection.
+- **Regression re-run:** focused descriptions/tool tests, full workspace build, exact Telegram burst, burst verifier, trajectory receipt, session source, and offline `explain`.
+- **Commit:** `e679730f` (RED commit `5319b30c`).
+- **Status:** CLOSED — next time one `explain` call proves automatic fetch grounding without inventing a missing model tool call.
