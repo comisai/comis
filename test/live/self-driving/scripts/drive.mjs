@@ -14,7 +14,7 @@
 //         node drive.mjs <chatId> @/path/to/message.txt
 //   - DATA: data dir (for the trajectory turn-end watch). env DATA also honored. Empty → wire-only mode.
 //   - INJECT_OPTS: optional JSON object carrying Telegram mention/reply/thread metadata, for example
-//     `{"mention":true,"replyTo":42,"thread":7}`. The control route validates the closed shape.
+//     `{"mention":true,"replyTo":42,"thread":7,"forwarded":true}`. The control route validates the closed shape.
 //   - Use `-` or `@/absolute/file` for credential-bearing prompts so values never enter argv/process listings.
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.

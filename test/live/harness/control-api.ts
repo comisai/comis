@@ -472,10 +472,18 @@ function resolveInjectOpts(raw: unknown): InjectOptsResult {
   if (raw === undefined) return { ok: true };
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
   const input = raw as Record<string, unknown>;
-  const allowedKeys = new Set(["mention", "command", "replyTo", "replyToUser", "thread", "spoiler"]);
+  const allowedKeys = new Set([
+    "mention",
+    "command",
+    "replyTo",
+    "replyToUser",
+    "thread",
+    "spoiler",
+    "forwarded",
+  ]);
   if (Object.keys(input).some((key) => !allowedKeys.has(key))) return { ok: false };
 
-  const booleanKeys = ["mention", "command", "spoiler"] as const;
+  const booleanKeys = ["mention", "command", "spoiler", "forwarded"] as const;
   if (booleanKeys.some((key) => input[key] !== undefined && typeof input[key] !== "boolean")) {
     return { ok: false };
   }
@@ -500,6 +508,7 @@ function resolveInjectOpts(raw: unknown): InjectOptsResult {
       ...(replyToUser !== undefined ? { replyToUser } : {}),
       ...(thread !== undefined ? { thread } : {}),
       ...(input["spoiler"] === true ? { spoiler: true } : {}),
+      ...(input["forwarded"] === true ? { forwarded: true } : {}),
     },
   };
 }
@@ -782,7 +791,7 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
           body: {
             ok: false,
             error:
-              "fromUserId (number), text (string), and optional strict opts:{ mention, command, replyTo, replyToUser, thread, spoiler } are required",
+              "fromUserId (number), text (string), and optional strict opts:{ mention, command, replyTo, replyToUser, thread, spoiler, forwarded } are required",
           },
         };
       }
