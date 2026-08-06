@@ -54,6 +54,39 @@ export function parseJsonlRecords(source) {
   return records;
 }
 
+/** True for a completed assistant response that can be replaced before delivery. */
+function isTerminalAssistantRecord(record) {
+  return record?.type === "message"
+    && record.message?.role === "assistant"
+    && record.message?.stopReason === "stop"
+    && typeof record.parentId === "string"
+    && record.parentId !== "";
+}
+
+/**
+ * Keep the last of adjacent terminal assistant siblings.
+ *
+ * Completion guards persist the model response and its guarded replacement as
+ * siblings of the same tool result. Only the replacement reaches the channel;
+ * counting both manufactures an answer and an unrelated background delivery.
+ */
+function collapseTerminalAssistantReplacements(records) {
+  const collapsed = [];
+  for (const record of records) {
+    const previous = collapsed.at(-1);
+    if (
+      isTerminalAssistantRecord(record)
+      && isTerminalAssistantRecord(previous)
+      && record.parentId === previous.parentId
+    ) {
+      collapsed[collapsed.length - 1] = record;
+      continue;
+    }
+    collapsed.push(record);
+  }
+  return collapsed;
+}
+
 /** True only for an assistant conversation transcript, never a provenance ledger or sidecar. */
 export function isBurstTranscriptFile(name) {
   return typeof name === "string"
@@ -240,7 +273,8 @@ export function attributeBurst({ injects, transcriptSource }) {
   // verdict it was run to establish).
   let burstStarted = false;
 
-  for (const record of parseJsonlRecords(transcriptSource)) {
+  const records = collapseTerminalAssistantReplacements(parseJsonlRecords(transcriptSource));
+  for (const record of records) {
     if (record?.type !== "message") continue;
     const role = record.message?.role;
     if (!burstStarted && role !== "user") continue;
