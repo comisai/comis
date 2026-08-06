@@ -96,6 +96,55 @@ export function filterRecordsWindow(records, { fromMs, toMs } = {}) {
   });
 }
 
+const TURN_START_TYPES = new Set([
+  "queue.enqueued",
+  "queue.dequeued",
+  "prompt.submitted",
+]);
+
+const TURN_TERMINAL_TYPES = new Set([
+  "session.summary",
+  "execution.aborted",
+  "activity.turn_finalized",
+  "queue.overflow",
+  "queue.coalesced",
+]);
+
+/**
+ * Trace ids whose burst work has started but has no terminal trajectory record yet.
+ *
+ * A model call can emit no trajectory growth for longer than the verifier's quiet
+ * period. Treating that silence as completion manufactured a live `lost-reply`
+ * verdict 1.3 seconds before a 23.8-second Luna call completed successfully.
+ */
+export function openTrajectoryTraceIds(records) {
+  const state = new Map();
+  for (const record of records) {
+    const traceId = record?.traceId;
+    if (typeof traceId !== "string" || traceId === "") continue;
+    const current = state.get(traceId) ?? { started: false, terminal: false };
+    if (TURN_START_TYPES.has(record.type)) current.started = true;
+    if (TURN_TERMINAL_TYPES.has(record.type)) current.terminal = true;
+    state.set(traceId, current);
+  }
+  return [...state.entries()]
+    .filter(([, value]) => value.started && !value.terminal)
+    .map(([traceId]) => traceId)
+    .sort();
+}
+
+/** Decide whether an evidence-quiet burst is genuinely ready to score. */
+export function shouldSettleBurstEvidence({
+  resolvedAll,
+  evidenceQuiet,
+  openTraceCount,
+  gatewayReachable,
+}) {
+  if (resolvedAll) return true;
+  if (!evidenceQuiet) return false;
+  return openTraceCount === 0 || !gatewayReachable;
+}
+
 /**
  * Bind each injected inbound to its own reply, using the session transcript.
  *

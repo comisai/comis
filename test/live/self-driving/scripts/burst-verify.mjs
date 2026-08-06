@@ -28,8 +28,10 @@ import {
   attributeBurst,
   burstVerdict,
   filterRecordsWindow,
+  openTrajectoryTraceIds,
   overlapReport,
   parseJsonlRecords,
+  shouldSettleBurstEvidence,
   wireReconciliation,
 } from './concurrency-oracle.mjs';
 
@@ -151,9 +153,20 @@ const readWire = async () => {
   }
 };
 
+const gatewayReachable = async () => {
+  try {
+    const response = await fetch(`http://127.0.0.1:${rig.gwPort}/health`, {
+      signal: AbortSignal.timeout(1_000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
 const evidence = async () => {
   const transcript = resolveTranscript();
-  const wire = await readWire();
+  const [wire, daemonReachable] = await Promise.all([readWire(), gatewayReachable()]);
   const trajectoryPath = transcript ? resolveTrajectory(transcript.path) : null;
   let trajectoryRecords = [];
   if (trajectoryPath) {
@@ -164,7 +177,7 @@ const evidence = async () => {
       );
     } catch { /* mid-write or absent — retried on the next poll */ }
   }
-  return { transcript, wire, trajectoryPath, trajectoryRecords };
+  return { transcript, wire, daemonReachable, trajectoryPath, trajectoryRecords };
 };
 
 const score = (state) => {
@@ -174,10 +187,12 @@ const score = (state) => {
   });
   const wire = wireReconciliation({ wire: state.wire, bindings: attribution.bindings });
   const overlap = overlapReport(state.trajectoryRecords);
+  const openTraceIds = openTrajectoryTraceIds(state.trajectoryRecords);
   return {
     attribution,
     wire,
     overlap,
+    openTraceIds,
     verdict: burstVerdict({ attribution, wire, overlap, expectOverlap }),
   };
 };
@@ -193,10 +208,15 @@ let settled = false;
 while (Date.now() - startedAtMs < maxMs) {
   const resolvedAll = scored.attribution.counts.unanswered === 0
     && scored.attribution.counts.ambiguous === 0;
-  if (resolvedAll) { settled = true; break; }
-  const next = `${state.transcript?.source.length ?? 0}:${state.wire.length}:${state.trajectoryRecords.length}`;
+  const next = `${state.transcript?.source.length ?? 0}:${state.wire.length}:${state.trajectoryRecords.length}:${state.daemonReachable ? 'up' : 'down'}`;
   if (next !== fingerprint) { fingerprint = next; quietSinceMs = Date.now(); }
-  else if (Date.now() - quietSinceMs >= settleMs) { settled = true; break; }
+  const evidenceQuiet = Date.now() - quietSinceMs >= settleMs;
+  if (shouldSettleBurstEvidence({
+    resolvedAll,
+    evidenceQuiet,
+    openTraceCount: scored.openTraceIds.length,
+    gatewayReachable: state.daemonReachable,
+  })) { settled = true; break; }
   await new Promise((resolve) => { setTimeout(resolve, 2000); });
   state = await evidence();
   scored = score(state);
@@ -212,6 +232,8 @@ const report = {
   inboundsFoundInTranscript: state.transcript?.hits ?? 0,
   trajectory: state.trajectoryPath,
   expectOverlap,
+  gatewayReachable: state.daemonReachable,
+  openTraceIds: scored.openTraceIds,
   ...scored.verdict,
   bindings: scored.attribution.bindings,
   ambiguousAnswers: scored.attribution.ambiguousAnswers,
