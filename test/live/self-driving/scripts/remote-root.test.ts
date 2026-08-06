@@ -27,6 +27,8 @@ const LOCAL_UP = resolve(HERE, "local-up.sh");
 const INIT_LOCAL_CONFIG = resolve(HERE, "init-local-config.sh");
 const LOCAL_CONFIG = resolve(HERE, "local-config.mjs");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
+const RESTART_EMULATOR = resolve(HERE, "restart-emu.sh");
+const VPS_EMULATOR = resolve(HERE, "../../bin/vps-emu.ts");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
 const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
@@ -647,6 +649,22 @@ describe("local rig mode", () => {
       const source = readFileSync(script, "utf8");
       expect(source, script).toContain("rig_load_env");
     }
+  });
+
+  it("scopes the local Telegram emulator lifecycle to the selected rig", () => {
+    const shellRig = readFileSync(RIG_HELPER, "utf8");
+    const nodeRig = readFileSync(RIG_NODE_HELPER, "utf8");
+    const restart = readFileSync(RESTART_EMULATOR, "utf8");
+    const launcher = readFileSync(VPS_EMULATOR, "utf8");
+
+    expect(shellRig).toContain('${EMU_JSON:=$DATA/emulator-wiring.json}');
+    expect(shellRig).toContain('${EMU_TMUX_SESSION:=emu-${SERVICE}}');
+    expect(nodeRig).toContain('isLocal ? `${dataDir}/emulator-wiring.json` : "/tmp/comis-emu.json"');
+    expect(restart).toContain('tmux kill-session -t "$EMU_TMUX_SESSION"');
+    expect(restart).toContain("EMU_JSON='$EMU_JSON'");
+    expect(restart).not.toContain('pkill -9 -f "^node .*vps-emu"');
+    expect(restart).not.toContain("tmux kill-session -t emu");
+    expect(launcher).toContain('process.env["EMU_JSON"] ?? "/tmp/comis-emu.json"');
   });
 
   it("keeps the local rig shell entry points syntactically valid", () => {
