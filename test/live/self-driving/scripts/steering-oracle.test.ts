@@ -78,6 +78,37 @@ describe("SDK steering burst ground-truth oracle", () => {
     expect(scored.verdict.hard).toEqual([]);
   });
 
+  it("binds the post-steer terminal response selected for channel delivery", () => {
+    const transcriptSource = [
+      userRecord(BASE_GUID, "write a long report"),
+      assistantRecord("the undelivered pre-steer draft"),
+      JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "make it three bullets" },
+      }),
+      assistantRecord("the delivered post-steer response"),
+    ].join("\n");
+    const trajectoryRecords = [
+      record("queue.enqueued", "base-trace", 1_010),
+      record("queue.steer_injected", "follow-trace", 13_010),
+      record("session.summary", "base-trace", 18_000),
+    ];
+
+    const scored = scoreSdkSteeringBurst({
+      injects,
+      transcriptSource,
+      trajectoryRecords,
+      wire: [{ method: "sendMessage", text: "the delivered post-steer response" }],
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.attribution.bindings[0].answer).toBe(
+      "the delivered post-steer response",
+    );
+    expect(scored.verdict.hard).toEqual([]);
+    expect(scored.verdict.soft).toEqual([]);
+  });
+
   it("fails when an accepted follow-up has no steering disposition event", () => {
     const scored = scoreSdkSteeringBurst({
       injects,
