@@ -15,6 +15,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
+import { AppConfigSchema } from "@comis/core";
+import { offlineSecretGet } from "@comis/memory";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELPER = resolve(HERE, "_remote-root.sh");
@@ -27,6 +30,8 @@ const LOCAL_UP = resolve(HERE, "local-up.sh");
 const INIT_LOCAL_CONFIG = resolve(HERE, "init-local-config.sh");
 const LOCAL_CONFIG = resolve(HERE, "local-config.mjs");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
+const RESTART_EMULATOR = resolve(HERE, "restart-emu.sh");
+const VPS_EMULATOR = resolve(HERE, "../../bin/vps-emu.ts");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
 const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
@@ -131,6 +136,27 @@ describe("sudo-aware live rig transport", () => {
     expect(scriptsSource).toContain("secrets get --offline COMIS_GATEWAY_TOKEN");
     expect(scriptsSource).toContain("tar --no-xattrs");
     expect(emulatorSource).toContain("tar --no-xattrs");
+  });
+
+  it("revalidates a non-empty gateway token against the selected local rig", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    expect(source).toContain('resolved_gateway_token=""');
+    expect(source).toContain(
+      'if [ -n "${GWTOKEN:-}" ] && [ "$GWTOKEN" != "$resolved_gateway_token" ]; then',
+    );
+    expect(source).toContain(
+      "the configured GWTOKEN does not match the selected rig — using its resolved token",
+    );
+    expect(source).not.toContain('&& ! rig_is_local; then');
+    expect(source).not.toContain("Authorization: Bearer $GWTOKEN");
+  });
+
+  it("does not persist the selected gateway token in a local rendered rig env", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    expect(source).toContain('if rig_is_local; then rendered_gateway_token=""; fi');
+    expect(source).toContain('export GWTOKEN="\\${GWTOKEN:-${rendered_gateway_token:-}}"');
   });
 
   it("uses service-none mode when a deployed build must remain stopped", () => {
@@ -538,14 +564,28 @@ describe("local rig mode", () => {
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     const config = readFileSync(configPath, "utf8");
     const envFile = readFileSync(resolve(data, ".env"), "utf8");
-    const token = config.match(/secret:\s+([a-f0-9]{48})/u)?.[1];
     const masterKey = envFile.match(/^SECRETS_MASTER_KEY=([a-f0-9]{64})$/mu)?.[1];
-    expect(token).toBeDefined();
+    const parsedConfig = YAML.parse(config);
+    expect(parsedConfig.gateway.tokens[0].secret).toEqual({
+      source: "env",
+      provider: "comis",
+      id: "COMIS_GATEWAY_TOKEN",
+    });
+    expect(AppConfigSchema.safeParse(parsedConfig).success).toBe(true);
     expect(masterKey).toBeDefined();
-    if (token === undefined || masterKey === undefined) {
+    if (masterKey === undefined) {
       throw new Error("initializer omitted generated credentials");
     }
-    expect(result.stdout).not.toContain(token);
+    const stored = offlineSecretGet({
+      name: "COMIS_GATEWAY_TOKEN",
+      dataDir: data,
+      envFilePath: resolve(data, ".env"),
+    });
+    expect(stored.ok).toBe(true);
+    if (!stored.ok) throw stored.error;
+    expect(stored.value).toMatch(/^[a-f0-9]{48}$/u);
+    expect(config).not.toContain(stored.value);
+    expect(result.stdout).not.toContain(stored.value);
     expect(result.stdout).not.toContain(masterKey);
     expect(statSync(configPath).mode & 0o777).toBe(0o600);
     expect(statSync(resolve(data, ".env")).mode & 0o777).toBe(0o600);
@@ -647,6 +687,22 @@ describe("local rig mode", () => {
       const source = readFileSync(script, "utf8");
       expect(source, script).toContain("rig_load_env");
     }
+  });
+
+  it("scopes the local Telegram emulator lifecycle to the selected rig", () => {
+    const shellRig = readFileSync(RIG_HELPER, "utf8");
+    const nodeRig = readFileSync(RIG_NODE_HELPER, "utf8");
+    const restart = readFileSync(RESTART_EMULATOR, "utf8");
+    const launcher = readFileSync(VPS_EMULATOR, "utf8");
+
+    expect(shellRig).toContain('${EMU_JSON:=$DATA/emulator-wiring.json}');
+    expect(shellRig).toContain('${EMU_TMUX_SESSION:=emu-${SERVICE}}');
+    expect(nodeRig).toContain('isLocal ? `${dataDir}/emulator-wiring.json` : "/tmp/comis-emu.json"');
+    expect(restart).toContain('tmux kill-session -t "$EMU_TMUX_SESSION"');
+    expect(restart).toContain("EMU_JSON='$EMU_JSON'");
+    expect(restart).not.toMatch(/^\s*pkill\s+.*vps-emu/mu);
+    expect(restart).not.toMatch(/^\s*tmux kill-session -t emu\b/mu);
+    expect(launcher).toContain('process.env["EMU_JSON"] ?? "/tmp/comis-emu.json"');
   });
 
   it("keeps the local rig shell entry points syntactically valid", () => {

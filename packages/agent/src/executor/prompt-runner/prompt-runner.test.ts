@@ -71,6 +71,14 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     expect(between).toMatch(/stuckSessionResult\(\)/);
   });
 
+  it("propagates caller cancellation without entering output escalation", () => {
+    const retryIdx = source.indexOf("runRetryLoop(");
+    const escalateIdx = source.indexOf("escalateOutput(");
+    const between = source.slice(retryIdx, escalateIdx);
+    expect(between).toMatch(/params\.executionOverrides\?\.signal\?\.aborted/);
+    expect(between).toMatch(/escalationAttempted:\s*false/);
+  });
+
   it("stays at or below the 250L design cap (orchestrator size budget)", () => {
     const lineCount = source.split("\n").length;
     expect(lineCount).toBeLessThanOrEqual(250);

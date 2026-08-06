@@ -117,7 +117,7 @@ rig_load_env() {
   local -a _explicit_values=()
   local -a _selected_keys=()
   local -a _selected_values=()
-  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_TRAJECTORY_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS EMU_LOG"
+  local _rig_keys="RIG_MODE COMIS_USER COMIS_HOME COMIS_DATA_DIR COMIS_TRAJECTORY_DIR DATA REPO PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON EMU_LOG EMU_TMUX_SESSION LOCAL_SUPERVISOR LOCAL_TMUX_SESSION LOCAL_DAEMON_PID_FILE NODE_ARGS VPS REMOTE_SUDO GWTOKEN EMU_GROUPS"
   local _explicit_keys_source="$_rig_keys COMIS_CONFIG_PATHS COMIS_CONFIG GW_HOST WH_BASE WH_PATH SKIP_BUILD PROTECT_CONTINUITY_AFTER_RESTART ALLOW_CONTINUITY_WIPE CONTINUITY_SENTINEL WIPE_CRONS"
 
   for _key in $_explicit_keys_source; do
@@ -192,6 +192,9 @@ rig_defaults() {
     # BASH_SOURCE is correct in both layouts: the checkout and a deployed copy.
     : "${KIT_DIR:=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
     : "${RIG_ENV:=$KIT_DIR/.rig-env}"
+    : "${EMU_JSON:=$DATA/emulator-wiring.json}"
+    : "${EMU_LOG:=$DATA/emulator.log}"
+    : "${EMU_TMUX_SESSION:=emu-${SERVICE}}"
     : "${LOCAL_SUPERVISOR:=auto}"
   else
     : "${COMIS_USER:=comis}"
@@ -204,9 +207,11 @@ rig_defaults() {
     : "${EMU_DIR:=/root/comis-emu}"
     : "${KIT_DIR:=/root}"
     : "${RIG_ENV:=/root/comis-rig.env}"
+    : "${EMU_JSON:=/tmp/comis-emu.json}"
+    : "${EMU_LOG:=/root/emu.log}"
+    : "${EMU_TMUX_SESSION:=emu}"
   fi
-  : "${EMU_JSON:=/tmp/comis-emu.json}"
-  export COMIS_USER COMIS_HOME DATA PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON
+  export COMIS_USER COMIS_HOME DATA PKG SERVICE GW_PORT CHATID EMU_DIR KIT_DIR RIG_ENV EMU_JSON EMU_LOG EMU_TMUX_SESSION
   [ -n "${REPO:-}" ] && export REPO
   [ -n "${LOCAL_SUPERVISOR:-}" ] && export LOCAL_SUPERVISOR
   [ -n "${COMIS_TRAJECTORY_DIR:-}" ] && export COMIS_TRAJECTORY_DIR
@@ -430,9 +435,23 @@ rig_daemon_pid() {
   pgrep -f "^node .*daemon\.js" 2>/dev/null | head -1
 }
 
-# The emulator pid, or empty. Same anchoring rule.
+# The selected emulator pid, or empty. The wiring path is scoped per local DATA root, so this never
+# returns a sibling rig's emulator merely because its command line also contains `vps-emu`.
 rig_emu_pid() {
-  pgrep -f "^node .*vps-emu" 2>/dev/null | head -1
+  local _pid=""
+  [ -f "${EMU_JSON:-}" ] || return 0
+  _pid="$(node -e '
+    try {
+      const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).pid;
+      if (Number.isInteger(value) && value > 0) process.stdout.write(String(value));
+    } catch {}
+  ' "$EMU_JSON" 2>/dev/null)"
+  case "$_pid" in
+  '' | *[!0-9]*) return 0 ;;
+  esac
+  if kill -0 "$_pid" 2>/dev/null && ps -o command= -p "$_pid" 2>/dev/null | grep -F -- "vps-emu" >/dev/null; then
+    printf '%s' "$_pid"
+  fi
 }
 
 # Resolve the daemon entrypoint for THIS mode's layout (installed package vs source checkout), so a

@@ -53,45 +53,51 @@ fi
 # init-config.mjs flow). Also self-heals token ROTATION: a re-deploy re-fetches the current value
 # instead of shipping a stale one that 4001s mid-run.
 #
-# A NON-EMPTY .live-env token is verified, not trusted. The emptiness guard alone let a stale or
-# wrong-rig token skip the fetch entirely: every RPC helper then 401s while rig-doctor advises
-# "re-run deploy-scripts.sh (auto-fetch)" — advice that provably cannot work, because the value
-# being non-empty is exactly what suppresses the fetch. Probing costs one RPC and turns a
-# dead-end loop into a self-heal.
-if [ -n "${GWTOKEN:-}" ] && ! rig_is_local; then
-  if ! remote_root "curl -s -o /dev/null --max-time 5 -H 'Authorization: Bearer $GWTOKEN' \
-        'http://127.0.0.1:${GW_PORT:-4766}/health' 2>/dev/null" ; then
-    echo "⚠ the .live-env GWTOKEN did not authenticate against the rig — re-fetching from the box"
-    GWTOKEN=""
-  fi
+# A NON-EMPTY .live-env token is never trusted as belonging to the selected rig. The gateway health
+# endpoint is public, so probing it with an Authorization header cannot validate a token. Resolve the
+# selected rig's encrypted store (or literal config fallback) every time instead. This also makes local
+# multi-rig switching safe: a checkout-level .rig-env may describe a different isolated DATA root.
+resolved_gateway_token=""
+if rig_is_local; then
+  # The `comis` CLI is not on PATH in a checkout — call the built dist directly.
+  resolved_gateway_token="$(
+    COMIS_DATA_DIR="$DATA" COMIS_CONFIG_PATHS="$DATA/config.yaml" \
+      node "$REPO/packages/cli/dist/cli.js" secrets get --offline COMIS_GATEWAY_TOKEN 2>/dev/null \
+      | tail -1 | tr -d '[:space:]'
+  )" || true
+  src="the local secrets store"
+else
+  resolved_gateway_token="$(
+    remote_root "su - $COMIS_USER -c 'comis secrets get --offline COMIS_GATEWAY_TOKEN' 2>/dev/null" \
+      | tail -1 | tr -d '[:space:]'
+  )" || true
+  src="the box secrets store"
 fi
-if [ -z "${GWTOKEN:-}" ]; then
-  if rig_is_local; then
-    # The `comis` CLI is not on PATH in a checkout — call the built dist directly.
-    GWTOKEN="$(COMIS_CONFIG_PATHS="$DATA/config.yaml" node "$REPO/packages/cli/dist/cli.js" secrets get --offline COMIS_GATEWAY_TOKEN 2>/dev/null | tail -1 | tr -d '[:space:]')" || true
-    src="the local secrets store"
-  else
-    GWTOKEN="$(remote_root "su - $COMIS_USER -c 'comis secrets get --offline COMIS_GATEWAY_TOKEN' 2>/dev/null" | tail -1 | tr -d '[:space:]')" || true
-    src="the box secrets store"
+if [ "${#resolved_gateway_token}" -lt 32 ]; then
+  resolved_gateway_token="$(remote_root "node '$KIT_DIR/rig-token.mjs' 2>/dev/null" | tr -d '[:space:]')" || true
+  src="the config.yaml literal"
+fi
+if [ "${#resolved_gateway_token}" -ge 32 ]; then
+  if [ -n "${GWTOKEN:-}" ] && [ "$GWTOKEN" != "$resolved_gateway_token" ]; then
+    echo "⚠ the configured GWTOKEN does not match the selected rig — using its resolved token"
   fi
-  if [ "${#GWTOKEN}" -lt 32 ]; then
-    GWTOKEN="$(remote_root "node '$KIT_DIR/rig-token.mjs' 2>/dev/null" | tr -d '[:space:]')" || true
-    src="the config.yaml literal"
-  fi
-  if [ "${#GWTOKEN}" -ge 32 ]; then
-    echo "GWTOKEN auto-fetched from $src (set it in .live-env to skip this lookup)"
-  else
-    GWTOKEN=""
-    echo "⚠ GWTOKEN unset and not resolvable from the rig (no config yet?) — the RPC helpers will 401"
-    echo "  until it exists. Fresh rig: run 'node $KIT_DIR/init-config.mjs' next (it generates the"
-    echo "  token and updates $RIG_ENV itself)."
-  fi
+  GWTOKEN="$resolved_gateway_token"
+  echo "GWTOKEN resolved from $src"
+elif [ -z "${GWTOKEN:-}" ] || [ "${#GWTOKEN}" -lt 32 ]; then
+  GWTOKEN=""
+  echo "⚠ GWTOKEN unset and not resolvable from the rig (no config yet?) — the RPC helpers will 401"
+  echo "  until it exists. Fresh rig: run 'node $KIT_DIR/init-config.mjs' next (it generates the"
+  echo "  token and updates $RIG_ENV itself)."
 fi
 
 # The rig env file — rendered from THIS .live-env. Rig-side scripts source it; the .mjs helpers read
-# it via _rig.mjs. The `${VAR:-…}` form keeps explicit-env-wins semantics. 0600: it carries GWTOKEN.
+# it via _rig.mjs. The `${VAR:-…}` form keeps explicit-env-wins semantics. Local RPC clients resolve
+# the gateway token from the encrypted store through the config reference, so persisting the token in
+# the local data root would create secret residency. Remote rigs retain the protected box-side value.
 # RIG_MODE is rendered too, so a helper invoked bare (no .live-env in scope) still resolves the right
 # data dir / layout instead of silently assuming the production-install one.
+rendered_gateway_token="${GWTOKEN:-}"
+if rig_is_local; then rendered_gateway_token=""; fi
 remote_root "umask 077 && cat > '$RIG_ENV'" <<EOF
 # Rendered by deploy-scripts.sh from the local scripts/.live-env — do not hand-edit (re-render instead).
 export RIG_MODE="\${RIG_MODE:-$(rig_mode)}"
@@ -104,7 +110,7 @@ export GW_PORT="\${GW_PORT:-$GW_PORT}"
 export COMIS_TRAJECTORY_DIR="\${COMIS_TRAJECTORY_DIR:-${COMIS_TRAJECTORY_DIR:-}}"
 export CHATID="\${CHATID:-$CHATID}"
 export EMU_DIR="\${EMU_DIR:-$EMU_DIR}"
-export GWTOKEN="\${GWTOKEN:-${GWTOKEN:-}}"
+export GWTOKEN="\${GWTOKEN:-${rendered_gateway_token:-}}"
 EOF
 
 remote_root "

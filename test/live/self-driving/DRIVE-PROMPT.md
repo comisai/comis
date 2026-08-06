@@ -4,6 +4,11 @@ Copy the fenced block below into an LLM coding-agent session opened at the Comis
 The behavior under test is realistic Telegram use; the transport is the local loopback Telegram emulator,
 not a real Telegram account.
 
+The campaign has four axes: the **sequential relationship** (one messy multi-day thread), **concurrency**
+(parallel turns in one chat), **steering** (mid-flight follow-ups and contradictions), and **stress**
+(bursts with no quiesce). Track CC below carries the last three. The two sections that save the most time
+are **Carried findings** (re-verify vs. re-diagnose) and **Traps** — read them before the first inject.
+
 ```text
 You are the primary Comis self-driving live-test driver. Work autonomously in this repository until the
 local real-user Telegram campaign is genuinely complete or every unresolved limitation is reported
@@ -15,10 +20,11 @@ safely.
 ## Mission
 
 Test Comis locally as a real person's everyday assistant on Telegram. Drive one continuous, messy,
-multi-day relationship through the real Telegram adapter and the loopback emulator. Exercise the complete
-runtime surface behind that relationship: memory, scheduling, media, groups, trust tiers, tools,
-background work, sub-agents, DAGs, coding, research, MCP, skills, learning, long context, proactive work,
-multiple agents, autonomy, recovery, self-service configuration, and bounded self-management.
+multi-day relationship through the real Telegram adapter and the loopback emulator, then attack it:
+in parallel, with mid-request steering, and under burst stress. Exercise the complete runtime surface
+behind that relationship: memory, scheduling, media, groups, trust tiers, tools, background work,
+sub-agents, DAGs, coding, research, MCP, skills, learning, long context, proactive work, multiple agents,
+autonomy, recovery, self-service configuration, and bounded self-management.
 
 The campaign succeeds only when every planned row is accounted for and every executed behavior either:
 
@@ -42,6 +48,8 @@ Before acting, read these files in order and follow them as the campaign protoco
 8. `test/live/self-driving/05-CATALOG.md`
 9. `test/live/self-driving/scripts/README.md`
 10. `test/live/self-driving/targets/real-user-everyday-assistant.md` in full
+11. the newest `test/live/self-driving/runs/*/RESULTS-LOG.md` and `FIX-VERIFY-LOG.md`, for the carried
+    findings and the previous-run baseline
 
 The pinned target spec is authoritative for the cast; implementation-state claims; A0–A13, B1–B15, and
 C1–C7 arcs; predicates; ground-truth and HARD oracles; config polarities; capability coverage matrix;
@@ -103,8 +111,8 @@ Before driving:
 2. Create the run directory and copy the three templates into it as `TEST-PLAN.md`, `RESULTS-LOG.md`, and
    `FIX-VERIFY-LOG.md`. Add `CAMPAIGN-STATE.md` containing the primary and scratch data roots, their distinct
    ports and dedicated service names, supervisor ownership, HEAD, fixture IDs, current stage, next row, and
-   open finding count. These run artifacts are local-only and must contain no credentials or real private
-   data.
+   open finding count. Add `CARRIED-FINDINGS.md` per the carried-findings section below. These run artifacts
+   are local-only and must contain no credentials or real private data.
 3. Use these neutral emulator identities unless the current target spec requires another value:
    U1 owner `678314278` with `admin` trust; U2 housemate `678314279` allowlisted with `user` trust; U3
    stranger `678314299` absent from both allowlist and trust map; G1 group `-1001234567890` containing U1,
@@ -128,7 +136,8 @@ Before driving:
    launch must also pin `COMIS_TRAJECTORY_DIR` to a canonical path inside that same root and reject config
    or environment trajectory overrides that escape it. Then require `rig-doctor.sh` and `verify-build.sh`
    to pass with the same explicit tuple. There is no local deploy step: this checkout's built `dist/` is
-   the build under test.
+   the build under test — record its HEAD and confirm the daemon is running that build, because a daemon
+   started before your last build is still executing the previous `dist/`.
 6. Establish a clean initial state once, then enable `PROTECT_CONTINUITY_AFTER_RESTART=1`. From that point,
    restart the primary daemon normally and use only the separate scratch root for clean-slate or
    destructive reproductions.
@@ -139,21 +148,43 @@ Before driving:
    oversized document, a 40k log paste, a public benign page, a public page containing hostile embedded
    instructions, deterministic failure sources, media-delivery faults, and the two byte-identical context
    openings. Never use real personal data.
+9. Freeze the message corpus per the corpus contract below and store it in the run directory before the
+   first scored inject.
 
 If a setup helper or the prompt itself has drifted, fix the framework in place and verify the helper before
 continuing. A harness failure is not a product failure.
 
+## The corpus — freeze it, then replay it verbatim
+
+Ratios are only comparable across runs when the workload is identical, so the message stream is an artifact,
+not an improvisation.
+
+- Author the corpus ONCE as `CORPUS.jsonl` in the run directory: ordered entries carrying sender, chat,
+  timestamp offset, message shape (text/media/reply/edit/reaction/service), and the exact text. Base it on
+  the previous run's own corpus plus this run's new arcs, so consecutive runs share a comparable spine.
+- If a corpus already exists from a prior run, replay it VERBATIM and in timestamp order. Do not paraphrase,
+  do not translate, do not reorder, and do not skip the turns that look redundant. The repeated greetings,
+  the `?`-only turns and the status polls are load-bearing: they are session restarts and cheap turns, which
+  is exactly where continuity, queueing, context assembly and cost behavior show.
+- Extend rather than rewrite. New rows append; a changed existing turn invalidates the cross-run comparison
+  for every ratio that rides it, so record that fact in the results log when you must change one.
+- An operator-supplied export (for example `comis messages --since 90d --limit 5000 --format jsonl` from
+  their own install) is read-only input: drive it verbatim, and never copy its content into run artifacts,
+  plans, prompts, or commits. Prefer a synthetic corpus; never author one from real personal data.
+- Every planned row states which corpus turn or turns it rides, so the plan and the workload cannot drift
+  apart.
+
 ## Plan gate
 
 Write a complete `TEST-PLAN.md` before the first scored inject, but do not stop after writing it. Expand
-every A, B, and C arc from the pinned spec into:
+every A, B, and C arc from the pinned spec, plus every Track CC row, into:
 
 - the real-world happy path in the continuous relationship;
 - edge, malformed, boundary, concurrency, outage, and recovery variants;
 - negative, abuse, trust, injection, secret-residency, SSRF, approval, and authority variants;
 - both polarities of each behavior-changing config used by that arc;
 - a precise success predicate and at least two independent oracles;
-- the exact human-style Telegram messages and injection metadata;
+- the exact human-style Telegram messages and injection metadata, keyed to corpus turns;
 - whether the row is model-sensitive and needs pass@k, or deterministic and needs one clean proof;
 - the local-rig limitation, if any;
 - cleanup and state-restoration steps.
@@ -166,9 +197,10 @@ rows explicitly rather than omitting them.
 
 Copy the capability coverage matrix from the target spec into the plan and map every family to at least one
 arc and oracle. Include the defaults-under-evidence table. Order execution risk-first so trust, secret,
-SSRF, injection, recipient-binding, capability-honesty, and authority checks run early; place true
-long-context stress late after the thread is organically long; place destructive lifecycle and
-self-escalation checks last.
+SSRF, injection, recipient-binding, capability-honesty, and authority checks run early; place carried open
+findings early enough to leave room for the fix-verify loop; place true long-context stress late after the
+thread is organically long; place Track CC after the sequential spine exists but before the finale; place
+destructive lifecycle and self-escalation checks last.
 
 ## Real-user style contract
 
@@ -196,6 +228,73 @@ reaction, media, service messages, timing, and injected platform faults. Drive a
 checked-in `test/live/self-driving/scripts/drive.mjs` helper; use the media and control helpers for non-text
 shapes. Never call internal business methods as a substitute for the channel path when the arc claims
 end-to-end Telegram behavior.
+
+## Track CC — concurrency, steering, and stress
+
+Run these after the sequential spine is organically long, on the continuity-protected primary root, against
+the same corpus. Every row needs a ground-truth predicate; a reply that looks right is not a pass.
+
+| ID  | Shape | Drive | Passes only if |
+|-----|-------|-------|----------------|
+| CC1 | Parallel, one chat | 5 concurrent injects into the same conversation | reply count equals inject count; each reply binds to its own inbound; no merged, interleaved, or cross-answered reply; no session-lock deadlock or lock-wait timeout; recorded outbound and `delivery_mirror` agree exactly |
+| CC2 | Parallel heavy | 3 concurrent asks that each fan out (long tool chain, background task, sub-agent, DAG) | every unit reaches its OWN terminal state, not just its turn end; child/background work is attributed to the requesting agent, session and chat; zero cross-attribution; zero orphan tasks after quiesce |
+| CC3 | Steer in flight | inject a follow-up 10–15s into a long turn | the steer is honored in-flight or queued and answered after — never silently dropped and never double-delivered; the queue decision is visible in ground truth, not inferred from the wording of the reply |
+| CC4 | Contradicting steer | `wait stop, do X instead` mid-turn | the superseded goal is abandoned (no tool call advances it past the boundary); exactly one coherent delivery; no answer to the abandoned goal arrives later |
+| CC5 | Burst | 10 messages with no quiesce between them | no crash, no FATAL, no supervisor restart, no breaker trip; every message is accounted for as answered, queued-and-answered, or honestly rejected with a reason; backpressure is surfaced, never silent |
+| CC6 | Burst plus restarts | the burst interleaved with cold session-restart greetings | continuity invariants hold across the restarts; the cost and context-reuse invariants hold as COUNTS against the established baseline, not as ratios |
+| CC7 | Health | after every other track | daemon active, restart count 0, zero FATAL, degraded rate and degraded-by-cause reported and triaged, every `system-health` signal explained |
+
+Drive these with the kit's concurrency helpers, NOT with `drive.mjs`: it holds a per-conversation lock and
+refuses to run two drives in one conversation (a DM outbound carries no correlation field), so N parallel
+drives serialize and report "no interleaving" as a pass on a test that never ran concurrently. Use
+`scripts/burst-inject.mjs` to inject without the lock and `scripts/burst-verify.mjs` to score — it binds
+each reply to its own inbound, returns `ambiguous` rather than guessing when two inbounds were outstanding,
+and PROVES overlap per `traceId` so a serialized run cannot pass. `scripts/parallel-chat.mjs` is the
+independent second oracle for runtime-level lock and isolation behavior; it cannot prove Telegram delivery.
+Do not gate CC rows behind `drive-quiet.sh`: driving a non-quiescent session is the behavior under test.
+
+Sweep both polarities of the queue behavior that governs CC3–CC5: `queue.defaultMode` accepts
+`followup`, `collect`, `steer`, and `steer+followup`. Plan at least the default and one contrasting mode,
+and state which mode each row ran under — a steer that is correctly QUEUED under one mode and correctly
+APPLIED under another are two different passes, and neither substitutes for the other.
+
+Ground truth for this track is recorded outbound plus `delivery_mirror` for delivery, the per-session
+trajectory for ordering and attribution, the typed stores through `db.mjs` for child sessions, tasks and
+schedules, then `comis explain` per session and `comis system-health` for the window. Log grepping is the
+last resort, and needing it is itself a finding.
+
+## Metric discipline — the invariant is the signal, the ratio is not
+
+- **Never present a ratio measured on one workload as a before/after against another.** Hit rates,
+  degraded rates, tool-error rates, tokens per turn and mean latency all track workload shape: a
+  prefix-building arc scores worse than a steady conversation on identical code. If you cannot replay the
+  same corpus in the same order on both sides, you do not have a comparison — you have an artifact.
+- Report counts and invariants as the primary signal: break counts, failure counts, duplicate-delivery
+  count, orphan count, restart count, FATAL count. When a ratio is genuinely informative, print its
+  numerator and denominator beside it so the next reader can re-derive it.
+- Label every estimated or derived number ESTIMATE, name the mechanism that produced it, state its
+  expected error, and reconcile it against the authoritative source when one exists. A number normalized
+  to sum to a total is an attribution estimate, not a measurement.
+- Distrust any figure the runtime obtains by subtraction; a residual can underflow to zero and read as
+  clean. Reconcile totals against the store or the provider surface rather than trusting the remainder.
+- When a metric moves, localise it before theorising: compare the consecutive records that carry the
+  component digests and counts, so the change is attributed to a specific component rather than guessed.
+
+## Carried findings — re-verify, do not re-diagnose
+
+Before the first scored inject, write `CARRIED-FINDINGS.md` from the newest prior run's `RESULTS-LOG.md`
+and `FIX-VERIFY-LOG.md`, in two lists:
+
+- **Verified fixed — re-verify, do not re-diagnose.** One row per closed finding, each naming the single
+  oracle that proves it still holds and budgeted at one clean pass. Re-running the original investigation
+  is wasted campaign time. A failed re-verify is a REGRESSION and preempts every new row.
+- **Open — this is the work.** One row per unresolved finding with its evidence anchor, the oracle that
+  will close it, and its position in the risk-first order. These are the reason this run exists; schedule
+  them early, not after the sweep.
+
+Never silently drop an open finding. A finding that survives two consecutive runs is escalated in the final
+report rather than normalized, and an observability gap that made a finding hard to diagnose is closed in
+this run under the improvement loop.
 
 ## Drive and prove
 
@@ -229,6 +328,57 @@ oracles require k/k. Correctness requires at least 2/3 and an evidence-backed ex
 attempt. Deterministic gates get one clean ground-truth proof; repeated execution of the same branch does
 not add confidence.
 
+## Traps that will cost you hours
+
+Every one of these has produced a wrong conclusion on a real drive. Check them before you believe a
+surprising result.
+
+1. **A stale rig env silently repoints the whole rig.** `.live-env` / `.rig-env` supply a complete layout
+   tuple, so an inherited value can aim your commands at another root, another port, another mode, or the
+   operator's everyday data dir — and everything then reports success against the wrong target. Assert the
+   effective `RIG_MODE`/`DATA`/`GW_PORT`/`SERVICE` before any helper mutates config or processes.
+2. **Liveness by pattern match lies in both directions.** `pgrep -f <pattern>` matches your own command
+   line, so an idle box reads as busy; a supervisor can also report a healthy process that is executing a
+   previous build. Prove liveness by log growth plus load average plus the supervisor's own status, and
+   prove the build by the daemon's start record, not by the fact that you ran a build.
+3. **The drive helper is positional: `chatId text quiesceMs maxMs DATA`.** Putting the data dir in the
+   `maxMs` slot yields a non-numeric bound, and a bound that never compares true produces an instant,
+   confident "no substantive answer" for a reply that actually landed. Treat any 0-second timeout as a
+   harness bug until disproven, and check the window the helper reports back.
+4. **A turn ending is not the work ending.** A pipeline, graph, background task, cron, or sub-agent turn
+   ends at the agent's "running it now" answer while the real work continues. Poll that mechanism's own
+   terminal oracle; a fixed sleep converts a slow pass into a false negative and a fast failure into a
+   false pass.
+5. **All-zero oracle output is a schema hypothesis before it is an idle-system conclusion.** A typed row
+   projection guarded by a strict schema can degrade to all-zeros when a selected column or field is not
+   in the schema. Prove the underlying row is non-empty at the store before reporting quiet.
+6. **Count by `hint`, not by `errorKind`.** One repeating advisory can dominate a kind and turn thousands
+   of non-failures into an apparent outage. Group by hint or message, subtract the known-benign advisories,
+   and only then rank causes.
+7. **Machine load forges failures.** Never run vitest concurrently with `pnpm validate`, never run two
+   coverage passes at once, and never rebuild `dist/` while integration or E2E is importing from it.
+   Re-run a suspected regression alone before filing it.
+8. **Deliberate containment is not a defect.** A relay that ships no tools, a steer that carries no
+   capability grant, a child whose denylist is fixed at spawn — these are documented invariants that stop
+   an untrusted result from acting on itself. Read the module doc before "fixing" a missing capability;
+   handing it the capability is the actual regression.
+9. **Group membership must exist before the emulator starts.** Groups cannot be added later through the
+   control route, so a group arc planned after launch silently has no group.
+10. **Backgrounded shells lose your exported environment.** Pass `COMIS_*` on the same command line as the
+    process that needs them. A script fed on stdin while stdin is also redirected elsewhere runs zero bytes
+    and exits 0 — a green exit code proving nothing ran.
+11. **Two lenses on the same number can double-count, and the same field name can mean different things on
+    different lines.** Before reporting a discrepancy between two surfaces, confirm they define the field
+    identically; reconcile the definitions first, then the values.
+12. **A kit unit test run with a bare `pnpm vitest run <path>` runs nothing.**
+    `test/live/self-driving/scripts/` is in no default vitest project, so the filter matches zero files and
+    the command exits looking clean. Pass the live config
+    (`npx vitest run --config test/live/vitest.config.ts <path>`) and always read the test COUNT.
+13. **`drive.mjs` cannot drive concurrency.** It holds `/tmp/comis-drive-<conversation>.lock` and refuses
+    two drives in one conversation, so N parallel drives serialize; the row then scores "no interleaving" as
+    a pass on a test that never ran. Use `burst-inject.mjs` + `burst-verify.mjs`, and require the overlap
+    proof (`maxConcurrent ≥ 2`) before believing any concurrency verdict.
+
 ## Failure loop — stop, fix, prove, resume
 
 Maintain at most one open COMIS-FAIL.
@@ -237,7 +387,8 @@ At the first COMIS-FAIL:
 
 1. Stop the campaign. Do not collect more failures.
 2. Diagnose the root cause end to end from evidence and the intended design. Fix the authoritative layer,
-   not a convenient parallel guard.
+   not a convenient parallel guard. When source contradicts your hypothesis, the hypothesis is wrong;
+   report the correction plainly and move on.
 3. For production behavior, write a regression/contract test that demonstrably fails before the patch.
    Commit the RED test first when it compiles independently; otherwise combine RED and GREEN with the
    required commit-message rationale. Documentation, prompt, and harness-only edits are test-exempt.
@@ -250,7 +401,7 @@ At the first COMIS-FAIL:
 6. Prove both the success path and forced honest-failure path against dual ground truth.
 7. Close any diagnosis gap exposed by the incident: the next occurrence must be answerable with one or two
    observability calls. Fix misleading hints, missing trajectory/report data, stale harness helpers, or
-   one-off scripts before resuming.
+   one-off scripts before resuming. The kit you investigated WITH is in scope, not only the product.
 8. Update `FIX-VERIFY-LOG.md`, close the finding, verify the working tree contains no uncommitted campaign
    changes, and continue at the next row.
 
@@ -264,11 +415,13 @@ defer a pile of ordinary defects.
 Do not declare the campaign complete until all applicable stop conditions in `02-DISCIPLINE.md` hold,
 including:
 
-- every A, B, and C row and every capability-matrix row resolved;
+- every A, B, C and Track CC row and every capability-matrix row resolved;
+- every carried finding either re-verified, closed, or escalated with evidence;
 - all HARD oracles green and zero false successes;
 - Telegram outbound and delivery mirror reconciled with no duplicates or cross-chat leaks;
-- provider/model, tools, RPC/CLI/channel/media surface, and config polarities swept;
-- costs and latency compared with the latest prior local run;
+- provider/model, tools, RPC/CLI/channel/media surface, queue modes, and config polarities swept;
+- costs and latency compared with the latest prior local run ON THE SAME CORPUS, with counts beside every
+  ratio;
 - defaults review completed from measured evidence without domain-specializing the runtime or weakening a
   security default for convenience;
 - `system-health` and per-session `explain` triaged, with no unexplained failure-level logs;
@@ -281,11 +434,13 @@ including:
   unchanged.
 
 Fill `RESULTS-LOG.md` with the exact local rig boundary, initial and final HEAD, provider/model, paths
-without credentials, fixture identities, previous-run diff, resolved capability matrix, pass@k results,
-defaults verdicts, fifth-axis metrics, fixes and commit IDs, remaining documented findings, and the honest
-overall verdict. Update `CAMPAIGN-STATE.md` throughout so the run is resumable after interruption.
+without credentials, fixture identities, corpus identity and any turn that changed, previous-run diff,
+resolved capability matrix, pass@k results, defaults verdicts, fifth-axis metrics, fixes and commit IDs,
+remaining documented findings, and the honest overall verdict. End the report with an explicit list of what
+you did NOT prove and why — no-access rows, deferred findings, and any predicate you could only observe
+indirectly. Update `CAMPAIGN-STATE.md` throughout so the run is resumable after interruption.
 
-Begin now. Read the required files, inspect the latest prior local campaign, create today's run artifacts,
-write the comprehensive plan, bring up the isolated local rig, and continue driving. Do not stop after the
-plan.
+Begin now. Read the required files, inspect the latest prior local campaign, create today's run artifacts
+including the carried-findings list and the frozen corpus, write the comprehensive plan, bring up the
+isolated local rig, and continue driving. Do not stop after the plan.
 ```

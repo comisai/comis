@@ -18,7 +18,7 @@
  *   - POST /control/chats/:id/reactions   { fromUserId, botMessageId, emoji }
  *   - POST /control/chats/:id/reset                                        → { ok: true }
  *
- * Writes the wiring to /tmp/comis-emu.json and prints `EMU_UP {json}`.
+ * Writes the wiring to `EMU_JSON` (default `/tmp/comis-emu.json`) and prints `EMU_UP {json}`.
  * Group chats (negative ids) are pre-created on request via EMU_GROUPS env
  * (a JSON array of { chatId, members:[{id,firstName,username?}], botId,
  * botUsername, supergroup?, forum? }).
@@ -37,7 +37,7 @@ import {
 } from "./vps-emu-group-options.js";
 
 const BOT_TOKEN = process.env["EMU_BOT_TOKEN"] ?? "1234567:emulator-fake-token";
-const WIRING_PATH = "/tmp/comis-emu.json";
+const WIRING_PATH = process.env["EMU_JSON"] ?? "/tmp/comis-emu.json";
 const priorState = existsSync(WIRING_PATH)
   ? (() => {
       try {

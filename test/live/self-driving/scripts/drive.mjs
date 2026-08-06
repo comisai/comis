@@ -140,6 +140,13 @@ try {
 // cannot disambiguate, serialize DMs and unthreaded chats instead of guessing. Telegram forum
 // topics carry a thread id on every correlated outbound, so distinct topics may run concurrently;
 // the lock still serializes two drives inside the same topic.
+//
+// SO: this helper is a SEQUENTIAL instrument, and firing N of them at one chat does NOT test
+// concurrency — they serialize, and the row then reports "no interleaving" as a pass on a test that
+// never ran concurrently. For a parallel / burst / mid-flight-steer row use `burst-inject.mjs`
+// (injects without this lock, records each inbound identity) + `burst-verify.mjs`
+// (`concurrency-oracle.mjs`: attributes each reply to its own inbound, refuses to guess when the
+// transcript cannot, and PROVES overlap from the trajectory so a serialized run cannot pass).
 const lockIdentity = Number(chatId) < 0 && injectOpts?.thread !== undefined
   ? `${chatId}-thread-${String(injectOpts.thread)}`
   : chatId;

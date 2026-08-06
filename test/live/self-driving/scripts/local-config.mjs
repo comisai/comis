@@ -46,6 +46,16 @@ if (!YAML) {
   );
 }
 
+let offlineSecretSet;
+try {
+  const { comisDist } = await import("./_rig.mjs");
+  ({ offlineSecretSet } = await import(comisDist("memory", "dist/index.js")));
+} catch {
+  fail(
+    "the encrypted secret-store adapter is unavailable from the resolved code root; build or install Comis before initializing the rig",
+  );
+}
+
 function canonicalPath(input) {
   const missing = [];
   let existing = resolve(input);
@@ -186,7 +196,11 @@ function initialize(configPath, dataDir, portInput, chatId) {
   config.dataDir = dataDir;
   config.gateway.host = "127.0.0.1";
   config.gateway.port = port;
-  config.gateway.tokens[0].secret = token;
+  config.gateway.tokens[0].secret = {
+    source: "env",
+    provider: "comis",
+    id: "COMIS_GATEWAY_TOKEN",
+  };
   config.agents.default.elevatedReply.senderTrustMap = { [String(chatId)]: "admin" };
   config.channels.telegram.enabled = false;
   config.channels.telegram.allowFrom = [String(chatId)];
@@ -195,6 +209,16 @@ function initialize(configPath, dataDir, portInput, chatId) {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   chmodSync(dataDir, 0o700);
   const masterKey = ensureMasterKey(dataDir);
+  const stored = offlineSecretSet({
+    name: "COMIS_GATEWAY_TOKEN",
+    value: token,
+    provider: "comis",
+    dataDir,
+    envFilePath: masterKey.envPath,
+  });
+  if (!stored.ok) {
+    fail(`could not persist the generated gateway token in the encrypted store: ${stored.error.message}`);
+  }
   writeFileSync(configPath, YAML.stringify(config), { flag: "wx", mode: 0o600 });
   validate(configPath, dataDir, portInput);
   console.log(`wrote isolated local config ${configPath}`);
