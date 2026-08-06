@@ -83,6 +83,7 @@ describe("burst settling — unresolved live work stays open", () => {
     expect(openTrajectoryTraceIds(activeRecords)).toEqual(["trace-live"]);
     expect(shouldSettleBurstEvidence({
       resolvedAll: false,
+      deliveryComplete: false,
       evidenceQuiet: true,
       openTraceCount: 1,
       gatewayReachable: true,
@@ -92,6 +93,7 @@ describe("burst settling — unresolved live work stays open", () => {
   it("settles the stopped-daemon lost-reply negative control after evidence goes quiet", () => {
     expect(shouldSettleBurstEvidence({
       resolvedAll: false,
+      deliveryComplete: false,
       evidenceQuiet: true,
       openTraceCount: 1,
       gatewayReachable: false,
@@ -106,12 +108,14 @@ describe("burst settling — unresolved live work stays open", () => {
     expect(openTrajectoryTraceIds(terminalRecords)).toEqual([]);
     expect(shouldSettleBurstEvidence({
       resolvedAll: false,
+      deliveryComplete: false,
       evidenceQuiet: true,
       openTraceCount: 0,
       gatewayReachable: true,
     })).toBe(true);
     expect(shouldSettleBurstEvidence({
       resolvedAll: true,
+      deliveryComplete: true,
       evidenceQuiet: false,
       openTraceCount: 1,
       gatewayReachable: true,
@@ -122,7 +126,7 @@ describe("burst settling — unresolved live work stays open", () => {
     expect(shouldSettleBurstEvidence({
       resolvedAll: true,
       deliveryComplete: false,
-      evidenceQuiet: true,
+      evidenceQuiet: false,
       openTraceCount: 0,
       gatewayReachable: true,
     })).toBe(false);
@@ -130,6 +134,14 @@ describe("burst settling — unresolved live work stays open", () => {
     expect(shouldSettleBurstEvidence({
       resolvedAll: true,
       deliveryComplete: true,
+      evidenceQuiet: false,
+      openTraceCount: 0,
+      gatewayReachable: true,
+    })).toBe(true);
+
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: true,
+      deliveryComplete: false,
       evidenceQuiet: true,
       openTraceCount: 0,
       gatewayReachable: true,
@@ -150,6 +162,7 @@ describe("burst settling — unresolved live work stays open", () => {
     expect(openTrajectoryTraceIds(terminalWithChild)).toEqual(["trace-live"]);
     expect(shouldSettleBurstEvidence({
       resolvedAll: true,
+      deliveryComplete: true,
       evidenceQuiet: true,
       openTraceCount: 1,
       gatewayReachable: true,
