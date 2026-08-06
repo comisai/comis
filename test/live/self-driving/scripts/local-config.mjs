@@ -196,7 +196,11 @@ function initialize(configPath, dataDir, portInput, chatId) {
   config.dataDir = dataDir;
   config.gateway.host = "127.0.0.1";
   config.gateway.port = port;
-  config.gateway.tokens[0].secret = "${COMIS_GATEWAY_TOKEN}";
+  config.gateway.tokens[0].secret = {
+    source: "env",
+    provider: "comis",
+    id: "COMIS_GATEWAY_TOKEN",
+  };
   config.agents.default.elevatedReply.senderTrustMap = { [String(chatId)]: "admin" };
   config.channels.telegram.enabled = false;
   config.channels.telegram.allowFrom = [String(chatId)];
