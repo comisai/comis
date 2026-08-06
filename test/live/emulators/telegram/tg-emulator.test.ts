@@ -1128,6 +1128,22 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
       expect(entities?.[0]?.["type"]).toBe("bot_command");
     });
 
+    it("a forwarded opt produces Telegram forward_origin metadata", async () => {
+      emu.injectMessage(
+        { chatId: 424242 },
+        { id: 111, firstName: "a" },
+        "forwarded body",
+        { forwarded: true },
+      );
+
+      const updates = await pollUpdates();
+      const msg = updates[0]!["message"] as Record<string, unknown>;
+      expect(msg["forward_origin"]).toEqual(expect.objectContaining({
+        type: "hidden_user",
+        sender_user_name: "synthetic_forward",
+      }));
+    });
+
     it("a replyTo opt → the served update carries a reply_to_message authored by the bot (replyToBot source)", async () => {
       const group = emu.createGroupChat({ members: [{ id: 111, firstName: "a" }], bot: { id: 12345, firstName: "TestBot", username: "test_bot" }, supergroup: true });
       const sent = await callMethod(apiRoot, "sendMessage", {

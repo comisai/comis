@@ -177,6 +177,23 @@ describe("control-api — generic /control/* surface + in-proc client + reply-wa
       ).toBe(true);
     });
 
+    it("threads forwarded-message provenance through the strict HTTP route", async () => {
+      const { status } = await postControl(apiRoot, `/control/chats/${CHAT_ID}/messages`, {
+        fromUserId: USER_ID,
+        text: "forwarded body",
+        opts: { forwarded: true },
+      });
+      expect(status).toBe(200);
+
+      const env = await callBotMethod(apiRoot, "getUpdates", { timeout: 5 });
+      const updates = env.result as Array<Record<string, unknown>>;
+      const message = updates[0]!["message"] as Record<string, unknown>;
+      expect(message["forward_origin"]).toEqual(expect.objectContaining({
+        type: "hidden_user",
+        sender_user_name: "synthetic_forward",
+      }));
+    });
+
     it("threads a reply-to-user option without misattributing the reply to the bot", async () => {
       const groupId = -100_424_243;
       emu.createGroupChat({
