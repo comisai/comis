@@ -35,8 +35,12 @@ describe("embedding model test-cache parity", () => {
     );
 
     expect(cacheUri).toBe(schemaUri);
-    expect(workflow.match(/key: embedding-models-bge-m3-Q8_0/g)).toHaveLength(4);
-    expect(workflow.match(/\.comis\/models\/\*bge-m3\*\.gguf/g)).toHaveLength(2);
+    // One restore + one save, in `integration` — the only job that boots a
+    // daemon and therefore the only one that needs the GGUF. `e2e` used to hold
+    // a second pair, back when it re-ran the whole integration suite; it is now
+    // the static flow-matrix gate and loads no model at all.
+    expect(workflow.match(/key: embedding-models-bge-m3-Q8_0/g)).toHaveLength(2);
+    expect(workflow.match(/\.comis\/models\/\*bge-m3\*\.gguf/g)).toHaveLength(1);
     expect(workflow).not.toContain("embedding-models-nomic-embed-text");
   });
 });

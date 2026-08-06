@@ -101,6 +101,8 @@ The codebase follows five mandatory engineering principles:
 - Integration tests run sequentially (`maxConcurrency: 1`, `pool: "forks"`)
 - Run integration tests: `pnpm test:integration`
 - Run full E2E orchestration with log validation and JSON report: `pnpm test:orchestrate`
+- Analyze an existing JSON report without re-running the suite: `pnpm test:orchestrate --report-only`. The suite and its report come from whoever ran it (in CI, the sharded `integration` job); this reads `test/.test-results.json` and exits non-zero on a failure or a missing report. Without it, orchestrate re-runs the whole integration tier — the same command `pnpm test:integration` runs.
+- Check only the E2E flow matrix, spawning no tests at all: `pnpm test:orchestrate --check-matrix`
 - Run the live-fire real-provider test tier: `pnpm test:live --dry` (dry run, no cost) or `pnpm test:live` (requires `COMIS_LIVE=1`)
 - Run the connectivity sweep (all provider probes, one per integration): `pnpm test:live sweep` (requires `COMIS_LIVE=1`); filter with `COMIS_LIVE_PROBES=llm-anthropic,llm-openai pnpm test:live sweep`
 - Run the core-loop scenarios (LOOP-01..04): `pnpm test:live loop` (requires `COMIS_LIVE=1` for real-LLM Stage-C assertions; Stage-A structural tests run without it); covers multi-turn.test.ts, tool-call.test.ts, restart.test.ts, streaming.test.ts
