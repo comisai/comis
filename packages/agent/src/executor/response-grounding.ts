@@ -120,6 +120,59 @@ export interface OngoingWorkEvidenceGuardResult {
   reason?: "missing_ongoing_work_evidence";
 }
 
+export interface RuntimeSelfReportEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_runtime_self_report_evidence";
+}
+
+const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
+  /\bwhat (?:did|have) (?:you|u) (?:even )?(?:do|done)\b/iu,
+  /\bwhat (?:have (?:you|u)|did (?:you|u)) (?:actually )?(?:accomplish(?:ed)?|work(?:ed)? on)\b/iu,
+  /\bhow much (?:(?:have|did) )?(?:you|u) cost(?: me| us)?\b/iu,
+  /\bwhy (?:were|are) (?:you|u) (?:so )?(?:slow|expensive)\b/iu,
+  /\bwhy was (?:that|this|it) so slow\b/iu,
+  /\bhow many\b[^?\n]{0,80}\b(?:did|have) (?:you|u)\b/iu,
+  /\b(?:cost|total)\b[^?\n]{0,100}\bbecause\b[^?\n]{0,80}\b(?:was|were) down\b[^?\n]{0,30}\b(?:right|correct|yeah)\b/iu,
+  /\b(?:you|u) only (?:did|used)\b[^?\n]{0,80}\b(?:turns?|calls?|tokens?|sessions?)\b[^?\n]{0,100}\b(?:confirm|right|correct|yeah)\b/iu,
+  /\b(?:slowness|latency|delay)\b[^?\n]{0,160}\b(?:cost|total)\b[^?\n]{0,60}\b(?:right|correct|confirm|yeah)\b/iu,
+];
+
+/** Whether the user explicitly asks the agent to report its own runtime activity. */
+export function isRuntimeSelfReportRequest(request: string): boolean {
+  return RUNTIME_SELF_REPORT_REQUEST_PATTERNS.some((pattern) => pattern.test(request));
+}
+
+/**
+ * Require a successful current-turn observability receipt for runtime work,
+ * cause, count, or spend reports. Conversation history records prior prose,
+ * not the authoritative diagnostic or billing state.
+ */
+export function enforceRuntimeSelfReportEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+  }>;
+  honestResponse: string;
+}): RuntimeSelfReportEvidenceGuardResult {
+  if (!isRuntimeSelfReportRequest(params.request)) {
+    return { response: params.response, corrected: false };
+  }
+  const hasEvidence = (params.toolExecResults ?? []).some(
+    (result) => result.toolName === "obs_query" && result.success,
+  );
+  if (hasEvidence || params.response === params.honestResponse) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_runtime_self_report_evidence",
+  };
+}
+
 export interface SchedulerStateEvidenceGuardResult {
   response: string;
   corrected: boolean;

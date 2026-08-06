@@ -132,7 +132,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
@@ -142,6 +142,7 @@ import {
   enforceSchedulerStateEvidence,
   enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
+  enforceRuntimeSelfReportEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
@@ -1633,6 +1634,49 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
       reason: "agent_update_noop_grounding",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const runtimeSelfReportGrounding = enforceRuntimeSelfReportEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    honestResponse: buildRuntimeSelfReportEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (runtimeSelfReportGrounding.corrected) {
+    result.response = runtimeSelfReportGrounding.response;
+    deps.logger.warn(
+      {
+        step: "response-honesty",
+        errorKind: "precondition" as const,
+        hint:
+          "The runtime self-report lacked a successful current-turn obs_query receipt; "
+          + "inspect request-tool relevance and obs_query availability in comis explain.",
+      },
+      "Unsupported runtime self-report replaced with an evidence limitation",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.runtime_self_report_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "runtime_self_report",
+        reason: runtimeSelfReportGrounding.reason,
+        requiredTool: "obs_query",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_runtime_self_report_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),

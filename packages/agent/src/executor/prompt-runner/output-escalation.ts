@@ -452,11 +452,11 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
             record.action === undefined ? {} : { action: record.action },
           ) === "mutating",
       ).length,
-    currentSuccessfulToolCount: () => {
+    currentSuccessfulToolCount: (toolNames) => {
       const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0
         ? params.requestRelevantPromptSkillWorkflowToolNames
         : params.requestRelevantToolNames;
-      const relevantNames = new Set(completionNames ?? []);
+      const relevantNames = new Set(toolNames ?? completionNames ?? []);
       return (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) => record.success && relevantNames.has(record.toolName),
       ).length;

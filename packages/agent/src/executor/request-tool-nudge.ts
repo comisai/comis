@@ -11,12 +11,13 @@ import {
   type ComisLogger,
   type TypedEventBus,
 } from "@comis/core";
-import { extractMcpServerName } from "@comis/shared";
+import { extractMcpServerName, tryCatch } from "@comis/shared";
 import {
   runContinuationTurn,
   type ContinuationTurnSession,
 } from "./continuation-turn.js";
 import type { ProviderDispatchGuard } from "./provider-dispatch.js";
+import { isRuntimeSelfReportRequest } from "./response-grounding.js";
 
 export interface RequestToolNudgeOutcome {
   fired: boolean;
@@ -46,7 +47,7 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
   requestRelevantPromptSkillWorkflowContext?: string;
   currentSuccessfulMutationCount: () => number;
-  currentSuccessfulToolCount: () => number;
+  currentSuccessfulToolCount: (toolNames?: readonly string[]) => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
   currentDeferredWorkCount: () => number;
   /** Matching tool receipts carrying a terminal policy denial. */
@@ -152,7 +153,8 @@ function buildDirective(
     | "repeated_answer"
     | "declared_mutation_request"
     | "claimed_action_attempt"
-    | "explicit_tool_use_request",
+    | "explicit_tool_use_request"
+    | "runtime_self_report",
 ): string {
   const triggerFact = trigger === "repeated_answer"
     ? "Your last answer exactly repeated an earlier assistant answer."
@@ -160,7 +162,9 @@ function buildDirective(
       ? "Capability metadata identifies the current wording as a direct mutation request."
       : trigger === "claimed_action_attempt"
         ? "Your last answer claimed an external action attempt without a current-turn tool receipt."
-        : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
+        : trigger === "runtime_self_report"
+          ? "The current request asks for a runtime self-report, but no current obs_query receipt exists."
+          : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
   const capabilityGuidance = toolNames.flatMap((toolName) => {
     const guidance = getToolMetadata(toolName)?.mutationRecoveryGuidance?.trim();
     return guidance
@@ -275,7 +279,23 @@ export async function runRequestToolNudge(
     clock,
     agentId,
   } = deps;
-  if (capabilityClass !== "small" && capabilityClass !== "nano") {
+  const runtimeSelfReportRequest = isRuntimeSelfReportRequest(deps.requestText);
+  const activeToolNames = deps.session.getActiveToolNames === undefined
+    ? undefined
+    : tryCatch(() => deps.session.getActiveToolNames!());
+  const obsQueryActive = activeToolNames?.ok === true
+    ? activeToolNames.value.includes("obs_query")
+    : requestRelevantToolNames.includes("obs_query");
+  const effectiveRelevantToolNames = runtimeSelfReportRequest && obsQueryActive
+    ? [...new Set([...requestRelevantToolNames, "obs_query"])]
+    : requestRelevantToolNames;
+
+  const runtimeSelfReportRecovery = runtimeSelfReportRequest && obsQueryActive;
+  if (
+    capabilityClass !== "small"
+    && capabilityClass !== "nano"
+    && !runtimeSelfReportRecovery
+  ) {
     return {
       fired: false,
       recovered: false,
@@ -284,7 +304,7 @@ export async function runRequestToolNudge(
     };
   }
 
-  const matchedToolNames = requestRelevantToolNames.filter(
+  const matchedToolNames = effectiveRelevantToolNames.filter(
     (toolName) =>
       getToolMetadata(toolName)?.isReadOnly !== undefined
       || extractMcpServerName(toolName) !== undefined,
@@ -315,7 +335,7 @@ export async function runRequestToolNudge(
   const mutationRecoveryRequested = mutatingToolNames.length > 0
     && (repeatedAnswer || declaredMutationRequest || claimedActionAttempt);
   const readRecoveryRequested = toolBackedReadNames.length > 0
-    && (explicitToolUseRequest || claimedActionAttempt);
+    && (explicitToolUseRequest || claimedActionAttempt || runtimeSelfReportRecovery);
   if (!mutationRecoveryRequested && !readRecoveryRequested) {
     return {
       fired: false,
@@ -325,18 +345,22 @@ export async function runRequestToolNudge(
     };
   }
   const useReadRecovery = readRecoveryRequested && !mutationRecoveryRequested;
-  const trigger = declaredMutationRequest
-    ? "declared_mutation_request"
-    : useReadRecovery && explicitToolUseRequest
-      ? "explicit_tool_use_request"
-      : repeatedAnswer
-        ? "repeated_answer"
-        : "claimed_action_attempt";
-  const recoveryToolNames = useReadRecovery
-    ? toolBackedReadNames
-    : mutatingToolNames;
+  const trigger = runtimeSelfReportRecovery
+    ? "runtime_self_report"
+    : declaredMutationRequest
+      ? "declared_mutation_request"
+      : useReadRecovery && explicitToolUseRequest
+        ? "explicit_tool_use_request"
+        : repeatedAnswer
+          ? "repeated_answer"
+          : "claimed_action_attempt";
+  const recoveryToolNames = runtimeSelfReportRecovery
+    ? ["obs_query"]
+    : useReadRecovery
+      ? toolBackedReadNames
+      : mutatingToolNames;
   const successfulCount = useReadRecovery
-    ? currentSuccessfulToolCount
+    ? () => currentSuccessfulToolCount(recoveryToolNames)
     : currentSuccessfulMutationCount;
   if (successfulCount() > 0) {
     return {

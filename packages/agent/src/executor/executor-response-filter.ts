@@ -263,6 +263,7 @@ export {
   enforceSchedulerStateEvidence,
   enforceCompletionEvidence,
   enforceOngoingWorkEvidence,
+  enforceRuntimeSelfReportEvidence,
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
 } from "./response-grounding.js";
@@ -272,6 +273,7 @@ export type {
   SchedulerStateEvidenceGuardResult,
   CompletionEvidenceGuardResult,
   OngoingWorkEvidenceGuardResult,
+  RuntimeSelfReportEvidenceGuardResult,
   SenderAuthorityGroundingGuardResult,
   ActiveModelSelfStatusGuardResult,
 } from "./response-grounding.js";

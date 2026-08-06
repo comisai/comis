@@ -780,6 +780,7 @@ export interface MessagingEvents {
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
+      | "missing_runtime_self_report_evidence"
       | "missing_scheduler_state_evidence"
       | "pending_scheduler_confirmation"
       | "unrecovered_tool_failure_completion_claim";
