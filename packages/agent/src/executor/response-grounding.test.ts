@@ -116,6 +116,40 @@ describe("response grounding module", () => {
     });
   });
 
+  it("requires observability for the elliptical latency follow-up", () => {
+    const honestResponse = "I could not verify the runtime cause in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "why was that so slow",
+      response: "It was slow because the context was large.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it.each([
+    "so it was exactly $5 total because telegram was down, right?",
+    "pretty sure you only did 12 turns and cost 3 cents this week — confirm?",
+    "the slowness was definitely the telegram 429 and the whole week cost $1, yeah?",
+  ])("requires observability before confirming a runtime premise: %s", (request) => {
+    const honestResponse = "I could not verify that runtime premise in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request,
+      response: "Yes, that is correct.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
   it("leaves unrelated reports outside the runtime self-report guard", () => {
     const response = "The weekly project report has three sections.";
 
