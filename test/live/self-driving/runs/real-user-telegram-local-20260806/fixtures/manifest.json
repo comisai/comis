@@ -1,0 +1,122 @@
+[
+  {
+    "name": "synthetic-track-cc-note.txt",
+    "bytes": 122,
+    "sha256": "68dee8f7a2f34cd1be10d0d8d1f2907c6da3cd7e1db357b042869aca619f8369"
+  },
+  {
+    "name": "fixture-project-brief.txt",
+    "bytes": 199,
+    "sha256": "087c8343dccf0847519af40933fc235f822dde816d5b9379780f5bebdd57b921"
+  },
+  {
+    "name": "paste-40k.txt",
+    "bytes": 40000,
+    "sha256": "ea7dc93b091445784b27ea094e9141f37614bd45a942fc46de96b0efb7dd31d0"
+  },
+  {
+    "name": "fixture-long-context.txt",
+    "bytes": 148204,
+    "sha256": "0c8dab17bf038864ae75937dffcee7ffbb87f56cddcdd63da4b8e040ed010c2f"
+  },
+  {
+    "name": "fixture-long-context-hostile.txt",
+    "bytes": 62124,
+    "sha256": "61fe8a389f67b771a6bfb29ce1bfb6a20f7499d6e2f641ad025e978de091f60b"
+  },
+  {
+    "name": "oversized-document.txt",
+    "bytes": 684000,
+    "sha256": "5d43a95e81154be80cee5fbdced8717a7b2daa820d5d511d716308dfd69497f0"
+  },
+  {
+    "name": "learning-opening-a.txt",
+    "bytes": 76,
+    "sha256": "cc7e914d84aede66cfc91bd47297bf9bf3b092bded68732915757ae3b9d8e7f3"
+  },
+  {
+    "name": "learning-opening-b.txt",
+    "bytes": 76,
+    "sha256": "cc7e914d84aede66cfc91bd47297bf9bf3b092bded68732915757ae3b9d8e7f3"
+  },
+  {
+    "name": "fixture-report.pdf",
+    "bytes": 778,
+    "sha256": "df0ba4ebd65dc1b894b5255ea4172fef529c9be8ad6ab3d90278677b4ae61cbd"
+  },
+  {
+    "name": "fixture-skill-malformed.md",
+    "bytes": 87,
+    "sha256": "b89d7b3f6e1f2c0c8c5a5eb483f80fc1e16f76a19f75bb09af388c0f368e63b3"
+  },
+  {
+    "name": "fixture-skill-hostile.md",
+    "bytes": 133,
+    "sha256": "950739762ff053c8a7fdb94b99195be7e0c9e5000410ad3dce581e17473b0490"
+  },
+  {
+    "name": "fixture-skill-missing-prereq.md",
+    "bytes": 189,
+    "sha256": "ef9bd192ba663db30332865b1b52227154c171243a368efde39b3fb7d5105125"
+  },
+  {
+    "name": "fixture-skill-valid.md",
+    "bytes": 194,
+    "sha256": "f3eee6a37f223fa33b89275cfd6b92f49c9920495602b87b9b793a0ab60ebe1a"
+  },
+  {
+    "name": "fixture-unsupported.bin",
+    "bytes": 6,
+    "sha256": "25fee5ceeba61ed5ad8071083c797bd5b2163ea4056fed0117c2b781776703d7"
+  },
+  {
+    "name": "receipt-clean.png",
+    "bytes": 22479,
+    "sha256": "d77798402e8d17f664290e8ab358139e174562fd675eb173f2c893179de94ec3"
+  },
+  {
+    "name": "receipt-blurry.png",
+    "bytes": 86799,
+    "sha256": "610bcf1c2074356fbd962a1c884366e0b2bfd9e1d5679edd2865421f4a2c1752"
+  },
+  {
+    "name": "image-hostile.png",
+    "bytes": 23065,
+    "sha256": "e6fab02bfd708d1cc305b2ba8cca2a41ab33fd282f7c09626021ac152bacea65"
+  },
+  {
+    "name": "voice-short.ogg",
+    "bytes": 28746,
+    "sha256": "bc06c13368fb90184a48e4d7dc904043251129954d065deaf101bfddeae1e503"
+  },
+  {
+    "name": "voice-context.ogg",
+    "bytes": 18473,
+    "sha256": "39ffbd2d7b883bfde475b6750d662978c0d886656edcf0b6840ef16f45803e4d"
+  },
+  {
+    "name": "voice-group-mention.ogg",
+    "bytes": 19094,
+    "sha256": "83e16946bf7a4d25e0bd730ce46f76fa06cc1d51aed9c1e164b7856abdcd09c9"
+  },
+  {
+    "name": "voice-hostile.ogg",
+    "bytes": 33051,
+    "sha256": "a053b191652cd58fab4f3013b12df83415093f1516a2e1c79a2f979c9262688a"
+  },
+  {
+    "name": "voice-silent.ogg",
+    "bytes": 849,
+    "sha256": "777c01878746bf0b776a851413629481284a266e688571a95c467df1db3d4df2"
+  },
+  {
+    "name": "voice-truncated.ogg",
+    "bytes": 192,
+    "sha256": "80ad2e5d75bdb419f53f3fcca53f5b3b7fdc240703191295a98acac082f83427"
+  },
+  {
+    "name": "voice-invalid.ogg",
+    "bytes": 20,
+    "sha256": "becf03ce3cb886d0fdaec1fc72eba330e5bb134b151aa53b5fdb990a7fd525ad"
+  }
+]
