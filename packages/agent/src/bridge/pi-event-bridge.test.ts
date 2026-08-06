@@ -3509,6 +3509,49 @@ describe("createPiEventBridge", () => {
       expect(cause).not.toContain("\n");
     });
 
+    // "Check LLM provider status" is the WRONG instruction for a 4xx
+    // invalid_request_error: nothing is wrong with the provider, the request WE
+    // built was rejected. Measured live on comis-moshe (claude-opus-5): a burst
+    // produced five consecutive
+    //   400 invalid_request_error: messages.299.content.0:
+    //   Invalid `signature` in `thinking` block
+    // and every one told the operator to check provider status, while the actual
+    // fault was a signed thinking block replayed with a stale signature. The
+    // fifth error tripped the provider circuit breaker, so the visible symptom
+    // was "provider_degraded" on a healthy provider. Branch the hint by failure
+    // class so each class gets the instruction that fits it.
+    it("names the request as the fault for a 4xx, not the provider's status", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener({
+        type: "turn_end",
+        message: {
+          stopReason: "error",
+          errorMessage: '400 {"type":"error","error":{"type":"invalid_request_error",'
+            + '"message":"messages.299.content.0: Invalid `signature` in `thinking` block"}}',
+        },
+      } as any);
+
+      const warned = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .find(([, msg]) => msg === "LLM call returned error");
+      expect(warned, "the LLM error must still be logged").toBeDefined();
+      const hint = String(warned?.[0].hint ?? "");
+      expect(hint).not.toMatch(/provider status/i);
+      // Points at the rejected request, and names the replay-state cause.
+      expect(hint).toMatch(/request|payload|replay|signature/i);
+    });
+
+    it("still points at provider status for a transport-level failure", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener({
+        type: "turn_end",
+        message: { stopReason: "error", errorMessage: "Request timed out." },
+      } as any);
+
+      const warned = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .find(([, msg]) => msg === "LLM call returned error");
+      expect(String(warned?.[0].hint ?? "")).toMatch(/provider/i);
+    });
+
     it("MCP tool timeout failure includes mcpErrorType: timeout", () => {
       const { listener } = createPiEventBridge(deps);
 

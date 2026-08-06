@@ -71,8 +71,7 @@ import {
   buildFailureArgsPreview,
   extractMcpFailureCode,
   sanitizeToolArgs,
-  extractErrorText,
-} from "./bridge-event-handlers.js";
+  extractErrorText, llmErrorHint } from "./bridge-event-handlers.js";
 
 /**
  * Bracketed `[error_code]` prefixes that mean the tool's OWN IO failed (disk,
@@ -3096,10 +3095,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               "Context exhausted mid-turn — mapped to finishReason",
             );
           } else {
+            // Branch the hint by failure class. A 4xx invalid_request_error means
+            // the request WE built was rejected — nothing is wrong with the
+            // provider, so "check provider status" sends the operator to a status
+            // page while the fault sits in our payload. Live, five consecutive
+            // `400 … Invalid \`signature\` in \`thinking\` block` each carried that
+            // hint, and the fifth tripped the provider circuit breaker, so the
+            // visible symptom became "provider_degraded" on a healthy provider.
             deps.logger.warn(
               {
                 err: m.lastLlmErrorMessage,
-                hint: "Check LLM provider status",
+                hint: llmErrorHint(m.lastLlmErrorMessage),
                 errorKind: "dependency" as const,
               },
               "LLM call returned error",
