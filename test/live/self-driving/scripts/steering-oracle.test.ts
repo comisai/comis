@@ -63,6 +63,11 @@ describe("SDK steering burst ground-truth oracle", () => {
     expect(burstVerifySource).toContain("scoreCommandSteeringBurst({");
   });
 
+  it("routes superseded-goal terms into both steering scorers", () => {
+    expect(burstVerifySource).toContain("flags.get('superseded-goal-terms')");
+    expect(burstVerifySource.match(/supersededGoalTerms,/g)).toHaveLength(2);
+  });
+
   it("accepts a steered inbound that intentionally has no separate transcript turn", () => {
     const transcriptSource = [
       userRecord(BASE_GUID, "write a long report"),
