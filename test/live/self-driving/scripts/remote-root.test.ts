@@ -138,12 +138,15 @@ describe("sudo-aware live rig transport", () => {
   it("revalidates a non-empty gateway token against the selected local rig", () => {
     const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
 
-    expect(source).toMatch(
-      /if \[ -n "\$\{GWTOKEN:-\}" \]; then[\s\S]*?if rig_is_local; then[\s\S]*?curl[\s\S]*?127\.0\.0\.1:\$\{GW_PORT:-4766\}\/health/,
+    expect(source).toContain('resolved_gateway_token=""');
+    expect(source).toContain(
+      'if [ -n "${GWTOKEN:-}" ] && [ "$GWTOKEN" != "$resolved_gateway_token" ]; then',
     );
     expect(source).toContain(
-      "the selected GWTOKEN did not authenticate against the local rig — re-fetching from its encrypted store",
+      "the configured GWTOKEN does not match the selected rig — using its resolved token",
     );
+    expect(source).not.toContain('&& ! rig_is_local; then');
+    expect(source).not.toContain("Authorization: Bearer $GWTOKEN");
   });
 
   it("uses service-none mode when a deployed build must remain stopped", () => {
