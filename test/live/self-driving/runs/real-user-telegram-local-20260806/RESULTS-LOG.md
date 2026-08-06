@@ -5,8 +5,8 @@
 ## Summary
 - **IN PROGRESS**
 - **Rig:** isolated local source-tree primary `/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2`, gateway 48701, tmux-owned daemon, loopback Telegram emulator, `openai-codex/gpt-5.6-luna` confirmed by trajectory.
-- **Outcome so far:** Phase 0 and the relationship spine are green; prelude CC1–CC5 have exact ownership/delivery; 3 harness COMIS-FAILs are fixed test-first; HARD A/B/C rows have not started.
-- **Coverage so far:** SETUP-1–SETUP-7, spine-01–spine-12, and prelude cc1–cc5 complete; next row prelude CC6. Full denominator is filled at finish audit.
+- **Outcome so far:** Phase 0 and the complete 44-message comparability prelude are complete; prelude runtime ownership/delivery is green, while the reset-burst content diagnostic repeated the prior 1/10 model-sensitive miss; 3 harness COMIS-FAILs are fixed test-first; HARD A/B/C rows have not started.
+- **Coverage so far:** SETUP-1–SETUP-7 and every `spine-*`/early `cc*` corpus record complete; next row A11. Full denominator is filled at finish audit.
 
 ## Per-test results
 Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven row that is omitted reads as covered, and one mislabelled `NO-ACCESS` reads as "the rig can't, and that's fine" (`../02-DISCIPLINE.md §scoring`).
@@ -22,6 +22,7 @@ Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven r
 | PRELUDE-SPINE | OK | deterministic | Exact twelve-turn relationship seed established and recalled the move code, three-bullet preference, document checkpoint, ETA, terminal child result, and persisted reminder. A normal primary restart preserved fact, preference, and completed-work recall. | — |
 | PRELUDE-CC1–CC4 | OK | deterministic | Exact frozen bursts produced 5/5 at peak concurrency 5, three terminal heavy answers at peak 3, and both 12-second SDK steering corrections with one selected wire delivery and no lost/duplicate output. | — |
 | PRELUDE-CC5 | COMIS-FAIL→fixed | deterministic replay | Initial verifier exited when 10 transcript answers but only 9 channel sends were visible; ground truth later reached 10/10. The fixed verifier waits for matching delivery, and a fresh exact ten-message burst passed 10/10 at peak concurrency 10. | `55c05a01` |
+| PRELUDE-CC6 | fails-honestly | ownership 1/1; literal content 1/10 diagnostic | Two normal session resets retained 10/10 terminal owners and zero open traces. The wire emitted two selected replies; only final value `100` matched the ten requested terms. Direct DB counts retained move code/preference/checkpoint memories at 1/2/3 rows. OF-04 remains open for the scored three-attempt block. | — |
 
 ## Coverage honesty + previous-run diff
 | check | this run | previous run | verdict |
