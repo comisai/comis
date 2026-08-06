@@ -20,6 +20,8 @@
 //     --no-expect-overlap  for a steering/sequential row, where one trace is the correct shape
 //     --sdk-steering       score the second inbound from SDK steer/follow-up disposition events
 //     --command-steering   score bare steer mode's abort-and-restart lifecycle
+//     --collect-burst      score collect-mode source, coalescing and answer accounting
+//     --expected-answer-terms <csv>  exact answer tokens required on the collect wire
 //     --superseded-goal-terms <csv>  reject post-boundary tool calls whose arguments match a term
 //     --data <path>        override the manifest's data dir
 //     --format json|text   default text (json prints the full report)
@@ -43,6 +45,7 @@ import {
   scoreSdkSteeringBurst,
   selectSdkSteeringTrajectoryRecords,
 } from './steering-oracle.mjs';
+import { scoreCollectBurst } from './collect-oracle.mjs';
 
 const argv = process.argv.slice(2);
 const positional = [];
@@ -52,12 +55,13 @@ for (let index = 0; index < argv.length; index += 1) {
   if (token === '--no-expect-overlap') { flags.set('no-expect-overlap', true); continue; }
   if (token === '--sdk-steering') { flags.set('sdk-steering', true); continue; }
   if (token === '--command-steering') { flags.set('command-steering', true); continue; }
+  if (token === '--collect-burst') { flags.set('collect-burst', true); continue; }
   if (token.startsWith('--')) { flags.set(token.slice(2), argv[index + 1]); index += 1; continue; }
   positional.push(token);
 }
 const manifestPath = positional[0];
 if (!manifestPath) {
-  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering|--command-steering] [--superseded-goal-terms csv] [--data path] [--format json|text]');
+  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering|--command-steering|--collect-burst] [--expected-answer-terms csv] [--superseded-goal-terms csv] [--data path] [--format json|text]');
   process.exit(2);
 }
 let manifest;
@@ -77,19 +81,28 @@ const dataDir = flags.get('data') || manifest.dataDir || rig.dataDir;
 const format = flags.get('format') || 'text';
 const sdkSteering = flags.get('sdk-steering') === true;
 const commandSteering = flags.get('command-steering') === true;
+const collectMode = flags.get('collect-burst') === true;
+const expectedAnswerTerms = String(flags.get('expected-answer-terms') ?? '')
+  .split(',')
+  .map((term) => term.trim())
+  .filter(Boolean);
 const supersededGoalTerms = String(flags.get('superseded-goal-terms') ?? '')
   .split(',')
   .map((term) => term.trim())
   .filter(Boolean);
-if (sdkSteering && commandSteering) {
-  console.error('burst-verify.mjs: choose only one of --sdk-steering or --command-steering');
+if ([sdkSteering, commandSteering, collectMode].filter(Boolean).length > 1) {
+  console.error('burst-verify.mjs: choose only one of --sdk-steering, --command-steering or --collect-burst');
   process.exit(2);
 }
 const steeringMode = sdkSteering || commandSteering;
-const expectOverlap = !steeringMode && flags.get('no-expect-overlap') !== true;
+const expectOverlap = !steeringMode && !collectMode && flags.get('no-expect-overlap') !== true;
 const injects = (manifest.injects ?? []).filter((inject) => inject.ok && inject.inboundGuid);
 if (injects.length === 0) {
   console.error('burst-verify.mjs: the manifest carries no accepted injects — nothing to verify');
+  process.exit(2);
+}
+if (collectMode && expectedAnswerTerms.length !== injects.length) {
+  console.error(`burst-verify.mjs: --collect-burst needs one --expected-answer-terms entry per accepted inbound (${injects.length})`);
   process.exit(2);
 }
 
@@ -205,6 +218,15 @@ const evidence = async () => {
 };
 
 const score = (state) => {
+  if (collectMode) {
+    return scoreCollectBurst({
+      injects,
+      transcriptSource: state.transcript?.source ?? '',
+      trajectoryRecords: state.trajectoryRecords,
+      wire: state.wire,
+      expectedAnswerTerms,
+    });
+  }
   if (sdkSteering) {
     return scoreSdkSteeringBurst({
       injects,
@@ -290,6 +312,7 @@ const report = {
   gatewayReachable: state.daemonReachable,
   openTraceIds: scored.openTraceIds,
   ...(scored.steering === undefined ? {} : { steering: scored.steering }),
+  ...(scored.collect === undefined ? {} : { collect: scored.collect }),
   ...scored.verdict,
   bindings: scored.attribution.bindings,
   ambiguousAnswers: scored.attribution.ambiguousAnswers,
