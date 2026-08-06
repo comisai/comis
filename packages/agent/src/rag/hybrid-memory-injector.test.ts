@@ -106,6 +106,17 @@ describe("createHybridMemoryInjector", () => {
       expect(result.inlineMemory).toContain("occurred 2026-01-03");
     });
 
+    it("preserves exact recorded time for same-day inline corrections", () => {
+      const injector = createHybridMemoryInjector();
+      const results = [
+        mockResult("The setting is beta now", 0.85, "2026-08-06T04:21:22.702Z"),
+      ];
+
+      const result = injector.split(results, 5000);
+
+      expect(result.inlineMemory).toContain("recorded 2026-08-06T04:21:22.702Z");
+    });
+
     it("puts top-1 in system prompt when score below threshold", () => {
       const injector = createHybridMemoryInjector();
       const results = [mockResult("Some vague memory", 0.5)];
@@ -255,6 +266,16 @@ describe("stripInlineRecalledMemoryFromMessage", () => {
 
     expect((carved as { content: string }).content).toBe("what is the forecast?");
     expect(carved).not.toBe(message);
+  });
+
+  it("carves a recall block carrying an exact recorded timestamp", () => {
+    const recall =
+      "[Relevant context from memory: current setting (recorded 2026-08-06T04:21:22.702Z)]\n";
+    const message = { role: "user", content: `${recall}what is current?` } as Message;
+
+    const carved = stripInlineRecalledMemoryFromMessage(message);
+
+    expect((carved as { content: string }).content).toBe("what is current?");
   });
 
   it("carves the recall from the first text block and keeps sibling blocks intact", () => {
