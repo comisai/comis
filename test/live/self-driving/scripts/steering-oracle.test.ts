@@ -70,6 +70,11 @@ describe("SDK steering burst ground-truth oracle", () => {
     expect(scored.steering.disposition).toBe("steer_injected");
     expect(scored.attribution.bindings[1].status).toBe("steered");
     expect(scored.wire.rawSubstantiveOutbound).toBe(1);
+    expect(scored.verdict.overlap).toEqual({
+      overlapped: false,
+      maxConcurrent: 1,
+      traces: 1,
+    });
     expect(scored.verdict.hard).toEqual([]);
   });
 
