@@ -87,6 +87,17 @@ describe("buildTemporalGuidanceBlock — read-time contradiction guidance", () =
     }
   });
 
+  it("requires clarification before an ambiguous correction can replace current memory", () => {
+    const block = buildTemporalGuidanceBlock([
+      makeResult("m1", "user_a runs on Tuesday mornings"),
+      makeResult("m2", "user_a runs on Wednesday mornings"),
+    ]);
+
+    expect(block).toContain("An ambiguous correction or reference does not establish a replacement value");
+    expect(block).toContain("ask what the user means");
+    expect(block).toContain("do not revive an older value from conversation history");
+  });
+
   it("returns undefined when exactly 1 memory is surfaced (<2 gate)", () => {
     expect(buildTemporalGuidanceBlock([makeResult("m1", "only one fact")])).toBeUndefined();
   });
