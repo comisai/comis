@@ -126,6 +126,21 @@ export function selectBurstTrajectoryRecords(records, { fromMs, expectedTraceCou
     selectedTraceIds.push(traceId);
     if (selectedTraceIds.length >= expectedTraceCount) break;
   }
+  // On a fresh session the queue event can precede trajectory recorder
+  // materialization, while `prompt.submitted` is written after the session
+  // pointer exists. Preserve enqueue identities when present (including a
+  // queued turn that never starts), then fill only missing identities from
+  // prompt starts.
+  if (selectedTraceIds.length < expectedTraceCount) {
+    for (const record of windowed) {
+      if (record?.type !== "prompt.submitted") continue;
+      const traceId = record.traceId;
+      if (typeof traceId !== "string" || traceId === "" || seen.has(traceId)) continue;
+      seen.add(traceId);
+      selectedTraceIds.push(traceId);
+      if (selectedTraceIds.length >= expectedTraceCount) break;
+    }
+  }
   const selected = new Set(selectedTraceIds);
   return windowed.filter((record) => selected.has(record?.traceId));
 }
