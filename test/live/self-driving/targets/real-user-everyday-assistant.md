@@ -706,8 +706,10 @@ S10) · `ask my notes what i decided about <X>` (`memory_ask` — default-on, op
 **Predicate.** Every mutating control-plane action is admin-gated, approval-gated where destructive,
 reversible, and reflected in the config audit trail. Every media path either produces a REAL artifact on
 the wire or fails honestly naming the missing knob — never a text-only false success. The video job store
-survives a restart. `memory_ask` with the knob OFF is absent from the surface and the agent says so; with
-it ON, the answer is grounded and cited.
+survives a restart. `memory_ask` with either cost knob OFF is absent from the surface and the agent must
+not claim that the dialectic ran. The separate LLM-free recall path remains available and may still answer
+from injected or searched memories; that is not evidence that `memory_ask` leaked through the gate. With
+both knobs ON, an explicit cited-memory request invokes `memory_ask` and returns a grounded, cited answer.
 
 **Oracle.** `config.audit.list`/`config.diff`/`config.rollback`; `RecordedOutbound.mediaKind` on
 `…/outbound` (a media-only turn prints `[NO SUBSTANTIVE ANSWER]` — read the outbound, not the text
