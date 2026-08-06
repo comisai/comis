@@ -30,7 +30,7 @@
 | data dir | `/home/comis/.comis` (`DATA`) | config, secrets.db, sessions, workspace — owned by `comis` |
 | master key | `$DATA/.env` → `SECRETS_MASTER_KEY` | the daemon loads `<dataDir>/.env` at boot; the systemd unit also loads `/etc/comis/env` |
 | secrets | encrypted `secrets.db` | API keys, OAuth profiles, `COMIS_GATEWAY_TOKEN` — `su - comis -c 'comis secrets list'` |
-| emulator | `tsx test/live/bin/vps-emu.ts` in `$EMU_DIR` (default `/root/comis-emu`) on a **kernel-allocated** loopback port | wiring in `/tmp/comis-emu.json` `{apiRoot, port, botToken:"1234567:emulator-fake-token"}` |
+| emulator | `tsx test/live/bin/vps-emu.ts` in `$EMU_DIR` (default `/root/comis-emu`) on a **kernel-allocated** loopback port | wiring in `EMU_JSON` (`$DATA/emulator-wiring.json` locally, `/tmp/comis-emu.json` remotely) `{apiRoot, port, botToken:"1234567:emulator-fake-token"}` |
 | drive id | sender/chat `678314278` (`CHATID`), `senderTrustMap: admin` | drive as this user (admin-trust) |
 
 The daemon runs **under systemd** (`comis.service`) exactly like a user install — including the SIGUSR2

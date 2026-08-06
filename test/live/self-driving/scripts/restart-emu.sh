@@ -9,11 +9,10 @@
 #   defaults to the repo root) and binds loopback next to the local daemon.
 #     ./restart-emu.sh
 #
-# WHY THIS EXISTS (two traps that together cost ~6 cycles):
-#  (1) pkill SELF-MATCH — `pkill -f "vps-emu"` matches the shell running THIS command (its argv
-#      contains "vps-emu.ts") → it kills itself → empty output / ssh exit 255, emulator never
-#      relaunched. MUST anchor `^node ` (the bash/ssh wrapper argv starts with "bash"/"sshd", never
-#      "node"). Same class as the `pkill -f daemon.js` trap in 01-SETUP.
+# WHY THIS EXISTS (two traps that together cost cycles):
+#  (1) PROCESS-WIDE KILL — a host may carry several isolated local rigs. A `pkill -f vps-emu`
+#      or fixed `tmux kill-session -t emu` stops every rig (and can self-match the wrapper). The
+#      selected wiring file carries the exact pid, and the selected tmux name is DATA/SERVICE-scoped.
 #  (2) BG-OVER-SSH DIES — `nohup … &` / `setsid … &` inside an ssh command dies when the channel
 #      closes despite nohup/setsid. tmux fully detaches and persists.
 #
@@ -35,25 +34,40 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 }
 rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
 if rig_is_local; then
-  EMU_LOG="${EMU_LOG:-/tmp/comis-emu.log}"
   # tsx from the workspace (a devDependency of this repo) — never assume a global install locally.
   if command -v tsx >/dev/null 2>&1; then TSX="tsx"; else TSX="pnpm -s exec tsx"; fi
 else
-  EMU_LOG="${EMU_LOG:-/root/emu.log}"
   TSX="tsx"
 fi
 
-# (1) Kill the old emulator with an ANCHORED pattern (never matches this shell).
-pkill -9 -f "^node .*vps-emu" 2>/dev/null
-tmux kill-session -t emu 2>/dev/null
-sleep 2
+# (1) Stop ONLY the emulator owned by this selected wiring/session tuple.
+old_pid="$(rig_emu_pid)"
+if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$EMU_TMUX_SESSION" 2>/dev/null; then
+  if rig_is_local; then
+    owner="$(tmux show-environment -t "$EMU_TMUX_SESSION" COMIS_EMU_DATA_OWNER 2>/dev/null)"
+    if [ "${owner#COMIS_EMU_DATA_OWNER=}" != "$DATA" ]; then
+      echo "tmux emulator session '$EMU_TMUX_SESSION' belongs to another DATA root; refusing to stop it" >&2
+      exit 2
+    fi
+  fi
+  tmux kill-session -t "$EMU_TMUX_SESSION"
+fi
+if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+  kill "$old_pid" 2>/dev/null || true
+  for _ in $(seq 1 15); do
+    kill -0 "$old_pid" 2>/dev/null || break
+    sleep 1
+  done
+  kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
+fi
 
 # (2) Launch it detached. tmux when available (the only thing that survives an ssh close); locally a
 # plain nohup suffices when tmux is absent, since there is no channel to close.
 : >"$EMU_LOG"
-LAUNCH="cd '$EMU_DIR' && exec env EMU_GROUPS='${EMU_GROUPS:-}' $TSX test/live/bin/vps-emu.ts"
+LAUNCH="cd '$EMU_DIR' && exec env EMU_JSON='$EMU_JSON' EMU_GROUPS='${EMU_GROUPS:-}' $TSX test/live/bin/vps-emu.ts"
 if command -v tmux >/dev/null 2>&1; then
-  tmux new-session -d -s emu "$LAUNCH > '$EMU_LOG' 2>&1"
+  tmux new-session -d -s "$EMU_TMUX_SESSION" "$LAUNCH > '$EMU_LOG' 2>&1"
+  tmux set-environment -t "$EMU_TMUX_SESSION" COMIS_EMU_DATA_OWNER "$DATA"
 elif rig_is_local; then
   nohup bash -c "$LAUNCH" >"$EMU_LOG" 2>&1 &
   disown 2>/dev/null || true
@@ -67,7 +81,7 @@ sleep 8
 if grep -aq EMU_UP "$EMU_LOG"; then
   echo "EMU UP:"
   grep -a EMU_UP "$EMU_LOG" | tail -1
-  PORT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).port)' "${EMU_JSON:-/tmp/comis-emu.json}" 2>/dev/null)
+  PORT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).port)' "$EMU_JSON" 2>/dev/null)
   if rig_is_local; then
     echo "NEXT: node $HERE/wire-emu.mjs && $HERE/restart-daemon.sh   # wires apiRoot → http://127.0.0.1:${PORT}"
   else

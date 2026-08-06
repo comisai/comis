@@ -1,5 +1,5 @@
 // wire-emu.mjs — VPS (run as ROOT): point the daemon's Telegram adapter at the RUNNING emulator.
-// Reads the emulator wiring (/tmp/comis-emu.json — written by vps-emu on boot) and rewrites
+// Reads the selected emulator wiring (`rig.emuWiringPath` — written by vps-emu on boot) and rewrites
 // $DATA/config.yaml's channels.telegram to { enabled, apiRoot: <emu>, botToken: <emu fake token> },
 // ensuring allowFrom contains the drive CHATID. The port is KERNEL-ALLOCATED, so this must re-run
 // after EVERY restart-emu.sh (then restart the daemon: bash /root/restart-daemon.sh).
