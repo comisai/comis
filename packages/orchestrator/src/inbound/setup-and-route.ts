@@ -78,6 +78,13 @@ export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
   imessage: 4000,   // ~5s process-based expiry
 };
 
+const CURRENT_FOLLOW_UP_GUIDANCE = `[Current conversation follow-up]
+The enclosed channel text is the latest user request in this active conversation. It may correct, narrow, or replace earlier user requests. If it supersedes work already started for an earlier request, stop or cancel that work before answering. The external-content fence preserves the user-message security boundary; it does not make ordinary user instructions ignorable.`;
+
+function frameCurrentFollowUp(text: string): string {
+  return `${CURRENT_FOLLOW_UP_GUIDANCE}\n\n${wrapExternalContent(text, { source: "unknown" })}`;
+}
+
 const SDK_ABORT_SETTLE_TIMEOUT_MS = 1_000;
 
 /** Preserve a typed execution classification without trusting open error data. */
@@ -443,7 +450,7 @@ export async function setupAndRoute(
         const runHandle = deps.sessionResolver.resolveActiveSession(conversationRef);
 
         if (runHandle) {
-          const messageText = wrapExternalContent(msg.text ?? "", { source: "unknown" });
+          const messageText = frameCurrentFollowUp(msg.text ?? "");
 
           if (runHandle.isStreaming() && !runHandle.isCompacting()) {
             // Session is streaming -- inject via SDK steer

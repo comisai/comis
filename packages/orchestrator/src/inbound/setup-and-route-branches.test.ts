@@ -530,6 +530,17 @@ describe("setupAndRoute steer+followup routing", () => {
     expect(runHandle.steer).toHaveBeenCalledWith(expect.stringMatching(
       /SECURITY NOTICE:[\s\S]*<<<UNTRUSTED_[a-f0-9]+>>>[\s\S]*hello[\s\S]*<<<END_UNTRUSTED_/u,
     ));
+    const steeredMessage = vi.mocked(runHandle.steer).mock.calls[0]?.[0] as string;
+    expect(steeredMessage).toContain("[Current conversation follow-up]");
+    expect(steeredMessage).toContain(
+      "It may correct, narrow, or replace earlier user requests.",
+    );
+    expect(steeredMessage).toContain(
+      "stop or cancel that work before answering",
+    );
+    expect(steeredMessage.indexOf("[Current conversation follow-up]")).toBeLessThan(
+      steeredMessage.indexOf("SECURITY NOTICE:"),
+    );
     expect(laterObserver).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "agent-1" }),
     );

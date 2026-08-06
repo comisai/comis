@@ -218,7 +218,15 @@ export function normalizedInboundTextError(text, limitChars) {
     : undefined;
 }
 
-function messageText(message) {
+/**
+ * The user-visible prose carried by one transcript `type:"message"` record.
+ *
+ * Exported so the concurrency oracle reads a transcript record exactly the way
+ * the sequential drive does. Two private definitions of "the text of a record"
+ * drift, and a drifted definition makes two oracles disagree about the same
+ * turn.
+ */
+export function transcriptMessageText(message) {
   const content = message?.content;
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -248,7 +256,7 @@ export function findAssistantReplyAfterInbound(source, inboundId) {
     }
     if (record?.type !== "message") continue;
     if (record.message?.role === "user") {
-      const text = messageText(record.message);
+      const text = transcriptMessageText(record.message);
       if (text.includes(inboundId)) {
         ownUserSeen = true;
         reply = null;
@@ -256,13 +264,18 @@ export function findAssistantReplyAfterInbound(source, inboundId) {
       continue;
     }
     if (!ownUserSeen || record.message?.role !== "assistant") continue;
-    const text = messageText(record.message).trim();
+    const text = transcriptMessageText(record.message).trim();
     if (text) reply = text;
   }
   return reply;
 }
 
-function normalizeWireText(value) {
+/**
+ * Reduce one wire payload to comparable prose (markup, entities and
+ * whitespace collapsed). Exported so delivery-duplicate detection compares
+ * texts by the SAME normalization the reply-correlation check uses.
+ */
+export function normalizeWireText(value) {
   return value
     .replace(/<a\b[^>]*>(.*?)<\/a>/gis, "$1")
     .replace(/<[^>]+>/g, "")
@@ -271,6 +284,10 @@ function normalizeWireText(value) {
     .replace(/__(.*?)__/gs, "$1")
     .replace(/~~(.*?)~~/gs, "$1")
     .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*$/gm, "")
+    .replace(/^\s*\|(.+)\|\s*$/gm, (_row, cells) => cells.replaceAll("|", " "))
+    .replace(/^(?:\s*-{3,})+\s*$/gm, "")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')

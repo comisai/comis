@@ -151,5 +151,9 @@ export const rig = {
   service: pick(process.env.SERVICE, fileVars.SERVICE, "comis"),
   gwPort: Number(pick(process.env.GW_PORT, fileVars.GW_PORT, "4766")),
   emuDir: pick(process.env.EMU_DIR, fileVars.EMU_DIR, isLocal ? repoRoot : "/root/comis-emu"),
-  emuWiringPath: pick(process.env.EMU_JSON, fileVars.EMU_JSON, "/tmp/comis-emu.json"),
+  emuWiringPath: pick(
+    process.env.EMU_JSON,
+    fileVars.EMU_JSON,
+    isLocal ? `${dataDir}/emulator-wiring.json` : "/tmp/comis-emu.json",
+  ),
 };

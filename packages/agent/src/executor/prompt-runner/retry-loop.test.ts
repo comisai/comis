@@ -448,6 +448,35 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(calls.some((c) => c[1].reason === "continuation_nudge")).toBe(true);
   });
 
+  it("caller cancellation suppresses continuation recovery after the aborted model settles", async () => {
+    const controller = new AbortController();
+    vi.mocked(runWithModelRetry).mockImplementation(async () => {
+      controller.abort();
+      return { succeeded: true };
+    });
+    const { params, emit } = makeDispatchParams([], "", "c-caller-aborted");
+    params.executionOverrides = {
+      operationType: "interactive",
+      signal: controller.signal,
+    };
+    (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
+      llmCalls: 1,
+      stepsExecuted: 0,
+      textEmitted: false,
+      finishReason: "stop",
+      lastLlmErrorMessage: undefined,
+    });
+    (params.session.getLastAssistantText as ReturnType<typeof vi.fn>).mockReturnValue("");
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    expect(params.session.prompt).not.toHaveBeenCalled();
+    expect(
+      emit.mock.calls.filter((call) => call[0] === "execution:recovery_attempted"),
+    ).toHaveLength(0);
+    expect(outcome.promptSucceeded).toBe(false);
+  });
+
   it("does not retry after a continuation opens a safety circuit", async () => {
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
     const { params } = makeDispatchParams([], "network failure", "c-continuation-abort");
