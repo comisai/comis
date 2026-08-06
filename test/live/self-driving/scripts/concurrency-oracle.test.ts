@@ -129,6 +129,25 @@ describe("burst trajectory selection — continuing relationships stay scoped", 
       "burst-b",
     ]);
   });
+
+  it("falls back to prompt-submitted identities when a fresh trajectory has no queue events", () => {
+    const records = [
+      trajectoryRecord("fresh-a", "2026-08-06T10:00:00.200Z", "prompt.submitted"),
+      trajectoryRecord("fresh-a", "2026-08-06T10:00:04.000Z", "session.summary"),
+      trajectoryRecord("fresh-b", "2026-08-06T10:00:04.100Z", "prompt.submitted"),
+      trajectoryRecord("fresh-b", "2026-08-06T10:00:08.000Z", "session.summary"),
+    ];
+
+    const selected = selectBurstTrajectoryRecords(records, {
+      fromMs: Date.parse("2026-08-06T10:00:00.000Z"),
+      expectedTraceCount: 2,
+    });
+
+    expect([...new Set(selected.map((record) => record.traceId))]).toEqual([
+      "fresh-a",
+      "fresh-b",
+    ]);
+  });
 });
 
 describe("burst transcript selection — provenance ledgers are not conversations", () => {
