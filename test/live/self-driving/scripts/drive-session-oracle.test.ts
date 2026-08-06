@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   findTelegramConversationWireAnswer,
+  isDriveProgressText,
   normalizedInboundTextError,
   outboundVisibleText,
   reconcileAssistantSurfaces,
@@ -182,5 +183,52 @@ describe("drive group conversation correlation", () => {
       1,
       6000999,
     )).toBeNull();
+  });
+});
+
+describe("drive progress classification", () => {
+  // A leading ✓/❌ marks the background-task progress frame, but the agent also
+  // OPENS real answers with one — its Hebrew acknowledgement style is
+  // "✓ <b>הובן.</b> …". Classifying those as progress made drive.mjs discard the
+  // answer, wait out its whole window, and report "[NO SUBSTANTIVE ANSWER]" for
+  // a turn the wire shows was answered correctly.
+  //
+  // Measured live on comis-moshe (2026-08-06): corpus rows 3, 4 and 6 each
+  // delivered a real reply (emulator messages 286/288/292) while the drive
+  // recorded a silent drop — three FALSE FAILURES against Track A's
+  // "none silently dropped" predicate. A false failure costs a campaign exactly
+  // what a false success does.
+  it("treats a plain marker-led status frame as progress regardless of length", () => {
+    expect(isDriveProgressText("✓ done")).toBe(true);
+    expect(isDriveProgressText("❌ managing skills")).toBe(true);
+    // Longer than several real answers — length cannot be the discriminator.
+    expect(isDriveProgressText("❌ dependency — a step failed outside the tool timeline")).toBe(true);
+    expect(isDriveProgressText("🔧 web_search")).toBe(true);
+    expect(isDriveProgressText("⏳ working")).toBe(true);
+  });
+
+  it("treats a marker-led SUBSTANTIVE answer as the answer, not progress", () => {
+    expect(
+      isDriveProgressText("✓ <b>נכון.</b> משה — מנהל צי. נצר — עוזר אישי לניהול הצי. אנחנו גם יחד. 👍 מה צריך?"),
+    ).toBe(false);
+    expect(
+      isDriveProgressText("✓ <b>הובן.</b> עוזר אישי למשה, מנהל צי 162 רכבים. קצר, תכליתי, בעברית. מוכן. 👍"),
+    ).toBe(false);
+    expect(
+      isDriveProgressText("✓ <b>הובן.</b> משה — רם-און, ישראל, עברית. זה תואם לפרופיל שלך. 👍"),
+    ).toBe(false);
+  });
+
+  it("still classifies the non-marker progress shapes as progress", () => {
+    expect(isDriveProgressText("")).toBe(true);
+    expect(isDriveProgressText("[ ] step one")).toBe(true);
+    expect(isDriveProgressText("(step 2 of 5)")).toBe(true);
+    expect(isDriveProgressText("reading ~/notes")).toBe(true);
+    expect(isDriveProgressText("Approved: deploy")).toBe(true);
+  });
+
+  it("keeps a plain substantive answer classified as an answer", () => {
+    expect(isDriveProgressText('לא ברור. מה זה "לשיקולך"?')).toBe(false);
+    expect(isDriveProgressText("<b>צריך URL עם commit SHA.</b> ה-xlsx skill כבר זמינה לך")).toBe(false);
   });
 });
