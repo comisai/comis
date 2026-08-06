@@ -242,11 +242,14 @@ export function scoreSdkSteeringBurst({
       },
     };
     wireReport = wireReconciliation({ wire, bindings: baseAttribution.bindings });
-    if (disposition === "steer_injected" && wireReport.rawSubstantiveOutbound !== 1) {
+    const scopedDispatches = trajectoryRecords.filter(
+      (record) => record?.type === "delivery.dispatched",
+    ).length;
+    if (disposition === "steer_injected" && scopedDispatches !== 1) {
       attribution.violations.push(hardViolation(
         "unexpected-steering-delivery",
-        "an injected steer must produce one combined substantive delivery; "
-          + `observed ${wireReport.rawSubstantiveOutbound}`,
+        "an injected steer must produce one scoped delivery dispatch; "
+          + `observed ${scopedDispatches}`,
       ));
     }
   }
