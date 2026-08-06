@@ -302,6 +302,8 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
   it("withholds asynchronous spawning from a cron agent turn while preserving inline tools", async () => {
     const customTools = [
       makeTool("sessions_spawn", "Spawn background work"),
+      makeTool("message", "Send to the current endpoint"),
+      makeTool("notify_user", "Send a proactive notification"),
       makeTool("web_search", "Search current sources"),
     ] as unknown[];
     const cronMessage = {

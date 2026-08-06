@@ -149,6 +149,7 @@ describe("buildInboundMetadataSection", () => {
     expect(joined).toMatch(/complete.*this execution/iu);
     expect(joined).toMatch(/do not.*background/iu);
     expect(joined).toMatch(/do not promise.*later/iu);
+    expect(joined).toMatch(/do not use.*notification tools/iu);
     expect(joined).not.toContain("SCHEDULED REMINDER");
   });
 
