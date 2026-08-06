@@ -1648,6 +1648,20 @@ describe("assembleIncidentReport — recovery attempts", () => {
     });
   });
 
+  it("includes successful signed replay recovery in the report", () => {
+    const signals = toIncidentSignals([
+      { traceSchema: "comis-trajectory", type: "execution.recovery_attempted", seq: 1, sessionKey: SESSION_KEY, data: { reason: "continuation_nudge", succeeded: false } },
+      { traceSchema: "comis-trajectory", type: "execution.replay_recovered", seq: 2, sessionKey: SESSION_KEY, data: { blocksRemoved: 6, thoughtSignaturesStripped: 0, succeeded: true } },
+    ]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 2);
+
+    expect(report.recoveries).toEqual({
+      total: 2,
+      succeeded: 1,
+      byReason: { continuation_nudge: 1, signed_replay: 1 },
+    });
+  });
+
   it("omits recoveries when the trajectory carries none", () => {
     const report = assembleIncidentReport(toIncidentSignals([]), makeMetadata(), null, SESSION_KEY, 0);
     expect(report.recoveries).toBeUndefined();
