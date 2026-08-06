@@ -135,6 +135,17 @@ describe("sudo-aware live rig transport", () => {
     expect(emulatorSource).toContain("tar --no-xattrs");
   });
 
+  it("revalidates a non-empty gateway token against the selected local rig", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    expect(source).toMatch(
+      /if \[ -n "\$\{GWTOKEN:-\}" \]; then[\s\S]*?if rig_is_local; then[\s\S]*?curl[\s\S]*?127\.0\.0\.1:\$\{GW_PORT:-4766\}\/health/,
+    );
+    expect(source).toContain(
+      "the selected GWTOKEN did not authenticate against the local rig — re-fetching from its encrypted store",
+    );
+  });
+
   it("uses service-none mode when a deployed build must remain stopped", () => {
     const source = readFileSync(INSTALL_VPS, "utf8");
 
