@@ -27,6 +27,7 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 import { isVisibleTextBlock } from "./phase-filter.js";
 import { isCompletionClaim } from "./critic-isolation.js";
+import { assertsUnbackedRunIdentifier } from "./fabricated-run-identifier.js";
 
 // ---------------------------------------------------------------------------
 // Current-turn delegation evidence
@@ -180,6 +181,24 @@ export function enforceCurrentTurnDelegationEvidence(params: {
 }): DelegationEvidenceGuardResult {
   if (params.runtimeCompletion === true) {
     return { response: params.response, corrected: false };
+  }
+  // A run identifier asserted by an execution that ran NO tool is invented:
+  // there was neither a spawn receipt nor a lookup to learn one from, so the
+  // reply hands the requester a tracking id for work that does not exist.
+  // Structural, so it runs BEFORE the request-phrase gate below — that gate
+  // fires only when the user asked for another worker, which by construction
+  // never covers an UNSOLICITED dispatch claim, the most misleading case of all.
+  if (
+    assertsUnbackedRunIdentifier({
+      response: params.response,
+      toolCallCount: (params.toolExecResults ?? []).length,
+    })
+  ) {
+    return {
+      response: params.honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_spawn",
+    };
   }
   const request = normalizedEvidenceText(params.request);
   const requested = containsUnnegatedEvidencePhrase(
