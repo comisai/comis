@@ -44,6 +44,15 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     expect(description).toMatch(/correction.*store.*new current fact/isu);
     expect(description).toMatch(/do not.*(?:forget|delete).*unless.*explicitly asks/isu);
   });
+
+  it("requires fetching before answering about a supplied URL", () => {
+    const description = LEAN_TOOL_DESCRIPTIONS.web_fetch;
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/supplied URL/iu);
+    expect(description).toMatch(/call.*before answering/iu);
+    expect(description).toMatch(/do not rely on prior knowledge/iu);
+  });
 });
 
 describe("TOOL_SUMMARIES", () => {
