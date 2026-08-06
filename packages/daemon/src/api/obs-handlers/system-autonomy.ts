@@ -55,7 +55,7 @@ export interface AutonomySlice {
   breakerTrips: number;
   /** The capability-DENIAL breaker trip count (event-sourced
    *  from the `autonomy_denial_breaker` rows) — SEPARABLE from `breakerTrips` (the
-   *  tool-failure breaker read-back). The two are distinct mechanisms. */
+   *  execution-failure breaker read-back). The two are distinct mechanisms. */
   denialBreakerTrips: number;
   budgetBreaches: number;
   costUsd: number;
@@ -162,7 +162,7 @@ export function computeAutonomySlice(input: {
       continue;
     }
     // The capability-denial breaker trip — SEPARABLE from
-    // both the tool-failure breaker (breakerTrips read-back) and kill/revoke. Each
+    // both the execution-failure breaker (breakerTrips read-back) and kill/revoke. Each
     // row is one trip (the count defaults to 1); the worst-run pick CAN promote it
     // (rank 3, above killed) since a denial-breaker abort is a robustness fault.
     const denial = autonomyDenialBreakerFromRow(row);
@@ -289,7 +289,7 @@ export function buildAutonomyFindings(healthSignals: readonly DiagnosticRow[]): 
   // autonomy_denial_breaker — the SUM of the per-row
   // denial-breaker trip counts (the capability-denial breaker aborted +
   // killed a run tree after N consecutive floor-blocks). DISTINCT from the
-  // tool-failure breaker (breakerTripTotal) and from kill/revoke — this is the
+  // execution-failure breaker (breakerTripTotal) and from kill/revoke — this is the
   // capability-denial breaker, the only system-visible signal that an unattended run
   // burned its denial budget in a deny loop. Counts + a STATIC hint naming the knob
   // (autonomy.denialBreakerN) + `comis explain <rootRunId>` ONLY — never the

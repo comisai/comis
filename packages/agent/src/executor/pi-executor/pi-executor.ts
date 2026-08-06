@@ -2571,6 +2571,14 @@ async function runSessionLocked(
       ? { memoryScope: { turnScope: executionTurnScope, visibility: { kind: "conversation" } as const } }
       : {}),
     onAbort: () => {
+      // The SDK evaluates retry and auto-compaction eligibility after it emits
+      // the failing turn. Disable both on this per-execution settings view so
+      // a safety abort cannot schedule new provider work after the abort hook
+      // runs. applyOverrides is in-memory and does not persist this state.
+      settingsManager.applyOverrides({
+        retry: { enabled: false },
+        compaction: { enabled: false },
+      });
       session.abortCompaction();
       suppressError(session.abort(), "session abort on compaction cancel");
     },

@@ -334,6 +334,15 @@ async function detectSilentFailure(
         "Continuation turn failed; falling through to retry recovery",
       );
     }
+
+    // The continuation is a real provider turn and can trip a safety control.
+    // Re-read the bridge after it settles instead of classifying the stale
+    // pre-continuation snapshot and starting another recovery attempt.
+    if (params.bridge.getResult().abortResponse !== undefined) {
+      retryState.promptSucceeded = true;
+      retryState.promptError = undefined;
+      return true;
+    }
   }
 
   if (!silent02Recovered && !silentRetryAttempted) {

@@ -195,7 +195,6 @@ export {
   OverflowPolicySchema,
   PerChannelQueueConfigSchema,
   OverflowConfigSchema,
-  DebounceBufferConfigSchema,
   FollowupConfigSchema,
 } from "./schema-queue.js";
 export {
@@ -357,7 +356,6 @@ export type {
   QueueMode,
   OverflowPolicy,
   OverflowConfig,
-  DebounceBufferConfig,
   FollowupConfig,
   StreamingConfig,
   PerChannelStreamingConfig,

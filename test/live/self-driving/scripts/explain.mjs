@@ -11,7 +11,8 @@
 // Usage (on the box; runs fine as root OR comis):
 //   node explain.mjs <sessionKey|traceId|rootRunId> [summary|full] [--json | --learning | --failures | --budget]
 //   default (no flag) prints the curated diagnostic set: coverage, outcome, cost, likelyRootCause,
-//   perRootBudget?, failures[] (with classifiedFailureBy + matchedRule + transportOk), and the learning block.
+//   recoveries?, perRootBudget?, failures[] (with classifiedFailureBy + matchedRule + transportOk),
+//   and the learning block.
 // Operator-oracle robustness: skip the DEV-only response.parse (IS_DEV gate) so explain ALWAYS returns the
 // assembled report for diagnosis instead of throwing on a strict-validation edge. (The report is the
 // diagnosis; a schema nit is a separate test concern — IncidentReportSchema.parse runs in the unit tests.)
@@ -61,6 +62,7 @@ assembleIncidentReportFromSources(
       outcome: r.outcome,
       costUsd: r.cost ? r.cost.costUsd : undefined,
       likelyRootCause: r.likelyRootCause,
+      ...(r.recoveries ? { recoveries: r.recoveries } : {}),
       ...(r.graph ? { graph: r.graph } : {}),
       ...(r.perRootBudget ? { perRootBudget: r.perRootBudget } : {}),
     };

@@ -243,6 +243,57 @@ function buildWakeGate(params: Record<string, unknown>): Record<string, unknown>
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function boundedPreview(value: unknown): string | undefined {
+  return typeof value === "string" ? value.slice(0, 128) : undefined;
+}
+
+/** Keep model-facing schedule inventory bounded and exclude message, script, and route bodies. */
+function compactCronListResult(result: unknown): unknown {
+  if (!isRecord(result) || !Array.isArray(result.jobs)) return result;
+  const jobs = result.jobs.map((value) => {
+    if (!isRecord(value)) return { invalid: true };
+    const payload = isRecord(value.payload) ? value.payload : undefined;
+    const messagePreview = boundedPreview(payload?.message);
+    const textPreview = boundedPreview(payload?.text);
+    const payloadSummary = payload === undefined
+      ? undefined
+      : {
+          ...(typeof payload.kind === "string" ? { kind: payload.kind } : {}),
+          ...(typeof payload.action === "string" ? { action: payload.action } : {}),
+          ...(messagePreview === undefined ? {} : { messagePreview }),
+          ...(textPreview === undefined ? {} : { textPreview }),
+          ...(typeof payload.model === "string" ? { model: payload.model } : {}),
+          ...(typeof payload.timeoutSeconds === "number"
+            ? { timeoutSeconds: payload.timeoutSeconds }
+            : {}),
+        };
+    return {
+      ...(typeof value.id === "string" ? { id: value.id } : {}),
+      ...(typeof value.name === "string" ? { name: value.name } : {}),
+      ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
+      ...(typeof value.source === "string" ? { source: value.source } : {}),
+      ...(isRecord(value.schedule) ? { schedule: value.schedule } : {}),
+      ...(isRecord(value.lifecycle) ? { lifecycle: value.lifecycle } : {}),
+      ...(payloadSummary === undefined ? {} : { payload: payloadSummary }),
+      wakeGateConfigured: value.wakeGate !== undefined,
+      deliveryBound: value.deliveryTarget !== undefined,
+      ...(typeof value.continuationMode === "string"
+        ? { continuationMode: value.continuationMode }
+        : {}),
+    };
+  });
+  return {
+    ...(typeof result.resolvedAgentId === "string"
+      ? { resolvedAgentId: result.resolvedAgentId }
+      : {}),
+    jobs,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -322,7 +373,11 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
 
           case "list": {
             const result = await rpcCall("cron.list", {});
-            return jsonResult(result);
+            const compact = compactCronListResult(result);
+            return {
+              content: [{ type: "text", text: JSON.stringify(compact) }],
+              details: compact,
+            };
           }
 
           case "update": {
@@ -331,6 +386,17 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
             const paused = readBooleanParam(p, "paused", false);
             const scheduleKind = readStringParam(p, "schedule_kind", false);
             const payloadKind = readStringParam(p, "payload_kind", false);
+            const payloadText = readStringParam(p, "payload_text", false);
+            if (payloadKind === undefined && payloadText !== undefined) {
+              throwToolError(
+                "missing_param",
+                "payload_kind is required when payload_text is supplied for update",
+                {
+                  param: "payload_kind",
+                  hint: "Set payload_kind to heartbeat_event, delivery, or agent_turn so the text is applied",
+                },
+              );
+            }
             const wakeGate = buildWakeGate(p);
             const result = await rpcCall("cron.update", {
               jobName,

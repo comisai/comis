@@ -31,12 +31,29 @@ function operatorMemoryPermission(tenantId: string, agentId: string) {
   };
 }
 
+function resolveOperatorTurnScope(tenantId: string, agentId: string, operation: string) {
+  const identity = resolveInternalTurnIdentity({
+    tenantId,
+    agentId,
+    originKind: "control-plane",
+    instanceId: operation,
+    conversationId: `${operation}-${tenantId}-${agentId}`,
+    principalId: `control-plane-${operation}-${agentId}`,
+  });
+  if (!identity.ok) return err(identity.error);
+  return ok(identity.value.turnScope);
+}
+
 export function resolveRequestMemoryRecallScope(
   tenantId: string,
   agentId: string,
   includeAgentShared: boolean,
+  grantOperatorPermission = false,
 ): Result<MemoryRecallScope, Error> {
-  const turnScope = resolvedRequestTurnScope(tenantId, agentId);
+  const ambient = tryGetContext()?.turnScope;
+  const turnScope = ambient === undefined && grantOperatorPermission
+    ? resolveOperatorTurnScope(tenantId, agentId, "memory-search")
+    : resolvedRequestTurnScope(tenantId, agentId);
   if (!turnScope.ok) return turnScope;
   return createMemoryRecallScope(turnScope.value, includeAgentShared);
 }
@@ -73,17 +90,10 @@ export function resolveRequestMemoryWriteScope(
   if (!grantOperatorPermission) {
     return err(new Error("Memory operation requires resolved request authority"));
   }
-  const identity = resolveInternalTurnIdentity({
-    tenantId,
-    agentId,
-    originKind: "control-plane",
-    instanceId: "memory-store",
-    conversationId: `memory-store-${tenantId}-${agentId}`,
-    principalId: `control-plane-memory-store-${agentId}`,
-  });
-  if (!identity.ok) return err(identity.error);
+  const turnScope = resolveOperatorTurnScope(tenantId, agentId, "memory-store");
+  if (!turnScope.ok) return turnScope;
   return ok({
-    turnScope: identity.value.turnScope,
+    turnScope: turnScope.value,
     visibility,
     operatorPermission: operatorMemoryPermission(tenantId, agentId),
   });

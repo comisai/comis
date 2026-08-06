@@ -2060,6 +2060,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
 
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
+    memoryCostFeaturesEnabled: container.config.memory.enabled !== false,
     // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),

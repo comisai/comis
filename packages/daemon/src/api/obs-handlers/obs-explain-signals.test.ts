@@ -96,6 +96,26 @@ describe("attachment rejection trajectory normalization", () => {
   });
 });
 
+describe("provider breaker trajectory normalization", () => {
+  it("turns a provider circuit-breaker abort into an opened breaker timeline entry", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "execution.aborted",
+      seq: 12,
+      data: {
+        reason: "circuit_breaker",
+        provider: "test-provider",
+      },
+    }]);
+
+    expect(signals.breakerEvents).toContainEqual({
+      seq: 12,
+      event: "opened",
+      toolName: "provider:test-provider",
+    });
+  });
+});
+
 // 678 log-shaped failure: errorText carries the injection block AND a
 // `"status": 200` substring (escaped, exactly as in the fixture). The block
 // is >200 chars — matching the real fixture (~1500 chars), so a single

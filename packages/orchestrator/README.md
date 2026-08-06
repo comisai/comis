@@ -41,7 +41,7 @@ Inbound message orchestration, execution coordination, and cross-session messagi
 Per-session command serialization keeps inbound flow ordered + bounded:
 
 - **`createCommandQueue`** -- Per-session command lane.
-- **`createDebounceBuffer`** -- Coalesces near-simultaneous messages into a single execution.
+- **`createCommandQueue` collect mode** -- Coalesces pending messages into one follow-up after the configured debounce delay.
 - **`createFollowupTrigger`** -- Schedules follow-up turns after pauses.
 - **`applyOverflowPolicy`** / **`coalesceMessages`** -- Backpressure + coalescer utilities.
 

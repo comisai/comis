@@ -706,8 +706,10 @@ S10) · `ask my notes what i decided about <X>` (`memory_ask` — default-on, op
 **Predicate.** Every mutating control-plane action is admin-gated, approval-gated where destructive,
 reversible, and reflected in the config audit trail. Every media path either produces a REAL artifact on
 the wire or fails honestly naming the missing knob — never a text-only false success. The video job store
-survives a restart. `memory_ask` with the knob OFF is absent from the surface and the agent says so; with
-it ON, the answer is grounded and cited.
+survives a restart. `memory_ask` with either cost knob OFF is absent from the surface and the agent must
+not claim that the dialectic ran. The separate LLM-free recall path remains available and may still answer
+from injected or searched memories; that is not evidence that `memory_ask` leaked through the gate. With
+both knobs ON, an explicit cited-memory request invokes `memory_ask` and returns a grounded, cited answer.
 
 **Oracle.** `config.audit.list`/`config.diff`/`config.rollback`; `RecordedOutbound.mediaKind` on
 `…/outbound` (a media-only turn prints `[NO SUBSTANTIVE ANSWER]` — read the outbound, not the text
@@ -1136,7 +1138,7 @@ TRADEOFF (recommend, don't flip) · DEAD.
 
 | knob | shipped default | the arc that puts it under evidence | what to measure |
 |---|---|---|---|
-| `queue.debounceBuffer.windowMs` | **0 — disabled** (`firstMessageImmediate` true, `maxBufferedMessages` 10) | A12 / B1 — the 3-message burst, the single most characteristic real-user behaviour | How many TURNS a 2–4 message burst produces, and whether the agent answers the first fragment before the thought is finished. Coalescing is off out of the box, so the canonical phone-typing pattern is un-debounced by default. If a burst yields a confused partial answer plus a second turn, say so with the turn count. |
+| `queue.defaultDebounceMs` | **0 — disabled**; applies to pending messages only when queue mode is `collect` | A12 / B1 — the 3-message burst, the single most characteristic real-user behaviour | How many TURNS a 2–4 message burst produces, and whether the agent answers the first fragment before the thought is finished. Coalescing is off out of the box, so the canonical phone-typing pattern is un-debounced by default. For the polarity, use `collect` plus a bounded nonzero delay: the first message starts immediately and later fragments coalesce into one follow-up. |
 | `queue.defaultMode` | `steer+followup` | A9 / B1 — interruption mid-work | Whether the mid-turn message preserved progress or discarded it, and whether the user could TELL which happened. A correct steer that reads as a dropped message is EXPERIENCE-WRONG. |
 | `backgroundTasks.autoBackgroundMs` | 10000 | B1 — "just ping me when its done" | The gap between the ack and the real completion. A tool promoted at 10s that finishes at 12s produces an ack the user did not need; a 4-minute job that never acks produces silence. Report both tails you actually saw. |
 | `backgroundTasks.maxBackgroundDurationMs` · `maxPerAgent` · `maxBackgroundHops` | 300000 · 5 · 3 | B1 — the slow job, six concurrent asks, the install→generate→send chain | Whether a legitimately long job hits the 5-minute wall, whether the 6th ask degrades honestly, and whether a normal multi-step sequence exhausts 3 hops. |

@@ -1,21 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `toIncidentSignals` — the dual-shape normalizer.
- *
- * Collapses two on-disk telemetry record shapes into one `IncidentSignals` view
- * the assembler + heuristic registry consume: the LOG shape (raw Pino lines —
- * no `traceSchema`, keyed on `msg`, detail from
- * `errorText`/`httpStatus`/`errorKind`) and the EVENT shape (structured
- * trajectory events — `traceSchema:"comis-trajectory"`, keyed on
- * `type`, detail from `data`).
- *
- * SECURITY (depth-independent): raw bodies are NEVER inlined — `errorPreview` is
- * the ReDoS-pre-bounded `sanitizeLogString(...).slice(0, MAX_ERROR_PREVIEW)` and
- * the full body is captured only by `resultDigest = fingerprint(...)`; an offload
- * `diskPath` is relativized (the absolute host path is never emitted). The
- * misclassification signal derives from LOG EVIDENCE ONLY (zero
- * `classifiedFailureBy` reads — the field is absent in the log shape).
- *
+ * Normalizes raw log and structured trajectory records into `IncidentSignals`.
+ * Raw bodies never enter reports: previews are bounded and sanitized, full
+ * results become digests, and offload paths are relative. Misclassification is
+ * derived only from evidence shared by the two shapes.
  * @module
  */
 import { fingerprint, type IncidentSignals } from "@comis/core";
@@ -564,6 +552,14 @@ function handleEventRecord(
       // sessionEnd rollup, so the spend-verdict can fire + name the limb.
       const reason = asString(data.reason);
       if (reason !== undefined && reason.length > 0) acc.abortReason = reason;
+      if (reason === "circuit_breaker") {
+        const provider = asString(data.provider);
+        acc.breakerEvents.push({
+          seq: asNumber(rec.seq) ?? acc.seq++,
+          event: "opened",
+          toolName: provider === undefined ? "provider" : `provider:${provider}`,
+        });
+      }
       const prb = (data as { perRootBudget?: Record<string, unknown> }).perRootBudget;
       if (prb && typeof prb === "object") {
         const limb = asString(prb.limb);

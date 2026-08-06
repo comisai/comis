@@ -650,12 +650,14 @@ export interface MessagingEvents {
    *  `denial_breaker` is the denial-limit breaker abort —
    *  N consecutive floor-blocks tripped the per-rootRunId breaker, so the run
    *  aborts + escalates instead of retry-looping (the "never loop" guarantee).
-   *  Distinct from `circuit_breaker`, which is the TOOL-FAILURE breaker
-   *  (provider cascade) — this is the CAPABILITY-DENIAL breaker. */
+   *  Distinct from `circuit_breaker`, which is the model-provider failure
+   *  breaker — this is the CAPABILITY-DENIAL breaker. */
   "execution:aborted": {
     sessionKey: SessionKey;
     reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
     agentId: string;
+    /** Model provider whose request failures opened the circuit breaker. */
+    provider?: string;
     timestamp: number;
     /** On a per-ROOT autonomy.budget abort, the exact tripped limb + its
      *  numbers in their own unit (token/wall-clock breaches carry tokens/ms, NOT
@@ -759,7 +761,9 @@ export interface MessagingEvents {
    *  `unrecovered_tool_failure_completion_claim` (affirmative completion prose
    *  contradicted the recovery-aware failed-tool inventory).
    *  `missing_scheduler_state_evidence` means affirmative reminder state was
-   *  replaced because no current-turn scheduler receipt supported it.
+   *  replaced because no current-turn scheduler receipt supported it;
+   *  `pending_scheduler_confirmation` means a gated removal stopped before
+   *  mutation and an overclaim was replaced with a neutral confirmation ask.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -776,7 +780,9 @@ export interface MessagingEvents {
       | "sender_authority_grounding"
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
+      | "missing_runtime_self_report_evidence"
       | "missing_scheduler_state_evidence"
+      | "pending_scheduler_confirmation"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;

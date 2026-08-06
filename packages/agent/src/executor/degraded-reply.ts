@@ -36,7 +36,9 @@ import {
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
   selectOngoingWorkEvidenceMissingReply,
+  selectRuntimeSelfReportEvidenceMissingReply,
   selectSchedulerStateEvidenceMissingReply,
+  selectPendingSchedulerConfirmationReply,
   selectCompletionEvidenceMissingReply,
   selectSenderAuthorityOverclaimReply,
   selectVisionUnavailableReply,
@@ -253,12 +255,28 @@ export function buildOngoingWorkEvidenceMissingReply(
   return selectOngoingWorkEvidenceMissingReply(language, localeCatalog);
 }
 
+/** Honest replacement when runtime self-report evidence is unavailable. */
+export function buildRuntimeSelfReportEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectRuntimeSelfReportEvidenceMissingReply(language, localeCatalog);
+}
+
 /** Honest replacement when no current scheduler receipt supports a state claim. */
 export function buildSchedulerStateEvidenceMissingReply(
   language?: string,
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectSchedulerStateEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Neutral confirmation request after a gated scheduler removal stops before mutation. */
+export function buildPendingSchedulerConfirmationReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectPendingSchedulerConfirmationReply(language, localeCatalog);
 }
 
 /** Honest replacement when unrecovered tool evidence contradicts a completion claim. */

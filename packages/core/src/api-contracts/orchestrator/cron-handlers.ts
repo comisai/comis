@@ -237,6 +237,19 @@ export const CronUpdateContract = defineContract({
     paused: z.boolean().optional(),
   }).refine((value) => value.jobId !== undefined || value.jobName !== undefined, {
     message: "jobId or jobName is required",
+  }).refine((value) =>
+    value.name !== undefined
+    || value.schedule !== undefined
+    || value.payload !== undefined
+    || value.sessionPolicy !== undefined
+    || value.continuationMode !== undefined
+    || value.deliveryTarget !== undefined
+    || value.wakeGate !== undefined
+    || value.cacheRetention !== undefined
+    || value.toolPolicy !== undefined
+    || value.maxConsecutiveDependencyErrors !== undefined
+    || value.paused !== undefined, {
+    message: "at least one update field is required",
   }),
   response: z.strictObject({
     jobName: z.string(),

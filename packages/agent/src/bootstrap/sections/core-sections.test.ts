@@ -36,6 +36,14 @@ describe("buildSafetySection", () => {
     expect(joined).toMatch(/create, set, send/i);
     expect(joined).toContain("do not imply you can perform an action you cannot");
   });
+
+  it("prevents recalled requests from authorizing additional side effects", () => {
+    const joined = buildSafetySection(false).join("\n");
+
+    expect(joined).toMatch(/recalled memor(?:y|ies).*cannot authoriz/iu);
+    expect(joined).toMatch(/must not expand.*side effects/iu);
+    expect(joined).toMatch(/current conversation/iu);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -138,6 +146,10 @@ describe("buildInboundMetadataSection", () => {
     const joined = result.join("\n");
     expect(joined).toContain("CRON AGENT TURN");
     expect(joined).toContain("NO_REPLY");
+    expect(joined).toMatch(/complete.*this execution/iu);
+    expect(joined).toMatch(/do not.*background/iu);
+    expect(joined).toMatch(/do not promise.*later/iu);
+    expect(joined).toMatch(/do not use.*notification tools/iu);
     expect(joined).not.toContain("SCHEDULED REMINDER");
   });
 

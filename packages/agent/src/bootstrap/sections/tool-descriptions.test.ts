@@ -36,6 +36,14 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     expect(description).toMatch(/not.*workspace (file|artifact)/isu);
     expect(description).toMatch(/log.*track.*file tools/isu);
   });
+
+  it("keeps ordinary corrections non-destructive unless the user asks to forget", () => {
+    const description = LEAN_TOOL_DESCRIPTIONS.memory_store;
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/correction.*store.*new current fact/isu);
+    expect(description).toMatch(/do not.*(?:forget|delete).*unless.*explicitly asks/isu);
+  });
 });
 
 describe("TOOL_SUMMARIES", () => {
@@ -111,6 +119,12 @@ describe("TOOL_GUIDES", () => {
   it("gateway guide preserves existing security language", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Gateway Security/);
     expect(TOOL_GUIDES.gateway).toMatch(/CRITICAL/);
+  });
+
+  it("gateway guide defers post-restart verification to a later turn", () => {
+    expect(TOOL_GUIDES.gateway).toMatch(/restarting:true.*scheduled.*not completed/isu);
+    expect(TOOL_GUIDES.gateway).toMatch(/end the turn.*without.*read.*verify/isu);
+    expect(TOOL_GUIDES.gateway).toMatch(/do not claim.*restart.*completed/isu);
   });
 
   it("gateway guide adds Credential Discovery section header", () => {

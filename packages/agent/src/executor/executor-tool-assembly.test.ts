@@ -299,6 +299,30 @@ describe("assembleTools — per-request tool merging with deps.customTools", () 
     expect(result.mergedCustomTools.length).toBeGreaterThan(0);
   });
 
+  it("withholds asynchronous spawning from a cron agent turn while preserving inline tools", async () => {
+    const customTools = [
+      makeTool("sessions_spawn", "Spawn background work"),
+      makeTool("message", "Send to the current endpoint"),
+      makeTool("notify_user", "Send a proactive notification"),
+      makeTool("web_search", "Search current sources"),
+    ] as unknown[];
+    const cronMessage = {
+      ...makeMsg(),
+      metadata: { isCronAgentTurn: true },
+    };
+
+    await assembleTools(makeParams({
+      deps: makeDeps({ customTools: customTools as never }),
+      msg: cronMessage as never,
+    }));
+
+    const promptTools = mocks.assembleExecutionPromptMock.mock.calls[0]?.[0]
+      ?.mergedCustomTools as Array<{ name: string }>;
+    const executableTools = mocks.applyToolDeferralMock.mock.calls[0]?.[0] as Array<{ name: string }>;
+    expect(promptTools.map((tool) => tool.name)).toEqual(["web_search"]);
+    expect(executableTools.map((tool) => tool.name)).toEqual(["web_search"]);
+  });
+
   it("places immutable operator tool notes on the MCP management schema", async () => {
     const operatorToolNotes = [
       "# Connection candidates",

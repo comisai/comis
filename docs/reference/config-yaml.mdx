@@ -1508,7 +1508,7 @@ Command queue for session serialization and concurrency control.
 | `maxConcurrentSessions` | `number` | `10` | Max concurrent agent executions globally |
 | `cleanupIdleMs` | `number` | `600000` | Idle lane garbage collection interval (10 min) |
 | `defaultMode` | `enum` | `"steer+followup"` | Default queue mode: `followup`, `collect`, `steer`, `steer+followup` |
-| `defaultDebounceMs` | `number` | `0` | Default debounce delay in ms |
+| `defaultDebounceMs` | `number` | `0` | Delay before collected pending messages run; applies only in `collect` mode, after the first message starts immediately |
 
 **Default Overflow (queue.defaultOverflow)**
 
@@ -1524,16 +1524,6 @@ Command queue for session serialization and concurrency control.
 | `mode` | `enum` | `"steer+followup"` | Queue mode for this channel |
 | `overflow` | `OverflowConfig` | _(inherit defaults)_ | Overflow settings |
 | `debounceMs` | `number` | `0` | Debounce delay in ms |
-
-**Debounce Buffer (queue.debounce)**
-
-Ingress-layer message coalescing before queue entry.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `windowMs` | `number` | `0` | Debounce window in ms (0 = disabled) |
-| `maxBufferedMessages` | `number` | `10` | Max messages to buffer per session |
-| `firstMessageImmediate` | `boolean` | `true` | First message triggers immediately |
 
 **Follow-up (queue.followup)**
 

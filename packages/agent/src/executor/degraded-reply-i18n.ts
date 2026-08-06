@@ -31,7 +31,9 @@ export type LocaleMessageId =
   | "provider_requires_model"
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
+  | "runtime_self_report_evidence_missing"
   | "scheduler_state_evidence_missing"
+  | "pending_scheduler_confirmation"
   | "completion_evidence_missing"
   | "sender_authority_overclaim"
   | "vision_unavailable"
@@ -99,9 +101,14 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   ongoing_work_evidence_missing:
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
+  runtime_self_report_evidence_missing:
+    "I could not verify my runtime activity in this turn. Work counts, failure causes, and cost "
+      + "require a current observability report, so I cannot provide those claims yet.",
   scheduler_state_evidence_missing:
     "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
       + "say that it is set. I need to check the scheduler before confirming it.",
+  pending_scheduler_confirmation:
+    "Please confirm that you want me to remove the scheduled job. Nothing has been removed yet.",
   completion_evidence_missing:
     "I could not verify the request as complete because one or more tool steps still failed. "
       + "Treat the result below as partial; any completion claim in it is unverified.",
@@ -400,12 +407,28 @@ export function selectOngoingWorkEvidenceMissingReply(
   return catalog.resolve(locale, "ongoing_work_evidence_missing");
 }
 
+/** Honest replacement when a runtime self-report lacks current observability evidence. */
+export function selectRuntimeSelfReportEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "runtime_self_report_evidence_missing");
+}
+
 /** Honest replacement when current scheduler state lacks a current-turn receipt. */
 export function selectSchedulerStateEvidenceMissingReply(
   locale: string | undefined,
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "scheduler_state_evidence_missing");
+}
+
+/** Neutral confirmation request after a gated scheduler removal stops before mutation. */
+export function selectPendingSchedulerConfirmationReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "pending_scheduler_confirmation");
 }
 
 /** Honest replacement when affirmative completion prose contradicts failed tool evidence. */

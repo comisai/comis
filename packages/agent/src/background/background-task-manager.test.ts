@@ -538,6 +538,29 @@ describe("BackgroundTaskManager", () => {
       expect(newResult.ok).toBe(true);
     });
 
+    it("redacts secret fields before persisting a background completion", () => {
+      const result = manager.promote(
+        "credential_tool",
+        new Promise(() => {}),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      if (!result.ok) throw result.error;
+      const mintedSecret = "A".repeat(64);
+
+      manager.complete(result.value, {
+        content: [{ type: "text", text: JSON.stringify({ secret: mintedSecret }) }],
+        details: { secret: mintedSecret },
+      });
+
+      const liveTask = manager.getTask(result.value);
+      const persistedTask = loadTask(dataDir, "agent-1", result.value);
+      expect(liveTask?.result).not.toContain(mintedSecret);
+      expect(persistedTask?.result).not.toContain(mintedSecret);
+      expect(liveTask?.result).toContain("[REDACTED]");
+      expect(persistedTask?.result).toContain("[REDACTED]");
+    });
+
     it("emits background_task:completed event", () => {
       const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;

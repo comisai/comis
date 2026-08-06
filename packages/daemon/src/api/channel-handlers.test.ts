@@ -48,6 +48,12 @@ function makeDeps(overrides?: Partial<ChannelHandlerDeps>): ChannelHandlerDeps {
   };
 }
 
+function makeDepsWithDisableFallback(overrides?: Partial<ChannelHandlerDeps>): ChannelHandlerDeps {
+  const deps = makeDeps(overrides);
+  deps.adaptersByType.set("discord", makeMockAdapter({ channelId: "discord-123" }));
+  return deps;
+}
+
 function makePersistDeps(): PersistToConfigDeps {
   return {
     container: {
@@ -285,6 +291,21 @@ describe("createChannelHandlers - channel management", () => {
   // -------------------------------------------------------------------------
 
   describe("channels.disable", () => {
+    it("refuses to stop the last running channel before any side effect", async () => {
+      const adapter = makeMockAdapter();
+      const adaptersByType = new Map([["telegram", adapter]]);
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ adaptersByType, persistDeps });
+      const handlers = createChannelHandlers(deps);
+
+      await expect(
+        handlers["channels.disable"]!({ channel_type: "telegram", _trustLevel: "admin" }),
+      ).rejects.toThrow(/last running channel/iu);
+
+      expect(adapter.stop).not.toHaveBeenCalled();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
     it("rejects channels.disable without admin trust level", async () => {
       const deps = makeDeps();
       const handlers = createChannelHandlers(deps);
@@ -304,7 +325,7 @@ describe("createChannelHandlers - channel management", () => {
     });
 
     it("calls adapter.stop() and returns success", async () => {
-      const deps = makeDeps();
+      const deps = makeDepsWithDisableFallback();
       const handlers = createChannelHandlers(deps);
 
       const result = (await handlers["channels.disable"]!({
@@ -336,6 +357,7 @@ describe("createChannelHandlers - channel management", () => {
       const adapter = makeMockAdapter({ stop: failStop });
       const adaptersByType = new Map();
       adaptersByType.set("telegram", adapter);
+      adaptersByType.set("discord", makeMockAdapter({ channelId: "discord-123" }));
 
       const deps = makeDeps({ adaptersByType });
       const handlers = createChannelHandlers(deps);
@@ -442,7 +464,7 @@ describe("createChannelHandlers - channel management", () => {
 
     it("channels.disable calls persistToConfig with enabled: false patch", async () => {
       const persistDeps = makePersistDeps();
-      const deps = makeDeps({ persistDeps });
+      const deps = makeDepsWithDisableFallback({ persistDeps });
       const handlers = createChannelHandlers(deps);
 
       await handlers["channels.disable"]!({ channel_type: "telegram", _trustLevel: "admin" });
@@ -686,7 +708,7 @@ describe("createChannelHandlers - channel management", () => {
         removeAdapter: vi.fn(),
       };
 
-      const deps = makeDeps({ healthMonitor: mockHealthMonitor as never });
+      const deps = makeDepsWithDisableFallback({ healthMonitor: mockHealthMonitor as never });
       const handlers = createChannelHandlers(deps);
 
       await handlers["channels.disable"]!({ channel_type: "telegram", _trustLevel: "admin" });
@@ -708,7 +730,7 @@ describe("createChannelHandlers - channel management", () => {
     });
 
     it("channels.disable works without healthMonitor (no removeAdapter call)", async () => {
-      const deps = makeDeps(); // no healthMonitor
+      const deps = makeDepsWithDisableFallback(); // no healthMonitor
       const handlers = createChannelHandlers(deps);
 
       const result = (await handlers["channels.disable"]!({

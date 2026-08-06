@@ -120,10 +120,63 @@ export interface OngoingWorkEvidenceGuardResult {
   reason?: "missing_ongoing_work_evidence";
 }
 
+export interface RuntimeSelfReportEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_runtime_self_report_evidence";
+}
+
+const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
+  /\bwhat (?:did|have) (?:you|u) (?:even )?(?:do|done)\b/iu,
+  /\bwhat (?:have (?:you|u)|did (?:you|u)) (?:actually )?(?:accomplish(?:ed)?|work(?:ed)? on)\b/iu,
+  /\bhow much (?:(?:have|did) )?(?:you|u) cost(?: me| us)?\b/iu,
+  /\bwhy (?:were|are) (?:you|u) (?:so )?(?:slow|expensive)\b/iu,
+  /\bwhy was (?:that|this|it) so slow\b/iu,
+  /\bhow many\b[^?\n]{0,80}\b(?:did|have) (?:you|u)\b/iu,
+  /\b(?:cost|total)\b[^?\n]{0,100}\bbecause\b[^?\n]{0,80}\b(?:was|were) down\b[^?\n]{0,30}\b(?:right|correct|yeah)\b/iu,
+  /\b(?:you|u) only (?:did|used)\b[^?\n]{0,80}\b(?:turns?|calls?|tokens?|sessions?)\b[^?\n]{0,100}\b(?:confirm|right|correct|yeah)\b/iu,
+  /\b(?:slowness|latency|delay)\b[^?\n]{0,160}\b(?:cost|total)\b[^?\n]{0,60}\b(?:right|correct|confirm|yeah)\b/iu,
+];
+
+/** Whether the user explicitly asks the agent to report its own runtime activity. */
+export function isRuntimeSelfReportRequest(request: string): boolean {
+  return RUNTIME_SELF_REPORT_REQUEST_PATTERNS.some((pattern) => pattern.test(request));
+}
+
+/**
+ * Require a successful current-turn observability receipt for runtime work,
+ * cause, count, or spend reports. Conversation history records prior prose,
+ * not the authoritative diagnostic or billing state.
+ */
+export function enforceRuntimeSelfReportEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+  }>;
+  honestResponse: string;
+}): RuntimeSelfReportEvidenceGuardResult {
+  if (!isRuntimeSelfReportRequest(params.request)) {
+    return { response: params.response, corrected: false };
+  }
+  const hasEvidence = (params.toolExecResults ?? []).some(
+    (result) => result.toolName === "obs_query" && result.success,
+  );
+  if (hasEvidence || params.response === params.honestResponse) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_runtime_self_report_evidence",
+  };
+}
+
 export interface SchedulerStateEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_scheduler_state_evidence";
+  reason?: "missing_scheduler_state_evidence" | "pending_scheduler_confirmation";
 }
 
 const SCHEDULER_STATE_SUBJECTS = [
@@ -162,6 +215,14 @@ const SCHEDULER_STATE_PREDICATES = [
 
 const SCHEDULER_STATE_TERMINATORS = [" ", ".", ",", "!", "?", ":", ";", "—", "-"];
 
+const SCHEDULER_MUTATION_CONFIRMATION = /\b(?:confirmed|updated|done|scheduled|set)\b/u;
+const SCHEDULER_DIRECT_CONFIRMATION = /\b(?:confirmed|updated|scheduled|set)\b/u;
+const SCHEDULER_FUTURE_BEHAVIOR =
+  /\b(?:will\s+)?(?:not\s+)?(?:run(?:s|ning)?|fir(?:e|es|ing)|send(?:s|ing)?|deliver(?:s|ing)?|skip(?:s|ping)?)\b(?!\s+(?:are|were)\b)/u;
+const SCHEDULER_TEMPORAL_CONTEXT =
+  /\b(?:hourly|daily|weekly|monthly|weekdays?|weekends?|holidays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}:\d{2}\b|\b(?:a\.?m\.?|p\.?m\.?)\b/u;
+const SCHEDULER_POLICY_TEMPORAL_CONTEXT = /\b(?:weekdays?|weekends?|holidays?)\b/u;
+
 const SCHEDULER_STATE_EVIDENCE_ACTIONS = new Set([
   "add",
   "update",
@@ -170,6 +231,17 @@ const SCHEDULER_STATE_EVIDENCE_ACTIONS = new Set([
   "runs",
   "run",
 ]);
+
+type SchedulerPolicyEvidence = "holiday" | "weekday" | "weekend";
+
+function schedulerPolicyClaims(text: string): readonly SchedulerPolicyEvidence[] {
+  if (!SCHEDULER_FUTURE_BEHAVIOR.test(text)) return [];
+  const claims: SchedulerPolicyEvidence[] = [];
+  if (/\bholidays?\b/u.test(text)) claims.push("holiday");
+  if (/\bweekdays?\b/u.test(text)) claims.push("weekday");
+  if (/\bweekends?\b/u.test(text)) claims.push("weekend");
+  return claims;
+}
 
 /**
  * Require a current-turn scheduler receipt before preserving affirmative prose
@@ -182,27 +254,68 @@ export function enforceSchedulerStateEvidence(params: {
     toolName: string;
     action?: string;
     success: boolean;
+    requiresConfirmation?: boolean;
+    schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
   }>;
   honestResponse: string;
+  pendingConfirmationResponse?: string;
 }): SchedulerStateEvidenceGuardResult {
   const normalizedResponse = normalizedEvidenceText(params.response);
-  const claimsCurrentSchedulerState = SCHEDULER_STATE_SUBJECTS.some(
+  const explicitStateClaim = SCHEDULER_STATE_SUBJECTS.some(
     (subject) => SCHEDULER_STATE_PREDICATES.some(
       (predicate) => SCHEDULER_STATE_TERMINATORS.some(
         (terminator) => normalizedResponse.includes(` ${subject}${predicate}${terminator}`),
       ),
     ),
   );
+  const futureBehaviorClaim =
+    SCHEDULER_MUTATION_CONFIRMATION.test(normalizedResponse)
+    && SCHEDULER_FUTURE_BEHAVIOR.test(normalizedResponse)
+    && SCHEDULER_TEMPORAL_CONTEXT.test(normalizedResponse);
+  const temporalPolicyConfirmation =
+    SCHEDULER_DIRECT_CONFIRMATION.test(normalizedResponse)
+    && SCHEDULER_POLICY_TEMPORAL_CONTEXT.test(normalizedResponse);
+  const policyClaims = schedulerPolicyClaims(normalizedResponse);
+  const claimsCurrentSchedulerState =
+    explicitStateClaim
+    || futureBehaviorClaim
+    || temporalPolicyConfirmation
+    || policyClaims.length > 0;
   if (!claimsCurrentSchedulerState) {
     return { response: params.response, corrected: false };
   }
-  const hasEvidence = (params.toolExecResults ?? []).some(
+  const pendingRemovalConfirmation = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "cron"
+      && result.action === "remove"
+      && result.success
+      && result.requiresConfirmation === true,
+  );
+  if (pendingRemovalConfirmation) {
+    return {
+      response: params.pendingConfirmationResponse ?? params.honestResponse,
+      corrected: true,
+      reason: "pending_scheduler_confirmation",
+    };
+  }
+  const stateReceipts = (params.toolExecResults ?? []).filter(
     (result) =>
       result.toolName === "cron"
       && result.success
       && result.action !== undefined
       && SCHEDULER_STATE_EVIDENCE_ACTIONS.has(result.action),
   );
+  const policyReceipt = stateReceipts.findLast(
+    (result) => result.action === "add" || result.action === "update" || result.action === "list",
+  );
+  const hasPolicyEvidence = policyClaims.length === 0
+    || policyReceipt?.action === "add"
+    || policyReceipt?.action === "update"
+    || (
+      policyReceipt?.action === "list"
+      && policyClaims.every((claim) => policyReceipt.schedulerPolicyEvidence?.includes(claim) === true)
+    );
+  const hasEvidence = stateReceipts.length > 0 && hasPolicyEvidence;
   return hasEvidence
     ? { response: params.response, corrected: false }
     : {

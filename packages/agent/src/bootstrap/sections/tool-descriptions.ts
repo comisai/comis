@@ -136,9 +136,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Memory (confusable pair: memory_search / session_search) -----
   memory_search: "Search stored facts and preferences. Returns empty if no match — not an error. For session history, use session_search.",
   memory_store:
-    "Save stable facts, preferences, decisions, and context for future recall only. " +
-    "Not for a workspace file or artifact. Do not use to log, record, append to, track, or " +
-    "maintain user-facing records; use workspace file tools.",
+    "Save stable facts, preferences, and decisions for future recall. For a correction, store the new current fact; " +
+    "do not forget or delete old memory unless the user explicitly asks. Not for workspace files: do not log, " +
+    "track, or maintain user-facing records; use file tools.",
   memory_get: "Read workspace files (SOUL.md, TOOLS.md, etc.).",
 
   // ----- Channel (confusable pair: message / sessions_send) -----
@@ -478,6 +478,8 @@ Each sub-agent has an isolated workspace at ~/.comis/workspace-{agentId}/. Do NO
   gateway: `## Gateway Security
 CRITICAL: Security-sensitive paths (security, gateway.tls, gateway.tokens) CANNOT be patched -- attempts will be rejected. Restart, patch, apply, rollback, and env_set require confirmation. Config changes go through schema validation, git-backed versioning, and audit logging.
 IMPORTANT: Never modify config YAML files directly -- always use gateway tool actions.
+## Restart Boundary
+A successful result with \`restarting:true\` means the restart is scheduled, not completed. End the turn after that result without calling read or management tools to verify the new state: the current process can still expose stale in-memory configuration. Tell the user the change was persisted and that verification must happen in a later turn after restart. Do not claim the restart completed in the mutation turn.
 ## Credential Discovery
 When the user asks to install, configure, or connect something that requires an API key, token, secret, or credential: call gateway(action:"env_list", filter:"<PATTERN>*") BEFORE asking the user. env_list returns only NAMES (never values), so it is safe to call proactively. Only ask the user for the credential if env_list returns no matching name. Use filter patterns like "GEMINI*", "OPENAI*", or "*_API_KEY" to narrow the search.
 ## MCP Output Directory

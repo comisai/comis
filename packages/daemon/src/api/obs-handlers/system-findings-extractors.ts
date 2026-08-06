@@ -640,7 +640,7 @@ export function autonomyKilledFromRow(row: DiagnosticRow): { killed: number; roo
  *  an `autonomy_denial_breaker` health_signal row's details JSON. Defensive parse (the
  *  autonomyKilledFromRow clone). A capability-DENIAL breaker trip is NEVER a
  *  session endReason / breakerTripCount — so this DISTINCT signal label is the ONLY way
- *  the system health view counts it SEPARABLY from the tool-failure breaker (breakerTripTotal),
+ *  the system health view counts it SEPARABLY from execution-failure breakers (breakerTripTotal),
  *  the same separation discipline as kill≠revoke. The `denialBreakerTrips` count
  *  defaults to 1 when absent/non-finite (each row is one trip). Counts/ids only — NEVER
  *  the engine's free-text deny reason (the row never carried it). */

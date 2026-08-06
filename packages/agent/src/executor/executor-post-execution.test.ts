@@ -1140,11 +1140,26 @@ describe("tool-failure endReason and notice", () => {
 
     expect(stripped).toMatch(/enforceSchedulerStateEvidence\(/);
     expect(stripped).toMatch(/buildSchedulerStateEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/buildPendingSchedulerConfirmationReply\(/);
+    expect(stripped).toMatch(/pending_scheduler_confirmation/);
     expect(stripped).toMatch(/response\.scheduler_state_evidence_guard/);
     expect(stripped).toMatch(
-      /schedulerStateGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_scheduler_state_evidence"[\s\S]*?succeeded:\s*true/,
+      /schedulerStateGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:[\s\S]*?"pending_scheduler_confirmation"[\s\S]*?"missing_scheduler_state_evidence"[\s\S]*?succeeded:\s*true/,
     );
     expect(stripped.indexOf("enforceSchedulerStateEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
+  it("source-grep — runtime self-reports require current observability evidence before delivery", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceRuntimeSelfReportEvidence\(/);
+    expect(stripped).toMatch(/buildRuntimeSelfReportEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.runtime_self_report_evidence_guard/);
+    expect(stripped).toMatch(
+      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceRuntimeSelfReportEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 

@@ -17,7 +17,28 @@ interface CompletionEvidenceGuardResult {
 interface SchedulerStateEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_scheduler_state_evidence";
+  reason?: "missing_scheduler_state_evidence" | "pending_scheduler_confirmation";
+}
+
+interface RuntimeSelfReportEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_runtime_self_report_evidence";
+}
+
+function runtimeSelfReportEvidenceGuard(): (params: {
+  request: string;
+  response: string;
+  toolExecResults?: readonly {
+    toolName: string;
+    success: boolean;
+  }[];
+  honestResponse: string;
+}) => RuntimeSelfReportEvidenceGuardResult {
+  const candidate = (responseGrounding as Record<string, unknown>)
+    .enforceRuntimeSelfReportEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as ReturnType<typeof runtimeSelfReportEvidenceGuard>;
 }
 
 function schedulerStateEvidenceGuard(): (params: {
@@ -26,8 +47,11 @@ function schedulerStateEvidenceGuard(): (params: {
     toolName: string;
     action?: string;
     success: boolean;
+    requiresConfirmation?: boolean;
+    schedulerPolicyEvidence?: readonly ("holiday" | "weekday" | "weekend")[];
   }[];
   honestResponse: string;
+  pendingConfirmationResponse?: string;
 }) => SchedulerStateEvidenceGuardResult {
   const candidate = (responseGrounding as Record<string, unknown>)
     .enforceSchedulerStateEvidence;
@@ -49,6 +73,94 @@ function completionEvidenceGuard(): (params: {
 
 
 describe("response grounding module", () => {
+  it("rejects a weekly runtime-work report without current observability evidence", () => {
+    const honestResponse =
+      "I could not verify my runtime activity for that period in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "what did you even do this week",
+      response:
+        "This week I set up a schedule, checked its history, and answered a few messages.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("keeps a runtime self-report grounded by a current obs_query receipt", () => {
+    const response = "The current report shows 45 sessions and 1,228 model calls.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "what did you even do this week",
+      response,
+      toolExecResults: [{ toolName: "obs_query", success: true }],
+      honestResponse: "I could not verify runtime activity.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not treat a failed observability query as self-report evidence", () => {
+    const honestResponse = "I could not verify runtime cost in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "how much have you cost me",
+      response: "I cost about five dollars.",
+      toolExecResults: [{ toolName: "obs_query", success: false }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("requires observability for the elliptical latency follow-up", () => {
+    const honestResponse = "I could not verify the runtime cause in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "why was that so slow",
+      response: "It was slow because the context was large.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it.each([
+    "so it was exactly $5 total because telegram was down, right?",
+    "pretty sure you only did 12 turns and cost 3 cents this week — confirm?",
+    "the slowness was definitely the telegram 429 and the whole week cost $1, yeah?",
+  ])("requires observability before confirming a runtime premise: %s", (request) => {
+    const honestResponse = "I could not verify that runtime premise in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request,
+      response: "Yes, that is correct.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("leaves unrelated reports outside the runtime self-report guard", () => {
+    const response = "The weekly project report has three sections.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "what did the project report cover this week",
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify runtime activity.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("rejects an already-set reminder claim without current scheduler evidence", () => {
     const honestResponse =
       "I did not verify the current reminder state in this turn, so I cannot say that it is set.";
@@ -79,6 +191,40 @@ describe("response grounding module", () => {
     })).toEqual({ response, corrected: false });
   });
 
+  it("rejects a listed holiday policy absent from the current scheduler receipt", () => {
+    const honestResponse = "I could not verify that holiday policy in the current job.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response: "The Saturday briefing skips U.S. federal holidays.",
+      toolExecResults: [{
+        toolName: "cron",
+        action: "list",
+        success: true,
+        schedulerPolicyEvidence: [],
+      }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("keeps a listed holiday policy present in the current scheduler receipt", () => {
+    const response = "The Saturday briefing skips U.S. federal holidays.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [{
+        toolName: "cron",
+        action: "list",
+        success: true,
+        schedulerPolicyEvidence: ["holiday"],
+      }],
+      honestResponse: "I could not verify that holiday policy.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("does not treat a removed cron receipt as proof that a reminder exists", () => {
     const honestResponse = "I could not verify the reminder.";
 
@@ -95,6 +241,106 @@ describe("response grounding module", () => {
       corrected: true,
       reason: "missing_scheduler_state_evidence",
     });
+  });
+
+  it("replaces a pending cron removal overclaim with a neutral confirmation request", () => {
+    const pendingConfirmationResponse =
+      "Please confirm that you want me to remove the scheduled job. Nothing has been removed yet.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "The reminder is set. Please confirm that you want me to remove it.",
+      toolExecResults: [{
+        toolName: "cron",
+        action: "remove",
+        success: true,
+        requiresConfirmation: true,
+      }],
+      honestResponse: "I could not verify the reminder.",
+      pendingConfirmationResponse,
+    })).toEqual({
+      response: pendingConfirmationResponse,
+      corrected: true,
+      reason: "pending_scheduler_confirmation",
+    });
+  });
+
+  it("rejects a future recurring-job policy claim inherited from conversation history", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "Confirmed: U.S. federal holidays. The Saturday briefing will skip them.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("rejects a confirmed recurring-job policy stated in the present tense", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response: "Confirmed: the briefing skips U.S. federal holidays.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("rejects an unverified recurring policy phrased with a present participle", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "Yes, weekly planning is every Saturday at 7:00 AM ET, skipping U.S. federal holidays.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("rejects a bare temporal policy confirmation inherited from scheduling context", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response: "Confirmed: U.S. federal holidays.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("does not classify an ordinary remembered weekday correction as scheduler state", () => {
+    const response = "Updated — your test runs are Wednesday mornings now.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify a scheduled job.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not classify an ordinary promise to omit prose as scheduler state", () => {
+    const response = "I will skip that section in the draft.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify the scheduled job.",
+    })).toEqual({ response, corrected: false });
   });
 
   it("uses the latest agent-update receipt as the no-op authority", () => {

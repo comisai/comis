@@ -7450,34 +7450,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("queue
     "type": "integer"
   },
   {
-    "default": {
-      "firstMessageImmediate": true,
-      "maxBufferedMessages": 10,
-      "windowMs": 0
-    },
-    "immutable": false,
-    "path": "queue.debounce",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": false,
-    "path": "queue.debounce.firstMessageImmediate",
-    "type": "boolean"
-  },
-  {
-    "default": 10,
-    "immutable": false,
-    "path": "queue.debounce.maxBufferedMessages",
-    "type": "integer"
-  },
-  {
-    "default": 0,
-    "immutable": false,
-    "path": "queue.debounce.windowMs",
-    "type": "integer"
-  },
-  {
     "default": 0,
     "immutable": false,
     "path": "queue.defaultDebounceMs",
@@ -7547,12 +7519,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("queue
     "default": {},
     "immutable": false,
     "path": "queue.perChannel",
-    "type": "object"
-  },
-  {
-    "default": {},
-    "immutable": false,
-    "path": "queue.perChannelDebounce",
     "type": "object"
   }
 ]"
@@ -14402,11 +14368,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "cleanupIdleMs": 600000,
-      "debounce": {
-        "firstMessageImmediate": true,
-        "maxBufferedMessages": 10,
-        "windowMs": 0
-      },
       "defaultDebounceMs": 0,
       "defaultMode": "steer+followup",
       "defaultOverflow": {
@@ -14419,8 +14380,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxFollowupRuns": 3
       },
       "maxConcurrentSessions": 10,
-      "perChannel": {},
-      "perChannelDebounce": {}
+      "perChannel": {}
     },
     "immutable": false,
     "path": "queue",
@@ -14430,34 +14390,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 600000,
     "immutable": false,
     "path": "queue.cleanupIdleMs",
-    "type": "integer"
-  },
-  {
-    "default": {
-      "firstMessageImmediate": true,
-      "maxBufferedMessages": 10,
-      "windowMs": 0
-    },
-    "immutable": false,
-    "path": "queue.debounce",
-    "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": false,
-    "path": "queue.debounce.firstMessageImmediate",
-    "type": "boolean"
-  },
-  {
-    "default": 10,
-    "immutable": false,
-    "path": "queue.debounce.maxBufferedMessages",
-    "type": "integer"
-  },
-  {
-    "default": 0,
-    "immutable": false,
-    "path": "queue.debounce.windowMs",
     "type": "integer"
   },
   {
@@ -14530,12 +14462,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": {},
     "immutable": false,
     "path": "queue.perChannel",
-    "type": "object"
-  },
-  {
-    "default": {},
-    "immutable": false,
-    "path": "queue.perChannelDebounce",
     "type": "object"
   },
   {
@@ -39711,11 +39637,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "additionalProperties": false,
       "default": {
         "cleanupIdleMs": 600000,
-        "debounce": {
-          "firstMessageImmediate": true,
-          "maxBufferedMessages": 10,
-          "windowMs": 0
-        },
         "defaultDebounceMs": 0,
         "defaultMode": "steer+followup",
         "defaultOverflow": {
@@ -39728,8 +39649,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "maxFollowupRuns": 3
         },
         "maxConcurrentSessions": 10,
-        "perChannel": {},
-        "perChannelDebounce": {}
+        "perChannel": {}
       },
       "properties": {
         "cleanupIdleMs": {
@@ -39737,38 +39657,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
-        },
-        "debounce": {
-          "additionalProperties": false,
-          "default": {
-            "firstMessageImmediate": true,
-            "maxBufferedMessages": 10,
-            "windowMs": 0
-          },
-          "properties": {
-            "firstMessageImmediate": {
-              "default": true,
-              "type": "boolean"
-            },
-            "maxBufferedMessages": {
-              "default": 10,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "windowMs": {
-              "default": 0,
-              "maximum": 9007199254740991,
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "windowMs",
-            "maxBufferedMessages",
-            "firstMessageImmediate"
-          ],
-          "type": "object"
         },
         "defaultDebounceMs": {
           "default": 0,
@@ -39911,40 +39799,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "type": "string"
           },
           "type": "object"
-        },
-        "perChannelDebounce": {
-          "additionalProperties": {
-            "additionalProperties": false,
-            "properties": {
-              "firstMessageImmediate": {
-                "default": true,
-                "type": "boolean"
-              },
-              "maxBufferedMessages": {
-                "default": 10,
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991,
-                "type": "integer"
-              },
-              "windowMs": {
-                "default": 0,
-                "maximum": 9007199254740991,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "windowMs",
-              "maxBufferedMessages",
-              "firstMessageImmediate"
-            ],
-            "type": "object"
-          },
-          "default": {},
-          "propertyNames": {
-            "type": "string"
-          },
-          "type": "object"
         }
       },
       "required": [
@@ -39955,8 +39809,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "defaultOverflow",
         "defaultDebounceMs",
         "perChannel",
-        "debounce",
-        "perChannelDebounce",
         "followup"
       ],
       "type": "object"

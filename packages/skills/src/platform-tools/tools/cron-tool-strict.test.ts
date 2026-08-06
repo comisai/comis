@@ -92,4 +92,16 @@ describe("cron tool strict scheduler RPC projection", () => {
       paused: true,
     });
   });
+
+  it("refuses payload text that would be silently ignored without a payload kind", async () => {
+    const rpcCall: RpcCall = vi.fn(async () => ({ updated: true }));
+    const tool = createCronTool(rpcCall);
+
+    await expect(tool.execute("call-a", {
+      action: "update",
+      job_name: "Saturday briefing",
+      payload_text: "Skip the briefing on federal holidays.",
+    } as never)).rejects.toThrow(/payload_kind.*required.*payload_text/i);
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
 });

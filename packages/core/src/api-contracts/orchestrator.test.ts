@@ -476,6 +476,12 @@ describe("CronUpdateContract", () => {
     ).not.toThrow();
   });
 
+  it("rejects a selector-only request that would report an unchanged job as updated", () => {
+    expect(() =>
+      CronUpdateContract.request.parse({ jobName: "Saturday briefing" }),
+    ).toThrow(/at least one update field is required/i);
+  });
+
   it("response carries jobName + updated", () => {
     expect(() =>
       CronUpdateContract.response.parse({

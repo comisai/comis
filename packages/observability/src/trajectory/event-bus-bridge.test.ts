@@ -2934,22 +2934,24 @@ describe("queue + execution + sender bridge", () => {
 
   // ---- Execution lifecycle events ----
 
-  it("execution_aborted_maps_to_execution.aborted with reason; sessionKey/agentId stripped", () => {
+  it("execution_aborted_maps_to_execution.aborted with reason and provider; envelope fields stripped", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
 
     bus.emit("execution:aborted", {
       sessionKey: "t1:u1:c1" as any,
-      reason: "user_stop",
+      reason: "circuit_breaker",
       agentId: "agent-1",
+      provider: "test-provider",
       timestamp: Date.now(),
     });
 
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("execution.aborted");
     const data = recorder.calls[0].data as Record<string, unknown>;
-    expect(data.reason).toBe("user_stop");
+    expect(data.reason).toBe("circuit_breaker");
+    expect(data.provider).toBe("test-provider");
     expect(data.sessionKey).toBeUndefined();
     expect(data.agentId).toBeUndefined();
     expect(data.timestamp).toBeUndefined();

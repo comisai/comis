@@ -241,7 +241,7 @@ export { orderByTrust, assembleSynthesis, citationChains } from "./memory/memory
 export { formatMemorySection } from "./rag/rag-retriever.js";
 
 // Queue symbols live in @comis/orchestrator:
-// createCommandQueue, CommandQueue, DebounceBuffer, FollowupTrigger,
+// createCommandQueue, CommandQueue, FollowupTrigger,
 // coalesceMessages, applyOverflowPolicy, SessionLane, and all related *Deps / *Stats types
 // live at packages/orchestrator/src/queue/ and re-export from @comis/orchestrator.
 

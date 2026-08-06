@@ -99,12 +99,11 @@ export { createMessageRouter, resolveAgent } from "./routing/message-router.js";
 export type { MessageRouter, RoutableMessage } from "./routing/message-router.js";
 
 // Queue.
-// Per-session command serialization, debounce buffering, follow-up triggering,
+// Per-session command serialization, collect-mode coalescing, follow-up triggering,
 // and overflow / coalescer utilities.
 // Named (not `export *`) to keep the public surface auditable.
 export {
   createCommandQueue,
-  createDebounceBuffer,
   createFollowupTrigger,
   applyOverflowPolicy,
   coalesceMessages,
@@ -117,8 +116,6 @@ export type {
   QueueStats,
   SessionLane,
   OverflowResult,
-  DebounceBuffer,
-  DebounceBufferDeps,
   FollowupTrigger,
   FollowupTriggerDeps,
 } from "./queue/index.js";

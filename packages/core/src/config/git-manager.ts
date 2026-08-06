@@ -318,18 +318,43 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       ["rev-parse", "--show-toplevel"],
       configDir,
     );
-    if (
+    const hasExactRepo =
       toplevelResult.ok &&
-      resolvePath(toplevelResult.value.trim()) === resolvePath(configDir)
-    ) {
-      initialized = true;
-      return ok(undefined);
+      resolvePath(toplevelResult.value.trim()) === resolvePath(configDir);
+
+    // Initialize a new repo when needed. An exact-root repo without HEAD is
+    // already initialized but still needs the seed snapshot below.
+    if (!hasExactRepo) {
+      const gitInitResult = await execGit(["init"], configDir);
+      if (!gitInitResult.ok) {
+        return err(`git init failed: ${gitInitResult.error}`);
+      }
     }
 
-    // Initialize new repo
-    const gitInitResult = await execGit(["init"], configDir);
-    if (!gitInitResult.ok) {
-      return err(`git init failed: ${gitInitResult.error}`);
+    // Config history is an application-owned repository and must not depend
+    // on an operator's global Git identity. Keep the identity local to this
+    // repo so both the seed snapshot and later runtime commits are portable.
+    const nameResult = await execGit(
+      ["config", "user.name", "Comis Config"],
+      configDir,
+    );
+    if (!nameResult.ok) {
+      return err(`Failed to configure config-history author name: ${nameResult.error}`);
+    }
+    const emailResult = await execGit(
+      ["config", "user.email", "config@comis.local"],
+      configDir,
+    );
+    if (!emailResult.ok) {
+      return err(`Failed to configure config-history author email: ${emailResult.error}`);
+    }
+
+    if (hasExactRepo) {
+      const headResult = await execGit(["rev-parse", "--verify", "HEAD"], configDir);
+      if (headResult.ok) {
+        initialized = true;
+        return ok(undefined);
+      }
     }
 
     // Write .gitignore with strict YAML whitelist
@@ -555,6 +580,25 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       // Stage restored files (separate calls — same reason as above)
       await execWithReinit(["add", "*.yaml"]);
       await execWithReinit(["add", "*.yml"]);
+
+      // Detect an already-current target before committing. Production
+      // execFile errors do not reliably include Git's stdout text for a
+      // no-op commit, so parsing "nothing to commit" is not a portable
+      // idempotency check.
+      const stagedResult = await execWithReinit([
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        "*.yaml",
+        "*.yml",
+      ]);
+      if (!stagedResult.ok) {
+        return err(`Failed to inspect staged rollback: ${stagedResult.error}`);
+      }
+      if (stagedResult.value.trim().length === 0) {
+        return ok("");
+      }
 
       // Create forward rollback commit
       const shortSha = sha.slice(0, 7);

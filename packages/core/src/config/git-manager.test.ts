@@ -207,6 +207,12 @@ function createMockDeps(opts?: {
           }
           return ok(repo.commits[repo.commits.length - 1]!.sha);
         }
+        if (args[1] === "--verify" && args[2] === "HEAD") {
+          if (repo.commits.length === 0) {
+            return err("fatal: Needed a single revision");
+          }
+          return ok(repo.commits[repo.commits.length - 1]!.sha);
+        }
         if (args[1] === "--verify" && args[2] === "HEAD~1") {
           if (repo.commits.length < 2) {
             return err("fatal: ambiguous argument 'HEAD~1'");
@@ -243,6 +249,9 @@ function createMockDeps(opts?: {
         if (!repo.initialized) {
           return err("fatal: not a git repository");
         }
+        if (args.includes("--cached") && args.includes("--name-only")) {
+          return ok(repo.dirty ? "config.yaml\n" : "");
+        }
         // Return a mock unified diff
         return ok(
           "--- a/config.yaml\n+++ b/config.yaml\n@@ -1,3 +1,3 @@\n setting: old\n-value: before\n+value: after\n other: same\n",
@@ -270,10 +279,12 @@ function createMockDeps(opts?: {
         const commit = repo.commits.find((c) => c.sha === sha);
         if (commit) {
           // Restore files from that commit
+          let changed = false;
           for (const [name, content] of commit.files) {
+            if (repo.workingTree.get(name) !== content) changed = true;
             repo.workingTree.set(name, content);
           }
-          repo.dirty = true;
+          repo.dirty = repo.dirty || changed;
           return ok("");
         }
         return err(`error: pathspec '${sha}' did not match any file(s) known to git`);
@@ -349,6 +360,25 @@ describe("config/git-manager", () => {
       expect(commitCall!.args).toContain("Initial config snapshot");
     });
 
+    it("configures a repository-local author before creating snapshots", async () => {
+      const { deps, calls } = createMockDeps();
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.init();
+
+      expect(result.ok).toBe(true);
+      expect(calls.some((call) => (
+        call.args[0] === "config"
+        && call.args[1] === "user.name"
+        && call.args[2] === "Comis Config"
+      ))).toBe(true);
+      expect(calls.some((call) => (
+        call.args[0] === "config"
+        && call.args[1] === "user.email"
+        && call.args[2] === "config@comis.local"
+      ))).toBe(true);
+    });
+
     it("returns ok() early if repo already exists", async () => {
       const { deps, calls } = createMockDeps({ preInitialized: true });
 
@@ -359,6 +389,22 @@ describe("config/git-manager", () => {
       // rev-parse --show-toplevel returns configDir → no init needed
       const commands = calls.map((c) => c.args[0]);
       expect(commands).not.toContain("init");
+    });
+
+    it("seeds an initial snapshot when an exact-root repo has no commits", async () => {
+      const { deps, calls, repo } = createMockDeps({ preInitialized: true });
+      repo.commits.length = 0;
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.init();
+
+      expect(result.ok).toBe(true);
+      expect(repo.commits).toHaveLength(1);
+      expect(repo.commits[0]?.message).toBe("Initial config snapshot");
+      expect(calls.some(
+        (call) => call.args[0] === "commit" && call.args.includes("--allow-empty"),
+      )).toBe(true);
+      expect(calls.some((call) => call.args[0] === "init")).toBe(false);
     });
 
     it("creates its own nested repo when configDir lives inside an unrelated parent repo", async () => {
@@ -972,6 +1018,27 @@ describe("config/git-manager", () => {
   });
 
   describe("rollback()", () => {
+    it("treats an already-current target as an idempotent rollback", async () => {
+      const initialFiles = new Map([["config.yaml", "version: 1"]]);
+      const { deps, repo, calls } = createMockDeps({
+        preInitialized: true,
+        initialFiles,
+      });
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.rollback(repo.commits[0]!.sha);
+
+      expect(result).toEqual(ok(""));
+      expect(calls.some((call) => (
+        call.args[0] === "diff"
+        && call.args.includes("--cached")
+        && call.args.includes("--name-only")
+      ))).toBe(true);
+      expect(calls.some((call) => (
+        call.args[0] === "commit" && !call.args.includes("--allow-empty")
+      ))).toBe(false);
+    });
+
     it("restores files from target SHA and creates forward commit", async () => {
       const { deps, repo, calls } = createMockDeps({ preInitialized: true });
 

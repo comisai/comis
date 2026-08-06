@@ -52,6 +52,7 @@ const TEMPORAL_GUIDANCE = `## Using these memories over time
 - Each memory shows when it was recorded, when the event occurred (if known), and its trust tier ([system] > [learned] > [external]).
 - If two conflict about the same thing, the higher-TRUST memory wins even if older — a [system] memory outranks a [learned] or [external] one even if older; answer from the higher-trust memory and treat the lower-trust statement as outdated for this answer, but keep BOTH in mind — this is a preference for answering, not a deletion; do NOT average or sum.
 - Only break ties between equal-trust memories by recency: among equal-trust memories, the most recently RECORDED one wins.
+- An ambiguous correction or reference does not establish a replacement value: ask what the user means, and do not revive an older value from conversation history.
 - For a timeline, order by when events OCCURRED, not when they were recorded.
 - If still disagreeing at equal trust and equal recency, say so rather than guess.
 - The current believed value of a contested fact is the higher-trust one; an older superseded value is not deleted — it still exists as history (the value that was believed true as of a past time) but it is not the current answer.`;
