@@ -154,7 +154,7 @@ describe("sudo-aware live rig transport", () => {
     const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
 
     expect(source).toContain('if rig_is_local; then rendered_gateway_token=""; fi');
-    expect(source).toContain('export GWTOKEN="\${GWTOKEN:-${rendered_gateway_token:-}}"');
+    expect(source).toContain('export GWTOKEN="\\${GWTOKEN:-${rendered_gateway_token:-}}"');
   });
 
   it("uses service-none mode when a deployed build must remain stopped", () => {

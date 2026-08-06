@@ -91,9 +91,13 @@ elif [ -z "${GWTOKEN:-}" ] || [ "${#GWTOKEN}" -lt 32 ]; then
 fi
 
 # The rig env file — rendered from THIS .live-env. Rig-side scripts source it; the .mjs helpers read
-# it via _rig.mjs. The `${VAR:-…}` form keeps explicit-env-wins semantics. 0600: it carries GWTOKEN.
+# it via _rig.mjs. The `${VAR:-…}` form keeps explicit-env-wins semantics. Local RPC clients resolve
+# the gateway token from the encrypted store through the config reference, so persisting the token in
+# the local data root would create secret residency. Remote rigs retain the protected box-side value.
 # RIG_MODE is rendered too, so a helper invoked bare (no .live-env in scope) still resolves the right
 # data dir / layout instead of silently assuming the production-install one.
+rendered_gateway_token="${GWTOKEN:-}"
+if rig_is_local; then rendered_gateway_token=""; fi
 remote_root "umask 077 && cat > '$RIG_ENV'" <<EOF
 # Rendered by deploy-scripts.sh from the local scripts/.live-env — do not hand-edit (re-render instead).
 export RIG_MODE="\${RIG_MODE:-$(rig_mode)}"
@@ -106,7 +110,7 @@ export GW_PORT="\${GW_PORT:-$GW_PORT}"
 export COMIS_TRAJECTORY_DIR="\${COMIS_TRAJECTORY_DIR:-${COMIS_TRAJECTORY_DIR:-}}"
 export CHATID="\${CHATID:-$CHATID}"
 export EMU_DIR="\${EMU_DIR:-$EMU_DIR}"
-export GWTOKEN="\${GWTOKEN:-${GWTOKEN:-}}"
+export GWTOKEN="\${GWTOKEN:-${rendered_gateway_token:-}}"
 EOF
 
 remote_root "
