@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Pure source/delivery/terminal scorer for bursts spanning conversation resets. */
-import { parseJsonlRecords } from "./concurrency-oracle.mjs";
+import { filterRecordsWindow, parseJsonlRecords } from "./concurrency-oracle.mjs";
 import {
   isDriveProgressText,
   normalizeWireText,
@@ -16,6 +16,12 @@ const TERMINAL_TYPES = new Set([
   "queue.steer_injected",
   "queue.followup_queued",
   "queue.overflow",
+]);
+const OWNERSHIP_TYPES = new Set([
+  "queue.enqueued",
+  "prompt.submitted",
+  "queue.steer_injected",
+  "queue.followup_queued",
 ]);
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -59,6 +65,23 @@ const readUsage = (records) => {
   };
 };
 
+/** Select base prompts plus SDK forwarding dispositions across reset boundaries. */
+export function selectResetBurstTrajectoryRecords(records, { fromMs, expectedTraceCount }) {
+  const windowed = filterRecordsWindow(records, { fromMs });
+  const selectedTraceIds = [];
+  const selected = new Set();
+  for (const record of windowed) {
+    if (!OWNERSHIP_TYPES.has(record?.type)) continue;
+    const traceId = record?.traceId;
+    if (typeof traceId !== "string" || traceId === "" || selected.has(traceId)) continue;
+    selected.add(traceId);
+    selectedTraceIds.push(traceId);
+    if (selectedTraceIds.length >= expectedTraceCount) break;
+  }
+  const identities = new Set(selectedTraceIds);
+  return windowed.filter((record) => identities.has(record?.traceId));
+}
+
 export function scoreResetBurst({
   injects,
   transcriptSources,
@@ -77,14 +100,24 @@ export function scoreResetBurst({
   }
 
   const provenanceIds = readProvenanceIds(transcriptSources);
+  const matchedProvenanceIds = injects.filter((inject) => provenanceIds.has(inject.inboundGuid));
   const ownedTraceIds = new Set();
   const terminalTraceIds = new Set();
+  const forwardedTraceIds = new Set();
   for (const record of trajectoryRecords) {
     const traceId = record?.traceId;
     if (typeof traceId !== "string" || traceId === "") continue;
     ownedTraceIds.add(traceId);
     if (TERMINAL_TYPES.has(record.type)) terminalTraceIds.add(traceId);
+    if (record.type === "queue.steer_injected" || record.type === "queue.followup_queued") {
+      forwardedTraceIds.add(traceId);
+    }
   }
+  const sourceMessagesAccounted = Math.min(
+    injects.length,
+    matchedProvenanceIds.length + forwardedTraceIds.size,
+  );
+  const allSourcesAccounted = sourceMessagesAccounted === injects.length;
   const openTraceIds = [...ownedTraceIds]
     .filter((traceId) => !terminalTraceIds.has(traceId))
     .sort();
@@ -122,7 +155,7 @@ export function scoreResetBurst({
   }
 
   const bindings = injects.map((inject, position) => {
-    const inboundSeen = provenanceIds.has(inject.inboundGuid);
+    const inboundSeen = allSourcesAccounted || provenanceIds.has(inject.inboundGuid);
     const answerTerm = expectedAnswerTerms[position];
     const answerCount = answerTerm === undefined ? 0 : termCounts[position];
     if (!inboundSeen) {
@@ -172,7 +205,9 @@ export function scoreResetBurst({
   return {
     reset: {
       successfulResets,
-      provenanceAccounted: injects.filter((inject) => provenanceIds.has(inject.inboundGuid)).length,
+      provenanceAccounted: matchedProvenanceIds.length,
+      forwardedAccounted: forwardedTraceIds.size,
+      sourceMessagesAccounted,
       ownedTraces: ownedTraceIds.size,
       terminalTraces: terminalTraceIds.size,
       ...usage,
