@@ -71,7 +71,7 @@ describe("scrubSecretsFromText", () => {
     expect(result.text).not.toContain(yamlValue);
   });
 
-  it("scrubs secret fields inside a JSON-encoded completion payload", () => {
+  it("returns redacted secret fields inside a JSON-encoded completion payload", () => {
     const value = "A".repeat(64);
     const nestedPayload = JSON.stringify(JSON.stringify({ secret: value }));
 
