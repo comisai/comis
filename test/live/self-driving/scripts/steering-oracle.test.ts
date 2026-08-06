@@ -431,4 +431,43 @@ describe("command-queue steering ground-truth oracle", () => {
       "unexpected-command-steer-delivery",
     );
   });
+
+  it("reports a completed base before the boundary as not in flight", () => {
+    const scored = scoreCommandSteeringBurst({
+      injects,
+      transcriptSource: [
+        userRecord(BASE_GUID, "write a long report"),
+        assistantRecord("the completed original answer"),
+        userRecord(FOLLOW_GUID, "answer the replacement instead"),
+        assistantRecord("the replacement answer"),
+      ].join("\n"),
+      trajectoryRecords: [
+        record("prompt.submitted", "base-trace", 1_010),
+        record("model.completed", "base-trace", 9_000, { stopReason: "stop" }),
+        record("session.summary", "base-trace", 9_010),
+        record("delivery.dispatched", "base-trace", 9_020),
+        record("activity.turn_finalized", "base-trace", 9_030, { outcome: "success" }),
+        record("queue.enqueued", "follow-trace", 13_010, { mode: "steer" }),
+        record("queue.dequeued", "follow-trace", 13_020),
+        record("prompt.submitted", "follow-trace", 13_030),
+        record("model.completed", "follow-trace", 17_000, { stopReason: "stop" }),
+        record("session.summary", "follow-trace", 17_010),
+        record("delivery.dispatched", "follow-trace", 17_020),
+      ],
+      wire: [
+        { method: "sendMessage", text: "the completed original answer" },
+        { method: "sendMessage", text: "the replacement answer" },
+      ],
+    });
+
+    expect(scored.steering.disposition).toBe("not_in_flight");
+    expect(scored.attribution.bindings.map((binding) => binding.status)).toEqual([
+      "answered",
+      "answered",
+    ]);
+    expect(scored.verdict.hard.map((violation) => violation.kind)).toEqual([
+      "command-steer-not-in-flight",
+    ]);
+    expect(scored.wire.substantiveOutbound).toBe(2);
+  });
 });
