@@ -129,7 +129,7 @@ describe("createAdaptiveCacheRetention", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
     retention.recordTurn();
-    retention.recordCacheReads(500);
+    retention.recordCacheReads(1_500);
 
     expect(retention.hasEscalated()).toBe(false);
   });
@@ -488,7 +488,9 @@ describe("createAdaptiveCacheRetention turn-based escalation", () => {
 // ---------------------------------------------------------------------------
 
 describe("Fast-path escalation", () => {
-  it("fast-path: escalates on turn 2 when first turn wrote >20K tokens and cache reads > 0", () => {
+  // Reads must MEET escalationThreshold (1000), not merely be non-zero — a single
+  // cached token is not evidence a large prefix is being reused.
+  it("fast-path: escalates on turn 2 when the first turn wrote >20K and reads meet the threshold", () => {
     const onEscalated = vi.fn();
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
       onEscalated,
@@ -499,7 +501,7 @@ describe("Fast-path escalation", () => {
     expect(retention.hasEscalated()).toBe(false);
 
     // Turn 2: cache reads confirm content is being reused, then turn completes
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(true);
     expect(retention.getRetention()).toBe("long");
@@ -517,7 +519,7 @@ describe("Fast-path escalation", () => {
     expect(retention.hasEscalated()).toBe(false);
 
     // Turn 2: cache reads + turn end
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
     expect(onEscalated).not.toHaveBeenCalled();
@@ -541,15 +543,15 @@ describe("Fast-path escalation", () => {
     }));
 
     // 3 turns with small writes and cache reads -- standard threshold
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
 
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
 
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(true);
     expect(onEscalated).toHaveBeenCalledOnce();
@@ -560,13 +562,13 @@ describe("Fast-path escalation", () => {
 
     // Turn 1: large write
     retention.recordTurnWithCacheWrite(25_000);
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
 
     // Reset before turn 2 -- fast-path state should be cleared
     retention.reset();
 
     // Turn 2: the previous large write should no longer trigger fast-path
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(false);
   });
@@ -648,7 +650,7 @@ describe("cost-aware TTL gating", () => {
     expect(retention.hasEscalated()).toBe(false);
 
     // Turn 2: cache reads confirm content is being reused, then turn completes
-    retention.recordCacheReads(100);
+    retention.recordCacheReads(1_500);
     retention.recordTurnWithCacheWrite(5_000);
     expect(retention.hasEscalated()).toBe(true);
     expect(retention.getRetention()).toBe("long");
@@ -974,6 +976,32 @@ describe("createAdaptiveCacheRetention cross-execution progress", () => {
     third.recordCacheReads(0);
 
     expect(state.warm).toBe(true);
+  });
+
+  // `escalationThreshold` is documented "Minimum cumulative cacheRead tokens
+  // before escalating. Default: 1000" and session-bootstrap passes 1000, but the
+  // implementation gated on `totalCacheReads > 0` and never read the field — so
+  // the knob an operator would reach for did nothing, and a single cached token
+  // counted as proof the prefix was worth 1h.
+  it("honours escalationThreshold instead of escalating on any non-zero read", () => {
+    const belowThreshold = createAdaptiveCacheRetention(createDefaultConfig({
+      coldStartRetention: "short", warmRetention: "long", escalationThreshold: 1000,
+    }));
+    for (let i = 0; i < 4; i++) {
+      belowThreshold.recordTurn();
+      belowThreshold.recordCacheReads(100); // 400 total — under 1000
+    }
+    expect(belowThreshold.getRetention()).toBe("short");
+    expect(belowThreshold.hasEscalated()).toBe(false);
+
+    const atThreshold = createAdaptiveCacheRetention(createDefaultConfig({
+      coldStartRetention: "short", warmRetention: "long", escalationThreshold: 1000,
+    }));
+    for (let i = 0; i < 4; i++) {
+      atThreshold.recordTurn();
+      atThreshold.recordCacheReads(250); // 1000 total — meets the threshold
+    }
+    expect(atThreshold.getRetention()).toBe("long");
   });
 
   it("still pays the cheap 5m rate on a genuinely new session's first turn", () => {

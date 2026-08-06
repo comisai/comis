@@ -162,9 +162,15 @@ export function createAdaptiveCacheRetention(
   function tryEscalate(): void {
     if (escalated || currentRetention === config.warmRetention) return;
 
+    // The documented gate: cumulative cache READS are the evidence that the
+    // prefix is actually being reused and therefore worth the 2x 1h write.
+    // A single cached token is not that evidence, so `> 0` was too weak and left
+    // `escalationThreshold` — the knob an operator would reach for — inert.
+    if (totalCacheReads < config.escalationThreshold) return;
+
     // Fast-path -- large first-turn cache write means big system prompt.
     // Escalate on turn 2 instead of waiting for turnThreshold (3).
-    if (turnCount >= 2 && lastCacheWriteTokens > FAST_PATH_CACHE_WRITE_THRESHOLD && totalCacheReads > 0) {
+    if (turnCount >= 2 && lastCacheWriteTokens > FAST_PATH_CACHE_WRITE_THRESHOLD) {
       currentRetention = config.warmRetention;
       escalated = true;
       config.onEscalated?.();
@@ -172,7 +178,7 @@ export function createAdaptiveCacheRetention(
     }
     // Standard path: require N turns (+2 when gate closed)
     const effectiveThreshold = costGateOpen ? turnThreshold : turnThreshold + 2;
-    if (turnCount >= effectiveThreshold && totalCacheReads > 0) {
+    if (turnCount >= effectiveThreshold) {
       currentRetention = config.warmRetention;
       escalated = true;
       config.onEscalated?.();
