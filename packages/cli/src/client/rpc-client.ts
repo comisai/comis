@@ -24,9 +24,22 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
+import { dirname } from "node:path";
 import WebSocket from "ws";
+import { parse as parseYaml } from "yaml";
 import type { z, ZodTypeAny } from "zod";
-import { loadEnvFile, parseConfigPaths, systemClearTimeout, systemGetEnv, systemSetTimeout, type ApiContract } from "@comis/core";
+import {
+  createSecretManager,
+  isSecretRef,
+  loadEnvFile,
+  parseConfigPaths,
+  resolveSecretRef,
+  systemClearTimeout,
+  systemGetEnv,
+  systemSetTimeout,
+  type ApiContract,
+  type SecretRef,
+} from "@comis/core";
 import { offlineSecretGet } from "../util/offline-secrets-store.js";
 
 /**
@@ -76,20 +89,19 @@ const CONNECTION_TIMEOUT_MS = 2000;
 /** Fallback gateway WebSocket URL when no config is found. */
 const FALLBACK_GATEWAY_URL = "ws://localhost:4766/ws";
 
-/** Whether we have already loaded ~/.comis/.env into process.env. */
-let envFileLoaded = false;
+/** Environment files already loaded into process.env. */
+const loadedEnvFiles = new Set<string>();
 
 /**
- * Ensure ~/.comis/.env is loaded into process.env (once).
+ * Ensure the selected data root's .env is loaded into process.env (once).
  *
  * The daemon calls loadEnvFile() at startup, but the CLI does not.
  * Config values like `${COMIS_GATEWAY_TOKEN}` reference env vars that
  * live in the .env file, so the CLI must load it too before resolving.
  */
-function ensureEnvFileLoaded(): void {
-  if (envFileLoaded) return;
-  envFileLoaded = true;
-  const envPath = os.homedir() + "/.comis/.env";
+function ensureEnvFileLoaded(envPath: string): void {
+  if (loadedEnvFiles.has(envPath)) return;
+  loadedEnvFiles.add(envPath);
   loadEnvFile(envPath);
 }
 
@@ -104,6 +116,27 @@ function resolveEnvRef(value: string): string {
   if (!match) return value;
   const resolved = systemGetEnv(match[1]!);
   return resolved ?? value;
+}
+
+function resolveNamedGatewaySecret(name: string, dataDir: string): string | undefined {
+  ensureEnvFileLoaded(dataDir + "/.env");
+  const fromEnv = systemGetEnv(name);
+  if (fromEnv !== undefined) return fromEnv;
+  const fromStore = offlineSecretGet({
+    name,
+    dataDir,
+    envFilePath: dataDir + "/.env",
+  });
+  return fromStore.ok ? fromStore.value : undefined;
+}
+
+function resolveGatewaySecretRef(ref: SecretRef, dataDir: string): string | undefined {
+  const namedValue = ref.source === "env" ? resolveNamedGatewaySecret(ref.id, dataDir) : undefined;
+  const secretManager = createSecretManager(
+    namedValue === undefined ? {} : Object.fromEntries([[ref.id, namedValue]]),
+  );
+  const resolved = resolveSecretRef(ref, { secretManager });
+  return resolved.ok ? resolved.value : undefined;
 }
 
 /**
@@ -140,74 +173,43 @@ function resolveFromConfig(): { url: string; token: string | undefined; tls: boo
 
   try {
     const content = readFileSync(configPath, "utf-8");
-    const lines = content.split("\n");
+    const parsed: unknown = parseYaml(content);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { url: FALLBACK_GATEWAY_URL, token: undefined, tls: false };
+    }
+    const config = parsed as Record<string, unknown>;
+    const gatewayValue = config["gateway"];
+    const gateway =
+      gatewayValue !== null && typeof gatewayValue === "object" && !Array.isArray(gatewayValue)
+        ? (gatewayValue as Record<string, unknown>)
+        : {};
 
-    let host = "localhost";
-    let port = "4766";
+    const host = typeof gateway["host"] === "string" ? gateway["host"] : "localhost";
+    const portValue = gateway["port"];
+    const port =
+      typeof portValue === "number" || typeof portValue === "string"
+        ? String(portValue)
+        : "4766";
     let token: string | undefined;
-    let tls = false;
-    let inGateway = false;
-    let inTokens = false;
-    let inTls = false;
-    let foundSecret = false;
-
-    for (const line of lines) {
-      const trimmed = line.trimStart();
-
-      // Track top-level sections
-      if (!line.startsWith(" ") && !line.startsWith("\t") && trimmed.length > 0 && !trimmed.startsWith("#")) {
-        inGateway = trimmed.startsWith("gateway:");
-        if (!inGateway) {
-          inTokens = false;
-          inTls = false;
-        }
-      }
-
-      if (inGateway) {
-        const hostMatch = trimmed.match(/^host:\s*(.+)/);
-        if (hostMatch) host = hostMatch[1]!.trim();
-
-        const portMatch = trimmed.match(/^port:\s*(\d+)/);
-        if (portMatch) port = portMatch[1]!;
-
-        if (trimmed.startsWith("tokens:")) {
-          inTokens = true;
-          inTls = false;
-          continue;
-        }
-
-        // Detect TLS configuration under gateway
-        if (trimmed.startsWith("tls:")) {
-          inTls = true;
-          inTokens = false;
-          continue;
-        }
-
-        if (inTls) {
-          // TLS is enabled if cert: or enabled: true is present
-          const certMatch = trimmed.match(/^cert:\s*(.+)/);
-          if (certMatch && certMatch[1]!.trim().length > 0) {
-            tls = true;
-          }
-          const enabledMatch = trimmed.match(/^enabled:\s*(true|yes)/i);
-          if (enabledMatch) {
-            tls = true;
-          }
-        }
-
-        if (inTokens && !foundSecret) {
-          const secretMatch = trimmed.match(/^secret:\s*(.+)/);
-          if (secretMatch) {
-            token = secretMatch[1]!.trim();
-            foundSecret = true;
-          }
-        }
-      }
+    const configDataDir = typeof config["dataDir"] === "string" ? config["dataDir"] : undefined;
+    const dataDir = systemGetEnv("COMIS_DATA_DIR") ?? configDataDir ?? os.homedir() + "/.comis";
+    const tokens = gateway["tokens"];
+    const tokenEntry = Array.isArray(tokens)
+      ? tokens.find(
+          (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry),
+        )
+      : undefined;
+    const secret =
+      tokenEntry === undefined ? undefined : (tokenEntry as Record<string, unknown>)["secret"];
+    if (typeof secret === "string") {
+      token = secret;
+    } else if (isSecretRef(secret)) {
+      token = resolveGatewaySecretRef(secret, dataDir);
     }
 
     // Resolve ${VAR} references in the token (e.g. ${COMIS_GATEWAY_TOKEN}).
     if (token && token.startsWith("${")) {
-      ensureEnvFileLoaded();
+      ensureEnvFileLoaded(dataDir + "/.env");
       const fromEnv = resolveEnvRef(token);
       if (!fromEnv.startsWith("${")) {
         token = fromEnv;
@@ -221,7 +223,6 @@ function resolveFromConfig(): { url: string; token: string | undefined; tls: boo
         // (no SECRETS_MASTER_KEY) offlineSecretGet fails and we fall through
         // to no token (unchanged behavior).
         const varName = token.slice(2, -1);
-        const dataDir = os.homedir() + "/.comis";
         const fromStore = offlineSecretGet({
           name: varName,
           dataDir,
@@ -236,6 +237,13 @@ function resolveFromConfig(): { url: string; token: string | undefined; tls: boo
     // can reach a daemon that's binding all interfaces (the default for
     // LAN / Docker deployments).
     const connectHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
+    const tlsValue = gateway["tls"];
+    const tlsConfig =
+      tlsValue !== null && typeof tlsValue === "object" && !Array.isArray(tlsValue)
+        ? (tlsValue as Record<string, unknown>)
+        : {};
+    const tls = tlsConfig["enabled"] === true ||
+      (typeof tlsConfig["cert"] === "string" && tlsConfig["cert"].length > 0);
     const protocol = tls ? "wss" : "ws";
     return { url: `${protocol}://${connectHost}:${port}/ws`, token, tls };
   } catch {
@@ -504,8 +512,9 @@ export async function withClient<T>(fn: (client: RpcClient) => Promise<T>): Prom
     );
   }
 
-  ensureEnvFileLoaded();
   const configDefaults = resolveFromConfig();
+  const dataDir = systemGetEnv("COMIS_DATA_DIR") ?? dirname(resolveGatewayConfigPath());
+  ensureEnvFileLoaded(dataDir + "/.env");
   const url = systemGetEnv("COMIS_GATEWAY_URL") ?? configDefaults.url;
   const token = systemGetEnv("COMIS_GATEWAY_TOKEN") ?? configDefaults.token;
 
