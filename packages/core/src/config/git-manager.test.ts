@@ -1013,6 +1013,27 @@ describe("config/git-manager", () => {
   });
 
   describe("rollback()", () => {
+    it("treats an already-current target as an idempotent rollback", async () => {
+      const initialFiles = new Map([["config.yaml", "version: 1"]]);
+      const { deps, repo, calls } = createMockDeps({
+        preInitialized: true,
+        initialFiles,
+      });
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.rollback(repo.commits[0]!.sha);
+
+      expect(result).toEqual(ok(""));
+      expect(calls.some((call) => (
+        call.args[0] === "diff"
+        && call.args.includes("--cached")
+        && call.args.includes("--name-only")
+      ))).toBe(true);
+      expect(calls.some((call) => (
+        call.args[0] === "commit" && !call.args.includes("--allow-empty")
+      ))).toBe(false);
+    });
+
     it("restores files from target SHA and creates forward commit", async () => {
       const { deps, repo, calls } = createMockDeps({ preInitialized: true });
 
