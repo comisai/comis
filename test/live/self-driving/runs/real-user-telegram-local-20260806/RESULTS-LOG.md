@@ -5,8 +5,8 @@
 ## Summary
 - **IN PROGRESS**
 - **Rig:** isolated local source-tree primary `/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2`, gateway 48701, tmux-owned daemon, loopback Telegram emulator, `openai-codex/gpt-5.6-luna` confirmed by trajectory.
-- **Outcome so far:** Phase 0 is green; 2 harness COMIS-FAILs fixed test-first; HARD campaign rows have not started.
-- **Coverage so far:** SETUP-1–SETUP-7 complete; next row `CORPUS-PRELUDE`. Full denominator is filled at finish audit.
+- **Outcome so far:** Phase 0 and the relationship spine are green; prelude CC1–CC5 have exact ownership/delivery; 3 harness COMIS-FAILs are fixed test-first; HARD A/B/C rows have not started.
+- **Coverage so far:** SETUP-1–SETUP-7, spine-01–spine-12, and prelude cc1–cc5 complete; next row prelude CC6. Full denominator is filled at finish audit.
 
 ## Per-test results
 Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven row that is omitted reads as covered, and one mislabelled `NO-ACCESS` reads as "the rig can't, and that's fine" (`../02-DISCIPLINE.md §scoring`).
@@ -19,6 +19,9 @@ Every planned row appears here. `NOT-RUN` is a real verdict — a never-driven r
 | SETUP-5 | OK | 1/1 | Inbound 103 → exactly one wire reply `PONG42`; trace `072709e3-b7cd-4c6a-9e42-1b3aa80dfff9`, served `gpt-5.6-luna`, success, 5,084 ms, 23,389 tokens, $0.023424. Session draft, wire, delivery trajectory, and mirror text agree; `explain` has 11 records/no failures and health is 0% degraded. | — |
 | SETUP-6 | OK | 1/1 | 24-fixture manifest hash/size verified: five decodable Opus voices, two deterministic decode failures, clean/blurry/hostile 1200×800 images visually read, valid one-page PDF, 40,000-byte paste, 684,000-byte oversized document, identical learning openings, and reachable benign/hostile public pages. | — |
 | SETUP-7 | OK | 1/1 | Baseline: PID 4072911, RSS 1,400,252 KiB, 44 fds, 0 children, root 638,259,676 bytes, logs 51,703 bytes, 2 DB files; LCD/mirror/memory/session counts 0/0/0/0 after protected restart; 5 setup audit rows. | — |
+| PRELUDE-SPINE | OK | deterministic | Exact twelve-turn relationship seed established and recalled the move code, three-bullet preference, document checkpoint, ETA, terminal child result, and persisted reminder. A normal primary restart preserved fact, preference, and completed-work recall. | — |
+| PRELUDE-CC1–CC4 | OK | deterministic | Exact frozen bursts produced 5/5 at peak concurrency 5, three terminal heavy answers at peak 3, and both 12-second SDK steering corrections with one selected wire delivery and no lost/duplicate output. | — |
+| PRELUDE-CC5 | COMIS-FAIL→fixed | deterministic replay | Initial verifier exited when 10 transcript answers but only 9 channel sends were visible; ground truth later reached 10/10. The fixed verifier waits for matching delivery, and a fresh exact ten-message burst passed 10/10 at peak concurrency 10. | `55c05a01` |
 
 ## Coverage honesty + previous-run diff
 | check | this run | previous run | verdict |
@@ -48,13 +51,14 @@ Latency and cost are mechanical and belong here every run, even when the target 
 ## Fixes (test-first)
 | issue | root cause (class) | RED test path | fix commit | confirmed-live (oracle) |
 |---|---|---|---|---|
-| | | | | |
+| Terminal burst answer reported lost before channel post-processing finished | harness false negative: settle race | `test/live/self-driving/scripts/concurrency-oracle.test.ts` | `55c05a01` (RED `695a9ae9`) | original manifest reconciles 10/10; fresh zero-delay burst reconciles 10/10 with peak concurrency 10 |
 
 ## Observability / emulator gaps closed (or dated TODO)
 | gap | how closed (signal threaded to explain/system · verb/method/fault/oracle added) | litmus proven? |
 |---|---|---|
 | Local helper inherited another rig's gateway token | Selected local encrypted-store resolution now precedes helper `GWTOKEN`; explicit `COMIS_GATEWAY_TOKEN` remains available for negative probes. | Yes: one command passes on fresh scratch and selected primary. |
 | Phase-zero process check used host-wide `pgrep` | Local check now calls lifecycle-owner-aware `rig_daemon_pid`. | Yes: line names selected PID while several other daemons remain live. |
+| Burst verifier treated terminal transcript state as terminal delivery | Settle now distinguishes resolved turns from matching Telegram wire delivery and retains the bounded quiet-period negative path. | Yes: the original late send and a fresh ten-way burst both reconcile 10/10. |
 
 ## Defaults verdict — the out-of-the-box experience (`../00-MISSION.md` STEP 4.6)
 One row per behavior-changing knob the run exercised. A knob exercised but not judged is an omission; a class with no measurement behind it is a guess. Both HARD guards apply: never tune toward this run's domain, never relax a security default for UX.

@@ -3,8 +3,8 @@
 - Scope: full A0–A13, B1–B15, C1–C7, Track CC1–CC7, capability matrix, Track K/L/M slices, defaults review, fifth-axis metrics, and finish audit.
 - Branch: `feature/real-user-telegram-campaign-20260806`.
 - Initial campaign HEAD: `a510a4c8f5b0db0ed39473dfa8cc4d7649046799`.
-- Current stage: Phase 0 and SETUP-1–SETUP-7 complete; two harness failures were closed test-first. No A/B/C scored inject has run.
-- Next row: `CORPUS-PRELUDE`, then the risk-first sequence beginning with A11.
+- Current stage: Phase 0 and SETUP-1–SETUP-7 complete; the relationship spine and prelude CC1–CC5 are green. Three harness failures were closed test-first. No A/B/C scored inject has run.
+- Next row: prelude CC6, then the risk-first sequence beginning with A11.
 - Open COMIS-FAIL count: 0.
 - Open carried finding count: 4 — Reflection dependency detail (OF-01), Track CC fan-out/content (OF-02), default steering behavior (OF-03), and reset-burst content (OF-04).
 - Primary tuple: `RIG_MODE=local`, `DATA=/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2`, `RIG_ENV=/home/ubuntu/.comis-live-real-user-telegram-local-20260806-v2/.rig-env`, `GW_PORT=48701`, `SERVICE=comis-live-real-user-20260806-primary`.
@@ -21,7 +21,8 @@
 - Corpus identity: first 44 lines copied byte-for-byte from the Track CC frozen corpus; A/B/C additions and the late identical-text `ccr*` scoring block are append-only and frozen before the first scored inject.
 - Phase-0 trace: `072709e3-b7cd-4c6a-9e42-1b3aa80dfff9`; exact PONG42 wire/mirror, `gpt-5.6-luna`, success, 5,084 ms, $0.023424.
 - Phase-0 baseline: PID 4072911; RSS 1,400,252 KiB; 44 fds; 0 children; root 638,259,676 bytes; log 51,703 bytes; config hash `ee97e66a52af59a7c1a57b7b749e4d0cf6ae8a73ffb783251a202f78fff0dc11`.
-- Closed campaign fixes: selected local RPC token resolution `509664a5`; selected Phase-0 process ownership `0e2dd6ea`.
+- Prelude evidence: the twelve-turn relationship spine survived a normal restart; prelude CC1/CC2/CC3/CC4/CC5 reached exact answer/delivery counts `5/5`, `3/3`, `2/2 with one selected delivery`, `2/2 with one selected delivery`, and `10/10`, with proven concurrency peaks `5`, `3`, and `10` where overlap is required.
+- Closed campaign fixes: selected local RPC token resolution `509664a5`; selected Phase-0 process ownership `0e2dd6ea`; terminal transcript/channel-delivery settle race `55c05a01`.
 
 ## Resume invariants
 

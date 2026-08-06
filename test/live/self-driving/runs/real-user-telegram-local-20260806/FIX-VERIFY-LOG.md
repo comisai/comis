@@ -29,3 +29,17 @@
 - **Regression re-run:** shell syntax gate and full `remote-root.test.ts` green.
 - **Commit:** `0e2dd6ea` (RED commit `29a374fe`).
 - **Status:** CLOSED — next time Phase 0 identifies the selected daemon without a process hand-join.
+
+## PRELUDE-CC5-SETTLE — terminal transcript outran Telegram delivery
+- **Symptom (live):** all ten exact burst turns were transcript-bound, terminal, and overlapped at peak concurrency ten, but the verifier exited with only nine matching Telegram sends and reported `answer-not-delivered`.
+- **Evidence (ground truth):** the emulator and delivery mirror later contained the exact tenth answer. The original manifest then reconciled ten accepted sources, ten answers, and ten wire sends with no duplicate or unrelated delivery.
+- **Hypothesis → root cause:** harness settle race in `burst-verify.mjs`: `resolvedAll && openTraceCount === 0` bypassed the evidence quiet window even while `wireReconciliation()` still reported a missing channel delivery.
+- **RED test:** `test/live/self-driving/scripts/concurrency-oracle.test.ts` proves a resolved terminal transcript with incomplete wire delivery must remain open while evidence is still active; it failed because the helper returned `true`.
+- **Fix:** the settle decision now distinguishes turn resolution from matching channel delivery. Complete transcript plus complete delivery may finish immediately; incomplete delivery waits for more evidence or the existing bounded quiet-period negative verdict. Docs-current: N/A.
+- **Review:** a real missing delivery still settles as a failure after the quiet bound; a stopped daemon still settles; open model or child work remains open.
+- **Clean-slate + rebuild + clean-restart:** no runtime rebuild or restart required because this is a campaign oracle. The focused 34-test oracle file is green.
+- **Confirm (ground truth):** the original late-delivery manifest re-scores ten of ten, then a fresh exact zero-delay ten-message burst passed ten of ten with peak concurrency ten on the protected primary.
+- **Observability gap closed:** the burst verifier now answers channel-delivery completeness in one call without a later manual emulator query.
+- **Regression re-run:** all 34 `concurrency-oracle.test.ts` tests plus the two live manifest replays.
+- **Commit:** `55c05a01` (RED commit `695a9ae9`).
+- **Status:** CLOSED — the sole open COMIS failure count returned to zero.
