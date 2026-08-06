@@ -204,13 +204,27 @@ export function openTrajectoryTraceIds(records) {
   for (const record of records) {
     const traceId = record?.traceId;
     if (typeof traceId !== "string" || traceId === "") continue;
-    const current = state.get(traceId) ?? { started: false, terminal: false };
+    const current = state.get(traceId) ?? {
+      started: false,
+      terminal: false,
+      openChildRunIds: new Set(),
+    };
     if (TURN_START_TYPES.has(record.type)) current.started = true;
     if (TURN_TERMINAL_TYPES.has(record.type)) current.terminal = true;
+    const childRunId = record?.data?.runId;
+    if (typeof childRunId === "string" && childRunId !== "") {
+      if (record.type === "subagent.spawned") current.openChildRunIds.add(childRunId);
+      if (record.type === "subagent.completed" || record.type === "subagent.killed") {
+        current.openChildRunIds.delete(childRunId);
+      }
+    }
     state.set(traceId, current);
   }
   return [...state.entries()]
-    .filter(([, value]) => value.started && !value.terminal)
+    .filter(([, value]) => (
+      value.started
+      && (!value.terminal || value.openChildRunIds.size > 0)
+    ))
     .map(([traceId]) => traceId)
     .sort();
 }
@@ -222,7 +236,7 @@ export function shouldSettleBurstEvidence({
   openTraceCount,
   gatewayReachable,
 }) {
-  if (resolvedAll) return true;
+  if (resolvedAll && openTraceCount === 0) return true;
   if (!evidenceQuiet) return false;
   return openTraceCount === 0 || !gatewayReachable;
 }
