@@ -148,6 +148,21 @@ describe("FollowupConfigSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("QueueConfigSchema", () => {
+  it("rejects removed ingress debounce keys instead of accepting inert configuration", () => {
+    expect(QueueConfigSchema.safeParse({
+      debounce: {
+        windowMs: 250,
+        maxBufferedMessages: 4,
+        firstMessageImmediate: false,
+      },
+    }).success).toBe(false);
+    expect(QueueConfigSchema.safeParse({
+      perChannelDebounce: {
+        telegram: { windowMs: 250 },
+      },
+    }).success).toBe(false);
+  });
+
   it("produces valid defaults from empty object", () => {
     const result = QueueConfigSchema.safeParse({});
     expect(result.success).toBe(true);
