@@ -6,6 +6,7 @@ import {
   findTelegramConversationWireAnswer,
   isDriveProgressText,
   normalizeWireText,
+  normalizeDriveStdinText,
   normalizedInboundTextError,
   outboundVisibleText,
   reconcileAssistantSurfaces,
@@ -20,6 +21,13 @@ describe("drive inbound validation", () => {
     expect(normalizedInboundTextError("x".repeat(65_537), 65_536)).toBe(
       "message text is 65537 characters; the deployed normalized-message limit is 65536",
     );
+  });
+
+  it("preserves multiline stdin while removing only its transport newline", () => {
+    expect(normalizeDriveStdinText(
+      "from: synthetic sender\ncan you confirm the window?\n",
+    )).toBe("from: synthetic sender\ncan you confirm the window?");
+    expect(normalizeDriveStdinText("one line\r\n")).toBe("one line");
   });
 });
 
