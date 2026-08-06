@@ -44,6 +44,14 @@ describe("buildSafetySection", () => {
     expect(joined).toMatch(/must not expand.*side effects/iu);
     expect(joined).toMatch(/current conversation/iu);
   });
+
+  it("keeps forwarded correspondence in draft mode until delivery is authorized", () => {
+    const joined = buildSafetySection(false).join("\n");
+
+    expect(joined).toMatch(/pasted or forwarded correspondence.*quoted context/iu);
+    expect(joined).toMatch(/asks whether or how to reply.*assess.*grounded draft/iu);
+    expect(joined).toMatch(/do not send.*exact recipient.*delivery authority/iu);
+  });
 });
 
 // ---------------------------------------------------------------------------
