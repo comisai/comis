@@ -299,6 +299,23 @@ describe("SDK steering burst ground-truth oracle", () => {
     ]);
   });
 
+  it("selects a direct SDK base trace when no command-queue enqueue exists", () => {
+    const selected = selectSdkSteeringTrajectoryRecords([
+      record("prompt.submitted", "base-trace", 1_010),
+      record("queue.steer_injected", "follow-trace", 13_010),
+      record("session.summary", "base-trace", 18_000),
+      record("delivery.dispatched", "base-trace", 18_100),
+    ], {
+      fromMs: 1_000,
+      followSentAtMs: 13_000,
+    });
+
+    expect([...new Set(selected.map((entry) => entry.traceId))]).toEqual([
+      "base-trace",
+      "follow-trace",
+    ]);
+  });
+
   it("scores an SDK follow-up queue through its two normal transcript replies", () => {
     const transcriptSource = [
       userRecord(BASE_GUID, "write a long report"),
