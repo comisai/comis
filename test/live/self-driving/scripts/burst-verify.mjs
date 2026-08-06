@@ -18,6 +18,7 @@
 //     --settle-ms <n>      quiet period with no new evidence before scoring (default 20000)
 //     --max-ms <n>         hard ceiling on settling (default 300000)
 //     --no-expect-overlap  for a steering/sequential row, where one trace is the correct shape
+//     --sdk-steering       score the second inbound from SDK steer/follow-up disposition events
 //     --data <path>        override the manifest's data dir
 //     --format json|text   default text (json prints the full report)
 //
@@ -35,6 +36,10 @@ import {
   shouldSettleBurstEvidence,
   wireReconciliation,
 } from './concurrency-oracle.mjs';
+import {
+  scoreSdkSteeringBurst,
+  selectSdkSteeringTrajectoryRecords,
+} from './steering-oracle.mjs';
 
 const argv = process.argv.slice(2);
 const positional = [];
@@ -42,12 +47,13 @@ const flags = new Map();
 for (let index = 0; index < argv.length; index += 1) {
   const token = argv[index];
   if (token === '--no-expect-overlap') { flags.set('no-expect-overlap', true); continue; }
+  if (token === '--sdk-steering') { flags.set('sdk-steering', true); continue; }
   if (token.startsWith('--')) { flags.set(token.slice(2), argv[index + 1]); index += 1; continue; }
   positional.push(token);
 }
 const manifestPath = positional[0];
 if (!manifestPath) {
-  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--data path] [--format json|text]');
+  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering] [--data path] [--format json|text]');
   process.exit(2);
 }
 let manifest;
@@ -65,7 +71,8 @@ if (!Number.isFinite(settleMs) || !Number.isFinite(maxMs)) {
 }
 const dataDir = flags.get('data') || manifest.dataDir || rig.dataDir;
 const format = flags.get('format') || 'text';
-const expectOverlap = flags.get('no-expect-overlap') !== true;
+const sdkSteering = flags.get('sdk-steering') === true;
+const expectOverlap = !sdkSteering && flags.get('no-expect-overlap') !== true;
 const injects = (manifest.injects ?? []).filter((inject) => inject.ok && inject.inboundGuid);
 if (injects.length === 0) {
   console.error('burst-verify.mjs: the manifest carries no accepted injects — nothing to verify');
@@ -168,16 +175,30 @@ const evidence = async () => {
   let trajectoryRecords = [];
   if (trajectoryPath) {
     try {
-      trajectoryRecords = selectBurstTrajectoryRecords(
-        parseJsonlRecords(readFileSync(trajectoryPath, 'utf8')),
-        { fromMs: manifest.startedAtMs, expectedTraceCount: injects.length },
-      );
+      const allRecords = parseJsonlRecords(readFileSync(trajectoryPath, 'utf8'));
+      trajectoryRecords = sdkSteering
+        ? selectSdkSteeringTrajectoryRecords(allRecords, {
+            fromMs: manifest.startedAtMs,
+            followSentAtMs: injects[1]?.sentAtMs,
+          })
+        : selectBurstTrajectoryRecords(
+            allRecords,
+            { fromMs: manifest.startedAtMs, expectedTraceCount: injects.length },
+          );
     } catch { /* mid-write or absent — retried on the next poll */ }
   }
   return { transcript, wire, daemonReachable, trajectoryPath, trajectoryRecords };
 };
 
 const score = (state) => {
+  if (sdkSteering) {
+    return scoreSdkSteeringBurst({
+      injects,
+      transcriptSource: state.transcript?.source ?? '',
+      trajectoryRecords: state.trajectoryRecords,
+      wire: state.wire,
+    });
+  }
   const attribution = attributeBurst({
     injects,
     transcriptSource: state.transcript?.source ?? '',
@@ -203,8 +224,13 @@ let fingerprint = '';
 let quietSinceMs = Date.now();
 let settled = false;
 while (Date.now() - startedAtMs < maxMs) {
+  const steeringEvidencePending = sdkSteering && scored.verdict.hard.some(
+    (violation) => violation.kind === 'missing-steering-disposition'
+      || violation.kind === 'steered-turn-not-terminal',
+  );
   const resolvedAll = scored.attribution.counts.unanswered === 0
-    && scored.attribution.counts.ambiguous === 0;
+    && scored.attribution.counts.ambiguous === 0
+    && !steeringEvidencePending;
   const next = `${state.transcript?.source.length ?? 0}:${state.wire.length}:${state.trajectoryRecords.length}:${state.daemonReachable ? 'up' : 'down'}`;
   if (next !== fingerprint) { fingerprint = next; quietSinceMs = Date.now(); }
   const evidenceQuiet = Date.now() - quietSinceMs >= settleMs;
@@ -231,6 +257,7 @@ const report = {
   expectOverlap,
   gatewayReachable: state.daemonReachable,
   openTraceIds: scored.openTraceIds,
+  ...(scored.steering === undefined ? {} : { steering: scored.steering }),
   ...scored.verdict,
   bindings: scored.attribution.bindings,
   ambiguousAnswers: scored.attribution.ambiguousAnswers,
@@ -265,6 +292,8 @@ if (format === 'json') {
   for (const binding of scored.attribution.bindings) {
     const detail = binding.status === 'answered'
       ? binding.answer
+      : binding.status === 'steered'
+        ? `forwarded via ${scored.steering?.disposition ?? 'SDK steering'}`
       : binding.status === 'ambiguous'
         ? `ambiguous with [${binding.ambiguousWith.join(', ')}]`
         : binding.inboundSeen ? 'NO REPLY' : 'NEVER INGESTED';
