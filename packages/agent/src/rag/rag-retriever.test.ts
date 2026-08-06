@@ -125,7 +125,7 @@ describe("formatMemorySection", () => {
     const headerLen =
       "## Relevant Memories\n\nThe following are memories from past interactions, ranked by relevance. They may be outdated; if any conflicts with what the user has said in the current conversation, the current conversation is authoritative:\n"
         .length;
-    const firstLineApprox = "- [system] (recorded 2023-11-14): First entry\n".length;
+    const firstLineApprox = "- [system] (recorded 2023-11-14T22:13:20.000Z): First entry\n".length;
     const result = formatMemorySection(results, headerLen + firstLineApprox + 5);
 
     expect(result).toContain("First entry");

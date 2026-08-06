@@ -14,7 +14,7 @@ import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 /**
  * Format a list of memory search results into a single annotated section.
  *
- * Each result is formatted with trust-level tag, date, optional source
+ * Each result is formatted with trust-level tag, timestamp, optional source
  * channel, and sanitized content. Results are appended until the
  * maxChars budget is exhausted.
  *
@@ -46,15 +46,17 @@ export function formatMemorySection(
   for (const result of results) {
     const { entry } = result;
 
-    // Format recorded date (createdAt) as YYYY-MM-DD
-    const date = systemDateFrom(entry.createdAt).toISOString().split("T")[0];
+    // Keep the full instant. Date-only rendering makes two same-day facts look
+    // equally recent, preventing the model from applying the documented
+    // most-recent-recorded tie-break to an explicit correction.
+    const recordedTimestamp = systemDateFrom(entry.createdAt).toISOString();
 
-    // Surface the EVENT date (occurredAt) only when present; absent →
+    // Surface the exact EVENT time (occurredAt) only when present; absent →
     // the line is byte-identical to the recorded-only format. systemDateFrom
     // (not new Date) keeps the wall-clock globals banned (globals.test.ts).
-    const occurred =
+    const occurredTimestamp =
       typeof entry.occurredAt === "number"
-        ? `, occurred ${systemDateFrom(entry.occurredAt).toISOString().split("T")[0]}`
+        ? `, occurred ${systemDateFrom(entry.occurredAt).toISOString()}`
         : "";
 
     // Format trust tag -- external gets explicit untrusted warning
@@ -85,7 +87,7 @@ export function formatMemorySection(
 
     // Build formatted line — explicit recorded/occurred labels back the
     // guidance block ("when it was recorded and (if known) when the event occurred").
-    const line = `- ${trustTag}${senderTag} (recorded ${date}${occurred}${source}): ${sanitizedContent}\n`;
+    const line = `- ${trustTag}${senderTag} (recorded ${recordedTimestamp}${occurredTimestamp}${source}): ${sanitizedContent}\n`;
 
     // Check budget
     if (charCount + line.length > maxChars) {

@@ -21,11 +21,11 @@ import { formatMemorySection } from "./rag-retriever.js";
  * `inlineMemory` template below: `\n[Relevant context from memory: <content>
  * (recorded YYYY-MM-DD[, occurred YYYY-MM-DD])]\n`). KEEP IN SYNC with that
  * template. Anchored at the start (the envelope-wrapper adds it as the OUTERMOST
- * prefix) and matched to the date-anchored `(recorded …)]` terminator so recalled
+ * prefix) and matched to the timestamp-anchored `(recorded …)]` terminator so recalled
  * content containing `[`/`]` is handled without over-stripping.
  */
 const INLINE_RECALL_BLOCK_RE =
-  /^\s*\[Relevant context from memory: [\s\S]*? \(recorded \d{4}-\d{2}-\d{2}(?:, occurred \d{4}-\d{2}-\d{2})?\)\]\n?/;
+  /^\s*\[Relevant context from memory: [\s\S]*? \(recorded \d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}\.\d{3}Z)?(?:, occurred \d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}\.\d{3}Z)?)?\)\]\n?/;
 
 /**
  * Remove the leading inline-recall block from a user message's text. The single
@@ -155,13 +155,13 @@ export function createHybridMemoryInjector(opts?: {
       // system section, where their provenance warning cannot be separated.
       if (topScore >= inlineMinScore && hasInlineSenderProvenance) {
         // Format top-1 as inline memory
-        const date = systemDateFrom(top.entry.createdAt).toISOString().split("T")[0];
-        // Surface the EVENT date only when present; absent → the inline
+        const recordedTimestamp = systemDateFrom(top.entry.createdAt).toISOString();
+        // Surface the exact EVENT time only when present; absent → the inline
         // string is byte-identical to the original recorded-only format. systemDateFrom
         // (not new Date) keeps the wall-clock globals banned (globals.test.ts).
-        const occurred =
+        const occurredTimestamp =
           typeof top.entry.occurredAt === "number"
-            ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
+            ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString()}`
             : "";
         const sanitized = sanitizeToolOutput(scrubSecretsFromText(top.entry.content).text);
         const inlineMemory =
@@ -169,7 +169,7 @@ export function createHybridMemoryInjector(opts?: {
           "Resolve references from the current conversation first. " +
           "Use this memory only when the current conversation has no plausible referent; " +
           "if ambiguity remains, ask the user rather than guess.\n" +
-          `${sanitized} (recorded ${date}${occurred})]\n`;
+          `${sanitized} (recorded ${recordedTimestamp}${occurredTimestamp})]\n`;
 
         // If the top hit cannot fit as a complete inline envelope, keep the
         // canonical formatter as the only placement. It either fits a complete
