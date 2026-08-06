@@ -85,7 +85,8 @@ describe("web-fetch-tool", () => {
     expect(tool.name).toBe("web_fetch");
     expect(tool.label).toBe("Web Fetch");
     expect(tool.description).toContain("readable content");
-    expect(tool.description).toMatch(/supplied URL.*before answering/iu);
+    expect(tool.description).toMatch(/request or relevant conversation context/iu);
+    expect(tool.description).toMatch(/before making claims about its contents/iu);
     expect(tool.description).toMatch(/do not rely on prior knowledge/iu);
     expect(tool.parameters).toBeDefined();
   });

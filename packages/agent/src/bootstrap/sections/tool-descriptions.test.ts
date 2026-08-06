@@ -45,12 +45,12 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     expect(description).toMatch(/do not.*(?:forget|delete).*unless.*explicitly asks/isu);
   });
 
-  it("requires fetching before answering about a supplied URL", () => {
+  it("requires fetching before claims about a contextual URL", () => {
     const description = LEAN_TOOL_DESCRIPTIONS.web_fetch;
 
     expect(description).toEqual(expect.any(String));
-    expect(description).toMatch(/supplied URL/iu);
-    expect(description).toMatch(/call.*before answering/iu);
+    expect(description).toMatch(/current request or relevant conversation context/iu);
+    expect(description).toMatch(/call.*before making claims about its contents/iu);
     expect(description).toMatch(/do not rely on prior knowledge/iu);
   });
 });
