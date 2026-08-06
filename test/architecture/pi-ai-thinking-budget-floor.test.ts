@@ -46,6 +46,22 @@ describe("pi-ai thinking-budget floor patch", () => {
   });
 });
 
+describe("pi-ai provider-error body normalization", () => {
+  it("only a plain object counts as an HTTP error body", () => {
+    // A class instance in `$response.body` (AWS SDK v3 puts an HTTP stream
+    // wrapper there) used to be stringified as `{"_events":...}` and then
+    // REPLACED `error.message` in the composed display string — discarding the
+    // one useful line ("Input is too long...") for noise. The repository
+    // carried a patch for this; upstream now ships the prototype check itself,
+    // so the patch hunk was retired. This guard keeps the behavior pinned to
+    // the INSTALLED package: a pi-ai upgrade that drops the check fails here
+    // rather than silently restoring garbage error text.
+    const src = installedSource("@earendil-works/pi-ai", "dist/utils/error-body.js");
+    expect(src).toContain("isPlainNonEmptyObject");
+    expect(src).toContain("Object.getPrototypeOf");
+  });
+});
+
 describe("pi-coding-agent script-aware compaction estimator patch", () => {
   it("compaction token estimation carries the non-Latin divisor", () => {
     // chars/4 undercounts non-Latin scripts (Hebrew, Arabic, CJK) roughly 2x,

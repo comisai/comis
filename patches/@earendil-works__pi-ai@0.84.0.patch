@@ -1,5 +1,5 @@
 diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
-index 17ec1ac38f1124cbb520522660b6f0dcab70d64d..48873fa11fa919e84c72fd9ac9c4f32d05dc21c0 100644
+index bab5117f2c58054e0dd8fcadb17b2285dd6118ed..cec52f7a84fa962dc48cb9ada5b51d56e852f5bb 100644
 --- a/dist/api/anthropic-messages.js
 +++ b/dist/api/anthropic-messages.js
 @@ -630,11 +630,21 @@ export const streamSimple = (model, context, options) => {
@@ -26,10 +26,10 @@ index 17ec1ac38f1124cbb520522660b6f0dcab70d64d..48873fa11fa919e84c72fd9ac9c4f32d
  };
  function isOAuthToken(apiKey) {
 diff --git a/dist/api/bedrock-converse-stream.js b/dist/api/bedrock-converse-stream.js
-index a6b1ec2e7590f938e40ca6cc4c6f05a4f4292187..48f8eb14fda4342b3d00b002021f603f82d49f9f 100644
+index d641b31264ef5a661efa4bd03489fdbc84a06ada..85b63e0d2fa4fa29a6b280d3076a18c538d7d31f 100644
 --- a/dist/api/bedrock-converse-stream.js
 +++ b/dist/api/bedrock-converse-stream.js
-@@ -310,13 +310,23 @@ export const streamSimple = (model, context, options) => {
+@@ -358,13 +358,23 @@ export const streamSimple = (model, context, options) => {
          // Do not coerce to 0 here, or the thinking budget would become the entire maxTokens value.
          const adjusted = adjustMaxTokensForThinking(base.maxTokens, model.maxTokens, options.reasoning, options.thinkingBudgets);
          const maxTokens = clampMaxTokensToContext(model, context, adjusted.maxTokens);
@@ -54,31 +54,3 @@ index a6b1ec2e7590f938e40ca6cc4c6f05a4f4292187..48f8eb14fda4342b3d00b002021f603f
              },
          });
      }
-diff --git a/dist/utils/error-body.js b/dist/utils/error-body.js
-index 4b148ca716e0145fd73c7195b8afaaeef26c5b28..dbafeacc56a56a5944459714e348d2e34073d083 100644
---- a/dist/utils/error-body.js
-+++ b/dist/utils/error-body.js
-@@ -70,7 +70,7 @@ function pickBodyText(error) {
-         return responseBody;
-     if (isReadableStreamLike(responseBody))
-         return undefined;
--    if (isNonEmptyObject(responseBody))
-+    if (isNonEmptyJsonBody(responseBody))
-         return safeJsonStringify(responseBody);
-     return undefined;
- }
-@@ -80,6 +80,14 @@ function isReadableStreamLike(value) {
- function isNonEmptyObject(value) {
-     return typeof value === "object" && value !== null && Object.keys(value).length > 0;
- }
-+function isNonEmptyJsonBody(value) {
-+    if (Array.isArray(value))
-+        return value.length > 0;
-+    if (!isNonEmptyObject(value))
-+        return false;
-+    const prototype = Object.getPrototypeOf(value);
-+    return prototype === Object.prototype || prototype === null;
-+}
- /**
-  * Compose a display string from a normalized error. When the message already
-  * carries the body (Anthropic / `@google/genai` happy path) or no body/status

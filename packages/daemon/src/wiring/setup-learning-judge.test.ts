@@ -26,7 +26,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
   };
 });
 
-import { createOutcomeJudgeSeam, resolveProviderApiKey, PROVIDER_SECRET_KEYS} from "@comis/agent";
+import { createOutcomeJudgeSeam, resolveProviderApiKey, resolveOperationModel, resolveProviderFamily, PROVIDER_SECRET_KEYS} from "@comis/agent";
 import { createConversationLocator } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -367,10 +367,25 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     expect(built.outcomeJudge).toBeDefined();
     await built.outcomeJudge!({ agentId: "a1", trajectoryContent: "bounded transcript" });
     expect(resolveCredential).toHaveBeenCalledWith("a1", "openai-codex");
+    // Derived, never pinned: the judge model is the operation resolver's
+    // cost-ranked pick from the LIVE pi-ai catalog, so a hard-coded id reds this
+    // gate on every SDK bump that adds a cheaper model — an upgrade, not a
+    // regression (pi 0.84.0 added a codex model below the previous cheapest).
+    // Asserting through the same resolver still pins what the test is for: the
+    // OAuth credential reaching the seam with the OPERATION-tier model, not the
+    // agent's own `gpt-5.6-sol`.
+    const expectedJudgeModel = resolveOperationModel({
+      operationType: "outcomeJudge",
+      agentProvider: "openai-codex",
+      agentModel: "gpt-5.6-sol",
+      operationModels: {} as never,
+      providerFamily: resolveProviderFamily("openai-codex"),
+    });
+    expect(expectedJudgeModel.modelId).not.toBe("gpt-5.6-sol");
     expect(createOutcomeJudgeSeam).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "openai-codex",
-        modelId: "gpt-5.4-mini",
+        modelId: expectedJudgeModel.modelId,
         apiKey: "oauth-access-token",
         agentId: "a1",
       }),
