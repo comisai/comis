@@ -165,7 +165,7 @@ const SCHEDULER_STATE_TERMINATORS = [" ", ".", ",", "!", "?", ":", ";", "—", "
 const SCHEDULER_MUTATION_CONFIRMATION = /\b(?:confirmed|updated|done|scheduled|set)\b/u;
 const SCHEDULER_DIRECT_CONFIRMATION = /\b(?:confirmed|updated|scheduled|set)\b/u;
 const SCHEDULER_FUTURE_BEHAVIOR =
-  /\b(?:will\s+)?(?:not\s+)?(?:run|fire|send|deliver|skip)s?\b/u;
+  /\b(?:will\s+)?(?:not\s+)?(?:run(?:s|ning)?|fir(?:e|es|ing)|send(?:s|ing)?|deliver(?:s|ing)?|skip(?:s|ping)?)\b/u;
 const SCHEDULER_TEMPORAL_CONTEXT =
   /\b(?:hourly|daily|weekly|monthly|weekdays?|weekends?|holidays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b\d{1,2}:\d{2}\b|\b(?:a\.?m\.?|p\.?m\.?)\b/u;
 
