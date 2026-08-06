@@ -103,6 +103,18 @@ export async function runRetryLoop(
     retryState.promptSucceeded = retryResult.succeeded;
     retryState.promptError = retryResult.error;
 
+    // The SDK reports a caller-aborted stream as a settled prompt. Do not
+    // reinterpret its empty assistant turn as a silent model failure: every
+    // recovery path below can dispatch another provider turn and resume work
+    // that the caller explicitly cancelled.
+    if (params.executionOverrides?.signal?.aborted) {
+      return {
+        promptSucceeded: false,
+        promptError: undefined,
+        stuckSessionDetected: false,
+      };
+    }
+
     // Record successful model for last-known-working tracker
     if (retryResult.succeeded && retryResult.effectiveModel) {
       deps.lastKnownModel?.recordSuccess(

@@ -57,6 +57,16 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
     envelope.promptImages,
     envelope.skipPrompt,
   );
+  if (params.executionOverrides?.signal?.aborted) {
+    // The executor's signal listener already owns the canonical cancellation
+    // result. Returning here prevents output escalation and empty-response
+    // recovery from starting replacement provider work or overwriting it.
+    return {
+      promptSucceeded: false,
+      promptError: undefined,
+      escalationAttempted: false,
+    };
+  }
   if (retry.stuckSessionDetected) {
     return stuckSessionResult();
   }
