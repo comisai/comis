@@ -627,7 +627,7 @@ export function createWebFetchTool(
     label: "Web Fetch",
     description:
       "Fetch and extract readable content from a URL (HTML -> markdown/text). "
-      + "If a supplied URL appears in the current request or relevant conversation context, call this before making claims about its contents; do not rely on prior knowledge. "
+      + "For a supplied URL in the current request or relevant conversation context, when Linked Content is already present, use it; otherwise call this before making claims. Do not rely on prior knowledge. "
       + "Use for lightweight page access without browser automation.",
     parameters: WebFetchParams,
 
