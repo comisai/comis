@@ -684,6 +684,7 @@ describe("withClient", () => {
     MockWebSocket.instances = [];
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
+    delete process.env["COMIS_DATA_DIR"];
     delete process.env["COMIS_INSECURE"];
     // These tests exercise withClient's config / transport-construction
     // paths via a mocked `ws` module — the WebSocket is fake, so opting
@@ -696,6 +697,7 @@ describe("withClient", () => {
   afterEach(() => {
     delete process.env["COMIS_GATEWAY_URL"];
     delete process.env["COMIS_GATEWAY_TOKEN"];
+    delete process.env["COMIS_DATA_DIR"];
     delete process.env["COMIS_INSECURE"];
     delete process.env["COMIS_CLI_E2E"];
   });
@@ -843,6 +845,43 @@ describe("withClient", () => {
       expect(vi.mocked(offlineSecretGet)).toHaveBeenCalledWith(
         expect.objectContaining({ name: "COMIS_GATEWAY_TOKEN" }),
       );
+    });
+
+    it("resolves an env SecretRef from the selected encrypted store", async () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        [
+          "gateway:",
+          "  host: localhost",
+          "  port: 48681",
+          "  tokens:",
+          "    - id: default",
+          "      secret:",
+          "        source: env",
+          "        provider: comis",
+          "        id: COMIS_GATEWAY_TOKEN",
+          "      scopes:",
+          '        - "*"',
+        ].join("\n"),
+      );
+      process.env["COMIS_DATA_DIR"] = "/selected/rig";
+      vi.mocked(offlineSecretGet).mockReturnValue({
+        ok: true,
+        value: "store-resolved-secret-ref-token",
+      });
+
+      connectLastWsAsync();
+      await withClient(async () => "done");
+
+      const ws = getLastWs();
+      expect(ws.options.headers!["authorization"]).toBe(
+        "Bearer store-resolved-secret-ref-token",
+      );
+      expect(vi.mocked(offlineSecretGet)).toHaveBeenCalledWith({
+        name: "COMIS_GATEWAY_TOKEN",
+        dataDir: "/selected/rig",
+        envFilePath: "/selected/rig/.env",
+      });
     });
 
     it("env URL overrides config URL while config token still used when no env token", async () => {
