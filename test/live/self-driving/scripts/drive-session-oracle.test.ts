@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   findTelegramConversationWireAnswer,
+  normalizeWireText,
   normalizedInboundTextError,
   outboundVisibleText,
   reconcileAssistantSurfaces,
@@ -22,6 +23,24 @@ describe("drive inbound validation", () => {
 });
 
 describe("drive outbound visibility", () => {
+  it("canonicalizes a Markdown table and Telegram HTML table to the same wire text", () => {
+    const markdown = [
+      "## Verification Report",
+      "",
+      "| Item | Value |",
+      "|---|---:|",
+      "| Box count | 12 |",
+    ].join("\n");
+    const telegramHtml = [
+      "<b>Verification Report</b>",
+      "",
+      "<pre><code>Item       Value",
+      "Box count  12</code></pre>",
+    ].join("\n");
+
+    expect(normalizeWireText(markdown)).toBe(normalizeWireText(telegramHtml));
+  });
+
   it("treats an attachment caption as substantive user-visible text", () => {
     expect(outboundVisibleText({
       method: "sendDocument",
