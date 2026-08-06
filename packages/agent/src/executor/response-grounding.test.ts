@@ -161,6 +161,21 @@ describe("response grounding module", () => {
     });
   });
 
+  it("rejects an unverified recurring policy phrased with a present participle", () => {
+    const honestResponse = "I did not verify the scheduled job in this turn.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "Yes, weekly planning is every Saturday at 7:00 AM ET, skipping U.S. federal holidays.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_scheduler_state_evidence",
+    });
+  });
+
   it("rejects a bare temporal policy confirmation inherited from scheduling context", () => {
     const honestResponse = "I did not verify the scheduled job in this turn.";
 
