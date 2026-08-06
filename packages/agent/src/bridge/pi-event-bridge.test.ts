@@ -774,6 +774,37 @@ describe("createPiEventBridge", () => {
       ]);
     });
 
+    it("retains only the confirmation-required boolean from a gated cron result", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "cron",
+        toolCallId: "tc-cron-remove",
+        args: { action: "remove", job_name: "synthetic scheduled job" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "cron",
+        "tc-cron-remove",
+        false,
+        {
+          content: [{ type: "text", text: "confirmation details" }],
+          details: {
+            requiresConfirmation: true,
+            actionType: "cron.remove",
+            hint: "untrusted model-visible prose",
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        requiresConfirmation?: boolean;
+      };
+      expect(record.requiresConfirmation).toBe(true);
+      expect(JSON.stringify(record)).not.toContain("confirmation details");
+      expect(JSON.stringify(record)).not.toContain("untrusted model-visible prose");
+    });
+
     it("classifies current cron-list policy evidence without retaining task text", () => {
       const bridge = createPiEventBridge(deps);
 

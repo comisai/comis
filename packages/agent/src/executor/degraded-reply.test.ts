@@ -471,6 +471,20 @@ describe("scheduler state evidence missing reply", () => {
   });
 });
 
+describe("pending scheduler confirmation reply", () => {
+  it("asks for removal confirmation without asserting that the job exists", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildPendingSchedulerConfirmationReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/confirm.*remove.*scheduled job/iu);
+    expect(reply).toMatch(/nothing has been removed/iu);
+    expect(reply).not.toMatch(/(?:job|reminder) is (?:set|scheduled|active)/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("pending_scheduler_confirmation");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Nameless tool-failure notice
 // ---------------------------------------------------------------------------

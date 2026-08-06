@@ -17,7 +17,7 @@ interface CompletionEvidenceGuardResult {
 interface SchedulerStateEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_scheduler_state_evidence";
+  reason?: "missing_scheduler_state_evidence" | "pending_scheduler_confirmation";
 }
 
 function schedulerStateEvidenceGuard(): (params: {
@@ -26,9 +26,11 @@ function schedulerStateEvidenceGuard(): (params: {
     toolName: string;
     action?: string;
     success: boolean;
+    requiresConfirmation?: boolean;
     schedulerPolicyEvidence?: readonly ("holiday" | "weekday" | "weekend")[];
   }[];
   honestResponse: string;
+  pendingConfirmationResponse?: string;
 }) => SchedulerStateEvidenceGuardResult {
   const candidate = (responseGrounding as Record<string, unknown>)
     .enforceSchedulerStateEvidence;
@@ -129,6 +131,28 @@ describe("response grounding module", () => {
       response: honestResponse,
       corrected: true,
       reason: "missing_scheduler_state_evidence",
+    });
+  });
+
+  it("replaces a pending cron removal overclaim with a neutral confirmation request", () => {
+    const pendingConfirmationResponse =
+      "Please confirm that you want me to remove the scheduled job. Nothing has been removed yet.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response:
+        "The reminder is set. Please confirm that you want me to remove it.",
+      toolExecResults: [{
+        toolName: "cron",
+        action: "remove",
+        success: true,
+        requiresConfirmation: true,
+      }],
+      honestResponse: "I could not verify the reminder.",
+      pendingConfirmationResponse,
+    })).toEqual({
+      response: pendingConfirmationResponse,
+      corrected: true,
+      reason: "pending_scheduler_confirmation",
     });
   });
 
