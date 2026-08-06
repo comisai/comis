@@ -56,7 +56,20 @@ const readUsage = (records) => {
       continue;
     }
     if (record?.type !== "model.completed") continue;
-    const modelTokens = Number(record.data?.usage?.totalTokens ?? record.data?.totalTokens);
+    const directTokenFields = [
+      record.data?.inputTokens,
+      record.data?.outputTokens,
+      record.data?.cacheReadTokens,
+      record.data?.cacheCreationTokens,
+    ].map(Number);
+    const directTotal = directTokenFields.every(Number.isFinite)
+      ? directTokenFields.reduce((total, count) => total + count, 0)
+      : undefined;
+    const modelTokens = Number(
+      record.data?.usage?.totalTokens
+      ?? record.data?.totalTokens
+      ?? directTotal,
+    );
     if (Number.isFinite(modelTokens)) totalTokens += modelTokens;
   }
   return {
