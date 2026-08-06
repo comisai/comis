@@ -15,6 +15,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
+import YAML from "yaml";
+import { AppConfigSchema } from "@comis/core";
 import { offlineSecretGet } from "@comis/memory";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -563,7 +565,13 @@ describe("local rig mode", () => {
     const config = readFileSync(configPath, "utf8");
     const envFile = readFileSync(resolve(data, ".env"), "utf8");
     const masterKey = envFile.match(/^SECRETS_MASTER_KEY=([a-f0-9]{64})$/mu)?.[1];
-    expect(config).toContain('secret: ${COMIS_GATEWAY_TOKEN}');
+    const parsedConfig = YAML.parse(config);
+    expect(parsedConfig.gateway.tokens[0].secret).toEqual({
+      source: "env",
+      provider: "comis",
+      id: "COMIS_GATEWAY_TOKEN",
+    });
+    expect(AppConfigSchema.safeParse(parsedConfig).success).toBe(true);
     expect(masterKey).toBeDefined();
     if (masterKey === undefined) {
       throw new Error("initializer omitted generated credentials");
