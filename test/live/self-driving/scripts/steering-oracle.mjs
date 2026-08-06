@@ -284,3 +284,166 @@ export function scoreSdkSteeringBurst({
     }),
   };
 }
+
+/** Score bare `steer` mode: abort the old trace and deliver only its replacement. */
+export function scoreCommandSteeringBurst({
+  injects,
+  transcriptSource,
+  trajectoryRecords,
+  wire,
+}) {
+  const customViolations = [];
+  if (injects.length !== 2) {
+    customViolations.push(hardViolation(
+      "invalid-steering-shape",
+      `command steering requires exactly two accepted injects; observed ${injects.length}`,
+    ));
+  }
+  const baseInject = injects[0];
+  const followInject = injects[1];
+  const followSentAtMs = followInject?.sentAtMs;
+  const replacementEnqueue = trajectoryRecords.find((record) => (
+    record?.type === "queue.enqueued"
+    && record?.data?.mode === "steer"
+    && typeof followSentAtMs === "number"
+    && recordTimeMs(record) >= followSentAtMs
+  ));
+  const replacementTraceId = replacementEnqueue?.traceId ?? null;
+  const baseTraceId = trajectoryRecords.find((record) => (
+    record?.type === "prompt.submitted"
+    && record?.traceId !== replacementTraceId
+    && (
+      typeof followSentAtMs !== "number"
+      || (recordTimeMs(record) ?? Number.POSITIVE_INFINITY) < followSentAtMs
+    )
+  ))?.traceId ?? null;
+
+  if (replacementTraceId === null) {
+    customViolations.push(hardViolation(
+      "missing-command-steer-replacement",
+      "no steer-mode queue enqueue was recorded for the follow-up",
+    ));
+  }
+  if (baseTraceId === null) {
+    customViolations.push(hardViolation(
+      "missing-command-steer-base",
+      "the original execution trace could not be resolved before the follow-up",
+    ));
+  }
+
+  const baseRecords = baseTraceId === null
+    ? []
+    : trajectoryRecords.filter((record) => record?.traceId === baseTraceId);
+  const replacementRecords = replacementTraceId === null
+    ? []
+    : trajectoryRecords.filter((record) => record?.traceId === replacementTraceId);
+  const modelAbort = baseRecords.some(
+    (record) => record?.type === "model.completed" && record?.data?.stopReason === "aborted",
+  );
+  const finalizedAbort = baseRecords.some(
+    (record) => record?.type === "activity.turn_finalized"
+      && record?.data?.outcome === "aborted",
+  );
+  const abortProven = modelAbort && finalizedAbort;
+  if (!abortProven) {
+    customViolations.push(hardViolation(
+      "missing-command-steer-abort",
+      "the original trace lacks both an aborted model completion and aborted finalization",
+    ));
+  }
+  const baseDispatches = baseRecords.filter(
+    (record) => record?.type === "delivery.dispatched",
+  ).length;
+  if (baseDispatches !== 0) {
+    customViolations.push(hardViolation(
+      "abandoned-command-steer-delivered",
+      `the superseded trace dispatched ${baseDispatches} delivery record(s)`,
+    ));
+  }
+  const coalesced = replacementRecords.some(
+    (record) => record?.type === "queue.coalesced"
+      && Number(record?.data?.messageCount) >= 1,
+  );
+  if (!coalesced) {
+    customViolations.push(hardViolation(
+      "missing-command-steer-coalesce",
+      "the replacement trace has no queue.coalesced event for the pending follow-up",
+    ));
+  }
+  if (!replacementRecords.some((record) => record?.type === "session.summary")) {
+    customViolations.push(hardViolation(
+      "command-steer-replacement-not-terminal",
+      "the replacement trace has no session.summary terminal record",
+    ));
+  }
+  const replacementDispatches = replacementRecords.filter(
+    (record) => record?.type === "delivery.dispatched",
+  ).length;
+  if (replacementDispatches !== 1) {
+    customViolations.push(hardViolation(
+      "unexpected-command-steer-delivery",
+      "the replacement trace must dispatch exactly once; "
+        + `observed ${replacementDispatches}`,
+    ));
+  }
+
+  const followAttribution = attributeBurst({
+    injects: followInject === undefined ? [] : [followInject],
+    transcriptSource,
+  });
+  const baseSeen = typeof baseInject?.inboundGuid === "string"
+    && transcriptSource.includes(baseInject.inboundGuid);
+  if (!baseSeen) {
+    customViolations.push(hardViolation(
+      "inbound-never-ingested",
+      "the superseded base inbound never appeared in the selected transcript",
+    ));
+  }
+  const baseBinding = {
+    index: baseInject?.index ?? 0,
+    inboundGuid: baseInject?.inboundGuid ?? "",
+    status: abortProven && baseSeen ? "aborted" : "unanswered",
+    inboundSeen: baseSeen,
+    answer: null,
+    answerKey: null,
+    progressReplies: 0,
+    ambiguousWith: [],
+  };
+  const attribution = {
+    ...followAttribution,
+    shape: "command-steering",
+    bindings: [baseBinding, ...followAttribution.bindings],
+    violations: [...followAttribution.violations, ...customViolations],
+    counts: {
+      injected: injects.length,
+      answered: followAttribution.counts.answered + (
+        baseBinding.status === "aborted" ? 1 : 0
+      ),
+      ambiguous: followAttribution.counts.ambiguous,
+      unanswered: followAttribution.counts.unanswered + (
+        baseBinding.status === "aborted" ? 0 : 1
+      ),
+    },
+  };
+  const wireReport = wireReconciliation({ wire, bindings: followAttribution.bindings });
+  const overlap = overlapReport(trajectoryRecords);
+  return {
+    attribution,
+    wire: wireReport,
+    overlap,
+    openTraceIds: openTrajectoryTraceIds(trajectoryRecords),
+    steering: {
+      disposition: "abort_and_restart",
+      baseTraceId,
+      replacementTraceId,
+      baseDispatches,
+      replacementDispatches,
+    },
+    verdict: burstVerdict({
+      attribution,
+      wire: wireReport,
+      overlap,
+      expectOverlap: false,
+    }),
+  };
+}
