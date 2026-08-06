@@ -118,6 +118,24 @@ describe("burst settling — unresolved live work stays open", () => {
     })).toBe(false);
   });
 
+  it("keeps terminal transcript answers open until matching wire deliveries arrive", () => {
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: true,
+      deliveryComplete: false,
+      evidenceQuiet: true,
+      openTraceCount: 0,
+      gatewayReachable: true,
+    })).toBe(false);
+
+    expect(shouldSettleBurstEvidence({
+      resolvedAll: true,
+      deliveryComplete: true,
+      evidenceQuiet: true,
+      openTraceCount: 0,
+      gatewayReachable: true,
+    })).toBe(true);
+  });
+
   it("keeps a terminal parent open while its spawned child can still deliver", () => {
     const spawned = {
       ...trajectoryRecord("trace-live", "2026-08-06T10:00:03.000Z", "subagent.spawned"),
