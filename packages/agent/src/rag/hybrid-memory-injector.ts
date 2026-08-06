@@ -149,11 +149,16 @@ export function createHybridMemoryInjector(opts?: {
       const topScore = top.score ?? 0;
       const hasInlineSenderProvenance =
         opts?.requesterUserId === undefined || top.entry.userId === opts.requesterUserId;
+      // A paired entry is a transcript of an earlier request and response, not
+      // a current instruction. Keep it in the explicitly annotated system
+      // memory section instead of placing it beside the live user request,
+      // where old action parameters can look like part of the new request.
+      const isPairedConversation = top.entry.tags.includes("paired");
 
       // Only same-sender top-1 recall receives the high-salience inline position.
       // Unknown and cross-sender memories remain available in the annotated
       // system section, where their provenance warning cannot be separated.
-      if (topScore >= inlineMinScore && hasInlineSenderProvenance) {
+      if (topScore >= inlineMinScore && hasInlineSenderProvenance && !isPairedConversation) {
         // Format top-1 as inline memory
         const recordedTimestamp = systemDateFrom(top.entry.createdAt).toISOString();
         // Surface the exact EVENT time only when present; absent → the inline
