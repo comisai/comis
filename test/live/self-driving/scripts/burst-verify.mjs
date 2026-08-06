@@ -20,6 +20,7 @@
 //     --no-expect-overlap  for a steering/sequential row, where one trace is the correct shape
 //     --sdk-steering       score the second inbound from SDK steer/follow-up disposition events
 //     --command-steering   score bare steer mode's abort-and-restart lifecycle
+//     --superseded-goal-terms <csv>  reject post-boundary tool calls whose arguments match a term
 //     --data <path>        override the manifest's data dir
 //     --format json|text   default text (json prints the full report)
 //
@@ -56,7 +57,7 @@ for (let index = 0; index < argv.length; index += 1) {
 }
 const manifestPath = positional[0];
 if (!manifestPath) {
-  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering|--command-steering] [--data path] [--format json|text]');
+  console.error('burst-verify.mjs: usage: burst-verify.mjs <manifest.json> [--settle-ms n] [--max-ms n] [--no-expect-overlap] [--sdk-steering|--command-steering] [--superseded-goal-terms csv] [--data path] [--format json|text]');
   process.exit(2);
 }
 let manifest;
@@ -76,6 +77,10 @@ const dataDir = flags.get('data') || manifest.dataDir || rig.dataDir;
 const format = flags.get('format') || 'text';
 const sdkSteering = flags.get('sdk-steering') === true;
 const commandSteering = flags.get('command-steering') === true;
+const supersededGoalTerms = String(flags.get('superseded-goal-terms') ?? '')
+  .split(',')
+  .map((term) => term.trim())
+  .filter(Boolean);
 if (sdkSteering && commandSteering) {
   console.error('burst-verify.mjs: choose only one of --sdk-steering or --command-steering');
   process.exit(2);
@@ -206,6 +211,7 @@ const score = (state) => {
       transcriptSource: state.transcript?.source ?? '',
       trajectoryRecords: state.trajectoryRecords,
       wire: state.wire,
+      supersededGoalTerms,
     });
   }
   if (commandSteering) {
@@ -214,6 +220,7 @@ const score = (state) => {
       transcriptSource: state.transcript?.source ?? '',
       trajectoryRecords: state.trajectoryRecords,
       wire: state.wire,
+      supersededGoalTerms,
     });
   }
   const attribution = attributeBurst({

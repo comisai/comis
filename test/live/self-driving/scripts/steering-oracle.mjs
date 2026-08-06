@@ -51,6 +51,66 @@ function hardViolation(kind, detail) {
   return { kind, severity: "hard", detail };
 }
 
+function supersededGoalToolCalls({
+  transcriptSource,
+  fromMs,
+  throughMs,
+  terms,
+}) {
+  const normalizedTerms = [...new Set(
+    terms
+      .map((term) => String(term).trim().toLowerCase())
+      .filter(Boolean),
+  )];
+  if (normalizedTerms.length === 0) return [];
+  const calls = [];
+  for (const record of parseJsonlRecords(transcriptSource)) {
+    if (record?.type !== "message" || record.message?.role !== "assistant") continue;
+    const atMs = typeof record.timestamp === "string"
+      ? Date.parse(record.timestamp)
+      : Number(record.timestamp);
+    if (!Number.isFinite(atMs) || atMs < fromMs || atMs > throughMs) continue;
+    const content = Array.isArray(record.message.content) ? record.message.content : [];
+    for (const part of content) {
+      if (part?.type !== "toolCall") continue;
+      const serializedArgs = JSON.stringify(part.arguments ?? {}).toLowerCase();
+      const matchedTerms = normalizedTerms.filter((term) => serializedArgs.includes(term));
+      if (matchedTerms.length === 0) continue;
+      calls.push({
+        atMs,
+        toolName: typeof part.name === "string" ? part.name : "unknown",
+        matchedTerms,
+      });
+    }
+  }
+  return calls;
+}
+
+function scoreSupersededGoalToolCalls({
+  transcriptSource,
+  trajectoryRecords,
+  followSentAtMs,
+  supersededGoalTerms,
+}) {
+  const terminalAtMs = trajectoryRecords
+    .filter((record) => record?.type === "session.summary")
+    .map(recordTimeMs)
+    .filter((atMs) => atMs !== null)
+    .reduce((latest, atMs) => Math.max(latest, atMs), Number.NEGATIVE_INFINITY);
+  if (
+    typeof followSentAtMs !== "number"
+    || !Number.isFinite(terminalAtMs)
+  ) {
+    return [];
+  }
+  return supersededGoalToolCalls({
+    transcriptSource,
+    fromMs: followSentAtMs,
+    throughMs: terminalAtMs,
+    terms: supersededGoalTerms,
+  });
+}
+
 /** Bind the terminal assistant response that the channel actually selected. */
 function attributeInjectedSteeringReply({
   baseInject,
@@ -150,6 +210,7 @@ export function scoreSdkSteeringBurst({
   transcriptSource,
   trajectoryRecords,
   wire,
+  supersededGoalTerms = [],
 }) {
   const customViolations = [];
   if (injects.length !== 2) {
@@ -167,6 +228,18 @@ export function scoreSdkSteeringBurst({
         return atMs !== null && atMs >= followSentAtMs;
       })
     : [];
+  const forbiddenToolCalls = scoreSupersededGoalToolCalls({
+    transcriptSource,
+    trajectoryRecords,
+    followSentAtMs,
+    supersededGoalTerms,
+  });
+  if (forbiddenToolCalls.length > 0) {
+    customViolations.push(hardViolation(
+      "superseded-goal-tool-call",
+      `${forbiddenToolCalls.length} tool call(s) advanced the superseded goal after the steering boundary`,
+    ));
+  }
   const injectedEvents = postFollowRecords.filter(
     (record) => record?.type === "queue.steer_injected",
   );
@@ -275,6 +348,7 @@ export function scoreSdkSteeringBurst({
       injectedEvents: injectedEvents.length,
       queuedEvents: queuedEvents.length,
       traceId: injectedEvents[0]?.traceId ?? queuedEvents[0]?.traceId ?? null,
+      supersededGoalToolCalls: forbiddenToolCalls,
     },
     verdict: burstVerdict({
       attribution,
@@ -291,6 +365,7 @@ export function scoreCommandSteeringBurst({
   transcriptSource,
   trajectoryRecords,
   wire,
+  supersededGoalTerms = [],
 }) {
   const customViolations = [];
   if (injects.length !== 2) {
@@ -302,6 +377,18 @@ export function scoreCommandSteeringBurst({
   const baseInject = injects[0];
   const followInject = injects[1];
   const followSentAtMs = followInject?.sentAtMs;
+  const forbiddenToolCalls = scoreSupersededGoalToolCalls({
+    transcriptSource,
+    trajectoryRecords,
+    followSentAtMs,
+    supersededGoalTerms,
+  });
+  if (forbiddenToolCalls.length > 0) {
+    customViolations.push(hardViolation(
+      "superseded-goal-tool-call",
+      `${forbiddenToolCalls.length} tool call(s) advanced the superseded goal after the steering boundary`,
+    ));
+  }
   const replacementEnqueue = trajectoryRecords.find((record) => (
     record?.type === "queue.enqueued"
     && record?.data?.mode === "steer"
@@ -438,6 +525,7 @@ export function scoreCommandSteeringBurst({
       replacementTraceId,
       baseDispatches,
       replacementDispatches,
+      supersededGoalToolCalls: forbiddenToolCalls,
     },
     verdict: burstVerdict({
       attribution,
