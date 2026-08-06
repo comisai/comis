@@ -86,6 +86,28 @@ describe("collect burst ground-truth oracle", () => {
     expect(scored.openTraceIds).toEqual([]);
   });
 
+  it("accepts durable provenance when pre-session enqueue events are not recordable", () => {
+    const trajectory = collectTrajectory()
+      .filter((entry) => entry.type !== "queue.enqueued")
+      .concat([
+        record("prompt.submitted", "trace-1", 1_100),
+        record("prompt.submitted", "trace-10", 2_100),
+      ]);
+    const scored = scoreCollectBurst({
+      injects,
+      transcriptSource: collectTranscript(),
+      trajectoryRecords: trajectory,
+      wire: collectWire(),
+      expectedAnswerTerms,
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.collect.enqueued).toBe(0);
+    expect(scored.collect.provenanceAccounted).toBe(10);
+    expect(scored.collect.coalescedMessages).toBe(9);
+    expect(scored.collect.executedTurns).toBe(2);
+  });
+
   it("rejects a coalesced answer that silently omits one source request", () => {
     const wire = collectWire();
     wire[1] = {
