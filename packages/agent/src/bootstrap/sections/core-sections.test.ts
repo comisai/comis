@@ -146,6 +146,9 @@ describe("buildInboundMetadataSection", () => {
     const joined = result.join("\n");
     expect(joined).toContain("CRON AGENT TURN");
     expect(joined).toContain("NO_REPLY");
+    expect(joined).toMatch(/complete.*this execution/iu);
+    expect(joined).toMatch(/do not.*background/iu);
+    expect(joined).toMatch(/do not promise.*later/iu);
     expect(joined).not.toContain("SCHEDULED REMINDER");
   });
 
