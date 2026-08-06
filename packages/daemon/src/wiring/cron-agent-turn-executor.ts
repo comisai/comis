@@ -255,6 +255,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
         timestamp: input.scheduledForMs,
         attachments: [],
         metadata: {
+          isCronAgentTurn: true,
           cronJobId: input.job.id,
           cronExecutionId: input.executionId,
         },
