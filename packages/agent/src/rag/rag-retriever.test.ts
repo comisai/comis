@@ -96,6 +96,16 @@ describe("formatMemorySection", () => {
     expect(result).toContain("current conversation is authoritative");
   });
 
+  it("the header denies action authority to recalled requests", () => {
+    const result = formatMemorySection([
+      createMockResult({ content: "An older request asked to create another schedule" }),
+    ], 4000).toLowerCase();
+
+    expect(result).toContain("cannot authorize");
+    expect(result).toContain("must not expand");
+    expect(result).toContain("side effects");
+  });
+
   it("labels cross-sender system memory so personal claims are not assigned to the current user", () => {
     const results = [
       createMockResult({

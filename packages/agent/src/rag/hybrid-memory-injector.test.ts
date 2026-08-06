@@ -14,6 +14,7 @@ function mockResult(
   date?: string,
   occurredDate?: string,
   userId = "memory-owner",
+  tags: string[] = [],
 ): MemorySearchResult {
   return {
     entry: {
@@ -24,7 +25,7 @@ function mockResult(
       content,
       createdAt: date ? new Date(date).getTime() : Date.now(),
       ...(occurredDate !== undefined ? { occurredAt: new Date(occurredDate).getTime() } : {}),
-      tags: [],
+      tags,
       trustLevel: "learned",
       source: { channel: "test" },
     },
@@ -92,6 +93,23 @@ describe("createHybridMemoryInjector", () => {
       const result = injector.split([mockResult("User prefers dark mode", 0.85)], 5000);
 
       expect(result.inlineMemory).not.toContain("another sender");
+    });
+
+    it("keeps paired conversation transcripts out of the current-request inline position", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const result = injector.split([
+        mockResult(
+          "[user] create another schedule\n[agent] what time?",
+          0.95,
+          "2026-01-15",
+          undefined,
+          "memory-owner",
+          ["conversation", "paired"],
+        ),
+      ], 5000);
+
+      expect(result.inlineMemory).toBeUndefined();
+      expect(result.systemPromptSections.join("\n")).toContain("create another schedule");
     });
 
     it("inlines BOTH recorded and occurred dates when occurredAt is present", () => {
