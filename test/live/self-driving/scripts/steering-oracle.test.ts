@@ -44,8 +44,10 @@ const burstVerifySource = readFileSync(
 describe("SDK steering burst ground-truth oracle", () => {
   it("routes the steering CLI flag through the dedicated selector and scorer", () => {
     expect(burstVerifySource).toContain("token === '--sdk-steering'");
+    expect(burstVerifySource).toContain("token === '--command-steering'");
     expect(burstVerifySource).toContain("selectSdkSteeringTrajectoryRecords(");
     expect(burstVerifySource).toContain("scoreSdkSteeringBurst({");
+    expect(burstVerifySource).toContain("scoreCommandSteeringBurst({");
   });
 
   it("accepts a steered inbound that intentionally has no separate transcript turn", () => {
