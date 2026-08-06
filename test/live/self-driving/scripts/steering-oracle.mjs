@@ -440,16 +440,31 @@ export function scoreCommandSteeringBurst({
       && record?.data?.outcome === "aborted",
   );
   const abortProven = modelAbort && finalizedAbort;
-  if (!abortProven) {
+  const baseTerminalBeforeFollow = baseRecords.some((record) => {
+    const atMs = recordTimeMs(record);
+    return record?.type === "session.summary"
+      && atMs !== null
+      && typeof followSentAtMs === "number"
+      && atMs < followSentAtMs;
+  });
+  const baseDispatches = baseRecords.filter(
+    (record) => record?.type === "delivery.dispatched",
+  ).length;
+  const notInFlight = !abortProven
+    && baseTerminalBeforeFollow
+    && baseDispatches === 1;
+  if (!abortProven && !notInFlight) {
     customViolations.push(hardViolation(
       "missing-command-steer-abort",
       "the original trace lacks both an aborted model completion and aborted finalization",
     ));
   }
-  const baseDispatches = baseRecords.filter(
-    (record) => record?.type === "delivery.dispatched",
-  ).length;
-  if (baseDispatches !== 0) {
+  if (notInFlight) {
+    customViolations.push(hardViolation(
+      "command-steer-not-in-flight",
+      "the original trace completed and dispatched before the follow-up boundary",
+    ));
+  } else if (baseDispatches !== 0) {
     customViolations.push(hardViolation(
       "abandoned-command-steer-delivered",
       `the superseded trace dispatched ${baseDispatches} delivery record(s)`,
@@ -459,7 +474,7 @@ export function scoreCommandSteeringBurst({
     (record) => record?.type === "queue.coalesced"
       && Number(record?.data?.messageCount) >= 1,
   );
-  if (!coalesced) {
+  if (!coalesced && !notInFlight) {
     customViolations.push(hardViolation(
       "missing-command-steer-coalesce",
       "the replacement trace has no queue.coalesced event for the pending follow-up",
@@ -480,6 +495,33 @@ export function scoreCommandSteeringBurst({
       "the replacement trace must dispatch exactly once; "
         + `observed ${replacementDispatches}`,
     ));
+  }
+
+  if (notInFlight) {
+    const attribution = attributeBurst({ injects, transcriptSource });
+    attribution.violations.push(...customViolations);
+    const wireReport = wireReconciliation({ wire, bindings: attribution.bindings });
+    const overlap = overlapReport(trajectoryRecords);
+    return {
+      attribution,
+      wire: wireReport,
+      overlap,
+      openTraceIds: openTrajectoryTraceIds(trajectoryRecords),
+      steering: {
+        disposition: "not_in_flight",
+        baseTraceId,
+        replacementTraceId,
+        baseDispatches,
+        replacementDispatches,
+        supersededGoalToolCalls: forbiddenToolCalls,
+      },
+      verdict: burstVerdict({
+        attribution,
+        wire: wireReport,
+        overlap,
+        expectOverlap: false,
+      }),
+    };
   }
 
   const followAttribution = attributeBurst({
