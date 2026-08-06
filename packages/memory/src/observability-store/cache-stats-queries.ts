@@ -161,9 +161,16 @@ export function buildCacheStatsQueries(db: Database.Database) {
       cache_write_tokens: row.cache_write_tokens,
       cache_write_5m_tokens: row.cache_write_5m_tokens,
       cache_write_1h_tokens: row.cache_write_1h_tokens,
-      non_cached_input_tokens: clamp(
-        row.prompt_tokens - row.cache_read_tokens - row.cache_write_tokens,
-      ),
+      // Providers disagree on what `prompt_tokens` counts. Some fold the cached
+      // tokens into it (subtract to get the uncached remainder); Anthropic bills
+      // `input_tokens` as the UNCACHED portion already, with reads and writes on
+      // separate counters. Subtracting there underflows and clamps to 0, hiding real
+      // spend — live, 17,184 uncached tokens reported as zero. If prompt cannot
+      // CONTAIN the cached tokens it plainly does not include them, so it is itself
+      // the uncached input.
+      non_cached_input_tokens: row.prompt_tokens >= row.cache_read_tokens + row.cache_write_tokens
+        ? clamp(row.prompt_tokens - row.cache_read_tokens - row.cache_write_tokens)
+        : clamp(row.prompt_tokens),
       output_tokens: row.output_tokens,
       turns: row.turns,
     };

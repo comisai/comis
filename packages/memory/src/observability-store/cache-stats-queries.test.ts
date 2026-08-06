@@ -73,6 +73,22 @@ describe("cache-stats queries", () => {
     });
   });
 
+  it("window_reports_uncached_input_when_the_provider_bills_it_separately", () => {
+    // Anthropic reports `input_tokens` as the UNCACHED portion only — cache reads and
+    // writes are separate counters. Deriving uncached input as
+    // `prompt - read - write` therefore goes hugely negative and clamps to 0, hiding
+    // genuine uncached spend. Live: the console showed 17,184 input tokens while
+    // `cache stats` reported 0, because prompt_tokens summed to 346 against 3.4M
+    // cached. When prompt cannot contain the cached tokens, it IS the uncached input.
+    insertTokenUsage(makeTokenUsageRow({
+      promptTokens: 500, cacheReadTokens: 200_000, cacheWriteTokens: 50_000,
+    }));
+
+    const r = queries.queryCacheStatsWindow({ since: 0 });
+
+    expect(r.non_cached_input_tokens).toBe(500);
+  });
+
   it("window_reports_the_per_ttl_write_split", () => {
     // A cache WRITE is billed by its TTL (1h at 2x base, 5m at 1.25x, vs 0.1x to
     // read), so on a cached workload this split is the number that moves the bill.
