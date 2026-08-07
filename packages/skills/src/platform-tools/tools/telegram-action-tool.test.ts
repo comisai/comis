@@ -14,9 +14,21 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 describe("telegram action tool", () => {
   it("describes promotion as explicit Telegram group or channel administration", () => {
     const tool = createTelegramActionTool(vi.fn(async () => ({ ok: true })));
+    const parameters = tool.parameters as unknown as {
+      properties: {
+        action: { description?: string };
+        chat_id: { description?: string };
+      };
+    };
 
     expect(tool.description).toMatch(/promot.*explicit.*group|explicit.*group.*promot/iu);
     expect(tool.description).toMatch(/not.*Comis.*sender trust/iu);
+    expect(parameters.properties.action.description).toMatch(
+      /promote.*user.*explicit.*group.*never.*Comis.*sender trust/isu,
+    );
+    expect(parameters.properties.chat_id.description).toMatch(
+      /ban.*unban.*promote.*user.*explicit.*group.*never.*current direct chat/isu,
+    );
   });
 
   it("poll action delegates to rpcCall('telegram.action')", async () => {
@@ -91,7 +103,7 @@ describe("telegram action tool", () => {
         rights: {},
       } as never),
     ).rejects.toThrow(
-      /invalid_value.*explicit.*group.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator config.*restart/isu,
+      /invalid_value.*explicit.*group.*do not ask.*group.*unless.*user.*explicit.*Telegram.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator config.*restart/isu,
     );
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
