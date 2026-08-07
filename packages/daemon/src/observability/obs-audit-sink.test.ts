@@ -2,7 +2,7 @@
 /**
  * The durable security-audit sink — `secret_access` correlation + trail purity.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import { wireAuditSink } from "./obs-audit-sink.js";
 import type { AuditEventRow } from "./obs-audit-sink.js";
@@ -63,5 +63,22 @@ describe("secret_access correlation + trail purity", () => {
     const { bus, rows } = makeSinkHarness();
     bus.emit("secret:accessed", payload({ secretName: "AWS_BEARER_TOKEN_BEDROCK" }) as never);
     expect(rows).toHaveLength(1);
+  });
+
+  it("honors the security audit master switch across every sink", () => {
+    const bus = new TypedEventBus();
+    const rows: AuditEventRow[] = [];
+    const logger = { audit: vi.fn() };
+    wireAuditSink({
+      eventBus: bus,
+      auditBuffer: { push: (row: AuditEventRow) => rows.push(row) } as never,
+      logger: logger as never,
+      auditConfig: { enabled: false, persist: true, sink: "sqlite" },
+    } as never);
+
+    bus.emit("secret:accessed", payload({ secretName: "PROVIDER_API_KEY" }) as never);
+
+    expect(rows).toEqual([]);
+    expect(logger.audit).not.toHaveBeenCalled();
   });
 });
