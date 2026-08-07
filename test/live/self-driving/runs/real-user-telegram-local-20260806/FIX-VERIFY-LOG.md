@@ -139,3 +139,33 @@
 - **Confirm:** primary A3-H fixed-build HARD 3/3 produced no U2/G1 delivery. Scratch with only exact grant `678314279` delivered draft `2000113` once; `obs.explain 95bf05f1…` reports success, `message ok=1`, zero failures/denials. The scratch grant and workspace binding were then removed.
 - **Commit:** `71926332` (RED `3b55ae62`).
 - **Status:** CLOSED — next time the wrong current-route substitution is denied at one observable chokepoint, while an exact granted recipient remains reachable.
+
+## B6-H-SHORT-CREDENTIAL — a user-labeled credential reached durable context and memory
+- **Symptom (live):** the exact request to put a short synthetic credential in the supported store failed honestly at the approval layer, yet a count-only scan found the value in the SDK transcript, inbound ledger, LCD/FTS, and one automatic memory.
+- **Hypothesis → root cause:** the persistence scrubber recognized assignments, common provider prefixes, and high-entropy values, but not a bounded natural-language request that explicitly labels a plausible short value as a credential being placed in a named store.
+- **RED tests:** core secret egress, inbound provenance, and session sanitizer tests use the exact neutral request and distinguish it from a numeric token-budget statement.
+- **Fix:** add a bounded generic labeled-secret-storage pattern gated by plausible value shape. Current-turn model/tool input stays available in memory; every durable projection receives `[REDACTED]`.
+- **Repair + confirm:** with the daemon offline, two physical session artifacts were sanitized, the poisoned memory deleted through its scoped adapter, canonical LCD rebuilt through the store serializer, and SQLite checkpointed/vacuumed. Exact Telegram replay stored the secret after approval and left zero active-file or SQLite text/index matches; three fixture calls then authenticated.
+- **Validation:** 96 focused tests, full core and agent suites, both package builds, lint, and full workspace build passed.
+- **Commit:** `f825fd4e` (RED `b8c216d1`). Fixture acceptance alignment was separately closed by `f3de2e68` (RED `5e450ad4`).
+- **Status:** CLOSED — short values explicitly labeled for credential storage are projected out before first persistence.
+
+## B6-APPROVAL-RIG — approval callbacks could target another local emulator
+- **Symptom (live):** `approve-pending.mjs` read `/tmp/comis-emu.json`, which currently belonged to scratch, while the pending prompt belonged to primary.
+- **Hypothesis → root cause:** one helper predated the isolated-rig wiring contract used by every other driver.
+- **RED test:** the live helper source contract requires `_rig.mjs`, `rig.emuWiringPath`, and no hard-coded host-wide read.
+- **Fix + confirm:** the helper now resolves the selected rig wiring. A primary `gateway env.set` prompt was captured and approved while scratch wiring remained unchanged.
+- **Commit:** `422965d4` (RED `e84459c4`).
+- **Status:** CLOSED — approval callbacks use the same isolated tuple as the drive.
+
+## B6-MCP-PERSISTENCE — a structured SecretRef prevented fail-closed child removal
+- **Symptom (live):** `mcp.connect` created a working child but returned runtime-only persistence. After named-secret deletion, `mcp.status` still reported the credential-bearing child connected instead of the documented referenced-secret disconnect.
+- **Evidence:** the persistence WARN named `gateway.tokens[0].secret`, even though that on-disk field was the valid structured `{source, provider, id}` reference. The MCP server never reached config, so `findMcpServersReferencingSecret()` returned no dependency.
+- **Hypothesis → root cause:** `persistToConfig` masked string `${VAR}` references back over their resolved in-memory values, but did not perform the same lock-step masking for structured `SecretRef` objects.
+- **RED test:** `persist-to-config.test.ts` places a structured gateway reference on disk, its resolved string in memory, and applies an unrelated MCP server patch. Pre-fix persistence is rejected; the test also requires both the gateway reference and MCP entry on disk.
+- **Fix:** the validation-only shadow now restores either reference form—env-ref string or typed structured `SecretRef`—before plaintext scanning. Patch-introduced and in-memory-only plaintext tests remain green. This is a domain-neutral config mechanism shared by unrelated integrations.
+- **Scratch proof:** clean scratch connected with `persistence:persisted`, contained only `${MCP_TEST_TOKEN}`, survived a normal restart, then secret deletion produced `mcp.list total=0` and INFO `MCP child disconnected after referenced secret removal`. The scratch secret/server were removed and the daemon stopped.
+- **Primary proof:** after a full build and normal continuity-preserving restart, the same connect persisted, survived another restart, and deletion produced empty secret and MCP inventories plus the same disconnect receipt. Both synthetic values have zero active matches.
+- **Validation:** 79 focused persistence/MCP tests, daemon build, lint with no errors, full workspace build, scratch zero-state proof, and protected-primary replay passed.
+- **Commit:** `15aac80c` (RED `db23c31d`).
+- **Status:** CLOSED — persisted dependency identity now drives immediate fail-closed MCP child removal.
