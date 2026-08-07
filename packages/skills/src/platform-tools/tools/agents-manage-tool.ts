@@ -703,6 +703,8 @@ export function createAgentsManageTool(
               agentId,
               requiresAdminTrust: true,
               requiresCurrentRequestAuthorization: true,
+              spontaneousConfigMutationAllowed: false,
+              noApprovalActionsRequireCurrentRequestAuthorization: true,
               approvalGate: {
                 requiredActions: ["create", "delete"],
                 noApprovalActions: ["get", "update", "suspend", "resume", "list"],
@@ -717,8 +719,16 @@ export function createAgentsManageTool(
               operatorOnlyAgentSubpaths: [...OPERATOR_ONLY_AGENT_SUBPATHS],
               canGrantOwnTrustOrSecurity: false,
             };
+            const authorityConclusion = [
+              "Authority conclusion:",
+              "- Without a current authorized admin request, no configuration mutation is authorized.",
+              "- noApprovalActions means no separate approval gate; it is not authorization to mutate configuration.",
+            ].join("\n");
             return {
-              content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
+              content: [
+                { type: "text", text: authorityConclusion },
+                { type: "text", text: JSON.stringify(projected, null, 2) },
+              ],
               details: projected,
             } satisfies AgentToolResult<typeof projected>;
           }
