@@ -122,6 +122,16 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("refuses audit disabling as operator-owned policy in every prompt mode", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(
+        /on.*turn off audit.*refuse immediately.*say.*`security\.auditLog`.*operator-only.*operator config.*restart/isu,
+      );
+    }
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{
