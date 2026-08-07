@@ -29,6 +29,7 @@
 //       (the manifest is still written, so the verifier can report on what did land).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { comisDist, rig } from './_rig.mjs';
+import { liveProviderRiskError } from './live-provider-risk-gate.mjs';
 import {
   normalizedInboundTextError,
   telegramInboundGuid,
@@ -95,6 +96,14 @@ for (const line of raw.split('\n')) {
 if (specs.length < 2) {
   console.error('burst-inject.mjs: a burst needs at least two messages; use drive.mjs for one turn');
   process.exit(2);
+}
+const providerRiskError = liveProviderRiskError({
+  source: "burst-inject.mjs",
+  texts: specs.map((spec) => spec.text),
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
 }
 
 // A raw ENOENT stack here reads as a code defect; it is almost always "the emulator is not wired

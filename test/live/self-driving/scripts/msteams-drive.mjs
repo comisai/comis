@@ -39,6 +39,7 @@
 // Exit code: 0 on a 2xx ack, else 1. A rig error (emulator info missing) exits 2.
 
 import { readFileSync, existsSync } from "node:fs";
+import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
 
 function parseArgs(argv) {
   const pos = [];
@@ -77,6 +78,14 @@ const gateway = (opt.gateway ?? process.env.MSTEAMS_GATEWAY ?? "http://127.0.0.1
 const fromAad = opt.from ?? "aad-selfdrive-user";
 const kind = opt.type ?? "message";
 const waitMs = opt.wait ?? 60_000;
+const providerRiskError = liveProviderRiskError({
+  source: "msteams-drive.mjs",
+  texts: kind === "message" ? [text] : [],
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
+}
 
 if (!existsSync(emuPath)) {
   console.error(`[local] emulator info not found: ${emuPath}`);

@@ -21,6 +21,7 @@
 import { readFileSync, readdirSync, statSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { comisDist, rig } from './_rig.mjs';
+import { liveProviderRiskError } from './live-provider-risk-gate.mjs';
 import {
   directConversationFinished,
   driveTextFilePath,
@@ -70,6 +71,14 @@ if (inboundTextError !== undefined) {
     `drive.mjs: ${inboundTextError}; split the text or send it as a document with media-drive.mjs`,
   );
   process.exit(2);
+}
+const providerRiskError = liveProviderRiskError({
+  source: "drive.mjs",
+  texts: [text],
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
 }
 const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);

@@ -1,5 +1,10 @@
 # TARGET — Adaptive Threat-Hunting agent as a STRESS workload for the Reflection engine
 
+> **PROVIDER SAFETY SUSPENSION:** Every provider-backed transcript, reflection, reuse, poisoning,
+> containment, or rotated-incident row in this target requires a current explicit operator request under
+> [`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md). Without it, run only offline
+> DB/schema/event assertions and record provider rows `NOT-RUN: provider cyber-abuse safety suspension`.
+
 > An **OFFLINE / DB / event-resident** target. The "threat-hunting agent" is **not a new capability** and
 > there is **no SOC subsystem to find** — it is a deliberately complex, adversarial *workload* chosen to
 > stress the SHIPPED reflection/learning engine in every dimension that breaks a naive memory: an

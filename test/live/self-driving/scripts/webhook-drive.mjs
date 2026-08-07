@@ -41,6 +41,7 @@
 import { createHmac } from "node:crypto";
 import http from "node:http";
 import { readFileSync, statSync, existsSync } from "node:fs";
+import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
 
 function parseArgs(argv) {
   const pos = [];
@@ -116,6 +117,14 @@ if (pos.length < 1) {
 }
 const path = pos[0].replace(/^\/+/, "");
 const rawBody = readBody(pos[1] ?? "{}", opt);
+const providerRiskError = liveProviderRiskError({
+  source: "webhook-drive.mjs",
+  texts: [rawBody],
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
+}
 const secret = opt.secret ?? process.env.WEBHOOK_HMAC_SECRET ?? process.env.WH_SECRET ?? "";
 const base = (opt.base ?? process.env.WH_BASE ?? "/hooks").replace(/\/+$/, "");
 const port = opt.port ?? Number(process.env.GW_PORT ?? 4766);

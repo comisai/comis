@@ -18,6 +18,7 @@
 # read GROUND TRUTH (mental_models delta + the newest skill row + a grounding grep of its body).
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WL="${1:?usage: drive-sim-workload.sh <workload> [variant=A] [feeder1] [feeder2]}"
 VARIANT="${2:-A}"
 F1="${3:-678314279}"
@@ -126,6 +127,11 @@ SRV="$(server_for "$WL" 2>/dev/null || true)"
 P="$(prompt_for "$WL" 2>/dev/null || true)"
 if [ -z "$SRV" ] || [ -z "$P" ]; then
   echo "unknown workload '$WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2
+fi
+if [ "$WL" = "threat-hunting" ]; then
+  node "$SCRIPT_DIR/live-provider-risk-gate.mjs" \
+    --source drive-sim-workload.sh \
+    --declared-risk cyber-abuse || exit $?
 fi
 if [ "$REUSE_ONLY" = "1" ]; then
   echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT reuse=$F1) =="
