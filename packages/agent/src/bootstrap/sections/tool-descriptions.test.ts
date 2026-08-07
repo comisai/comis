@@ -231,6 +231,18 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.agents_manage).toContain("elevatedReply.defaultTrustLevel");
   });
 
+  it("agents_manage requires live authority evidence for self-configuration reports", () => {
+    const description = resolveDescription(
+      { name: "agents_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toMatch(
+      /what.*change.*without approval.*get.*view.*authority.*do not guess/isu,
+    );
+  });
+
   it("telegram promotion is scoped to an explicitly identified group or channel", () => {
     const description = resolveDescription(
       { name: "telegram_action" },

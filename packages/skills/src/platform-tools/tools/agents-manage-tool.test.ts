@@ -126,6 +126,16 @@ describe("agents_manage tool", () => {
     expect(description).toMatch(/do not ask.*command details/isu);
   });
 
+  it("routes self-configuration authority questions to a bounded live view", () => {
+    const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+    const args = { action: "get", view: "authority" } as const;
+
+    expect(Value.Check(tool.parameters, args)).toBe(true);
+    expect(tool.description).toMatch(
+      /what.*change.*without approval.*view.*authority.*do not guess/isu,
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Trust guard
   // -----------------------------------------------------------------------
@@ -937,6 +947,69 @@ describe("agents_manage tool", () => {
           numericCapsChanged: false,
         }),
       });
+    });
+
+    it("returns source-derived self-configuration authority without full agent config", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "test-agent",
+        config: {
+          name: "Private display name",
+          rag: { enabled: true, maxContextChars: 40_000 },
+        },
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-g-current-authority", { action: "get", view: "authority" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.get", {
+        agentId: "test-agent",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({
+        agentId: "test-agent",
+        requiresAdminTrust: true,
+        requiresCurrentRequestAuthorization: true,
+        approvalGate: {
+          requiredActions: ["create", "delete"],
+          noApprovalActions: ["get", "update", "suspend", "resume", "list"],
+        },
+        agentsManageUpdatePaths: [
+          "name",
+          "model",
+          "provider",
+          "maxSteps",
+          "autonomy.profile",
+          "workspace.profile",
+          "skills.builtinTools",
+          "oauthProfiles",
+        ],
+        runtimeMutableConfigOverrides: expect.arrayContaining([
+          "agents.test-agent.model",
+          "agents.test-agent.provider",
+          "agents.test-agent.operationModels",
+          "agents.test-agent.promptTimeout.promptTimeoutMs",
+        ]),
+        immutableConfigPrefixes: expect.arrayContaining([
+          "security",
+          "approvals",
+          "tooling",
+          "executor",
+        ]),
+        operatorOnlyAgentSubpaths: expect.arrayContaining([
+          "skills.execSandbox",
+          "skills.terminal.unsafeDisableSandbox",
+          "skills.terminal.allow",
+          "elevatedReply.senderTrustMap",
+          "elevatedReply.defaultTrustLevel",
+        ]),
+        canGrantOwnTrustOrSecurity: false,
+      });
+      const rendered = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
+      expect(rendered).not.toContain("Private display name");
+      expect(rendered).not.toContain('"rag"');
+      expect(rendered.length).toBeLessThan(5_000);
     });
   });
 
