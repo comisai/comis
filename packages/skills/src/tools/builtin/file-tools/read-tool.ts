@@ -279,7 +279,10 @@ async function extractPdfText(
         extractedChars: text.length,
       });
     } finally {
-      await pdf.destroy();
+      // Teardown belongs to the loading task, not the document —
+      // `PDFDocumentProxy` exposes only `cleanup()`, which drops cached
+      // fonts/images but leaves the worker and its transport running.
+      await loadingTask.destroy();
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

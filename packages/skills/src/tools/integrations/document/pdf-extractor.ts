@@ -46,8 +46,9 @@ export interface PdfExtractorDeps {
 /**
  * Detect password-protected PDF errors from pdfjs-dist.
  *
- * pdfjs-dist does NOT export PasswordException, so we detect by checking
- * error.name and error.code properties instead of instanceof.
+ * Detected by error.name and error.code rather than instanceof: the module is
+ * loaded through a lazy dynamic import, so an instanceof check would depend on
+ * holding the same module instance the throw came from.
  * - code 1 = NEED_PASSWORD
  * - code 2 = INCORRECT_PASSWORD
  */
@@ -240,8 +241,11 @@ export function createPdfExtractor(deps: PdfExtractorDeps): FileExtractionPort {
             totalPages: pdf.numPages,
           });
         } finally {
-          // 9. Cleanup: destroy PDFDocumentProxy (prevents memory leak)
-          await pdf.destroy();
+          // 9. Cleanup: tear down the loading task (prevents memory leak).
+          // Teardown belongs to the loading task, not the document —
+          // `PDFDocumentProxy` exposes only `cleanup()`, which drops cached
+          // fonts/images but leaves the worker and its transport running.
+          await loadingTask.destroy();
         }
       } catch (e: unknown) {
         // 10. Error handling

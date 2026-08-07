@@ -45,6 +45,7 @@ import { existsSync, readdirSync, readFileSync, mkdtempSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PATCH_MARKERS } from "../../packages/comis/scripts/patch-markers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../..");
@@ -198,19 +199,18 @@ try {
     ok(`@comis/orchestrator/dist/ present (explicit check)`);
   }
 
-  // Assertion 5 — the dependency patch must cross the npm distribution boundary.
-  const providerErrorBody = join(
-    extractDir,
-    "package/node_modules/@earendil-works/pi-ai/dist/utils/error-body.js",
-  );
-  if (!existsSync(providerErrorBody)) {
-    fail(`patched @earendil-works/pi-ai error normalizer missing at ${providerErrorBody}`);
-  } else {
-    const providerSource = readFileSync(providerErrorBody, "utf8");
-    if (!providerSource.includes("function isNonEmptyJsonBody")) {
-      fail(`bundled @earendil-works/pi-ai does not contain the dependency patch`);
+  // Assertion 5 — every patched hunk must cross the npm distribution boundary.
+  // Markers come from the shared table so this cannot drift away from the patch
+  // independently of prepack.js; both used to hard-code the same string, and
+  // both went stale together when a version rebase dropped a hunk.
+  for (const { file, marker, describes } of PATCH_MARKERS) {
+    const patched = join(extractDir, "package/node_modules/@earendil-works/pi-ai", ...file);
+    if (!existsSync(patched)) {
+      fail(`patched @earendil-works/pi-ai file missing from tarball: ${file.join("/")}`);
+    } else if (!readFileSync(patched, "utf8").includes(marker)) {
+      fail(`bundled @earendil-works/pi-ai lost a patched hunk — ${file.join("/")}: ${describes}`);
     } else {
-      ok(`patched @earendil-works/pi-ai error normalizer is bundled`);
+      ok(`patched @earendil-works/pi-ai ${file.join("/")} is bundled`);
     }
   }
 } finally {
