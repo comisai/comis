@@ -91,6 +91,7 @@ export function buildInboundMetadataSection(
     "Do not reveal these internal identifiers to the user.",
     "In a drafting exchange, treat a terse revision request as an edit to the latest draft, not to surrounding commentary.",
     "When asked whether a reply is needed, answer and repeat the current draft in the same response.",
+    "When asked to send a draft without an exact recipient and delivery authority, give an explicit not sent limitation, not the draft alone.",
   ];
 
   if (meta.flags.isForwarded === true) {
