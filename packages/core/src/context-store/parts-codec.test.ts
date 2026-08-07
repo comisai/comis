@@ -263,6 +263,27 @@ describe("parts-codec — reasoning exclusion from visible content", () => {
     const hasThinking = reconstructed.content.some((b) => b.type === "thinking");
     expect(hasThinking).toBe(false);
   });
+
+  it("keeps private reasoning text and signatures out of persisted part metadata", () => {
+    const privateValue = "test-key";
+    const assistant = {
+      ...ANTHROPIC_MESSAGES[1],
+      content: [
+        {
+          type: "thinking",
+          thinking: `Compare ${privateValue} before continuing.`,
+          thinkingSignature: `signed-container-${privateValue}`,
+        },
+        { type: "text", text: "Continuing safely." },
+      ],
+    } as AssistantMessage;
+
+    const reasoningPart = messageToParts(assistant).find((part) => part.kind === "reasoning");
+
+    expect(reasoningPart).toBeDefined();
+    expect(JSON.stringify(reasoningPart)).not.toContain(privateValue);
+    expect(reasoningPart!.metadata.raw).toBeUndefined();
+  });
 });
 
 describe("parts-codec — verbatim raw-block capture", () => {
