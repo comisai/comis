@@ -80,6 +80,15 @@ describe("live provider cyber-abuse risk classification", () => {
 
   it("permits cyber-risk tests only with the exact operator acknowledgement", () => {
     expect(liveProviderRiskDecision({
+      authorization: CYBER_ABUSE_AUTH_VALUE,
+      texts: ["Investigate this threat-hunting scenario."],
+    })).toMatchObject({
+      allowed: false,
+      authorized: false,
+      requiresAuthorization: true,
+    });
+
+    expect(liveProviderRiskDecision({
       declaredRisk: "cyber-abuse",
       authorization: CYBER_ABUSE_AUTH_VALUE,
       texts: ["Investigate this threat-hunting scenario."],
