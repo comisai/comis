@@ -26,7 +26,10 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import * as ts from "typescript";
 import { findInSourceFiles } from "../../../../test/support/source-grep.js";
-import { findForbiddenImports } from "../../../../test/support/import-checker.js";
+import {
+  findForbiddenImports,
+  FULL_TREE_SCAN_TIMEOUT_MS,
+} from "../../../../test/support/import-checker.js";
 import { formatViolations } from "../../../../test/support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -186,11 +189,12 @@ describe("@comis/daemon -- architecture invariants", () => {
     ).toBeLessThanOrEqual(3000);
   });
 
-  // 90s timeout (default 5s) — under v8 coverage instrumentation the
-  // 27-handler AST walk slows enough to exceed the default budget, and on a
-  // loaded CI runner under full-workspace coverage it can exceed even a 30s
-  // ceiling. Without coverage the test runs in ~1.5s; the generous ceiling
-  // only delays a REAL hang's report.
+  // One full-tree scan, so the shared FULL_TREE_SCAN_TIMEOUT_MS budget
+  // applies rather than a bespoke literal. The earlier shape ran one walk
+  // PER handler — 27 re-reads and re-parses of the same ~150 api/ files —
+  // which cost ~1.5s bare but 15s+ under v8 coverage and blew a 90s ceiling
+  // outright on a CI runner sharing itself with three other shards, failing
+  // as a timeout that read like the invariant had broken.
   it(
     "api/*-handlers.ts never imports another api/*-handlers.ts file",
     () => {
@@ -204,14 +208,14 @@ describe("@comis/daemon -- architecture invariants", () => {
     // ./shared/*.js -- never from a sibling handler.
     //
     // Implementation: enumerate every *-handlers.ts file under api/, then
-    // for each (handler, otherHandler) pair, run findForbiddenImports
-    // looking for `./${otherHandler}.js`. To keep the run within vitest's
-    // default 5s per-test budget on a 27-handler workspace we do a SINGLE
-    // walk per other-handler (27 walks total) and post-filter the
-    // violations by importing-file basename in memory -- a strict
-    // optimization of the documented N × (N-1) walk shape. The AST-based
-    // scanner from test/support/import-checker.ts (not regex) produces
-    // verbose failure messages via formatViolations.
+    // hand the whole sibling set to findForbiddenImports as ONE forbidden
+    // specifier list. The helper walks api/ exactly once and tags each
+    // violation with the specifier it matched, so the per-handler
+    // assertions below are a regrouping of one scan rather than N scans --
+    // the walk's cost is the tree, not the number of rules. Violations are
+    // then post-filtered by importing-file basename so only cross-sibling
+    // edges count. The AST-based scanner from test/support/import-checker.ts
+    // (not regex) produces verbose failure messages via formatViolations.
     const apiDir = resolve(SRC_ROOT, "api");
     const handlerFiles = readdirSync(apiDir)
       .filter((f) => f.endsWith("-handlers.ts") && !f.endsWith(".test.ts"))
@@ -223,15 +227,22 @@ describe("@comis/daemon -- architecture invariants", () => {
     ).toBeGreaterThan(20);
 
     const handlerSet = new Set(handlerFiles);
+    const { violations } = findForbiddenImports({
+      rootDir: apiDir,
+      forbiddenPackage: handlerFiles.map((h) => `./${h}.js`),
+    });
+    const bySpecifier = new Map<string, typeof violations>();
+    for (const v of violations) {
+      bySpecifier.set(v.specifier, [...(bySpecifier.get(v.specifier) ?? []), v]);
+    }
+
     for (const other of handlerFiles) {
-      const { violations } = findForbiddenImports({
-        rootDir: apiDir,
-        forbiddenPackage: `./${other}.js`,
-      });
       // Cross-handler edges only: keep offenders whose importing file is
       // ALSO a *-handlers.ts sibling (not the helper itself, not a test,
       // not api/shared/*).
-      const crossHandlerOffenders = violations.filter((v) => {
+      const crossHandlerOffenders = (
+        bySpecifier.get(`./${other}.js`) ?? []
+      ).filter((v) => {
         const m = /\/([^/]+)\.ts$/.exec(v.file);
         if (!m) return false;
         const importer = m[1];
@@ -253,7 +264,7 @@ describe("@comis/daemon -- architecture invariants", () => {
       ).toEqual([]);
     }
     },
-    90_000,
+    FULL_TREE_SCAN_TIMEOUT_MS,
   );
 
   // Per-domain audit-coverage invariants. For each cluster slice in

@@ -46,6 +46,14 @@ export interface ImportViolation {
   readonly column: number;
   readonly importedSymbols: readonly string[];
   readonly snippet: string;
+  /**
+   * The entry of `forbiddenPackage` this import matched — the exact
+   * specifier, not the subpath that matched it (`@comis/agent` for an
+   * `@comis/agent/dist/foo` import). Always populated, including for the
+   * single-specifier form, so a caller checking N specifiers in one walk
+   * can group the result back into per-specifier assertions.
+   */
+  readonly specifier: string;
 }
 
 /**
@@ -63,7 +71,19 @@ export interface ImportViolation {
  */
 export interface FindForbiddenImportsOptions {
   readonly rootDir: string;
-  readonly forbiddenPackage: string;
+  /**
+   * One forbidden module specifier, or several checked in the SAME walk.
+   *
+   * The array form exists because the walk's cost is the tree, not the
+   * rule: every call re-reads and re-parses every `.ts` file under
+   * `rootDir`. A caller that loops `findForbiddenImports` over N
+   * specifiers against one root therefore pays N full parses of the same
+   * files, and that is quadratic in the thing being checked whenever the
+   * specifiers are themselves derived from the tree (sibling-import
+   * invariants). Pass the whole set instead and read
+   * `ImportViolation.specifier` to attribute each hit.
+   */
+  readonly forbiddenPackage: string | readonly string[];
   readonly allowlistPaths?: readonly string[];
   readonly excludeFileSuffixes?: readonly string[];
   /**
@@ -153,6 +173,10 @@ export function findForbiddenImports(
   const excludeSuffixes =
     opts.excludeFileSuffixes ?? DEFAULT_EXCLUDE_FILE_SUFFIXES;
   const allowlist = opts.allowlistPaths ?? [];
+  const forbidden =
+    typeof opts.forbiddenPackage === "string"
+      ? [opts.forbiddenPackage]
+      : opts.forbiddenPackage;
   const violations: ImportViolation[] = [];
   let checkedFiles = 0;
 
@@ -199,17 +223,22 @@ export function findForbiddenImports(
         ts.forEachChild(sf, function visit(node) {
           if (
             ts.isImportDeclaration(node) &&
-            ts.isStringLiteral(node.moduleSpecifier) &&
+            ts.isStringLiteral(node.moduleSpecifier)
+          ) {
             // Match exact package OR any subpath (`@comis/agent/dist/foo`).
             // CLAUDE.md §9 forbids `@comis/<pkg>/dist/...` subpaths anyway,
             // and architecture allowlists key on file paths — a subpath
             // import would otherwise smuggle past every rule keyed on the
             // bare package name.
-            (node.moduleSpecifier.text === opts.forbiddenPackage ||
-              node.moduleSpecifier.text.startsWith(
-                `${opts.forbiddenPackage}/`,
-              ))
-          ) {
+            const specifierText = node.moduleSpecifier.text;
+            const matched = forbidden.find(
+              (pkg) =>
+                specifierText === pkg || specifierText.startsWith(`${pkg}/`),
+            );
+            if (matched === undefined) {
+              ts.forEachChild(node, visit);
+              return;
+            }
             // Type-only filter (default false preserves backwards compat
             // with every existing caller). See
             // FindForbiddenImportsOptions.valueImportsOnly doc for the
@@ -263,6 +292,7 @@ export function findForbiddenImports(
               column: col1,
               importedSymbols,
               snippet: extractSnippet(content, line1),
+              specifier: matched,
             });
           }
           ts.forEachChild(node, visit);
