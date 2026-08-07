@@ -9,12 +9,13 @@ const variant = variantArg === "first" || variantArg === "second"
   : "unresolved";
 const variantReady = variant !== "unresolved";
 const credential = process.env.MCP_TEST_TOKEN;
+const acceptedCredentials = new Set(["test-key", "test-key-two"]);
 const credentialState =
   typeof credential !== "string"
   || credential.length === 0
   || credential.includes("${")
     ? "unresolved"
-    : credential.startsWith("MCP-LIVE-SECRET-")
+    : acceptedCredentials.has(credential)
       ? "ready"
       : "invalid";
 const credentialReady = credentialState === "ready";
