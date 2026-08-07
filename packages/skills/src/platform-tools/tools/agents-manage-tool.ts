@@ -13,7 +13,13 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate, AutonomyConfig, ComisLogger, ResolvedAutonomy } from "@comis/core";
-import { registerActivityLabelSpec, resolveAutonomy } from "@comis/core";
+import {
+  IMMUTABLE_CONFIG_PREFIXES,
+  MUTABLE_CONFIG_OVERRIDES,
+  OPERATOR_ONLY_AGENT_SUBPATHS,
+  registerActivityLabelSpec,
+  resolveAutonomy,
+} from "@comis/core";
 import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
@@ -53,14 +59,15 @@ export const AgentsManageToolParams = Type.Object({
   ),
   agent_id: Type.Optional(Type.String({
     description:
-      "The agent identifier. Required except for list and self-scoped get with view=autonomy; " +
-      "that view defaults to the active agent.",
+      "The agent identifier. Required except for list and self-scoped get with view=autonomy or " +
+      "view=authority; those views default to the active agent.",
   })),
   view: Type.Optional(
-    Type.Union([Type.Literal("full"), Type.Literal("autonomy")], {
+    Type.Union([Type.Literal("full"), Type.Literal("autonomy"), Type.Literal("authority")], {
       description:
-        "Get-action response view. Use autonomy for profile, floor, or cap reporting; " +
-        "it returns only the live autonomy block instead of the full agent config.",
+        "Get-action response view. Use autonomy for profile, floor, or cap reporting. Use authority " +
+        "for what this agent can change without approval, what requires approval or operator config, " +
+        "and whether it can expand its own access. Both return bounded projections instead of full config.",
     }),
   ),
   config: Type.Optional(
@@ -540,6 +547,9 @@ export function createAgentsManageTool(
         "For autonomy profile, floor, or caps reporting, first call get with view autonomy and the " +
         "current agent ID; do not call list or full get first. If the current agent ID is omitted, " +
         "that scoped view defaults to the active agent. " +
+        "For questions about what you can change without approval, what needs the user or operator, " +
+        "or whether you can expand your own access, first call get with view authority. Report that " +
+        "bounded live authority matrix; do not guess from memory. " +
         "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, " +
         "skills.terminal.allow, elevatedReply.senderTrustMap, and elevatedReply.defaultTrustLevel " +
         "cannot be set by this tool. Refuse requests to change them; say operator " +
@@ -675,15 +685,44 @@ export function createAgentsManageTool(
         },
         async get(p, rpcCall, ctx) {
           const explicitAgentId = typeof p.agent_id === "string" ? p.agent_id : undefined;
+          const selfScopedView = p.view === "autonomy" || p.view === "authority";
           const agentId = explicitAgentId
-            ?? (p.view === "autonomy" ? ctx.agentId : undefined)
+            ?? (selfScopedView ? ctx.agentId : undefined)
             ?? readStringParam(p, "agent_id");
+          if (agentId === undefined) {
+            return throwToolError("missing_param", "agent_id is required for this get view");
+          }
           const result = await rpcCall("agents.get", { agentId, _trustLevel: ctx.trustLevel });
-          if (p.view !== "autonomy") return result;
+          if (!selfScopedView) return result;
 
           if (typeof result !== "object" || result === null) {
             return throwToolError("not_found", "agents.get returned no agent configuration");
           }
+          if (p.view === "authority") {
+            const projected = {
+              agentId,
+              requiresAdminTrust: true,
+              requiresCurrentRequestAuthorization: true,
+              approvalGate: {
+                requiredActions: ["create", "delete"],
+                noApprovalActions: ["get", "update", "suspend", "resume", "list"],
+              },
+              agentsManageUpdatePaths: [
+                "name", "model", "provider", "maxSteps", "autonomy.profile",
+                "workspace.profile", "skills.builtinTools", "oauthProfiles",
+              ],
+              runtimeMutableConfigOverrides: MUTABLE_CONFIG_OVERRIDES.map((path) =>
+                path.replaceAll("*", agentId)),
+              immutableConfigPrefixes: [...IMMUTABLE_CONFIG_PREFIXES],
+              operatorOnlyAgentSubpaths: [...OPERATOR_ONLY_AGENT_SUBPATHS],
+              canGrantOwnTrustOrSecurity: false,
+            };
+            return {
+              content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
+              details: projected,
+            } satisfies AgentToolResult<typeof projected>;
+          }
+
           const resultRecord = result as Record<string, unknown>;
           const config = resultRecord.config;
           if (typeof config !== "object" || config === null) {

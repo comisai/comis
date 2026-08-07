@@ -189,7 +189,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
     if (ctx.trustLevel === "admin") {
-      return "Dedicated assistant: create now, reasonable defaults; no heartbeat. skills.execSandbox/skills.terminal.unsafeDisableSandbox/skills.terminal.allow. Operator admin IDs alone/mixed: refuse all; agents.<id>.elevatedReply.senderTrustMap operator-only; operator config+restart; ask no values; no platform.";
+      return "Dedicated assistant: create now, reasonable defaults; no heartbeat. What can you change without approval or what needs the operator? First get view authority; report the bounded live matrix; do not guess. skills.execSandbox/skills.terminal.unsafeDisableSandbox/skills.terminal.allow. Operator admin IDs alone/mixed: refuse all; agents.<id>.elevatedReply.senderTrustMap operator-only; operator config+restart; ask no values; no platform.";
     }
     const base = "Dedicated assistant: create immediately, reasonable defaults; no heartbeat. Operator-only security/trust fields.";
     return base + " Admin required.";

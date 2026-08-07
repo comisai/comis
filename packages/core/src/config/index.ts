@@ -422,7 +422,7 @@ export { parseConfigPaths } from "./config-paths.js";
 export { buildGatewayEnvLayer } from "./env-layer.js";
 
 // Immutable key guard (runtime config mutation protection)
-export { IMMUTABLE_CONFIG_PREFIXES, MUTABLE_CONFIG_OVERRIDES, isImmutableConfigPath, matchesOverridePattern, getMutableOverridesForSection, findOperatorOnlyAgentPaths } from "./immutable-keys.js";
+export { IMMUTABLE_CONFIG_PREFIXES, MUTABLE_CONFIG_OVERRIDES, OPERATOR_ONLY_AGENT_SUBPATHS, isImmutableConfigPath, matchesOverridePattern, getMutableOverridesForSection, findOperatorOnlyAgentPaths } from "./immutable-keys.js";
 
 // Managed-section redirects (LLM-readable hints for immutable rejections)
 export {
