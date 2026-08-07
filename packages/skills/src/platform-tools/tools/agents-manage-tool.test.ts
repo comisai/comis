@@ -897,9 +897,18 @@ describe("agents_manage tool", () => {
       expect(result.details).toEqual({
         agentId: "bot-1",
         autonomy: expect.objectContaining({ profile: "unattended" }),
+        profileComparison: {
+          from: "standard",
+          to: "unattended",
+          capabilitySetChanged: false,
+          numericCapsChanged: false,
+          mode: { standard: "accept-reversible", unattended: "unattended" },
+          unattendedBehavior: expect.stringMatching(/would-ask.*deny.*escalate/isu),
+        },
       });
       const rendered = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
       expect(rendered).toContain('"profile": "unattended"');
+      expect(rendered).toContain('"numericCapsChanged": false');
       expect(rendered).not.toContain('"rag"');
       expect(rendered.length).toBeLessThan(5_000);
       expect(tool.description).toMatch(/profile.*floor.*caps.*view.*autonomy/isu);
@@ -923,6 +932,10 @@ describe("agents_manage tool", () => {
       expect(result.details).toEqual({
         agentId: "test-agent",
         autonomy: { profile: "unattended" },
+        profileComparison: expect.objectContaining({
+          capabilitySetChanged: false,
+          numericCapsChanged: false,
+        }),
       });
     });
   });
