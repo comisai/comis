@@ -202,4 +202,8 @@ describe("autonomy SKILL.md names only real caps + tools (no drift)", () => {
     expect(body).toMatch(/would-ask.*deny.*escalate/isu);
     expect(body).toMatch(/never report that the standard baseline is unavailable/iu);
   });
+
+  it("versions the profile comparison for deployed bundle refresh", () => {
+    expect(body).toMatch(/^version: "0\.3\.0"$/mu);
+  });
 });
