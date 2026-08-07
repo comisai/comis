@@ -24,6 +24,7 @@ import {
   serializeBundledManifest,
   thirdPartyBundledPackages,
 } from "./bundled-manifest.js";
+import { PATCH_MARKERS, UPSTREAM_ABSORBED_MARKERS } from "./patch-markers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const comisRoot = resolve(__dirname, "..");
@@ -31,13 +32,36 @@ const monoRoot = resolve(comisRoot, "../..");
 const patchedProviderSource = realpathSync(
   join(monoRoot, "node_modules", "@earendil-works", "pi-ai"),
 );
-const patchedProviderMarker = join(patchedProviderSource, "dist", "utils", "error-body.js");
-if (
-  !existsSync(patchedProviderMarker)
-  || !readFileSync(patchedProviderMarker, "utf8").includes("function isNonEmptyJsonBody")
-) {
-  console.error("ERROR: installed @earendil-works/pi-ai does not contain the required dependency patch");
+
+// Verify every hunk landed, not just one. Naming the file and the expected
+// behaviour keeps a failure actionable: the previous single-marker check said
+// only "the patch is missing", which sent a reader hunting for a broken patch
+// when the patch had applied and the marker was the stale part.
+const missingPatches = PATCH_MARKERS.filter(({ file, marker }) => {
+  const path = join(patchedProviderSource, ...file);
+  return !existsSync(path) || !readFileSync(path, "utf8").includes(marker);
+});
+if (missingPatches.length > 0) {
+  console.error(
+    "ERROR: installed @earendil-works/pi-ai is missing patched behaviour — "
+      + "check that pnpm.patchedDependencies pins the installed version:",
+  );
+  for (const { file, describes } of missingPatches) {
+    console.error(`  - ${file.join("/")}: ${describes}`);
+  }
   process.exit(1);
+}
+
+// Upstream-owned behaviour we depend on but no longer patch. Warn only —
+// see UPSTREAM_ABSORBED_MARKERS for why this must not block a publish.
+for (const { file, marker, describes } of UPSTREAM_ABSORBED_MARKERS) {
+  const path = join(patchedProviderSource, ...file);
+  if (!existsSync(path) || !readFileSync(path, "utf8").includes(marker)) {
+    console.warn(
+      `WARNING: @earendil-works/pi-ai no longer exposes \`${marker}\` in ${file.join("/")} — `
+        + `${describes}. Upstream may have dropped it; provider error text will degrade if so.`,
+    );
+  }
 }
 
 // Single source of truth: bundledDependencies in our own package.json.
