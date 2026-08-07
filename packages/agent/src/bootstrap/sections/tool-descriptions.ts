@@ -144,10 +144,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Channel (confusable pair: message / sessions_send) -----
   message: (ctx: ToolDescriptionContext): string => {
     const ch = ctx.channelType ?? "chat";
-    // The turn's final text is delivered automatically; an agent that also sends
-    // here double-posts. The runtime honours the silent sentinel — say so.
-    return `Send, reply, react, edit, delete, fetch messages on ${ch}. For inter-session messaging, use sessions_send.`
-      + ` After delivering user-facing content here, reply NO_REPLY: the turn's final text is sent too, so restating it double-posts.`;
+    return `Send, reply, react, edit, delete, fetch on ${ch}. Normal current-chat replies auto-deliver without this tool.`
+      + ` Routing context is not recipient confirmation; never substitute it for a draft addressed elsewhere.`
+      + ` For sessions use sessions_send. After delivery reply NO_REPLY to avoid double-posting.`;
   },
 
   // ----- Sessions -----
@@ -539,7 +538,7 @@ The exec sandbox denies writes to ~/.comis/skills/, global node_modules (e.g. ~/
 To run CLI tools that need API tokens (wrangler, gh, gcloud, kubectl, doctl, fly, vercel, stripe, etc.), use the \`secretRefs\` parameter — pass the secret NAMES as a list; the daemon resolves them and injects them as env vars into the child. Do NOT try to read ~/.comis/.env (outside sandbox), pass tokens via the \`env\` parameter (the env allowlist rejects credential names), or shell-substitute $(...) (blocked by exec-security). Call gateway({action:"env_list", filter:"<PREFIX>*"}) first to see available names. Example: exec({command:"npx wrangler pages deploy ./dist", secretRefs:["CLOUDFLARE_API_TOKEN","CLOUDFLARE_ACCOUNT_ID"]}). Platform-managed secrets (referenced in daemon config, e.g. ANTHROPIC_API_KEY) are rejected. Raw-interpreter commands (python -c, node -e, bash -c, etc.) are rejected when secretRefs is present — write a script file first and invoke that instead.`,
 
   message: `## Message Guide
-IMPORTANT: Always include channel_type and channel_id from the conversation context. Do NOT guess or fabricate channel IDs.
+IMPORTANT: Use channel_type and channel_id only for an exact target explicitly selected or confirmed by the user. Conversation context supplies routing coordinates, not recipient confirmation; never substitute the current chat for a draft addressed elsewhere. Normal current-chat replies are delivered automatically; answer without the message tool.
 For reply: always include message_id of the message being replied to.
 For react: use Unicode emoji (e.g., the actual emoji character), not text shortcodes (e.g., ":thumbsup:"). Platform adapters handle conversion.
 For delete: requires user confirmation (_confirmed: true). Present the action to the user first and wait for approval.
