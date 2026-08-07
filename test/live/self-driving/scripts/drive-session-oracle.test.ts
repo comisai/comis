@@ -259,4 +259,10 @@ describe("drive progress classification", () => {
     expect(isDriveProgressText('לא ברור. מה זה "לשיקולך"?')).toBe(false);
     expect(isDriveProgressText("<b>צריך URL עם commit SHA.</b> ה-xlsx skill כבר זמינה לך")).toBe(false);
   });
+
+  it("keeps a denial explanation classified as an answer", () => {
+    expect(isDriveProgressText(
+      "Denied: the fixture credential is restricted to the fixture API. No request was made.",
+    )).toBe(false);
+  });
 });
