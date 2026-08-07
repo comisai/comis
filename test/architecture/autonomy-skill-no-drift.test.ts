@@ -52,6 +52,7 @@ import {
   AGENT_CAPABILITIES,
   TOOL_CAPABILITY_MAP,
   HANDLER_CAPABILITY_MAP,
+  resolveAutonomy,
 } from "@comis/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -182,5 +183,23 @@ describe("autonomy SKILL.md names only real caps + tools (no drift)", () => {
       /\btool_invoke\s*\??\(/.test(body),
       "the skill frames tool_invoke(...) as a model-facing CALL — model tools are snake_case but tool.invoke is the in-script socket dispatch verb, not an agent tool (Pitfall-1)",
     ).toBe(false);
+  });
+
+  it("teaches the truthful standard to unattended profile comparison", () => {
+    const standard = resolveAutonomy({ profile: "standard" });
+    const unattended = resolveAutonomy({ profile: "unattended" });
+
+    expect(unattended.capabilities).toEqual(standard.capabilities);
+    expect(unattended.budget).toEqual(standard.budget);
+    expect(unattended.rate).toEqual(standard.rate);
+    expect(unattended.spawn).toEqual(standard.spawn);
+    expect(unattended.outward).toEqual(standard.outward);
+    expect(standard.mode).toBe("accept-reversible");
+    expect(unattended.mode).toBe("unattended");
+
+    expect(body).toMatch(/standard and unattended share the same base capabilities and numeric caps/iu);
+    expect(body).toMatch(/accept-reversible.*unattended/isu);
+    expect(body).toMatch(/would-ask.*deny.*escalate/isu);
+    expect(body).toMatch(/never report that the standard baseline is unavailable/iu);
   });
 });
