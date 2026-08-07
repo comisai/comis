@@ -234,6 +234,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   // Delivery queue lifecycle.
   "delivery.outward_ledger_transition",
   "delivery.queued",
+  "delivery.reply_bound",
   "delivery.dispatched",
   "delivery.aborted",
   "activity.turn_finalized",

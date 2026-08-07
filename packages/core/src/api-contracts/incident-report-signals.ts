@@ -463,6 +463,8 @@ export interface IncidentSignals {
     deliveredChunks: number;
     failedChunks: number;
     errorKind?: string;
+    /** Platform response IDs bound to this trace, in delivery order. */
+    messageIds?: string[];
   };
   /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events

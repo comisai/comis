@@ -25,10 +25,9 @@ import {
 import { ensureTool, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
-import { accumulateDeliveryDispatch } from "./obs-explain-delivery-fold.js";
+import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
 import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js";
 import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
-// ---------------------------------------------------------------------------
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
 /** Minimum same-tool failures for a breaker/repeated-failure signal; shared with the heuristic registry. */
@@ -454,6 +453,7 @@ function handleEventRecord(
       });
       return;
     }
+    case "delivery.reply_bound": accumulateDeliveryReplyBound(acc, data); return;
     case "delivery.dispatched": accumulateDeliveryDispatch(acc, data); return;
     case "activity.turn_finalized": {
       const strategy = asString(data.strategy);
@@ -653,7 +653,6 @@ function handleEventRecord(
       return;
   }
 }
-// ---------------------------------------------------------------------------
 // Public normalizer.
 // ---------------------------------------------------------------------------
 /**
@@ -688,6 +687,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     crossUserRecalls: 0,
     contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
+    deliveryMessageIds: [],
     learning: emptyLearningFold(),
     sessionKey: "",
     seq: 0,

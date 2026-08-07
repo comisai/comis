@@ -12991,6 +12991,22 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "deliveryReceipt": {
+          "type": "object",
+          "properties": {
+            "messageIds": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "messageIds"
+          ],
+          "additionalProperties": false
+        },
         "recoveries": {
           "type": "object",
           "properties": {

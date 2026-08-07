@@ -796,7 +796,6 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
       messageId: "message-42",
       channelId: "chat_a",
       channelType: "telegram",
-      agentId: "agent_a",
     });
   });
 });
@@ -1456,6 +1455,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       channelType: "telegram",
       channelId: "c",
       origin: "user",
+    },
+    "delivery:reply_bound": {
+      messageId: "message-42",
+      channelId: "c",
+      channelType: "telegram",
+      traceId: "trace-a",
+      agentId: "default",
+      timestamp: 1000,
     },
     "delivery:complete": {
       entryId: "e",
@@ -2245,6 +2252,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["skill:prompt_invoked"]).toBe("skill.prompt_invoked");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:outward_ledger_transition"]).toBe("delivery.outward_ledger_transition");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:enqueued"]).toBe("delivery.queued");
+    expect(TRAJECTORY_BRIDGE_MAPPING["delivery:reply_bound"]).toBe("delivery.reply_bound");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:complete"]).toBe("delivery.dispatched");
     // Context engine pipeline → context.compiled.
     expect(TRAJECTORY_BRIDGE_MAPPING["context:pipeline"]).toBe("context.compiled");
@@ -4489,7 +4497,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(142);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(143);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

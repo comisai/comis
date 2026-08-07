@@ -453,6 +453,13 @@ export function translatePayload(
       };
     }
 
+    case "delivery:reply_bound":
+      return {
+        messageId: payload.messageId,
+        channelId: payload.channelId,
+        channelType: payload.channelType,
+      };
+
     case "context:pipeline":
       // Envelope-only correlation keys (agentId, sessionKey) intentionally
       // stripped — the trajectory envelope carries them

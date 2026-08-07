@@ -319,6 +319,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // platform errors, and credentials never cross into the trajectory.
   "delivery:outward_ledger_transition": "delivery.outward_ledger_transition",
   "delivery:enqueued": "delivery.queued",
+  "delivery:reply_bound": "delivery.reply_bound",
   "delivery:complete": "delivery.dispatched",
   // Fires when an abort cut delivery short — including the orchestrator
   // stage's whole-turn skip (an already-aborted signal -> the pacer never
