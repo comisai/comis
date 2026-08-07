@@ -71,6 +71,17 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("keeps sender approval distinct from operator-only configuration in follow-ups", () => {
+    for (const mode of ["full", "operational", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(
+        /self-authority follow-up.*need me.*current admin request.*approval-gated.*operator-only/isu,
+      );
+      expect(kernel).toMatch(/sender cannot authorize operator-only.*operator config.*restart/isu);
+    }
+  });
+
   it("requires current evidence for provider prerequisite claims", () => {
     const result = compileExecutionPrompt(makeInput());
 
