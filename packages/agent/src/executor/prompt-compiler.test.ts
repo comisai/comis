@@ -112,6 +112,16 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("reports empty config updates as unchanged without using tools", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(
+        /empty.*unspecified.*config update.*no tools.*(?:nothing|no configuration).*changed/isu,
+      );
+    }
+  });
+
   it("refuses approval bypass as operator-owned policy in every prompt mode", () => {
     for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;

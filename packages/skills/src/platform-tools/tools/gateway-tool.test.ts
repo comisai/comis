@@ -175,6 +175,7 @@ describe("gateway tool", () => {
     expect(tool.description).toContain("restart");
     expect(tool.description).toContain("status");
     expect(tool.description).toContain("confirmation");
+    expect(tool.description).toMatch(/empty.*unspecified.*update.*no call.*unchanged/iu);
     expect(tool.description.length).toBeLessThanOrEqual(150);
   });
 

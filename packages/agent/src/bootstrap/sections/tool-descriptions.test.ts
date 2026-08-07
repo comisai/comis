@@ -126,6 +126,20 @@ describe("TOOL_GUIDES", () => {
     expect(description).toMatch(/overwrite/iu);
   });
 
+  it("gateway descriptions keep empty config updates tool-free and unchanged", () => {
+    const description = resolveDescription(
+      { name: "gateway" },
+      LEAN_TOOL_DESCRIPTIONS,
+      {
+        modelTier: "small",
+        trustLevel: "admin",
+      },
+    );
+
+    expect(description).toMatch(/empty.*unspecified.*update.*no tool.*unchanged/isu);
+    expect(TOOL_GUIDES.gateway).toMatch(/empty.*unspecified.*config update.*no tool.*nothing changed/isu);
+  });
+
   it("gateway guide preserves existing security language", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Gateway Security/);
     expect(TOOL_GUIDES.gateway).toMatch(/CRITICAL/);
