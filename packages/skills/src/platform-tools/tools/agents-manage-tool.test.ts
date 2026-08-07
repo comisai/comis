@@ -971,6 +971,8 @@ describe("agents_manage tool", () => {
         agentId: "test-agent",
         requiresAdminTrust: true,
         requiresCurrentRequestAuthorization: true,
+        spontaneousConfigMutationAllowed: false,
+        noApprovalActionsRequireCurrentRequestAuthorization: true,
         approvalGate: {
           requiredActions: ["create", "delete"],
           noApprovalActions: ["get", "update", "suspend", "resume", "list"],
@@ -1007,6 +1009,12 @@ describe("agents_manage tool", () => {
         canGrantOwnTrustOrSecurity: false,
       });
       const rendered = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
+      expect(rendered).toMatch(
+        /without.*current.*admin request.*no.*configuration mutation.*authorized/isu,
+      );
+      expect(rendered).toMatch(
+        /noApprovalActions.*separate approval gate.*not authorization/isu,
+      );
       expect(rendered).not.toContain("Private display name");
       expect(rendered).not.toContain('"rag"');
       expect(rendered.length).toBeLessThan(5_000);
