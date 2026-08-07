@@ -66,7 +66,11 @@ describe("compileExecutionPrompt", () => {
       expect(kernel).toMatch(
         /distinguish.*admin.*no-approval.*approval-gated.*operator-only/isu,
       );
+      expect(kernel).toMatch(
+        /requiresCurrentRequestAuthorization.*no-approval.*no (?:extra|separate) gate.*not authoriz/isu,
+      );
       expect(kernel).toMatch(/model.*provider.*bounded autonomy.*not operator-only/isu);
+      expect(kernel).toMatch(/model.*provider.*bounded autonomy.*current admin request/isu);
       expect(kernel).toMatch(/cannot self-grant.*trust.*security/isu);
     }
   });
