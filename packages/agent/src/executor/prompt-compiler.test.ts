@@ -84,6 +84,7 @@ describe("compileExecutionPrompt", () => {
       expect(kernel).toMatch(
         /self-authority follow-up.*need me.*current admin request.*approval-gated.*operator-only/isu,
       );
+      expect(kernel).toMatch(/include all 3 live categories/isu);
       expect(kernel).toMatch(/do not say.*need.*sender.*operator-only/isu);
       expect(kernel).toMatch(/sender cannot authorize operator-only.*operator config.*restart/isu);
     }
