@@ -1015,6 +1015,13 @@ describe("agents_manage tool", () => {
       expect(rendered).toMatch(
         /noApprovalActions.*separate approval gate.*not authorization/isu,
       );
+      expect(rendered).toMatch(
+        /current admin request.*update.*suspend.*resume.*no separate approval gate/isu,
+      );
+      expect(rendered).toMatch(/separate approval gate.*create.*delete/isu);
+      expect(rendered).toMatch(
+        /operator-only config.*sender cannot authorize.*operator config.*restart/isu,
+      );
       expect(rendered).not.toContain("Private display name");
       expect(rendered).not.toContain('"rag"');
       expect(rendered.length).toBeLessThan(5_000);
