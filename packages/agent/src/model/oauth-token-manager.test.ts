@@ -701,6 +701,47 @@ describe("OAuthTokenManager — port-backed", () => {
   // ---------------------------------------------------------------------------
 
   describe("B. persisted-on-refresh + always-truthy newCredentials bug fix", () => {
+    it("forces a refresh when a provider invalidates an access token before its expiry", async () => {
+      const stored = makeStoredProfile({
+        access: "invalidated-access-token",
+        expires: Date.now() + 3600_000,
+      });
+      const credentialStore = makeMockCredentialStore();
+      vi.mocked(credentialStore.list).mockResolvedValue(_ok([stored]));
+      vi.mocked(credentialStore.get).mockResolvedValue(_ok(stored));
+      mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
+      mockGetOAuthApiKey.mockResolvedValue({
+        newCredentials: {
+          ...stored,
+          access: "refreshed-access-token",
+          expires: Date.now() + 7200_000,
+        } as never,
+        apiKey: "refreshed-access-token",
+      });
+      const manager = createOAuthTokenManager({
+        secretManager: makeSecretManager({}),
+        eventBus,
+        credentialStore,
+        logger: makeMockLogger(),
+        dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
+      });
+      const refreshInvalidatedCredential = (
+        manager as unknown as Pick<OAuthTokenManager, "getCredential"> & {
+          refreshInvalidatedCredential: OAuthTokenManager["getCredential"];
+        }
+      ).refreshInvalidatedCredential;
+
+      const result = await refreshInvalidatedCredential("openai-codex");
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.apiKey).toBe("refreshed-access-token");
+      }
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(credentialStore.set).toHaveBeenCalledTimes(1);
+    });
+
     // Test B.1
     it("when refresh token is rotated, manager calls credentialStore.set exactly once", async () => {
       const stored = makeStoredProfile({ refresh: "old-refresh-token" });
