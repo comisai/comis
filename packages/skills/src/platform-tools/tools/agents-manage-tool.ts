@@ -722,7 +722,10 @@ export function createAgentsManageTool(
             const authorityConclusion = [
               "Authority conclusion:",
               "- Without a current authorized admin request, no configuration mutation is authorized.",
-              "- noApprovalActions means no separate approval gate; it is not authorization to mutate configuration.",
+              "- noApprovalActions means no separate approval gate, not authorization by itself.",
+              "- Current admin request: update, suspend, and resume need no separate approval gate.",
+              "- Separate approval gate: create and delete.",
+              "- Operator-only config: the current sender cannot authorize it; operator config and daemon restart are required.",
             ].join("\n");
             return {
               content: [
