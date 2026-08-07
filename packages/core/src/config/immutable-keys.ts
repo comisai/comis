@@ -107,6 +107,10 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // capability map or detour policy.
   "tooling",
 
+  // Durable security-decision persistence is operator policy. Runtime callers
+  // may query the audit trail but cannot disable or redirect its sinks.
+  "observability.audit",
+
   // Authenticated platform-subject mappings define storage authority.
   "identity",
 
