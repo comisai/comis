@@ -43,8 +43,13 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", async (importOriginal) => {
       if (useRealPdfjs.value) {
         return real.getDocument(opts as Parameters<typeof real.getDocument>[0]);
       }
+      // Teardown lives on the loading task, not the document: pdfjs 6 removed
+      // `PDFDocumentProxy.destroy()` (only `cleanup()` remains), so a mock that
+      // offers `destroy` on the resolved document would let a regression back to
+      // `pdf.destroy()` pass here while throwing against the real library.
       return {
         promise: mockDocumentPromise(),
+        destroy: mockDestroy,
       };
     },
   };
@@ -91,7 +96,6 @@ function configureMockPdf(opts: {
   mockDocumentPromise.mockResolvedValue({
     numPages,
     getPage: mockGetPage,
-    destroy: mockDestroy,
   });
 }
 
@@ -216,6 +220,42 @@ describe("pdf-extractor (mocked) - empty pages", () => {
     expect(result.value.text).toBe("");
     expect(result.value.pageCount).toBe(1);
     expect(result.value.truncated).toBe(false);
+  });
+});
+
+describe("pdf-extractor (mocked) - teardown", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useRealPdfjs.value = false;
+  });
+
+  // The worker and its transport outlive the document, so skipping teardown
+  // leaks them per extraction. Teardown must therefore run on BOTH exits.
+  it("destroys the loading task after a successful extraction", async () => {
+    configureMockPdf({ numPages: 1, pageTexts: ["hello"] });
+    const extractor = makeExtractor();
+    const result = await extractor.extract({
+      source: "buffer",
+      buffer: Buffer.from("fake-pdf"),
+      mimeType: "application/pdf",
+      fileName: "ok.pdf",
+    });
+    expect(result.ok).toBe(true);
+    expect(mockDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroys the loading task when page extraction throws", async () => {
+    configureMockPdf({ numPages: 1 });
+    mockGetPage.mockRejectedValueOnce(new Error("page decode failed"));
+    const extractor = makeExtractor();
+    const result = await extractor.extract({
+      source: "buffer",
+      buffer: Buffer.from("fake-pdf"),
+      mimeType: "application/pdf",
+      fileName: "boom.pdf",
+    });
+    expect(result.ok).toBe(false);
+    expect(mockDestroy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -447,7 +487,6 @@ function configureMockPdfWithPages(opts: {
   mockDocumentPromise.mockResolvedValue({
     numPages,
     getPage: mockGetPage,
-    destroy: mockDestroy,
   });
 }
 
