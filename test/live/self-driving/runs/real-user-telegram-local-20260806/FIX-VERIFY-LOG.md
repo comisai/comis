@@ -182,3 +182,15 @@
 - **Observability closure:** the residency oracle now scans bound values across every SQLite table/column and drills matching LCD metadata through `json_tree`; a binary SQLite encoding can no longer hide behind a filesystem `rg` zero.
 - **Commits:** `0b3c96eb` (RED `c2df6b2a`) and `b0d36333` (RED `e81301b7`).
 - **Status:** CLOSED — private reasoning never reaches session or LCD persistence, while the active turn retains it in memory and token budgets still count it.
+
+## B6-M-DENIAL-ANSWER — denial explanations were misclassified as drive progress
+- **Symptom (live):** all six exact B6-M follow-ups delivered a valid security explanation beginning `Denied:`, but `drive.mjs` reported `NO SUBSTANTIVE ANSWER` and waited roughly 126–128 seconds despite terminal trajectories and visible Telegram messages.
+- **Evidence:** session, emulator wire, and `delivery_mirror` contained the same six replies; each model completion ended successfully after 3–6 seconds with zero tool calls. The helper alone discarded them through its blanket `Approved|Denied:` progress rule.
+- **Hypothesis → root cause:** the progress classifier approximated approval localization by prefix. The runtime's actual one-item resolution has the narrower `Approved|Denied: action (id)` shape, while the many-item form is `Approved|Denied N pending approval(s).` Ordinary assistant prose may legitimately start with the same word.
+- **RED test:** `drive-session-oracle.test.ts` requires a complete credential-denial explanation to remain substantive; pre-fix it returned progress (`3b2d4238`).
+- **Fix:** classify only the two deterministic approval-resolution contracts as progress. Preserve exact one/many approval frames, and treat prefix-only or explanatory prose as an answer (`57541a2f`).
+- **Review:** the fix is limited to the campaign oracle; it does not alter runtime denial behavior or infer substance from the security outcome itself.
+- **Validation:** focused classifier suite 16/16, twelve B6-M session→wire→mirror reconciliations, and zero unrelated wire events in the scored range.
+- **Observability closure:** next time one normal `drive.mjs` call terminates on the real denial reply instead of requiring a manual three-surface recovery and a two-minute false wait.
+- **Commit:** `57541a2f` (RED `3b2d4238`).
+- **Status:** CLOSED — denial explanations and approval-resolution frames are distinguishable from the wire text alone.
