@@ -343,7 +343,7 @@ export function registerAllToolMetadata(): void {
       "change model",
       "change the model",
     ],
-    validKeys: ["action", "agent_id", "config"],
+    validKeys: ["action", "agent_id", "config", "view"],
     // agent_id is required for every action except list.
     requiredByAction: {
       create:  ["agent_id", "config"],
