@@ -1854,7 +1854,7 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
       key: "default.skills.execSandbox.enabled",
     });
 
-    expect(error).toMatch(/operator config.*daemon restart/isu);
+    expect(error).toMatch(/operator config.*(?:daemon restart|restart the daemon)/isu);
     expect(error).not.toContain("agents_manage");
   });
 

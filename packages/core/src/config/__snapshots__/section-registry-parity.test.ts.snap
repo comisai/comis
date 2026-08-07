@@ -13915,19 +13915,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
       "persist": true,
       "sink": "both"
     },
-    "immutable": false,
+    "immutable": true,
     "path": "observability.audit",
     "type": "object"
   },
   {
     "default": true,
-    "immutable": false,
+    "immutable": true,
     "path": "observability.audit.persist",
     "type": "boolean"
   },
   {
     "default": "both",
-    "immutable": false,
+    "immutable": true,
     "path": "observability.audit.sink",
     "type": "string"
   },

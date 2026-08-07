@@ -28,7 +28,10 @@ import {
   SUB_PATH_MANAGED_REDIRECTS,
   type ManagedSectionRedirect,
 } from "./section-registry.js";
-import { matchesOverridePattern } from "./immutable-keys.js";
+import {
+  matchesOverridePattern,
+  OPERATOR_ONLY_AGENT_SUBPATHS,
+} from "./immutable-keys.js";
 
 export type { ManagedSectionRedirect } from "./section-registry.js";
 
@@ -76,6 +79,11 @@ export function getManagedSectionRedirect(
 ): ManagedSectionRedirect | undefined {
   if (!section) return undefined;
   const fullPath = key ? `${section}.${key}` : section;
+  const operatorOnlyAgentPath = section === "agents" && key !== undefined
+    && OPERATOR_ONLY_AGENT_SUBPATHS.some((subpath) =>
+      matchesOverridePattern(fullPath, `agents.*.${subpath}`),
+    );
+  if (operatorOnlyAgentPath) return undefined;
   let best: ManagedSectionRedirect | undefined;
   for (const candidate of MANAGED_SECTIONS) {
     const matchesPrefix =

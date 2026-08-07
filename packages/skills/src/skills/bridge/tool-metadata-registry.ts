@@ -249,11 +249,12 @@ export function registerAllToolMetadata(): void {
           const mutablePaths = getMutableOverridesForSection(section, key);
           const redirect = getManagedSectionRedirect(section, key);
           const fullPath = `${section}${key ? "." + key : ""}`;
+          const operatorHint = ` Edit operator config and restart the daemon.`;
           const suffix = redirect
             ? ` ${formatRedirectHint(redirect, mutablePaths)}`
             : mutablePaths.length > 0
-              ? ` Patchable: ${mutablePaths.join(", ")}.`
-              : "";
+              ? `${operatorHint} Runtime-patchable paths: ${mutablePaths.join(", ")}.`
+              : operatorHint;
           return `Cannot patch immutable config path: ${fullPath}.${suffix}`;
         }
       }
