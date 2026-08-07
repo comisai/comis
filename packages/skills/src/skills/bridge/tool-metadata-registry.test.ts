@@ -1043,7 +1043,7 @@ describe("tool-metadata-registry -- completeness", () => {
 describe("tool-metadata-registry -- tool-entry schema metadata", () => {
   it.each([
     ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 9],
-    ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 3],
+    ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 4],
     ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
     ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
@@ -1062,6 +1062,15 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
       expect(meta?.requiredByAction).toBeDefined();
     },
   );
+
+  it("allows the agents_manage autonomy projection key at tool entry", () => {
+    expect(getToolMetadata("agents_manage")?.validKeys).toEqual([
+      "action",
+      "agent_id",
+      "config",
+      "view",
+    ]);
+  });
 
   it("mcp_manage requiredByAction matches the connect / status / disconnect / reconnect spec", () => {
     const meta = getToolMetadata("mcp_manage");
