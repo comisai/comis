@@ -904,6 +904,27 @@ describe("agents_manage tool", () => {
       expect(rendered.length).toBeLessThan(5_000);
       expect(tool.description).toMatch(/profile.*floor.*caps.*view.*autonomy/isu);
     });
+
+    it("defaults an autonomy projection to the current agent", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "test-agent",
+        config: { autonomy: { profile: "unattended" } },
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-g-current-autonomy", { action: "get", view: "autonomy" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.get", {
+        agentId: "test-agent",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({
+        agentId: "test-agent",
+        autonomy: { profile: "unattended" },
+      });
+    });
   });
 
   // -----------------------------------------------------------------------

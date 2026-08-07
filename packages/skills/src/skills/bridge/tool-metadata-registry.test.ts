@@ -1072,6 +1072,10 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ]);
   });
 
+  it("allows self-scoped autonomy reads without an agent identifier", () => {
+    expect(getToolMetadata("agents_manage")?.requiredByAction?.get).toBeUndefined();
+  });
+
   it("mcp_manage requiredByAction matches the connect / status / disconnect / reconnect spec", () => {
     const meta = getToolMetadata("mcp_manage");
     // `transport` is NOT unconditionally required at the pre-flight gate — it is
