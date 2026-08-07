@@ -890,6 +890,42 @@ describe("agents_manage tool", () => {
       );
     });
 
+    it("exposes bounded autonomy profile updates through the typed management surface", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "default",
+        config: { autonomy: { profile: "max" } },
+        updated: true,
+        changed: true,
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const args = {
+        action: "update" as const,
+        agent_id: "default",
+        config: { autonomy: { profile: "max" as const } },
+      };
+
+      expect(tool.description).toMatch(
+        /autonomy\.profile.*assistant.*standard.*unattended.*max/isu,
+      );
+      expect(tool.description).toMatch(/max.*bounded.*standard/isu);
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-autonomy", args as never),
+      );
+      const text = result.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.update", {
+        agentId: "default",
+        config: { autonomy: { profile: "max" } },
+        _trustLevel: "admin",
+      });
+      expect(text).toContain("config.autonomy.profile=\"max\"");
+    });
+
     it("returns a bounded completion contract after a model binding update", async () => {
       const rpcReturn = {
         agentId: "bot-1",
