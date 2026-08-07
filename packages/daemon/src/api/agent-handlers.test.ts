@@ -2586,6 +2586,28 @@ describe("createAgentHandlers", () => {
       );
     });
 
+    it("agents.update rejects mixed safe and sender-trust changes atomically", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+      const before = deps.agents["default"]!;
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: {
+            name: "Updated agent",
+            elevatedReply: { senderTrustMap: { user_a: "admin" } },
+          },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/agents\.default\.elevatedReply\.senderTrustMap.*operator-only/iu);
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+      expect(deps.agents["default"]).toBe(before);
+    });
+
     it("dryRun does NOT bypass the operator-only guard (rejects before the dry-run short-circuit)", async () => {
       const persistDeps = makePersistDeps();
       const deps = makeDeps({ persistDeps });

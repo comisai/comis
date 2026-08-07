@@ -119,6 +119,9 @@ describe("agents_manage tool", () => {
     expect(description).toMatch(
       /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*operator config.*restart.*never.*platform/isu,
     );
+    expect(description).toMatch(
+      /operator admin IDs.*alone or mixed.*refuse.*whole request.*agents\.<id>\.elevatedReply\.senderTrustMap.*do not ask.*values/isu,
+    );
     expect(description).toMatch(/refuse.*operator config.*restart/isu);
     expect(description).toMatch(/do not ask.*command details/isu);
   });

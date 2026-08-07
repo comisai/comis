@@ -210,6 +210,9 @@ describe("TOOL_GUIDES", () => {
     expect(description).toMatch(
       /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*config.*restart.*no platform/isu,
     );
+    expect(description).toMatch(
+      /operator admin IDs.*alone or mixed.*refuse.*whole request.*agents\.<id>\.elevatedReply\.senderTrustMap.*do not ask.*values/isu,
+    );
     expect(description).toMatch(/operator config/iu);
     expect(TOOL_GUIDES.agents_manage).toMatch(/operator-only/iu);
     expect(TOOL_GUIDES.agents_manage).toMatch(/terminal command.*do not ask/isu);

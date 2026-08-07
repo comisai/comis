@@ -102,6 +102,16 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("refuses mixed operator-admin updates before asking for values", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(
+        /operator admin IDs.*alone\/mixed.*agents\.<id>\.elevatedReply\.senderTrustMap.*refuse immediately.*do not ask.*values/isu,
+      );
+    }
+  });
+
   it("refuses approval bypass as operator-owned policy in every prompt mode", () => {
     for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
