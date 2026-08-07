@@ -2058,6 +2058,49 @@ describe("refresh_token_reused detection", () => {
     }
   });
 
+  it("normalizes a nested OAuth error object and emits the rejected HTTP status", async () => {
+    const profile = expiredCodexProfile();
+    const credentialStore = makeMockCredentialStore();
+    vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
+    vi.mocked(credentialStore.list).mockResolvedValue(_ok([profile]));
+    mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
+
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "The refresh credential is invalid.",
+            type: "invalid_grant",
+            code: "invalid_grant",
+          },
+        }),
+        { status: 401 },
+      ),
+    );
+
+    const events: Array<Record<string, unknown>> = [];
+    eventBus.on("auth:refresh_failed", (payload) => {
+      events.push(payload as Record<string, unknown>);
+    });
+
+    const { manager, logger } = buildManager(credentialStore);
+    const result = await manager.getApiKey("openai-codex");
+
+    expect(result.ok).toBe(false);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      errorKind: "invalid_grant",
+      hint: expect.stringContaining("login"),
+      status: 401,
+    });
+    const refreshWarning = logger._calls().find((call) =>
+      call.level === "warn" && call.message === "OAuth refresh failed"
+    );
+    const warningError = (refreshWarning?.payload as Record<string, unknown> | undefined)?.err;
+    expect(warningError).toBeInstanceOf(Error);
+    expect((warningError as Error).message).not.toContain("[object Object]");
+  });
+
   it("classifies unsupported_country_region_territory + hint mentions HTTPS_PROXY", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();

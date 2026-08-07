@@ -795,6 +795,31 @@ describe("toIncidentSignals — structured event shape (production)", () => {
     ]);
   }
 
+  it("folds the latest OAuth refresh rejection without raw-log evidence", () => {
+    const signals = toIncidentSignals([
+      event("auth.refresh_failed", 4, {
+        provider: "openai-codex",
+        errorKind: "invalid_grant",
+        hint: "Restart the login flow",
+        status: 401,
+      }),
+    ]) as IncidentSignals & {
+      oauthRefreshFailure?: {
+        provider: string;
+        errorKind: string;
+        hint: string;
+        status?: number;
+      };
+    };
+
+    expect(signals.oauthRefreshFailure).toEqual({
+      provider: "openai-codex",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+    });
+  });
+
   it("pulls classifiedFailureBy and transportOk from the structured tool.result data", () => {
     const s = signalsEvent();
     expect(s.failures.length).toBeGreaterThanOrEqual(1);

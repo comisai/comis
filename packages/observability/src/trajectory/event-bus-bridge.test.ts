@@ -56,6 +56,35 @@ describe("trajectory event type filtering", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus -- OAuth refresh diagnostics", () => {
+  it("records a content-free refresh failure with its HTTP status", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("auth:refresh_failed", {
+      provider: "openai-codex",
+      profileId: "openai-codex:user_a@example.com",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+      timestamp: 10,
+    });
+
+    expect(recorder.calls).toEqual([{
+      type: "auth.refresh_failed",
+      data: {
+        provider: "openai-codex",
+        errorKind: "invalid_grant",
+        hint: "Restart the login flow",
+        status: 401,
+      },
+      parentEntryId: undefined,
+    }]);
+    expect(JSON.stringify(recorder.calls)).not.toContain("user_a@example.com");
+  });
+});
+
 describe("attachTrajectoryToEventBus background cancellation and reentry", () => {
   it("records cancelled and reentered lifecycle events on the owning trajectory", () => {
     const bus = makeBus();

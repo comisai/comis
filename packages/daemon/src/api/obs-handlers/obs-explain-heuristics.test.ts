@@ -1171,6 +1171,34 @@ describe("obs-explain-heuristics", () => {
     expect(steps).toContain("providers.entries.<name>.apiKeyName");
   });
 
+  it("reports a rejected OAuth refresh directly from trajectory evidence", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      modelErrors: { total: 3, byCategory: { auth_invalid: 3 } },
+    }) as IncidentSignals & {
+      oauthRefreshFailure: {
+        provider: string;
+        errorKind: string;
+        hint: string;
+        status?: number;
+      };
+    };
+    signals.oauthRefreshFailure = {
+      provider: "openai-codex",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+    };
+
+    const result = rootCause(signals);
+
+    expect(result?.code).toBe("provider_rejected_request");
+    expect(result?.detail).toContain("OAuth refresh failed");
+    expect(result?.detail).toContain("HTTP 401");
+    expect(result?.detail).toContain("invalid_grant");
+  });
+
   it("recall_miss still fires when no model call was rejected", () => {
     // Regression guard: the new gate must not swallow the genuine recall_miss.
     const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
