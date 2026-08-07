@@ -496,8 +496,9 @@ export function createAgentsManageTool(
         "Use update with config.autonomy.profile set to assistant, standard, unattended, or max for " +
         "bounded autonomy tuning. max remains bounded to the standard capability set and never " +
         "removes approval or security floors. " +
-        "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, and " +
-        "skills.terminal.allow cannot be set by this tool. Refuse requests to change them; say operator " +
+        "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, " +
+        "skills.terminal.allow, elevatedReply.senderTrustMap, and elevatedReply.defaultTrustLevel " +
+        "cannot be set by this tool. Refuse requests to change them; say operator " +
         "config plus a daemon restart is required, and do not ask for command details. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,

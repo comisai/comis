@@ -91,7 +91,7 @@ describe("compileExecutionPrompt", () => {
 
       expect(kernel).toContain("agents.<id>.elevatedReply.senderTrustMap");
       expect(kernel).toContain("agents.<id>.elevatedReply.defaultTrustLevel");
-      expect(kernel).toMatch(/make.*sender.*admin.*senderTrustMap/isu);
+      expect(kernel).toMatch(/sender.*admin.*means.*senderTrustMap/isu);
       expect(kernel).toMatch(/operator config.*restart/isu);
     }
   });

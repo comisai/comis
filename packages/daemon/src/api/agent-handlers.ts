@@ -176,13 +176,14 @@ function assertKnownAgentModel(
 
 /**
  * Refuse an agents.create / agents.update that would SET an operator-only
- * security-posture field (sandbox/jail escape switches, terminal allowlist).
+ * authority or security-posture field (sender trust, sandbox/jail escape
+ * switches, terminal allowlist).
  *
  * The authoritative layer for agent-config policy. `config.patch` already
  * rejects the whole `agents` section and redirects to `agents_manage`; without
  * this, `agents_manage` itself could let an admin-trust agent flip its own
- * `skills.execSandbox.enabled` from `never` to `always` at runtime. These fields
- * are operator-file-only.
+ * `skills.execSandbox.enabled` from `never` to `always` or grant another sender
+ * admin trust at runtime. These fields are operator-file-only.
  *
  * `userConfig` is the RAW user-supplied partial (before schema defaults) — the
  * defaulted config always carries `skills.execSandbox`, so scanning post-parse
@@ -197,6 +198,7 @@ function assertNoOperatorOnlyAgentFields(
 ): void {
   const hits = findOperatorOnlyAgentPaths(userConfig);
   if (hits.length === 0) return;
+  const fullPaths = hits.map((path) => `agents.${agentId}.${path}`);
 
   // Best-effort security audit — same eventBus persistToConfig uses. Absent in
   // some test contexts; the throw below is the load-bearing refusal.
@@ -209,14 +211,14 @@ function assertNoOperatorOnlyAgentFields(
       actionType,
       classification: "destructive" as const,
       outcome: "failure" as const,
-      metadata: { entityId: agentId, error: `operator-only fields refused: ${hits.join(", ")}` },
+      metadata: { entityId: agentId, error: `operator-only fields refused: ${fullPaths.join(", ")}` },
     });
   }
 
   throw new AuthorizationError(
-    `Config path${hits.length > 1 ? "s" : ""} "${hits.join('", "')}" ${hits.length > 1 ? "are" : "is"} ` +
-      `operator-only and cannot be set at runtime via agents_manage — these gate sandbox/jail escape and ` +
-      `terminal command allowlisting. Edit the agent's config file directly and restart the daemon to change them.`,
+    `Config path${fullPaths.length > 1 ? "s" : ""} "${fullPaths.join('", "')}" ${fullPaths.length > 1 ? "are" : "is"} ` +
+      `operator-only and cannot be set at runtime via agents_manage. These fields control sender authority or ` +
+      `security posture. Edit the agent's config file directly and restart the daemon to change them.`,
   );
 }
 

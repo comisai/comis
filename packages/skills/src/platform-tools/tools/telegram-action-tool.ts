@@ -88,7 +88,8 @@ const telegramDescriptor: PlatformActionDescriptor = {
   name: "telegram_action",
   label: "Telegram Actions",
   description:
-    "Perform Telegram-specific actions: pin/unpin messages, send polls/stickers, get chat info/member count/admins, set chat title/description, ban/unban/promote members. Bot must be admin for moderation actions.",
+    "Perform Telegram-specific actions: pin/unpin messages, send polls/stickers, get chat info/member count/admins, set chat title/description, and ban/unban/promote members. " +
+    "Promote means Telegram membership administration in an explicitly identified group/channel, not Comis sender trust. Bot must be admin for moderation actions.",
   parameters: TelegramActionParams,
   rpcMethod: "telegram.action",
   gatedActions: [
