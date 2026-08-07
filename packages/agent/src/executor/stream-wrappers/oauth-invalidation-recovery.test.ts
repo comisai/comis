@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
-import { AssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type {
   AssistantMessage,
   Context,
@@ -58,8 +58,8 @@ function message(
   } as AssistantMessage;
 }
 
-function terminalStream(finalMessage: AssistantMessage): AssistantMessageEventStream {
-  const stream = new AssistantMessageEventStream();
+function terminalStream(finalMessage: AssistantMessage) {
+  const stream = createAssistantMessageEventStream();
   if (finalMessage.stopReason === "error") {
     stream.push({ type: "error", reason: "error", error: finalMessage });
   } else {

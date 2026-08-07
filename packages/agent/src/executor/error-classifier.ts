@@ -117,6 +117,15 @@ interface ErrorPattern {
   hint?: string;
 }
 
+const INVALIDATED_OAUTH_TOKEN =
+  /invalidated\s+oauth\s+token|oauth\s+token.{0,24}invalidated/i;
+
+/** True only for a provider rejection that explicitly invalidated OAuth access. */
+export function isInvalidatedOAuthTokenError(errorMessage: unknown): boolean {
+  return typeof errorMessage === "string"
+    && INVALIDATED_OAUTH_TOKEN.test(errorMessage);
+}
+
 const ERROR_PATTERNS: ErrorPattern[] = [
   // AWS Bedrock authentication and model-routing failures. These provider-
   // specific names must precede the generic auth/network patterns: for
@@ -171,7 +180,7 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   },
   // Auth / API key errors
   {
-    test: /invalidated\s+oauth\s+token|oauth\s+token.{0,24}invalidated/i,
+    test: { test: (message: string) => isInvalidatedOAuthTokenError(message) },
     category: "auth_invalid",
     userMessage:
       "The AI service could not authenticate. Please notify the system administrator.",
