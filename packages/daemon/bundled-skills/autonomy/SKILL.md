@@ -92,6 +92,23 @@ surface as their own distinct errors from the budget / rate / outward guards. Wh
 correct response is the same: **do not retry the same call and do not try to escalate your own
 permissions.** Adapt — do less, do it a cheaper way, or report what you could not do and why.
 
+## Reporting named-profile posture
+
+When asked to compare profiles, use the live agent config for explicit overrides and the named-profile
+contract for the baseline. Never report that the standard baseline is unavailable merely because the
+conversation has no earlier snapshot.
+
+Standard and unattended share the same base capabilities and numeric caps. With the same explicit
+overrides, switching between them changes the mode from `accept-reversible` to `unattended`; it does
+not add a capability or relax a budget, rate, spawn, or outward-message cap. Say that plainly instead
+of inventing a numeric delta.
+
+The unattended mode changes never-hang behavior: a would-ask becomes deny and escalate rather than a
+blocking prompt, the consecutive-denial breaker aborts retry loops, and the operator can evict the run
+to the safe default mode. The non-removable floor is unchanged. Approval and security checks still
+apply, outward actions still escalate instead of auto-sending, and capability self-escalation remains
+forbidden.
+
 ## The contract — what you can and cannot do
 
 You act within a bounded envelope, by design:
