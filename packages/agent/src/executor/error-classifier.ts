@@ -171,6 +171,14 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   },
   // Auth / API key errors
   {
+    test: /invalidated\s+oauth\s+token|oauth\s+token.{0,24}invalidated/i,
+    category: "auth_invalid",
+    userMessage:
+      "The AI service could not authenticate. Please notify the system administrator.",
+    retryable: false,
+    hint: "Refresh the selected OAuth profile; if refresh fails, run `comis auth login` for the affected provider.",
+  },
+  {
     test: /invalid.?api.?key|no api key found|authentication|unauthorized|401|403|invalid x-api-key|permission.?denied/i,
     category: "auth_invalid",
     userMessage:
