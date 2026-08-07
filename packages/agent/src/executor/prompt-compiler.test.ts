@@ -62,7 +62,9 @@ describe("compileExecutionPrompt", () => {
     for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
 
-      expect(kernel).toMatch(/self-configuration.*agents_manage.*get.*view.*authority/isu);
+      expect(kernel).toMatch(
+        /self-configuration.*must call.*agents_manage.*get.*view.*authority.*first/isu,
+      );
       expect(kernel).toMatch(
         /distinguish.*admin.*no-approval.*approval-gated.*operator-only/isu,
       );
