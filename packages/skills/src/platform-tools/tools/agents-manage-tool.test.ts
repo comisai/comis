@@ -116,6 +116,9 @@ describe("agents_manage tool", () => {
     expect(description).toContain("skills.terminal.allow");
     expect(description).toContain("elevatedReply.senderTrustMap");
     expect(description).toContain("elevatedReply.defaultTrustLevel");
+    expect(description).toMatch(
+      /bare.*make ID admin.*agents\.<id>\.elevatedReply\.senderTrustMap.*refuse.*never.*platform/isu,
+    );
     expect(description).toMatch(/refuse.*operator config.*restart/isu);
     expect(description).toMatch(/do not ask.*command details/isu);
   });
