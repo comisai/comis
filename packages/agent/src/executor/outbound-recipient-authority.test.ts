@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
-import { outboundRecipientAuthorityVerdict } from "../outbound-recipient-authority.js";
+import { outboundRecipientAuthorityVerdict } from "./outbound-recipient-authority.js";
 
 describe("outboundRecipientAuthorityVerdict", () => {
   it("denies current-route substitution for forwarded correspondence", () => {

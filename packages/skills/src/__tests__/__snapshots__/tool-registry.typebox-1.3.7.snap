@@ -38,7 +38,7 @@
           "description": "Agent management action. Valid values: create (new agent), get (read config/status), update (modify config), delete (remove agent), suspend (pause execution), resume (restart execution), list (all agent IDs)"
         },
         "agent_id": {
-          "description": "The agent identifier (required for all actions except list)",
+          "description": "The agent identifier. Required except for list and self-scoped get with view=autonomy or view=authority; those views default to the active agent.",
           "type": "string"
         },
         "config": {
@@ -46,6 +46,34 @@
             {
               "description": "Agent configuration for create/update actions",
               "properties": {
+                "autonomy": {
+                  "additionalProperties": false,
+                  "description": "Runtime-mutable bounded-autonomy settings",
+                  "properties": {
+                    "profile": {
+                      "anyOf": [
+                        {
+                          "const": "assistant",
+                          "type": "string"
+                        },
+                        {
+                          "const": "standard",
+                          "type": "string"
+                        },
+                        {
+                          "const": "unattended",
+                          "type": "string"
+                        },
+                        {
+                          "const": "max",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Named bounded-autonomy profile. max currently resolves to the standard capability set and does not remove approval or security floors."
+                    }
+                  },
+                  "type": "object"
+                },
                 "maxSteps": {
                   "description": "Maximum execution steps per turn",
                   "type": "integer"
@@ -182,6 +210,23 @@
               "type": "string"
             }
           ]
+        },
+        "view": {
+          "anyOf": [
+            {
+              "const": "full",
+              "type": "string"
+            },
+            {
+              "const": "autonomy",
+              "type": "string"
+            },
+            {
+              "const": "authority",
+              "type": "string"
+            }
+          ],
+          "description": "Get-action response view. Use autonomy for profile, floor, or cap reporting. Use authority for what this agent can change without approval, what requires approval or operator config, and whether it can expand its own access. Both return bounded projections instead of full config."
         }
       },
       "required": [
@@ -2677,10 +2722,10 @@
               "type": "string"
             }
           ],
-          "description": "Telegram-specific action. Valid values: pin (pin message), unpin (unpin message), poll (send poll), sticker (send sticker), chat_info (get chat details), member_count (get member total), get_admins (list admins), set_title (change chat title), set_description (change chat description), ban (ban user), unban (unban user), promote (grant admin rights)"
+          "description": "Telegram-specific action. Valid values: pin (pin message), unpin (unpin message), poll (send poll), sticker (send sticker), chat_info (get chat details), member_count (get member total), get_admins (list admins), set_title (change chat title), set_description (change chat description), ban (ban user), unban (unban user), promote (promote a user in an explicitly named group/channel; never use for Comis sender trust)"
         },
         "chat_id": {
-          "description": "Chat/group ID (for all actions)",
+          "description": "Chat/group ID. For ban, unban, or promote, the user must explicitly supply a group/channel ID; never substitute the current direct chat.",
           "type": "string"
         },
         "description": {
