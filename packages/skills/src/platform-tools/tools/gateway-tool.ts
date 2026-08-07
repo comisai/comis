@@ -195,7 +195,7 @@ export function createGatewayTool(
       name: "gateway",
       label: "Gateway Control",
       description:
-        "Read/patch config, restart gateway, check status. Destructive actions require confirmation.",
+        "Read/patch config, restart gateway, check status. Destructive actions require confirmation. Empty/unspecified update: no call; report unchanged.",
       parameters: GatewayToolParams,
       validActions: GATEWAY_ACTIONS,
       actionHandler: async (action, p, rpcCall) => {
