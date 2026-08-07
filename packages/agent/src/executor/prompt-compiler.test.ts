@@ -58,6 +58,19 @@ describe("compileExecutionPrompt", () => {
     );
   });
 
+  it("routes self-configuration reports through the live authority projection", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(/self-configuration.*agents_manage.*get.*view.*authority/isu);
+      expect(kernel).toMatch(
+        /distinguish.*admin.*no-approval.*approval-gated.*operator-only/isu,
+      );
+      expect(kernel).toMatch(/model.*provider.*bounded autonomy.*not operator-only/isu);
+      expect(kernel).toMatch(/cannot self-grant.*trust.*security/isu);
+    }
+  });
+
   it("requires current evidence for provider prerequisite claims", () => {
     const result = compileExecutionPrompt(makeInput());
 
