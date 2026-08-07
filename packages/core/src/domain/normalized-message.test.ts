@@ -309,6 +309,18 @@ describe("NormalizedMessage", () => {
       }]);
     });
 
+    it("retains a forwarded marker in physical inbound provenance", () => {
+      const result = parseMessage(validMessage({
+        metadata: { isForwarded: true },
+      }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(getOriginalInboundMessages(result.value)).toEqual([
+        expect.objectContaining({ isForwarded: true }),
+      ]);
+    });
+
     it("marks a button callback as a non-text physical interaction", () => {
       const result = parseMessage(validMessage({
         text: "v1.approve.Ab12Cd34Ef56.ABCDEFGHIJKLMNO_",

@@ -99,6 +99,22 @@ describe("persistInboundMessageProvenance", () => {
     );
   });
 
+  it("persists the content-free forwarded marker with the physical message", () => {
+    const message = {
+      ...first,
+      attachments: [],
+      metadata: { isForwarded: true },
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.value.payloads[0]?.messages).toEqual([
+      expect.objectContaining({ isForwarded: true }),
+    ]);
+  });
+
   it("redacts credential assignments in durable inbound provenance without mutating the live message", () => {
     const username = "example-user-value";
     const password = "test-password-value";

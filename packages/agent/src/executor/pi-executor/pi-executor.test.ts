@@ -8619,6 +8619,16 @@ describe("recent recall context provenance wiring", () => {
 });
 
 describe("outbound completion evidence wiring", () => {
+  it("threads recent forwarded provenance and the current route into the pre-send guard", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+
+    expect(src).toMatch(/hasRecentForwardedUserTurn/);
+    expect(src).toMatch(/forwardedContextActive/);
+    expect(src).toMatch(/currentRoute:\s*\{[\s\S]*?channelType:\s*msg\.channelType[\s\S]*?channelId:\s*msg\.channelId/);
+    expect(src).toMatch(/response\.outbound_recipient_authority_guard/);
+  });
+
   it("threads request-matched mutation receipts into the pre-send guard", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
