@@ -451,14 +451,15 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // Stage-2 snapshot: the post-fuse id order (the fused ranking before rerank/score).
       const fusedOrder = ranked.map((r) => r.entry.id);
 
-      // Current-session paired memories can duplicate the exact user turns already
-      // present in the fresh conversation tail. Suppress only those redundant rows
-      // before reranking: the live conversation is authoritative, while distinct
-      // same-session memories and all cross-session relationship memory remain eligible.
+      // Current-session paired memories can duplicate the current request or exact
+      // user turns already present in the fresh conversation tail. Suppress only
+      // those redundant rows before reranking: the live conversation is authoritative,
+      // while distinct same-session memories and all cross-session relationship memory
+      // remain eligible.
       const recentTailPartition = partitionRecentTailRecall(
         ranked,
         sessionKey,
-        recentUserTurns,
+        [...recentUserTurns, query],
       );
       ranked = recentTailPartition.kept;
 
