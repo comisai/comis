@@ -500,6 +500,8 @@ export function createAgentsManageTool(
         "skills.terminal.allow, elevatedReply.senderTrustMap, and elevatedReply.defaultTrustLevel " +
         "cannot be set by this tool. Refuse requests to change them; say operator " +
         "config plus a daemon restart is required, and do not ask for command details. " +
+        "A bare 'make ID admin' request concerns agents.<id>.elevatedReply.senderTrustMap; " +
+        "refuse it and never use a platform admin tool. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,
