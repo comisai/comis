@@ -519,9 +519,7 @@ function handleEventRecord(
       return;
     }
     case "execution.replay_recovered": {
-      // The signed-replay path has its own trajectory event because it also
-      // carries content-free scrub counters. Count its terminal outcome in the
-      // same report section as the other model re-entry recoveries.
+      // Count this signed-replay outcome with the other model re-entry recoveries.
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
       if (data.succeeded === true) prev.succeeded += 1;
