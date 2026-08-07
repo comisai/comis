@@ -130,6 +130,13 @@ export interface IncidentSignals {
    * (a zero-hit recall on a fresh install with an empty memory store).
    */
   modelErrors?: { total: number; byCategory: Record<string, number> };
+  /** Latest content-free OAuth refresh rejection on the selected trajectory. */
+  oauthRefreshFailure?: {
+    provider: string;
+    errorKind: string;
+    hint: string;
+    status?: number;
+  };
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;

@@ -54,6 +54,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "model.fallback_attempt",
   "model.fallback_exhausted",
   "model.auth_cooldown",
+  "auth.refresh_failed",
 
   // Tool lifecycle.
   "tool.call",

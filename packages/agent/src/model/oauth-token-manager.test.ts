@@ -2094,7 +2094,7 @@ describe("refresh_token_reused detection", () => {
       status: 401,
     });
     const refreshWarning = logger._calls().find((call) =>
-      call.level === "warn" && call.message === "OAuth refresh failed"
+      call.level === "warn" && call.msg === "OAuth refresh failed"
     );
     const warningError = (refreshWarning?.payload as Record<string, unknown> | undefined)?.err;
     expect(warningError).toBeInstanceOf(Error);

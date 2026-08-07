@@ -398,17 +398,28 @@ async function refreshOpenAICodexTokenLocal(
     } catch {
       // Defense-in-depth: body read failed → empty string.
     }
-    let parsed: { error?: string; error_description?: string } = {};
+    let parsed: { error?: unknown; error_description?: unknown } = {};
     try {
       parsed = JSON.parse(text) as typeof parsed;
     } catch {
       // Malformed body → empty parse, classifier falls back to default case.
     }
+    const nestedError = parsed.error !== null && typeof parsed.error === "object"
+      ? parsed.error as { code?: unknown; type?: unknown; message?: unknown }
+      : undefined;
+    const errorCode = typeof parsed.error === "string"
+      ? parsed.error
+      : typeof nestedError?.code === "string"
+        ? nestedError.code
+        : typeof nestedError?.type === "string" ? nestedError.type : "unknown_error";
+    const errorDescription = typeof parsed.error_description === "string"
+      ? parsed.error_description
+      : typeof nestedError?.message === "string" ? nestedError.message : undefined;
     return {
       ok: false,
       error: {
-        error: parsed.error ?? "unknown_error",
-        errorDescription: parsed.error_description,
+        error: errorCode,
+        errorDescription,
         status: response.status,
       },
     };
@@ -999,6 +1010,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 // The discriminator flows via `rewritten.code`.
                 errorKind: rewritten.code,
                 hint: rewritten.hint,
+                ...(localResult.error.status > 0 ? { status: localResult.error.status } : {}),
                 timestamp: systemNowMs(),
               });
               return err({

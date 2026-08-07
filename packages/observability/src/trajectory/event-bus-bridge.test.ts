@@ -1188,6 +1188,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       failureCount: 0,
       timestamp: 0,
     },
+    "auth:refresh_failed": {
+      provider: "openai-codex",
+      profileId: "openai-codex:user_a@example.com",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+      timestamp: 0,
+    },
     "skill:prompt_loaded": {
       skillName: "s",
       source: "registry",
@@ -4526,7 +4534,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(143);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(144);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

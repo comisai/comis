@@ -72,6 +72,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "model:lkw_fallback_attempt": "model.fallback_attempt",
   "model:fallback_exhausted": "model.fallback_exhausted",
   "model:auth_cooldown": "model.auth_cooldown",
+  "auth:refresh_failed": "auth.refresh_failed",
 
   // ---- Skill observability ----
   "skill:prompt_loaded": "skill.prompt_loaded",

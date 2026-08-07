@@ -91,13 +91,20 @@ export const providerRejectedRequestVerdict = (
   );
   if (dominant === undefined) return null;
   const [category, count] = dominant;
+  const refresh = category === "auth_invalid" ? s.oauthRefreshFailure : undefined;
+  const refreshEvidence = refresh === undefined
+    ? ""
+    : ` OAuth refresh failed for \`${refresh.provider}\``
+      + `${refresh.status === undefined ? "" : ` with HTTP ${refresh.status}`}`
+      + ` (\`${refresh.errorKind}\`); ${refresh.hint}.`;
 
   return {
     code: "provider_rejected_request",
     detail:
       `provider rejected the request — ${count} of ${s.modelErrors.total} LLM call(s) failed with `
       + `\`${category}\`; the model never ran, so any tool/recall evidence on this session is downstream. `
-      + "Deterministic: an identical retry reproduces it",
+      + "Deterministic: an identical retry reproduces it."
+      + refreshEvidence,
     suggestedNextSteps: [
       ...(NEXT_STEPS[category] ?? [
         "inspect the provider error for this category in the daemon log (the raw body is never persisted to the trajectory)",

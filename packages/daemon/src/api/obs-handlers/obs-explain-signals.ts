@@ -2,8 +2,7 @@
 /**
  * Normalizes raw log and structured trajectory records into `IncidentSignals`.
  * Raw bodies never enter reports: previews are bounded and sanitized, full
- * results become digests, and offload paths are relative. Misclassification is
- * derived only from evidence shared by the two shapes.
+ * results become digests, and offload paths are relative.
  * @module
  */
 import { fingerprint, type IncidentSignals } from "@comis/core";
@@ -22,7 +21,7 @@ import {
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
-import { ensureTool, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { accumulateOauthRefreshFailure, ensureTool, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
@@ -30,7 +29,6 @@ import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js
 import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
-/** Minimum same-tool failures for a breaker/repeated-failure signal; shared with the heuristic registry. */
 export const BREAKER_N = 5;
 /** Token literals the misclassification heuristic looks for in a failure body. */
 const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
@@ -548,6 +546,7 @@ function handleEventRecord(
       acc.modelErrorCounts = foldModelErrorCategory(acc.modelErrorCounts, asString(data.modelErrorCategory));
       return;
     }
+    case "auth.refresh_failed": accumulateOauthRefreshFailure(acc, data); return;
     // The spend kill-switch breach (LAST wins) — delegated to a fold helper (learning-fold mold) for the subdir cap.
     case "spend.exceeded": accumulateSpendExceeded(acc, data); return;
     // The terminal `execution.aborted` record carries the per-ROOT
@@ -901,6 +900,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.modelTokens !== undefined ? { modelTokens: acc.modelTokens } : {}),
     ...(acc.providerErrorCode !== undefined ? { providerErrorCode: acc.providerErrorCode } : {}),
+    ...(acc.oauthRefreshFailure !== undefined ? { oauthRefreshFailure: acc.oauthRefreshFailure } : {}),
     ...modelErrorsField(acc.modelErrorCounts),
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),

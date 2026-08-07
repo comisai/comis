@@ -96,7 +96,7 @@ export function summarizeToolStats(
 
 // @optional-field-count: internal mutable fold accumulator — each optional field
 // is a DISTINCT terminal-record signal (breaker tool, contextBudget, rehydration, promptTimeout,
-// toolSchemaUnsupported, providerErrorCode, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
+// toolSchemaUnsupported, providerErrorCode, oauthRefreshFailure, inboundEdit, responseLocale, lastRecall, spend, perRootBudget, the four media turns,
 // agentId, channel) that is absent until its trajectory record class is seen. They
 // are not a configuration surface; collapsing or splitting them would only obscure
 // the one-fold-per-record-class structure.
@@ -244,6 +244,7 @@ export interface Acc {
   modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
   /** The LAST recognized content-free provider protocol error classification. */
   providerErrorCode?: "invalid_tool_identity";
+  oauthRefreshFailure?: IncidentSignals["oauthRefreshFailure"];
   /** Per-category tally of the LLM calls the provider rejected, keyed by the
    *  closed `ErrorCategory` enum carried on `model.completed`. Absent ⇒ no
    *  errored model call in the trajectory. */
@@ -347,4 +348,14 @@ export function ensureTool(acc: Acc, tool: string): { ok: number; failed: number
     acc.toolStats.set(tool, entry);
   }
   return entry;
+}
+
+/** Fold a content-free OAuth refresh failure; malformed records do not erase the last valid one. */
+export function accumulateOauthRefreshFailure(acc: Acc, data: Record<string, unknown>): void {
+  const provider = typeof data.provider === "string" ? data.provider : undefined;
+  const errorKind = typeof data.errorKind === "string" ? data.errorKind : undefined;
+  const hint = typeof data.hint === "string" ? data.hint : undefined;
+  if (provider === undefined || errorKind === undefined || hint === undefined) return;
+  const status = typeof data.status === "number" ? data.status : undefined;
+  acc.oauthRefreshFailure = { provider, errorKind, hint, ...(status !== undefined ? { status } : {}) };
 }

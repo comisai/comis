@@ -185,6 +185,14 @@ export function translatePayload(
         failureCount: payload.failureCount,
       };
 
+    case "auth:refresh_failed":
+      return {
+        provider: payload.provider,
+        errorKind: payload.errorKind,
+        hint: payload.hint,
+        ...(payload.status !== undefined ? { status: payload.status } : {}),
+      };
+
     case "skill:prompt_loaded":
       return {
         skillName: payload.skillName,
