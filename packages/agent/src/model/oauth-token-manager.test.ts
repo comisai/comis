@@ -768,8 +768,7 @@ describe("OAuthTokenManager — port-backed", () => {
       expect(credentialStore.set).toHaveBeenCalledTimes(1);
     });
 
-    // Test B.2 — newCredentials always truthy quirk
-    it("when refresh token is unchanged, manager does NOT call credentialStore.set and does NOT emit auth:token_rotated", async () => {
+    it("persists a renewed expiry even when the token strings are unchanged", async () => {
       const stored = makeStoredProfile({ refresh: "stored-refresh" });
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(_ok(stored));
@@ -777,9 +776,9 @@ describe("OAuthTokenManager — port-backed", () => {
       mockGetOAuthApiKey.mockResolvedValue({
         newCredentials: {
           ...stored,
-          refresh: "stored-refresh", // UNCHANGED — should NOT trigger persist + event
+          refresh: "stored-refresh",
         } as never,
-        apiKey: "no-rotation-api-key",
+        apiKey: stored.access,
       });
       const events: unknown[] = [];
       eventBus.on("auth:token_rotated", (p) => events.push(p));
@@ -793,8 +792,8 @@ describe("OAuthTokenManager — port-backed", () => {
         fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
-      expect(credentialStore.set).not.toHaveBeenCalled();
-      expect(events).toHaveLength(0);
+      expect(credentialStore.set).toHaveBeenCalledTimes(1);
+      expect(events).toHaveLength(1);
     });
 
     // Test B.3 — auth:token_rotated payload includes profileId

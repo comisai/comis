@@ -169,6 +169,15 @@ export interface OAuthTokenManager {
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
   /**
+   * Refresh a credential after the provider rejects its access token before
+   * the recorded expiry. The per-profile lock deduplicates concurrent
+   * recovery attempts.
+   */
+  refreshInvalidatedCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
+  /**
    * Synchronous best-effort check: the in-memory cache + env-var (SecretManager)
    * ONLY. Does NOT consult the async persisted credential store — so in
    * encrypted-store mode it UNDER-REPORTS a logged-in OAuth profile until the
@@ -826,6 +835,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   async function refreshUnderLock(
     providerId: string,
     initialProfile: OAuthProfile,
+    forceRefresh = false,
   ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
     const lockPath = lockSentinelPath(dataDir, initialProfile.profileId);
     const lockStart = systemNowMs();
@@ -857,12 +867,21 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           }
           const profile = reread.value ?? initialProfile;
 
+          // Another caller may have refreshed the invalidated access token
+          // while this caller waited for the per-profile lock. Reuse that
+          // newer credential instead of rotating the same refresh token twice.
+          if (forceRefresh && profile.access !== initialProfile.access) {
+            cache.set(profile.profileId, profile);
+            lastGood.set(providerId, profile.profileId);
+            return ok(resolvedCredential(profile, profile.access));
+          }
+
           // Pi-ai requires a Record<providerId, OAuthCredentials> shape.
           const credsRecord: Record<string, OAuthCredentials> = {
             [providerId]: {
               access: profile.access,
               refresh: profile.refresh,
-              expires: profile.expires,
+              expires: forceRefresh ? 0 : profile.expires,
             } as OAuthCredentials,
           };
 
@@ -888,7 +907,8 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // "restart-survives-refresh" contract. 60s buffer keeps callers
             // from racing the actual expiry.
             const REFRESH_EXPIRY_BUFFER_MS = 60_000;
-            if (typeof profile.expires === "number"
+            if (!forceRefresh
+              && typeof profile.expires === "number"
               && profile.expires > systemNowMs() + REFRESH_EXPIRY_BUFFER_MS
             ) {
               cache.set(profile.profileId, profile);
@@ -1100,9 +1120,14 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             });
           }
 
-          // Real refresh detection compares the refresh-token
-          // value, not the always-truthy newCredentials marker.
-          const refreshed = oauthResult.newCredentials.refresh !== profile.refresh;
+          // Persist any credential field that changed. Providers can replace
+          // an invalidated access token without rotating the refresh token;
+          // dropping that access/expires update would make the next request
+          // reuse the credential that was just rejected.
+          const refreshed =
+            oauthResult.newCredentials.access !== profile.access
+            || oauthResult.newCredentials.refresh !== profile.refresh
+            || oauthResult.newCredentials.expires !== profile.expires;
 
           let effectiveProfile: OAuthProfile;
           if (refreshed) {
@@ -1224,6 +1249,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   async function resolveCredential(
     providerId: string,
     agentContext?: { oauthProfiles?: Record<string, string> },
+    forceRefresh = false,
   ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
       // Provider validation first (cheap check; avoids store I/O on bad input).
       const provider = getProviderOAuth(providerId);
@@ -1313,7 +1339,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             providerId,
           });
         }
-        return refreshUnderLock(providerId, getResult.value);
+        return refreshUnderLock(providerId, getResult.value, forceRefresh);
       }
 
       // Tier (b) — lastGood (in-process Map; only consulted when no agent-level
@@ -1334,7 +1360,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               },
               "Resolved OAuth profile via chain",
             );
-            return refreshUnderLock(providerId, getResult.value);
+            return refreshUnderLock(providerId, getResult.value, forceRefresh);
           }
         }
         // Stale lastGood (profile deleted, has() failed, or get() returned
@@ -1368,7 +1394,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             },
             "Resolved OAuth profile via chain",
           );
-          return refreshUnderLock(providerId, firstProfile);
+          return refreshUnderLock(providerId, firstProfile, forceRefresh);
         }
       }
 
@@ -1446,7 +1472,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       }
 
       // Acquire per-profile lock and run the refresh body.
-      return refreshUnderLock(providerId, profile);
+      return refreshUnderLock(providerId, profile, forceRefresh);
   }
 
   const manager: OAuthTokenManager = {
@@ -1462,6 +1488,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       agentContext?: { oauthProfiles?: Record<string, string> },
     ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
       return resolveCredential(providerId, agentContext);
+    },
+    async refreshInvalidatedCredential(
+      providerId: string,
+      agentContext?: { oauthProfiles?: Record<string, string> },
+    ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
+      return resolveCredential(providerId, agentContext, true);
     },
 
     hasCredentials(providerId: string): boolean {

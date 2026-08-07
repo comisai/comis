@@ -143,6 +143,14 @@ export interface OAuthTokenManager {
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
   /**
+   * Refresh a credential after the provider rejects its access token before
+   * the recorded expiry. Implementations serialize recovery per profile.
+   */
+  refreshInvalidatedCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
+  /**
    * Synchronous best-effort check: the in-memory cache + env-var
    * (SecretManager) ONLY. Does NOT consult the async persisted credential
    * store — so in encrypted-store mode it UNDER-REPORTS a logged-in OAuth
