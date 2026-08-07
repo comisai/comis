@@ -605,6 +605,75 @@ describe("persistToConfig", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("does not block when an existing structured secret reference is resolved in memory", async () => {
+    const gatewaySecretRef = {
+      source: "env" as const,
+      provider: "comis",
+      id: "COMIS_GATEWAY_TOKEN",
+    };
+    writeFileSync(
+      configPath,
+      yamlStringify({
+        logLevel: "info",
+        gateway: {
+          enabled: true,
+          tokens: [{ id: "default", secret: gatewaySecretRef, scopes: ["*"] }],
+        },
+      }),
+      "utf-8",
+    );
+
+    const containerConfig = AppConfigSchema.parse({
+      logLevel: "info",
+      gateway: {
+        enabled: true,
+        tokens: [{
+          id: "default",
+          secret: "test-key-for-gateway-fixture-1234567890",
+          scopes: ["*"],
+        }],
+      },
+    });
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+
+    const result = await persistToConfig(deps, makeOpts({
+      patch: {
+        integrations: {
+          mcp: {
+            servers: [{
+              name: "fixture-api",
+              transport: "stdio",
+              command: "node",
+              args: ["fixture-server.mjs"],
+              env: { MCP_TEST_TOKEN: "${MCP_TEST_TOKEN}" },
+              enabled: true,
+            }],
+          },
+        },
+      },
+      actionType: "mcp.connect",
+      entityId: "fixture-api",
+    }));
+
+    expect(result.ok).toBe(true);
+    const parsed = parseYaml(readFileSync(configPath, "utf-8")) as {
+      gateway: { tokens: Array<{ secret: unknown }> };
+      integrations: { mcp: { servers: Array<{ name: string }> } };
+    };
+    expect(parsed.gateway.tokens[0]?.secret).toEqual(gatewaySecretRef);
+    expect(parsed.integrations.mcp.servers.map((server) => server.name)).toEqual([
+      "fixture-api",
+    ]);
+  });
+
   it("STILL blocks when an actual plaintext secret is in the in-memory config and the on-disk YAML has no matching env-ref", async () => {
     // On-disk YAML: no telegram block at all (no env-ref to mask the finding).
     writeFileSync(configPath, yamlStringify({ logLevel: "info" }), "utf-8");

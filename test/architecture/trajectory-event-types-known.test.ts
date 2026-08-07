@@ -222,7 +222,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // -------------------------------------------------------------------
   "auth:profile_added",
   "auth:profile_bootstrapped",
-  "auth:refresh_failed",
   "auth:token_rotated",
 
   // -------------------------------------------------------------------

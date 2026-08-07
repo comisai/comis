@@ -285,11 +285,16 @@ while (Date.now() - startedAtMs < maxMs) {
   const resolvedAll = scored.attribution.counts.unanswered === 0
     && scored.attribution.counts.ambiguous === 0
     && !steeringEvidencePending;
+  const deliveryComplete = !scored.wire.violations.some(
+    (violation) => violation.kind === 'answer-not-delivered'
+      || violation.kind === 'missing-collect-answer',
+  );
   const next = `${state.transcript?.source.length ?? 0}:${state.wire.length}:${state.trajectoryRecords.length}:${state.daemonReachable ? 'up' : 'down'}`;
   if (next !== fingerprint) { fingerprint = next; quietSinceMs = Date.now(); }
   const evidenceQuiet = Date.now() - quietSinceMs >= settleMs;
   if (shouldSettleBurstEvidence({
     resolvedAll,
+    deliveryComplete,
     evidenceQuiet,
     openTraceCount: scored.openTraceIds.length,
     gatewayReachable: state.daemonReachable,

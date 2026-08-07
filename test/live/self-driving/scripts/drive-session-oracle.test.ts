@@ -6,6 +6,7 @@ import {
   findTelegramConversationWireAnswer,
   isDriveProgressText,
   normalizeWireText,
+  normalizeDriveStdinText,
   normalizedInboundTextError,
   outboundVisibleText,
   reconcileAssistantSurfaces,
@@ -20,6 +21,13 @@ describe("drive inbound validation", () => {
     expect(normalizedInboundTextError("x".repeat(65_537), 65_536)).toBe(
       "message text is 65537 characters; the deployed normalized-message limit is 65536",
     );
+  });
+
+  it("preserves multiline stdin while removing only its transport newline", () => {
+    expect(normalizeDriveStdinText(
+      "from: synthetic sender\ncan you confirm the window?\n",
+    )).toBe("from: synthetic sender\ncan you confirm the window?");
+    expect(normalizeDriveStdinText("one line\r\n")).toBe("one line");
   });
 });
 
@@ -244,11 +252,20 @@ describe("drive progress classification", () => {
     expect(isDriveProgressText("[ ] step one")).toBe(true);
     expect(isDriveProgressText("(step 2 of 5)")).toBe(true);
     expect(isDriveProgressText("reading ~/notes")).toBe(true);
-    expect(isDriveProgressText("Approved: deploy")).toBe(true);
+    expect(isDriveProgressText("Approved: shell (abc123)")).toBe(true);
+    expect(isDriveProgressText("Denied: shell (abc123)")).toBe(true);
+    expect(isDriveProgressText("Approved 2 pending approval(s).")).toBe(true);
+    expect(isDriveProgressText("Approved: deploy")).toBe(false);
   });
 
   it("keeps a plain substantive answer classified as an answer", () => {
     expect(isDriveProgressText('לא ברור. מה זה "לשיקולך"?')).toBe(false);
     expect(isDriveProgressText("<b>צריך URL עם commit SHA.</b> ה-xlsx skill כבר זמינה לך")).toBe(false);
+  });
+
+  it("keeps a denial explanation classified as an answer", () => {
+    expect(isDriveProgressText(
+      "Denied: the fixture credential is restricted to the fixture API. No request was made.",
+    )).toBe(false);
   });
 });

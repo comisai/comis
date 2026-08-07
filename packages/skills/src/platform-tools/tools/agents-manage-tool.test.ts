@@ -107,6 +107,35 @@ describe("agents_manage tool", () => {
     expect(tool.label).toBe("Agent Management");
   });
 
+  it("describes operator-only security posture fields in the native tool schema", () => {
+    const description = createAgentsManageTool(mockRpcCall, mockLogger).description;
+
+    expect(description).toMatch(/operator-only/iu);
+    expect(description).toContain("skills.execSandbox");
+    expect(description).toContain("skills.terminal.unsafeDisableSandbox");
+    expect(description).toContain("skills.terminal.allow");
+    expect(description).toContain("elevatedReply.senderTrustMap");
+    expect(description).toContain("elevatedReply.defaultTrustLevel");
+    expect(description).toMatch(
+      /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*operator config.*restart.*never.*platform/isu,
+    );
+    expect(description).toMatch(
+      /operator admin IDs.*alone or mixed.*refuse.*whole request.*agents\.<id>\.elevatedReply\.senderTrustMap.*do not ask.*values/isu,
+    );
+    expect(description).toMatch(/refuse.*operator config.*restart/isu);
+    expect(description).toMatch(/do not ask.*command details/isu);
+  });
+
+  it("routes self-configuration authority questions to a bounded live view", () => {
+    const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+    const args = { action: "get", view: "authority" } as const;
+
+    expect(Value.Check(tool.parameters, args)).toBe(true);
+    expect(tool.description).toMatch(
+      /what.*change.*without approval.*view.*authority.*do not guess/isu,
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Trust guard
   // -----------------------------------------------------------------------
@@ -845,6 +874,158 @@ describe("agents_manage tool", () => {
         expect.objectContaining({ agentId: "bot-1", suspended: false }),
       );
     });
+
+    it("returns a bounded autonomy projection for profile reporting", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "bot-1",
+        config: {
+          name: "Bot 1",
+          rag: { enabled: true, maxContextChars: 40_000 },
+          autonomy: {
+            profile: "unattended",
+            budget: { aggregateUsd: 30, tokens: 200_000_000, wallClockMs: 172_800_000 },
+            rate: { perRootCallsPerSec: 20, perSocketCallsPerSec: 10, connectionChurnPerMin: 60 },
+            spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+            outward: { originOnly: true, perTargetGrants: [], volumeCap: 4_000 },
+          },
+        },
+        suspended: false,
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const args = { action: "get", agent_id: "bot-1", view: "autonomy" } as const;
+
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-g-autonomy", args as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.get", {
+        agentId: "bot-1",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({
+        agentId: "bot-1",
+        autonomy: expect.objectContaining({ profile: "unattended" }),
+        profileComparison: {
+          from: "standard",
+          to: "unattended",
+          capabilitySetChanged: false,
+          numericCapsChanged: false,
+          mode: { standard: "accept-reversible", unattended: "unattended" },
+          unattendedBehavior: expect.stringMatching(/would-ask.*deny.*escalate/isu),
+        },
+      });
+      const rendered = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
+      expect(rendered).toContain('"profile": "unattended"');
+      expect(rendered).toContain('"numericCapsChanged": false');
+      expect(rendered).not.toContain('"rag"');
+      expect(rendered.length).toBeLessThan(5_000);
+      expect(tool.description).toMatch(/profile.*floor.*caps.*view.*autonomy/isu);
+    });
+
+    it("defaults an autonomy projection to the current agent", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "test-agent",
+        config: { autonomy: { profile: "unattended" } },
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-g-current-autonomy", { action: "get", view: "autonomy" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.get", {
+        agentId: "test-agent",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({
+        agentId: "test-agent",
+        autonomy: { profile: "unattended" },
+        profileComparison: expect.objectContaining({
+          capabilitySetChanged: false,
+          numericCapsChanged: false,
+        }),
+      });
+    });
+
+    it("returns source-derived self-configuration authority without full agent config", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "test-agent",
+        config: {
+          name: "Private display name",
+          rag: { enabled: true, maxContextChars: 40_000 },
+        },
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-g-current-authority", { action: "get", view: "authority" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.get", {
+        agentId: "test-agent",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({
+        agentId: "test-agent",
+        requiresAdminTrust: true,
+        requiresCurrentRequestAuthorization: true,
+        spontaneousConfigMutationAllowed: false,
+        noApprovalActionsRequireCurrentRequestAuthorization: true,
+        approvalGate: {
+          requiredActions: ["create", "delete"],
+          noApprovalActions: ["get", "update", "suspend", "resume", "list"],
+        },
+        agentsManageUpdatePaths: [
+          "name",
+          "model",
+          "provider",
+          "maxSteps",
+          "autonomy.profile",
+          "workspace.profile",
+          "skills.builtinTools",
+          "oauthProfiles",
+        ],
+        runtimeMutableConfigOverrides: expect.arrayContaining([
+          "agents.test-agent.model",
+          "agents.test-agent.provider",
+          "agents.test-agent.operationModels",
+          "agents.test-agent.promptTimeout.promptTimeoutMs",
+        ]),
+        immutableConfigPrefixes: expect.arrayContaining([
+          "security",
+          "approvals",
+          "tooling",
+          "executor",
+        ]),
+        operatorOnlyAgentSubpaths: expect.arrayContaining([
+          "skills.execSandbox",
+          "skills.terminal.unsafeDisableSandbox",
+          "skills.terminal.allow",
+          "elevatedReply.senderTrustMap",
+          "elevatedReply.defaultTrustLevel",
+        ]),
+        canGrantOwnTrustOrSecurity: false,
+      });
+      const rendered = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
+      expect(rendered).toMatch(
+        /without.*current.*admin request.*no.*configuration mutation.*authorized/isu,
+      );
+      expect(rendered).toMatch(
+        /noApprovalActions.*separate approval gate.*not authorization/isu,
+      );
+      expect(rendered).toMatch(
+        /current admin request.*update.*suspend.*resume.*no separate approval gate/isu,
+      );
+      expect(rendered).toMatch(/separate approval gate.*create.*delete/isu);
+      expect(rendered).toMatch(
+        /operator-only config.*sender cannot authorize.*operator config.*restart/isu,
+      );
+      expect(rendered).not.toContain("Private display name");
+      expect(rendered).not.toContain('"rag"');
+      expect(rendered.length).toBeLessThan(5_000);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -877,6 +1058,42 @@ describe("agents_manage tool", () => {
       expect(result.details).toEqual(
         expect.objectContaining({ agentId: "bot-1", updated: true }),
       );
+    });
+
+    it("exposes bounded autonomy profile updates through the typed management surface", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "default",
+        config: { autonomy: { profile: "max" } },
+        updated: true,
+        changed: true,
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const args = {
+        action: "update" as const,
+        agent_id: "default",
+        config: { autonomy: { profile: "max" as const } },
+      };
+
+      expect(tool.description).toMatch(
+        /autonomy\.profile.*assistant.*standard.*unattended.*max/isu,
+      );
+      expect(tool.description).toMatch(/max.*bounded.*standard/isu);
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-u-autonomy", args as never),
+      );
+      const text = result.content
+        .filter((block): block is { type: "text"; text: string } => block.type === "text")
+        .map((block) => block.text)
+        .join("\n");
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.update", {
+        agentId: "default",
+        config: { autonomy: { profile: "max" } },
+        _trustLevel: "admin",
+      });
+      expect(text).toContain("config.autonomy.profile=\"max\"");
     });
 
     it("returns a bounded completion contract after a model binding update", async () => {

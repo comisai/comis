@@ -185,6 +185,14 @@ export function translatePayload(
         failureCount: payload.failureCount,
       };
 
+    case "auth:refresh_failed":
+      return {
+        provider: payload.provider,
+        errorKind: payload.errorKind,
+        hint: payload.hint,
+        ...(payload.status !== undefined ? { status: payload.status } : {}),
+      };
+
     case "skill:prompt_loaded":
       return {
         skillName: payload.skillName,
@@ -452,6 +460,13 @@ export function translatePayload(
         ...(payload.errorKind !== undefined ? { errorKind: payload.errorKind } : {}),
       };
     }
+
+    case "delivery:reply_bound":
+      return {
+        messageId: payload.messageId,
+        channelId: payload.channelId,
+        channelType: payload.channelType,
+      };
 
     case "context:pipeline":
       // Envelope-only correlation keys (agentId, sessionKey) intentionally

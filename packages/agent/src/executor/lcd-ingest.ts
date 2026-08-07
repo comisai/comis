@@ -13,9 +13,9 @@
  *      is wrapped per-entry (try/catch + log); the caller gates on
  *      `deps.contextStore` presence so a missing store skips cleanly.
  *   2. AGENT-SIDE TOKENS: `tokenCount` is computed here via
- *      `estimateMessageTokens` (which counts the `thinking` block) — the
- *      store NEVER computes tokens (the contract keeps core/memory free of
- *      the agent estimator dependency).
+ *      `estimateMessageTokens` before the persistence projection omits private
+ *      `thinking` blocks — the store NEVER computes tokens (the contract keeps
+ *      core/memory free of the agent estimator dependency).
  *   3. STRUCTURED PARTS AFTER SECURITY PROJECTION: secret-bearing persistence
  *      values are redacted before `parts` pass through the core
  *      `messageToParts` codec. The remaining `metadata.raw` blocks + envelope
@@ -96,7 +96,10 @@ export function ingestTurn(
         scope,
         seq: currentSeq,
         role: m.role, // "user" | "assistant" | "toolResult" (LcdRole)
-        tokenCount: estimateMessageTokens(m), // agent-side (counts the thinking block) — store never computes it
+        // Count the live, marker-neutralized message before persistence omits
+        // private reasoning payloads. The stored budget must still account for
+        // reasoning tokens even though no durable store retains their content.
+        tokenCount: estimateMessageTokens(forged.message),
         createdAt: now,
         parts: messageToParts(m), // structure preserved after secret projection
       });

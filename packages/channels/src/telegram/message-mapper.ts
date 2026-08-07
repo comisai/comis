@@ -194,6 +194,12 @@ export function mapGrammyToNormalized(
   if (updateKind === "edited_message") {
     metadata.isEdited = true;
   }
+  // Preserve only the content-free fact that Telegram attributed this message
+  // to a forward. Origin identity remains external message data and is not
+  // promoted into trusted runtime metadata.
+  if (msg.forward_origin !== undefined) {
+    metadata.isForwarded = true;
+  }
   // The sender's client UI locale — the request-tier response-locale signal
   // consumed by resolveResponseLocalePolicy and the inbound gate's localized
   // replies. Telegram sends lowercase IETF tags ("pt-br");

@@ -272,8 +272,12 @@ export interface WireAuditSinkDeps {
   dataDir?: string;
   /** The shared `observability.logRotation` bounds (the 6th stream). */
   logRotation?: { maxSizeBytes: number; maxFiles: number };
-  /** The `observability.audit` policy (defaults: persist on, both sinks). */
-  auditConfig?: { persist: boolean; sink: "sqlite" | "jsonl" | "both" };
+  /** Security master switch plus `observability.audit` persistence policy. */
+  auditConfig?: {
+    enabled?: boolean;
+    persist: boolean;
+    sink: "sqlite" | "jsonl" | "both";
+  };
 }
 
 /**
@@ -284,6 +288,8 @@ export interface WireAuditSinkDeps {
  */
 export function wireAuditSink(deps: WireAuditSinkDeps): void {
   const { eventBus, auditBuffer, logger, dataDir, logRotation, auditConfig } = deps;
+
+  if (auditConfig?.enabled === false) return;
 
   // Defaults: persist on, both sinks. The JSONL path is the 6th stream under the
   // shared logRotation (no per-sink knob); rotation bounds come from logRotation

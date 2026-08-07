@@ -232,11 +232,12 @@ export function openTrajectoryTraceIds(records) {
 /** Decide whether an evidence-quiet burst is genuinely ready to score. */
 export function shouldSettleBurstEvidence({
   resolvedAll,
+  deliveryComplete,
   evidenceQuiet,
   openTraceCount,
   gatewayReachable,
 }) {
-  if (resolvedAll && openTraceCount === 0) return true;
+  if (resolvedAll && deliveryComplete && openTraceCount === 0) return true;
   if (!evidenceQuiet) return false;
   return openTraceCount === 0 || !gatewayReachable;
 }

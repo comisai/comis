@@ -12,8 +12,14 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import type { ApprovalGate, ComisLogger } from "@comis/core";
-import { registerActivityLabelSpec } from "@comis/core";
+import type { ApprovalGate, AutonomyConfig, ComisLogger, ResolvedAutonomy } from "@comis/core";
+import {
+  IMMUTABLE_CONFIG_PREFIXES,
+  MUTABLE_CONFIG_OVERRIDES,
+  OPERATOR_ONLY_AGENT_SUBPATHS,
+  registerActivityLabelSpec,
+  resolveAutonomy,
+} from "@comis/core";
 import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
@@ -52,8 +58,18 @@ export const AgentsManageToolParams = Type.Object({
     { description: "Agent management action. Valid values: create (new agent), get (read config/status), update (modify config), delete (remove agent), suspend (pause execution), resume (restart execution), list (all agent IDs)" },
   ),
   agent_id: Type.Optional(Type.String({
-    description: "The agent identifier (required for all actions except list)",
+    description:
+      "The agent identifier. Required except for list and self-scoped get with view=autonomy or " +
+      "view=authority; those views default to the active agent.",
   })),
+  view: Type.Optional(
+    Type.Union([Type.Literal("full"), Type.Literal("autonomy"), Type.Literal("authority")], {
+      description:
+        "Get-action response view. Use autonomy for profile, floor, or cap reporting. Use authority " +
+        "for what this agent can change without approval, what requires approval or operator config, " +
+        "and whether it can expand its own access. Both return bounded projections instead of full config.",
+    }),
+  ),
   config: Type.Optional(
     // Accept EITHER a structured object OR a JSON string. Anthropic's LLM
     // sometimes emits nested free-form objects as stringified JSON; coerceConfig()
@@ -77,6 +93,31 @@ export const AgentsManageToolParams = Type.Object({
               "substitute a different provider.",
           })),
           maxSteps: Type.Optional(Type.Integer({ description: "Maximum execution steps per turn" })),
+          autonomy: Type.Optional(
+            Type.Object(
+              {
+                profile: Type.Optional(
+                  Type.Union(
+                    [
+                      Type.Literal("assistant"),
+                      Type.Literal("standard"),
+                      Type.Literal("unattended"),
+                      Type.Literal("max"),
+                    ],
+                    {
+                      description:
+                        "Named bounded-autonomy profile. max currently resolves to the standard " +
+                        "capability set and does not remove approval or security floors.",
+                    },
+                  ),
+                ),
+              },
+              {
+                description: "Runtime-mutable bounded-autonomy settings",
+                additionalProperties: false,
+              },
+            ),
+          ),
           workspace_profile: Type.Optional(
             Type.Union([Type.Literal("full"), Type.Literal("specialist")], {
               description:
@@ -350,6 +391,38 @@ function validateAgentUpdateParams(
   );
 }
 
+function numericAutonomyCaps(resolved: ResolvedAutonomy): Record<string, unknown> {
+  return {
+    aggregateBudgetUsd: resolved.aggregateBudgetUsd,
+    maxConcurrentSelfAgents: resolved.maxConcurrentSelfAgents,
+    maxSelfSpawnRatePerMin: resolved.maxSelfSpawnRatePerMin,
+    cronSelfMax: resolved.cronSelfMax,
+    denialBreakerN: resolved.denialBreakerN,
+    leaseMaxTtlMin: resolved.leaseMaxTtlMin,
+    messageMaxPerHour: resolved.message.maxPerHour,
+    budget: resolved.budget,
+    rate: resolved.rate,
+    spawn: resolved.spawn,
+    outwardVolumeCap: resolved.outward.volumeCap,
+  };
+}
+
+function buildAutonomyProfileComparison(autonomy: Record<string, unknown>): Record<string, unknown> {
+  const config = autonomy as AutonomyConfig;
+  const standard = resolveAutonomy({ ...config, profile: "standard" });
+  const unattended = resolveAutonomy({ ...config, profile: "unattended" });
+  return {
+    from: "standard",
+    to: "unattended",
+    capabilitySetChanged:
+      JSON.stringify(standard.capabilities) !== JSON.stringify(unattended.capabilities),
+    numericCapsChanged:
+      JSON.stringify(numericAutonomyCaps(standard)) !== JSON.stringify(numericAutonomyCaps(unattended)),
+    mode: { standard: standard.mode, unattended: unattended.mode },
+    unattendedBehavior: unattended.m1Notice ?? "",
+  };
+}
+
 function buildUpdateContract(
   agentId: string | undefined,
   config: Record<string, unknown> | undefined,
@@ -379,23 +452,42 @@ function buildUpdateContract(
           `config.model=${JSON.stringify(model)}.`
         )
       : "";
+  const requestedAutonomy =
+    config?.autonomy !== null && typeof config?.autonomy === "object"
+      ? config.autonomy as Record<string, unknown>
+      : undefined;
+  const effectiveAutonomy =
+    effectiveConfig?.autonomy !== null && typeof effectiveConfig?.autonomy === "object"
+      ? effectiveConfig.autonomy as Record<string, unknown>
+      : undefined;
+  const autonomyProfile =
+    typeof requestedAutonomy?.profile === "string"
+      ? effectiveAutonomy?.profile ?? requestedAutonomy.profile
+      : undefined;
+  const autonomyBinding =
+    typeof autonomyProfile === "string"
+      ? ` Configured autonomy profile: config.autonomy.profile=${JSON.stringify(autonomyProfile)}.`
+      : "";
 
   if (resultRecord?.dryRun === true) {
     return (
       `✓ Agent ${target} configuration validated; no update was applied.` +
-      binding
+      binding +
+      autonomyBinding
     );
   }
   if (resultRecord?.changed === false) {
     return (
       `✓ No configuration change for agent ${target}; it already uses the requested settings.` +
       binding +
+      autonomyBinding +
       " Do not repeat agents_manage for this request."
     );
   }
   return (
     `✓ Agent ${target} update complete.` +
     binding +
+    autonomyBinding +
     " Do not repeat agents_manage for this request."
   );
 }
@@ -449,6 +541,23 @@ export function createAgentsManageTool(
         "Use update with provider and model together to switch an agent's LLM binding. " +
         "Explicit provider and model identifiers are exact targets: never silently substitute another value. " +
         "If an exact target is unavailable, leave configuration unchanged and report the failure. " +
+        "Use update with config.autonomy.profile set to assistant, standard, unattended, or max for " +
+        "bounded autonomy tuning. max remains bounded to the standard capability set and never " +
+        "removes approval or security floors. " +
+        "For autonomy profile, floor, or caps reporting, first call get with view autonomy and the " +
+        "current agent ID; do not call list or full get first. If the current agent ID is omitted, " +
+        "that scoped view defaults to the active agent. " +
+        "For questions about what you can change without approval, what needs the user or operator, " +
+        "or whether you can expand your own access, first call get with view authority. Report that " +
+        "bounded live authority matrix; do not guess from memory. " +
+        "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, " +
+        "skills.terminal.allow, elevatedReply.senderTrustMap, and elevatedReply.defaultTrustLevel " +
+        "cannot be set by this tool. Refuse requests to change them; say operator " +
+        "config plus a daemon restart is required, and do not ask for command details. " +
+        "For a bare 'make ID admin' request, reply: 'agents.<id>.elevatedReply.senderTrustMap is " +
+        "operator-only; edit operator config and restart the daemon.' Never use a platform admin tool. " +
+        "For operator admin IDs, alone or mixed with safe changes, refuse the whole request, name " +
+        "agents.<id>.elevatedReply.senderTrustMap, and do not ask for values. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,
@@ -575,8 +684,78 @@ export function createAgentsManageTool(
           }
         },
         async get(p, rpcCall, ctx) {
-          const agentId = readStringParam(p, "agent_id");
-          return rpcCall("agents.get", { agentId, _trustLevel: ctx.trustLevel });
+          const explicitAgentId = typeof p.agent_id === "string" ? p.agent_id : undefined;
+          const selfScopedView = p.view === "autonomy" || p.view === "authority";
+          const agentId = explicitAgentId
+            ?? (selfScopedView ? ctx.agentId : undefined)
+            ?? readStringParam(p, "agent_id");
+          if (agentId === undefined) {
+            return throwToolError("missing_param", "agent_id is required for this get view");
+          }
+          const result = await rpcCall("agents.get", { agentId, _trustLevel: ctx.trustLevel });
+          if (!selfScopedView) return result;
+
+          if (typeof result !== "object" || result === null) {
+            return throwToolError("not_found", "agents.get returned no agent configuration");
+          }
+          if (p.view === "authority") {
+            const projected = {
+              agentId,
+              requiresAdminTrust: true,
+              requiresCurrentRequestAuthorization: true,
+              spontaneousConfigMutationAllowed: false,
+              noApprovalActionsRequireCurrentRequestAuthorization: true,
+              approvalGate: {
+                requiredActions: ["create", "delete"],
+                noApprovalActions: ["get", "update", "suspend", "resume", "list"],
+              },
+              agentsManageUpdatePaths: [
+                "name", "model", "provider", "maxSteps", "autonomy.profile",
+                "workspace.profile", "skills.builtinTools", "oauthProfiles",
+              ],
+              runtimeMutableConfigOverrides: MUTABLE_CONFIG_OVERRIDES.map((path) =>
+                path.replaceAll("*", agentId)),
+              immutableConfigPrefixes: [...IMMUTABLE_CONFIG_PREFIXES],
+              operatorOnlyAgentSubpaths: [...OPERATOR_ONLY_AGENT_SUBPATHS],
+              canGrantOwnTrustOrSecurity: false,
+            };
+            const authorityConclusion = [
+              "Authority conclusion:",
+              "- Without a current authorized admin request, no configuration mutation is authorized.",
+              "- noApprovalActions means no separate approval gate, not authorization by itself.",
+              "- Current admin request: update, suspend, and resume need no separate approval gate.",
+              "- Separate approval gate: create and delete.",
+              "- Operator-only config: the current sender cannot authorize it; operator config and daemon restart are required.",
+            ].join("\n");
+            return {
+              content: [
+                { type: "text", text: authorityConclusion },
+                { type: "text", text: JSON.stringify(projected, null, 2) },
+              ],
+              details: projected,
+            } satisfies AgentToolResult<typeof projected>;
+          }
+
+          const resultRecord = result as Record<string, unknown>;
+          const config = resultRecord.config;
+          if (typeof config !== "object" || config === null) {
+            return throwToolError("not_found", "agents.get returned no agent configuration");
+          }
+          const autonomy = (config as Record<string, unknown>).autonomy;
+          if (typeof autonomy !== "object" || autonomy === null) {
+            return throwToolError("not_found", "agents.get returned no autonomy configuration");
+          }
+
+          const autonomyRecord = autonomy as Record<string, unknown>;
+          const projected = {
+            agentId,
+            autonomy: autonomyRecord,
+            profileComparison: buildAutonomyProfileComparison(autonomyRecord),
+          };
+          return {
+            content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
+            details: projected,
+          } satisfies AgentToolResult<typeof projected>;
         },
         async update(p, rpcCall, ctx) {
           const agentId = readStringParam(p, "agent_id");

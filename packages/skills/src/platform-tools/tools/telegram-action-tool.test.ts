@@ -12,6 +12,28 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("telegram action tool", () => {
+  it("describes promotion as explicit Telegram group or channel administration", () => {
+    const tool = createTelegramActionTool(vi.fn(async () => ({ ok: true })));
+    const parameters = tool.parameters as unknown as {
+      properties: {
+        action: { description?: string };
+        chat_id: { description?: string };
+      };
+    };
+
+    expect(tool.description).toMatch(/promot.*explicit.*group|explicit.*group.*promot/iu);
+    expect(tool.description).toMatch(/not.*Comis.*sender trust/iu);
+    expect(tool.description).toMatch(
+      /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*operator config.*restart.*never ask.*group/isu,
+    );
+    expect(parameters.properties.action.description).toMatch(
+      /promote.*user.*explicit.*group.*never.*Comis.*sender trust/isu,
+    );
+    expect(parameters.properties.chat_id.description).toMatch(
+      /ban.*unban.*promote.*user.*explicit.*group.*never.*current direct chat/isu,
+    );
+  });
+
   it("poll action delegates to rpcCall('telegram.action')", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "telegram.action") {
@@ -61,7 +83,7 @@ describe("telegram action tool", () => {
     const tool = createTelegramActionTool(mockRpcCall);
     const result = await tool.execute("call-3", {
       action: "promote",
-      chat_id: "chat-1",
+      chat_id: "-1001234567890",
       user_id: "u-1",
       rights: {},
     } as never);
@@ -69,6 +91,23 @@ describe("telegram action tool", () => {
     const parsed = parseResult(result) as { requiresConfirmation: boolean; actionType: string };
     expect(parsed.requiresConfirmation).toBe(true);
     expect(parsed.actionType).toBe("telegram.promote");
+    expect(mockRpcCall).not.toHaveBeenCalled();
+  });
+
+  it("promote rejects a positive numeric direct-message target before confirmation", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ ok: true }));
+    const tool = createTelegramActionTool(mockRpcCall);
+
+    await expect(
+      tool.execute("call-direct-promote", {
+        action: "promote",
+        chat_id: "678314278",
+        user_id: "678314299",
+        rights: {},
+      } as never),
+    ).rejects.toThrow(
+      /invalid_value.*explicit.*group.*do not ask.*group.*unless.*user.*explicit.*Telegram.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator config.*restart/isu,
+    );
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
 

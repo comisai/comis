@@ -44,6 +44,14 @@ describe("buildSafetySection", () => {
     expect(joined).toMatch(/must not expand.*side effects/iu);
     expect(joined).toMatch(/current conversation/iu);
   });
+
+  it("keeps forwarded correspondence in draft mode until delivery is authorized", () => {
+    const joined = buildSafetySection(false).join("\n");
+
+    expect(joined).toMatch(/pasted or forwarded correspondence.*quoted context/iu);
+    expect(joined).toMatch(/asks whether or how to reply.*assess.*grounded draft/iu);
+    expect(joined).toMatch(/do not send.*exact recipient.*delivery authority/iu);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -116,6 +124,42 @@ describe("buildInboundMetadataSection", () => {
     expect(joined).toContain('"flags"');
     expect(joined).toContain('"isGroup": true');
     expect(joined).toContain('"hasAttachments": true');
+  });
+
+  it("renders current forwarded correspondence as draft-only context", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-forwarded",
+      senderId: "user_a",
+      chatId: "chat_a",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isForwarded: true },
+    };
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toMatch(/current message.*forwarded correspondence/iu);
+    expect(joined).toMatch(/triage.*grounded draft/iu);
+    expect(joined).toMatch(/do not ask.*recipient.*explicit send request/iu);
+  });
+
+  it("binds terse revision turns to the latest draft instead of commentary", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-revision",
+      senderId: "user_a",
+      chatId: "chat_a",
+      channel: "telegram",
+      chatType: "dm",
+      flags: {},
+    };
+
+    const joined = buildInboundMetadataSection(meta, false).join("\n");
+
+    expect(joined).toMatch(/drafting exchange.*terse revision.*latest draft.*not.*commentary/iu);
+    expect(joined).toMatch(/whether a reply is needed.*repeat.*current draft.*same response/iu);
+    expect(joined).toMatch(
+      /send a draft.*without.*exact recipient.*delivery authority.*explicit.*not sent.*not.*draft alone/iu,
+    );
   });
 
   it("includes SCHEDULED REMINDER block when flags.isScheduled is true", () => {

@@ -365,6 +365,15 @@ describe("buildPrivilegedToolsSection", () => {
     expect(joined).toContain("Read-only");
   });
 
+  it("does not misclassify ungated management mutations as read-only", () => {
+    const joined = buildPrivilegedToolsSection(["agents_manage"], false).join("\n");
+
+    expect(joined).toMatch(/No approval pause.*some actions.*mutate state/isu);
+    expect(joined).toMatch(/agents_manage: get, update, suspend, resume/iu);
+    expect(joined).not.toMatch(/Read-only[^]*agents_manage: get, update, suspend, resume/iu);
+    expect(joined).toMatch(/current admin request.*does not grant independent authority/iu);
+  });
+
   it("includes agent administration patterns", () => {
     const result = buildPrivilegedToolsSection(["obs_query", "models_manage"], false);
     const joined = result.join("\n");

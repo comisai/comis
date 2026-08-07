@@ -109,6 +109,58 @@ describe("sanitizeSessionSecrets", () => {
     expect(persisted.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("repairs short credentials placed into a named secret store", () => {
+    const credential = "test-key";
+    const text = `put this neutral test credential in the supported secret store: ${credential}`;
+    const path = writeJsonl(tmpDir, [
+      { type: "session", version: 1, id: "s1" },
+      {
+        type: "custom",
+        customType: "comis.inbound-message-provenance",
+        data: { messages: [{ text }] },
+      },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text }],
+        },
+      },
+    ]);
+
+    expect(sanitizeSessionSecrets(path)).toBe(2);
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).not.toContain(credential);
+    expect(persisted.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
+  it("removes private assistant reasoning payloads from existing session files", () => {
+    const privateValue = "test-key";
+    const path = writeJsonl(tmpDir, [
+      { type: "session", version: 1, id: "s1" },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: `Compare ${privateValue} before continuing.`,
+              thinkingSignature: `signed-container-${privateValue}`,
+            },
+            { type: "text", text: "Continuing safely." },
+          ],
+        },
+      },
+    ]);
+
+    expect(sanitizeSessionSecrets(path)).toBe(1);
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).not.toContain(privateValue);
+    expect(persisted).not.toContain('"type":"thinking"');
+    expect(persisted).toContain("Continuing safely.");
+  });
+
   it("repairs unlabeled credential-shaped values in user messages and provenance records", () => {
     const credential = "aZ9mQ2v7Kp3X8nL4tR6sB1cD5eF0gH7jK9mN2pQ4wX6yT8u0";
     const path = writeJsonl(tmpDir, [

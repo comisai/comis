@@ -165,7 +165,7 @@ export function bindConfigWriteHandlers(
           const redirect = getManagedSectionRedirect(section, key);
           const suffix = redirect
             ? ` ${formatRedirectHint(redirect)}`
-            : " This setting requires manual operator intervention via config files.";
+            : " Edit operator config and restart the daemon.";
           throw new PreconditionError(
             `Config path "${key ? `${section}.${key}` : section}" is immutable and cannot be modified at runtime.${suffix}`,
           );

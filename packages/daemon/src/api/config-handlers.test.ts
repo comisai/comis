@@ -111,6 +111,26 @@ describe("config.patch", () => {
     ).rejects.toThrow(/immutable/i);
   });
 
+  it("rejects operator-only agent paths with operator remediation", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    let message = "";
+    try {
+      await handlers["config.patch"]!({
+        section: "agents",
+        key: "default.skills.execSandbox.enabled",
+        value: "never",
+        _trustLevel: "admin",
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toMatch(/operator config.*restart/iu);
+    expect(message).not.toContain("agents_manage");
+  });
+
   it("schedules SIGUSR2 restart after successful write", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);

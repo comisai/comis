@@ -705,6 +705,47 @@ describe("OAuthTokenManager — port-backed", () => {
   // ---------------------------------------------------------------------------
 
   describe("B. persisted-on-refresh + always-truthy newCredentials bug fix", () => {
+    it("forces a refresh when a provider invalidates an access token before its expiry", async () => {
+      const stored = makeStoredProfile({
+        access: "invalidated-access-token",
+        expires: Date.now() + 3600_000,
+      });
+      const credentialStore = makeMockCredentialStore();
+      vi.mocked(credentialStore.list).mockResolvedValue(_ok([stored]));
+      vi.mocked(credentialStore.get).mockResolvedValue(_ok(stored));
+      mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
+      mockGetOAuthApiKey.mockResolvedValue({
+        newCredentials: {
+          ...stored,
+          access: "refreshed-access-token",
+          expires: Date.now() + 7200_000,
+        } as never,
+        apiKey: "refreshed-access-token",
+      });
+      const manager = createOAuthTokenManager({
+        secretManager: makeSecretManager({}),
+        eventBus,
+        credentialStore,
+        logger: makeMockLogger(),
+        dataDir: "/tmp/comis-test",
+        fileLock: makeFileLockStub(),
+      });
+      const refreshInvalidatedCredential = (
+        manager as unknown as Pick<OAuthTokenManager, "getCredential"> & {
+          refreshInvalidatedCredential: OAuthTokenManager["getCredential"];
+        }
+      ).refreshInvalidatedCredential;
+
+      const result = await refreshInvalidatedCredential("openai-codex");
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.apiKey).toBe("refreshed-access-token");
+      }
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      expect(credentialStore.set).toHaveBeenCalledTimes(1);
+    });
+
     // Test B.1
     it("when refresh token is rotated, manager calls credentialStore.set exactly once", async () => {
       const stored = makeStoredProfile({ refresh: "old-refresh-token" });
@@ -731,8 +772,7 @@ describe("OAuthTokenManager — port-backed", () => {
       expect(credentialStore.set).toHaveBeenCalledTimes(1);
     });
 
-    // Test B.2 — newCredentials always truthy quirk
-    it("when refresh token is unchanged, manager does NOT call credentialStore.set and does NOT emit auth:token_rotated", async () => {
+    it("persists a renewed expiry even when the token strings are unchanged", async () => {
       const stored = makeStoredProfile({ refresh: "stored-refresh" });
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(_ok(stored));
@@ -740,9 +780,9 @@ describe("OAuthTokenManager — port-backed", () => {
       mockGetOAuthApiKey.mockResolvedValue({
         newCredentials: {
           ...stored,
-          refresh: "stored-refresh", // UNCHANGED — should NOT trigger persist + event
+          refresh: "stored-refresh",
         } as never,
-        apiKey: "no-rotation-api-key",
+        apiKey: stored.access,
       });
       const events: unknown[] = [];
       eventBus.on("auth:token_rotated", (p) => events.push(p));
@@ -756,8 +796,8 @@ describe("OAuthTokenManager — port-backed", () => {
         fileLock: makeFileLockStub(),
       });
       await manager.getApiKey("openai-codex");
-      expect(credentialStore.set).not.toHaveBeenCalled();
-      expect(events).toHaveLength(0);
+      expect(credentialStore.set).toHaveBeenCalledTimes(1);
+      expect(events).toHaveLength(1);
     });
 
     // Test B.3 — auth:token_rotated payload includes profileId
@@ -2062,6 +2102,49 @@ describe("refresh_token_reused detection", () => {
       expect(e.errorKind).toBe("invalid_grant");
       expect(String(e.hint)).toContain("invalid_grant");
     }
+  });
+
+  it("normalizes a nested OAuth error object and emits the rejected HTTP status", async () => {
+    const profile = expiredCodexProfile();
+    const credentialStore = makeMockCredentialStore();
+    vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
+    vi.mocked(credentialStore.list).mockResolvedValue(_ok([profile]));
+    mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
+
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "The refresh credential is invalid.",
+            type: "invalid_grant",
+            code: "invalid_grant",
+          },
+        }),
+        { status: 401 },
+      ),
+    );
+
+    const events: Array<Record<string, unknown>> = [];
+    eventBus.on("auth:refresh_failed", (payload) => {
+      events.push(payload as Record<string, unknown>);
+    });
+
+    const { manager, logger } = buildManager(credentialStore);
+    const result = await manager.getApiKey("openai-codex");
+
+    expect(result.ok).toBe(false);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      errorKind: "invalid_grant",
+      hint: expect.stringContaining("login"),
+      status: 401,
+    });
+    const refreshWarning = logger._calls().find((call) =>
+      call.level === "warn" && call.msg === "OAuth refresh failed"
+    );
+    const warningError = (refreshWarning?.payload as Record<string, unknown> | undefined)?.err;
+    expect(warningError).toBeInstanceOf(Error);
+    expect((warningError as Error).message).not.toContain("[object Object]");
   });
 
   it("classifies unsupported_country_region_territory + hint mentions HTTPS_PROXY", async () => {

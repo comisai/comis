@@ -52,6 +52,10 @@ const DETERMINISTIC_REJECTIONS = new Set([
 
 /** Per-category operator guidance. Falls back to a generic step when unlisted. */
 const NEXT_STEPS: Record<string, string[]> = {
+  client_request_signed_replay: [
+    "check `recoveries.byReason.signed_replay` and `recoveries.succeeded` in this report to confirm whether Comis removed persisted signed reasoning state and recovered",
+    "if automatic replay recovery failed, start a new conversation so the provider receives no rejected signed reasoning history",
+  ],
   model_capability_unsupported: [
     "check the resolved model id under `agents.<id>.model` against the provider's supported request parameters",
     "a `providers.entries.*` entry that re-declares built-in catalog models can drop the capability metadata that selects the request shape — remove the redundant entry or list the model explicitly",
@@ -59,7 +63,10 @@ const NEXT_STEPS: Record<string, string[]> = {
   model_not_available: [
     "verify the configured model id is enabled for this API plan/region",
   ],
-  auth_invalid: ["verify the provider credential named by `providers.entries.<name>.apiKeyName`"],
+  auth_invalid: [
+    "for OAuth, verify `agents.<id>.oauthProfiles` selects an existing profile and run `comis auth login --provider <provider>` if refresh failed",
+    "for a direct key, verify the credential named by `providers.entries.<name>.apiKeyName`",
+  ],
   credit_exhausted: ["check the provider account's billing/usage caps"],
   context_too_long: ["lower `contextEngine.budget.*` or start a new conversation"],
 };
@@ -84,13 +91,20 @@ export const providerRejectedRequestVerdict = (
   );
   if (dominant === undefined) return null;
   const [category, count] = dominant;
+  const refresh = category === "auth_invalid" ? s.oauthRefreshFailure : undefined;
+  const refreshEvidence = refresh === undefined
+    ? ""
+    : ` OAuth refresh failed for \`${refresh.provider}\``
+      + `${refresh.status === undefined ? "" : ` with HTTP ${refresh.status}`}`
+      + ` (\`${refresh.errorKind}\`); ${refresh.hint}.`;
 
   return {
     code: "provider_rejected_request",
     detail:
       `provider rejected the request — ${count} of ${s.modelErrors.total} LLM call(s) failed with `
       + `\`${category}\`; the model never ran, so any tool/recall evidence on this session is downstream. `
-      + "Deterministic: an identical retry reproduces it",
+      + "Deterministic: an identical retry reproduces it."
+      + refreshEvidence,
     suggestedNextSteps: [
       ...(NEXT_STEPS[category] ?? [
         "inspect the provider error for this category in the daemon log (the raw body is never persisted to the trajectory)",

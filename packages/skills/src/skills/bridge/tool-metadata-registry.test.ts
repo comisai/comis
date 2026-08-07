@@ -1043,7 +1043,7 @@ describe("tool-metadata-registry -- completeness", () => {
 describe("tool-metadata-registry -- tool-entry schema metadata", () => {
   it.each([
     ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 9],
-    ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 3],
+    ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 4],
     ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
     ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
     ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
@@ -1062,6 +1062,19 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
       expect(meta?.requiredByAction).toBeDefined();
     },
   );
+
+  it("allows the agents_manage autonomy projection key at tool entry", () => {
+    expect(getToolMetadata("agents_manage")?.validKeys).toEqual([
+      "action",
+      "agent_id",
+      "config",
+      "view",
+    ]);
+  });
+
+  it("allows self-scoped autonomy reads without an agent identifier", () => {
+    expect(getToolMetadata("agents_manage")?.requiredByAction?.get).toBeUndefined();
+  });
 
   it("mcp_manage requiredByAction matches the connect / status / disconnect / reconnect spec", () => {
     const meta = getToolMetadata("mcp_manage");
@@ -1844,6 +1857,18 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
     expect(error).not.toContain("discover_tools");
     expect(error).toContain("agents.default.model");
     expect(error).toContain("agents.default.provider");
+  });
+
+  it("keeps operator-only agent paths out of the agents_manage redirect", async () => {
+    const meta = getToolMetadata("gateway");
+    const error = await meta!.validateInput!({
+      action: "patch",
+      section: "agents",
+      key: "default.skills.execSandbox.enabled",
+    });
+
+    expect(error).toMatch(/operator config.*(?:daemon restart|restart the daemon)/isu);
+    expect(error).not.toContain("agents_manage");
   });
 
   it("returns no redirect or patchable hint for sections without managed tool or overrides", async () => {

@@ -3116,6 +3116,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               "Context exhausted mid-turn — mapped to finishReason",
             );
           } else {
+            const classification = classifyError(new Error(m.lastLlmErrorMessage));
             // Branch the hint by failure class. A 4xx invalid_request_error means
             // the request WE built was rejected — nothing is wrong with the
             // provider, so "check provider status" sends the operator to a status
@@ -3126,8 +3127,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             deps.logger.warn(
               {
                 err: m.lastLlmErrorMessage,
-                hint: llmErrorHint(m.lastLlmErrorMessage),
-                errorKind: "dependency" as const,
+                hint: classification.hint ?? llmErrorHint(m.lastLlmErrorMessage),
+                errorKind: classification.category === "unknown"
+                  ? "dependency" as const
+                  : errorKindForCategory(classification.category),
               },
               "LLM call returned error",
             );

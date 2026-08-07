@@ -8,6 +8,14 @@ export function driveTextFilePath(textArg) {
     : undefined;
 }
 
+/** Remove the single line terminator added by a shell text producer while
+ * preserving every newline that belongs to the Telegram message itself. */
+export function normalizeDriveStdinText(source) {
+  if (source.endsWith("\r\n")) return source.slice(0, -2);
+  if (source.endsWith("\n")) return source.slice(0, -1);
+  return source;
+}
+
 /** Return the user-visible prose carried by one outbound wire record.
  * Telegram attachments carry their only prose in `caption`, so treating only
  * `text` as an answer fabricates an empty-final failure after a successful
@@ -46,6 +54,11 @@ function isMarkerLedProgressFrame(text) {
   return !/<[a-z/]/i.test(remainder); // markup ⇒ rendered answer, not a frame
 }
 
+function isApprovalResolutionFrame(text) {
+  return /^(?:Approved|Denied):\s.+\s\([^)]+\)$/.test(text)
+    || /^(?:Approved|Denied) \d+ pending approval\(s\)\.$/.test(text);
+}
+
 export function isDriveProgressText(text) {
   if (!text) return true;
   // 🔧/🤖/⏳ are pure tool/agent status markers — the agent never opens an
@@ -53,7 +66,7 @@ export function isDriveProgressText(text) {
   if (/^(🔧|🤖|⏳)/u.test(text)) return true;
   if (/^(?:✓|❌)/u.test(text)) return isMarkerLedProgressFrame(text);
   return (
-    /^(?:Approved|Denied):\s/.test(text)
+    isApprovalResolutionFrame(text)
     || /\(running/.test(text)
     || /reading ~/.test(text)
     || /^\s*\[[ x~]\]/.test(text)

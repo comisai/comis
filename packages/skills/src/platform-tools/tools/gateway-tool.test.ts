@@ -175,6 +175,7 @@ describe("gateway tool", () => {
     expect(tool.description).toContain("restart");
     expect(tool.description).toContain("status");
     expect(tool.description).toContain("confirmation");
+    expect(tool.description).toMatch(/empty.*unspecified.*update.*no call.*unchanged/iu);
     expect(tool.description.length).toBeLessThanOrEqual(150);
   });
 
@@ -1135,7 +1136,7 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalled();
     });
 
-    it("channels/<type>/<field>/patch rejection points to channels_manage with fullyManaged:false note", async () => {
+    it("channel sender allowlist rejection points to operator config instead of channels_manage", async () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
@@ -1152,15 +1153,31 @@ describe("gateway tool", () => {
       }
       expect(captured).toBeDefined();
       const msg = captured!.message;
-      expect(msg).toContain('Use the "channels_manage" tool');
-      // No-exampleArgs branch now says "Call <tool> directly; it will auto-load on first invocation."
-      expect(msg).toContain("Call channels_manage directly");
-      expect(msg).toContain("auto-load on first invocation");
-      expect(msg).not.toContain("discover_tools");
-      // channels_manage is fullyManaged:false — the warning must appear
-      expect(msg).toContain("brand-new platform types still requires operator config edits");
-      // No exampleArgs for channels — single-step Recovery framing absent
-      expect(msg).not.toContain("Recovery: call");
+      expect(msg).toContain("channels.telegram.allowFrom");
+      expect(msg).toMatch(/operator config.*daemon restart/isu);
+      expect(msg).not.toContain("channels_manage");
+      expect(rpcCall).not.toHaveBeenCalled();
+    });
+
+    it("operator-only agent rejection points to operator config instead of agents_manage", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-redir-operator-agent", {
+          action: "patch",
+          section: "agents",
+          key: "default.skills.execSandbox.enabled",
+          value: "never",
+        });
+      } catch (error) {
+        captured = error as Error;
+      }
+
+      expect(captured).toBeDefined();
+      expect(captured!.message).toMatch(/operator config.*daemon restart/isu);
+      expect(captured!.message).not.toContain("agents_manage");
       expect(rpcCall).not.toHaveBeenCalled();
     });
   });

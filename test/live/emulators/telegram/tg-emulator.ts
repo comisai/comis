@@ -322,6 +322,8 @@ export interface InjectOpts {
   readonly thread?: number;
   /** Mark the message text as a spoiler (the inbound spoiler flag). */
   readonly spoiler?: boolean;
+  /** Add Telegram `forward_origin` provenance without exposing a real identity. */
+  readonly forwarded?: boolean;
 }
 
 /**
@@ -1543,6 +1545,15 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
         ...(addressing.entities !== undefined ? { entities: addressing.entities } : {}),
         ...(addressing.replyToMessage !== undefined ? { replyToMessage: addressing.replyToMessage } : {}),
         ...(opts?.thread !== undefined ? { messageThreadId: opts.thread } : {}),
+        ...(opts?.forwarded === true
+          ? {
+              forwardOrigin: {
+                type: "hidden_user" as const,
+                date: Math.floor(Date.now() / 1000),
+                sender_user_name: "synthetic_forward",
+              },
+            }
+          : {}),
       });
       // Ensure the oracle exists for this chat so `outbound()` is never a silent
       // empty for a chat the driver has injected into.

@@ -49,21 +49,21 @@ export type LcdRole = "user" | "assistant" | "toolResult";
 /**
  * Per-part metadata persisted as the JSON `metadata` column.
  *
- * `raw` is the verbatim canonical pi-ai block — opaque at the DTO layer — and
- * is what makes the round-trip exact: a reconstructed block backfills from
- * `raw` when a typed column is NULL. Stored verbatim by design (lossless
- * store); sanitization happens at assembly/presentation, never at storage.
+ * `raw` is the security-projected canonical pi-ai block — opaque at the DTO
+ * layer — and makes replayable blocks round-trip exactly when a typed column is
+ * NULL. Private reasoning payloads are deliberately absent because they are
+ * excluded from reconstruction and can contain unclassifiable secret values.
  */
 export interface LcdPartMetadata {
-  /** Verbatim canonical pi-ai content block (exact round-trip). Opaque here. */
+  /** Security-projected canonical content block; absent for private reasoning. */
   raw: unknown;
   /** The `type` discriminator of the captured `raw` block (e.g. `"toolCall"`), for fast dispatch on read. */
   rawType?: string;
   /**
    * Reasoning-exclusion marker: when true, this `reasoning` part is excluded
    * from the reconstructed VISIBLE content (and from summarizer input), but
-   * its tokens are still counted at write time. Restored as message metadata,
-   * never as a visible content block.
+   * its tokens are still counted at write time. The reasoning payload is not
+   * stored or restored.
    */
   topLevelReasoningOnly?: boolean;
   /**

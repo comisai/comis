@@ -13915,19 +13915,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
       "persist": true,
       "sink": "both"
     },
-    "immutable": false,
+    "immutable": true,
     "path": "observability.audit",
     "type": "object"
   },
   {
     "default": true,
-    "immutable": false,
+    "immutable": true,
     "path": "observability.audit.persist",
     "type": "boolean"
   },
   {
     "default": "both",
-    "immutable": false,
+    "immutable": true,
     "path": "observability.audit.sink",
     "type": "string"
   },
@@ -15766,6 +15766,9 @@ exports[`section-registry parity > managed-sections view > MANAGED_SECTIONS expo
   {
     "description": "Manage channel adapters (list, get, enable, disable, restart, configure).",
     "fullyManaged": false,
+    "managedPathPatterns": [
+      "channels.*.enabled"
+    ],
     "pathPrefix": "channels",
     "schemaFragment": {
       "actions": [
@@ -15855,24 +15858,7 @@ exports[`section-registry parity > managed-sections view > getManagedSectionRedi
 }"
 `;
 
-exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("channels", "(no key)") 1`] = `
-"{
-  "description": "Manage channel adapters (list, get, enable, disable, restart, configure).",
-  "fullyManaged": false,
-  "pathPrefix": "channels",
-  "schemaFragment": {
-    "actions": [
-      "list",
-      "get",
-      "enable",
-      "disable",
-      "restart",
-      "configure"
-    ]
-  },
-  "tool": "channels_manage"
-}"
-`;
+exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("channels", "(no key)") 1`] = `undefined`;
 
 exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("gateway", "tokens") 1`] = `
 "{

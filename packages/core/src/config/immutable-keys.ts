@@ -107,6 +107,10 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // capability map or detour policy.
   "tooling",
 
+  // Durable security-decision persistence is operator policy. Runtime callers
+  // may query the audit trail but cannot disable or redirect its sinks.
+  "observability.audit",
+
   // Authenticated platform-subject mappings define storage authority.
   "identity",
 
@@ -177,19 +181,20 @@ export function isImmutableConfigPath(section: string, key?: string): boolean {
 }
 
 /**
- * Security-posture sub-paths WITHIN a single agent's config that are
+ * Authority and security-posture sub-paths WITHIN a single agent's config that are
  * OPERATOR-ONLY: no runtime RPC may set them — not `config.patch`, and not
- * `agents_manage` / `agents.create` / `agents.update`. They gate sandbox and
- * bwrap-jail escape and terminal command allowlisting, and can only change by
- * editing the config file directly.
+ * `agents_manage` / `agents.create` / `agents.update`. They govern sender
+ * authority, sandbox and bwrap-jail escape, or terminal command allowlisting,
+ * and can only change by editing the config file directly.
  *
  * WHY a SEPARATE list from {@link IMMUTABLE_CONFIG_PREFIXES}: the whole
  * `agents` section is immutable to `config.patch` (which STEERS callers to the
  * dedicated `agents_manage` tool via the redirect hint), but `agents_manage`
  * LEGITIMATELY writes agent config — name, provider, model, budgets, autonomy
  * tuning, tool toggles, … That asymmetry is intentional for those fields; it is
- * NOT intentional for the sandbox/jail escape switches. An admin-trust agent
- * must never be able to flip its own `skills.execSandbox.enabled` from `never`
+ * NOT intentional for authority-bearing sender trust or the sandbox/jail
+ * escape switches. An admin-trust agent must never be able to grant another
+ * sender admin trust or flip its own `skills.execSandbox.enabled` from `never`
  * to `always` through `agents.update`. These sub-paths are the narrow deny-list
  * that `agents_manage` must also refuse.
  *
@@ -201,6 +206,8 @@ export const OPERATOR_ONLY_AGENT_SUBPATHS: readonly string[] = [
   "skills.execSandbox",                    // exec OS-level sandbox switch (enabled: always|never) + its scope
   "skills.terminal.unsafeDisableSandbox",  // bwrap-jail bypass for the terminal driver
   "skills.terminal.allow",                 // terminal command allowlist — operator config only, never agent-extensible
+  "elevatedReply.senderTrustMap",           // per-sender authority assignments — never self-grantable
+  "elevatedReply.defaultTrustLevel",        // default sender authority — never runtime-broadenable
 ] as const;
 
 /**

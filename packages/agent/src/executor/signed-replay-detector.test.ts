@@ -99,6 +99,13 @@ describe("isSignedReplayError", () => {
     expect(isSignedReplayError(msg)).toBe(true);
   });
 
+  it("matches spaced encrypted content verification wording", () => {
+    const msg =
+      "The encrypted content for item rs_test_item could not be verified. "
+      + "Reason: Encrypted content could not be decrypted or parsed.";
+    expect(isSignedReplayError(msg)).toBe(true);
+  });
+
   // -------------------------------------------------------------------------
   // Negative cases
   // -------------------------------------------------------------------------

@@ -99,6 +99,22 @@ describe("persistInboundMessageProvenance", () => {
     );
   });
 
+  it("persists the content-free forwarded marker with the physical message", () => {
+    const message = {
+      ...first,
+      attachments: [],
+      metadata: { isForwarded: true },
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.value.payloads[0]?.messages).toEqual([
+      expect.objectContaining({ isForwarded: true }),
+    ]);
+  });
+
   it("redacts credential assignments in durable inbound provenance without mutating the live message", () => {
     const username = "example-user-value";
     const password = "test-password-value";
@@ -137,6 +153,25 @@ describe("persistInboundMessageProvenance", () => {
     expect(JSON.stringify(planned.value)).not.toContain(password);
     expect(JSON.stringify(planned.value)).toContain("[REDACTED]");
     expect(message.text).toContain(password);
+  });
+
+  it("redacts short credentials placed into a named secret store", () => {
+    const credential = "test-key";
+    const message = {
+      ...first,
+      text: `put this neutral test credential in the supported secret store: ${credential}`,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(JSON.stringify(planned.value.payloads)).not.toContain(credential);
+    expect(planned.value.ledgerContent).not.toContain(credential);
+    expect(JSON.stringify(planned.value)).toContain("[REDACTED]");
+    expect(message.text).toContain(credential);
   });
 
   it("redacts a thumb-typed opaque token from both provenance persistence forms", () => {

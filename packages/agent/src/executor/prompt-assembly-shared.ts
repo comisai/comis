@@ -762,6 +762,9 @@ export function buildMessageFlags(msg: NormalizedMessage): Record<string, boolea
   if (meta.isEdited === true) {
     flags.isEdited = true;
   }
+  if (meta.isForwarded === true) {
+    flags.isForwarded = true;
+  }
   if (meta.isScheduled === true) {
     flags.isScheduled = true;
   }

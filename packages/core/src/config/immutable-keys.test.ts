@@ -35,6 +35,12 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("daemon.logging");
   });
 
+  it("keeps durable security-audit persistence operator-only", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toContain("observability.audit");
+    expect(isImmutableConfigPath("observability", "audit.persist")).toBe(true);
+    expect(isImmutableConfigPath("observability", "audit.sink")).toBe(true);
+  });
+
   it("contains immutable prefix: tooling (capability layer)", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
@@ -58,8 +64,8 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("browser.allowLoopbackNavigation");
   });
 
-  it("has exactly 18 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(18);
+  it("has exactly 19 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(19);
   });
 });
 
@@ -576,6 +582,11 @@ describe("OPERATOR_ONLY_AGENT_SUBPATHS", () => {
     expect(OPERATOR_ONLY_AGENT_SUBPATHS).toContain("skills.terminal.allow");
   });
 
+  it("locks sender trust assignments as operator-owned authority policy", () => {
+    expect(OPERATOR_ONLY_AGENT_SUBPATHS).toContain("elevatedReply.senderTrustMap");
+    expect(OPERATOR_ONLY_AGENT_SUBPATHS).toContain("elevatedReply.defaultTrustLevel");
+  });
+
   it("paths are agent-relative (no agents.<id> prefix) so they apply to any agent id", () => {
     for (const p of OPERATOR_ONLY_AGENT_SUBPATHS) {
       expect(p.startsWith("agents.")).toBe(false);
@@ -599,6 +610,17 @@ describe("findOperatorOnlyAgentPaths", () => {
       skills: { terminal: { allow: [{ id: "x", match: { path: "/bin/sh" } }] } },
     });
     expect(hits).toContain("skills.terminal.allow");
+  });
+
+  it("flags sender trust elevation and default trust broadening", () => {
+    const hits = findOperatorOnlyAgentPaths({
+      elevatedReply: {
+        senderTrustMap: { user_a: "admin" },
+        defaultTrustLevel: "admin",
+      },
+    });
+    expect(hits).toContain("elevatedReply.senderTrustMap");
+    expect(hits).toContain("elevatedReply.defaultTrustLevel");
   });
 
   it("flags the operator-only path even when the sub-object is present but empty (fail-closed on presence)", () => {

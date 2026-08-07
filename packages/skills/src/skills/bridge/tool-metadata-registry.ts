@@ -249,11 +249,12 @@ export function registerAllToolMetadata(): void {
           const mutablePaths = getMutableOverridesForSection(section, key);
           const redirect = getManagedSectionRedirect(section, key);
           const fullPath = `${section}${key ? "." + key : ""}`;
+          const operatorHint = ` Edit operator config and restart the daemon.`;
           const suffix = redirect
             ? ` ${formatRedirectHint(redirect, mutablePaths)}`
             : mutablePaths.length > 0
-              ? ` Patchable: ${mutablePaths.join(", ")}.`
-              : "";
+              ? `${operatorHint} Runtime-patchable paths: ${mutablePaths.join(", ")}.`
+              : operatorHint;
           return `Cannot patch immutable config path: ${fullPath}.${suffix}`;
         }
       }
@@ -342,11 +343,10 @@ export function registerAllToolMetadata(): void {
       "change model",
       "change the model",
     ],
-    validKeys: ["action", "agent_id", "config"],
+    validKeys: ["action", "agent_id", "config", "view"],
     // agent_id is required for every action except list.
     requiredByAction: {
       create:  ["agent_id", "config"],
-      get:     ["agent_id"],
       update:  ["agent_id", "config"],
       delete:  ["agent_id"],
       suspend: ["agent_id"],

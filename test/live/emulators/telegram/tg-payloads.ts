@@ -145,6 +145,7 @@ export function makeGroupChat(opts: MakeGroupChatOptions): Chat.GroupChat | Chat
  *    (`detectBotAddressing` reads them → `isBotMentioned`/`isBotCommand`).
  *  - `replyToMessage` sets `reply_to_message` (→ `replyToBot` when the author is the bot).
  *  - `messageThreadId` sets `message_thread_id` (the forum topic the thread resolver reads).
+ *  - `forwardOrigin` sets Telegram's typed `forward_origin` provenance.
  */
 export interface MakeMessageUpdateOptions {
   /** The Update's unique, monotonically-increasing id (the caller owns the counter; see {@link nextUpdateId}). */
@@ -165,6 +166,8 @@ export interface MakeMessageUpdateOptions {
   readonly replyToMessage?: Message;
   /** A `message_thread_id` (the forum topic id the thread resolver reads). Omitted when absent. */
   readonly messageThreadId?: number;
+  /** Telegram-provided origin attribution for a forwarded message. */
+  readonly forwardOrigin?: NonNullable<Message["forward_origin"]>;
 }
 
 /**
@@ -199,12 +202,16 @@ export function makeMessageUpdate(opts: MakeMessageUpdateOptions): Update {
   // builder-supplied non-reply `Message` is exactly that shape, so it is widened
   // to the field type `Message["reply_to_message"]` for the assignment (no
   // explicit `: undefined`, which exactOptionalPropertyTypes would reject).
-  const addressing: Partial<Pick<Message, "entities" | "reply_to_message" | "message_thread_id">> = {
+  const addressing: Partial<Pick<
+    Message,
+    "entities" | "reply_to_message" | "message_thread_id" | "forward_origin"
+  >> = {
     ...(opts.entities !== undefined ? { entities: opts.entities } : {}),
     ...(opts.replyToMessage !== undefined
       ? { reply_to_message: opts.replyToMessage as NonNullable<Message["reply_to_message"]> }
       : {}),
     ...(opts.messageThreadId !== undefined ? { message_thread_id: opts.messageThreadId } : {}),
+    ...(opts.forwardOrigin !== undefined ? { forward_origin: opts.forwardOrigin } : {}),
   };
   return {
     update_id: opts.updateId,

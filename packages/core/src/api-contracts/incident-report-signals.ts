@@ -130,6 +130,13 @@ export interface IncidentSignals {
    * (a zero-hit recall on a fresh install with an empty memory store).
    */
   modelErrors?: { total: number; byCategory: Record<string, number> };
+  /** Latest content-free OAuth refresh rejection on the selected trajectory. */
+  oauthRefreshFailure?: {
+    provider: string;
+    errorKind: string;
+    hint: string;
+    status?: number;
+  };
   /** agentId from the trajectory record envelopes (first seen). Fallback for
    *  reports whose metadata rollup carries no agentId. */
   agentId?: string;
@@ -463,6 +470,8 @@ export interface IncidentSignals {
     deliveredChunks: number;
     failedChunks: number;
     errorKind?: string;
+    /** Platform response IDs bound to this trace, in delivery order. */
+    messageIds?: string[];
   };
   /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events
@@ -471,9 +480,10 @@ export interface IncidentSignals {
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /**
-   * Runtime-recovery fold from `execution.recovery_attempted` records: total +
-   * succeeded tally + per-reason counts. Includes model re-entry and
-   * deterministic response-grounding corrections. Absent ⇒ no recovery attempts.
+   * Runtime-recovery fold from `execution.recovery_attempted` and
+   * `execution.replay_recovered` records: total + succeeded tally + per-reason
+   * counts. Includes model re-entry and deterministic response-grounding
+   * corrections. Absent ⇒ no recovery attempts.
    */
   recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
   /**

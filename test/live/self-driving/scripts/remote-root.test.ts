@@ -605,6 +605,57 @@ describe("local rig mode", () => {
     expect(validated.status, `${validated.stdout}${validated.stderr}`).toBe(0);
   });
 
+  it("resolves the selected local gateway secret ahead of a stale helper token", () => {
+    const directory = makeCanonicalTempDirectory("comis-local-rpc-secret-");
+    const data = resolve(directory, "isolated-data");
+    const configPath = resolve(data, "config.yaml");
+    const initialized = spawnSync("bash", [INIT_LOCAL_CONFIG], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: directory,
+        RIG_MODE: "local",
+        RIG_ENV: resolve(directory, "selected.rig-env"),
+        DATA: data,
+        GW_PORT: "4883",
+        SERVICE: "comis-local-rpc-secret",
+      },
+    });
+    expect(initialized.status, `${initialized.stdout}${initialized.stderr}`).toBe(0);
+
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          `const { ensureRpcEnv } = await import(${JSON.stringify(pathToFileURL(RIG_NODE_HELPER).href)});`,
+          "ensureRpcEnv();",
+          "const resolved = process.env.COMIS_GATEWAY_TOKEN ?? '';",
+          "console.log(`${resolved === process.env.GWTOKEN ? 'stale' : 'selected'}|${resolved.length}`);",
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RIG_MODE: "local",
+          RIG_ENV: resolve(directory, "selected.rig-env"),
+          COMIS_DATA_DIR: data,
+          COMIS_CONFIG_PATHS: configPath,
+          DATA: data,
+          GW_PORT: "4883",
+          SERVICE: "comis-local-rpc-secret",
+          GWTOKEN: "f".repeat(48),
+          COMIS_GATEWAY_TOKEN: "",
+        },
+      },
+    );
+
+    expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
+    expect(probe.stdout.trim()).toBe("selected|48");
+  });
+
   it("validates the authoritative config before any local rig mutation", () => {
     const source = readFileSync(LOCAL_UP, "utf8");
     const configGuard = source.indexOf('node "$HERE/local-config.mjs" validate');
@@ -735,6 +786,14 @@ describe("local rig mode", () => {
     expect(restart).not.toMatch(/^\s*pkill\s+.*vps-emu/mu);
     expect(restart).not.toMatch(/^\s*tmux kill-session -t emu\b/mu);
     expect(launcher).toContain('process.env["EMU_JSON"] ?? "/tmp/comis-emu.json"');
+  });
+
+  it("scopes the local phase-zero daemon probe to the selected lifecycle owner", () => {
+    const source = readFileSync(PHASE_ZERO_CHECK, "utf8");
+
+    expect(source).toContain('daemon_pid="$(rig_daemon_pid)"');
+    expect(source).toContain('pass "daemon-process" "selected daemon process is running (pid $daemon_pid)"');
+    expect(source).not.toContain("pid $(pgrep -f 'node.*daemon\\.js' | head -1)");
   });
 
   it("keeps the local rig shell entry points syntactically valid", () => {

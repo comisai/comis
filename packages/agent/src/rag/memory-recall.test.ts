@@ -470,6 +470,45 @@ describe("createMemoryRecall — orchestrator composition", () => {
       .toBe("recent_tail_duplicate");
   });
 
+  it("excludes a same-session paired response to the current repeated request", async () => {
+    const currentSession = formatSessionKey(DEFAULT_SESSION_KEY_OBJ);
+    const input = [
+      makeResult("current-request-echo", {
+        content:
+          "[user] repeat the safe operation\n"
+          + "[agent] an older response chose the wrong operation",
+        sessionKey: currentSession,
+        tags: ["conversation", "paired"],
+        base: 0.9,
+      }),
+      makeResult("distinct-same-session", {
+        content:
+          "[user] preserve my concise response preference\n"
+          + "[agent] understood and saved",
+        sessionKey: currentSession,
+        tags: ["conversation", "paired"],
+        base: 0.8,
+      }),
+    ];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig(),
+    );
+
+    const got = await recall.recall(
+      "repeat the safe operation",
+      memoryScope(),
+      DEFAULT_SESSION_KEY_OBJ,
+      [],
+    );
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((result) => result.entry.id);
+    expect(ids).not.toContain("current-request-echo");
+    expect(ids).toContain("distinct-same-session");
+  });
+
   it("NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
     // Distinct content (so the 200-char dedup fingerprint does NOT collapse them) but
     // contradictory about the same subject. Recall resolves contradictions at READ time

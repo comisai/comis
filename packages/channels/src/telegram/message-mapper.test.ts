@@ -154,6 +154,26 @@ describe("message-mapper / mapGrammyToNormalized", () => {
     expect(result.metadata.telegramMessageId).toBe(777);
   });
 
+  it("preserves Telegram forward provenance as a content-free normalized flag", () => {
+    const msg = stubTextMessage({
+      forward_origin: {
+        type: "hidden_user",
+        date: 1_700_000_000,
+        sender_user_name: "synthetic_sender",
+      },
+    });
+
+    const result = mapGrammyToNormalized(msg, 123);
+
+    expect(result.metadata.isForwarded).toBe(true);
+    expect(JSON.stringify(result.metadata)).not.toContain("synthetic_sender");
+  });
+
+  it("does not mark an ordinary Telegram message as forwarded", () => {
+    expect(mapGrammyToNormalized(stubTextMessage(), 123).metadata)
+      .not.toHaveProperty("isForwarded");
+  });
+
   it("derives a stable normalized id from the Telegram chat and message ids", () => {
     const msg = stubTextMessage({ message_id: 777 });
 

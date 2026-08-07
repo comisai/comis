@@ -1953,6 +1953,11 @@ describe("assembleExecutionPrompt", () => {
       expect(flags.isEdited).toBe(true);
     });
 
+    it("marks forwarded channel messages in current-message context", async () => {
+      const flags = await getFlags({ metadata: { isForwarded: true } });
+      expect(flags.isForwarded).toBe(true);
+    });
+
     it("sets isScheduled when metadata.isScheduled is true", async () => {
       const flags = await getFlags({ metadata: { isScheduled: true } });
       expect(flags.isScheduled).toBe(true);

@@ -128,6 +128,7 @@ export {
   buildGatewayEnvLayer,
   IMMUTABLE_CONFIG_PREFIXES,
   MUTABLE_CONFIG_OVERRIDES,
+  OPERATOR_ONLY_AGENT_SUBPATHS,
   isImmutableConfigPath,
   matchesOverridePattern,
   getMutableOverridesForSection,

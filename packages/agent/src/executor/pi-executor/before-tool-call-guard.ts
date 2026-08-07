@@ -23,10 +23,14 @@ import {
   promptSkillReadVerdict,
   type PromptSkillReadPolicy,
 } from "./prompt-skill-read-guard.js";
+import {
+  outboundRecipientAuthorityVerdict,
+  type OutboundRecipientEvidence,
+} from "../outbound-recipient-authority.js";
 
 const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
 
-export interface OutboundCompletionEvidence {
+export interface OutboundCompletionEvidence extends OutboundRecipientEvidence {
   readonly requestMutationToolNames: ReadonlySet<string>;
   readonly currentSuccessfulMutationCount: () => number;
   readonly onBlocked: () => void;
@@ -306,6 +310,12 @@ export function createBeforeToolCallGuard(
       outboundCompletionEvidence,
     );
     if (completionEvidenceVerdict) return completionEvidenceVerdict;
+
+    const recipientAuthorityVerdict = outboundRecipientAuthorityVerdict(
+      context,
+      outboundCompletionEvidence,
+    );
+    if (recipientAuthorityVerdict) return recipientAuthorityVerdict;
 
     const citationEvidenceVerdict = outboundCitationEvidenceVerdict(
       context,

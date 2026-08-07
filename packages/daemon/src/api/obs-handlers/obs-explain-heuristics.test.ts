@@ -1141,6 +1141,64 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/model|provider/i);
   });
 
+  it("explains terminal signed replay without requiring raw logs", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        modelErrors: { total: 3, byCategory: { client_request_signed_replay: 3 } },
+      }),
+    );
+
+    expect(r?.code).toBe("provider_rejected_request");
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/signed|reasoning|conversation/i);
+    expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/daemon log|raw body/i);
+  });
+
+  it("names both OAuth re-login and direct-key configuration for auth rejection", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        modelErrors: { total: 3, byCategory: { auth_invalid: 3 } },
+      }),
+    );
+
+    expect(r?.code).toBe("provider_rejected_request");
+    const steps = r?.suggestedNextSteps.join(" ") ?? "";
+    expect(steps).toContain("comis auth login");
+    expect(steps).toContain("agents.<id>.oauthProfiles");
+    expect(steps).toContain("providers.entries.<name>.apiKeyName");
+  });
+
+  it("reports a rejected OAuth refresh directly from trajectory evidence", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      modelErrors: { total: 3, byCategory: { auth_invalid: 3 } },
+    }) as IncidentSignals & {
+      oauthRefreshFailure: {
+        provider: string;
+        errorKind: string;
+        hint: string;
+        status?: number;
+      };
+    };
+    signals.oauthRefreshFailure = {
+      provider: "openai-codex",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+    };
+
+    const result = rootCause(signals);
+
+    expect(result?.code).toBe("provider_rejected_request");
+    expect(result?.detail).toContain("OAuth refresh failed");
+    expect(result?.detail).toContain("HTTP 401");
+    expect(result?.detail).toContain("invalid_grant");
+  });
+
   it("recall_miss still fires when no model call was rejected", () => {
     // Regression guard: the new gate must not swallow the genuine recall_miss.
     const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));

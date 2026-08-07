@@ -226,6 +226,46 @@ function isRuntimeCitationEvidenceData(
     );
 }
 
+function isPrivateReasoningBlock(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return (prototype === Object.prototype || prototype === null)
+    && (value as { type?: unknown }).type === "thinking";
+}
+
+/**
+ * Project an assistant content array without retaining provider-private
+ * reasoning. Reasoning text and signatures can repeat short credentials with
+ * no reliable format or label; removing the complete block also avoids
+ * persisting a modified signed block that a provider would reject on replay.
+ */
+function projectAssistantContent(
+  value: unknown[],
+  seen: WeakSet<object>,
+): PersistenceSecretProjection<unknown> {
+  if (seen.has(value)) return { value, redactions: 0 };
+  seen.add(value);
+  let redactions = 0;
+  let changed = false;
+  const projected: unknown[] = [];
+  for (const item of value) {
+    if (isPrivateReasoningBlock(item)) {
+      redactions += 1;
+      changed = true;
+      continue;
+    }
+    const next = projectPersistenceValue(item, undefined, seen);
+    projected.push(next.value);
+    redactions += next.redactions;
+    if (next.value !== item) changed = true;
+  }
+  seen.delete(value);
+  return {
+    value: changed ? projected : value,
+    redactions,
+  };
+}
+
 function projectPersistenceValue(
   value: unknown,
   fieldName: string | undefined,
@@ -292,7 +332,9 @@ function projectPersistenceValue(
     // the provider reject the next request before it consumes the tool result.
     // Tool arguments and result content still traverse the secret scrubber.
     const container = value as Record<string, unknown>;
-    const next = isToolProtocolIdentity(container, key, item)
+    const next = container.role === "assistant" && key === "content" && Array.isArray(item)
+      ? projectAssistantContent(item, seen)
+      : isToolProtocolIdentity(container, key, item)
       || isRuntimeCitationEvidenceData(container, key, item)
       ? { value: item, redactions: 0 }
       : projectPersistenceValue(item, key, seen);
@@ -309,7 +351,9 @@ function projectPersistenceValue(
 
 /**
  * Produce a secret-free persistence projection without mutating the live value
- * used by the current model/tool execution.
+ * used by the current model/tool execution. Provider-private assistant
+ * reasoning blocks are omitted because their text and signatures cannot be
+ * scrubbed reliably without invalidating the signed block.
  */
 export function projectSessionValueForPersistence<T>(
   value: T,

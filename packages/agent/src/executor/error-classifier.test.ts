@@ -55,6 +55,17 @@ describe("classifyError", () => {
     expect(errorKindForCategory(result.category)).toBe("auth");
   });
 
+  it("classifies an invalidated OAuth access token as an authentication failure", () => {
+    const result = classifyError(
+      new Error("Encountered invalidated oauth token for user, failing request"),
+    );
+
+    expect(result.category).toBe("auth_invalid");
+    expect(result.retryable).toBe(false);
+    expect(errorKindForCategory(result.category)).toBe("auth");
+    expect(result.hint).toContain("comis auth login");
+  });
+
   it.each([
     ["UnrecognizedClientException", "aws_auth_invalid", "AWS_BEARER_TOKEN_BEDROCK"],
     ["InvalidSignatureException", "aws_auth_invalid", "access keys"],

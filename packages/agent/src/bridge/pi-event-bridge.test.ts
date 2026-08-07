@@ -3552,6 +3552,24 @@ describe("createPiEventBridge", () => {
       expect(String(warned?.[0].hint ?? "")).toMatch(/provider/i);
     });
 
+    it("identifies an invalidated OAuth token as auth and names the recovery command", () => {
+      const { listener } = createPiEventBridge(deps);
+      listener({
+        type: "turn_end",
+        message: {
+          stopReason: "error",
+          errorMessage: "Encountered invalidated oauth token for user, failing request",
+        },
+      } as any);
+
+      const warned = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .find(([, msg]) => msg === "LLM call returned error");
+      expect(warned?.[0]).toEqual(expect.objectContaining({
+        errorKind: "auth",
+        hint: expect.stringContaining("comis auth login"),
+      }));
+    });
+
     it("MCP tool timeout failure includes mcpErrorType: timeout", () => {
       const { listener } = createPiEventBridge(deps);
 

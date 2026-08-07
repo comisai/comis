@@ -72,6 +72,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "model:lkw_fallback_attempt": "model.fallback_attempt",
   "model:fallback_exhausted": "model.fallback_exhausted",
   "model:auth_cooldown": "model.auth_cooldown",
+  "auth:refresh_failed": "auth.refresh_failed",
 
   // ---- Skill observability ----
   "skill:prompt_loaded": "skill.prompt_loaded",
@@ -319,6 +320,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // platform errors, and credentials never cross into the trajectory.
   "delivery:outward_ledger_transition": "delivery.outward_ledger_transition",
   "delivery:enqueued": "delivery.queued",
+  "delivery:reply_bound": "delivery.reply_bound",
   "delivery:complete": "delivery.dispatched",
   // Fires when an abort cut delivery short — including the orchestrator
   // stage's whole-turn skip (an already-aborted signal -> the pacer never

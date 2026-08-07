@@ -48,6 +48,7 @@ import {
   scanForSecrets,
   substituteEnvVars,
   isEnvRefString,
+  isSecretRef,
   type AppContainer,
   type ConfigGitManager,
   type GitCommitMetadata,
@@ -64,7 +65,7 @@ import { parse as parseYaml, stringify as yamlStringify } from "yaml";
 import { commitConfigVersionBestEffort } from "./config-git-commit.js";
 
 // ---------------------------------------------------------------------------
-// Env-ref masking for the plaintext-secret scan.
+// Secret-reference masking for the plaintext-secret scan.
 //
 // The on-disk YAML stores credentials as `${VAR}` refs; the in-memory config
 // holds the substituted values. Scanning the in-memory tree for plaintext
@@ -73,18 +74,22 @@ import { commitConfigVersionBestEffort } from "./config-git-commit.js";
 //
 // Walk the resolved tree in lock-step with the on-disk tree: at every path
 // where the on-disk value is an env-ref string (`${VAR}` / `$VAR` /
-// `$${VAR}`, with optional auth-scheme prefix), substitute the on-disk
-// literal back into the resolved view. scanForSecrets already exempts those
-// strings, so the false positive disappears while in-memory-only plaintext
-// (paths where the on-disk file has no ref) still surfaces.
+// `$${VAR}`, with optional auth-scheme prefix) or a structured `SecretRef`,
+// substitute that reference back into the resolved view. scanForSecrets
+// already exempts both forms, so the false positive disappears while
+// in-memory-only plaintext (paths where the on-disk file has no ref) still
+// surfaces.
 // ---------------------------------------------------------------------------
 
-function maskRefsFromOnDisk(resolved: unknown, onDisk: unknown): unknown {
-  if (typeof onDisk === "string" && isEnvRefString(onDisk)) {
+function maskSecretReferencesFromOnDisk(resolved: unknown, onDisk: unknown): unknown {
+  if (
+    (typeof onDisk === "string" && isEnvRefString(onDisk))
+    || isSecretRef(onDisk)
+  ) {
     return onDisk;
   }
   if (Array.isArray(resolved) && Array.isArray(onDisk)) {
-    return resolved.map((v, i) => maskRefsFromOnDisk(v, onDisk[i]));
+    return resolved.map((v, i) => maskSecretReferencesFromOnDisk(v, onDisk[i]));
   }
   if (
     resolved !== null
@@ -98,7 +103,7 @@ function maskRefsFromOnDisk(resolved: unknown, onDisk: unknown): unknown {
     const r = resolved as Record<string, unknown>;
     const d = onDisk as Record<string, unknown>;
     for (const k of Object.keys(r)) {
-      out[k] = maskRefsFromOnDisk(r[k], d[k]);
+      out[k] = maskSecretReferencesFromOnDisk(r[k], d[k]);
     }
     return out;
   }
@@ -430,7 +435,7 @@ export async function persistToConfig(
     // value the PATCH introduces is never exempted.
     const inMemory = deps.container.config as unknown;
     const refMaskedFullMerged = maskPreservedSecrets(
-      maskRefsFromOnDisk(fullMerged, updatedLocal),
+      maskSecretReferencesFromOnDisk(fullMerged, updatedLocal),
       existingLocal,
       inMemory,
     );

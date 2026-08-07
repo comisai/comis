@@ -131,7 +131,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Web -----
   web_search: "Search the web for current information. May return partial results — retry with refined query if needed.",
-  web_fetch: "Fetch content from URL (HTML, PDF, JSON auto-detected). Readable extraction. Use this, not exec curl/wget.",
+  web_fetch: "Fetch URL content (HTML/PDF/JSON). For a supplied URL in the current request or relevant conversation context, when Linked Content is already present, use it; otherwise call this before making claims. Do not rely on prior knowledge or use exec curl/wget.",
 
   // ----- Memory (confusable pair: memory_search / session_search) -----
   memory_search: "Search stored facts and preferences. Returns empty if no match — not an error. For session history, use session_search.",
@@ -144,10 +144,9 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Channel (confusable pair: message / sessions_send) -----
   message: (ctx: ToolDescriptionContext): string => {
     const ch = ctx.channelType ?? "chat";
-    // The turn's final text is delivered automatically; an agent that also sends
-    // here double-posts. The runtime honours the silent sentinel — say so.
-    return `Send, reply, react, edit, delete, fetch messages on ${ch}. For inter-session messaging, use sessions_send.`
-      + ` After delivering user-facing content here, reply NO_REPLY: the turn's final text is sent too, so restating it double-posts.`;
+    return `Send, reply, react, edit, delete, fetch on ${ch}. Normal current-chat replies auto-deliver without this tool.`
+      + ` Routing context is not recipient confirmation; never substitute it for a draft addressed elsewhere.`
+      + ` For sessions use sessions_send. After delivery reply NO_REPLY to avoid double-posting.`;
   },
 
   // ----- Sessions -----
@@ -171,7 +170,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   // ----- Platform -----
   cron: "Manage cron jobs, scheduled tasks, and reminders.",
   gateway:
-    "Read/patch config; env_set stores credentials. Use the exact operator-provided secret name or key."
+    "Read/patch config; env_set stores credentials. Empty/unspecified update: no tool; report unchanged. Use the exact operator-provided secret name or key."
     + " Never infer it from token contents or the active channel, and never overwrite an unrelated"
     + " existing secret. Use mcp_manage for MCP connections.",
   image_analyze: "Analyze images (PNG, JPG, GIF, WebP) via vision model. Accepts file paths, URLs, base64, or attachment_url.",
@@ -183,14 +182,17 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Platform actions -----
   discord_action: "Discord actions: pin, kick, ban, roles, threads, channels, presence.",
-  telegram_action: "Telegram actions: pin, poll, sticker, chat info, admin, topics.",
+  telegram_action: "Telegram group/channel actions: pin, poll, sticker, chat info, topics. Promote only in an explicit user-named group/channel; not Comis sender trust. Make ID admin: reply agents.<id>.elevatedReply.senderTrustMap is operator-only; operator config+restart; never ask for a group.",
   slack_action: "Slack actions: pin, topic, archive, channels, invites.",
   whatsapp_action: "WhatsApp actions: group management, participants, settings.",
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agents: list, create, get, update, delete, suspend, resume. A separate or dedicated assistant request is a complete create intent: create immediately with reasonable defaults. Do not require a heartbeat unless asked.";
-    return ctx.trustLevel === "admin" ? base : base + " Admin required.";
+    if (ctx.trustLevel === "admin") {
+      return "Dedicated assistant: create now, reasonable defaults; no heartbeat. What can you change without approval or what needs the operator? First get view authority; report the bounded live matrix; do not guess. skills.execSandbox/skills.terminal.unsafeDisableSandbox/skills.terminal.allow. Operator admin IDs alone/mixed: refuse all; agents.<id>.elevatedReply.senderTrustMap operator-only; operator config+restart; ask no values; no platform.";
+    }
+    const base = "Dedicated assistant: create immediately, reasonable defaults; no heartbeat. Operator-only security/trust fields.";
+    return base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
     const base = "MANDATORY evidence for runtime self-reports. What failed, why it was slow, counts, or cost? Call explain/system_health/billing before answering. Use system_health for failure or degraded counts. Never infer runtime cause from chat memory; say unknown if evidence cannot establish it.";
@@ -207,7 +209,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   channels_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage channel adapters: list, status, enable, disable, restart.";
+    const base = "Channel adapters: list, status, enable, disable, restart. Cannot configure sender allowlists: channels.<type>.allowFrom requires operator config and daemon restart.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   tokens_manage: (ctx: ToolDescriptionContext): string => {
@@ -279,7 +281,20 @@ export const TOOL_ORDER: string[] = [
  * Not all tools need guides -- most are self-explanatory from their lean description.
  */
 export const TOOL_GUIDES: Record<string, string> = {
-  agents_manage: `## Single-call creation (PREFERRED for batch system creation)
+  agents_manage: `## Operator-only authority and security posture
+Agent create/update cannot set the operator-only paths \`skills.execSandbox\`,
+\`skills.terminal.unsafeDisableSandbox\`, \`skills.terminal.allow\`,
+\`elevatedReply.senderTrustMap\`, or \`elevatedReply.defaultTrustLevel\`. Refuse requests to disable the
+sandbox, bypass the terminal jail, or expand the terminal command allowlist; name the exact path and
+direct the operator to edit agent config and restart the daemon. Do not ask for command details or try
+alternate runtime tools because no runtime path may set these fields.
+Sender trust cannot be granted or broadened at runtime. A request to make a sender an admin of the
+agent requires this reply: "\`agents.<id>.elevatedReply.senderTrustMap\` is operator-only; edit operator
+config and restart the daemon." Operator admin IDs, alone or mixed with safe changes, require refusing
+the whole request, naming \`agents.<id>.elevatedReply.senderTrustMap\`, and not asking for values. Never
+use a platform admin tool or ask for a group.
+
+## Single-call creation (PREFERRED for batch system creation)
 For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating systems of 5+ agents in parallel.
 
 agents_manage({action:"create", agent_id, config:{
@@ -477,6 +492,7 @@ Each sub-agent has an isolated workspace at ~/.comis/workspace-{agentId}/. Do NO
 
   gateway: `## Gateway Security
 CRITICAL: Security-sensitive paths (security, gateway.tls, gateway.tokens) CANNOT be patched -- attempts will be rejected. Restart, patch, apply, rollback, and env_set require confirmation. Config changes go through schema validation, git-backed versioning, and audit logging.
+An empty or unspecified config update has no target: call no tool and report that nothing changed.
 IMPORTANT: Never modify config YAML files directly -- always use gateway tool actions.
 ## Restart Boundary
 A successful result with \`restarting:true\` means the restart is scheduled, not completed. End the turn after that result without calling read or management tools to verify the new state: the current process can still expose stale in-memory configuration. Tell the user the change was persisted and that verification must happen in a later turn after restart. Do not claim the restart completed in the mutation turn.
@@ -489,7 +505,8 @@ Use mcp_manage as the canonical entry point for MCP server install / inspect / r
 Single mcp.servers entry shape: {name, transport, command?, args?, url?, env?, cwd?, enabled?: true, headers?, maxConcurrency?}. README-style mcpServers maps use <id> as the JSON-object key — when migrating those into integrations.mcp.servers (an array), move the <id> into the name field and DROP UI-only fields like label.`,
 
   channels_manage: `## Channel Management Side Effects
-Enable, disable, and configure actions persist to config.yaml and trigger daemon restart. Current execution terminates after the tool returns. Batch changes together and warn the user before proceeding.`,
+Enable, disable, and configure actions persist to config.yaml and trigger daemon restart. Current execution terminates after the tool returns. Batch changes together and warn the user before proceeding.
+This tool cannot configure inbound sender allowlists. \`channels.<type>.allowFrom\` requires operator config and daemon restart.`,
 
   mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.
 ## STDIO servers that need credentials/env
@@ -539,7 +556,7 @@ The exec sandbox denies writes to ~/.comis/skills/, global node_modules (e.g. ~/
 To run CLI tools that need API tokens (wrangler, gh, gcloud, kubectl, doctl, fly, vercel, stripe, etc.), use the \`secretRefs\` parameter — pass the secret NAMES as a list; the daemon resolves them and injects them as env vars into the child. Do NOT try to read ~/.comis/.env (outside sandbox), pass tokens via the \`env\` parameter (the env allowlist rejects credential names), or shell-substitute $(...) (blocked by exec-security). Call gateway({action:"env_list", filter:"<PREFIX>*"}) first to see available names. Example: exec({command:"npx wrangler pages deploy ./dist", secretRefs:["CLOUDFLARE_API_TOKEN","CLOUDFLARE_ACCOUNT_ID"]}). Platform-managed secrets (referenced in daemon config, e.g. ANTHROPIC_API_KEY) are rejected. Raw-interpreter commands (python -c, node -e, bash -c, etc.) are rejected when secretRefs is present — write a script file first and invoke that instead.`,
 
   message: `## Message Guide
-IMPORTANT: Always include channel_type and channel_id from the conversation context. Do NOT guess or fabricate channel IDs.
+IMPORTANT: Use channel_type and channel_id only for an exact target explicitly selected or confirmed by the user. Conversation context supplies routing coordinates, not recipient confirmation; never substitute the current chat for a draft addressed elsewhere. Normal current-chat replies are delivered automatically; answer without the message tool.
 For reply: always include message_id of the message being replied to.
 For react: use Unicode emoji (e.g., the actual emoji character), not text shortcodes (e.g., ":thumbsup:"). Platform adapters handle conversion.
 For delete: requires user confirmation (_confirmed: true). Present the action to the user first and wait for approval.

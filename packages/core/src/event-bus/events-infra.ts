@@ -141,16 +141,16 @@ export interface InfraEvents {
 
   /**
    * OAuth refresh failed terminally (e.g. refresh_token_reused, network
-   * error after retries, timeout). Emitted with coarse errorKind because
-   * pi-ai swallows the original cause.
+   * error after retries, timeout). Carries a coarse errorKind.
    */
   "auth:refresh_failed": {
     provider: string;
     profileId: string;
     /** Coarse classification: refresh_token_reused | network | timeout | refresh_failed. */
     errorKind: string;
-    /** Operator action recommendation. */
+    /** Operator action recommendation; status is present for HTTP failures. */
     hint: string;
+    status?: number;
     timestamp: number;
   };
 

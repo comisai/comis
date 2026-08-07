@@ -3,6 +3,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   parseInboundMessageProvenanceBatch,
+  type OriginalInboundMessage,
 } from "@comis/core";
 
 export const RECENT_USER_TURN_COUNT = 8;
@@ -47,7 +48,74 @@ interface ProvenanceBatch {
   readonly batchId: string;
   readonly recordedAt: number;
   readonly chunkCount: number;
-  readonly chunks: Map<number, readonly string[]>;
+  readonly chunks: Map<number, readonly OriginalInboundMessage[]>;
+}
+
+function collectProvenanceBatches(
+  entries: readonly SessionEntryLike[],
+  currentBatchId?: string,
+): { batches: Map<string, ProvenanceBatch>; sawValidProvenance: boolean } {
+  const batches = new Map<string, ProvenanceBatch>();
+  let sawValidProvenance = false;
+  for (const entry of entries) {
+    if (
+      entry.type !== "custom"
+      || entry.customType !== INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE
+    ) {
+      continue;
+    }
+    const parsed = parseInboundMessageProvenanceBatch(entry.data);
+    if (!parsed.ok) continue;
+    sawValidProvenance = true;
+    const value = parsed.value;
+    if (value.batchId === currentBatchId) continue;
+    const existing = batches.get(value.batchId);
+    if (existing !== undefined) {
+      if (
+        existing.chunkCount !== value.chunkCount
+        || existing.recordedAt !== value.recordedAt
+      ) {
+        batches.delete(value.batchId);
+        continue;
+      }
+      if (!existing.chunks.has(value.chunkIndex)) {
+        existing.chunks.set(value.chunkIndex, value.messages);
+      }
+      continue;
+    }
+    batches.set(value.batchId, {
+      batchId: value.batchId,
+      recordedAt: value.recordedAt,
+      chunkCount: value.chunkCount,
+      chunks: new Map([[value.chunkIndex, value.messages]]),
+    });
+  }
+  return { batches, sawValidProvenance };
+}
+
+function completeProvenanceBatches(
+  entries: readonly SessionEntryLike[],
+  currentBatchId?: string,
+): ProvenanceBatch[] {
+  const { batches } = collectProvenanceBatches(entries, currentBatchId);
+  return [...batches.values()]
+    .filter((batch) => batch.chunks.size === batch.chunkCount)
+    .sort((left, right) =>
+      left.recordedAt - right.recordedAt
+      || left.batchId.localeCompare(right.batchId),
+    );
+}
+
+/** Read a bounded structured flag without parsing rendered prompt text. */
+export function hasRecentForwardedUserTurn(
+  entries: readonly SessionEntryLike[],
+  currentBatchId?: string,
+): boolean {
+  return completeProvenanceBatches(entries, currentBatchId)
+    .slice(-RECENT_USER_TURN_COUNT)
+    .some((batch) => [...batch.chunks.values()].flat().some(
+      (message) => message.isForwarded === true,
+    ));
 }
 
 function extractText(content: unknown): string {
@@ -74,46 +142,10 @@ export function selectRecentUserTurns(
   entries: readonly SessionEntryLike[] = [],
   currentBatchId?: string,
 ): string[] {
-  const batches = new Map<string, ProvenanceBatch>();
-  let sawValidProvenance = false;
-  for (const entry of entries) {
-    if (
-      entry.type !== "custom"
-      || entry.customType !== INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE
-    ) {
-      continue;
-    }
-    const parsed = parseInboundMessageProvenanceBatch(entry.data);
-    if (!parsed.ok) continue;
-    sawValidProvenance = true;
-    const value = parsed.value;
-    if (value.batchId === currentBatchId) continue;
-    const existing = batches.get(value.batchId);
-    if (existing !== undefined) {
-      if (
-        existing.chunkCount !== value.chunkCount
-        || existing.recordedAt !== value.recordedAt
-      ) {
-        batches.delete(value.batchId);
-        continue;
-      }
-      if (!existing.chunks.has(value.chunkIndex)) {
-        existing.chunks.set(
-          value.chunkIndex,
-          value.messages.map((message) => message.text),
-        );
-      }
-      continue;
-    }
-    batches.set(value.batchId, {
-      batchId: value.batchId,
-      recordedAt: value.recordedAt,
-      chunkCount: value.chunkCount,
-      chunks: new Map([
-        [value.chunkIndex, value.messages.map((message) => message.text)],
-      ]),
-    });
-  }
+  const { batches, sawValidProvenance } = collectProvenanceBatches(
+    entries,
+    currentBatchId,
+  );
   if (sawValidProvenance) {
     const turns = [...batches.values()]
       .filter((batch) => batch.chunks.size === batch.chunkCount)
@@ -126,6 +158,7 @@ export function selectRecentUserTurns(
           batch.chunks.get(chunkIndex) ?? [],
         )
           .flat()
+          .map((message) => message.text)
           .join("\n")
           .trim(),
       )

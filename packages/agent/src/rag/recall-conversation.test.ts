@@ -5,6 +5,7 @@ import { INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE } from "@comis/core";
 import {
   RECENT_USER_TURN_COUNT,
   describeRecentUserTurnSelection,
+  hasRecentForwardedUserTurn,
   selectRecentUserTurns,
 } from "./recall-conversation.js";
 
@@ -13,6 +14,31 @@ function message(role: string, content: unknown): AgentMessage {
 }
 
 describe("selectRecentUserTurns", () => {
+  it("detects a forwarded message from bounded structured provenance", () => {
+    const prior = {
+      type: "custom",
+      customType: INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+      data: {
+        schemaVersion: 1,
+        batchId: "0f0d0f4a-02ff-4cd7-87e4-615723598b59",
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: 100,
+        messages: [{
+          id: "f7097f69-1c86-4f7c-9bbe-fb14bb88ee14",
+          channelId: "channel_a",
+          channelType: "telegram",
+          senderId: "user_a",
+          text: "quoted correspondence",
+          timestamp: 90,
+          isForwarded: true,
+        }],
+      },
+    };
+
+    expect(hasRecentForwardedUserTurn([prior])).toBe(true);
+  });
+
   it("returns three recent user turns so a fourth-turn follow-up keeps its referent", () => {
     const turns = selectRecentUserTurns([
       message("user", "old user context"),

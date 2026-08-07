@@ -24,6 +24,12 @@ export type { TurnBudgetSummary, TurnResultBudgetWrapperResult } from "./turn-re
 
 export { createValidationErrorFormatter } from "./validation-error-formatter.js";
 
+export { createOAuthInvalidationRecovery } from "./oauth-invalidation-recovery.js";
+export type {
+  OAuthInvalidationRecoveryDeps,
+  OAuthInvalidationRecoveryError,
+} from "./oauth-invalidation-recovery.js";
+
 export { createConfigResolver, resolveBreakpointStrategy, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "./config-resolver.js";
 export type { ConfigResolverConfig } from "./config-resolver.js";
 

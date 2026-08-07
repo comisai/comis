@@ -15,6 +15,7 @@
 // Exits 0 having tapped exactly one prompt, 3 if none appeared inside the window (a caller that
 // expected a gate can treat that as "the action was NOT gated" — a real, distinguishable result).
 import { readFileSync } from "node:fs";
+import { rig } from "./_rig.mjs";
 
 const chatId = process.argv[2];
 const verb = (process.argv[3] ?? "approve").toLowerCase();
@@ -26,7 +27,7 @@ if (!chatId || !["approve", "deny"].includes(verb)) {
   process.exit(2);
 }
 
-const wiring = JSON.parse(readFileSync("/tmp/comis-emu.json", "utf8"));
+const wiring = JSON.parse(readFileSync(rig.emuWiringPath, "utf8"));
 const base = `http://127.0.0.1:${wiring.port}`;
 
 /** Pull the button payload out of whichever casing the emulator recorded. */

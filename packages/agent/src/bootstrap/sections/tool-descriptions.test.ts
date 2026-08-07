@@ -44,6 +44,16 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     expect(description).toMatch(/correction.*store.*new current fact/isu);
     expect(description).toMatch(/do not.*(?:forget|delete).*unless.*explicitly asks/isu);
   });
+
+  it("reuses linked prefetch content before fetching a contextual URL again", () => {
+    const description = LEAN_TOOL_DESCRIPTIONS.web_fetch;
+
+    expect(description).toEqual(expect.any(String));
+    expect(description).toMatch(/current request or relevant conversation context/iu);
+    expect(description).toMatch(/linked content.*already.*use it/iu);
+    expect(description).toMatch(/otherwise.*call.*before making claims/iu);
+    expect(description).toMatch(/do not rely on prior knowledge/iu);
+  });
 });
 
 describe("TOOL_SUMMARIES", () => {
@@ -116,6 +126,20 @@ describe("TOOL_GUIDES", () => {
     expect(description).toMatch(/overwrite/iu);
   });
 
+  it("gateway descriptions keep empty config updates tool-free and unchanged", () => {
+    const description = resolveDescription(
+      { name: "gateway" },
+      LEAN_TOOL_DESCRIPTIONS,
+      {
+        modelTier: "small",
+        trustLevel: "admin",
+      },
+    );
+
+    expect(description).toMatch(/empty.*unspecified.*update.*no tool.*unchanged/isu);
+    expect(TOOL_GUIDES.gateway).toMatch(/empty.*unspecified.*config update.*no tool.*nothing changed/isu);
+  });
+
   it("gateway guide preserves existing security language", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/## Gateway Security/);
     expect(TOOL_GUIDES.gateway).toMatch(/CRITICAL/);
@@ -183,6 +207,67 @@ describe("TOOL_GUIDES", () => {
     expect(description).toMatch(/operator.*command.*args.*env/i);
     expect(description).toMatch(/gateway env_set/i);
     expect(description).toMatch(/\$\{NAME\}/);
+  });
+
+  it("agents_manage names the operator-only security posture fields", () => {
+    const description = resolveDescription(
+      { name: "agents_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toMatch(/operator-only/iu);
+    expect(description).toContain("skills.execSandbox");
+    expect(description).toContain("skills.terminal.unsafeDisableSandbox");
+    expect(description).toContain("skills.terminal.allow");
+    expect(description).toContain("agents.<id>.elevatedReply.senderTrustMap");
+    expect(description).toMatch(
+      /operator admin IDs.*alone\/mixed.*refuse all.*agents\.<id>\.elevatedReply\.senderTrustMap.*ask no values.*no platform/isu,
+    );
+    expect(description).toMatch(/operator config/iu);
+    expect(TOOL_GUIDES.agents_manage).toMatch(/operator-only/iu);
+    expect(TOOL_GUIDES.agents_manage).toMatch(/terminal command.*do not ask/isu);
+    expect(TOOL_GUIDES.agents_manage).toMatch(/sender trust.*cannot.*runtime/isu);
+    expect(TOOL_GUIDES.agents_manage).toContain("elevatedReply.defaultTrustLevel");
+  });
+
+  it("agents_manage requires live authority evidence for self-configuration reports", () => {
+    const description = resolveDescription(
+      { name: "agents_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toMatch(
+      /what.*change.*without approval.*get.*view.*authority.*do not guess/isu,
+    );
+  });
+
+  it("telegram promotion is scoped to an explicitly identified group or channel", () => {
+    const description = resolveDescription(
+      { name: "telegram_action" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toMatch(/promot.*explicit.*group|explicit.*group.*promot/iu);
+    expect(description).toMatch(/not.*Comis.*sender trust/iu);
+    expect(description).toMatch(
+      /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*config.*restart.*never ask.*group/isu,
+    );
+  });
+
+  it("channel sender allowlists remain operator-owned", () => {
+    const description = resolveDescription(
+      { name: "channels_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toContain("channels.<type>.allowFrom");
+    expect(description).toMatch(/operator.*config.*daemon restart/isu);
+    expect(TOOL_GUIDES.channels_manage).toContain("channels.<type>.allowFrom");
+    expect(TOOL_GUIDES.channels_manage).toMatch(/cannot.*configure/isu);
   });
 
   // OAuth steering drift guard: assert the OAuth handoff block is present in the
@@ -526,9 +611,9 @@ describe("resolveDescription", () => {
       { trustLevel: "admin", modelTier: "large" },
     );
 
-    expect(agentsDescription).toMatch(/separate.*dedicated.*assistant/isu);
-    expect(agentsDescription).toMatch(/create immediately.*reasonable.*defaults/isu);
-    expect(agentsDescription).toMatch(/do not require.*heartbeat/isu);
+    expect(agentsDescription).toMatch(/dedicated.*assistant/isu);
+    expect(agentsDescription).toMatch(/create (?:immediately|now).*reasonable.*defaults/isu);
+    expect(agentsDescription).toMatch(/no heartbeat/isu);
     expect(heartbeatDescription).toMatch(/explicitly.*heartbeat.*monitor/isu);
     expect(heartbeatDescription).toMatch(/not.*separate.*assistant/isu);
   });
@@ -794,6 +879,7 @@ describe("Task Delegation policy covers the child tool profile", () => {
 describe("message tool states the no-double-post contract", () => {
   const ctx: ToolDescriptionContext = { modelTier: "large", channelType: "telegram" };
   const desc = resolveDescription({ name: "message" }, LEAN_TOOL_DESCRIPTIONS, ctx);
+  const guide = TOOL_GUIDES.message!;
 
   it("tells the model to return the silent sentinel after delivering", () => {
     expect(desc).toContain("NO_REPLY");
@@ -801,6 +887,16 @@ describe("message tool states the no-double-post contract", () => {
 
   it("says why — the final text is sent as well", () => {
     expect(desc).toMatch(/also|too|double|twice/i);
+  });
+
+  it("keeps ordinary current-chat replies out of the message tool", () => {
+    expect(desc).toMatch(/normal.*current.*chat.*without.*tool/iu);
+  });
+
+  it("does not promote routing context into recipient confirmation", () => {
+    expect(guide).toMatch(
+      /conversation context.*routing.*not.*recipient confirmation.*draft.*addressed.*elsewhere/isu,
+    );
   });
 
   it("stays within the lean description budget", () => {

@@ -121,6 +121,54 @@ describe("session persistence projection", () => {
 
     expect(installed).toBe(false);
   });
+
+  it("omits private reasoning on the first durable write without mutating the live message", () => {
+    const dir = makeTempDir();
+    const path = join(dir, "private-reasoning-session.jsonl");
+    const sm = SessionManager.open(path, dir);
+    const privateValue = "test-key";
+    const liveMessage = {
+      role: "assistant",
+      content: [
+        {
+          type: "thinking",
+          thinking: `Compare ${privateValue} before continuing.`,
+          thinkingSignature: `signed-container-${privateValue}`,
+        },
+        { type: "text", text: "Continuing safely." },
+      ],
+      api: "messages",
+      provider: "anthropic",
+      model: "test-model",
+      usage: {
+        input: 10,
+        output: 20,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 30,
+        cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+      },
+      stopReason: "stop" as const,
+      timestamp: Date.now(),
+    };
+    const installed = installSecretSafeSessionPersistence(
+      sm,
+      createMockLogger(),
+      "agent_a:telegram:user_a",
+    );
+    expect(installed.ok).toBe(true);
+
+    sm.appendMessage(liveMessage as any);
+
+    const persisted = readFileSync(path, "utf8");
+    expect(persisted).not.toContain(privateValue);
+    expect(persisted).not.toContain('"type":"thinking"');
+    expect(persisted).toContain("Continuing safely.");
+    expect(liveMessage.content[0]).toMatchObject({
+      type: "thinking",
+      thinking: expect.stringContaining(privateValue),
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

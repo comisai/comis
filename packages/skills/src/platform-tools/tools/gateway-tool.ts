@@ -195,7 +195,7 @@ export function createGatewayTool(
       name: "gateway",
       label: "Gateway Control",
       description:
-        "Read/patch config, restart gateway, check status. Destructive actions require confirmation.",
+        "Read/patch config, restart gateway, check status. Destructive actions require confirmation. Empty/unspecified update: no call; report unchanged.",
       parameters: GatewayToolParams,
       validActions: GATEWAY_ACTIONS,
       actionHandler: async (action, p, rpcCall) => {
@@ -236,11 +236,13 @@ export function createGatewayTool(
             if (isImmutableConfigPath(section, key)) {
               const mutablePaths = getMutableOverridesForSection(section, key);
               const redirect = getManagedSectionRedirect(section, key);
+              const operatorHint =
+                `Requested path "${section}.${key}" requires an operator config edit and daemon restart.`;
               const hint = redirect
                 ? formatRedirectHint(redirect, mutablePaths)
                 : mutablePaths.length > 0
-                  ? `Patchable paths under "${section}": ${mutablePaths.join(", ")}.`
-                  : "This section has no runtime-patchable paths and no dedicated management tool.";
+                  ? `${operatorHint} Runtime-patchable paths under "${section}": ${mutablePaths.join(", ")}.`
+                  : `${operatorHint} This section has no runtime-patchable paths and no dedicated management tool.`;
               throwToolError(
                 "permission_denied",
                 `Cannot patch immutable config path: ${section}.${key}.`,

@@ -313,10 +313,14 @@ export interface ObsPersistenceDeps {
    */
   logRotation?: { maxSizeBytes: number; maxFiles: number };
   /**
-   * The `observability.audit` policy (persist on/off + sink selection). Optional;
-   * defaults to `{persist:true, sink:"both"}`.
+   * The security audit master switch plus `observability.audit` persistence
+   * policy. Optional; defaults to enabled with both durable sinks.
    */
-  auditConfig?: { persist: boolean; sink: "sqlite" | "jsonl" | "both" };
+  auditConfig?: {
+    enabled?: boolean;
+    persist: boolean;
+    sink: "sqlite" | "jsonl" | "both";
+  };
   /**
    * The `observability.persistence` policy — only `cacheBreaks` is read here:
    * when `false`, the cache_break subscriber is NOT wired (opt-out).

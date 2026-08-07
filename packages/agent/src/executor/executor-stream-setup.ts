@@ -37,6 +37,7 @@ import { resolveToolChoiceEnforcement } from "./tool-choice-policy.js";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { StreamFnWrapper } from "./stream-wrappers/index.js";
 import {
+  createOAuthInvalidationRecovery,
   createToolResultSizeBouncer,
   createTurnResultBudgetWrapper,
   createConfigResolver,
@@ -80,6 +81,8 @@ import type { SystemPromptBlocks } from "../bootstrap/index.js";
 import type { ExecutionOverrides } from "./types.js";
 import { homedir } from "node:os";
 import path from "node:path";
+import type { Result } from "@comis/shared";
+import type { OAuthInvalidationRecoveryError } from "./stream-wrappers/index.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,6 +156,10 @@ export interface StreamSetupParams {
   onBreakpointsPlaced?: (highestIdx: number) => void;
   /** Callback invoked when Gemini cache hit is detected. */
   onGeminiCacheHit?: (entry: { cachedTokens: number }) => void;
+  /** Force-refresh and install an OAuth credential rejected before expiry. */
+  recoverInvalidatedOAuth?: (
+    providerId: string,
+  ) => Promise<Result<void, OAuthInvalidationRecoveryError>>;
 }
 
 /** Result of stream wrapper setup. */
@@ -247,7 +254,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     capabilityClass, executionOverrides, deferralResult, systemPromptBlocks, agentId,
     cacheTrace, modelProfile,
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
-    onBreakpointsPlaced, onGeminiCacheHit,
+    onBreakpointsPlaced, onGeminiCacheHit, recoverInvalidatedOAuth,
   } = params;
 
   // Mutable holder for context engine -- allows the requestBodyInjector
@@ -335,11 +342,19 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   const capturedCacheRetention = getExecutionCacheRetention();
 
   // Wrapper chain order (outermost first):
-  // ttlGuard -> toolCallRepairWrapper -> validationErrorFormatter -> toolResultSizeBouncer ->
+  // oauthInvalidationRecovery -> ttlGuard -> toolCallRepairWrapper -> validationErrorFormatter -> toolResultSizeBouncer ->
   //   turnResultBudget -> configResolver -> requestBodyInjector (Anthropic) ->
   //   geminiCacheInjector (Google) -> [traceWriters]
 
-  // TTL guard is outermost wrapper
+  if (recoverInvalidatedOAuth) {
+    wrappers.push(createOAuthInvalidationRecovery({
+      clock: deps.clock,
+      logger: deps.logger,
+      recoverCredential: recoverInvalidatedOAuth,
+    }));
+  }
+
+  // TTL guard is outermost when OAuth recovery is unavailable.
   const onTtlExpiry = () => {
     // Coordinated resets on TTL expiry.
     //

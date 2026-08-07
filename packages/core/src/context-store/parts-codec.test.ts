@@ -263,16 +263,41 @@ describe("parts-codec — reasoning exclusion from visible content", () => {
     const hasThinking = reconstructed.content.some((b) => b.type === "thinking");
     expect(hasThinking).toBe(false);
   });
+
+  it("keeps private reasoning text and signatures out of persisted part metadata", () => {
+    const privateValue = "test-key";
+    const assistant = {
+      ...ANTHROPIC_MESSAGES[1],
+      content: [
+        {
+          type: "thinking",
+          thinking: `Compare ${privateValue} before continuing.`,
+          thinkingSignature: `signed-container-${privateValue}`,
+        },
+        { type: "text", text: "Continuing safely." },
+      ],
+    } as AssistantMessage;
+
+    const reasoningPart = messageToParts(assistant).find((part) => part.kind === "reasoning");
+
+    expect(reasoningPart).toBeDefined();
+    expect(JSON.stringify(reasoningPart)).not.toContain(privateValue);
+    expect(reasoningPart!.metadata.raw).toBeUndefined();
+  });
 });
 
 describe("parts-codec — verbatim raw-block capture", () => {
-  it("captures a non-undefined metadata.raw deep-equal to the source block for every part", () => {
+  it("captures replayable blocks verbatim while keeping private reasoning payload-free", () => {
     const assistant = ANTHROPIC_MESSAGES[1] as AssistantMessage;
     const parts = messageToParts(assistant);
     expect(parts.length).toBe(assistant.content.length);
     parts.forEach((part, i) => {
-      expect(part.metadata.raw).toBeDefined();
-      expect(part.metadata.raw).toEqual(assistant.content[i]);
+      if (part.kind === "reasoning") {
+        expect(part.metadata.raw).toBeUndefined();
+      } else {
+        expect(part.metadata.raw).toBeDefined();
+        expect(part.metadata.raw).toEqual(assistant.content[i]);
+      }
     });
   });
 
@@ -461,8 +486,8 @@ describe("parts-codec — isError + tool input fidelity", () => {
 /**
  * Build the EXPECTED reconstruction of a canonical message: identical to the
  * source EXCEPT an assistant message's visible content drops any `thinking`
- * block (reasoning rides as a marked part / metadata, never re-emitted as
- * a visible content block). User + toolResult messages are returned unchanged.
+ * block (reasoning rides as a payload-free marked part, never re-emitted as a
+ * visible content block). User + toolResult messages are returned unchanged.
  */
 function stripVisibleReasoning(msg: Message): Message {
   if (msg.role !== "assistant") return msg;

@@ -115,7 +115,7 @@ export function ensureLcdTables(db: Database.Database): void {
       tool_input   TEXT,                         -- JSON: ToolCall.arguments
       tool_output  TEXT,                         -- JSON: ToolResultMessage.content
       is_error     INTEGER,                      -- 0/1; NULL for non-tool_result
-      metadata     TEXT NOT NULL DEFAULT '{}'   -- JSON LcdPartMetadata: { raw, rawType, topLevelReasoningOnly, messageEnvelope }
+      metadata     TEXT NOT NULL DEFAULT '{}'   -- JSON LcdPartMetadata: projected raw replay block, reasoning marker, message envelope
     );
     CREATE INDEX IF NOT EXISTS idx_lcd_parts_msg ON lcd_message_parts(message_id, ordinal);
 

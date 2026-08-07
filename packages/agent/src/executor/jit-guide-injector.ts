@@ -77,6 +77,16 @@ export interface GuideInjectionOptions {
    * guide set suppresses repeats.
    */
   delegationAvailable?: boolean;
+
+  /** Structured arguments from the tool call, used only for bounded-result routing. */
+  toolParams?: Readonly<Record<string, unknown>>;
+}
+
+function isSelfAuthorityProjection(
+  toolName: string,
+  params: Readonly<Record<string, unknown>> | undefined,
+): boolean {
+  return toolName === "agents_manage" && params?.action === "get" && params.view === "authority";
 }
 
 export function wrapToolResultWithGuide(
@@ -86,6 +96,19 @@ export function wrapToolResultWithGuide(
   logger: ComisLogger,
   options?: GuideInjectionOptions,
 ): AgentToolResult<unknown> {
+  // The authority projection is itself the complete, source-derived reporting
+  // contract. Appending the general management manuals can push this bounded
+  // result through offload indirection and make a simple authority answer depend
+  // on file-path recovery. Preserve the projection exactly; a later ordinary
+  // management call can still receive the one-shot guides.
+  if (isSelfAuthorityProjection(toolName, options?.toolParams)) {
+    logger.debug(
+      { step: "jit-guide-injection", toolName },
+      "Kept bounded self-authority result free of deferred guides",
+    );
+    return result;
+  }
+
   // Two-phase design: first decide what WOULD fire without mutating state,
   // then commit (mark delivered + append) only if the result is non-error.
   // Rationale: if the first call to a guided tool errors (validation,
@@ -205,6 +228,7 @@ export function createJitGuideWrapper(
       const result = await tool.execute(toolCallId, params, signal, onUpdate, _ctx);
       return wrapToolResultWithGuide(tool.name, result, deliveredGuides, logger, {
         delegationAvailable,
+        toolParams: params,
       });
     },
   }));

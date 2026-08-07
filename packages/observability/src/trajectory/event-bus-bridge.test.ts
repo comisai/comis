@@ -56,6 +56,35 @@ describe("trajectory event type filtering", () => {
   });
 });
 
+describe("attachTrajectoryToEventBus -- OAuth refresh diagnostics", () => {
+  it("records a content-free refresh failure with its HTTP status", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("auth:refresh_failed", {
+      provider: "openai-codex",
+      profileId: "openai-codex:user_a@example.com",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+      timestamp: 10,
+    });
+
+    expect(recorder.calls).toEqual([{
+      type: "auth.refresh_failed",
+      data: {
+        provider: "openai-codex",
+        errorKind: "invalid_grant",
+        hint: "Restart the login flow",
+        status: 401,
+      },
+      parentEntryId: undefined,
+    }]);
+    expect(JSON.stringify(recorder.calls)).not.toContain("user_a@example.com");
+  });
+});
+
 describe("attachTrajectoryToEventBus background cancellation and reentry", () => {
   it("records cancelled and reentered lifecycle events on the owning trajectory", () => {
     const bus = makeBus();
@@ -775,6 +804,29 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
     expect(data2.status).toBe("partial");
     expect(data2.errorKind).toBe("platform");
   });
+
+  it("delivery reply bindings retain platform message IDs in trajectories", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("delivery:reply_bound", {
+      messageId: "message-42",
+      channelId: "chat_a",
+      channelType: "telegram",
+      traceId: "trace-a",
+      agentId: "agent_a",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("delivery.reply_bound");
+    expect(recorder.calls[0]!.data).toEqual({
+      messageId: "message-42",
+      channelId: "chat_a",
+      channelType: "telegram",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1136,6 +1188,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       failureCount: 0,
       timestamp: 0,
     },
+    "auth:refresh_failed": {
+      provider: "openai-codex",
+      profileId: "openai-codex:user_a@example.com",
+      errorKind: "invalid_grant",
+      hint: "Restart the login flow",
+      status: 401,
+      timestamp: 0,
+    },
     "skill:prompt_loaded": {
       skillName: "s",
       source: "registry",
@@ -1432,6 +1492,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       channelType: "telegram",
       channelId: "c",
       origin: "user",
+    },
+    "delivery:reply_bound": {
+      messageId: "message-42",
+      channelId: "c",
+      channelType: "telegram",
+      traceId: "trace-a",
+      agentId: "default",
+      timestamp: 1000,
     },
     "delivery:complete": {
       entryId: "e",
@@ -2221,6 +2289,7 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- architecture-test surface", () => {
     expect(TRAJECTORY_BRIDGE_MAPPING["skill:prompt_invoked"]).toBe("skill.prompt_invoked");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:outward_ledger_transition"]).toBe("delivery.outward_ledger_transition");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:enqueued"]).toBe("delivery.queued");
+    expect(TRAJECTORY_BRIDGE_MAPPING["delivery:reply_bound"]).toBe("delivery.reply_bound");
     expect(TRAJECTORY_BRIDGE_MAPPING["delivery:complete"]).toBe("delivery.dispatched");
     // Context engine pipeline → context.compiled.
     expect(TRAJECTORY_BRIDGE_MAPPING["context:pipeline"]).toBe("context.compiled");
@@ -4465,7 +4534,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(142);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(144);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

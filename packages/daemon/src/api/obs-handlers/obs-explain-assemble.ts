@@ -629,6 +629,9 @@ export function assembleIncidentReport(
           },
         }
       : {}),
+    ...(signals.deliveryDispatch?.messageIds !== undefined
+      ? { deliveryReceipt: { messageIds: signals.deliveryDispatch.messageIds } }
+      : {}),
     ...(signals.deliveryAborts !== undefined
       ? { deliverySkipped: { events: signals.deliveryAborts.events, chunksNotSent: signals.deliveryAborts.chunksNotSent } }
       : {}),

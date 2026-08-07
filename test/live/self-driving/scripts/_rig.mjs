@@ -13,6 +13,7 @@
 //   source checkout    <root>/packages/<pkg>/dist/…              (rsync'd repo tree)
 // so a helper never hand-builds either path: use comisDist()/importCli()/requireCodeRoot().
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { homedir, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -131,7 +132,28 @@ export const requireCodeRoot = (name) => {
 /** Default the RPC client env (config path + gateway token) so ad-hoc calls need no env prefix. */
 export const ensureRpcEnv = () => {
   if (!process.env.COMIS_CONFIG_PATHS) process.env.COMIS_CONFIG_PATHS = `${dataDir}/config.yaml`;
-  const tok = pick(process.env.COMIS_GATEWAY_TOKEN, process.env.GWTOKEN, fileVars.GWTOKEN);
+  let tok = process.env.COMIS_GATEWAY_TOKEN;
+  if (!tok && isLocal) {
+    try {
+      const childEnv = {
+        ...process.env,
+        COMIS_DATA_DIR: dataDir,
+        COMIS_CONFIG_PATHS: `${dataDir}/config.yaml`,
+      };
+      delete childEnv.COMIS_GATEWAY_TOKEN;
+      delete childEnv.GWTOKEN;
+      const resolved = execFileSync(
+        process.execPath,
+        [comisDist("cli", "dist/cli.js"), "secrets", "get", "--offline", "COMIS_GATEWAY_TOKEN"],
+        { encoding: "utf8", env: childEnv, stdio: ["ignore", "pipe", "ignore"] },
+      ).trim();
+      if (resolved.length >= 32) tok = resolved;
+    } catch {
+      // A selected local store may not exist during initial setup. The explicit
+      // helper token remains the final fallback for that pre-bootstrap state.
+    }
+  }
+  tok = pick(tok, process.env.GWTOKEN, fileVars.GWTOKEN);
   if (tok && !process.env.COMIS_GATEWAY_TOKEN) process.env.COMIS_GATEWAY_TOKEN = tok;
 };
 

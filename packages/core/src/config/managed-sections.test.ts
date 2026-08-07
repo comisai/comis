@@ -37,6 +37,16 @@ describe("getManagedSectionRedirect", () => {
     expect(getManagedSectionRedirect("agents", "coding")?.tool).toBe("agents_manage");
   });
 
+  it.each([
+    "skills.execSandbox",
+    "skills.terminal.unsafeDisableSandbox",
+    "skills.terminal.allow",
+    "elevatedReply.senderTrustMap",
+    "elevatedReply.defaultTrustLevel",
+  ])("does not redirect operator-only agent path %s to agents_manage", (subpath) => {
+    expect(getManagedSectionRedirect("agents", `default.${subpath}`)).toBeUndefined();
+  });
+
   it("longer prefix wins: integrations.mcp.servers -> mcp_manage", () => {
     expect(getManagedSectionRedirect("integrations", "mcp.servers")?.tool).toBe(
       "mcp_manage",
@@ -58,10 +68,11 @@ describe("getManagedSectionRedirect", () => {
     expect(getManagedSectionRedirect("providers", "entries.nvidia")?.tool).toBe("providers_manage");
   });
 
-  it("redirects channels paths to channels_manage", () => {
-    expect(getManagedSectionRedirect("channels", "telegram.allowFrom")?.tool).toBe(
+  it("redirects runtime-managed channel paths to channels_manage", () => {
+    expect(getManagedSectionRedirect("channels", "telegram.enabled")?.tool).toBe(
       "channels_manage",
     );
+    expect(getManagedSectionRedirect("channels", "telegram.allowFrom")).toBeUndefined();
   });
 
   it("returns undefined for sections without a managed tool", () => {
@@ -120,7 +131,7 @@ describe("formatRedirectHint", () => {
   });
 
   it("warns when the tool is not fullyManaged", () => {
-    const redirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
+    const redirect = getManagedSectionRedirect("channels", "telegram.enabled")!;
     const hint = formatRedirectHint(redirect);
     expect(hint).toContain(
       "brand-new platform types still requires operator config edits",
@@ -128,7 +139,7 @@ describe("formatRedirectHint", () => {
   });
 
   it("emits 'Call <tool> directly' when redirect has no exampleArgs (no discover_tools mention)", () => {
-    const redirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
+    const redirect = getManagedSectionRedirect("channels", "telegram.enabled")!;
     const hint = formatRedirectHint(redirect);
     expect(hint).not.toContain("Recovery: call");
     expect(hint).toContain("Call channels_manage directly");
@@ -182,7 +193,7 @@ describe("formatRedirectHint", () => {
   });
 
   it("WITHOUT exampleArgs -> 'Call <tool> directly; it will auto-load on first invocation.'", () => {
-    const channelsRedirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
+    const channelsRedirect = getManagedSectionRedirect("channels", "telegram.enabled")!;
     expect(channelsRedirect.exampleArgs).toBeUndefined();
     const hint = formatRedirectHint(channelsRedirect);
     expect(hint).toContain("Call channels_manage directly");
@@ -294,7 +305,7 @@ describe("schemaFragment (inline schema in the rejection hint)", () => {
   });
 
   it("channels (channels_manage) lists exact action enum from channels-manage-tool.ts", () => {
-    const redirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
+    const redirect = getManagedSectionRedirect("channels", "telegram.enabled")!;
     expect(redirect.schemaFragment).toBeDefined();
     // Pinned to the TypeBox Union literals in channels-manage-tool.ts:32-37.
     expect(redirect.schemaFragment!.actions).toEqual([

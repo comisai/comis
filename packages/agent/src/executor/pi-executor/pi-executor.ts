@@ -80,7 +80,7 @@ import {
   type ContextStoreScope,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { ok, suppressError, type Result } from "@comis/shared";
+import { err, ok, suppressError, type Result } from "@comis/shared";
 import type {
   AfterToolCallResult,
   AgentMessage,
@@ -132,6 +132,7 @@ import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
 import {
   describeRecentUserTurnSelection,
+  hasRecentForwardedUserTurn,
   selectRecentUserTurns,
 } from "../../rag/recall-conversation.js";
 import {
@@ -1177,6 +1178,8 @@ async function runSessionLocked(
     sm.getEntries?.() ?? [],
     msg.id,
   );
+  const forwardedContextActive = msg.metadata.isForwarded === true
+    || hasRecentForwardedUserTurn(sm.getEntries?.() ?? [], msg.id);
   const requestRelevanceHistory = describeRecentUserTurnSelection(recentUserTurns);
 
   // Get or create session-scoped guide delivery tracking.
@@ -1966,6 +1969,11 @@ async function runSessionLocked(
       {
         requestMutationToolNames,
         currentSuccessfulMutationCount: () => currentSuccessfulMutationCount(),
+        forwardedContextActive,
+        currentRoute: {
+          channelType: msg.channelType,
+          channelId: msg.channelId,
+        },
         citationEvidenceEnabled: () =>
           currentWebResearchObserved()
           || relayedCitationEvidence !== undefined
@@ -2029,6 +2037,35 @@ async function runSessionLocked(
               metadata: {
                 claimKind: "citation",
                 reason: "citation_without_fetch_evidence",
+              },
+            },
+          );
+        },
+        onRecipientBlocked: () => {
+          deps.logger.warn(
+            {
+              step: "recipient-authority",
+              channelType: msg.channelType,
+              errorKind: "precondition" as const,
+              hint:
+                "Ask the user for the exact recipient and delivery authority; "
+                + "the current request route cannot substitute for a forwarded correspondent.",
+            },
+            "Outbound message recipient authority denied",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "response.outbound_recipient_authority_guard",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                reason: "forwarded_context_current_route_substitution",
+                channelType: msg.channelType,
               },
             },
           );
@@ -2149,6 +2186,7 @@ async function runSessionLocked(
             delegationAvailable: contextTools.some(
               (t) => (t as { name?: string }).name === "sessions_spawn",
             ),
+            toolParams: params as Record<string, unknown>,
           });
         },
       } as unknown as (typeof contextTools)[0]);
@@ -2169,6 +2207,7 @@ async function runSessionLocked(
   // Gemini cache hit tracking for Execution complete log
   let geminiCacheHit = false;
   let geminiCachedTokens = 0;
+  const oauthManagerForRecovery = deps.oauthManager;
 
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
@@ -2193,6 +2232,29 @@ async function runSessionLocked(
       geminiCacheHit = true;
       geminiCachedTokens = entry.cachedTokens;
     },
+    ...(oauthManagerForRecovery !== undefined
+      ? {
+          recoverInvalidatedOAuth: async (providerId: string) => {
+            const refreshed = await oauthManagerForRecovery.refreshInvalidatedCredential(
+              providerId,
+              { oauthProfiles: config.oauthProfiles },
+            );
+            if (!refreshed.ok) {
+              return err({
+                code: refreshed.error.code,
+                ...(refreshed.error.hint !== undefined
+                  ? { hint: refreshed.error.hint }
+                  : {}),
+              });
+            }
+            deps.authStorage.setRuntimeOAuthCredential(
+              providerId,
+              refreshed.value.credential,
+            );
+            return ok(undefined);
+          },
+        }
+      : {}),
   });
   const {
     contextEngineRef, cacheBreakDetector,
