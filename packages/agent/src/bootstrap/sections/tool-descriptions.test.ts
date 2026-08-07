@@ -804,6 +804,7 @@ describe("Task Delegation policy covers the child tool profile", () => {
 describe("message tool states the no-double-post contract", () => {
   const ctx: ToolDescriptionContext = { modelTier: "large", channelType: "telegram" };
   const desc = resolveDescription({ name: "message" }, LEAN_TOOL_DESCRIPTIONS, ctx);
+  const guide = TOOL_GUIDES.message!;
 
   it("tells the model to return the silent sentinel after delivering", () => {
     expect(desc).toContain("NO_REPLY");
@@ -811,6 +812,16 @@ describe("message tool states the no-double-post contract", () => {
 
   it("says why — the final text is sent as well", () => {
     expect(desc).toMatch(/also|too|double|twice/i);
+  });
+
+  it("keeps ordinary current-chat replies out of the message tool", () => {
+    expect(desc).toMatch(/normal.*current.*chat.*without.*tool/iu);
+  });
+
+  it("does not promote routing context into recipient confirmation", () => {
+    expect(guide).toMatch(
+      /conversation context.*routing.*not.*recipient confirmation.*draft.*addressed.*elsewhere/isu,
+    );
   });
 
   it("stays within the lean description budget", () => {
