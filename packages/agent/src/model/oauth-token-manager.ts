@@ -1010,9 +1010,15 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               value: { apiKey: synth.access, newCredentials: synth },
             };
           } else {
-            // Non-Codex: original pi-ai path UNCHANGED.
-            // 30s timeout wrapper — pi-ai has no built-in timeout.
-            const piAiCall = fromPromise(resolveOAuthApiKey(providerId, credsRecord));
+            // Non-Codex: the pi-ai path. One budget governs both halves — the
+            // race stops us waiting, and aborting the controller cancels the
+            // exchange itself. Without the abort the abandoned refresh keeps
+            // running and holds the provider's credential-store lock, so the
+            // next attempt queues behind a request nobody awaits.
+            const refreshAbort = new AbortController();
+            const piAiCall = fromPromise(
+              resolveOAuthApiKey(providerId, credsRecord, { signal: refreshAbort.signal }),
+            );
             const raceResult = await raceWithTimeout(
               piAiCall,
               REFRESH_TIMEOUT_MS,
@@ -1021,6 +1027,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
             if (!raceResult.ok) {
               // timeout
+              refreshAbort.abort();
               logger.warn(
                 {
                   provider: providerId,

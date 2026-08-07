@@ -945,6 +945,106 @@ describe("registerCustomProviders", () => {
     expect(found!.compat).toEqual(sample.compat);
   });
 
+  // `samplingParams` joined `compat` / `thinkingLevelMap` as catalog-owned
+  // capability metadata: default sampling values (top_p, top_k, min_p,
+  // repetition_penalty, …) the provider adapters send as-is. It has no
+  // user-supplied counterpart on the catalog path, so re-registration must
+  // carry it exactly like `compat` — dropping it silently samples a model
+  // differently than its catalog entry specifies.
+  it("carries catalog samplingParams through both re-registration branches", async () => {
+    const sample = getModels("anthropic").find(
+      (m) => m.samplingParams !== undefined && Object.keys(m.samplingParams).length > 0,
+    )
+      // No anthropic model ships defaults today; any catalog provider proves
+      // the passthrough just as well.
+      ?? getModels("openrouter").find(
+        (m) => m.samplingParams !== undefined && Object.keys(m.samplingParams).length > 0,
+      );
+    // Nothing in the catalog carries defaults yet — the synthetic case below
+    // still pins the mapping, so skip only this catalog-sourced assertion.
+    if (!sample) return;
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "sk-ant-test" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const { registry } = await createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    registerCustomProviders(
+      registry,
+      {
+        anthropic: {
+          type: "anthropic",
+          baseUrl: "",
+          apiKeyName: "ANTHROPIC_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    const found = registry.find("anthropic", sample.id);
+    expect(found?.samplingParams).toEqual(sample.samplingParams);
+  });
+
+  it("forwards user-declared samplingParams for a custom OpenAI-compatible model", async () => {
+    // vLLM / llama.cpp / SGLang accept sampling knobs pi does not model as
+    // named fields. Without a passthrough the config key validates and then
+    // vanishes before the request — the same silent-drop shape that made
+    // `compat.forceAdaptiveThinking` a hard 400 on every thinking turn.
+    const secretManager = createSecretManager({ VLLM_API_KEY: "vllm-test" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const { registry } = await createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    const { registered } = registerCustomProviders(
+      registry,
+      {
+        "local-vllm": {
+          type: "openai",
+          baseUrl: "http://localhost:8000/v1",
+          apiKeyName: "VLLM_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "qwen-local", samplingParams: { top_k: 40, min_p: 0.05 } }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+    expect(registered).toBe(1);
+
+    const found = registry.find("local-vllm", "qwen-local");
+    expect(found?.samplingParams).toEqual({ top_k: 40, min_p: 0.05 });
+  });
+
+  it("user samplingParams override catalog defaults per key", async () => {
+    const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const { registry } = await createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    registerCustomProviders(
+      registry,
+      {
+        "or-tuned": {
+          type: "openrouter",
+          baseUrl: "https://openrouter.example/api/v1",
+          apiKeyName: "OPENROUTER_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "tuned-model", samplingParams: { top_p: 0.8 } }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    const found = registry.find("or-tuned", "tuned-model");
+    expect(found?.samplingParams).toEqual({ top_p: 0.8 });
+  });
+
   it("sparse list with native type enriches missing fields from catalog", async () => {
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });

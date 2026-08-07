@@ -262,10 +262,12 @@ describe("createOAuthTokenManager", () => {
       expect(result.value).toBe("ghu_test-api-key-123");
     }
 
-    // Verify getOAuthApiKey was called with the right shape
+    // Verify getOAuthApiKey was called with the right shape — including the
+    // cancellation seam the refresh budget drives.
     expect(mockGetOAuthApiKey).toHaveBeenCalledWith(
       "github-copilot",
       { "github-copilot": FAKE_CREDS },
+      { signal: expect.any(AbortSignal) },
     );
   });
 
@@ -315,6 +317,7 @@ describe("createOAuthTokenManager", () => {
     expect(mockGetOAuthApiKey).toHaveBeenLastCalledWith(
       "github-copilot",
       { "github-copilot": newCreds },
+      { signal: expect.any(AbortSignal) },
     );
   });
 
@@ -399,6 +402,7 @@ describe("createOAuthTokenManager", () => {
     expect(mockGetOAuthApiKey).toHaveBeenCalledWith(
       "github-copilot",
       { "github-copilot": FAKE_CREDS },
+      { signal: expect.any(AbortSignal) },
     );
   });
 
@@ -1211,6 +1215,48 @@ describe("OAuthTokenManager — port-backed", () => {
       if (!result.ok) expect(result.error.code).toBe("REFRESH_FAILED");
       expect(events).toHaveLength(1);
       expect(events[0].errorKind).toBe("timeout");
+    });
+
+    // Test F.3 — the budget must CANCEL the exchange, not merely stop waiting
+    // for it. An abandoned refresh keeps running and holds the provider's
+    // credential-store lock, so the next attempt queues behind a request
+    // nobody is waiting for any more.
+    it("30s timeout — aborts the signal handed to the pi-ai refresh", async () => {
+      const secretManager = makeSecretManager({
+        OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
+      });
+      mockGetOAuthProvider.mockReturnValue(makeFakeProvider("github-copilot"));
+      mockGetOAuthApiKey.mockImplementation(() => new Promise(() => {/* never resolves */}));
+      vi.useFakeTimers();
+      const manager = createOAuthTokenManager({ secretManager, eventBus, ...legacyOAuthDeps() });
+      const promise = manager.getApiKey("github-copilot");
+      await vi.advanceTimersByTimeAsync(31_000);
+      const result = await promise;
+      vi.useRealTimers();
+
+      expect(result.ok).toBe(false);
+      const signal = mockGetOAuthApiKey.mock.calls[0]?.[2]?.signal;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(true);
+    });
+
+    it("leaves the refresh signal unaborted when the exchange completes in budget", async () => {
+      const secretManager = makeSecretManager({
+        OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
+      });
+      mockGetOAuthProvider.mockReturnValue(makeFakeProvider("github-copilot"));
+      mockGetOAuthApiKey.mockResolvedValue({
+        newCredentials: FAKE_CREDS,
+        apiKey: "ghu_in-budget",
+      });
+      const manager = createOAuthTokenManager({ secretManager, eventBus, ...legacyOAuthDeps() });
+
+      const result = await manager.getApiKey("github-copilot");
+
+      expect(result.ok).toBe(true);
+      const signal = mockGetOAuthApiKey.mock.calls[0]?.[2]?.signal;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(false);
     });
   });
 

@@ -108,3 +108,50 @@ describe("resolveOAuthApiKey", () => {
     ).rejects.toThrow(/no api key/i);
   });
 });
+
+describe("resolveOAuthApiKey refresh cancellation", () => {
+  const expired = { access: "old", refresh: "old-refresh", expires: Date.now() - 1 };
+
+  // A refresh with no abort signal cannot be cancelled: a stalled token
+  // endpoint leaves the exchange running while the caller's timeout gives up,
+  // and the abandoned call keeps holding the provider's credential-store lock.
+  it("always hands the provider a refresh signal", async () => {
+    const oauth = makeFakeOAuth();
+    await resolveOAuthApiKey("anthropic", { anthropic: expired }, { oauthOverride: oauth });
+    const [, signal] = vi.mocked(oauth.refresh).mock.calls[0]!;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal.aborted).toBe(false);
+  });
+
+  it("forwards the caller's signal so its budget governs the exchange", async () => {
+    const oauth = makeFakeOAuth();
+    const controller = new AbortController();
+    await resolveOAuthApiKey(
+      "anthropic",
+      { anthropic: expired },
+      { oauthOverride: oauth, signal: controller.signal },
+    );
+    const [, signal] = vi.mocked(oauth.refresh).mock.calls[0]!;
+    expect(signal).toBe(controller.signal);
+  });
+
+  it("propagates an already-aborted caller signal to the provider", async () => {
+    const oauth = makeFakeOAuth();
+    const controller = new AbortController();
+    controller.abort();
+    await resolveOAuthApiKey(
+      "anthropic",
+      { anthropic: expired },
+      { oauthOverride: oauth, signal: controller.signal },
+    );
+    const [, signal] = vi.mocked(oauth.refresh).mock.calls[0]!;
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("does not manufacture a signal when the token is still valid (no refresh call)", async () => {
+    const oauth = makeFakeOAuth();
+    const valid = { access: "live", refresh: "live-refresh", expires: Date.now() + 3_600_000 };
+    await resolveOAuthApiKey("anthropic", { anthropic: valid }, { oauthOverride: oauth });
+    expect(oauth.refresh).not.toHaveBeenCalled();
+  });
+});

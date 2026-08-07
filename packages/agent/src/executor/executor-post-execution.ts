@@ -215,13 +215,28 @@ export interface PostExecutionBridgeResult {
    * The SDK-normalized stop reason of the session's FINAL turn. The bridge
    * captures `AssistantMessage.stopReason` at EVERY `turn_end`
    * (pi-event-bridge.ts), so the value carried here is the TERMINAL one. Its
-   * union is `"stop" | "length" | "toolUse" | "error" | "aborted"` (pi-ai) — a
-   * terminal `"length"` is the output-cap truncation the chokepoint promotes to
+   * union is
+   * `"pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred"`
+   * (pi-ai) — matching is POSITIVE throughout, so an added member never
+   * misclassifies. `"pending"` is the stream-accumulator initial value and
+   * `"deferred"` only appears for opt-in deferred provider requests, which
+   * Comis does not issue. A terminal `"length"` is the output-cap truncation
+   * the chokepoint promotes to
    * `finishReason:"output_starved"` (see {@link promoteOutputStarved}). Already
    * returned by `buildBridgeResult`; surfaced on this interface so the chokepoint
    * can read it without a second source.
    */
   lastStopReason?: string;
+  /**
+   * For a terminal `"length"`, whether output ended BELOW the model's own
+   * output ceiling — i.e. the provider truncated early (context pressure)
+   * rather than the model spending its whole allowance. Decided by the SDK's
+   * `isRecoverableLength` at the bridge's `turn_end`, which is the same
+   * predicate the SDK's own compact-and-retry uses, so both layers agree about
+   * the turn. `undefined` = the model cap was unavailable, NOT "measured
+   * false"; the hint falls back to its cap/emit branches in that case.
+   */
+  lastLengthStopRecoverable?: boolean;
   /** Session-cumulative cache savings across all turns (USD). */
   executionCacheSavedUsd?: number;
   /** Thinking tokens from SDK reasoningTokens field. */
@@ -831,7 +846,19 @@ const TERMINAL_OUTPUT_STARVED_STOP_REASONS: ReadonlySet<string> = new Set([
 export function outputStarvedHint(evidence: {
   textEmitted?: boolean;
   lastStopReason?: string;
+  recoverableLength?: boolean;
 }): string {
+  // Checked FIRST: a below-cap truncation makes both cap-shaped remedies
+  // wrong, whether or not text was emitted. The SDK detects the same shape and
+  // compacts + retries the turn once, so the operator needs to know a
+  // compaction already ran before reaching for any knob.
+  if (evidence.recoverableLength === true) {
+    return "The terminal turn stopped at a length limit BELOW the model's own output ceiling, so the "
+      + "configured cap was not the binding constraint — the provider truncated the response early, "
+      + "which points at context pressure. The SDK compacts and retries such a turn once; if this "
+      + "recurs, reduce the assembled context (contextEngine budget, tool-result sizes) rather than "
+      + "raising maxTokens.";
+  }
   if (evidence.textEmitted === true) {
     return "The terminal turn was cut off at the output cap after emitting text: raise the agent's "
       + "maxTokens, or enable contextEngine.outputEscalation so a capped turn retries with a larger "
@@ -2206,9 +2233,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         errorKind: "resource" as const,
         lastStopReason: bridgeResult.lastStopReason,
         textEmitted: bridgeResult.textEmitted === true,
+        // Omitted rather than coerced when unmeasured, so the field never
+        // asserts a below-cap truncation the bridge could not substantiate.
+        ...(bridgeResult.lastLengthStopRecoverable !== undefined
+          ? { recoverableLength: bridgeResult.lastLengthStopRecoverable }
+          : {}),
         hint: outputStarvedHint({
           ...(bridgeResult.textEmitted !== undefined ? { textEmitted: bridgeResult.textEmitted } : {}),
           ...(bridgeResult.lastStopReason !== undefined ? { lastStopReason: bridgeResult.lastStopReason } : {}),
+          ...(bridgeResult.lastLengthStopRecoverable !== undefined
+            ? { recoverableLength: bridgeResult.lastLengthStopRecoverable }
+            : {}),
         }),
       },
       "output_starved — annotated truncated reply",

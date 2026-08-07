@@ -49,10 +49,25 @@ export interface ResolvedOAuthApiKey {
   apiKey: string;
 }
 
+/**
+ * Fallback budget for a refresh whose caller supplied no signal. The provider
+ * requires a signal, and an unbounded one is the state this constant exists to
+ * prevent: a stalled token endpoint keeps the exchange — and the provider's
+ * credential-store lock — alive after the caller has already given up.
+ */
+const DEFAULT_REFRESH_TIMEOUT_MS = 30_000;
+
 /** Optional seams for resolveOAuthApiKey. */
 export interface ResolveOAuthApiKeyDeps {
   /** Test seam: bypass the builtin catalog lookup with a specific flow. */
   oauthOverride?: OAuthAuth;
+  /**
+   * Cancellation for the refresh exchange. Callers that already bound the
+   * operation should pass their own signal so one budget governs both the
+   * outer wait and the in-flight request; omitting it falls back to
+   * `DEFAULT_REFRESH_TIMEOUT_MS`.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -63,7 +78,9 @@ export interface ResolveOAuthApiKeyDeps {
  * - unknown/api-key-only provider → throws `Unknown OAuth provider: <id>`
  * - no credentials stored for the provider → null
  * - expired credentials → `refresh()` then derive; refresh failures throw
- *   `Failed to refresh OAuth token for <id>`
+ *   `Failed to refresh OAuth token for <id>`. An aborted refresh is a refresh
+ *   failure and reports as one — the signal bounds the exchange, it does not
+ *   change the contract.
  * - valid credentials → derive without a network call
  */
 export async function resolveOAuthApiKey(
@@ -82,8 +99,9 @@ export async function resolveOAuthApiKey(
 
   let current = { type: "oauth" as const, ...stored };
   if (systemNowMs() >= current.expires) {
+    const signal = deps.signal ?? AbortSignal.timeout(DEFAULT_REFRESH_TIMEOUT_MS);
     try {
-      current = await oauth.refresh(current);
+      current = await oauth.refresh(current, signal);
     } catch {
       throw new Error(`Failed to refresh OAuth token for ${providerId}`);
     }

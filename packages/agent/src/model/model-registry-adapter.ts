@@ -186,6 +186,8 @@ export interface CustomProviderRegistration {
     reasoning?: boolean;
     input?: ReadonlyArray<"text" | "image">;
     cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+    /** OpenAI-compatible sampling knobs the SDK does not model as named fields. */
+    samplingParams?: Readonly<Record<string, unknown>>;
   }>;
 }
 
@@ -275,6 +277,7 @@ export function registerCustomProviders(
       cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
       thinkingLevelMap?: CatalogModel["thinkingLevelMap"];
       compat?: CatalogModel["compat"];
+      samplingParams?: Readonly<Record<string, unknown>>;
     }>;
 
     if (shouldInheritCatalog) {
@@ -295,6 +298,10 @@ export function registerCustomProviders(
         // provider rejects with a hard 400 on every thinking-enabled turn.
         thinkingLevelMap: m.thinkingLevelMap,
         compat: m.compat,
+        // Catalog-owned default sampling values, same passthrough reason as
+        // `compat`: dropping them samples the model differently than its
+        // catalog entry specifies.
+        samplingParams: m.samplingParams,
       }));
       logger.debug(
         { providerName, type: entry.type, inherited: workingModels.length },
@@ -314,6 +321,7 @@ export function registerCustomProviders(
             reasoning: m.reasoning,
             input: m.input,
             cost: m.cost,
+            samplingParams: m.samplingParams,
           };
         }
         return {
@@ -328,6 +336,12 @@ export function registerCustomProviders(
           // catalog. See the inherit branch above for why it must survive.
           thinkingLevelMap: cat.thinkingLevelMap,
           compat: cat.compat,
+          // Per-key merge: a user value wins for the keys it names, the
+          // catalog's defaults survive for the rest.
+          samplingParams:
+            m.samplingParams !== undefined || cat.samplingParams !== undefined
+              ? { ...cat.samplingParams, ...m.samplingParams }
+              : undefined,
           cost: {
             input: m.cost?.input ?? cat.cost?.input,
             output: m.cost?.output ?? cat.cost?.output,
@@ -414,6 +428,7 @@ export function registerCustomProviders(
               // pi-ai then applies its own per-api defaults, as before.
               thinkingLevelMap: m.thinkingLevelMap,
               compat: m.compat,
+              samplingParams: m.samplingParams,
               cost: {
                 input: m.cost?.input ?? 0,
                 output: m.cost?.output ?? 0,

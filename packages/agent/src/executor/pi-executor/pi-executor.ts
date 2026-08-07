@@ -2611,6 +2611,12 @@ async function runSessionLocked(
     // falls back to its own default model object (e.g. gemini-*); record the
     // CONFIGURED model so token_usage/cost are not mislabeled. See observedModelId.
     getCurrentModel: () => observedModelId(resolvedModel, session.model?.id, config.model),
+    // The model's own ceiling, NOT the per-request cap: a length stop is only
+    // "early" relative to what the model could have produced. `session.model`
+    // is preferred so a manual model switch mid-session is measured against the
+    // model actually serving the turn. Matches the SDK's own input for the same
+    // decision (`this.model?.maxTokens`).
+    getModelMaxTokens: () => session.model?.maxTokens ?? resolvedModel?.maxTokens,
     onCacheReads: capturedBridgeRetention
       ? (tokens: number) => { capturedBridgeRetention.recordCacheReads(tokens); }
       : undefined,

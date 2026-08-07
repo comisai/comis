@@ -15,6 +15,7 @@ import { isRelayedBackgroundFailure } from "../safety/background-failure-attribu
 import { isBreakerBlockMessage } from "../safety/tool-retry-breaker.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isRecoverableLength } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
   sanitizeLogString,
@@ -509,6 +510,14 @@ export interface PiEventBridgeDeps {
   /** Returns current model ID for per-turn pricing resolution. Updated on manual /model switch. */
   getCurrentModel?: () => string;
   /**
+   * The model's own output ceiling — the limit a `length` stop is measured
+   * against to tell "consumed the whole allowance" from "truncated early".
+   * MUST be the pre-clamp value (`Model.maxTokens`), the same input the SDK
+   * uses, or the two layers disagree about the same turn. Absent → the
+   * distinction is simply not recorded.
+   */
+  getModelMaxTokens?: () => number | undefined;
+  /**
    * The daemon-wide spend accumulator (the dollars kill-switch enforcement
    * state). The per-agent bridge holds a REFERENCE to the single daemon-wide
    * instance — never a per-bridge copy, or ceilings would be enforced per
@@ -678,7 +687,7 @@ export interface PiEventBridgeResult {
   /** Event listener to subscribe to AgentSession events. */
   listener: (event: AgentSessionEvent) => void;
   /** Returns accumulated execution stats (includes last known context usage and duration breakdown). */
-  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: ToolExecutionResultRecord[]; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; executionCostUsd?: number; executionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
+  getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: ToolExecutionResultRecord[]; breakerTripCount?: number; turnCount?: number; lastStopReason?: string; lastLengthStopRecoverable?: boolean; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; executionCostUsd?: number; executionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
   /** ReadonlyMap views of the per-responseId hash store and canonical-snapshot
@@ -2053,6 +2062,18 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           if (assistantMsg && "stopReason" in assistantMsg) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
             m.lastStopReason = (assistantMsg as any).stopReason as string | undefined;
+            // A `length` stop has two causes with opposite remedies: the model
+            // spent its whole output allowance (raise the cap), or the provider
+            // truncated it early under context pressure (the cap was never
+            // binding). Ask the SDK's own predicate rather than re-deriving the
+            // comparison — the SDK's AgentSession uses it to decide whether to
+            // compact and retry this turn, so a second definition here would
+            // let the two layers disagree about the same message.
+            const desiredMaxOutput = deps.getModelMaxTokens?.();
+            m.lastLengthStopRecoverable =
+              desiredMaxOutput !== undefined
+                ? isRecoverableLength(assistantMsg, desiredMaxOutput)
+                : undefined;
           }
 
           // Block-accounting diagnostic: captures the post-stream shape of any
