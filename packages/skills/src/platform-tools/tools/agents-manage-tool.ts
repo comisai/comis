@@ -12,8 +12,8 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import type { ApprovalGate, ComisLogger } from "@comis/core";
-import { registerActivityLabelSpec } from "@comis/core";
+import type { ApprovalGate, AutonomyConfig, ComisLogger, ResolvedAutonomy } from "@comis/core";
+import { registerActivityLabelSpec, resolveAutonomy } from "@comis/core";
 import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
@@ -384,6 +384,38 @@ function validateAgentUpdateParams(
   );
 }
 
+function numericAutonomyCaps(resolved: ResolvedAutonomy): Record<string, unknown> {
+  return {
+    aggregateBudgetUsd: resolved.aggregateBudgetUsd,
+    maxConcurrentSelfAgents: resolved.maxConcurrentSelfAgents,
+    maxSelfSpawnRatePerMin: resolved.maxSelfSpawnRatePerMin,
+    cronSelfMax: resolved.cronSelfMax,
+    denialBreakerN: resolved.denialBreakerN,
+    leaseMaxTtlMin: resolved.leaseMaxTtlMin,
+    messageMaxPerHour: resolved.message.maxPerHour,
+    budget: resolved.budget,
+    rate: resolved.rate,
+    spawn: resolved.spawn,
+    outwardVolumeCap: resolved.outward.volumeCap,
+  };
+}
+
+function buildAutonomyProfileComparison(autonomy: Record<string, unknown>): Record<string, unknown> {
+  const config = autonomy as AutonomyConfig;
+  const standard = resolveAutonomy({ ...config, profile: "standard" });
+  const unattended = resolveAutonomy({ ...config, profile: "unattended" });
+  return {
+    from: "standard",
+    to: "unattended",
+    capabilitySetChanged:
+      JSON.stringify(standard.capabilities) !== JSON.stringify(unattended.capabilities),
+    numericCapsChanged:
+      JSON.stringify(numericAutonomyCaps(standard)) !== JSON.stringify(numericAutonomyCaps(unattended)),
+    mode: { standard: standard.mode, unattended: unattended.mode },
+    unattendedBehavior: unattended.m1Notice ?? "",
+  };
+}
+
 function buildUpdateContract(
   agentId: string | undefined,
   config: Record<string, unknown> | undefined,
@@ -662,7 +694,12 @@ export function createAgentsManageTool(
             return throwToolError("not_found", "agents.get returned no autonomy configuration");
           }
 
-          const projected = { agentId, autonomy };
+          const autonomyRecord = autonomy as Record<string, unknown>;
+          const projected = {
+            agentId,
+            autonomy: autonomyRecord,
+            profileComparison: buildAutonomyProfileComparison(autonomyRecord),
+          };
           return {
             content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
             details: projected,
