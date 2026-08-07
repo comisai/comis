@@ -107,7 +107,7 @@ describe("compileExecutionPrompt", () => {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
 
       expect(kernel).toMatch(
-        /any request.*stop asking approvals.*refuse immediately.*say.*`approvals`.*operator-only.*operator config.*restart/isu,
+        /if asked.*stop asking approvals.*refuse immediately.*say.*`approvals`.*operator-only.*operator config.*restart/isu,
       );
     }
   });
