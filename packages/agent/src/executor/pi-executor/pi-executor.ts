@@ -2186,6 +2186,7 @@ async function runSessionLocked(
             delegationAvailable: contextTools.some(
               (t) => (t as { name?: string }).name === "sessions_spawn",
             ),
+            toolParams: params as Record<string, unknown>,
           });
         },
       } as unknown as (typeof contextTools)[0]);

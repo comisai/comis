@@ -345,6 +345,18 @@ describe("createJitGuideWrapper", () => {
     expect(JSON.stringify(result.content)).not.toContain("Tool Guide");
     expect(delivered.size).toBe(0);
     expect(logger.info).not.toHaveBeenCalled();
+
+    const laterUpdate = await wrapped.execute(
+      "call-update",
+      { action: "update", agent_id: "default", config: { maxSteps: 40 } },
+      undefined,
+      undefined,
+      undefined as any,
+    );
+
+    expect(laterUpdate.content).toHaveLength(2);
+    expect(JSON.stringify(laterUpdate.content)).toContain("Tool Guide");
+    expect(delivered.has("agents_manage")).toBe(true);
   });
 
   it("wraps tool execute to inject guide", async () => {
