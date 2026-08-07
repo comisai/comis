@@ -502,6 +502,8 @@ export function createAgentsManageTool(
         "config plus a daemon restart is required, and do not ask for command details. " +
         "For a bare 'make ID admin' request, reply: 'agents.<id>.elevatedReply.senderTrustMap is " +
         "operator-only; edit operator config and restart the daemon.' Never use a platform admin tool. " +
+        "For operator admin IDs, alone or mixed with safe changes, refuse the whole request, name " +
+        "agents.<id>.elevatedReply.senderTrustMap, and do not ask for values. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,

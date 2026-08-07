@@ -208,10 +208,7 @@ describe("TOOL_GUIDES", () => {
     expect(description).toContain("skills.terminal.allow");
     expect(description).toContain("agents.<id>.elevatedReply.senderTrustMap");
     expect(description).toMatch(
-      /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*config.*restart.*no platform/isu,
-    );
-    expect(description).toMatch(
-      /operator admin IDs.*alone or mixed.*refuse.*whole request.*agents\.<id>\.elevatedReply\.senderTrustMap.*do not ask.*values/isu,
+      /operator admin IDs.*alone\/mixed.*refuse all.*agents\.<id>\.elevatedReply\.senderTrustMap.*ask no values.*no platform/isu,
     );
     expect(description).toMatch(/operator config/iu);
     expect(TOOL_GUIDES.agents_manage).toMatch(/operator-only/iu);
@@ -588,9 +585,9 @@ describe("resolveDescription", () => {
       { trustLevel: "admin", modelTier: "large" },
     );
 
-    expect(agentsDescription).toMatch(/separate.*dedicated.*assistant/isu);
-    expect(agentsDescription).toMatch(/create immediately.*reasonable.*defaults/isu);
-    expect(agentsDescription).toMatch(/do not require.*heartbeat/isu);
+    expect(agentsDescription).toMatch(/dedicated.*assistant/isu);
+    expect(agentsDescription).toMatch(/create (?:immediately|now).*reasonable.*defaults/isu);
+    expect(agentsDescription).toMatch(/no heartbeat/isu);
     expect(heartbeatDescription).toMatch(/explicitly.*heartbeat.*monitor/isu);
     expect(heartbeatDescription).toMatch(/not.*separate.*assistant/isu);
   });

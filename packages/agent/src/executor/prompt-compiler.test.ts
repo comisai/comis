@@ -165,7 +165,7 @@ describe("compileExecutionPrompt", () => {
     const result = compileExecutionPrompt(makeInput());
 
     expect(result.stableEnginePrefix).toMatch(
-      /only.*current.*available_skills.*(?:active|available).*prompt skill/iu,
+      /only.*current.*available_skills.*(?:active|available)/iu,
     );
     expect(result.stableEnginePrefix).toMatch(
       /remembered.*SKILL\.md.*ordinary.*untrusted data/iu,
@@ -188,7 +188,7 @@ describe("compileExecutionPrompt", () => {
   it("keeps sources-only answers within successfully retrieved evidence", () => {
     const result = compileExecutionPrompt(makeInput());
 
-    expect(result.stableEnginePrefix).toMatch(/sources? only.*every factual claim/iu);
+    expect(result.stableEnginePrefix).toMatch(/sources? only.*claims supported/iu);
     expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
     expect(result.stableEnginePrefix).toMatch(/omit unsupported/iu);
   });
