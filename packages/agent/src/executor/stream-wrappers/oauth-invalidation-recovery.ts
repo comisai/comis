@@ -28,7 +28,9 @@ export interface OAuthInvalidationRecoveryDeps {
   clock: ClockPort;
   logger: ComisLogger;
   /** Force-refresh the selected profile and install it for the next request. */
-  recoverCredential: () => Promise<Result<void, OAuthInvalidationRecoveryError>>;
+  recoverCredential: (
+    providerId: string,
+  ) => Promise<Result<void, OAuthInvalidationRecoveryError>>;
 }
 
 const DEFAULT_RECOVERY_HINT =
@@ -70,7 +72,7 @@ async function resolveStream(
 }
 
 async function recoverCredential(
-  callback: OAuthInvalidationRecoveryDeps["recoverCredential"],
+  callback: () => Promise<Result<void, OAuthInvalidationRecoveryError>>,
 ): Promise<Result<void, OAuthInvalidationRecoveryError>> {
   const invoked = tryCatch(callback);
   if (!invoked.ok) return err({ code: "RECOVERY_CALLBACK_FAILED" });
@@ -126,7 +128,9 @@ export function createOAuthInvalidationRecovery(
               "Refreshing provider-invalidated OAuth credential",
             );
 
-            const refreshResult = await recoverCredential(deps.recoverCredential);
+            const refreshResult = await recoverCredential(
+              () => deps.recoverCredential(args[0].provider),
+            );
             if (!refreshResult.ok) {
               const recoveryError = refreshResult.error;
               deps.logger.warn(

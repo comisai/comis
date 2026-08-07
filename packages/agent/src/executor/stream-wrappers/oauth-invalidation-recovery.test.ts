@@ -16,7 +16,7 @@ type RecoveryError = { code: string; hint?: string };
 type RecoveryFactory = (deps: {
   clock: ClockPort;
   logger: ComisLogger;
-  recoverCredential: () => Promise<Result<void, RecoveryError>>;
+  recoverCredential: (providerId: string) => Promise<Result<void, RecoveryError>>;
 }) => (next: StreamFn) => StreamFn;
 
 const model = {
@@ -112,6 +112,7 @@ describe("OAuth invalidation stream recovery", () => {
     const output = await collect(wrapped(model, context));
 
     expect(recoverCredential).toHaveBeenCalledTimes(1);
+    expect(recoverCredential).toHaveBeenCalledWith("openai-codex");
     expect(next).toHaveBeenCalledTimes(2);
     expect(output.events.map((event) => event.type)).toEqual(["start", "done"]);
     expect(output.result.stopReason).toBe("stop");

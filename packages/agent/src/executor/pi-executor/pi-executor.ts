@@ -80,7 +80,7 @@ import {
   type ContextStoreScope,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { ok, suppressError, type Result } from "@comis/shared";
+import { err, ok, suppressError, type Result } from "@comis/shared";
 import type {
   AfterToolCallResult,
   AgentMessage,
@@ -2207,6 +2207,7 @@ async function runSessionLocked(
   // Gemini cache hit tracking for Execution complete log
   let geminiCacheHit = false;
   let geminiCachedTokens = 0;
+  const oauthManagerForRecovery = deps.oauthManager;
 
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
@@ -2231,6 +2232,29 @@ async function runSessionLocked(
       geminiCacheHit = true;
       geminiCachedTokens = entry.cachedTokens;
     },
+    ...(oauthManagerForRecovery !== undefined
+      ? {
+          recoverInvalidatedOAuth: async (providerId: string) => {
+            const refreshed = await oauthManagerForRecovery.refreshInvalidatedCredential(
+              providerId,
+              { oauthProfiles: config.oauthProfiles },
+            );
+            if (!refreshed.ok) {
+              return err({
+                code: refreshed.error.code,
+                ...(refreshed.error.hint !== undefined
+                  ? { hint: refreshed.error.hint }
+                  : {}),
+              });
+            }
+            deps.authStorage.setRuntimeOAuthCredential(
+              providerId,
+              refreshed.value.credential,
+            );
+            return ok(undefined);
+          },
+        }
+      : {}),
   });
   const {
     contextEngineRef, cacheBreakDetector,
