@@ -387,6 +387,8 @@ import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createAgentSession } from "@earendil-works/pi-coding-agent";
 import { appendFileSync } from "node:fs";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 const mockAppendFileSync = vi.mocked(appendFileSync);
 
 // ---------------------------------------------------------------------------
@@ -3727,6 +3729,108 @@ describe("PiExecutor", () => {
       // by the composed wrapper chain (no longer the original mockStreamFn)
       expect(mockSession.agent.streamFunction).not.toBe(mockStreamFn);
       expect(typeof mockSession.agent.streamFunction).toBe("function");
+    });
+
+    it("wires forced OAuth refresh into the provider stream and installs the recovered credential", async () => {
+      const assistantMessage = (
+        stopReason: "error" | "stop",
+        errorMessage?: string,
+      ): AssistantMessage => ({
+        role: "assistant",
+        content: stopReason === "stop" ? [{ type: "text", text: "recovered" }] : [],
+        api: "openai-responses",
+        provider: "openai-codex",
+        model: "test-model",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason,
+        ...(errorMessage !== undefined ? { errorMessage } : {}),
+        timestamp: 0,
+      } as AssistantMessage);
+      const stream = (finalMessage: AssistantMessage) => {
+        const result = createAssistantMessageEventStream();
+        if (finalMessage.stopReason === "error") {
+          result.push({ type: "error", reason: "error", error: finalMessage });
+        } else {
+          result.push({ type: "start", partial: finalMessage });
+          result.push({ type: "done", reason: "stop", message: finalMessage });
+        }
+        return result;
+      };
+      mockStreamFn
+        .mockReturnValueOnce(stream(assistantMessage(
+          "error",
+          "Encountered invalidated oauth token for user, failing request",
+        )))
+        .mockReturnValueOnce(stream(assistantMessage("stop")));
+      const staleCredential = {
+        access: "stale-access",
+        refresh: "test-refresh",
+        expires: 1,
+      };
+      const refreshedCredential = {
+        access: "fresh-access",
+        refresh: "test-refresh-2",
+        expires: 2,
+      };
+      const oauthManager = {
+        getCredential: vi.fn().mockResolvedValue(ok({
+          apiKey: staleCredential.access,
+          credential: staleCredential,
+        })),
+        refreshInvalidatedCredential: vi.fn().mockResolvedValue(ok({
+          apiKey: refreshedCredential.access,
+          credential: refreshedCredential,
+        })),
+      };
+      const deps = createMockDeps({
+        oauthManager: oauthManager as unknown as PiExecutorDeps["oauthManager"],
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai-codex", id: "test-model" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as unknown as PiExecutorDeps["modelRegistry"],
+      });
+      const setRuntimeOAuthCredential = vi.fn();
+      deps.authStorage.setRuntimeOAuthCredential = setRuntimeOAuthCredential;
+      const executor = createPiExecutor({
+        ...testConfig,
+        provider: "openai-codex",
+        model: "test-model",
+      }, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+      const wrappedStreamFn = mockSession.agent.streamFunction;
+      const model = {
+        id: "test-model",
+        name: "Test model",
+        api: "openai-responses",
+        provider: "openai-codex",
+        baseUrl: "https://example.com",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 32_000,
+        maxTokens: 4_096,
+      } as unknown as Model<"openai-responses">;
+      const output = await wrappedStreamFn(model, { messages: [], tools: [] }, {});
+      for await (const _event of output) {
+        // Drain the stream so the recovery callback and replay complete.
+      }
+
+      expect(oauthManager.refreshInvalidatedCredential).toHaveBeenCalledTimes(1);
+      expect(setRuntimeOAuthCredential).toHaveBeenLastCalledWith(
+        "openai-codex",
+        refreshedCredential,
+      );
+      expect(mockStreamFn).toHaveBeenCalledTimes(2);
+      expect((await output.result()).stopReason).toBe("stop");
     });
 
     it("wrapper chain includes config resolver with config values", async () => {
