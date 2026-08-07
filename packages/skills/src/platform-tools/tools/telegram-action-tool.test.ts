@@ -68,7 +68,7 @@ describe("telegram action tool", () => {
     const tool = createTelegramActionTool(mockRpcCall);
     const result = await tool.execute("call-3", {
       action: "promote",
-      chat_id: "chat-1",
+      chat_id: "-1001234567890",
       user_id: "u-1",
       rights: {},
     } as never);
@@ -76,6 +76,23 @@ describe("telegram action tool", () => {
     const parsed = parseResult(result) as { requiresConfirmation: boolean; actionType: string };
     expect(parsed.requiresConfirmation).toBe(true);
     expect(parsed.actionType).toBe("telegram.promote");
+    expect(mockRpcCall).not.toHaveBeenCalled();
+  });
+
+  it("promote rejects a positive numeric direct-message target before confirmation", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ ok: true }));
+    const tool = createTelegramActionTool(mockRpcCall);
+
+    await expect(
+      tool.execute("call-direct-promote", {
+        action: "promote",
+        chat_id: "678314278",
+        user_id: "678314299",
+        rights: {},
+      } as never),
+    ).rejects.toThrow(
+      /invalid_value.*explicit.*group.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator config.*restart/isu,
+    );
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
 
