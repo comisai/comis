@@ -42,10 +42,21 @@ const TelegramActionParams = Type.Object({
       Type.Literal("unban"),
       Type.Literal("promote"),
     ],
-    { description: "Telegram-specific action. Valid values: pin (pin message), unpin (unpin message), poll (send poll), sticker (send sticker), chat_info (get chat details), member_count (get member total), get_admins (list admins), set_title (change chat title), set_description (change chat description), ban (ban user), unban (unban user), promote (grant admin rights)" },
+    {
+      description:
+        "Telegram-specific action. Valid values: pin (pin message), unpin (unpin message), poll (send poll), " +
+        "sticker (send sticker), chat_info (get chat details), member_count (get member total), get_admins " +
+        "(list admins), set_title (change chat title), set_description (change chat description), ban (ban user), " +
+        "unban (unban user), promote (promote a user in an explicitly named group/channel; never use for " +
+        "Comis sender trust)",
+    },
   ),
   chat_id: Type.Optional(
-    Type.String({ description: "Chat/group ID (for all actions)" }),
+    Type.String({
+      description:
+        "Chat/group ID. For ban, unban, or promote, the user must explicitly supply a group/channel ID; " +
+        "never substitute the current direct chat.",
+    }),
   ),
   message_id: Type.Optional(
     Type.String({ description: "Message ID (for pin/unpin)" }),
@@ -102,8 +113,9 @@ function assertTelegramGroupAdminTarget(action: string, chatId: unknown): void {
       {
         param: "chat_id",
         hint:
-          "For Comis sender trust, agents.<id>.elevatedReply.senderTrustMap is operator-only; " +
-          "edit operator config and restart the daemon",
+          "Do not ask for a group ID unless the user explicitly requested Telegram group administration. " +
+          "A bare sender-admin request concerns agents.<id>.elevatedReply.senderTrustMap; it is operator-only, " +
+          "so edit operator config and restart the daemon",
       },
     );
   }
