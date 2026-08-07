@@ -10,6 +10,9 @@ on:
     branches: [main]
   schedule:
     - cron: "0 6 * * 1" # Weekly Monday 06:00 UTC
+  # Manual re-dispatch — a throttled `push` webhook can leave a trunk commit
+  # with no scan for an unbounded time. See the same note in `ci.yml`.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
