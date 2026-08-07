@@ -52,7 +52,7 @@ const ESCAPED_LABELED_SECRET_ASSIGNMENT_RE = new RegExp(
 );
 
 const SECRET_STORAGE_ACTION_FRAGMENT =
-  "(?:confirm(?:ed|ation)?|stor(?:e|ing)|sav(?:e|ing)|set(?:ting)?)";
+  "(?:confirm(?:ed|ation)?|stor(?:e|ing)|sav(?:e|ing)|set(?:ting)?|put(?:ting)?)";
 const SECRET_STORAGE_ACTION_RE = new RegExp(
   `\\b${SECRET_STORAGE_ACTION_FRAGMENT}\\b`,
   "i",
@@ -61,6 +61,13 @@ const LABELED_SECRET_CONFIRMATION_RE = new RegExp(
     `((?:^|[\\s,{])${SECRET_STORAGE_ACTION_FRAGMENT}\\b[^\\r\\n]{0,96}?` +
     `["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?[^\\r\\n]{0,160}?` +
     `(?:(?:confirmed\\s+)?value\\s+is|with\\s+the\\s+value)\\s*)` +
+    `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
+  "gim",
+);
+const LABELED_SECRET_STORAGE_REQUEST_RE = new RegExp(
+  `((?:^|[\\s,{])${SECRET_STORAGE_ACTION_FRAGMENT}\\b[^\\r\\n]{0,160}?` +
+    `["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?[^\\r\\n]{0,160}?` +
+    `(?:store|vault)\\s*:\\s*)` +
     `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
   "gim",
 );
@@ -145,6 +152,29 @@ function scrubLabeledConfirmations(text: string): ScrubResult {
     (_match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
       const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
       if (value.length === 0 || isSafeSecretPlaceholder(value)) return _match;
+      redactions++;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
+  return { text: scrubbed, redactions };
+}
+
+/** Redact a value placed after a human-readable secret-store destination. */
+function scrubLabeledStorageRequests(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(
+    LABELED_SECRET_STORAGE_REQUEST_RE,
+    (
+      match,
+      prefix: string,
+      doubleQuoted: string | undefined,
+      singleQuoted: string | undefined,
+      bare: string | undefined,
+    ) => {
+      const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (!isPlausibleDisclosedSecret(value)) return match;
       redactions++;
       if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
       if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
@@ -265,12 +295,14 @@ export function scrubSecretsFromText(text: string): ScrubResult {
   if (!mightContainSecret(text)) return { text, redactions: 0 };
   const labeled = scrubLabeledAssignments(text);
   const confirmed = scrubLabeledConfirmations(labeled.text);
-  const disclosed = scrubLabeledDisclosures(confirmed.text);
+  const stored = scrubLabeledStorageRequests(confirmed.text);
+  const disclosed = scrubLabeledDisclosures(stored.text);
   const replaced = scrubLabeledReplacements(disclosed.text);
   let result = replaced.text;
   let redactions =
     labeled.redactions
     + confirmed.redactions
+    + stored.redactions
     + disclosed.redactions
     + replaced.redactions;
 
