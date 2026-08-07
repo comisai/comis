@@ -117,13 +117,15 @@ interface ErrorPattern {
   hint?: string;
 }
 
-const INVALIDATED_OAUTH_TOKEN =
-  /invalidated\s+oauth\s+token|oauth\s+token.{0,24}invalidated/i;
-
 /** True only for a provider rejection that explicitly invalidated OAuth access. */
 export function isInvalidatedOAuthTokenError(errorMessage: unknown): boolean {
-  return typeof errorMessage === "string"
-    && INVALIDATED_OAUTH_TOKEN.test(errorMessage);
+  if (typeof errorMessage !== "string") return false;
+  const normalized = errorMessage.toLowerCase();
+  const oauthTokenAt = normalized.indexOf("oauth token");
+  const invalidatedAt = normalized.indexOf("invalidated");
+  return oauthTokenAt >= 0
+    && invalidatedAt >= 0
+    && Math.abs(oauthTokenAt - invalidatedAt) <= 32;
 }
 
 const ERROR_PATTERNS: ErrorPattern[] = [
