@@ -26,7 +26,7 @@ import {
 import {
   outboundRecipientAuthorityVerdict,
   type OutboundRecipientEvidence,
-} from "./outbound-recipient-authority.js";
+} from "../outbound-recipient-authority.js";
 
 const TECHNICAL_TOKEN_PATTERN = /[A-Za-z][A-Za-z0-9._:/-]*/g;
 
