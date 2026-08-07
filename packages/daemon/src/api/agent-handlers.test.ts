@@ -2557,6 +2557,35 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["term-escalator"]).toBeUndefined();
     });
 
+    it("agents.update rejects sender trust self-grant and audits the exact path", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+      mockPersistToConfig.mockClear();
+      const before = deps.agents["default"]!;
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { elevatedReply: { senderTrustMap: { user_a: "admin" } } },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/agents\.default\.elevatedReply\.senderTrustMap.*operator-only/iu);
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+      expect(deps.agents["default"]).toBe(before);
+      expect(persistDeps.container.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "agents.update",
+          outcome: "failure",
+          metadata: expect.objectContaining({
+            error: expect.stringContaining("agents.default.elevatedReply.senderTrustMap"),
+          }),
+        }),
+      );
+    });
+
     it("dryRun does NOT bypass the operator-only guard (rejects before the dry-run short-circuit)", async () => {
       const persistDeps = makePersistDeps();
       const deps = makeDeps({ persistDeps });

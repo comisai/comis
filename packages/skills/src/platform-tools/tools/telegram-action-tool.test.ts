@@ -12,6 +12,13 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("telegram action tool", () => {
+  it("describes promotion as explicit Telegram group or channel administration", () => {
+    const tool = createTelegramActionTool(vi.fn(async () => ({ ok: true })));
+
+    expect(tool.description).toMatch(/promot.*explicit.*group|explicit.*group.*promot/iu);
+    expect(tool.description).toMatch(/not.*Comis.*sender trust/iu);
+  });
+
   it("poll action delegates to rpcCall('telegram.action')", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "telegram.action") {

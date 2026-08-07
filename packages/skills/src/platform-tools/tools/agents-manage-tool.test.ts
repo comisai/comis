@@ -114,6 +114,8 @@ describe("agents_manage tool", () => {
     expect(description).toContain("skills.execSandbox");
     expect(description).toContain("skills.terminal.unsafeDisableSandbox");
     expect(description).toContain("skills.terminal.allow");
+    expect(description).toContain("elevatedReply.senderTrustMap");
+    expect(description).toContain("elevatedReply.defaultTrustLevel");
     expect(description).toMatch(/refuse.*operator config.*restart/isu);
     expect(description).toMatch(/do not ask.*command details/isu);
   });

@@ -206,9 +206,23 @@ describe("TOOL_GUIDES", () => {
     expect(description).toContain("skills.execSandbox");
     expect(description).toContain("skills.terminal.unsafeDisableSandbox");
     expect(description).toContain("skills.terminal.allow");
+    expect(description).toContain("elevatedReply.senderTrustMap");
+    expect(description).toContain("elevatedReply.defaultTrustLevel");
     expect(description).toMatch(/operator config/iu);
     expect(TOOL_GUIDES.agents_manage).toMatch(/operator-only/iu);
     expect(TOOL_GUIDES.agents_manage).toMatch(/terminal command.*do not ask/isu);
+    expect(TOOL_GUIDES.agents_manage).toMatch(/sender trust.*cannot.*runtime/isu);
+  });
+
+  it("telegram promotion is scoped to an explicitly identified group or channel", () => {
+    const description = resolveDescription(
+      { name: "telegram_action" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toMatch(/promot.*explicit.*group|explicit.*group.*promot/iu);
+    expect(description).toMatch(/not.*Comis.*sender trust/iu);
   });
 
   // OAuth steering drift guard: assert the OAuth handoff block is present in the

@@ -85,6 +85,17 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("refuses sender trust elevation as operator-owned policy in every prompt mode", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toContain("agents.<id>.elevatedReply.senderTrustMap");
+      expect(kernel).toContain("agents.<id>.elevatedReply.defaultTrustLevel");
+      expect(kernel).toMatch(/make.*sender.*admin.*senderTrustMap/isu);
+      expect(kernel).toMatch(/operator config.*restart/isu);
+    }
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{
