@@ -101,7 +101,7 @@ export function createChannelsManageTool(
       name: "channels_manage",
       label: "Channel Management",
       description:
-        "Manage channel adapters: list, get, enable, disable, restart, configure. Enable/disable/restart/configure require approval.",
+        "Manage channel adapters: list, get, enable, disable, restart, configure. Cannot configure inbound sender allowlists: channels.<type>.allowFrom requires operator config and daemon restart. Enable/disable/restart/configure require approval.",
       parameters: ChannelsManageToolParams,
       validActions: VALID_ACTIONS,
       rpcPrefix: "channels",

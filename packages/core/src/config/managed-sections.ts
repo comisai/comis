@@ -28,6 +28,7 @@ import {
   SUB_PATH_MANAGED_REDIRECTS,
   type ManagedSectionRedirect,
 } from "./section-registry.js";
+import { matchesOverridePattern } from "./immutable-keys.js";
 
 export type { ManagedSectionRedirect } from "./section-registry.js";
 
@@ -65,8 +66,9 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = Object.freeze
  * Resolve the management redirect for a given section/key path.
  *
  * Picks the longest matching pathPrefix. Matches when fullPath equals or is a
- * child of a redirect's pathPrefix. Returns undefined when no dedicated tool
- * covers this path -- callers fall back to the generic immutable message.
+ * child of a redirect's pathPrefix and, when present, one of its managed path
+ * patterns. Returns undefined when no dedicated tool covers this path --
+ * callers fall back to the generic immutable message.
  */
 export function getManagedSectionRedirect(
   section: string | undefined,
@@ -76,10 +78,19 @@ export function getManagedSectionRedirect(
   const fullPath = key ? `${section}.${key}` : section;
   let best: ManagedSectionRedirect | undefined;
   for (const candidate of MANAGED_SECTIONS) {
-    const matches =
+    const matchesPrefix =
       fullPath === candidate.pathPrefix ||
       fullPath.startsWith(candidate.pathPrefix + ".");
-    if (matches && (!best || candidate.pathPrefix.length > best.pathPrefix.length)) {
+    const matchesManagedPath =
+      candidate.managedPathPatterns === undefined ||
+      candidate.managedPathPatterns.some((pattern) =>
+        matchesOverridePattern(fullPath, pattern),
+      );
+    if (
+      matchesPrefix &&
+      matchesManagedPath &&
+      (!best || candidate.pathPrefix.length > best.pathPrefix.length)
+    ) {
       best = candidate;
     }
   }

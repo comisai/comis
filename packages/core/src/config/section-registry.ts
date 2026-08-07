@@ -58,6 +58,12 @@ import { ToolingConfigSchema } from "./schema-tooling.js";
 export interface ManagedSectionRedirect {
   /** Path prefix that triggers this redirect (e.g., "agents", "integrations.mcp.servers"). */
   pathPrefix: string;
+  /**
+   * Optional exact path families owned by the management tool beneath the
+   * prefix. Wildcards match one segment. Omit when the tool owns the whole
+   * prefix.
+   */
+  managedPathPatterns?: readonly string[];
   /** Tool name (matches the registered AgentTool name). */
   tool: string;
   /** One-line description that includes the tool's full action list. */
@@ -194,6 +200,7 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     fieldMetadataVisible: true,
     managedRedirect: {
       pathPrefix: "channels",
+      managedPathPatterns: ["channels.*.enabled"],
       tool: "channels_manage",
       description: "Manage channel adapters (list, get, enable, disable, restart, configure).",
       // No exampleArgs -- no create-equivalent action; channels are configured
