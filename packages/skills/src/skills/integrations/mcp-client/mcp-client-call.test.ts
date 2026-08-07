@@ -440,17 +440,54 @@ describe("call deadline covers the queue wait", () => {
     const second = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
     await new Promise((r) => setTimeout(r, 400));
     release?.();
-    const [, secondResult] = await Promise.all([first, second]);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
 
     expect(secondResult.ok).toBe(false);
     const message = secondResult.ok ? "" : secondResult.error.message;
     // Must blame contention, not the server's speed, and name the knob that fixes it.
     expect(message).toMatch(/queue|contention|concurren/i);
     expect(message).toContain("maxConcurrency");
+    // And it must state the budget floor the remainder fell under — without it, a
+    // refusal that still had deadline left reads as a self-contradiction.
+    expect(message).toMatch(/\d+ms a request needs to be worth issuing/);
     // And it must NOT have issued a doomed request against an already-blown budget.
     const calls = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
       .mock.calls;
     expect(calls.length).toBe(1);
+    // The FIRST call held the slot from an EMPTY queue — it must have been issued.
+    // (Clamping the viability floor to a sub-floor deadline refused it after a 1ms
+    // wait, which flipped the gated call onto `second` and made this test a coin toss.)
+    expect(firstResult.ok).toBe(true);
+  });
+
+  // Deadlines at or below MIN_VIABLE_CALL_BUDGET_MS (250ms) clamp the viability floor
+  // to the deadline itself, so `remainingMs < floor` was true for ANY non-zero wait:
+  // a call was refused for "queue contention" after waiting 1ms on an idle server,
+  // pointing the operator at `maxConcurrency` for a queue that was never contended.
+  it("issues calls whose short wait leaves a sub-floor deadline nearly intact", async () => {
+    const serverName = "inventory";
+    let callIndex = 0;
+    const state = makeConnectedState(serverName, () => {
+      callIndex += 1;
+      // The first call holds the concurrency-1 slot for a few ms — a real but tiny
+      // slice of the deadline, nothing like exhausting it.
+      return callIndex === 1
+        ? new Promise((r) => setTimeout(() => r({ content: [{ type: "text", text: "{}" }] }), 5))
+        : Promise.resolve({ content: [{ type: "text", text: "{}" }] });
+    });
+    state.options = { ...state.options, callToolTimeoutMs: 200 };
+
+    const first = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    const second = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+    // Both reached the server: ~195ms of a 200ms deadline is the budget the operator
+    // chose, not a contention refusal.
+    const calls = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
+      .mock.calls;
+    expect(calls.length).toBe(2);
   });
 
   it("removes a cancelled queued call before it consumes the server slot", async () => {
