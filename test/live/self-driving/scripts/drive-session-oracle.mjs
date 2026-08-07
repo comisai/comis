@@ -54,6 +54,11 @@ function isMarkerLedProgressFrame(text) {
   return !/<[a-z/]/i.test(remainder); // markup ⇒ rendered answer, not a frame
 }
 
+function isApprovalResolutionFrame(text) {
+  return /^(?:Approved|Denied):\s.+\s\([^)]+\)$/.test(text)
+    || /^(?:Approved|Denied) \d+ pending approval\(s\)\.$/.test(text);
+}
+
 export function isDriveProgressText(text) {
   if (!text) return true;
   // 🔧/🤖/⏳ are pure tool/agent status markers — the agent never opens an
@@ -61,7 +66,7 @@ export function isDriveProgressText(text) {
   if (/^(🔧|🤖|⏳)/u.test(text)) return true;
   if (/^(?:✓|❌)/u.test(text)) return isMarkerLedProgressFrame(text);
   return (
-    /^(?:Approved|Denied):\s/.test(text)
+    isApprovalResolutionFrame(text)
     || /\(running/.test(text)
     || /reading ~/.test(text)
     || /^\s*\[[ x~]\]/.test(text)

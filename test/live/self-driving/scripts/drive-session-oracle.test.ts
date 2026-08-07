@@ -252,7 +252,10 @@ describe("drive progress classification", () => {
     expect(isDriveProgressText("[ ] step one")).toBe(true);
     expect(isDriveProgressText("(step 2 of 5)")).toBe(true);
     expect(isDriveProgressText("reading ~/notes")).toBe(true);
-    expect(isDriveProgressText("Approved: deploy")).toBe(true);
+    expect(isDriveProgressText("Approved: shell (abc123)")).toBe(true);
+    expect(isDriveProgressText("Denied: shell (abc123)")).toBe(true);
+    expect(isDriveProgressText("Approved 2 pending approval(s).")).toBe(true);
+    expect(isDriveProgressText("Approved: deploy")).toBe(false);
   });
 
   it("keeps a plain substantive answer classified as an answer", () => {
