@@ -72,6 +72,19 @@ describe("compileExecutionPrompt", () => {
     );
   });
 
+  it("refuses operator-only agent security changes before asking for details", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toContain("skills.execSandbox");
+      expect(kernel).toContain("skills.terminal.unsafeDisableSandbox");
+      expect(kernel).toContain("skills.terminal.allow");
+      expect(kernel).toMatch(/operator-only.*refuse.*immediately/isu);
+      expect(kernel).toMatch(/do not ask.*command.*arguments.*scope/isu);
+      expect(kernel).toMatch(/operator config.*restart/isu);
+    }
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{
