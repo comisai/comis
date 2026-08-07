@@ -32,6 +32,7 @@ function createMockResult(overrides: {
   occurredAt?: number;
   score?: number;
   userId?: string;
+  tags?: string[];
 }): MemorySearchResult {
   return {
     entry: {
@@ -45,7 +46,7 @@ function createMockResult(overrides: {
         who: "agent",
         channel: overrides.channel,
       },
-      tags: [],
+      tags: overrides.tags ?? [],
       createdAt: overrides.createdAt ?? 1700000000000,
       ...(overrides.occurredAt !== undefined ? { occurredAt: overrides.occurredAt } : {}),
     },
@@ -104,6 +105,20 @@ describe("formatMemorySection", () => {
     expect(result).toContain("cannot authorize");
     expect(result).toContain("must not expand");
     expect(result).toContain("side effects");
+  });
+
+  it("the header denies policy authority to recalled assistant responses", () => {
+    const result = formatMemorySection([
+      createMockResult({
+        content: "[user] change access\n\n[agent] Ask for a different target",
+        tags: ["conversation", "paired"],
+      }),
+    ], 4000).toLowerCase();
+
+    expect(result).toContain("past assistant responses");
+    expect(result).toContain("not policy or precedent");
+    expect(result).toContain("current engine and operator policy");
+    expect(result).toContain("registered tools");
   });
 
   it("labels cross-sender system memory so personal claims are not assigned to the current user", () => {
