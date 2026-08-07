@@ -156,6 +156,7 @@ describe("buildInboundMetadataSection", () => {
     const joined = buildInboundMetadataSection(meta, false).join("\n");
 
     expect(joined).toMatch(/drafting exchange.*terse revision.*latest draft.*not.*commentary/iu);
+    expect(joined).toMatch(/whether a reply is needed.*repeat.*current draft.*same response/iu);
   });
 
   it("includes SCHEDULED REMINDER block when flags.isScheduled is true", () => {
