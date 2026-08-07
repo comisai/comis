@@ -77,6 +77,31 @@ export const AgentsManageToolParams = Type.Object({
               "substitute a different provider.",
           })),
           maxSteps: Type.Optional(Type.Integer({ description: "Maximum execution steps per turn" })),
+          autonomy: Type.Optional(
+            Type.Object(
+              {
+                profile: Type.Optional(
+                  Type.Union(
+                    [
+                      Type.Literal("assistant"),
+                      Type.Literal("standard"),
+                      Type.Literal("unattended"),
+                      Type.Literal("max"),
+                    ],
+                    {
+                      description:
+                        "Named bounded-autonomy profile. max currently resolves to the standard " +
+                        "capability set and does not remove approval or security floors.",
+                    },
+                  ),
+                ),
+              },
+              {
+                description: "Runtime-mutable bounded-autonomy settings",
+                additionalProperties: false,
+              },
+            ),
+          ),
           workspace_profile: Type.Optional(
             Type.Union([Type.Literal("full"), Type.Literal("specialist")], {
               description:
@@ -379,23 +404,42 @@ function buildUpdateContract(
           `config.model=${JSON.stringify(model)}.`
         )
       : "";
+  const requestedAutonomy =
+    config?.autonomy !== null && typeof config?.autonomy === "object"
+      ? config.autonomy as Record<string, unknown>
+      : undefined;
+  const effectiveAutonomy =
+    effectiveConfig?.autonomy !== null && typeof effectiveConfig?.autonomy === "object"
+      ? effectiveConfig.autonomy as Record<string, unknown>
+      : undefined;
+  const autonomyProfile =
+    typeof requestedAutonomy?.profile === "string"
+      ? effectiveAutonomy?.profile ?? requestedAutonomy.profile
+      : undefined;
+  const autonomyBinding =
+    typeof autonomyProfile === "string"
+      ? ` Configured autonomy profile: config.autonomy.profile=${JSON.stringify(autonomyProfile)}.`
+      : "";
 
   if (resultRecord?.dryRun === true) {
     return (
       `✓ Agent ${target} configuration validated; no update was applied.` +
-      binding
+      binding +
+      autonomyBinding
     );
   }
   if (resultRecord?.changed === false) {
     return (
       `✓ No configuration change for agent ${target}; it already uses the requested settings.` +
       binding +
+      autonomyBinding +
       " Do not repeat agents_manage for this request."
     );
   }
   return (
     `✓ Agent ${target} update complete.` +
     binding +
+    autonomyBinding +
     " Do not repeat agents_manage for this request."
   );
 }
@@ -449,6 +493,9 @@ export function createAgentsManageTool(
         "Use update with provider and model together to switch an agent's LLM binding. " +
         "Explicit provider and model identifiers are exact targets: never silently substitute another value. " +
         "If an exact target is unavailable, leave configuration unchanged and report the failure. " +
+        "Use update with config.autonomy.profile set to assistant, standard, unattended, or max for " +
+        "bounded autonomy tuning. max remains bounded to the standard capability set and never " +
+        "removes approval or security floors. " +
         "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, and " +
         "skills.terminal.allow cannot be set by this tool. Refuse requests to change them; say operator " +
         "config plus a daemon restart is required, and do not ask for command details. " +
