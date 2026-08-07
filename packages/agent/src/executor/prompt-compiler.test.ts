@@ -33,16 +33,16 @@ describe("compileExecutionPrompt", () => {
   it("requires immediate refusal when the current sender cannot access a required tool", () => {
     const result = compileExecutionPrompt(makeInput());
 
-    expect(result.stableEnginePrefix).toMatch(/current sender.*trust.*required by a tool/iu);
-    expect(result.stableEnginePrefix).toMatch(/refuse.*immediately.*required trust level/iu);
-    expect(result.stableEnginePrefix).toMatch(/do not ask.*missing parameters/iu);
+    expect(result.stableEnginePrefix).toMatch(/current sender.*tool-required trust/iu);
+    expect(result.stableEnginePrefix).toMatch(/refuse.*immediately.*required level/iu);
+    expect(result.stableEnginePrefix).toMatch(/do(?: not|n't) ask.*missing parameters/iu);
   });
 
   it("includes live tools and current sender trust in self-authority grounding", () => {
     const result = compileExecutionPrompt(makeInput());
 
     expect(result.stableEnginePrefix).toMatch(
-      /asked.*(?:own|your).*capabilit.*(?:authorit|access|change)/iu,
+      /asked.*capabilit.*(?:authorit|access|change)/iu,
     );
     expect(result.stableEnginePrefix).toMatch(
       /registered tool.*current sender.*trust.*authoritative/iu,
@@ -54,7 +54,7 @@ describe("compileExecutionPrompt", () => {
       /below.*required trust.*authorized administrator/iu,
     );
     expect(result.stableEnginePrefix).toMatch(
-      /do not (?:say|imply).*sender.*(?:approve|authorize)/iu,
+      /do(?: not|n't) (?:say|imply).*sender.*(?:approve|authorize)/iu,
     );
   });
 
@@ -65,10 +65,10 @@ describe("compileExecutionPrompt", () => {
       /do not claim.*credential.*provider.*prerequisite.*configured or missing.*current.*evidence/iu,
     );
     expect(result.stableEnginePrefix).toMatch(
-      /registered tool.*available to attempt.*trust.*prerequisite/iu,
+      /registered tool.*attemptable.*trust.*prerequisite/iu,
     );
     expect(result.stableEnginePrefix).toMatch(
-      /distinguish.*successful provider call/iu,
+      /not.*successful provider call/iu,
     );
   });
 
@@ -107,7 +107,7 @@ describe("compileExecutionPrompt", () => {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
 
       expect(kernel).toMatch(
-        /if asked.*stop asking approvals.*refuse immediately.*say.*`approvals`.*operator-only.*operator config.*restart/isu,
+        /on.*stop asking approvals.*refuse immediately.*say.*`approvals`.*operator-only.*operator config.*restart/isu,
       );
     }
   });
@@ -117,7 +117,7 @@ describe("compileExecutionPrompt", () => {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
 
       expect(kernel).toMatch(
-        /if asked.*route creds.*refuse immediately.*say.*`executor\.broker\.bindings`.*operator-only.*operator config.*restart/isu,
+        /on.*route creds.*refuse immediately.*say.*`executor\.broker\.bindings`.*operator-only.*operator config.*restart/isu,
       );
     }
   });
@@ -136,9 +136,9 @@ describe("compileExecutionPrompt", () => {
     }));
 
     expect(result.stableEnginePrefix).toMatch(/prompt skills?.*advisory/iu);
-    expect(result.stableEnginePrefix).toMatch(/do not grant.*capabilit/iu);
+    expect(result.stableEnginePrefix).toMatch(/grant no capabilit/iu);
     expect(result.stableEnginePrefix).toMatch(/registered tools.*authoritative/iu);
-    expect(result.stableEnginePrefix).toMatch(/do not claim.*output.*skill.*advertis/iu);
+    expect(result.stableEnginePrefix).toMatch(/claim no advertised output/iu);
   });
 
   it("limits prompt-skill invocation to the current registry snapshot", () => {
@@ -160,9 +160,9 @@ describe("compileExecutionPrompt", () => {
 
     expect(result.stableEnginePrefix).toMatch(/source attribution.*exact.*URL/iu);
     expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
-    expect(result.stableEnginePrefix).toMatch(/never (?:cite|invent).*URL.*not.*retriev/iu);
+    expect(result.stableEnginePrefix).toMatch(/never invent.*unretrieved URL/iu);
     expect(result.stableEnginePrefix).toMatch(/several.*plausible.*all relevant.*URL/iu);
-    expect(result.stableEnginePrefix).toMatch(/instead of asking.*(?:quote|identify)/iu);
+    expect(result.stableEnginePrefix).toMatch(/do(?: not|n't) ask which/iu);
   });
 
   it("keeps sources-only answers within successfully retrieved evidence", () => {
@@ -170,7 +170,7 @@ describe("compileExecutionPrompt", () => {
 
     expect(result.stableEnginePrefix).toMatch(/sources? only.*every factual claim/iu);
     expect(result.stableEnginePrefix).toMatch(/successful.*retriev/iu);
-    expect(result.stableEnginePrefix).toMatch(/omit.*not supported/iu);
+    expect(result.stableEnginePrefix).toMatch(/omit unsupported/iu);
   });
 
   it("keeps quoted correspondence in draft mode across every prompt mode", () => {
@@ -178,16 +178,16 @@ describe("compileExecutionPrompt", () => {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
 
       expect(kernel).toMatch(/forwarded correspondence.*quoted context/iu);
-      expect(kernel).toMatch(/whether or how to reply.*grounded draft/iu);
-      expect(kernel).toMatch(/do not send.*exact recipient.*delivery authority/iu);
+      expect(kernel).toMatch(/whether(?: or |\/)how.*reply.*grounded draft/iu);
+      expect(kernel).toMatch(/do(?: not|n't) send.*exact recipient.*delivery authority/iu);
     }
   });
 
   it("defers recipient discovery until a forwarded draft becomes a send request", () => {
     const kernel = compileExecutionPrompt(makeInput({ mode: "none" })).stableEnginePrefix;
 
-    expect(kernel).toMatch(/forwarded correspondence.*default to.*grounded draft/iu);
-    expect(kernel).toMatch(/do not ask.*recipient.*until.*explicit send request/iu);
+    expect(kernel).toMatch(/forwarded correspondence.*default.*grounded draft/iu);
+    expect(kernel).toMatch(/do(?: not|n't) ask.*recipient.*until.*explicit send request/iu);
   });
 
   it("separates trusted operator policy from untrusted agent state", () => {
