@@ -80,6 +80,9 @@ describe("compileExecutionPrompt", () => {
       expect(kernel).toContain("skills.terminal.unsafeDisableSandbox");
       expect(kernel).toContain("skills.terminal.allow");
       expect(kernel).toContain("channels.<type>.allowFrom");
+      expect(kernel).toMatch(
+        /direct channel.*no named destination.*add.*ID.*channels\.<type>\.allowFrom/isu,
+      );
       expect(kernel).toMatch(/operator-only.*refuse.*immediately/isu);
       expect(kernel).toMatch(/do not ask.*command.*arguments.*scope/isu);
       expect(kernel).toMatch(/operator config.*restart/isu);
