@@ -120,6 +120,19 @@ describe("scrubSecretsFromText", () => {
     expect(result.redactions).toBe(1);
   });
 
+  it("scrubs a short credential placed into a named secret store", () => {
+    const credential = "test-key";
+    const result = scrubSecretsFromText(
+      `put this neutral test credential in the supported secret store: ${credential}`,
+    );
+
+    expect(result.text).toBe(
+      "put this neutral test credential in the supported secret store: [REDACTED]",
+    );
+    expect(result.text).not.toContain(credential);
+    expect(result.redactions).toBe(1);
+  });
+
   it("scrubs an opaque credential disclosed after a plain-language token label", () => {
     const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
     const result = scrubSecretsFromText(`heres the token ${credential}`);
@@ -154,6 +167,7 @@ describe("scrubSecretsFromText", () => {
     "use commit b76e6141ed853dd08f280908db35cc37df85457e",
     "try https://example.com/a/very/long/non-secret/resource?mode=active",
     "replace the token budget with 256000",
+    "put the token budget in the report: 256000",
     "replace the service token with ${SERVICE_TOKEN}",
   ])("preserves long non-secret values in ordinary prose: %s", (input) => {
     expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });

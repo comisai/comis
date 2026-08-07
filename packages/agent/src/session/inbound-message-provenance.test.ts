@@ -155,6 +155,25 @@ describe("persistInboundMessageProvenance", () => {
     expect(message.text).toContain(password);
   });
 
+  it("redacts short credentials placed into a named secret store", () => {
+    const credential = "test-key";
+    const message = {
+      ...first,
+      text: `put this neutral test credential in the supported secret store: ${credential}`,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(JSON.stringify(planned.value.payloads)).not.toContain(credential);
+    expect(planned.value.ledgerContent).not.toContain(credential);
+    expect(JSON.stringify(planned.value)).toContain("[REDACTED]");
+    expect(message.text).toContain(credential);
+  });
+
   it("redacts a thumb-typed opaque token from both provenance persistence forms", () => {
     const credential = "AZ9mQ2-v7Kp3_X8nL4tR6sB1";
     const message = {
