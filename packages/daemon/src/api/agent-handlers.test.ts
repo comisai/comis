@@ -916,6 +916,54 @@ describe("createAgentHandlers", () => {
       expect(agent.skills.builtinTools.read).toBe(true);       // schema default preserved
     });
 
+    it("changes the autonomy profile without resetting existing autonomy bounds", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({
+        persistDeps,
+        agents: {
+          default: {
+            name: "Test Agent",
+            model: "claude-sonnet-4-5-20250929",
+            provider: "anthropic",
+            maxSteps: 25,
+            autonomy: {
+              profile: "standard",
+              browse: true,
+              budget: {
+                aggregateUsd: 9,
+                tokens: 123_456,
+                wallClockMs: 78_000,
+              },
+            },
+          } as AgentHandlerDeps["agents"][string],
+        },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { autonomy: { profile: "max" } },
+        _trustLevel: "admin",
+      })) as { config: { autonomy: Record<string, unknown> } };
+
+      expect(result.config.autonomy).toMatchObject({
+        profile: "max",
+        browse: true,
+        budget: {
+          aggregateUsd: 9,
+          tokens: 123_456,
+          wallClockMs: 78_000,
+        },
+      });
+      expect(deps.agents.default?.autonomy).toMatchObject(result.config.autonomy);
+      expect(mockPersistToConfig).toHaveBeenCalledWith(
+        persistDeps,
+        expect.objectContaining({
+          patch: { agents: { default: { autonomy: { profile: "max" } } } },
+        }),
+      );
+    });
+
     it("throws when agent not found", async () => {
       const deps = makeDeps();
       const handlers = createAgentHandlers(deps);
