@@ -1339,7 +1339,11 @@ async function bootFoundation(
             maxSizeBytes: obsConfig.logRotation.maxSizeBytes,
             maxFiles: obsConfig.logRotation.maxFiles,
           },
-          auditConfig: { persist: obsConfig.audit.persist, sink: obsConfig.audit.sink },
+          auditConfig: {
+            enabled: container.config.security.auditLog,
+            persist: obsConfig.audit.persist,
+            sink: obsConfig.audit.sink,
+          },
           // The cache_break subscriber is opt-out-able via this flag (default on).
           persistence: { cacheBreaks: obsConfig.persistence.cacheBreaks },
         });
