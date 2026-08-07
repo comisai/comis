@@ -107,6 +107,17 @@ describe("agents_manage tool", () => {
     expect(tool.label).toBe("Agent Management");
   });
 
+  it("describes operator-only security posture fields in the native tool schema", () => {
+    const description = createAgentsManageTool(mockRpcCall, mockLogger).description;
+
+    expect(description).toMatch(/operator-only/iu);
+    expect(description).toContain("skills.execSandbox");
+    expect(description).toContain("skills.terminal.unsafeDisableSandbox");
+    expect(description).toContain("skills.terminal.allow");
+    expect(description).toMatch(/refuse.*operator config.*restart/isu);
+    expect(description).toMatch(/do not ask.*command details/isu);
+  });
+
   // -----------------------------------------------------------------------
   // Trust guard
   // -----------------------------------------------------------------------
