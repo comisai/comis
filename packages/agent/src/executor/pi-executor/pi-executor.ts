@@ -132,6 +132,7 @@ import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
 import {
   describeRecentUserTurnSelection,
+  hasRecentForwardedUserTurn,
   selectRecentUserTurns,
 } from "../../rag/recall-conversation.js";
 import {
@@ -1177,6 +1178,8 @@ async function runSessionLocked(
     sm.getEntries?.() ?? [],
     msg.id,
   );
+  const forwardedContextActive = msg.metadata.isForwarded === true
+    || hasRecentForwardedUserTurn(sm.getEntries?.() ?? [], msg.id);
   const requestRelevanceHistory = describeRecentUserTurnSelection(recentUserTurns);
 
   // Get or create session-scoped guide delivery tracking.
@@ -1966,6 +1969,11 @@ async function runSessionLocked(
       {
         requestMutationToolNames,
         currentSuccessfulMutationCount: () => currentSuccessfulMutationCount(),
+        forwardedContextActive,
+        currentRoute: {
+          channelType: msg.channelType,
+          channelId: msg.channelId,
+        },
         citationEvidenceEnabled: () =>
           currentWebResearchObserved()
           || relayedCitationEvidence !== undefined
@@ -2029,6 +2037,35 @@ async function runSessionLocked(
               metadata: {
                 claimKind: "citation",
                 reason: "citation_without_fetch_evidence",
+              },
+            },
+          );
+        },
+        onRecipientBlocked: () => {
+          deps.logger.warn(
+            {
+              step: "recipient-authority",
+              channelType: msg.channelType,
+              errorKind: "precondition" as const,
+              hint:
+                "Ask the user for the exact recipient and delivery authority; "
+                + "the current request route cannot substitute for a forwarded correspondent.",
+            },
+            "Outbound message recipient authority denied",
+          );
+          emitObservationalEventSafely(
+            { eventBus: deps.eventBus, logger: deps.logger },
+            "audit:event",
+            {
+              timestamp: deps.clock.now(),
+              agentId: deps.agentId,
+              tenantId: deps.tenantId,
+              actionType: "response.outbound_recipient_authority_guard",
+              kind: "audit",
+              outcome: "denied",
+              metadata: {
+                reason: "forwarded_context_current_route_substitution",
+                channelType: msg.channelType,
               },
             },
           );

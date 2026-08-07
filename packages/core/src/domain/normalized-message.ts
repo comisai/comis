@@ -93,6 +93,8 @@ const OriginalInboundMessageSchema = z.strictObject({
     timestamp: z.number().int().positive().max(MAX_DATE_EPOCH_MS),
     /** Present when the physical inbound was a platform interaction, not typed text. */
     interaction: z.literal("button_callback").optional(),
+    /** Content-free marker that the platform identified this message as forwarded. */
+    isForwarded: z.literal(true).optional(),
   });
 
 export type OriginalInboundMessage = z.infer<typeof OriginalInboundMessageSchema>;
@@ -377,6 +379,9 @@ export function getOriginalInboundMessages(
     timestamp: message.timestamp,
     ...(message.metadata?.isButtonCallback === true
       ? { interaction: "button_callback" as const }
+      : {}),
+    ...(message.metadata?.isForwarded === true
+      ? { isForwarded: true as const }
       : {}),
   }];
 }
