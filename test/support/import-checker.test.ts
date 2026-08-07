@@ -95,4 +95,64 @@ describe("findForbiddenImports -- AST-based import detection", () => {
     expect(hit?.snippet.length).toBeGreaterThan(0);
     expect(hit?.importedSymbols.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("records on each violation which forbidden specifier it matched", () => {
+    const result = findForbiddenImports({
+      rootDir: FIXTURES_ROOT,
+      forbiddenPackage: "@comis/agent",
+    });
+    const hit = result.violations.find((v) =>
+      v.file.endsWith("multi-line-import.ts"),
+    );
+    expect(
+      hit?.specifier,
+      "a single-specifier scan still attributes the match, so callers can group a multi-specifier result",
+    ).toBe("@comis/agent");
+  });
+
+  it("matches any of several forbidden specifiers in one walk, attributing each violation to the specifier it matched", () => {
+    const result = findForbiddenImports({
+      rootDir: FIXTURES_ROOT,
+      forbiddenPackage: ["@comis/agent", "@comis/infra"],
+    });
+    const byFile = new Map(
+      result.violations.map((v) => [v.file.split("/").pop(), v.specifier]),
+    );
+    expect(
+      byFile.get("multi-line-import.ts"),
+      "@comis/agent importer must be attributed to @comis/agent",
+    ).toBe("@comis/agent");
+    expect(
+      byFile.get("second-package-import.ts"),
+      "@comis/infra importer must be attributed to @comis/infra",
+    ).toBe("@comis/infra");
+  });
+
+  it("returns the same violations for an N-specifier walk as for N single-specifier walks", () => {
+    // The equivalence that lets a caller replace an O(N) sequence of
+    // full-tree walks with ONE walk: the array form must be exactly the
+    // union of the single form, not an approximation of it. The daemon's
+    // cross-handler-import invariant relies on this to check 27 sibling
+    // specifiers without re-parsing the tree 27 times.
+    const specifiers = ["@comis/agent", "@comis/infra"] as const;
+    const union = specifiers.flatMap(
+      (s) =>
+        findForbiddenImports({ rootDir: FIXTURES_ROOT, forbiddenPackage: s })
+          .violations,
+    );
+    const batched = findForbiddenImports({
+      rootDir: FIXTURES_ROOT,
+      forbiddenPackage: [...specifiers],
+    }).violations;
+    const key = (v: { file: string; line: number; specifier: string }) =>
+      `${v.specifier}|${v.file}|${v.line}`;
+    expect(
+      [...batched].map(key).sort(),
+      "one N-specifier walk must find exactly what N single-specifier walks find",
+    ).toEqual([...union].map(key).sort());
+    expect(
+      batched.length,
+      "sanity: the fixtures must produce at least one violation per specifier",
+    ).toBeGreaterThanOrEqual(2);
+  });
 });
