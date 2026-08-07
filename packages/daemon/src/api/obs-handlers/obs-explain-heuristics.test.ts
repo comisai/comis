@@ -1155,6 +1155,22 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).not.toMatch(/daemon log|raw body/i);
   });
 
+  it("names both OAuth re-login and direct-key configuration for auth rejection", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "error",
+        degraded: true,
+        modelErrors: { total: 3, byCategory: { auth_invalid: 3 } },
+      }),
+    );
+
+    expect(r?.code).toBe("provider_rejected_request");
+    const steps = r?.suggestedNextSteps.join(" ") ?? "";
+    expect(steps).toContain("comis auth login");
+    expect(steps).toContain("agents.<id>.oauthProfiles");
+    expect(steps).toContain("providers.entries.<name>.apiKeyName");
+  });
+
   it("recall_miss still fires when no model call was rejected", () => {
     // Regression guard: the new gate must not swallow the genuine recall_miss.
     const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
