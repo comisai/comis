@@ -449,6 +449,9 @@ export function createAgentsManageTool(
         "Use update with provider and model together to switch an agent's LLM binding. " +
         "Explicit provider and model identifiers are exact targets: never silently substitute another value. " +
         "If an exact target is unavailable, leave configuration unchanged and report the failure. " +
+        "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, and " +
+        "skills.terminal.allow cannot be set by this tool. Refuse requests to change them; say operator " +
+        "config plus a daemon restart is required, and do not ask for command details. " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
       validActions: VALID_ACTIONS,
