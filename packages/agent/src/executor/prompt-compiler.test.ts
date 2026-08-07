@@ -102,6 +102,16 @@ describe("compileExecutionPrompt", () => {
     }
   });
 
+  it("refuses approval bypass as operator-owned policy in every prompt mode", () => {
+    for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
+      const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
+
+      expect(kernel).toMatch(
+        /(?:stop asking|bypass|remove).*approvals.*`approvals`.*operator-only.*refuse.*exact path/isu,
+      );
+    }
+  });
+
   it("prevents prompt-skill advertising from becoming a capability claim", () => {
     const result = compileExecutionPrompt(makeInput({
       runtimeSections: [{
