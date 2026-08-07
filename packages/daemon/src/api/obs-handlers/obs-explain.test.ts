@@ -271,6 +271,53 @@ describe("bindObsExplainHandlers", () => {
     expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toContain("destination access");
   });
 
+  it("reports platform message IDs for trace-to-wire correlation", async () => {
+    const traceId = "trace-delivery-receipt";
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => [{
+        traceSchema: "comis-trajectory",
+        type: "delivery.reply_bound",
+        traceId,
+        seq: 1,
+        data: {
+          messageId: "message-42",
+          channelId: "chat_a",
+          channelType: "telegram",
+          agentId: "agent_a",
+        },
+      }, {
+        traceSchema: "comis-trajectory",
+        type: "delivery.dispatched",
+        traceId,
+        seq: 2,
+        data: {
+          channelType: "telegram",
+          status: "success",
+          totalChunks: 1,
+          deliveredChunks: 1,
+          failedChunks: 0,
+        },
+      }],
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId,
+        agentId: "agent_a",
+        channel: { type: "telegram", id: "chat_a" },
+        sessionEnd: { endReason: "success", degraded: false, turnCount: 1 },
+      }),
+      readDiagnosticsRollup: async () => null,
+    };
+    const handlers = bindObsExplainHandlers(makeDeps({ incidentReader: reader }));
+    const report = (await handlers["obs.explain"]!({
+      sessionKey: "tenant_a:agent_a:telegram:chat_a",
+      _trustLevel: "admin",
+    })) as IncidentReport & {
+      deliveryReceipt?: { messageIds: string[] };
+    };
+
+    expect(report.deliveryReceipt?.messageIds).toEqual(["message-42"]);
+  });
+
   // ------------------------------------------------------------------------
   // Both traceIds resolve to one session while retaining execution isolation.
   // ------------------------------------------------------------------------

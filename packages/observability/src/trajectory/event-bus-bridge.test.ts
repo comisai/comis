@@ -775,6 +775,30 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
     expect(data2.status).toBe("partial");
     expect(data2.errorKind).toBe("platform");
   });
+
+  it("delivery reply bindings retain platform message IDs in trajectories", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("delivery:reply_bound", {
+      messageId: "message-42",
+      channelId: "chat_a",
+      channelType: "telegram",
+      traceId: "trace-a",
+      agentId: "agent_a",
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]!.type).toBe("delivery.reply_bound");
+    expect(recorder.calls[0]!.data).toEqual({
+      messageId: "message-42",
+      channelId: "chat_a",
+      channelType: "telegram",
+      agentId: "agent_a",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
