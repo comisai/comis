@@ -89,9 +89,12 @@ describe("compileExecutionPrompt", () => {
     for (const mode of ["full", "operational", "minimal", "none", "compact-secure"] as const) {
       const kernel = compileExecutionPrompt(makeInput({ mode })).stableEnginePrefix;
 
-      expect(kernel).toContain("agents.<id>.elevatedReply.senderTrustMap");
-      expect(kernel).toContain("agents.<id>.elevatedReply.defaultTrustLevel");
-      expect(kernel).toMatch(/sender.*admin.*means.*senderTrustMap/isu);
+      expect(kernel).toContain("agents.<id>.elevatedReply.");
+      expect(kernel).toContain("senderTrustMap");
+      expect(kernel).toContain("defaultTrustLevel");
+      expect(kernel).toMatch(
+        /no named platform.*group.*channel.*make.*ID.*admin.*senderTrustMap.*never.*platform promotion/isu,
+      );
       expect(kernel).toMatch(/operator config.*restart/isu);
     }
   });
