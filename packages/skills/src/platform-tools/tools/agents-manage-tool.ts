@@ -52,7 +52,9 @@ export const AgentsManageToolParams = Type.Object({
     { description: "Agent management action. Valid values: create (new agent), get (read config/status), update (modify config), delete (remove agent), suspend (pause execution), resume (restart execution), list (all agent IDs)" },
   ),
   agent_id: Type.Optional(Type.String({
-    description: "The agent identifier (required for all actions except list)",
+    description:
+      "The agent identifier. Required except for list and self-scoped get with view=autonomy; " +
+      "that view defaults to the active agent.",
   })),
   view: Type.Optional(
     Type.Union([Type.Literal("full"), Type.Literal("autonomy")], {
@@ -503,8 +505,9 @@ export function createAgentsManageTool(
         "Use update with config.autonomy.profile set to assistant, standard, unattended, or max for " +
         "bounded autonomy tuning. max remains bounded to the standard capability set and never " +
         "removes approval or security floors. " +
-        "For autonomy profile, floor, or caps reporting, use get with view autonomy to read the " +
-        "bounded live posture without loading the full agent config. " +
+        "For autonomy profile, floor, or caps reporting, first call get with view autonomy and the " +
+        "current agent ID; do not call list or full get first. If the current agent ID is omitted, " +
+        "that scoped view defaults to the active agent. " +
         "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, " +
         "skills.terminal.allow, elevatedReply.senderTrustMap, and elevatedReply.defaultTrustLevel " +
         "cannot be set by this tool. Refuse requests to change them; say operator " +
@@ -639,7 +642,10 @@ export function createAgentsManageTool(
           }
         },
         async get(p, rpcCall, ctx) {
-          const agentId = readStringParam(p, "agent_id");
+          const explicitAgentId = typeof p.agent_id === "string" ? p.agent_id : undefined;
+          const agentId = explicitAgentId
+            ?? (p.view === "autonomy" ? ctx.agentId : undefined)
+            ?? readStringParam(p, "agent_id");
           const result = await rpcCall("agents.get", { agentId, _trustLevel: ctx.trustLevel });
           if (p.view !== "autonomy") return result;
 

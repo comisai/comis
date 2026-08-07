@@ -347,7 +347,6 @@ export function registerAllToolMetadata(): void {
     // agent_id is required for every action except list.
     requiredByAction: {
       create:  ["agent_id", "config"],
-      get:     ["agent_id"],
       update:  ["agent_id", "config"],
       delete:  ["agent_id"],
       suspend: ["agent_id"],
