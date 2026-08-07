@@ -35,6 +35,12 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("daemon.logging");
   });
 
+  it("keeps durable security-audit persistence operator-only", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toContain("observability.audit");
+    expect(isImmutableConfigPath("observability", "audit.persist")).toBe(true);
+    expect(isImmutableConfigPath("observability", "audit.sink")).toBe(true);
+  });
+
   it("contains immutable prefix: tooling (capability layer)", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
@@ -58,8 +64,8 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("browser.allowLoopbackNavigation");
   });
 
-  it("has exactly 18 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(18);
+  it("has exactly 19 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(19);
   });
 });
 
