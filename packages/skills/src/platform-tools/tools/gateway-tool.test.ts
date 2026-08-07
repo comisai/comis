@@ -1135,7 +1135,7 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalled();
     });
 
-    it("channels/<type>/<field>/patch rejection points to channels_manage with fullyManaged:false note", async () => {
+    it("channel sender allowlist rejection points to operator config instead of channels_manage", async () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
@@ -1152,15 +1152,9 @@ describe("gateway tool", () => {
       }
       expect(captured).toBeDefined();
       const msg = captured!.message;
-      expect(msg).toContain('Use the "channels_manage" tool');
-      // No-exampleArgs branch now says "Call <tool> directly; it will auto-load on first invocation."
-      expect(msg).toContain("Call channels_manage directly");
-      expect(msg).toContain("auto-load on first invocation");
-      expect(msg).not.toContain("discover_tools");
-      // channels_manage is fullyManaged:false — the warning must appear
-      expect(msg).toContain("brand-new platform types still requires operator config edits");
-      // No exampleArgs for channels — single-step Recovery framing absent
-      expect(msg).not.toContain("Recovery: call");
+      expect(msg).toContain("channels.telegram.allowFrom");
+      expect(msg).toMatch(/operator config.*daemon restart/isu);
+      expect(msg).not.toContain("channels_manage");
       expect(rpcCall).not.toHaveBeenCalled();
     });
   });

@@ -79,6 +79,7 @@ describe("compileExecutionPrompt", () => {
       expect(kernel).toContain("skills.execSandbox");
       expect(kernel).toContain("skills.terminal.unsafeDisableSandbox");
       expect(kernel).toContain("skills.terminal.allow");
+      expect(kernel).toContain("channels.<type>.allowFrom");
       expect(kernel).toMatch(/operator-only.*refuse.*immediately/isu);
       expect(kernel).toMatch(/do not ask.*command.*arguments.*scope/isu);
       expect(kernel).toMatch(/operator config.*restart/isu);

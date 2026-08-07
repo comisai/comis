@@ -75,6 +75,14 @@ describe("channels_manage tool", () => {
     expect(tool.label).toBe("Channel Management");
   });
 
+  it("names sender allowlists as operator-owned configuration", () => {
+    const tool = createChannelsManageTool(mockRpcCall);
+
+    expect(tool.description).toContain("channels.<type>.allowFrom");
+    expect(tool.description).toMatch(/operator.*config.*daemon restart/isu);
+    expect(tool.description).toMatch(/cannot.*configure/isu);
+  });
+
   // -----------------------------------------------------------------------
   // Trust guard
   // -----------------------------------------------------------------------

@@ -231,6 +231,19 @@ describe("TOOL_GUIDES", () => {
     );
   });
 
+  it("channel sender allowlists remain operator-owned", () => {
+    const description = resolveDescription(
+      { name: "channels_manage" },
+      LEAN_TOOL_DESCRIPTIONS,
+      { modelTier: "small", trustLevel: "admin" },
+    );
+
+    expect(description).toContain("channels.<type>.allowFrom");
+    expect(description).toMatch(/operator.*config.*daemon restart/isu);
+    expect(TOOL_GUIDES.channels_manage).toContain("channels.<type>.allowFrom");
+    expect(TOOL_GUIDES.channels_manage).toMatch(/cannot.*configure/isu);
+  });
+
   // OAuth steering drift guard: assert the OAuth handoff block is present in the
   // mcp_manage tool guide. If this fails, someone removed the OAuth steering text — the
   // guard is the final layer of defense against the agent improvising curl/device-code flows.
