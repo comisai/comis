@@ -13,6 +13,7 @@
 import { Type } from "typebox";
 import { registerActivityLabelSpec } from "@comis/core";
 import { createPlatformActionTool, type PlatformActionDescriptor } from "../platform-action-tool.js";
+import { readStringParam, throwToolError } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 
 // Activity label spec (§17.6). Descriptor name == emitted name.
@@ -80,6 +81,34 @@ const TelegramActionParams = Type.Object({
   ),
 });
 
+const TELEGRAM_GROUP_ADMIN_ACTIONS = ["ban", "unban", "promote"] as const;
+
+function assertTelegramGroupAdminTarget(action: string, chatId: unknown): void {
+  if (!TELEGRAM_GROUP_ADMIN_ACTIONS.includes(action as typeof TELEGRAM_GROUP_ADMIN_ACTIONS[number])) {
+    return;
+  }
+  if (typeof chatId !== "string" || chatId.trim().length === 0) {
+    throwToolError("missing_param", `Telegram ${action} requires chat_id.`, {
+      param: "chat_id",
+      hint: "Provide the explicit group or channel chat_id",
+    });
+  }
+  const normalizedChatId = chatId.trim();
+  const isPositiveNumericId = /^\d+$/.test(normalizedChatId) && /[1-9]/.test(normalizedChatId);
+  if (isPositiveNumericId) {
+    throwToolError(
+      "invalid_value",
+      `Telegram ${action} requires an explicit group or channel chat_id; positive numeric IDs identify direct user chats.`,
+      {
+        param: "chat_id",
+        hint:
+          "For Comis sender trust, agents.<id>.elevatedReply.senderTrustMap is operator-only; " +
+          "edit operator config and restart the daemon",
+      },
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Descriptor + factory wrapper
 // ---------------------------------------------------------------------------
@@ -108,5 +137,14 @@ const telegramDescriptor: PlatformActionDescriptor = {
  * @returns AgentTool implementing the Telegram actions interface
  */
 export function createTelegramActionTool(rpcCall: RpcCall) {
-  return createPlatformActionTool(telegramDescriptor, rpcCall);
+  const tool = createPlatformActionTool(telegramDescriptor, rpcCall);
+  return {
+    ...tool,
+    async execute(...args: Parameters<typeof tool.execute>) {
+      const params = args[1] as Record<string, unknown>;
+      const action = readStringParam(params, "action") ?? "";
+      assertTelegramGroupAdminTarget(action, params.chat_id);
+      return tool.execute(...args);
+    },
+  };
 }
