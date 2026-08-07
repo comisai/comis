@@ -24,7 +24,7 @@ describe("telegram action tool", () => {
     expect(tool.description).toMatch(/promot.*explicit.*group|explicit.*group.*promot/iu);
     expect(tool.description).toMatch(/not.*Comis.*sender trust/iu);
     expect(tool.description).toMatch(
-      /bare.*make ID admin.*agents\.<id>\.elevatedReply\.senderTrustMap.*never ask.*group/isu,
+      /make ID admin.*reply.*agents\.<id>\.elevatedReply\.senderTrustMap.*operator-only.*operator config.*restart.*never ask.*group/isu,
     );
     expect(parameters.properties.action.description).toMatch(
       /promote.*user.*explicit.*group.*never.*Comis.*sender trust/isu,
