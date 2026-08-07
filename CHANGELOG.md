@@ -4,6 +4,36 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ## [Unreleased]
 
+## [1.0.59] - 2026-08-07
+
+### Security
+
+- Replies are bound to the endpoint the request was observed on, so a granted send cannot be redirected to another conversation, and a shared chat's owner is resolved from the authenticated principal rather than from the chat.
+- Administrative memory search, dialectic tools, and session history enforce the operator profile gate and derive their search scope from the authenticated caller instead of trusting the request.
+- Secrets encoded inside a completion are scrubbed before the reply leaves the runtime, and credential results are no longer carried into background tasks.
+- `pdfjs-dist` moves to 6.2.108, clearing a high-severity advisory that covered the previously pinned range.
+
+### Fixed
+
+- A conversation of short turns no longer re-buys its whole cached prefix after every pause. Cache-retention progress now carries across the turns of a conversation instead of resetting each turn, so an idle gap writes at the configured retention rather than expiring at five minutes.
+- A turn whose output allowance was consumed by the thinking budget is told apart from one genuinely cut off mid-answer, and the reported cause names the setting that actually bound it.
+- The conversation history horizon no longer shifts every turn, which had been rewriting the cached prefix even when nothing about the conversation changed.
+- An answer that carries no script of its own — a table of numbers, a code block — is no longer discarded by the language gate as off-locale.
+- Invalidated provider OAuth tokens are recognized as such, refreshed, and the interrupted request replayed once, instead of surfacing as an opaque failure; a refresh that stalls is cancelled rather than left running.
+- Tool calls no longer fail before being issued when the configured call deadline is at or below the internal viability floor, and the refusal states the budget the call fell under.
+- The agent no longer reports work as done, schedules as active, or sources as cited without evidence from the tool that would have produced it. Cron listings, schedule confirmations, and completion claims are grounded the same way.
+- Background and sub-agent lifecycle: a killed sub-agent is recorded before teardown, an unresolved child process is no longer reported as success, duplicate child-failure disclosures are collapsed, and a hop-cap fallback explains itself.
+- Missing speech-to-text and text-to-speech credentials are named by the exact setting that supplies them, a globally disabled vision path stays disabled, and vision requires an explicitly selected provider instead of falling back to one.
+- Text extraction from PDFs no longer throws while releasing the document.
+- A terminal drive's notifications are delivered to the conversation that started it rather than to the most recent one.
+- A stuck dead-letter queue is reported once with its cause instead of on every sweep.
+
+### Changed
+
+- The pi SDK moves to 0.84.0.
+- Provider registration carries sampling parameters through to the model call, and the Baseten credential is wired into both provider maps.
+- Cache spend is reported split by retention tier, provider breaker trips are surfaced, and providers that bill uncached input separately no longer report it as zero.
+
 ## [1.0.58] - 2026-08-04
 
 ### Fixed
