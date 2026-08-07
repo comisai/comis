@@ -864,6 +864,46 @@ describe("agents_manage tool", () => {
         expect.objectContaining({ agentId: "bot-1", suspended: false }),
       );
     });
+
+    it("returns a bounded autonomy projection for profile reporting", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "bot-1",
+        config: {
+          name: "Bot 1",
+          rag: { enabled: true, maxContextChars: 40_000 },
+          autonomy: {
+            profile: "unattended",
+            budget: { aggregateUsd: 30, tokens: 200_000_000, wallClockMs: 172_800_000 },
+            rate: { perRootCallsPerSec: 20, perSocketCallsPerSec: 10, connectionChurnPerMin: 60 },
+            spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+            outward: { originOnly: true, perTargetGrants: [], volumeCap: 4_000 },
+          },
+        },
+        suspended: false,
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const args = { action: "get", agent_id: "bot-1", view: "autonomy" } as const;
+
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-g-autonomy", args as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.get", {
+        agentId: "bot-1",
+        _trustLevel: "admin",
+      });
+      expect(result.details).toEqual({
+        agentId: "bot-1",
+        autonomy: expect.objectContaining({ profile: "unattended" }),
+      });
+      const rendered = result.content.map((block) => block.type === "text" ? block.text : "").join("\n");
+      expect(rendered).toContain('"profile": "unattended"');
+      expect(rendered).not.toContain('"rag"');
+      expect(rendered.length).toBeLessThan(5_000);
+      expect(tool.description).toMatch(/profile.*floor.*caps.*view.*autonomy/isu);
+    });
   });
 
   // -----------------------------------------------------------------------
