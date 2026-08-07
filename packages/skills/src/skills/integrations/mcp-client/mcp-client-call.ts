@@ -221,7 +221,15 @@ export async function callTool(
     // deadline below the floor has chosen that, and must not have every call refused
     // before it is issued.
     const viableFloorMs = Math.min(MIN_VIABLE_CALL_BUDGET_MS, state.options.callToolTimeoutMs);
-    if (remainingMs < viableFloorMs) {
+    // The clamp alone does not deliver that: at or below the floor it pins
+    // viableFloorMs to the deadline ITSELF, so `remainingMs < viableFloorMs` holds for
+    // ANY non-zero wait. A call that waited 1ms on an EMPTY queue was refused and told
+    // to raise `maxConcurrency` for contention that never happened — and whether it
+    // was refused came down to whether the queue drain landed on the same millisecond
+    // as entry. Once the deadline is at/below the floor the operator's own budget is
+    // the only bar left, so only an exhausted one is non-viable.
+    const floorApplies = viableFloorMs < state.options.callToolTimeoutMs;
+    if (floorApplies ? remainingMs < viableFloorMs : remainingMs <= 0) {
       // Issuing here would burn a slot on a request that cannot finish in time and would
       // then surface as a plain deadline expiry — telling the agent to narrow a request
       // scope that was never the problem. Blame contention explicitly instead.
@@ -230,12 +238,15 @@ export async function callTool(
         toolName,
         state.options.callToolTimeoutMs,
         waitedMs,
+        viableFloorMs,
       );
       logger.warn(
         {
           serverName,
           toolName,
           waitedMs,
+          remainingMs,
+          viableFloorMs,
           timeoutMs: state.options.callToolTimeoutMs,
           hint: queueHint,
           errorKind: "resource" as const,

@@ -103,10 +103,17 @@ export function emitMcpBreakerOpened(
  * server was never asked, so narrowing the request scope changes nothing. What has to
  * change is concurrency (or the number of callers fanning out at once).
  *
+ * Reports all three numbers the refusal turns on — waited, left, and the minimum a request
+ * is issued with. Stating only "used up its Nms deadline" hid the floor: a call refused with
+ * budget still on the clock read as a contradiction, and the floor's existence was
+ * discoverable only by reading this module.
+ *
  * @param serverName - the MCP server whose queue the call waited in.
  * @param toolName - the qualified tool name that never got issued.
  * @param timeoutMs - the resolved `integrations.mcp.callToolTimeoutMs`.
  * @param waitedMs - how long the call actually waited for a concurrency slot.
+ * @param minViableMs - the budget floor the remainder fell under ({@link MIN_VIABLE_CALL_BUDGET_MS},
+ *   clamped by `timeoutMs`).
  * @returns the hint text (also used verbatim as the Error message).
  */
 export function mcpCallQueueExhaustedHint(
@@ -114,11 +121,14 @@ export function mcpCallQueueExhaustedHint(
   toolName: string,
   timeoutMs: number,
   waitedMs: number,
+  minViableMs: number,
 ): string {
+  const remainingMs = Math.max(0, timeoutMs - waitedMs);
   return (
     `MCP tool "${toolName}" on server "${serverName}" never ran: it waited ${waitedMs}ms for a ` +
-    `concurrency slot, which used up its ${timeoutMs}ms call deadline ` +
-    "(`integrations.mcp.callToolTimeoutMs`). The server was never asked, so this is contention " +
+    `concurrency slot, leaving ${remainingMs}ms of its ${timeoutMs}ms call deadline ` +
+    `(\`integrations.mcp.callToolTimeoutMs\`) — under the ${minViableMs}ms a request needs to be ` +
+    "worth issuing. The server was never asked, so this is contention " +
     "between callers, NOT a slow server or an over-broad request — narrowing the arguments will " +
     "not help. Unlike a deadline expiry this is not deterministic: the same call can succeed once " +
     "the calls ahead of it drain, so a retry is reasonable. To fix it for good, raise " +
