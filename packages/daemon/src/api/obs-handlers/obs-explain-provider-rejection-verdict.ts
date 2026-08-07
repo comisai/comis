@@ -63,7 +63,10 @@ const NEXT_STEPS: Record<string, string[]> = {
   model_not_available: [
     "verify the configured model id is enabled for this API plan/region",
   ],
-  auth_invalid: ["verify the provider credential named by `providers.entries.<name>.apiKeyName`"],
+  auth_invalid: [
+    "for OAuth, verify `agents.<id>.oauthProfiles` selects an existing profile and run `comis auth login --provider <provider>` if refresh failed",
+    "for a direct key, verify the credential named by `providers.entries.<name>.apiKeyName`",
+  ],
   credit_exhausted: ["check the provider account's billing/usage caps"],
   context_too_long: ["lower `contextEngine.budget.*` or start a new conversation"],
 };
