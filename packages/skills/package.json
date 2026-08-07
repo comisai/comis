@@ -65,7 +65,7 @@
     "music-metadata": "11.12.3",
     "openai": "6.39.1",
     "p-queue": "9.3.3",
-    "pdfjs-dist": "5.7.284",
+    "pdfjs-dist": "6.2.108",
     "playwright-core": "1.60.0",
     "sharp": "0.35.3",
     "undici": "8.10.0",
