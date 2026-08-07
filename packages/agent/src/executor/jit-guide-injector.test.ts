@@ -314,6 +314,39 @@ describe("wrapToolResultWithGuide -- SYSTEM_PROMPT_GUIDES", () => {
 // ---------------------------------------------------------------------------
 
 describe("createJitGuideWrapper", () => {
+  it("keeps the self-authority projection free of deferred guides", async () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+    const authorityResult = makeToolResult(JSON.stringify({
+      agentId: "default",
+      requiresAdminTrust: true,
+      canGrantOwnTrustOrSecurity: false,
+    }));
+
+    const mockTool = {
+      name: "agents_manage",
+      label: "Agents Manage",
+      description: "Manage agents",
+      parameters: {},
+      execute: vi.fn().mockResolvedValue(authorityResult),
+    } as unknown as ToolDefinition;
+
+    const [wrapped] = createJitGuideWrapper([mockTool], delivered, logger);
+    const result = await wrapped.execute(
+      "call-authority",
+      { action: "get", view: "authority" },
+      undefined,
+      undefined,
+      undefined as any,
+    );
+
+    expect(result).toBe(authorityResult);
+    expect(result.content).toHaveLength(1);
+    expect(JSON.stringify(result.content)).not.toContain("Tool Guide");
+    expect(delivered.size).toBe(0);
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
   it("wraps tool execute to inject guide", async () => {
     const logger = createMockLogger();
     const delivered = new Set<string>();
@@ -623,6 +656,26 @@ describe("regression: mid-turn discovered tool path routes through the guide wra
     // Same tool called again inside the mid-turn agentic loop -> one-shot.
     const out2 = await executeWithGuide();
     expect(out2.content).toHaveLength(1);
+  });
+
+  it("keeps a discovered self-authority projection free of deferred guides", () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+    const authorityResult = makeToolResult("bounded authority report");
+
+    const result = wrapToolResultWithGuide(
+      "agents_manage",
+      authorityResult,
+      delivered,
+      logger,
+      {
+        toolParams: { action: "get", view: "authority" },
+      } as never,
+    );
+
+    expect(result).toBe(authorityResult);
+    expect(delivered.size).toBe(0);
+    expect(logger.info).not.toHaveBeenCalled();
   });
 });
 
