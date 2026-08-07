@@ -83,3 +83,59 @@
 - **Regression re-run:** focused descriptions/tool tests, full workspace build, exact Telegram burst, burst verifier, trajectory receipt, session source, and offline `explain`.
 - **Commit:** `e679730f` (RED commit `5319b30c`).
 - **Status:** CLOSED — next time one `explain` call proves automatic fetch grounding without inventing a missing model tool call.
+
+## A3-H-FORWARD-CONTEXT — draft policy was absent from the stable prompt and Telegram provenance
+- **Symptom (live):** the first forwarded-thread attempts treated the opening as an ordinary request, asked for recipient details before send intent, and did not reliably remain in draft mode.
+- **Evidence (ground truth):** changing `buildSafetySection()` did not change the live system digest because the stable executor compiles `ENGINE_KERNEL`; the real Telegram adapter also discarded `forward_origin`, leaving the agent unable to distinguish a forward from original user text.
+- **Hypothesis → root cause:** the behavior spanned two authoritative layers: policy belonged in the stable kernel, while message shape belonged in normalized inbound metadata. Editing only the unused prompt builder could not affect production.
+- **RED tests:** `packages/agent/src/executor/prompt-compiler.test.ts`, `packages/channels/src/telegram/message-mapper.test.ts`, emulator/control tests, and prompt-assembly tests pin kernel wording plus content-free forward provenance.
+- **Fix:** compile generic forwarded-correspondence draft policy into the stable kernel; defer recipient discovery until explicit send intent; map Telegram `forward_origin` to `metadata.isForwarded` without exposing origin identity; render explicit per-turn forwarded guidance. The earlier `5e8877ff` prompt-builder change remains covered but is not the load-bearing surface.
+- **Review:** unrelated deployments receive only domain-neutral correspondence handling; no vertical vocabulary, identity mapping, or application workflow entered runtime code.
+- **Confirm:** after rebuilding and restarting the current emulator/daemon, exact forwarded openings arrived intact with `isForwarded:true`, produced grounded drafts, and requested recipient authority only on the explicit send turn.
+- **Commits:** `16c48f82` (RED `0f89cb61`), `516ed82f` (RED `2edabf57`), `242d92e8` (RED `d82310c6`), `87d89ac9` (RED `439b69f2`); preliminary pair `5e8877ff` (RED `e9e602bd`).
+- **Status:** CLOSED — current-turn forward shape and stable-kernel policy now agree end to end.
+
+## A3-H-MULTILINE-DRIVE — frozen forward body was truncated by the harness
+- **Symptom (live):** an apparent product failure repeatedly saw only `from: alex (synthetic)` and omitted the booking-window body.
+- **Evidence (ground truth):** `jq` emitted both lines, but `drive.mjs` consumed only the first stdin chunk/line before injection.
+- **Hypothesis → root cause:** harness input loss, not model comprehension. The scored prompt was not the frozen corpus record.
+- **RED test:** `test/live/self-driving/scripts/drive-session-oracle.test.ts` supplies multiline stdin and requires byte-preserved text.
+- **Fix:** `drive.mjs` now reads all stdin chunks through the shared session-oracle helper before injecting.
+- **Review:** argv text and single-line stdin remain unchanged; empty-input validation remains bounded.
+- **Confirm:** all valid A3 replays received the exact two-line forward and grounded the 10–4 uncertainty plus alternative-time request.
+- **Commit:** `c1df6237` (RED `606225ed`).
+- **Status:** CLOSED — multiline frozen records are now preserved by one ordinary `drive.mjs` call.
+
+## A3-H-DRAFT-CONTINUITY — terse turns lost the active draft or hid send status
+- **Symptom (live):** `less formal` could revise surrounding commentary instead of the draft; `do i need to reply` could answer without repeating the draft; an unbound send refusal could return draft text without an explicit not-sent statement.
+- **Evidence (ground truth):** successive exact resets isolated each failure after forward provenance was already correct.
+- **Hypothesis → root cause:** generic referent guidance did not state the drafting-exchange invariants needed across terse follow-ups.
+- **RED tests:** `packages/agent/src/bootstrap/sections/core-sections.test.ts` pins terse revision binding, reply-assessment retention, and explicit unbound-send status.
+- **Fix:** current-message guidance binds terse revisions to the latest draft, repeats the draft alongside reply assessment, and requires an explicit not-sent limitation when exact recipient authority is absent.
+- **Review:** the behavior applies to unrelated drafting conversations and does not encode an industry, persona, fixed script, or preferred language.
+- **Confirm:** fixed-build A3-H passed 3/3, and A3-E cancellation plus old-message editing each passed 3/3.
+- **Commits:** `c34ac3b9` (RED `9adf2c03`), `ee4f1ae6` (RED `7b6d6c84`), `5f1877ba` (RED `7370fcb4`).
+- **Status:** CLOSED — the active draft and its delivery status survive terse conversational turns.
+
+## A3-H-ROUTE-INTENT — tool guidance treated current routing as recipient confirmation
+- **Symptom (live):** after an explicit `ok send it`, the model invoked `message.send` using U1's current route even though the draft was addressed to Alex.
+- **Evidence (ground truth):** the trajectory showed a successful `message` tool call targeting U1, followed by final-response suppression; the visible draft was therefore a tool delivery, not merely the normal origin reply. U2 and G1 remained untouched.
+- **Hypothesis → root cause:** the message-tool description exposed current route coordinates without explicitly separating transport context from recipient intent.
+- **RED test:** `packages/agent/src/bootstrap/sections/tool-descriptions.test.ts` requires routing context to remain insufficient recipient confirmation for a draft addressed elsewhere.
+- **Fix:** both the lean description and full message guide say normal current-chat replies auto-deliver and forbid substituting the current route for an unconfirmed target.
+- **Review:** this is generic messaging safety guidance; it grants no destination and does not weaken the runtime's channel checks.
+- **Confirm:** the advisory change improved model behavior but did not eliminate all route-substitution attempts, proving a code-enforced guard was still required.
+- **Commit:** `b6ef80a1` (RED `02d6b378`).
+- **Status:** CLOSED as guidance; the enforcement finding below owns the security boundary.
+
+## A3-H-RECIPIENT-GUARD — forwarded drafts could use the origin route as a confused deputy
+- **Symptom (live):** prompt-correct surface text could coexist with an actual tool delivery to the wrong route. A prose-only fix could never make the HARD recipient oracle reliable.
+- **Evidence (ground truth):** pre-fix trajectory and wire proved `message.send` to the current U1 route during an active forwarded draft. The proposed route equaled the request route, while no exact Alex endpoint was available.
+- **Hypothesis → root cause:** recipient binding was advisory at the model layer; the pre-tool security chokepoint lacked structured forwarded-context evidence.
+- **RED tests:** `packages/agent/src/executor/pi-executor/before-tool-call-guard.test.ts`, `pi-executor.test.ts`, recall/provenance tests, and `packages/core/src/domain/normalized-message.test.ts` reproduce current-route substitution and require an exact non-origin route to remain allowed.
+- **Fix:** preserve a content-free `isForwarded` literal through normalized-message provenance, coalescing, recall, and executor wiring. Before `message.send`, reject only the forwarded-context case whose proposed endpoint exactly equals the current request route. Emit an actionable WARN and content-free `response.outbound_recipient_authority_guard` audit event. Exact non-origin targets continue through the normal grant/endpoint/approval pipeline.
+- **Review:** the guard consumes structured metadata rather than prompt text, protects unrelated messaging deployments, and cannot mint target authority. Extracting the helper also kept the executor under its architecture file-size cap.
+- **Validation:** 363 focused agent tests, 56 focused core tests, core/agent builds, lint, generic-runtime boundary, globals, and source-rules passed. File-size had only the unrelated pre-existing `obs-explain-signals.ts` 1002-line violation.
+- **Confirm:** primary A3-H fixed-build HARD 3/3 produced no U2/G1 delivery. Scratch with only exact grant `678314279` delivered draft `2000113` once; `obs.explain 95bf05f1…` reports success, `message ok=1`, zero failures/denials. The scratch grant and workspace binding were then removed.
+- **Commit:** `71926332` (RED `3b55ae62`).
+- **Status:** CLOSED — next time the wrong current-route substitution is denied at one observable chokepoint, while an exact granted recipient remains reachable.
