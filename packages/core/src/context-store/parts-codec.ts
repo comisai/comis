@@ -13,18 +13,20 @@
  * the OpenAI Responses function-output blocks, etc.) here — pi-ai owns that
  * and is version-pinned.
  *
- * Fidelity model: every content block is emitted as one part whose
+ * Fidelity model: every replayable content block is emitted as one part whose
  * `metadata.raw` is the verbatim canonical block; the message-level envelope
  * (every top-level field except `content`) rides verbatim on the FIRST part's
  * `metadata.messageEnvelope`. A top-level `ToolResultMessage` is its own
  * message, so its whole verbatim value goes to the single part's
- * `metadata.raw`. Reconstruction prefers these verbatim captures so the
- * round-trip drops no field; the typed tool columns are the queryable
- * projection, not the source of truth.
+ * `metadata.raw`. Reconstruction prefers these verbatim captures so replayable
+ * content drops no field; the typed tool columns are the queryable projection,
+ * not the source of truth.
  *
- * Reasoning exclusion: a `thinking` block becomes a `reasoning` part marked
- * `topLevelReasoningOnly` and is NOT re-emitted as a visible content block on
- * reconstruction (excluded from visible content + summarizer input); its tokens
+ * Reasoning exclusion: a `thinking` block becomes a payload-free `reasoning`
+ * part marked `topLevelReasoningOnly` and is NOT re-emitted as a visible content
+ * block on reconstruction (excluded from visible content + summarizer input).
+ * Provider-private reasoning and signatures can repeat secret values without
+ * enough context to classify them safely, so neither is persisted. Its tokens
  * were already counted agent-side at write time (`estimateMessageTokens` counts
  * `thinking`), so the budget accounts for it even while it is invisible here.
  *
@@ -59,7 +61,8 @@ type UserMessageLike = Extract<Message, { role: "user" }>;
  * path): one part per content block, plus a single `tool_result` part for a
  * top-level `ToolResultMessage`. Captures `metadata.raw` = the verbatim block
  * (or whole tool-result message), the top-level reasoning marker, and the
- * message-level envelope on the first part.
+ * message-level envelope on the first part. Private reasoning payloads are
+ * represented only by their marker and discriminator.
  */
 export function messageToParts(msg: Message): LcdMessagePart[] {
   if (msg.role === "toolResult") {
@@ -138,11 +141,14 @@ function blockToPart(block: unknown): LcdMessagePart {
       return { kind: "file", metadata: { raw: block, rawType: "image" } };
 
     case "thinking":
-      // Reasoning is captured as a marked part, excluded from visible
-      // content on reconstruction, but its tokens are counted at write time.
+      // Never persist provider-private reasoning text or signatures. They are
+      // excluded from reconstruction and may repeat short credential values
+      // that no format-only scrubber can identify reliably. The marker retains
+      // the structural fact that reasoning occurred; tokens were counted before
+      // this codec runs.
       return {
         kind: "reasoning",
-        metadata: { raw: block, rawType: "thinking", topLevelReasoningOnly: true },
+        metadata: { raw: undefined, rawType: "thinking", topLevelReasoningOnly: true },
       };
 
     case "toolCall": {

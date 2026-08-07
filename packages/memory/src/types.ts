@@ -131,7 +131,7 @@ export interface LcdMessagePartRow {
   tool_output: string | null;
   /** 0/1 tool-result error flag; null for non-`tool_result` blocks. */
   is_error: number | null;
-  /** JSON-encoded LcdPartMetadata (verbatim `raw` block + `messageEnvelope` + `topLevelReasoningOnly`). */
+  /** JSON-encoded projected raw replay block, reasoning marker, and message envelope. */
   metadata: string;
 }
 
