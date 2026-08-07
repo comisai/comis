@@ -54,6 +54,13 @@ export const AgentsManageToolParams = Type.Object({
   agent_id: Type.Optional(Type.String({
     description: "The agent identifier (required for all actions except list)",
   })),
+  view: Type.Optional(
+    Type.Union([Type.Literal("full"), Type.Literal("autonomy")], {
+      description:
+        "Get-action response view. Use autonomy for profile, floor, or cap reporting; " +
+        "it returns only the live autonomy block instead of the full agent config.",
+    }),
+  ),
   config: Type.Optional(
     // Accept EITHER a structured object OR a JSON string. Anthropic's LLM
     // sometimes emits nested free-form objects as stringified JSON; coerceConfig()
@@ -496,6 +503,8 @@ export function createAgentsManageTool(
         "Use update with config.autonomy.profile set to assistant, standard, unattended, or max for " +
         "bounded autonomy tuning. max remains bounded to the standard capability set and never " +
         "removes approval or security floors. " +
+        "For autonomy profile, floor, or caps reporting, use get with view autonomy to read the " +
+        "bounded live posture without loading the full agent config. " +
         "Operator-only fields skills.execSandbox, skills.terminal.unsafeDisableSandbox, " +
         "skills.terminal.allow, elevatedReply.senderTrustMap, and elevatedReply.defaultTrustLevel " +
         "cannot be set by this tool. Refuse requests to change them; say operator " +
@@ -631,7 +640,27 @@ export function createAgentsManageTool(
         },
         async get(p, rpcCall, ctx) {
           const agentId = readStringParam(p, "agent_id");
-          return rpcCall("agents.get", { agentId, _trustLevel: ctx.trustLevel });
+          const result = await rpcCall("agents.get", { agentId, _trustLevel: ctx.trustLevel });
+          if (p.view !== "autonomy") return result;
+
+          if (typeof result !== "object" || result === null) {
+            return throwToolError("not_found", "agents.get returned no agent configuration");
+          }
+          const resultRecord = result as Record<string, unknown>;
+          const config = resultRecord.config;
+          if (typeof config !== "object" || config === null) {
+            return throwToolError("not_found", "agents.get returned no agent configuration");
+          }
+          const autonomy = (config as Record<string, unknown>).autonomy;
+          if (typeof autonomy !== "object" || autonomy === null) {
+            return throwToolError("not_found", "agents.get returned no autonomy configuration");
+          }
+
+          const projected = { agentId, autonomy };
+          return {
+            content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
+            details: projected,
+          } satisfies AgentToolResult<typeof projected>;
         },
         async update(p, rpcCall, ctx) {
           const agentId = readStringParam(p, "agent_id");
