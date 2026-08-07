@@ -29,6 +29,7 @@ import {
   stripInternalFields,
   systemGetEnv,
   findOperatorOnlyAgentPaths,
+  deepMerge,
   sanitizeLogString,
   systemNowMs,
 } from "@comis/core";
@@ -525,6 +526,17 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
             ...(config.skills.builtinTools ?? {}),
           },
         } as typeof existing.skills;
+      }
+
+      // Match the persistence layer's recursive object / replace-array
+      // semantics for partial autonomy updates. A profile-only patch must not
+      // reset tighter budgets, quotas, grants, or other explicit bounds to
+      // schema defaults in the live runtime before the persisted restart.
+      if (config.autonomy && existing.autonomy) {
+        config.autonomy = deepMerge(
+          existing.autonomy as unknown as Record<string, unknown>,
+          config.autonomy as unknown as Record<string, unknown>,
+        ) as typeof config.autonomy;
       }
 
       // Deep-merge scheduler so heartbeat updates don't lose cron config and vice versa.
