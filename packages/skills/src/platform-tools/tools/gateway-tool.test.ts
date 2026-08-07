@@ -1158,6 +1158,28 @@ describe("gateway tool", () => {
       expect(msg).not.toContain("channels_manage");
       expect(rpcCall).not.toHaveBeenCalled();
     });
+
+    it("operator-only agent rejection points to operator config instead of agents_manage", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-redir-operator-agent", {
+          action: "patch",
+          section: "agents",
+          key: "default.skills.execSandbox.enabled",
+          value: "never",
+        });
+      } catch (error) {
+        captured = error as Error;
+      }
+
+      expect(captured).toBeDefined();
+      expect(captured!.message).toMatch(/operator config.*daemon restart/isu);
+      expect(captured!.message).not.toContain("agents_manage");
+      expect(rpcCall).not.toHaveBeenCalled();
+    });
   });
 
   // Inline schema fragment in immutable-section rejection hint so the LLM

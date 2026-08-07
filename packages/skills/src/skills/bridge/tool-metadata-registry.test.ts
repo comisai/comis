@@ -1846,6 +1846,18 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
     expect(error).toContain("agents.default.provider");
   });
 
+  it("keeps operator-only agent paths out of the agents_manage redirect", async () => {
+    const meta = getToolMetadata("gateway");
+    const error = await meta!.validateInput!({
+      action: "patch",
+      section: "agents",
+      key: "default.skills.execSandbox.enabled",
+    });
+
+    expect(error).toMatch(/operator config.*daemon restart/isu);
+    expect(error).not.toContain("agents_manage");
+  });
+
   it("returns no redirect or patchable hint for sections without managed tool or overrides", async () => {
     const meta = getToolMetadata("gateway");
     const error = await meta!.validateInput!({

@@ -37,6 +37,16 @@ describe("getManagedSectionRedirect", () => {
     expect(getManagedSectionRedirect("agents", "coding")?.tool).toBe("agents_manage");
   });
 
+  it.each([
+    "skills.execSandbox",
+    "skills.terminal.unsafeDisableSandbox",
+    "skills.terminal.allow",
+    "elevatedReply.senderTrustMap",
+    "elevatedReply.defaultTrustLevel",
+  ])("does not redirect operator-only agent path %s to agents_manage", (subpath) => {
+    expect(getManagedSectionRedirect("agents", `default.${subpath}`)).toBeUndefined();
+  });
+
   it("longer prefix wins: integrations.mcp.servers -> mcp_manage", () => {
     expect(getManagedSectionRedirect("integrations", "mcp.servers")?.tool).toBe(
       "mcp_manage",
