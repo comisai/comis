@@ -28,6 +28,7 @@ import type { RunPromptParams } from "./prompt-runner-types.js";
 import type { ExecutionResult } from "../types.js";
 import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
 import { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
+import { markAuxiliaryStreamCall } from "../stream-wrappers/types.js";
 export { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
 
 type LocaleEnforcementSession = Pick<AgentSession, "agent" | "prompt">;
@@ -94,7 +95,11 @@ function createIsolatedLocaleRepairSession(
           messages: [],
         },
         convertToLlm: sourceAgent.convertToLlm,
-        streamFn: sourceAgent.streamFunction,
+        streamFn: (model, context, options) => sourceAgent.streamFunction(
+          model,
+          context,
+          markAuxiliaryStreamCall(options),
+        ),
         getApiKey: sourceAgent.getApiKey,
         onPayload: sourceAgent.onPayload,
         onResponse: sourceAgent.onResponse,

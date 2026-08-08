@@ -28,7 +28,7 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
-import type { StreamFnWrapper } from "../types.js";
+import { isAuxiliaryStreamCall, type StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
 import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
@@ -91,6 +91,13 @@ export function createRequestBodyInjector(
 ): StreamFnWrapper {
   return function requestBodyInjector(next: StreamFn): StreamFn {
     return (model, context, options) => {
+      // Utility-model calls can reuse the parent agent's composed stream
+      // function, but their one-shot payload is not part of that conversation.
+      // Bypass every session-scoped cache mutation so it cannot overwrite the
+      // parent's fence, retention latch, or prefix-stability baseline.
+      if (isAuxiliaryStreamCall(options)) {
+        return next(model, context, options);
+      }
       const needsCacheBreakpoints = config.modelProfile?.supportsPromptCache
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
