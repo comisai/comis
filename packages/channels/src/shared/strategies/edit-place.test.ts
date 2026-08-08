@@ -22,6 +22,7 @@ import type {
   TurnOutcome,
   FinalDeliveryReceipt,
   ActivityRenderError,
+  RichButton,
 } from "@comis/core";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
@@ -33,8 +34,8 @@ const DEBOUNCE_MS = 800;
 const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
 
 type Call =
-  | { op: "send"; text: string; id: string }
-  | { op: "edit"; id: string; text: string }
+  | { op: "send"; text: string; id: string; buttons?: RichButton[][] }
+  | { op: "edit"; id: string; text: string; buttons?: RichButton[][] }
   | { op: "delete"; id: string };
 
 function makeRecordingActions(): {
@@ -44,13 +45,13 @@ function makeRecordingActions(): {
   const calls: Call[] = [];
   let seq = 0;
   const actions: ActivityRenderActions = {
-    async send(text): Promise<Result<string, ActivityRenderError>> {
+    async send(text, options): Promise<Result<string, ActivityRenderError>> {
       const id = `msg-${seq++}`;
-      calls.push({ op: "send", text, id });
+      calls.push({ op: "send", text, id, buttons: options?.buttons });
       return ok(id);
     },
-    async edit(id, text): Promise<Result<void, ActivityRenderError>> {
-      calls.push({ op: "edit", id, text });
+    async edit(id, text, options): Promise<Result<void, ActivityRenderError>> {
+      calls.push({ op: "edit", id, text, buttons: options?.buttons });
       return ok(undefined);
     },
     async delete(id): Promise<Result<void, ActivityRenderError>> {
@@ -126,6 +127,41 @@ describe("createEditPlaceRenderer", () => {
     // Exactly one edit despite three frames — and it carries the LATEST frame's text.
     expect(edits).toHaveLength(1);
     expect(edits[0].text).toContain("step 3");
+  });
+
+  it("clears resolved approval controls before the streaming edit debounce", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const { actions, calls } = makeRecordingActions();
+    const approvalButton: RichButton = {
+      text: "Approve",
+      callback_data: "v1.approve.Ab3Cd5Ef7Gh9.signature",
+    };
+    const buildButtons = (events: readonly ActivityEvent[]): RichButton[][] =>
+      events.some((event) => event.kind === "approval" && event.status === "running")
+        ? [[approvalButton]]
+        : [];
+    const renderer = createEditPlaceRenderer({ actions, timer, clock, buildButtons });
+
+    const pending = makeFrame(0, "approval required");
+    pending.visibleEvents = [makeEvent({ kind: "approval", status: "running" })];
+    await renderer.apply(pending);
+
+    const resolved = makeFrame(1, "approval granted");
+    resolved.visibleEvents = [makeEvent({
+      kind: "approval",
+      phase: "end",
+      status: "completed",
+      semanticPhase: "done",
+    })];
+    await renderer.apply(resolved);
+
+    const sends = calls.filter((call): call is Extract<Call, { op: "send" }> => call.op === "send");
+    const edits = calls.filter((call): call is Extract<Call, { op: "edit" }> => call.op === "edit");
+    expect(sends[0]?.buttons).toEqual([[approvalButton]]);
+    expect(edits).toHaveLength(1);
+    expect(edits[0]?.buttons).toEqual([]);
+    expect(timer.unrefRecord().some((entry) => entry.delay === DEBOUNCE_MS)).toBe(false);
   });
 
   it("on success edits to the final form, then deletes ONLY after the deliveredAt point", async () => {
