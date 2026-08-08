@@ -347,13 +347,15 @@ describe("persistToConfig", () => {
     // Allow fire-and-forget .catch() to resolve
     await new Promise((r) => setTimeout(r, 10));
 
-    // Git failure should be logged at DEBUG
-    expect(logger.debug).toHaveBeenCalledWith(
+    // Git failure stays visible to operators even though persistence succeeds.
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "persistToConfig",
         outcome: "failure",
+        errorKind: "dependency",
+        hint: expect.stringContaining("comis config history"),
       }),
-      expect.any(String),
+      "Config history commit failed; config write remains applied",
     );
   });
 
