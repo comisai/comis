@@ -87,6 +87,20 @@ describe("catalogFromLocalePacks", () => {
     expect(selectPipelineTimeoutReply("he", {}, catalog)).toBe("ok");
     expect(onUnknown).toEqual(["he:not_a_message_id"]);
   });
+
+  it("does not report deterministic inbound reply ids as dead config", () => {
+    const onUnknown: string[] = [];
+    catalogFromLocalePacks(
+      {
+        he: {
+          "error.callback_invalid": "הפעולה אינה זמינה",
+          "approval.resolved_one.approved": "אושר: {action} ({id})",
+        },
+      },
+      (locale, id) => onUnknown.push(`${locale}:${id}`),
+    );
+    expect(onUnknown).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
