@@ -263,6 +263,7 @@ describe("sessions list explicit authority", () => {
 describe("sessions inspect full details", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let callSpy: ReturnType<typeof vi.fn>;
 
   const SESSION_HISTORY = {
     session: {
@@ -283,10 +284,10 @@ describe("sessions inspect full details", () => {
       { role: "user", content: "check the build", timestamp: 100 },
       { role: "assistant", content: "build passed", timestamp: 200 },
     ],
-    total: 2,
+    total: 45,
     offset: 0,
     limit: 20,
-    hasMore: false,
+    hasMore: true,
   };
 
   beforeEach(() => {
@@ -294,12 +295,9 @@ describe("sessions inspect full details", () => {
     consoleSpy = createConsoleSpy();
     exitSpy = createProcessExitSpy();
 
-    vi.mocked(withClient).mockImplementation(async (fn) => {
-      const mockClient = createMockRpcClient()
-        .onCall("session.history", SESSION_HISTORY)
-        .build();
-      return fn(mockClient);
-    });
+    callSpy = vi.fn().mockResolvedValue(SESSION_HISTORY);
+    vi.mocked(withClient).mockImplementation(async (fn) =>
+      fn({ call: callSpy, close: vi.fn() }));
   });
 
   afterEach(() => {
@@ -321,6 +319,10 @@ describe("sessions inspect full details", () => {
       "test-tenant",
       "--agent",
       "default",
+      "--offset",
+      "20",
+      "--limit",
+      "2",
     ]);
 
     const output = getSpyOutput(consoleSpy.log);
@@ -330,7 +332,16 @@ describe("sessions inspect full details", () => {
     expect(output).toContain("default");
     expect(output).toContain("1234");
     expect(output).toContain("check the build");
+    expect(output).toContain("Showing 21-22 of 45");
+    expect(output).toContain("Next page: --offset 22 --limit 2");
     expect(output).not.toContain("Max Steps");
+    expect(callSpy).toHaveBeenCalledWith("session.history", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+      conversation_ref: "cv_test",
+      offset: 20,
+      limit: 2,
+    });
   });
 });
 

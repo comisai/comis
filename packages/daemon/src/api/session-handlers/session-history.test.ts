@@ -680,6 +680,8 @@ describe("session.history LCD transcript recovery", () => {
     const createdAt = 1_700_000_100_000;
     const assistantAt = 1_700_000_102_000;
     const updatedAt = 1_700_000_104_000;
+    const lcdCreatedAt = createdAt - 1_000;
+    const lcdUpdatedAt = updatedAt + 1_000;
     const lcdRows: LcdMessage[] = [
       {
         id: "lcd-user",
@@ -730,6 +732,21 @@ describe("session.history LCD transcript recovery", () => {
     const deps = makeDeps({
       deliveryQueue: queue,
       lcdStore: { getMessages } as unknown as SessionHandlerDeps["lcdStore"],
+      contextBrowse: {
+        listConversations: vi.fn().mockReturnValue({
+          conversations: [{
+            conversationRef,
+            tenantId: "test",
+            agentId: "default",
+            sessionKey: canonicalSessionKeyFor("default"),
+            title: null,
+            createdAt: lcdCreatedAt,
+            updatedAt: lcdUpdatedAt,
+            messageCount: 2,
+          }],
+          total: 1,
+        }),
+      } as unknown as SessionHandlerDeps["contextBrowse"],
       sessionStore: {
         listDetailed: () => [],
         loadByFormattedKey: (key: string) => key === SESSION_KEY
@@ -790,8 +807,8 @@ describe("session.history LCD transcript recovery", () => {
       outputTokens: 50,
       totalTokens: 150,
       toolCalls: 1,
-      createdAt,
-      lastActiveAt: updatedAt,
+      createdAt: lcdCreatedAt,
+      lastActiveAt: lcdUpdatedAt,
       endpoint: {
         channelType: "telegram",
         channelInstanceId: "telegram-account",

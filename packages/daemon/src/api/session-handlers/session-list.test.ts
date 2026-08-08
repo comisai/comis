@@ -180,7 +180,6 @@ describe("session list explicit authority", () => {
         agentId: "agent_a",
         kind: "dm",
         messageCount: 4,
-        totalTokens: 2_000,
         updatedAt: 1_700_000_010_000,
         createdAt: 1_700_000_000_000,
       }],
