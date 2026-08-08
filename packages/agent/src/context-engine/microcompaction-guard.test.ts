@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installMicrocompactionGuard, getInlineThreshold } from "./microcompaction-guard.js";
@@ -333,6 +333,8 @@ describe("installMicrocompactionGuard", () => {
       expect(existsSync(join(tempDir, "tool-results", "call-writefail.txt"))).toBe(false);
       // ...and the trajectory offload event must NOT have been emitted.
       expect(onOffloaded).not.toHaveBeenCalled();
+      expect(sm.appended[0]).toBe(largeResult);
+      expect(largeResult.content[0]!.text).toBe("x".repeat(10_000));
     } finally {
       rmSync(unrelatedBase, { recursive: true, force: true });
     }
@@ -352,9 +354,32 @@ describe("installMicrocompactionGuard", () => {
 
       expect(existsSync(join(tempDir, "tool-results", "call-hardcap-writefail.txt"))).toBe(false);
       expect(onOffloaded).not.toHaveBeenCalled();
+      expect(sm.appended[0]).toBe(hugeResult);
+      expect(hugeResult.content[0]!.text).toBe("x".repeat(150_000));
     } finally {
       rmSync(unrelatedBase, { recursive: true, force: true });
     }
+  });
+
+  it("keeps an external result inline when its origin sidecar cannot be written", () => {
+    const sm = createMockSessionManager(tempDir);
+    const onOffloaded = vi.fn();
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger, onOffloaded);
+
+    const toolResultsDir = join(tempDir, "tool-results");
+    mkdirSync(join(toolResultsDir, "call-sidecar-fail.origin.json"), {
+      recursive: true,
+    });
+    const prose = "External plain-text result. ".repeat(500);
+    const result = createWrappedMcpResult(prose, "call-sidecar-fail");
+
+    sm.appendMessage(result);
+
+    expect(existsSync(join(toolResultsDir, "call-sidecar-fail.txt"))).toBe(true);
+    expect(onOffloaded).not.toHaveBeenCalled();
+    expect(sm.appended[0]).toBe(result);
+    expect(result.content[0]!.text).toContain("SECURITY NOTICE");
+    expect(result.content[0]!.text).not.toContain("offloaded to disk");
   });
 
   it("does not fire onOffloaded for under-threshold tool results", () => {
