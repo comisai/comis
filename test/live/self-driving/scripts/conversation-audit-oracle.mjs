@@ -141,6 +141,7 @@ function lifecycleViolations(trajectoryRecords) {
   const promoted = new Set();
   const backgroundTerminals = new Set();
   let failedToolResults = 0;
+  const failedToolNames = [];
 
   for (const record of trajectoryRecords) {
     if (record?.type === "tool.call") {
@@ -149,6 +150,11 @@ function lifecycleViolations(trajectoryRecords) {
       terminals.add(recordKey(record, "toolCallId", "tool"));
       if (recordData(record).success === false || record?.type === "tool.timeout") {
         failedToolResults += 1;
+        failedToolNames.push(
+          typeof recordData(record).toolName === "string"
+            ? recordData(record).toolName
+            : "unknown-tool",
+        );
       }
     } else if (record?.type === "background_task.promoted") {
       promoted.add(recordKey(record, "taskId", "background"));
@@ -172,7 +178,7 @@ function lifecycleViolations(trajectoryRecords) {
       `${unmatchedBackground} promoted background task(s) have no terminal lifecycle record`,
     ));
   }
-  return { violations, failedToolResults };
+  return { violations, failedToolResults, failedToolNames };
 }
 
 function localeViolations(wireRecords, contract) {
@@ -180,6 +186,12 @@ function localeViolations(wireRecords, contract) {
   const forbidden = Array.isArray(contract.forbiddenSurfaceTexts)
     ? contract.forbiddenSurfaceTexts.filter((text) => typeof text === "string" && text.length > 0)
     : [];
+  if (forbidden.length === 0) {
+    return [violation(
+      "locale_contract_empty",
+      `locale ${contract.expectedLocale} has no forbidden fallback surfaces to verify`,
+    )];
+  }
   const visible = wireRecords.map(wireText);
   const matches = forbidden.filter((text) => visible.some((surface) => surface.includes(text)));
   return matches.length === 0
@@ -242,7 +254,14 @@ function groundingViolations(grounding) {
     if (assertion?.kind === "set_covers") {
       const set = normalizedSet(entitySets, assertion.set);
       const universe = normalizedSet(entitySets, assertion.universe);
-      const actual = set !== undefined && universe !== undefined && setCovers(set, universe);
+      if (set === undefined || universe === undefined || typeof assertion.claimed !== "boolean") {
+        violations.push(violation(
+          "grounding_assertion_invalid",
+          `grounding assertion ${String(assertion.id)} references unavailable entity sets`,
+        ));
+        continue;
+      }
+      const actual = setCovers(set, universe);
       if (actual !== assertion.claimed) {
         violations.push(violation(
           "grounding_set_coverage_false",
@@ -254,7 +273,14 @@ function groundingViolations(grounding) {
     if (assertion?.kind === "sets_equal") {
       const left = normalizedSet(entitySets, assertion.left);
       const right = normalizedSet(entitySets, assertion.right);
-      const actual = left !== undefined && right !== undefined && setsEqual(left, right);
+      if (left === undefined || right === undefined || typeof assertion.claimed !== "boolean") {
+        violations.push(violation(
+          "grounding_assertion_invalid",
+          `grounding assertion ${String(assertion.id)} references unavailable entity sets`,
+        ));
+        continue;
+      }
+      const actual = setsEqual(left, right);
       if (actual !== assertion.claimed) {
         violations.push(violation(
           "grounding_set_equality_false",
@@ -320,18 +346,29 @@ function budgetViolations(metrics, budgets) {
       `input token count ${metrics.inputTokens} exceeds budget ${budgets.maxInputTokens}`,
     ));
   }
-  if (typeof budgets.maxCostUsd === "number"
-    && metrics.costUsd !== undefined
-    && metrics.costUsd > budgets.maxCostUsd) {
-    violations.push(violation(
-      "cost_budget_exceeded",
-      `cost ${metrics.costUsd} USD exceeds budget ${budgets.maxCostUsd} USD`,
-    ));
+  if (typeof budgets.maxCostUsd === "number") {
+    if (metrics.costUsd === undefined) {
+      violations.push(violation(
+        "cost_metric_unavailable",
+        "a cost budget was requested but the incident report carries no finite cost metric",
+      ));
+    } else if (metrics.costUsd > budgets.maxCostUsd) {
+      violations.push(violation(
+        "cost_budget_exceeded",
+        `cost ${metrics.costUsd} USD exceeds budget ${budgets.maxCostUsd} USD`,
+      ));
+    }
   }
   return violations;
 }
 
-function incidentViolations(incidentReport, failedToolResults) {
+function countsByName(names) {
+  const counts = new Map();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return counts;
+}
+
+function incidentViolations(incidentReport, failedToolResults, failedToolNames) {
   if (incidentReport === undefined || incidentReport === null) {
     return [violation(
       "incident_report_unavailable",
@@ -341,7 +378,17 @@ function incidentViolations(incidentReport, failedToolResults) {
   const reportedFailures = Array.isArray(incidentReport.failures)
     ? incidentReport.failures.length
     : 0;
-  return reportedFailures < failedToolResults
+  const reportedNames = Array.isArray(incidentReport.failures)
+    ? incidentReport.failures
+      .map((failure) => failure?.toolName)
+      .filter((name) => typeof name === "string")
+    : [];
+  const expectedByName = countsByName(failedToolNames);
+  const reportedByName = countsByName(reportedNames);
+  const namedFailureMissing = [...expectedByName].some(
+    ([name, count]) => (reportedByName.get(name) ?? 0) < count,
+  );
+  return reportedFailures < failedToolResults || namedFailureMissing
     ? [violation(
       "incident_report_omits_tool_failure",
       `incident report exposes ${reportedFailures} of ${failedToolResults} failed tool result(s)`,
@@ -398,7 +445,17 @@ export function auditConversationEvidence(input) {
       "no wire records were available; user-visible behavior is unverified",
     ));
   }
-  violations.push(...incidentViolations(input?.incidentReport, lifecycle.failedToolResults));
+  if (sessionRecords.length === 0) {
+    violations.push(violation(
+      "session_evidence_empty",
+      "no session records were available; persisted conversation evidence is unverified",
+    ));
+  }
+  violations.push(...incidentViolations(
+    input?.incidentReport,
+    lifecycle.failedToolResults,
+    lifecycle.failedToolNames,
+  ));
 
   return {
     schemaVersion: 1,

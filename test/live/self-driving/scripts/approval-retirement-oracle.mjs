@@ -23,6 +23,9 @@ export function classifyApprovalRetirement({
   elapsedMs,
   maxRetirementMs,
 }) {
+  if (elapsedMs > maxRetirementMs) {
+    return { state: "late", elapsedMs, maxRetirementMs };
+  }
   const expectedId = String(messageId);
   for (let index = Math.max(0, afterEventCount); index < messages.length; index += 1) {
     const message = messages[index];
@@ -33,9 +36,6 @@ export function classifyApprovalRetirement({
     if (approvalButtons(message).length > 0) {
       return { state: "still_actionable", eventIndex: index };
     }
-  }
-  if (elapsedMs > maxRetirementMs) {
-    return { state: "late", elapsedMs, maxRetirementMs };
   }
   return { state: "pending" };
 }
