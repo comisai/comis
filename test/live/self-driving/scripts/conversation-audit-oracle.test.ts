@@ -13,7 +13,7 @@ function trajectoryRecord(
 
 describe("conversation evidence audit oracle", () => {
   it("names every production-shaped approval locale grounding and budget defect", () => {
-    const fleet = Array.from({ length: 6 }, (_, index) => `vehicle_${index + 1}`);
+    const population = Array.from({ length: 6 }, (_, index) => `entity_${index + 1}`);
     const report = auditConversationEvidence({
       trajectoryRecords: [
         trajectoryRecord("approval.requested", "trace_a", "2026-08-07T16:47:00.000Z", {
@@ -30,11 +30,11 @@ describe("conversation evidence audit oracle", () => {
           taskId: "task_a",
         }),
         trajectoryRecord("tool.call", "trace_a", "2026-08-07T16:47:16.000Z", {
-          toolName: "fleet_snapshot",
+          toolName: "asset_snapshot",
           toolCallId: "call_a",
         }),
         trajectoryRecord("tool.result", "trace_a", "2026-08-07T16:47:17.000Z", {
-          toolName: "fleet_snapshot",
+          toolName: "asset_snapshot",
           toolCallId: "call_a",
           success: false,
         }),
@@ -98,13 +98,13 @@ describe("conversation evidence audit oracle", () => {
         },
         grounding: {
           entitySets: {
-            fleet,
-            located: fleet,
-            fresh: fleet.slice(0, 5),
-            recent: fleet.slice(0, 2),
-            aged: fleet.slice(2, 5),
-            stale: [fleet[5]],
-            no_transmissions: [fleet[0]],
+            population,
+            located: population,
+            fresh: population.slice(0, 5),
+            recent: population.slice(0, 2),
+            aged: population.slice(2, 5),
+            stale: [population[5]],
+            no_transmissions: [population[0]],
           },
           assertions: [
             {
@@ -112,7 +112,7 @@ describe("conversation evidence audit oracle", () => {
               kind: "set_covers",
               claimed: true,
               set: "fresh",
-              universe: "fleet",
+              universe: "population",
             },
             {
               id: "equal_counts_mean_same_vehicles",
@@ -124,7 +124,7 @@ describe("conversation evidence audit oracle", () => {
             {
               id: "freshness_buckets_are_exclusive",
               kind: "partition",
-              whole: "fleet",
+              whole: "population",
               parts: ["recent", "aged", "stale"],
             },
           ],
@@ -165,11 +165,11 @@ describe("conversation evidence audit oracle", () => {
           approved: true,
         }),
         trajectoryRecord("tool.call", "trace_ok", "2026-08-07T16:47:03.000Z", {
-          toolName: "fleet_snapshot",
+          toolName: "asset_snapshot",
           toolCallId: "call_ok",
         }),
         trajectoryRecord("tool.result", "trace_ok", "2026-08-07T16:47:04.000Z", {
-          toolName: "fleet_snapshot",
+          toolName: "asset_snapshot",
           toolCallId: "call_ok",
           success: true,
         }),
@@ -198,7 +198,7 @@ describe("conversation evidence audit oracle", () => {
         },
         { method: "sendMessage", messageId: 52, text: "הבדיקה הושלמה" },
       ],
-      sessionRecords: [{ role: "user", content: "secret://fleet_password" }],
+      sessionRecords: [{ role: "user", content: "secret://integration_password" }],
       incidentReport: { cost: { costUsd: 0.08 }, failures: [] },
       contract: {
         expectedLocale: "he",
@@ -214,12 +214,12 @@ describe("conversation evidence audit oracle", () => {
         },
         grounding: {
           entitySets: {
-            fleet: ["vehicle_1", "vehicle_2", "vehicle_3"],
-            fresh: ["vehicle_1", "vehicle_2", "vehicle_3"],
-            recent: ["vehicle_1"],
-            aged: ["vehicle_2"],
-            stale: ["vehicle_3"],
-            no_transmissions: ["vehicle_3"],
+            population: ["entity_1", "entity_2", "entity_3"],
+            fresh: ["entity_1", "entity_2", "entity_3"],
+            recent: ["entity_1"],
+            aged: ["entity_2"],
+            stale: ["entity_3"],
+            no_transmissions: ["entity_3"],
           },
           assertions: [
             {
@@ -227,7 +227,7 @@ describe("conversation evidence audit oracle", () => {
               kind: "set_covers",
               claimed: true,
               set: "fresh",
-              universe: "fleet",
+              universe: "population",
             },
             {
               id: "stale_vehicle_has_no_transmissions",
@@ -239,7 +239,7 @@ describe("conversation evidence audit oracle", () => {
             {
               id: "freshness_buckets_are_exclusive",
               kind: "partition",
-              whole: "fleet",
+              whole: "population",
               parts: ["recent", "aged", "stale"],
             },
           ],
