@@ -330,7 +330,12 @@ export function runCacheBreakpointPhase(
   if (slotsAvailable > 0 && Array.isArray(result.messages)) {
     // Conversation breakpoints use zone-aware retention.
     // Recent zone always uses "short" (5m); semi-stable/mid zones get escalated retention.
-    const messageRetention = config.getMessageRetention?.() ?? resolvedRetention;
+    const requestedMessageRetention = config.getMessageRetention?.() ?? resolvedRetention;
+    // Adaptive retention is allowed to shorten message markers independently,
+    // but it cannot advance beyond the execution-level retention latch. If it
+    // did, a later model call in the same execution could emit system(5m) then
+    // message(1h), forcing the monotonic-TTL safety net to repair every request.
+    const messageRetention = resolvedRetention === "long" ? requestedMessageRetention : resolvedRetention;
     const placed = placeCacheBreakpoints(
       result.messages as Array<Record<string, unknown>>,
       {
