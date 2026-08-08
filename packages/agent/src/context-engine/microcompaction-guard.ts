@@ -121,10 +121,9 @@ function unwrapToolResultText(content: ToolResultMessage["content"]): CleanToolR
  * to the inline reference and trajectory event.
  *
  * @returns `{ diskPath, written }` — `diskPath` is the absolute target path;
- *   `written` is `false` when the parent-dir or file write was rejected
- *   (e.g. confinement-base escape), so the caller can suppress the
- *   `tool:result_offloaded` trajectory emit instead of recording a phantom
- *   pointer at a file that does not exist.
+ *   `written` is `false` when the parent-dir, payload, or required origin
+ *   sidecar write was rejected, so the caller can keep the original result
+ *   inline and suppress the `tool:result_offloaded` trajectory emit.
  */
 function saveToDisk(
   sessionDir: string,
@@ -155,6 +154,7 @@ function saveToDisk(
 
   const writeResult = writeRegularFile({ path: diskPath, content: diskText, confinedBaseDir: dataDir });
 
+  let originWritten = true;
   if (origin) {
     const sidecarPath = diskPath.slice(0, -extension.length) + ".origin.json";
     const sidecarBody = JSON.stringify({
@@ -163,14 +163,12 @@ function saveToDisk(
     });
     const sidecarResult = writeRegularFile({ path: sidecarPath, content: `${sidecarBody}\n`, confinedBaseDir: dataDir });
     if (!sidecarResult.ok) {
-      // Best-effort: without the sidecar a later recovery read is delivered
-      // without its taint boundary — visible, not fatal (the inline preview
-      // stays wrapped either way).
+      originWritten = false;
       logger.warn(
         {
           toolCallId,
           sidecarPath,
-          hint: "Origin sidecar write failed; a read-tool recovery of this offload will not restore the external-content taint boundary. Check data-dir confinement and filesystem permissions.",
+          hint: "Origin sidecar write failed; the offload will be rejected and the external result kept inline so a recovery read cannot lose its taint boundary. Check data-dir confinement and filesystem permissions.",
           errorKind: "resource" as ErrorKind,
         },
         "Offload origin sidecar write failed",
@@ -178,7 +176,7 @@ function saveToDisk(
     }
   }
 
-  return { diskPath, written: dirResult.ok && writeResult.ok };
+  return { diskPath, written: dirResult.ok && writeResult.ok && originWritten };
 }
 
 /**
@@ -462,6 +460,30 @@ export function installMicrocompactionGuard(
         logger,
       );
 
+      // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
+      // absolute diskPath leaks the host filesystem layout and is
+      // not a stable drill-down target. This guard holds no event bus and no
+      // clock: it computes the payload and hands it to onOffloaded;
+      // the executor callback (which has both) performs the trajectory emit.
+      //
+      // Offloading is successful only after every required artifact persists.
+      // On failure keep the original wrapped result inline: replacing it with
+      // a phantom pointer would lose data, and accepting an external payload
+      // without its origin sidecar would weaken the taint boundary.
+      if (!written) {
+        logger.warn(
+          {
+            toolName: toolResultMsg.toolName,
+            toolCallId: toolResultMsg.toolCallId,
+            diskPath,
+            hint: "Disk offload persistence failed; kept the original tool result inline and suppressed tool:result_offloaded. Check data-dir confinement and filesystem permissions.",
+            errorKind: "resource" as ErrorKind,
+          },
+          "Tool result offload persistence failed -- keeping result inline",
+        );
+        return originalAppend(message);
+      }
+
       logger.warn(
         {
           toolName: toolResultMsg.toolName,
@@ -474,33 +496,9 @@ export function installMicrocompactionGuard(
         "Tool result exceeded hard cap -- truncated and offloaded",
       );
 
+      const diskPathRel = relative(sessionDir, diskPath);
+      onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
       const reference = createInlineReference(toolResultMsg, totalChars, diskPath, diskText, external, diskTruncated);
-      // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
-      // absolute diskPath leaks the host filesystem layout and is
-      // not a stable drill-down target. This guard holds no event bus and no
-      // clock: it computes the payload and hands it to onOffloaded;
-      // the executor callback (which has both) performs the trajectory emit.
-      //
-      // Only emit when the disk write actually persisted: a
-      // best-effort write failure (confinement-base escape, fs error) returns
-      // `written: false` and the file does not exist, so emitting
-      // tool:result_offloaded would record a phantom pointer the
-      // IncidentReport.offloads[] drill-down cannot open. Log+suppress instead.
-      if (written) {
-        const diskPathRel = relative(sessionDir, diskPath);
-        onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
-      } else {
-        logger.warn(
-          {
-            toolName: toolResultMsg.toolName,
-            toolCallId: toolResultMsg.toolCallId,
-            diskPath,
-            hint: "Disk offload write was rejected (confinement-base escape or fs error); suppressed tool:result_offloaded so the trajectory does not record a pointer at a non-existent file. Check the data-dir confinement and filesystem permissions.",
-            errorKind: "resource" as ErrorKind,
-          },
-          "Tool result offload write failed -- suppressing offload event",
-        );
-      }
 
       // Propagate the compact reference to the in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
@@ -525,6 +523,22 @@ export function installMicrocompactionGuard(
         logger,
       );
 
+      // Keep the original result inline unless every artifact required for a
+      // safe recovery read persisted successfully.
+      if (!written) {
+        logger.warn(
+          {
+            toolName: toolResultMsg.toolName,
+            toolCallId: toolResultMsg.toolCallId,
+            diskPath,
+            hint: "Disk offload persistence failed; kept the original tool result inline and suppressed tool:result_offloaded. Check data-dir confinement and filesystem permissions.",
+            errorKind: "resource" as ErrorKind,
+          },
+          "Tool result offload persistence failed -- keeping result inline",
+        );
+        return originalAppend(message);
+      }
+
       const reference = createInlineReference(toolResultMsg, totalChars, diskPath, cleanText, external, false);
 
       // Compute reference size and compression ratio for observability
@@ -543,25 +557,8 @@ export function installMicrocompactionGuard(
         "Tool result offloaded to disk",
       );
 
-      // Same residency-safe pointer at the threshold branch — its own diskPath
-      // is in scope (returned by the saveToDisk above). Workspace-relative only.
-      // Suppress the offload event on a failed write so the
-      // trajectory never records a pointer at a file that was not persisted.
-      if (written) {
-        const diskPathRel = relative(sessionDir, diskPath);
-        onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
-      } else {
-        logger.warn(
-          {
-            toolName: toolResultMsg.toolName,
-            toolCallId: toolResultMsg.toolCallId,
-            diskPath,
-            hint: "Disk offload write was rejected (confinement-base escape or fs error); suppressed tool:result_offloaded so the trajectory does not record a pointer at a non-existent file. Check the data-dir confinement and filesystem permissions.",
-            errorKind: "resource" as ErrorKind,
-          },
-          "Tool result offload write failed -- suppressing offload event",
-        );
-      }
+      const diskPathRel = relative(sessionDir, diskPath);
+      onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
 
       // Propagate the compact reference to the in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
