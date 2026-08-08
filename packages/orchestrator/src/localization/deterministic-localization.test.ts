@@ -27,6 +27,34 @@ describe("deterministic localization", () => {
       .toEqual({ ok: true, value: "No pending approvals." });
   });
 
+  it("uses the resolved agent locale pack instead of the channel advisory locale", () => {
+    const localization = createDeterministicLocalization({
+      getLocaleConfig: (agentId) => agentId === "agent_he"
+        ? {
+            language: "he-IL",
+            localePacks: {
+              he: {
+                "error.callback_invalid": "הפעולה הזו כבר אינה זמינה.",
+                "approval.resolved_one.approved": "אושר: {action} ({id})",
+              },
+            },
+          }
+        : undefined,
+    });
+
+    expect(localization.render({
+      agentId: "agent_he",
+      key: "error.callback_invalid",
+      locale: "en-US",
+    })).toEqual({ ok: true, value: "הפעולה הזו כבר אינה זמינה." });
+    expect(localization.render({
+      agentId: "agent_he",
+      key: "approval.resolved_one",
+      locale: "en-US",
+      values: { outcome: "approved", action: "shell", id: "abc123" },
+    })).toEqual({ ok: true, value: "אושר: shell (abc123)" });
+  });
+
   it("fails closed when required template values are missing", () => {
     const localization = createDeterministicLocalization();
     expect(localization.render({ key: "approval.resolved_one", locale: "en" }))
