@@ -79,4 +79,18 @@ describe("approval control retirement oracle", () => {
       maxRetirementMs: 500,
     })).toEqual({ state: "late", elapsedMs: 501, maxRetirementMs: 500 });
   });
+
+  it("rejects a retirement event first observed after the latency budget", () => {
+    expect(classifyApprovalRetirement({
+      messages: [{
+        method: "editMessageText",
+        messageId: 93,
+        replyMarkup: { inline_keyboard: [] },
+      }],
+      messageId: 93,
+      afterEventCount: 0,
+      elapsedMs: 501,
+      maxRetirementMs: 500,
+    })).toEqual({ state: "late", elapsedMs: 501, maxRetirementMs: 500 });
+  });
 });

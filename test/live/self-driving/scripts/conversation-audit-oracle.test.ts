@@ -287,7 +287,53 @@ describe("conversation evidence audit oracle", () => {
       "tool_call_unmatched",
       "background_task_unmatched",
       "wire_evidence_empty",
+      "session_evidence_empty",
       "incident_report_unavailable",
+    ]);
+  });
+
+  it("fails closed when requested locale grounding and cost evidence is absent", () => {
+    const report = auditConversationEvidence({
+      trajectoryRecords: [
+        trajectoryRecord("tool.call", "trace_missing", "2026-08-07T16:47:00.000Z", {
+          toolName: "asset_snapshot",
+          toolCallId: "call_missing",
+        }),
+        trajectoryRecord("tool.result", "trace_missing", "2026-08-07T16:47:01.000Z", {
+          toolName: "asset_snapshot",
+          toolCallId: "call_missing",
+          success: false,
+        }),
+      ],
+      wireRecords: [{ method: "sendMessage", messageId: 61, text: "בדיקה" }],
+      sessionRecords: [{ role: "user", content: "בדיקה" }],
+      incidentReport: {
+        cost: {},
+        failures: [{ toolName: "different_tool" }],
+      },
+      contract: {
+        expectedLocale: "he",
+        forbiddenSurfaceTexts: [],
+        budgets: { maxCostUsd: 1 },
+        grounding: {
+          entitySets: {},
+          assertions: [{
+            id: "missing_sets_must_not_match_false",
+            kind: "set_covers",
+            claimed: false,
+            set: "missing_set",
+            universe: "missing_universe",
+          }],
+        },
+      },
+    });
+
+    expect(report.verdict).toBe("fail");
+    expect(report.violations.map((violation) => violation.code)).toEqual([
+      "locale_contract_empty",
+      "grounding_assertion_invalid",
+      "cost_metric_unavailable",
+      "incident_report_omits_tool_failure",
     ]);
   });
 });
