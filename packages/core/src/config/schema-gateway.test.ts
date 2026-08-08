@@ -188,6 +188,20 @@ describe("GatewayTokenSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts an unresolved environment reference without weakening literal length", () => {
+    const referenceResult = GatewayTokenSchema.safeParse({
+      id: "token-reference",
+      secret: "${EXAMPLE_GATEWAY_TOKEN}",
+    });
+    const literalResult = GatewayTokenSchema.safeParse({
+      id: "token-literal",
+      secret: "test-key",
+    });
+
+    expect(referenceResult.success).toBe(true);
+    expect(literalResult.success).toBe(false);
+  });
+
   it("accepts SecretRef object for secret field", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "token-5",
