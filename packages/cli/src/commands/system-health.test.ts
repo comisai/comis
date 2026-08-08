@@ -98,6 +98,11 @@ const FAKE_REPORT = {
     detail: "over half the window's sessions degraded",
     suggestedNextSteps: ["obs.explain the worst session"],
   },
+  worstDegradedExecution: {
+    sessionKey: "default:user_a:chat_a",
+    traceId: "trace-degraded",
+    endReason: "context_exhausted",
+  },
   suggestedNextSteps: ["raise the breaker threshold"],
   truncations: [],
 };
@@ -203,6 +208,7 @@ describe("comis system-health (defaults) uses --since 24 --format table", () => 
     expect(output).toContain("system_recurring_health_signal");
     expect(output).toContain("system_high_degraded_rate");
     expect(output).toContain("raise the breaker threshold");
+    expect(output).toContain("Worst:      comis explain trace-degraded");
     // The table branch must NOT have emitted the whole report as JSON.
     expect(() => JSON.parse(output)).toThrow();
   });

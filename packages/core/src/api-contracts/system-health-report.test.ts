@@ -86,6 +86,23 @@ describe("SystemHealthReportSchema (bounded/deterministic system wire shape)", (
     expect(parsed.likelyRootCause?.code).toBe("provider_rate_limiting");
   });
 
+  it("preserves the worst degraded execution reference for direct drill-down", () => {
+    const parsed = SystemHealthReportSchema.parse({
+      ...validReport(),
+      worstDegradedExecution: {
+        sessionKey: "default:user_a:chat_a",
+        traceId: "trace-degraded",
+        endReason: "context_exhausted",
+      },
+    }) as Record<string, unknown>;
+
+    expect(parsed.worstDegradedExecution).toEqual({
+      sessionKey: "default:user_a:chat_a",
+      traceId: "trace-degraded",
+      endReason: "context_exhausted",
+    });
+  });
+
   it("pins schemaVersion to the literal 1 (a future version is rejected)", () => {
     const wrongVersion = { ...validReport(), schemaVersion: 2 };
     const result = SystemHealthReportSchema.safeParse(wrongVersion);

@@ -954,6 +954,7 @@ describe("assembleSystemHealthReport (bounded read fan-in)", () => {
       category: "session_summary",
       severity: "warning",
       sessionKey: "s-degraded",
+      traceId: "trace-degraded",
       message: "session:summary",
       details: summaryDetails({ degraded: true, costUsd: 0, turnCount: 2, endReason: "context_exhausted" }),
     });
@@ -982,7 +983,13 @@ describe("assembleSystemHealthReport (bounded read fan-in)", () => {
     // The exact worst session is NAMED — the operator pastes it straight into
     // `comis explain` instead of hunting for "the worst session" (live incident).
     expect(report.likelyRootCause?.detail).toContain("s-degraded");
-    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain s-degraded");
+    expect(report).toHaveProperty("worstDegradedExecution", {
+      sessionKey: "s-degraded",
+      traceId: "trace-degraded",
+      endReason: "context_exhausted",
+    });
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain trace-degraded");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).not.toContain("comis explain s-degraded");
   });
 
   it("HEURISTIC: chronic config posture still wins when no session degraded", async () => {
