@@ -11,6 +11,15 @@
 //   node revoke.mjs message.send --file                      # MULTI-PARAM: params from /tmp/rpc.json
 //   node revoke.mjs tokens.create --file /tmp/tok.json       # ...or an explicit path
 //
+// ⚠ Provider-backed methods are risk-gated. Anything that drives a model turn (`graph.execute`
+// node tasks, `cron.run`, `message.send`, cron authoring, …) goes through
+// live-provider-risk-gate.mjs on the RESOLVED params and exits 4 before the socket opens when the
+// text is cyber-abuse-shaped and the operator has not authorized it (see CYBER-ABUSE-SUSPENSIONS.md).
+// Operational/diagnostic RPCs are exempt so triage keeps working — the exempt set is
+// `UNGATED_RPC_METHODS` in live-provider-risk-gate.mjs (read it there; do not re-list it here).
+// Any OTHER method is gated by default — a benign payload classifies clean and passes, so the
+// gate only bites on suspended content.
+//
 // Param typing: a single arg that parses as a JSON object is the WHOLE params object;
 // otherwise key+val, with val JSON-parsed when possible ("1"→1, "true"→true, '["a"]'→array)
 // and left as a string on parse failure (so bare ids/sessionKeys still work).
@@ -32,6 +41,11 @@ import { readFileSync } from "node:fs";
 // Code-root resolution (installed comisai package OR source checkout; COMIS_SRC overrides) + RPC env
 // defaults live in _rig.mjs — shared by every helper, deployed alongside by deploy-scripts.sh.
 import { ensureRpcEnv, importCli } from "./_rig.mjs";
+import {
+  collectRpcRiskTexts,
+  isGatedRpcMethod,
+  liveProviderRiskError,
+} from "./live-provider-risk-gate.mjs";
 ensureRpcEnv();
 const { withClient } = await importCli("client/rpc-client.js");
 const rawArgv = process.argv.slice(2);
@@ -50,6 +64,21 @@ if (key === "--file") {
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) params = parsed;
 } else if (key !== undefined) {
   params = { [key]: tryJson(val) };
+}
+// Methods that drive a model turn (graph.execute node tasks, cron.run, message.send, …)
+// reach the provider with caller-supplied text, so they carry the same suspension as the
+// dedicated injectors. Gate on the RESOLVED params — inline JSON, key+val, and --file all
+// land here — and before withClient() opens the socket. Operational/diagnostic RPCs stay
+// ungated so live triage keeps working.
+if (isGatedRpcMethod(method)) {
+  const providerRiskError = liveProviderRiskError({
+    source: `revoke.mjs ${method}`,
+    texts: collectRpcRiskTexts(params),
+  });
+  if (providerRiskError) {
+    console.error(providerRiskError);
+    process.exit(4);
+  }
 }
 try {
   const r = await withClient((c) => c.call(method, params));

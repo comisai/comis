@@ -7,6 +7,14 @@ it. These are the runnable companions to
 [`../targets/MEMORY-LEARNING-STRESS-CATALOG.md`](../targets/MEMORY-LEARNING-STRESS-CATALOG.md); the design
 rationale (and why MCP, not `exec`) is in [`DESIGN-DRAFT.md`](./DESIGN-DRAFT.md).
 
+> **Provider suspension — `threat-hunting` only.** Driving the `threat-hunting` workload at a provider is
+> suspended unless the operator explicitly requested it
+> ([`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md)); `drive-sim-workload.sh threat-hunting`
+> declares that risk itself and exits `4` without the operator acknowledgement. It is nonetheless the
+> worked example below — substitute another workload when you are not authorized. The offline CLI
+> (`--selftest`, `--list`, single-function calls) needs no authorization, and the other 13 workloads'
+> canonical feeder prompts classify clean.
+
 **The one principle:** every `SKILL.md` teaches tool **mechanics** (the tools, the call order, the goal) —
 never the **strategy** (which host is compromised, the winning playbook). The strategy is what the reflection
 engine must *learn* from successful episodes. The hidden truth lives only in each workload's

@@ -10,6 +10,15 @@
 //   GWTOKEN env = the gateway token (for the HARD token-leak check) — REQUIRED; set in scripts/.live-env.
 import { readFileSync } from "node:fs";
 import { rig } from "./_rig.mjs";
+import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
+const providerRiskError = liveProviderRiskError({
+  source: "model-battery.mjs",
+  declaredRisk: "cyber-abuse",
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
+}
 const emu = JSON.parse(readFileSync(rig.emuWiringPath, "utf8"));
 const base = emu.apiRoot, chatId = rig.chatId;
 const label = process.argv[2] || "?";

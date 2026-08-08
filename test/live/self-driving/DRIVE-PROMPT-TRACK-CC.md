@@ -61,9 +61,10 @@ A narrow run is PARTIAL by construction and must not read as a full campaign.
 5. `test/live/self-driving/03-OBSERVABILITY.md` — ground-truth read order, dual oracle, improvement loops
 6. `test/live/self-driving/01-SETUP.md` section on local mode — what a local run cannot prove
 7. `test/live/self-driving/scripts/README.md`, plus the SOURCE of every helper you drive with
-8. `test/live/self-driving/05-CATALOG.md` section 2b (contended / gated / long-running work) — prior
+8. `test/live/self-driving/CYBER-ABUSE-SUSPENSIONS.md`
+9. `test/live/self-driving/05-CATALOG.md` section 2b (contended / gated / long-running work) — prior
    contention findings live there; do not re-discover them
-9. the newest `test/live/self-driving/runs/*/RESULTS-LOG.md` and `FIX-VERIFY-LOG.md`
+10. the newest `test/live/self-driving/runs/*/RESULTS-LOG.md` and `FIX-VERIFY-LOG.md`
 
 Source is implementation truth. Where prose and source disagree, the drift is a framework finding and you
 fix it in place. Before changing production source read `docs/developer-guide/generic-agent-architecture.md`:
@@ -78,6 +79,11 @@ The `comis` CLI is not on PATH. Invoke it as `node packages/cli/dist/cli.js <com
 Run on THIS MACHINE only. `RIG_MODE=local` for every rig command. No SSH, no VPS, no remote deploy scripts,
 no systemd, no real Telegram bot or account. Drive channel behavior only through the loopback Telegram
 emulator and the real Telegram adapter.
+
+Provider-backed cyber-abuse-shaped corpus entries remain suspended unless the operator explicitly
+requested them in this task. The driver may mark risk but must not self-set or persist the operator
+acknowledgement. Record suspended rows as `NOT-RUN: provider cyber-abuse safety suspension`; the narrow
+scope of this prompt is not authorization.
 
 - Use a dedicated absolute `DATA` root for the campaign and a SECOND one for destructive scratch
   verification, each with its own free `GW_PORT` and its own non-default `SERVICE`. Never use the service

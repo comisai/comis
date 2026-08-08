@@ -15,6 +15,11 @@
 > **How to invoke it (the user):** *"Live-test `<target>` using `test/live/self-driving/` — drive it end to end."*
 > The agent then follows **`00-MISSION.md`**.
 
+> **Provider safety suspension:** cyber-abuse-shaped provider calls are default-deny, including defensive,
+> simulated, and expected-refusal probes. They run only after a current, explicit operator request and the
+> exact operator acknowledgement. Read **`CYBER-ABUSE-SUSPENSIONS.md`** before deriving or driving security,
+> secret, SSRF, destructive, self-escalation, prompt-injection, sandbox, or threat-hunting rows.
+
 This kit **compiles** the full live-test protocol — the comprehensive Tracks A–L, the UC catalog, the
 emulator-harness design, the FINDINGS lessons, the config-map, and the milestone-coverage and verify audits,
 plus the local and VPS runbooks + scripts — into one followable kit. It is the **canonical** entry point.
@@ -26,6 +31,7 @@ plus the local and VPS runbooks + scripts — into one followable kit. It is the
 | **`DRIVE-PROMPT.md`** | The single copy-paste, **local-only real-user Telegram** kickoff. It drives one messy multi-day relationship through the loopback emulator and real adapter, then attacks it in parallel, with mid-flight steering, and under burst stress (**Track CC**) — on a **frozen corpus** replayed verbatim so cross-run numbers are comparable. Carries the **carried-findings** (re-verify vs. re-diagnose), **metric-discipline** and **traps** sections; `targets/real-user-everyday-assistant.md` remains the sole authoritative A/B/C arc, oracle, polarity and trap specification. |
 | **`DRIVE-PROMPT-TRACK-CC.md`** | The **narrow-scope** sibling: drives ONLY **Track CC** (concurrency · steering · stress) plus the frozen-corpus, metric-discipline, carried-findings and traps machinery — a minimum spine instead of the full A/B/C sweep, so the new rows can be proven first. Gates on a harness stage: `drive.mjs` takes a per-conversation lock and **cannot** express same-chat concurrency, so a concurrent injector + attribution reader must be built and negative-controlled before any CC row is scored. |
 | **`00-MISSION.md`** | THE driver — the generic orchestration loop an agent follows from a target to a closed audit. Start here. |
+| **`CYBER-ABUSE-SUSPENSIONS.md`** | The default-deny provider safety policy, operator-only authorization contract, suspended target/row inventory, and central injector gate. |
 | **`01-SETUP.md`** | Stand up the rig: VPS **or this machine** (`RIG_MODE=local` → `scripts/init-local-config.sh` → `scripts/local-up.sh`) + emulator + the build under test + baseline smoke. Uses `scripts/`. §Local mode states what a local run cannot prove. |
 | **`02-DISCIPLINE.md`** | Prime directives + the per-issue fix-verify loop + 3-way scoring + the stop condition. The non-negotiables. |
 | **`03-OBSERVABILITY.md`** | Ground-truth read-order, the dual oracle, logging, troubleshooting, and the three mandatory improvement loops (obs + emulator + framework). The fourth — the shipped-DEFAULTS review — is `00-MISSION.md` STEP 4.6. |

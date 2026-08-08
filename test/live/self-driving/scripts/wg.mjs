@@ -14,6 +14,7 @@
 // Env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN default via _rig.mjs (rig env); COMIS_SRC optional.
 import { readFileSync } from "node:fs";
 import { ensureRpcEnv, importCli, requireCodeRoot, rig } from "./_rig.mjs";
+import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
 
 ensureRpcEnv();
 const { withClient } = await importCli("client/rpc-client.js");
@@ -64,6 +65,14 @@ const spec = JSON.parse(readFileSync(specPath, "utf8"));
 const name = spec.name;
 const agentId = spec.agentId || "default";
 const script = spec.scriptFile ? readFileSync(spec.scriptFile, "utf8") : spec.script;
+const providerRiskError = liveProviderRiskError({
+  source: "wg.mjs",
+  texts: [spec.payloadText, script],
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
+}
 
 // 1. Replace any same-name job so cron.run resolves unambiguously + the store is fresh.
 //    NOTE: cron.remove has no agentId param (the operator gateway strips _agentId), so it

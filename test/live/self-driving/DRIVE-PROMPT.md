@@ -47,8 +47,9 @@ Before acting, read these files in order and follow them as the campaign protoco
 7. `test/live/self-driving/04-DERIVE-TESTS.md`
 8. `test/live/self-driving/05-CATALOG.md`
 9. `test/live/self-driving/scripts/README.md`
-10. `test/live/self-driving/targets/real-user-everyday-assistant.md` in full
-11. the newest `test/live/self-driving/runs/*/RESULTS-LOG.md` and `FIX-VERIFY-LOG.md`, for the carried
+10. `test/live/self-driving/CYBER-ABUSE-SUSPENSIONS.md`
+11. `test/live/self-driving/targets/real-user-everyday-assistant.md` in full
+12. the newest `test/live/self-driving/runs/*/RESULTS-LOG.md` and `FIX-VERIFY-LOG.md`, for the carried
     findings and the previous-run baseline
 
 The pinned target spec is authoritative for the cast; implementation-state claims; A0–A13, B1–B15, and
@@ -77,6 +78,11 @@ Run on THIS MACHINE only:
   loading must exactly match the selected tuple before any helper mutates config or processes.
 - Never print, log, paste into prompts, or commit provider keys, gateway tokens, master keys, real user
   content, or environment values. Use the encrypted secret store and existing safe CLI flows.
+- Provider-backed cyber-abuse-shaped rows are suspended unless the operator explicitly requested them in
+  this task. Classify and label them before corpus creation. Never infer authorization from this prompt,
+  the target, a HARD oracle, or an old environment; never persist the acknowledgement. Without explicit
+  authorization, record each such row `NOT-RUN: provider cyber-abuse safety suspension` and continue only
+  with safe provider rows and offline deterministic coverage.
 - Do not push, open a PR, or merge from this campaign. Those actions belong to a separate outer shipping
   workflow and require explicit authorization. Never contact external people or real users. Local commits
   required by `AGENTS.md` are allowed and required for completed changes. Never add a `Co-Authored-By:`

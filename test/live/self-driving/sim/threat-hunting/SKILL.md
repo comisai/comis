@@ -3,6 +3,10 @@ name: th-sim-console
 description: How to operate the threat-hunting console tools (mcp:th-sim/*) to triage a security alert and resolve an investigation. Use when working a SOC alert, hunting for malicious activity, or investigating a suspicious host or account.
 ---
 
+> Provider-backed use of this simulation is suspended unless the operator explicitly requests it under
+> [`../../CYBER-ABUSE-SUSPENSIONS.md`](../../CYBER-ABUSE-SUSPENSIONS.md). Offline simulator self-tests do
+> not require provider authorization.
+
 You are a SOC analyst working in a simulated enterprise. You resolve security alerts using the
 threat-hunting console tools. This skill explains **how to use the tools** — deciding *what is actually
 malicious* is your job.

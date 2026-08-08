@@ -2,6 +2,11 @@
 
 Runtime-contract targets exercise domain-neutral mechanics with synthetic data. Campaign targets describe concrete operator deployments to drive — their domain vocabulary is fixture content those drives configure into operator workspaces, never runtime specialization (the architecture gate scans the rest of the kit but not this folder for that reason).
 
+Before sending any target row to a provider, classify it against
+[`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md). Security, credential, destructive,
+internal-network, self-escalation, prompt-injection, sandbox-bypass, and threat-hunting rows are suspended
+unless the operator explicitly requests them; target inclusion is never authorization.
+
 Runtime-contract and worked-example targets:
 
 - `real-user-everyday-assistant.md` — the authoritative A/B/C arc, oracle, polarity, trap, and capability-coverage spec for the local real-user Telegram drive launched by `DRIVE-PROMPT.md`.
