@@ -15,7 +15,12 @@
  */
 
 import { buildPromptTimeoutReply, catalogFromLocalePacks } from "../degraded-reply.js";
-import { formatSessionKey, resolveModelPricing, scriptTokenFactor } from "@comis/core";
+import {
+  formatSessionKey,
+  resolveModelPricing,
+  scriptTokenFactor,
+  tryGetContext,
+} from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
 import { withPromptTimeout, PromptTimeoutError } from "../prompt-timeout.js";
@@ -302,7 +307,7 @@ function emitTimeoutGhostCost(
 
   deps.eventBus.emit("observability:token_usage", {
     timestamp: deps.clock.now(),
-    traceId: executionId,
+    traceId: tryGetContext()?.traceId ?? executionId,
     agentId: agentId ?? "default",
     channelId: msg.channelId,
     executionId,
