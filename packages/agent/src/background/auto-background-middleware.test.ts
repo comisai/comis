@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { createConversationRef, safePath, scrubSecretsFromText } from "@comis/core";
+import { createConversationRef, runWithContext, safePath, scrubSecretsFromText, TypedEventBus } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
@@ -217,6 +217,74 @@ describe("wrapToolForAutoBackground", () => {
     const tasks = manager.getAllTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.status).toBe("running");
+  });
+
+  it("excludes a correlated human approval wait from the promotion timer", async () => {
+    vi.useFakeTimers();
+    const eventBus = new TypedEventBus();
+    const promoteSpy = vi.spyOn(manager, "promote");
+    const traceId = "10000000-0000-4000-8000-000000000001";
+    const sessionKey = "default:agent-1:echo:test";
+    let resolveTool: ((result: AgentToolResult<unknown>) => void) | undefined;
+    const tool: ToolDefinition = {
+      name: "approval_gated_tool",
+      description: "test tool",
+      parameters: {},
+      execute: vi.fn(() => {
+        eventBus.emit("approval:requested", {
+          requestId: "approval-1",
+          shortId: "Ab3Cd5Ef7Gh9",
+          toolName: "approval_gated_tool",
+          action: "update",
+          params: {},
+          tenantId: "default",
+          agentId: "agent-1",
+          conversationRef: "cv_test",
+          sessionKey,
+          resolvingPrincipalId: "user1",
+          trustLevel: "user",
+          createdAt: 1,
+          timeoutMs: 60_000,
+          traceId,
+        });
+        return new Promise((resolve) => {
+          resolveTool = resolve;
+        });
+      }),
+    };
+    const wrapped = wrapToolForAutoBackground(
+      tool,
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      undefined,
+      eventBus,
+    );
+    const execution = runWithContext({
+      tenantId: "default",
+      userId: "user1",
+      agentId: "agent-1",
+      sessionKey,
+      traceId,
+      startedAt: 1,
+      trustLevel: "user",
+    }, () => wrapped.execute("call-approval", {}, undefined, undefined, undefined));
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(config.autoBackgroundMs + 10);
+    const promotionsWhileApprovalPending = promoteSpy.mock.calls.length;
+    eventBus.emit("approval:resolved", {
+      requestId: "approval-1",
+      approved: true,
+      approvedBy: "user1",
+      resolvedAt: 2,
+    });
+    resolveTool?.(toolOk("approved-result"));
+    await vi.runAllTimersAsync();
+    await execution;
+    vi.useRealTimers();
+
+    expect(promotionsWhileApprovalPending).toBe(0);
   });
 
   it("keeps a registered high-entropy tool label usable across status boundaries", async () => {
