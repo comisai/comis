@@ -83,6 +83,30 @@ export function createSkillRegistry(
   let cachedSnapshot: SkillSnapshot | null = null;
   let snapshotVersion = 0;
 
+  function logUndeclaredRequirements(skills: Iterable<SkillMetadata>): void {
+    if (!eligibilityContext || !(config.runtimeEligibility?.enabled ?? true)) return;
+    const skillNames = [...skills]
+      .filter((metadata) => isSkillEligible(metadata.name, config.promptSkills))
+      .filter((metadata) => {
+        const result = evaluateSkillEligibility(metadata, eligibilityContext);
+        return result.eligible && !result.requirementsDeclared;
+      })
+      .map((metadata) => metadata.name)
+      .sort();
+    if (skillNames.length === 0) return;
+    const displayedNames = skillNames.slice(0, 20);
+    logger?.warn(
+      {
+        skillCount: skillNames.length,
+        skillNames: displayedNames,
+        truncatedSkillCount: skillNames.length - displayedNames.length,
+        errorKind: "precondition" as const,
+        hint: "Add an explicit `comis.requires` block to each listed SKILL.md; use empty bins and env arrays for dependency-free skills",
+      },
+      "Eligible skills have undeclared runtime requirements",
+    );
+  }
+
   /** Check runtime eligibility if context is available and enabled. Returns false if skill should be excluded. */
   function checkRuntimeEligibility(metadata: SkillMetadata): boolean {
     if (!eligibilityContext) return true;
@@ -92,23 +116,6 @@ export function createSkillRegistry(
     if (!result.eligible) {
       logger?.debug({ skillName: metadata.name, reason: result.reason }, "Skill excluded by runtime eligibility");
       return false;
-    }
-    // An eligible skill that declared NOTHING is not the same as one verified to need nothing.
-    // A third-party import with no `comis:` block reaches here indistinguishable from a
-    // dependency-free first-party skill: the gate had nothing to check, so its real prerequisites
-    // were never pre-flighted. Observed live — an imported skill was surfaced as available while a
-    // python module its scripts import was absent from the host. Surfaced at WARN (not debug)
-    // because it is the only signal that a skill's prerequisites are unverifiable, and the failure
-    // it precedes happens mid-task with no earlier warning.
-    if (!result.requirementsDeclared) {
-      logger?.warn(
-        {
-          skillName: metadata.name,
-          errorKind: "precondition" as const,
-          hint: "This skill declares no `comis.requires` block, so its binaries and env vars cannot be pre-flighted; a missing prerequisite will surface only when the skill runs. Add a `comis: requires: { bins: [...], env: [...] }` block to the skill's SKILL.md to make it checkable.",
-        },
-        "Skill requirements are undeclared and cannot be verified",
-      );
     }
     return true;
   }
@@ -147,6 +154,7 @@ export function createSkillRegistry(
         logger?.debug({ binCount: allBins.size, bins: [...allBins] }, "Binary availability cache populated");
       }
     }
+    logUndeclaredRequirements(discovered);
 
     cachedSnapshot = null;
     snapshotVersion++;
@@ -485,6 +493,7 @@ export function createSkillRegistry(
           eligibilityContext.populateBinaryCache([...allBins]);
         }
       }
+      logUndeclaredRequirements(metadataMap.values());
 
       cachedSnapshot = null;
       snapshotVersion++;

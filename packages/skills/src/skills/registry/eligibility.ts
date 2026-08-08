@@ -43,11 +43,9 @@ export interface EligibilityResult {
   /**
    * Did the skill DECLARE its requirements at all?
    *
-   * `eligible: true` alone conflates two very different states: a skill that genuinely needs
-   * nothing, and a third-party skill that needs plenty and simply never declared. An imported
-   * upstream skill with no `comis:` block was surfaced as available while a python module its
-   * scripts import was absent from the host — the gate that correctly excludes a Comis-shaped
-   * skill for a missing env var had nothing to check and stayed silent.
+   * `eligible: true` alone conflates a skill that explicitly needs nothing with one whose
+   * prerequisites were never declared. A skill with no `comis:` block gives the runtime
+   * nothing to pre-flight, so callers must not imply that its environment was verified.
    *
    * The distinction is already in the metadata: a Comis-shaped skill carries `requires` (possibly
    * with empty arrays), while a skill with no `comis:` block has `requires === undefined`. Callers
