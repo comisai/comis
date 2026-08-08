@@ -110,6 +110,12 @@ describe("runCacheBreakpointPhase — system marker coordinates with the UNTRUST
     const warned = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
       .some((call) => String(call[1] ?? "").includes("MONOTONIC-TTL"));
     expect(warned).toBe(false);
+    const anchorLog = (logger.debug as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .find((call) => String(call[1] ?? "").includes("cache anchor placed"));
+    expect(anchorLog?.[1]).toBe(
+      "Long-TTL cache anchor placed on user message carrying an untrusted block",
+    );
+    expect(String(anchorLog?.[1])).not.toContain("E-FIX");
   });
 
   it("leaves the system marker at 5m when no UNTRUSTED_ anchor fires", () => {
