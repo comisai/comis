@@ -149,28 +149,37 @@ interface SystemSignals {
    *  `comis explain`). Undefined when no autonomy row carried one. */
   worstRootRunId?: string;
   /** The worst degraded session's sessionKey (the one carrying the dominant
-   *  cause, most-recent tiebreak) — so the acute-degradation verdict names the
-   *  exact session to paste into `comis explain` instead of "the worst session".
+   *  cause, most-recent tiebreak) — retained as the fallback when an older row
+   *  has no execution trace.
    *  Undefined when no degraded runtime session is in the window. */
   worstDegradedSessionKey?: string;
+  /** Exact execution trace for the degraded-session drill-down. */
+  worstDegradedTraceId?: string;
 }
 
 /**
- * Pick the worst degraded session's key: prefer a session whose named
+ * Pick the worst degraded execution: prefer a session whose named
  * `endReason` matches the dominant cause; among matches (or, if none match,
  * across all degraded runtime sessions) take the MOST RECENT (`lastTs`). Pure,
  * deterministic. Returns undefined when no degraded runtime session exists.
  */
-export function pickWorstDegradedSessionKey(
-  rows: readonly { sessionKey: string; degraded: boolean; endReason: string; lastTs: number; source: string }[],
+export function pickWorstDegradedExecution(
+  rows: readonly { sessionKey: string; traceId?: string; degraded: boolean; endReason: string; lastTs: number; source: string }[],
   topCause: string | undefined,
-): string | undefined {
+): { sessionKey: string; traceId?: string; endReason: string } | undefined {
   const degraded = rows.filter((r) => r.source === "runtime" && r.degraded && r.sessionKey.length > 0);
   if (degraded.length === 0) return undefined;
   const matching = topCause !== undefined ? degraded.filter((r) => r.endReason === topCause) : [];
   const pool = matching.length > 0 ? matching : degraded;
   // Most-recent tiebreak (deterministic: lastTs desc, then sessionKey asc).
-  return [...pool].sort((a, b) => b.lastTs - a.lastTs || a.sessionKey.localeCompare(b.sessionKey))[0]!.sessionKey;
+  const selected = [...pool].sort(
+    (a, b) => b.lastTs - a.lastTs || a.sessionKey.localeCompare(b.sessionKey),
+  )[0]!;
+  return {
+    sessionKey: selected.sessionKey,
+    ...(selected.traceId === undefined ? {} : { traceId: selected.traceId }),
+    endReason: selected.endReason,
+  };
 }
 
 /**
@@ -217,9 +226,10 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
       : `top cause: ${s.topDegradedCause ?? "unknown"}`;
     const worst =
       s.worstDegradedSessionKey === undefined ? "" : `; worst: ${s.worstDegradedSessionKey}`;
-    const explainStep = s.worstDegradedSessionKey === undefined
+    const explainRef = s.worstDegradedTraceId ?? s.worstDegradedSessionKey;
+    const explainStep = explainRef === undefined
       ? "run `comis explain <sessionKey>` on the worst degraded session"
-      : `run \`comis explain ${s.worstDegradedSessionKey}\` on the worst degraded session`;
+      : `run \`comis explain ${explainRef}\` on the worst degraded execution`;
     const diagnoseStep = s.topErrorKind !== undefined
       ? `inspect failures classified as ${s.topErrorKind} in the per-session report`
       : `address the dominant degradation cause (${s.topDegradedCause ?? "unknown"}) shown in the per-session report`;
@@ -250,8 +260,9 @@ const SYSTEM_HEURISTICS: ReadonlyArray<(s: SystemSignals) => SystemRootCause | n
     const cause = s.topDegradedCause ?? "a named cause";
     // Name the exact session to explain when we resolved one — "the worst
     // session" with no key made the operator hunt for it (live incident).
-    const explainStep = s.worstDegradedSessionKey !== undefined
-      ? `run \`comis explain ${s.worstDegradedSessionKey}\` for the per-session verdict`
+    const explainRef = s.worstDegradedTraceId ?? s.worstDegradedSessionKey;
+    const explainStep = explainRef !== undefined
+      ? `run \`comis explain ${explainRef}\` for the degraded-execution verdict`
       : "run `comis explain <sessionKey>` on the worst degraded session for the per-session verdict";
     const deliveredNote =
       s.deliveredWithToolErrorsCount > 0
@@ -545,7 +556,7 @@ export async function assembleSystemHealthReport(
   const topDegradedCause = Object.entries(system.degradedByCause)
     .filter(([cause]) => cause !== "completed_with_tool_errors")
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
-  const worstDegradedSessionKey = pickWorstDegradedSessionKey(
+  const worstDegradedExecution = pickWorstDegradedExecution(
     preSessionFailures.rows,
     topDegradedCause,
   );
@@ -569,10 +580,15 @@ export async function assembleSystemHealthReport(
           configPostureHint: configPostureFinding.hint,
         }),
     topErrorKind: topErrorKinds[0]?.kind,
-    // Name the exact worst degraded session so the acute-degradation verdict
-    // pastes straight into `comis explain` (undefined-safe spread).
-    ...(worstDegradedSessionKey !== undefined
-      ? { worstDegradedSessionKey }
+    // Keep both identities: traceId is the exact execution drill-down while the
+    // sessionKey is the fallback for rows that lack an execution correlation id.
+    ...(worstDegradedExecution !== undefined
+      ? {
+          worstDegradedSessionKey: worstDegradedExecution.sessionKey,
+          ...(worstDegradedExecution.traceId === undefined
+            ? {}
+            : { worstDegradedTraceId: worstDegradedExecution.traceId }),
+        }
       : {}),
     // The autonomy verdict keys on the DEGRADED autonomy run count +
     // the worst rootRunId (both from the slice above) — undefined-safe spread.
@@ -614,6 +630,15 @@ export async function assembleSystemHealthReport(
     // endReason cause, computed by reduceSystemWindow from the per-session rows
     // (bounded + deterministic; synthetic excluded by the reducer above).
     degradedByCause: system.degradedByCause,
+    ...(worstDegradedExecution?.traceId === undefined
+      ? {}
+      : {
+          worstDegradedExecution: {
+            sessionKey: worstDegradedExecution.sessionKey,
+            traceId: worstDegradedExecution.traceId,
+            endReason: worstDegradedExecution.endReason,
+          },
+        }),
     breakerTripTotal: system.breakerTripTotal,
     toolStats: system.toolStats,
     // Cost, tokens, and calls are one reconciled provider-ledger tuple.

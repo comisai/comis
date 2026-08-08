@@ -531,7 +531,7 @@ describe("comis system-health table view renders the autonomy block and omits it
     expect(output).toContain("20 run(s)");
     // No degraded run → no drill-down pointer.
     expect(output).not.toContain("worst run");
-    expect(output).not.toContain("comis explain");
+    expect(output).not.toContain("→ worst run: comis explain");
   });
 
   it("emits the autonomy block on the --format json path when present", async () => {

@@ -147,7 +147,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
   // session emits ONE summary row per EXECUTION → the rollup SUMs additive fields
   // across a session's rows (latest-row-only under-reports). Rides idx_obs_diag_session_cat.
   const aggSessionsInWindowStmt = db.prepare(`
-    SELECT session_key, timestamp as last_ts, details, severity
+    SELECT session_key, timestamp as last_ts, details, severity, trace_id
     FROM obs_diagnostics
     WHERE category = 'session_summary'
       AND timestamp >= ?
@@ -336,13 +336,18 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
         typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown";
       if (rowDegraded) {
         const isPendingContinuation = rowEndReason === "background_pending";
-        if (!isPendingContinuation || !acc.degraded) acc.endReason = rowEndReason;
+        if (!isPendingContinuation || !acc.degraded) {
+          acc.endReason = rowEndReason;
+          if (r.trace_id.length > 0) acc.traceId = r.trace_id;
+        }
         acc.degraded = true;
       } else if (acc.endReason === "background_pending") {
         acc.endReason = rowEndReason;
         acc.degraded = false;
+        if (r.trace_id.length > 0) acc.traceId = r.trace_id;
       } else if (!acc.degraded) {
         acc.endReason = rowEndReason;
+        if (r.trace_id.length > 0) acc.traceId = r.trace_id;
       }
       bySession.set(r.session_key, acc);
     }
