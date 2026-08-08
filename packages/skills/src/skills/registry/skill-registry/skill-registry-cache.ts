@@ -49,6 +49,7 @@ import {
   tokenize,
 } from "./skill-registry-discovery.js";
 import { buildPromptSkillInventory } from "./skill-registry-inventory.js";
+import { logUndeclaredRequirements } from "./skill-registry-requirements.js";
 import type {
   OperatorSkillHint,
   PromptSkillContent,
@@ -82,30 +83,6 @@ export function createSkillRegistry(
   // Snapshot cache: lazily built on first getSnapshot() call, invalidated on init()/reload()
   let cachedSnapshot: SkillSnapshot | null = null;
   let snapshotVersion = 0;
-
-  function logUndeclaredRequirements(skills: Iterable<SkillMetadata>): void {
-    if (!eligibilityContext || !(config.runtimeEligibility?.enabled ?? true)) return;
-    const skillNames = [...skills]
-      .filter((metadata) => isSkillEligible(metadata.name, config.promptSkills))
-      .filter((metadata) => {
-        const result = evaluateSkillEligibility(metadata, eligibilityContext);
-        return result.eligible && !result.requirementsDeclared;
-      })
-      .map((metadata) => metadata.name)
-      .sort();
-    if (skillNames.length === 0) return;
-    const displayedNames = skillNames.slice(0, 20);
-    logger?.warn(
-      {
-        skillCount: skillNames.length,
-        skillNames: displayedNames,
-        truncatedSkillCount: skillNames.length - displayedNames.length,
-        errorKind: "precondition" as const,
-        hint: "Add an explicit `comis.requires` block to each listed SKILL.md; use empty bins and env arrays for dependency-free skills",
-      },
-      "Eligible skills have undeclared runtime requirements",
-    );
-  }
 
   /** Check runtime eligibility if context is available and enabled. Returns false if skill should be excluded. */
   function checkRuntimeEligibility(metadata: SkillMetadata): boolean {
@@ -154,7 +131,7 @@ export function createSkillRegistry(
         logger?.debug({ binCount: allBins.size, bins: [...allBins] }, "Binary availability cache populated");
       }
     }
-    logUndeclaredRequirements(discovered);
+    logUndeclaredRequirements(discovered, config, eligibilityContext, logger);
 
     cachedSnapshot = null;
     snapshotVersion++;
@@ -493,7 +470,7 @@ export function createSkillRegistry(
           eligibilityContext.populateBinaryCache([...allBins]);
         }
       }
-      logUndeclaredRequirements(metadataMap.values());
+      logUndeclaredRequirements(metadataMap.values(), config, eligibilityContext, logger);
 
       cachedSnapshot = null;
       snapshotVersion++;

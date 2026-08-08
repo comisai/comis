@@ -198,9 +198,11 @@ export function placeCacheBreakpoints(
             tokens += Math.ceil(block.text.length / ratio);
           }
           if (block.type === "tool_use" && block.input !== undefined) {
+            // flat-by-design: aggregate structured JSON characters have no source text to factor
             tokens += Math.ceil(structuredChars(block.input) / CHARS_PER_TOKEN_RATIO_STRUCTURED);
           }
           if (block.toolUse?.input !== undefined) {
+            // flat-by-design: aggregate structured JSON characters have no source text to factor
             tokens += Math.ceil(structuredChars(block.toolUse.input) / CHARS_PER_TOKEN_RATIO_STRUCTURED);
           }
           // tool_result blocks nest text inside block.content[]

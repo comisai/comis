@@ -242,12 +242,8 @@ export function createCacheBreakDetector(
       // Attribute reason
       const changes = state.pendingChanges ?? NO_CHANGES;
       const conversationBlockCount = input.messageBlockCount ?? 0;
-      const reason = attributeReason(
-        changes,
-        state.ttlExpired,
-        input.lastResponseElapsedMs,
-        state.currentSnapshot.breakpointBudget?.tailGapBlocks,
-      );
+      const reason = attributeReason(changes, state.ttlExpired, input.lastResponseElapsedMs,
+        state.currentSnapshot.breakpointBudget?.tailGapBlocks);
 
       // Clear TTL flag after attribution
       state.ttlExpired = false;

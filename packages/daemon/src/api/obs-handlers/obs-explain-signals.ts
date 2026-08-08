@@ -988,9 +988,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         }
       : {}),
     ...(backgroundTasks !== undefined ? { backgroundTasks } : {}),
-    ...(acc.linkPrefetch !== undefined
-      ? { linkPrefetch: acc.linkPrefetch }
-      : {}),
+    ...(acc.linkPrefetch !== undefined ? { linkPrefetch: acc.linkPrefetch } : {}),
     // Surface the reconstructed image/vision/video/voice turns (presence-conditional; keyless voice costUsd:0 stays visible).
     ...(acc.image !== undefined ? { image: acc.image } : {}),
     ...(acc.vision !== undefined ? { vision: acc.vision } : {}),
