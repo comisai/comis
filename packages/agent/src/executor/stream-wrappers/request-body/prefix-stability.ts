@@ -45,18 +45,20 @@ function hashEachMessage(messages: Array<Record<string, unknown>>, endIdx: numbe
 
 /**
  * Redaction-safe STRUCTURAL signature of a message: role + block count + thinking-block
- * count + a had-inline-recall bit + total content length. Carries NO message text — only
+ * count + transient-context bits + total content length. Carries NO message text — only
  * shape/size/flags — so it is safe to log, yet reveals what changed (a cleared thinking
  * block → t drops; an offloaded tool_result → len drops; a stripped inline-recall block →
- * r drops 1→0). Format: `<role>|b<blocks>|t<thinking>|r<0|1>|len<chars>`.
+ * r drops 1→0). Format: `<role>|b<blocks>|t<thinking>|r<0|1>|p<0|1>|len<chars>`.
  */
 export function messageStructSig(m: Record<string, unknown>): string {
   const c = m.content;
-  let blocks = 1, thinking = 0, len = 0, hadRecall = 0;
+  let blocks = 1, thinking = 0, len = 0, hadRecall = 0, hadRuntimePreamble = 0;
   const RECALL_RE = /\[Relevant context from memory:/;
+  const RUNTIME_PREAMBLE_RE = /\[System context\][\s\S]*\[End system context\]/;
   if (typeof c === "string") {
     len = c.length;
     if (RECALL_RE.test(c)) hadRecall = 1;
+    if (RUNTIME_PREAMBLE_RE.test(c)) hadRuntimePreamble = 1;
   } else if (Array.isArray(c)) {
     const arr = c as Array<Record<string, unknown>>;
     blocks = arr.length;
@@ -70,6 +72,7 @@ export function messageStructSig(m: Record<string, unknown>): string {
       const text = blockText(b);
       len += text.length;
       if (RECALL_RE.test(text)) hadRecall = 1;
+      if (RUNTIME_PREAMBLE_RE.test(text)) hadRuntimePreamble = 1;
     }
   }
   // The block-TYPE list, not just the count. Three separate root-cause attempts on a live
@@ -77,7 +80,7 @@ export function messageStructSig(m: Record<string, unknown>): string {
   // attempt had to infer the mechanism from `t`/`len` movement and each inference was wrong. Types are
   // closed vocabulary (`text`, `thinking`, `tool_use`, `tool_result`, …) — no content, no tool names,
   // no argument values — so they are safe to log and they name the dropped block outright.
-  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|len${len}|[${blockTypes(c)}]`;
+  return `${m.role}|b${blocks}|t${thinking}|r${hadRecall}|p${hadRuntimePreamble}|len${len}|[${blockTypes(c)}]`;
 }
 
 /**
@@ -97,10 +100,10 @@ function structEachMessage(messages: Array<Record<string, unknown>>, endIdx: num
   return messages.slice(0, endIdx + 1).map(messageStructSig);
 }
 
-/** Parse the `t<n>`/`r<n>`/`len<n>` fields out of a struct sig (returns {t,r,len} or undefined). */
+/** Parse the numeric fields out of a structural signature. */
 function parseSig(
   sig: string | undefined,
-): { b: number; t: number; r: number; len: number } | undefined {
+): { b: number; t: number; r: number; p: number; len: number } | undefined {
   if (!sig) return undefined;
   // `b` (content BLOCK count) was previously not parsed at all, which made the
   // classifier structurally blind to a block-count reshape — the dominant live
@@ -108,6 +111,7 @@ function parseSig(
   // signature already showed b1→b2 (comis-moshe 2026-07-26).
   const b = /\|b(\d+)\|/.exec(sig);
   const t = /\|t(\d+)\|/.exec(sig); const r = /\|r(\d+)\|/.exec(sig); // NOT end-anchored: the signature now carries a trailing `|[block,types]` field, and an anchored
+  const p = /\|p(\d+)\|/.exec(sig);
   // `len` pattern silently stopped matching when that was added — every mutation then classified as
   // "unknown", which is the same blindness this classifier was written to remove.
   const len = /\|len(\d+)(?:\||$)/.exec(sig);
@@ -115,6 +119,7 @@ function parseSig(
     b: b ? Number(b[1]) : 0,
     t: t ? Number(t[1]) : 0,
     r: r ? Number(r[1]) : 0,
+    p: p ? Number(p[1]) : 0,
     len: len ? Number(len[1]) : 0,
   };
 }
@@ -194,6 +199,11 @@ export function classifyPrefixMutation(
   // (clearStaleThinkingBlocks / clearStaleToolResults) mutated a CACHED message.
   const p = parseSig(prevSig); const c = parseSig(currSig);
   if (p && c) {
+    // The runtime envelope is intentionally re-rendered from request-scoped
+    // context and projected back to the compact durable user turn afterward.
+    // Its appearance, disappearance, or timestamp change is expected suffix
+    // movement; cache-read telemetry determines whether reuse actually degraded.
+    if (!roleChanged && (p.p > 0 || c.p > 0)) return "runtime-preamble";
     // r1→r0 = the inline-recall block was stripped as a user message went historical
     // — a one-time transient-by-design transition, benign ONLY when it is NOT
     // also a structural shift (a role change is never benign).
@@ -329,7 +339,10 @@ export function runPrefixStabilityDiagnostic(
     const benignInlineRecall = mutationClass.includes("inline-recall")
       && !mutationClass.includes("structural-shift")
       && !mutationClass.includes("history-window-slid");
-    if (!benignInlineRecall) {
+    const benignRuntimePreamble = mutationClass.includes("runtime-preamble")
+      && !mutationClass.includes("structural-shift")
+      && !mutationClass.includes("history-window-slid");
+    if (!benignInlineRecall && !benignRuntimePreamble) {
       mutations = [...mutations, callCount];
       if (mutations.length >= THRESHOLD) {
         emitUnstableWarn(logger, config.sessionKey, mutations.length, WINDOW, fd, pSig, cSig, mutationClass);
@@ -385,7 +398,7 @@ function emitUnstableWarn(
       // operator sees exactly what changed at the divergent message without ad-hoc logging.
       prevSig,
       currSig,
-      hint: `Cached-prefix content mutated at message #${firstDivergentIndex} [${mutationClass}] (${mutationCount} cached-region mutations in the last ${window} calls): ${prevSig ?? "?"} → ${currSig ?? "?"}. Already-sent content inside the cache fence must be byte-stable — re-sending it changed wastes the cache write (see stripReplayThinking). A once-per-turn mutation at a DIFFERENT message each turn still accumulates here.`,
+      hint: `Cached-prefix content mutated at message #${firstDivergentIndex} [${mutationClass}] (${mutationCount} cached-region mutations in the last ${window} calls): ${prevSig ?? "?"} → ${currSig ?? "?"}. Inspect the named mutation class and structural signatures; unexpected changes to already-sent content inside the cache fence waste the cache write. A once-per-turn mutation at a different message each turn still accumulates here.`,
       errorKind: "internal" as const,
     },
     "Unstable prefix detected",
