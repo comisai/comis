@@ -409,6 +409,8 @@ describe("applyResponseLocaleEnforcement", () => {
     expect(providerContext.messages).toHaveLength(1);
     expect(providerContext.messages[0]?.role).toBe("user");
     expect(providerContext.tools ?? []).toEqual([]);
+    const providerOptions = session.streamFunction.mock.calls[0]?.[2] as Record<PropertyKey, unknown>;
+    expect(providerOptions[Symbol.for("comis.auxiliary-stream-call")]).toBe(true);
   });
 
   it("recovers the locale terminal error when a later deterministic guard satisfies the policy", () => {

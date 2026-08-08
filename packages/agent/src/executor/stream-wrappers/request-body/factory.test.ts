@@ -92,6 +92,34 @@ describe("createRequestBodyInjector", () => {
     expect(receivedOptions.onPayload).toBeUndefined();
   });
 
+  it("keeps auxiliary model calls out of the parent cache state", () => {
+    const base = createMockStreamFn();
+    const onPayloadForCacheDetection = vi.fn();
+    const onBreakpointsPlaced = vi.fn();
+    const wrapper = createRequestBodyInjector({
+      getCacheRetention: () => "long",
+      sessionKey: "parent-session",
+      onPayloadForCacheDetection,
+      onBreakpointsPlaced,
+    }, logger);
+    const wrappedFn = wrapper(base);
+    const options = {
+      [Symbol.for("comis.auxiliary-stream-call")]: true,
+    } as Record<PropertyKey, unknown>;
+
+    wrappedFn(
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as never,
+      makeContext([]),
+      options as never,
+    );
+
+    const receivedOptions = base.mock.calls[0]?.[2] as Record<PropertyKey, unknown>;
+    expect(receivedOptions).toBe(options);
+    expect(receivedOptions.onPayload).toBeUndefined();
+    expect(onPayloadForCacheDetection).not.toHaveBeenCalled();
+    expect(onBreakpointsPlaced).not.toHaveBeenCalled();
+  });
+
   it("injects breakpoints for Anthropic provider via onPayload", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
