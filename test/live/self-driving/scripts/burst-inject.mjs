@@ -26,7 +26,8 @@
 // Use the JSON form to mix senders (a group row) or to attach reply/thread metadata.
 //
 // Exit: 0 all injects accepted · 2 usage/rig error · 3 one or more injects rejected
-//       (the manifest is still written, so the verifier can report on what did land).
+//       (the manifest is still written, so the verifier can report on what did land) ·
+//       4 provider-risk suspension (../CYBER-ABUSE-SUSPENSIONS.md) — nothing was injected.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { comisDist, rig } from './_rig.mjs';
 import { liveProviderRiskError } from './live-provider-risk-gate.mjs';

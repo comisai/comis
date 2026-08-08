@@ -37,6 +37,8 @@
 //
 // Exit code: 0 if the HTTP response status is 2xx, else 1 (so `&&` chains are honest).
 // A missing `@file` or a stale reused body exits 2 (a rig error, distinct from an honest HTTP non-2xx).
+// A cyber-abuse-shaped body the operator has not authorized exits 4 before the request is sent
+// (../CYBER-ABUSE-SUSPENSIONS.md) — record that row NOT-RUN, not an HTTP result.
 
 import { createHmac } from "node:crypto";
 import http from "node:http";

@@ -9,9 +9,11 @@ those docs refer to. (Driven by `../00-MISSION.md`.)
 Read **`../CYBER-ABUSE-SUSPENSIONS.md`** before any security, credential, SSRF, destructive,
 self-escalation, prompt-injection, sandbox, or threat-hunting drive. The arbitrary provider-backed
 injectors run `live-provider-risk-gate.mjs` before network activity and exit `4` on suspended content.
-`revoke.mjs` is gated too, on its resolved params, for every RPC except the operational/diagnostic ones
-(`capabilities.introspect`, `obs.*`, `cron.list|runs|status`, `lease.revoke`, `run.kill`, `tokens.create`,
-`session.reset_conversation`) — so `graph.execute`, `cron.run`, and `message.send` cannot route around it.
+`revoke.mjs` is gated too, on its resolved params, for every RPC except the operational/diagnostic
+exemptions — so `graph.execute`, `cron.run`, and `message.send` cannot route around it. That exempt set is
+enumerated once in `../CYBER-ABUSE-SUSPENSIONS.md` and is `UNGATED_RPC_METHODS` in
+`live-provider-risk-gate.mjs`; every other method is gated by default, and a benign payload classifies
+clean and passes.
 The driver may declare opaque/risky content with `COMIS_LIVE_TEST_RISK=cyber-abuse`, but must not set
 `COMIS_LIVE_CYBER_ABUSE_TESTS=operator-authorized` unless the operator explicitly requested that test in
 the current task. Never persist the authorization acknowledgement in `.live-env` or a rendered rig env.

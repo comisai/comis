@@ -12,8 +12,11 @@
 #           drive-quiet.sh <chatId> @/abs/path/to/prompt.txt
 #
 # Exit 0 = the real drive ran (its output is on stdout).
-# Exit 4 = never reached quiescence inside maxWaitSecs; the row must be recorded NOT-RUN with
-#          that reason, NOT scored from whatever the agent happened to say.
+# Exit 4 = TWO distinct reasons, both NOT-RUN — read the stderr line to tell them apart, and record
+#          THAT reason; never score whatever the agent happened to say:
+#          · "refusing to drive" → never reached quiescence inside maxWaitSecs (this script);
+#          · "suspended provider-backed test" → the exec'd drive.mjs hit the provider-risk gate
+#            (../CYBER-ABUSE-SUSPENSIONS.md) and nothing was injected.
 set -uo pipefail
 CHAT="${1:?usage: drive-quiet.sh <chatId> <prompt|@file> [maxWaitSecs]}"
 PROMPT="${2:?missing prompt}"

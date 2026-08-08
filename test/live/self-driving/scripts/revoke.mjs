@@ -15,10 +15,10 @@
 // node tasks, `cron.run`, `message.send`, cron authoring, …) goes through
 // live-provider-risk-gate.mjs on the RESOLVED params and exits 4 before the socket opens when the
 // text is cyber-abuse-shaped and the operator has not authorized it (see CYBER-ABUSE-SUSPENSIONS.md).
-// Operational/diagnostic RPCs are exempt so triage keeps working: capabilities.introspect,
-// obs.system.health, obs.explain, cron.list/runs/status, lease.revoke, run.kill, tokens.create,
-// session.reset_conversation. Any OTHER method is gated by default — a benign payload classifies
-// clean and passes, so the gate only bites on suspended content.
+// Operational/diagnostic RPCs are exempt so triage keeps working — the exempt set is
+// `UNGATED_RPC_METHODS` in live-provider-risk-gate.mjs (read it there; do not re-list it here).
+// Any OTHER method is gated by default — a benign payload classifies clean and passes, so the
+// gate only bites on suspended content.
 //
 // Param typing: a single arg that parses as a JSON object is the WHOLE params object;
 // otherwise key+val, with val JSON-parsed when possible ("1"→1, "true"→true, '["a"]'→array)

@@ -36,7 +36,8 @@
 //     --no-auth          omit the Authorization header (tests the 401 missing-bearer path)
 //     --bad-token        send a garbage Bearer (tests the 401 invalid-token path)
 //
-// Exit code: 0 on a 2xx ack, else 1. A rig error (emulator info missing) exits 2.
+// Exit code: 0 on a 2xx ack, else 1. A rig error (emulator info missing) exits 2. A cyber-abuse-shaped
+// message text the operator has not authorized exits 4 before the post (../CYBER-ABUSE-SUSPENSIONS.md).
 
 import { readFileSync, existsSync } from "node:fs";
 import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
