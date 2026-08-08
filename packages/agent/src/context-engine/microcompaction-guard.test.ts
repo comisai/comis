@@ -124,6 +124,31 @@ describe("installMicrocompactionGuard", () => {
     expect(logger.debug).toHaveBeenCalled();
   });
 
+  it("uses a text filename and trajectory pointer for a plain-text offload", () => {
+    const sm = createMockSessionManager(tempDir);
+    const onOffloaded = vi.fn();
+    installMicrocompactionGuard(
+      sm as any,
+      tempDir,
+      tempDir,
+      logger,
+      onOffloaded,
+    );
+
+    sm.appendMessage(createToolResult("bash", 10_000, "call-text"));
+
+    const textPath = join(tempDir, "tool-results", "call-text.txt");
+    expect(existsSync(textPath)).toBe(true);
+    expect(existsSync(join(tempDir, "tool-results", "call-text.json"))).toBe(false);
+    expect((sm.appended[0] as any).content[0].text).toContain(textPath);
+    expect(onOffloaded).toHaveBeenCalledWith(
+      "bash",
+      10_000,
+      "call-text",
+      "tool-results/call-text.txt",
+    );
+  });
+
   it("offloads MCP tabular results exceeding the default 8K threshold", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
@@ -1098,6 +1123,23 @@ describe("wrap-on-read: recovery reads restore the taint boundary", () => {
     expect(text).toContain('{"rows"');
     // Still exempt from re-offload (no second disk file for the read).
     expect(existsSync(join(tempDir, "tool-results", "call-wrapread-read.json"))).toBe(false);
+  });
+
+  it("restores the external-content boundary from a plain-text offload sidecar", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const prose = "External plain-text result. ".repeat(500);
+    sm.appendMessage(createWrappedMcpResult(prose, "call-text-wrapread"));
+    const diskPath = join(tempDir, "tool-results", "call-text-wrapread.txt");
+    expect(existsSync(diskPath)).toBe(true);
+    expect(existsSync(join(tempDir, "tool-results", "call-text-wrapread.origin.json"))).toBe(true);
+
+    sm.appendMessage(createRecoveryRead(diskPath, "call-text-wrapread-read"));
+
+    const text: string = (sm.appended[1] as any).content[0].text;
+    expect(text).toContain("SECURITY NOTICE");
+    expect(text).toContain("External plain-text result.");
   });
 
   it("passes through recovery reads of internal-origin offload files unwrapped", () => {
