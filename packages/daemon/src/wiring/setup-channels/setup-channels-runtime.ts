@@ -254,14 +254,10 @@ export async function buildAndStartChannelManager(
         getLocaleConfig: (agentId) => {
           if (agentId === undefined) return undefined;
           const agentConfig = agents[agentId];
-          return agentConfig === undefined
-            ? undefined
-            : {
-                ...(agentConfig.language === undefined ? {} : { language: agentConfig.language }),
-                ...(agentConfig.localePacks === undefined
-                  ? {}
-                  : { localePacks: agentConfig.localePacks }),
-              };
+          return agentConfig === undefined ? undefined : {
+            ...(agentConfig.language === undefined ? {} : { language: agentConfig.language }),
+            ...(agentConfig.localePacks === undefined ? {} : { localePacks: agentConfig.localePacks }),
+          };
         },
       }),
       getDmScope: (agentId: string) => DmScopeConfigSchema.parse(
