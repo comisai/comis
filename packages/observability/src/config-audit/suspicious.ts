@@ -26,11 +26,10 @@
  *      resolved entry-script path (typically `fileURLToPath(import.meta.url)`)
  *      as `entryScript` so this heuristic does not false-positive.
  *
- *   3. `permission-restricted-caller` — `execArgv` contains
- *      `--permission` (Node 20+ permission model). A caller running
- *      under explicit permission-restriction is more interesting for
- *      audit forensics; even legitimate uses (CI/CD) benefit from
- *      the flag.
+ *   3. `permission-restricted-caller` — a caller not identified as Comis
+ *      has `--permission` in `execArgv` (Node 20+ permission model). The
+ *      production daemon intentionally uses this model, so its verified Comis
+ *      entry path is expected rather than suspicious.
  *
  * The heuristics intentionally err on the side of false-positives —
  * audit-log operators want to see suspicious patterns even when the
@@ -103,7 +102,7 @@ export function detectSuspicious(input: SuspiciousInput): SuspiciousFlag[] {
       typeof arg === "string" &&
       (arg === "--permission" || arg.startsWith("--permission=")),
   );
-  if (hasPermissionFlag) {
+  if (hasPermissionFlag && !anyHasComis) {
     flags.push("permission-restricted-caller");
   }
 
