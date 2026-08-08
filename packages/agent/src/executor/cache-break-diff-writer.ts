@@ -14,6 +14,7 @@ import { readdirSync, unlinkSync } from "node:fs";
 import { createPatch } from "diff";
 import { safePath, resolveModelPricing, ZERO_COST, systemDateFrom } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
+import type { BreakpointBudget } from "./cache-detection/cache-state-types.js";
 
 const MAX_DIFF_FILES = 50;
 
@@ -65,13 +66,7 @@ export interface CacheBreakDiffPayload {
   /** Effort value from detection pipeline for downstream analytics. */
   effortValue?: string;
   /** Breakpoint budget context at time of break. */
-  breakpointBudget?: {
-    total: number;
-    system: number;
-    tool: number;
-    message: number;
-    sdkAuto: number;
-  };
+  breakpointBudget?: BreakpointBudget;
   /**
    * Breakpoint pressure as a fraction of the SDK's 4-breakpoint ceiling.
    * Computed by the writer from `breakpointBudget.total / 4` and clamped

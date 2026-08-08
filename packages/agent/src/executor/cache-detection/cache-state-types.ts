@@ -9,6 +9,24 @@
  * @module
  */
 
+/** Content-free accounting and marker topology observed in an Anthropic request body. */
+export interface BreakpointBudget {
+  total: number;
+  system: number;
+  tool: number;
+  /** Message markers controlled by Comis; excludes the SDK marker. */
+  message: number;
+  sdkAuto: number;
+  /** Trailing Comis marker positions in the flattened message-content block stream. */
+  messagePositions: number[];
+  /** SDK marker position in that stream, or null when no marker was observed. */
+  sdkAutoPosition: number | null;
+  /** Total content blocks in the request's messages. */
+  messageContentBlocks: number;
+  /** Blocks from the nearest preceding message marker to the SDK marker. */
+  tailGapBlocks: number | null;
+}
+
 export interface PromptStateSnapshot {
   systemHash: number;
   toolsHash: number;
@@ -30,13 +48,7 @@ export interface PromptStateSnapshot {
   /** Lazy getter -- serialization only runs when called (zero cost on cache hits). */
   buildDiffableContent?: () => { system: string; tools: string };
   /** Breakpoint budget snapshot for cache break enrichment. */
-  breakpointBudget?: {
-    total: number;
-    system: number;
-    tool: number;
-    message: number;
-    sdkAuto: number;
-  };
+  breakpointBudget?: BreakpointBudget;
 }
 
 export interface PendingChanges {
@@ -100,16 +112,10 @@ export interface CacheBreakEvent {
   currentTools?: string;
   /** Effort value from detection pipeline for downstream consumers (diff writer, analytics). */
   effortValue?: string;
-  /** Number of message blocks in the conversation. Set for lookback window detection. */
+  /** Approximate session message count retained as supporting incident context. */
   conversationBlockCount?: number;
   /** Breakpoint budget context at time of cache break. */
-  breakpointBudget?: {
-    total: number;
-    system: number;
-    tool: number;
-    message: number;
-    sdkAuto: number;
-  };
+  breakpointBudget?: BreakpointBudget;
 }
 
 export interface RecordPromptStateInput {
@@ -134,13 +140,7 @@ export interface RecordPromptStateInput {
   /** Lazy getter -- deferred serialization for diff content (zero cost on cache hits). */
   buildDiffableContent?: () => { system: string; tools: string };
   /** Breakpoint budget for cache break enrichment. */
-  breakpointBudget?: {
-    total: number;
-    system: number;
-    tool: number;
-    message: number;
-    sdkAuto: number;
-  };
+  breakpointBudget?: BreakpointBudget;
 }
 
 export interface CheckCacheBreakInput {
@@ -153,7 +153,7 @@ export interface CheckCacheBreakInput {
   lastResponseElapsedMs?: number;
   /** When true, API returned an error (400/429/500). Do not treat zero usage as cache break. */
   apiError?: boolean;
-  /** Number of message blocks in the conversation. Used for lookback window detection. */
+  /** Approximate session message count retained as supporting incident context. */
   messageBlockCount?: number;
 }
 

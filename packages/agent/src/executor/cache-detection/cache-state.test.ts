@@ -1162,7 +1162,7 @@ describe("lookback-aware cache break attribution", () => {
       sdkAutoPosition,
       messageContentBlocks: sdkAutoPosition === null ? reportedMessageCount : sdkAutoPosition + 1,
       tailGapBlocks,
-    } as unknown as NonNullable<RecordPromptStateInput["breakpointBudget"]>;
+    } satisfies NonNullable<RecordPromptStateInput["breakpointBudget"]>;
     detector.recordPromptState(makeBaseInput({ breakpointBudget }));
     detector.checkResponseForCacheBreak({
       sessionKey: "test-session", provider: "anthropic",
@@ -1206,7 +1206,7 @@ describe("lookback-aware cache break attribution", () => {
     const event = triggerBreakWithMarkerGap(30, 21, 60_000);
     expect(event).not.toBeNull();
     expect(event!.conversationBlockCount).toBe(30);
-    expect((event!.breakpointBudget as unknown as { tailGapBlocks: number }).tailGapBlocks).toBe(21);
+    expect(event!.breakpointBudget?.tailGapBlocks).toBe(21);
   });
 
   it("defaults to 0 block count when messageBlockCount not provided", () => {

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, statSync, rmSync, readdirSync as realReaddirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CacheBreakEvent } from "./cache-detection/index.js";
+import type { BreakpointBudget, CacheBreakEvent } from "./cache-detection/index.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // Mock the @comis/observability fs-safe substrate so the structural
@@ -77,6 +77,21 @@ function makeCacheBreakEvent(overrides: Partial<CacheBreakEvent> = {}): CacheBre
     agentId: "agent-1",
     sessionKey: "telegram:123:456",
     timestamp: Date.now(),
+    ...overrides,
+  };
+}
+
+function makeBreakpointBudget(overrides: Partial<BreakpointBudget> = {}): BreakpointBudget {
+  return {
+    total: 3,
+    system: 1,
+    tool: 0,
+    message: 1,
+    sdkAuto: 1,
+    messagePositions: [40],
+    sdkAutoPosition: 42,
+    messageContentBlocks: 43,
+    tailGapBlocks: 2,
     ...overrides,
   };
 }
@@ -666,13 +681,13 @@ describe("cache-break-diff-writer", () => {
       });
 
       handler(makeCacheBreakEvent({
-        breakpointBudget: {
+        breakpointBudget: makeBreakpointBudget({
           total: 4,
           system: 1,
           tool: 0,
           message: 2,
           sdkAuto: 1,
-        },
+        }),
       } as any));
 
       const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
@@ -685,6 +700,10 @@ describe("cache-break-diff-writer", () => {
       expect(content.breakpointBudget.tool).toBe(0);
       expect(content.breakpointBudget.message).toBe(2);
       expect(content.breakpointBudget.sdkAuto).toBe(1);
+      expect(content.breakpointBudget.messagePositions).toEqual([40]);
+      expect(content.breakpointBudget.sdkAutoPosition).toBe(42);
+      expect(content.breakpointBudget.messageContentBlocks).toBe(43);
+      expect(content.breakpointBudget.tailGapBlocks).toBe(2);
     });
 
     it("breakpointBudget omitted from diff file when absent", () => {
@@ -794,7 +813,7 @@ describe("cache-break-diff-writer", () => {
       });
 
       handler(makeCacheBreakEvent({
-        breakpointBudget: { total: 2, system: 1, tool: 0, message: 1, sdkAuto: 0 },
+        breakpointBudget: makeBreakpointBudget({ total: 2, sdkAuto: 0, sdkAutoPosition: null, tailGapBlocks: null }),
       }));
 
       const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
@@ -812,7 +831,7 @@ describe("cache-break-diff-writer", () => {
       });
 
       handler(makeCacheBreakEvent({
-        breakpointBudget: { total: 6, system: 1, tool: 2, message: 3, sdkAuto: 0 },
+        breakpointBudget: makeBreakpointBudget({ total: 6, system: 1, tool: 2, message: 3, sdkAuto: 0, sdkAutoPosition: null, tailGapBlocks: null }),
       }));
 
       const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));
@@ -830,7 +849,7 @@ describe("cache-break-diff-writer", () => {
       });
 
       handler(makeCacheBreakEvent({
-        breakpointBudget: { total: -1, system: 0, tool: 0, message: 0, sdkAuto: 0 },
+        breakpointBudget: makeBreakpointBudget({ total: -1, system: 0, message: 0, sdkAuto: 0, messagePositions: [], sdkAutoPosition: null, tailGapBlocks: null }),
       }));
 
       const jsonCall = mockWriteRegularFile.mock.calls.find((c) => pathOf(c).endsWith(".json"));

@@ -2,46 +2,42 @@
 /**
  * Operator-facing `hint` text for cache-break WARNs.
  *
- * Lives in ONE place so the log site and its test assert the SAME string. The
- * previous shape duplicated the literal into the test's hand-rolled handler
- * stand-in, so the two could drift silently — a green-mock hazard on the exact
- * field an operator reads to decide whether to act.
- *
- * The rule these hints follow (AGENTS.md §2.7, the troubleshooting feedback
- * loop): a hint says WHICH KNOB, with the numbers that conflicted — never a
- * bare reassurance. A `lookback_window_exceeded` break re-pays the whole
- * prefix at the cache-WRITE rate; on a long-context model that is real money
- * per occurrence, so "No action needed." was actively misleading.
+ * A single helper supplies both the runtime log and its test stand-in so the
+ * operator action cannot drift. A `lookback_window_exceeded` break re-pays the
+ * whole prefix at the cache-write rate, so its hint carries the observed marker
+ * positions, the provider limit, and the matching durable evidence location.
  *
  * @module
  */
 
+import { CACHE_LOOKBACK_WINDOW } from "../../context-engine/constants.js";
+import type { BreakpointBudget } from "./cache-state-types.js";
+
 /**
  * Hint for a `lookback_window_exceeded` cache break.
  *
- * Why it is actionable (and why the old "No action needed." was wrong): the
- * provider's cache lookup scans a bounded number of trailing message BLOCKS,
- * not tokens. A conversation can therefore blow the lookback while sitting far
- * below `contextEngine.contextThreshold` (the token-ratio that triggers
- * compaction) — so compaction never fires and every subsequent turn re-pays the
- * prefix at the cache-write rate. The lever is the BLOCK COUNT, which is why
- * the log line carries `conversationBlockCount` and this hint names it.
+ * The provider's cache lookup scans a bounded number of content blocks before
+ * an explicit breakpoint. Attribution therefore depends on the observed gap
+ * between the recent Comis marker and the SDK tail marker, not the total number
+ * of messages in the conversation.
  *
- * @param conversationBlockCount - blocks in the conversation at break time
- *   (`undefined` when the detector could not count them).
+ * @param budget - marker accounting observed in the provider request body.
  * @returns the hint string for the WARN's `hint` field.
  */
-export function lookbackWindowExceededHint(conversationBlockCount: number | undefined): string {
-  const blocks =
-    conversationBlockCount === undefined ? "the conversation" : `${conversationBlockCount} blocks`;
+export function lookbackWindowExceededHint(budget: BreakpointBudget | undefined): string {
+  const observed = budget
+    ? `${String(budget.tailGapBlocks)} content blocks (Comis positions `
+      + `[${budget.messagePositions.join(",")}], SDK position ${String(budget.sdkAutoPosition)}, `
+      + `${budget.messageContentBlocks} message-content blocks total)`
+    : "an unavailable number of content blocks";
   return (
-    `Cache lookback exceeded by BLOCK COUNT (${blocks}), not by tokens — so ` +
-    "`contextEngine.contextThreshold` compaction does not fire and the prefix is re-paid at the " +
-    "cache-write rate on this turn. Priced impact for this break is in " +
-    "`~/.comis/cache-breaks/<ts>_<agent>_lookback_window_exceeded.json` (`estimatedCostUsd`); " +
-    "the recurring total is the `cache_prefix_churn` finding in `comis system-health`. " +
-    "Reduce trailing blocks (fewer tool round-trips per turn, or a lower " +
-    "`contextEngine.freshTailTurns`) to keep the prefix inside the lookback."
+    `The observed cache-marker tail gap was ${observed}, above the provider window of ` +
+    `${CACHE_LOOKBACK_WINDOW}. The prefix is re-paid at the cache-write rate on this turn. ` +
+    "Inspect `breakpointBudget` and `estimatedCostUsd` in the matching " +
+    "`~/.comis/cache-breaks/<ts>_<agent>_lookback_window_exceeded.json`; the same topology is " +
+    "on the `cache.break` trajectory entry used by `comis explain`. If the gap spans one " +
+    "tool-heavy turn, reduce its tool round-trips; if no recent Comis position is present, " +
+    "investigate cache breakpoint placement."
   );
 }
 
@@ -65,6 +61,7 @@ export function cacheBreakLogFields(event: {
   ttlCategory: "short" | "long" | "none" | undefined;
   toolsChanged: readonly string[];
   changes: { systemChanged: boolean; modelChanged: boolean };
+  breakpointBudget?: BreakpointBudget;
 }): Record<string, unknown> {
   return {
     agentId: event.agentId,
@@ -77,6 +74,7 @@ export function cacheBreakLogFields(event: {
     toolsChanged: event.toolsChanged,
     systemChanged: event.changes.systemChanged,
     modelChanged: event.changes.modelChanged,
+    breakpointBudget: event.breakpointBudget,
   };
 }
 

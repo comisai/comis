@@ -435,6 +435,20 @@ export interface AgentEvents {
     model?: string;
     /** Effort/thinking value at time of break. */
     effortValue?: string;
+    /** Approximate session message count retained for correlation with older health metrics. */
+    conversationBlockCount?: number;
+    /** Content-free cache marker accounting and flattened message-block topology. */
+    breakpointBudget?: {
+      total: number;
+      system: number;
+      tool: number;
+      message: number;
+      sdkAuto: number;
+      messagePositions: number[];
+      sdkAutoPosition: number | null;
+      messageContentBlocks: number;
+      tailGapBlocks: number | null;
+    };
   };
 
   /** Spend approaching a ceiling (fired at

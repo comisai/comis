@@ -29,6 +29,13 @@ export function translateCacheBreakPayload(
   const num = (v: unknown): number => (typeof v === "number" ? v : 0);
   const pricing = resolveModelPricing(str(payload.provider), str(payload.model));
   const rewritePremium = Math.max(0, pricing.cacheWrite - pricing.cacheRead);
+  const budget = payload.breakpointBudget && typeof payload.breakpointBudget === "object"
+    ? payload.breakpointBudget as Record<string, unknown>
+    : undefined;
+  const nullableNum = (value: unknown): number | null => typeof value === "number" ? value : null;
+  const messagePositions = Array.isArray(budget?.messagePositions)
+    ? budget.messagePositions.filter((value): value is number => typeof value === "number").slice(-4)
+    : [];
   return {
     reason: payload.reason,
     tokenDrop: payload.tokenDrop,
@@ -40,5 +47,13 @@ export function translateCacheBreakPayload(
       schemaChanged: toLen(payload.toolsSchemaChanged),
       systemCharDelta: num(payload.systemCharDelta),
     },
+    ...(budget ? {
+      cacheTopology: {
+        messagePositions,
+        sdkAutoPosition: nullableNum(budget.sdkAutoPosition),
+        messageContentBlocks: num(budget.messageContentBlocks),
+        tailGapBlocks: nullableNum(budget.tailGapBlocks),
+      },
+    } : {}),
   };
 }
