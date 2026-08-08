@@ -15,7 +15,8 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
-import { isAuxiliaryStreamCall, type StreamFnWrapper } from "./stream-wrappers/types.js";
+import { isAuxiliaryStreamCall } from "./stream-wrappers/auxiliary-stream-call.js";
+import type { StreamFnWrapper } from "./stream-wrappers/types.js";
 import type { GeminiCacheManager, CacheEntry } from "./gemini-cache-manager.js";
 import { computeCacheContentHash } from "./gemini-cache-manager.js";
 import { isGoogleFamily, isGoogleAIStudio } from "../provider/capabilities.js";

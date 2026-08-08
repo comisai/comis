@@ -28,7 +28,7 @@ import type { RunPromptParams } from "./prompt-runner-types.js";
 import type { ExecutionResult } from "../types.js";
 import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
 import { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
-import { markAuxiliaryStreamCall } from "../stream-wrappers/types.js";
+import { markAuxiliaryStreamCall } from "../stream-wrappers/auxiliary-stream-call.js";
 export { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
 
 type LocaleEnforcementSession = Pick<AgentSession, "agent" | "prompt">;

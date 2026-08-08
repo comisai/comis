@@ -28,7 +28,8 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
-import { isAuxiliaryStreamCall, type StreamFnWrapper } from "../types.js";
+import { isAuxiliaryStreamCall } from "../auxiliary-stream-call.js";
+import type { StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
 import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
 import type { RequestBodyInjectorConfig } from "./types.js";
