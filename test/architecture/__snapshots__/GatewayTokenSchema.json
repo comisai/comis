@@ -14,7 +14,7 @@
         },
         {
           "type": "string",
-          "pattern": "^\\$\\{(?<varName>[A-Z_][A-Z0-9_]*)\\}$"
+          "pattern": "^\\$\\{[A-Z_][A-Z0-9_]*\\}$"
         },
         {
           "type": "object",
