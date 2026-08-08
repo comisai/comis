@@ -11,12 +11,64 @@
  */
 import { suppressError } from "@comis/shared";
 import { BackgroundTaskOriginSchema, tryGetContext } from "@comis/core";
-import type { BackgroundTasksConfig } from "@comis/core";
+import type { BackgroundTasksConfig, SystemTimeoutHandle, TypedEventBus } from "@comis/core";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
 import { backgroundToolLabel } from "./background-tool-label.js";
+import { pauseDuringCorrelatedApprovals } from "../approval-timeout-pause.js";
+
+interface PromotionTimeoutControl {
+  readonly promise: Promise<"timeout">;
+  pauseTimer(): void;
+  resumeTimer(): void;
+  cancel(): void;
+}
+
+/** Auto-background deadline with approval-aware pause/resume controls. */
+function createPromotionTimeout(timeoutMs: number): PromotionTimeoutControl {
+  let settled = false;
+  let paused = false;
+  let timer: SystemTimeoutHandle | undefined;
+  let resolveTimeout: (value: "timeout") => void;
+
+  function startTimer(): void {
+    if (settled || paused) return;
+    if (timer !== undefined) systemClearTimeout(timer);
+    timer = systemSetTimeout(() => {
+      if (settled || paused) return;
+      settled = true;
+      resolveTimeout("timeout");
+    }, timeoutMs);
+    timer.unref();
+  }
+
+  const promise = new Promise<"timeout">((resolve) => {
+    resolveTimeout = resolve;
+    startTimer();
+  });
+  return {
+    promise,
+    pauseTimer() {
+      if (settled || paused) return;
+      paused = true;
+      if (timer !== undefined) systemClearTimeout(timer);
+      timer = undefined;
+    },
+    resumeTimer() {
+      if (settled || !paused) return;
+      paused = false;
+      startTimer();
+    },
+    cancel() {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) systemClearTimeout(timer);
+      timer = undefined;
+    },
+  };
+}
 
 /**
  * Tool definition interface matching pi-agent-core ToolDefinition.
@@ -113,6 +165,7 @@ export function wrapToolForAutoBackground(
   config: BackgroundTasksConfig,
   originResolver: () => BackgroundTaskOrigin | undefined,
   onPromoted?: () => void,
+  approvalEventBus?: TypedEventBus,
 ): ToolDefinition {
   // `exec` opts out of the generic auto-background wrapper to enforce
   // single-owner backgrounding. The exec-tool's own internal escalation path
@@ -156,23 +209,29 @@ export function wrapToolForAutoBackground(
         ? (text: string) => { if (onUpdateActive) onUpdate(text); }
         : undefined;
 
-      // Start the real tool execution (uses snapshot, not tool.execute)
-      const taskPromise = origExecute(toolCallId, params, ac.signal, gatedOnUpdate, ctx);
+      const promotionTimeout = createPromotionTimeout(config.autoBackgroundMs);
+      const turnContext = tryGetContext();
+      const stopApprovalTracking = approvalEventBus === undefined
+        ? () => {}
+        : pauseDuringCorrelatedApprovals(approvalEventBus, promotionTimeout, {
+            agentId: turnContext?.agentId,
+            sessionKey: turnContext?.sessionKey,
+            traceId: turnContext?.traceId,
+          });
 
-      // Race: tool result vs. timeout
-      const timeoutPromise = new Promise<"timeout">((resolve) => {
-        const timer = systemSetTimeout(() => resolve("timeout"), config.autoBackgroundMs);
-        // Clean up timer if tool finishes first (prevents leak)
-        taskPromise.then(
-          () => systemClearTimeout(timer),
-          () => systemClearTimeout(timer),
-        );
-      });
+      // Defer invocation by one microtask so the approval listeners are active
+      // before an approval-gated tool can synchronously publish its request.
+      const taskPromise = Promise.resolve().then(
+        () => origExecute(toolCallId, params, ac.signal, gatedOnUpdate, ctx),
+      );
 
       const raceResult = await Promise.race([
         taskPromise.then((value) => ({ kind: "result" as const, value })),
-        timeoutPromise.then(() => ({ kind: "timeout" as const })),
-      ]);
+        promotionTimeout.promise.then(() => ({ kind: "timeout" as const })),
+      ]).finally(() => {
+        promotionTimeout.cancel();
+        stopApprovalTracking();
+      });
 
       if (raceResult.kind === "result") {
         return raceResult.value;

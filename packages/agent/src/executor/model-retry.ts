@@ -27,14 +27,15 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { TypedEventBus, ClockPort, TimerPort, EventMap } from "@comis/core";
+import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { tryGetContext } from "@comis/core";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
-import { withPausablePromptTimeout, withResettablePromptTimeout, PromptTimeoutError, type PausableTimeoutControl } from "./prompt-timeout.js";
+import { withPausablePromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
+import { pauseDuringCorrelatedApprovals } from "../approval-timeout-pause.js";
 import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
@@ -199,44 +200,6 @@ export function isAuthError(error: unknown): boolean {
     );
   }
   return false;
-}
-
-/** Pause a prompt stall timer only for approvals owned by the same live turn. */
-function pauseDuringCorrelatedApprovals(
-  eventBus: TypedEventBus,
-  control: PausableTimeoutControl,
-  turnIds: { agentId?: string; sessionKey?: string; traceId?: string },
-): () => void {
-  if (
-    turnIds.agentId === undefined
-    || turnIds.sessionKey === undefined
-    || turnIds.traceId === undefined
-  ) {
-    return () => {};
-  }
-
-  const pending = new Set<string>();
-  const onRequested = (request: EventMap["approval:requested"]): void => {
-    if (
-      request.agentId !== turnIds.agentId
-      || request.sessionKey !== turnIds.sessionKey
-      || request.traceId !== turnIds.traceId
-    ) return;
-    const wasEmpty = pending.size === 0;
-    pending.add(request.requestId);
-    if (wasEmpty) control.pauseTimer();
-  };
-  const onResolved = (resolution: EventMap["approval:resolved"]): void => {
-    if (!pending.delete(resolution.requestId)) return;
-    if (pending.size === 0) control.resumeTimer();
-  };
-
-  eventBus.on("approval:requested", onRequested);
-  eventBus.on("approval:resolved", onResolved);
-  return () => {
-    eventBus.off("approval:requested", onRequested);
-    eventBus.off("approval:resolved", onResolved);
-  };
 }
 
 // ---------------------------------------------------------------------------
