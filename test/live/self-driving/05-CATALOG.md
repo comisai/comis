@@ -5,6 +5,14 @@
 > surface + fault matrix, and the capability inventory. This is the compiled, reach-for-it version of the
 > full live-test protocol.
 
+> **Provider suspension applies to every row drawn from here.** Rows whose prompt carries cyber-abuse-shaped
+> content — injection, credential/secret extraction, exfil, destructive action, sandbox/approval/audit
+> bypass, self-escalation, internal-network probing, threat-hunting — are **suspended by default** when they
+> are driven at a provider, including the ones in §3's HARD bank. Classify against
+> [`CYBER-ABUSE-SUSPENSIONS.md`](./CYBER-ABUSE-SUSPENSIONS.md) at plan time; catalog membership is not
+> authorization. The deterministic gate/jail oracles (`scripts/gate-probe.mjs`, the bwrap egress check) run
+> offline against the deployed dist and stay available.
+
 ## 1. Capability domains (the map)
 
 | Domain | Capabilities | Deep phase(s) |

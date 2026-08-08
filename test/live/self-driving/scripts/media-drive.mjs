@@ -20,6 +20,7 @@
 // ("transcription failed; send as text") which is a coverage-gap, NOT a Comis bug. (`05-CATALOG.md`.)
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { rig } from "./_rig.mjs";
+import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
 import { mediaMetaForPath } from "./media-file-meta.mjs";
 
 const [, , chatIdArg, fileOrB64, kindArg, captionArg, maxMsArg] = process.argv;
@@ -31,6 +32,14 @@ const maxMs = Number(maxMsArg || 180000);
 if (!fileOrB64) {
   console.error('usage: media-drive.mjs <chatId> <file-or-base64> <kind> ["caption"] [maxMs]');
   process.exit(2);
+}
+const providerRiskError = liveProviderRiskError({
+  source: "media-drive.mjs",
+  texts: [caption],
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
 }
 
 // AUTO-DETECT: an existing regular file → read+encode; else treat the arg as inline base64.

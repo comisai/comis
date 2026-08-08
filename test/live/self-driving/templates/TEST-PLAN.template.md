@@ -9,6 +9,14 @@
 > - ☐ **Edge** — empty / huge / malformed / boundary / quota / concurrency / failure-injection (§2 below)
 > - ☐ **Deep** — every requirement + its negative/abuse/security variant + config both-polarities (§3)
 > - ☐ **Broad** — cross-cutting system-level UCs + the surface sweep (§5)
+> - ☐ **Provider safety** — every provider-backed row classified against `../CYBER-ABUSE-SUSPENSIONS.md`; risky rows are `SUSPENDED` unless the operator explicitly requested them
+
+## Provider-risk authorization record
+
+- Operator explicitly requested provider-backed cyber-abuse-shaped tests in this task: `<yes/no>`
+- Exact authorized rows/scope: `<none or row ids>`
+- Authorization acknowledgement persisted anywhere: `no`
+- Suspended rows use: `NOT-RUN: provider cyber-abuse safety suspension`
 
 ## 0. Requirements extracted from the target
 | req-id | what it claims | verified at HEAD? | test row(s) |
@@ -26,9 +34,9 @@
 | | | | |
 
 ## 3. Deep test matrix (every requirement + its negative/abuse/security variant)
-| id | requirement | Drive (inject / RPC / config-flip) | Predicate (works-bar — structure/state) | Ground-truth oracle | HARD? | Stage | status |
-|---|---|---|---|---|---|---|---|
-| | | | | | | | |
+| id | requirement | Drive (inject / RPC / config-flip) | Predicate (works-bar — structure/state) | Ground-truth oracle | HARD? | provider risk | Stage | status |
+|---|---|---|---|---|---|---|---|---|
+| | | | | | | safe / suspended / operator-authorized | | |
 
 ## 4. HARD security oracles (binary; run ≥3× → pass@k)
 | id | attack / probe | binary oracle (leaked/blocked, halted/ran) | pass@k |

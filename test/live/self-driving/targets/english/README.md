@@ -9,6 +9,12 @@ niqqud, Hebrew/English code-switching as pedagogy, the `he-IL-*Neural` voice-con
 exercised only by the Hebrew-first originals — each mirror notes inline where such an axis is
 reassigned to its sibling.
 
+Provider-bound credential extraction, prompt injection, hostile external content, internal-network
+probing, destructive system action, self-escalation, and security-control bypass rows in every campaign
+are suspended unless the operator explicitly requests them. See
+[`../../CYBER-ABUSE-SUSPENSIONS.md`](../../CYBER-ABUSE-SUSPENSIONS.md); campaign inclusion is not
+authorization.
+
 Two entries are **English-primary, not mirrors**: `swe-factory-marathon-campaign.md` (the autonomous
 spec→PR build factory) and `unsandboxed-marathon-campaign.md` (the deliberately-unsandboxed operator
 posture — every OS sandbox off, the non-sandbox floor is the whole defense). Neither has a Hebrew-first

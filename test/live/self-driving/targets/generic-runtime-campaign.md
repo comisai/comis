@@ -1,5 +1,10 @@
 # Target — generic runtime acceptance campaign
 
+> Provider-backed adversarial external-instruction, secret-policy override, authority-escalation,
+> internal-network, and security-control negative rows are suspended unless the operator explicitly
+> requests them under [`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md). Offline compiler,
+> architecture, and deterministic guard checks remain available.
+
 Drive the source-built Comis runtime end to end on the assigned test host. Follow `../00-MISSION.md`, `../01-SETUP.md`, `../02-DISCIPLINE.md`, and `../03-OBSERVABILITY.md`. Use only neutral synthetic data and a synthetic integration server. Do not depend on application repositories or production credentials.
 
 ## Required evidence

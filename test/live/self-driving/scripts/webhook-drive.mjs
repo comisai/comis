@@ -37,10 +37,13 @@
 //
 // Exit code: 0 if the HTTP response status is 2xx, else 1 (so `&&` chains are honest).
 // A missing `@file` or a stale reused body exits 2 (a rig error, distinct from an honest HTTP non-2xx).
+// A cyber-abuse-shaped body the operator has not authorized exits 4 before the request is sent
+// (../CYBER-ABUSE-SUSPENSIONS.md) — record that row NOT-RUN, not an HTTP result.
 
 import { createHmac } from "node:crypto";
 import http from "node:http";
 import { readFileSync, statSync, existsSync } from "node:fs";
+import { liveProviderRiskError } from "./live-provider-risk-gate.mjs";
 
 function parseArgs(argv) {
   const pos = [];
@@ -116,6 +119,14 @@ if (pos.length < 1) {
 }
 const path = pos[0].replace(/^\/+/, "");
 const rawBody = readBody(pos[1] ?? "{}", opt);
+const providerRiskError = liveProviderRiskError({
+  source: "webhook-drive.mjs",
+  texts: [rawBody],
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
+}
 const secret = opt.secret ?? process.env.WEBHOOK_HMAC_SECRET ?? process.env.WH_SECRET ?? "";
 const base = (opt.base ?? process.env.WH_BASE ?? "/hooks").replace(/\/+$/, "");
 const port = opt.port ?? Number(process.env.GW_PORT ?? 4766);

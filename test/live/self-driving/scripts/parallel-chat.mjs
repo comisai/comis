@@ -6,6 +6,7 @@
 // proof that model/tool execution overlapped and stayed within the requested conversation.
 import { readFileSync } from 'node:fs';
 import { ensureRpcEnv, rig } from './_rig.mjs';
+import { liveProviderRiskError } from './live-provider-risk-gate.mjs';
 
 ensureRpcEnv();
 const token = process.env.COMIS_GATEWAY_TOKEN;
@@ -28,6 +29,14 @@ if (!Array.isArray(specs) || specs.length < 2 || specs.some((spec) =>
   || (spec.locale !== undefined && typeof spec.locale !== 'string'))) {
   console.error('parallel-chat.mjs: expected at least two {name,sessionKey,message,locale?} entries');
   process.exit(2);
+}
+const providerRiskError = liveProviderRiskError({
+  source: "parallel-chat.mjs",
+  texts: specs.map((spec) => spec.message),
+});
+if (providerRiskError) {
+  console.error(providerRiskError);
+  process.exit(4);
 }
 
 const campaignStartedAtMs = Date.now();

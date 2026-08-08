@@ -8,6 +8,12 @@ reproducible defect reports, durable resume state (`CAMPAIGN-STATE.md`), and exp
 criteria. Hebrew is the primary drive language throughout; each campaign states its own
 bilingual/multilingual split (e.g. English technical or financial content, a multilingual public).
 
+Provider-bound credential extraction, prompt injection, hostile external content, internal-network
+probing, destructive system action, self-escalation, and security-control bypass rows in every campaign
+are suspended unless the operator explicitly requests them. See
+[`../../CYBER-ABUSE-SUSPENSIONS.md`](../../CYBER-ABUSE-SUSPENSIONS.md); campaign inclusion is not
+authorization.
+
 The campaign file itself is the authoritative spec. `../README.md` ("The worked patterns") carries
 the full per-campaign summaries and the lighter, non-campaign target shapes; the kit loop lives at
 `../../README.md` + `../../00-MISSION.md`.
