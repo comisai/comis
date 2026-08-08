@@ -12,6 +12,12 @@
 > Rig identity (box alias, access path, the local ituran-mcp checkout) comes from the **kickoff
 > paste** + `scripts/.live-env` (untracked) via `scripts/_rig.mjs` — never hard-code it here.
 
+The rows in [`../conversation-integrity-regression-pack.md`](../conversation-integrity-regression-pack.md)
+are a mandatory sub-campaign. Run them against the same relationship and real read-only tool
+results: especially approval retirement, approval-aware background timing, Hebrew deterministic
+surfaces, secret references, equal-count entity collisions, freshness partitions, recovery
+visibility, and per-conversation cost reconciliation.
+
 ## At a glance (the whole campaign on one screen)
 
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · ituran-mcp

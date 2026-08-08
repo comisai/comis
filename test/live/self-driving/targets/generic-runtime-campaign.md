@@ -7,6 +7,10 @@
 
 Drive the source-built Comis runtime end to end on the assigned test host. Follow `../00-MISSION.md`, `../01-SETUP.md`, `../02-DISCIPLINE.md`, and `../03-OBSERVABILITY.md`. Use only neutral synthetic data and a synthetic integration server. Do not depend on application repositories or production credentials.
 
+Run every applicable row in [`conversation-integrity-regression-pack.md`](conversation-integrity-regression-pack.md)
+against this same conversation. Its approval, locale, secret-reference, recovery, cost, and lens
+reconciliation rows are required, not optional broad coverage.
+
 ## Required evidence
 
 1. Start from an empty agent workspace. Verify starter files are created only when absent and untouched starters add no operator-policy sections or prompt tokens.
@@ -15,10 +19,16 @@ Drive the source-built Comis runtime end to end on the assigned test host. Follo
 4. Send representative Latin, RTL, Cyrillic, CJK, Indic, and mixed-script requests. Confirm no script is coerced to a fixed language set, explicit BCP-47 tags canonicalize, and a translation target remains separate from the surrounding locale.
 5. Connect a synthetic integration server whose instruction text attempts to override operator policy, locale, approval, and secret rules. Confirm the block is bounded, attributed, externally wrapped, and unable to change the trusted policy snapshot.
 6. Exercise a read-only tool, an approval-required mutation, an unavailable capability, and a failed tool. Confirm the response reports actual outcomes and does not claim success without evidence.
+   Hold the mutation at its approval gate beyond the auto-background threshold and prove the
+   correlated turn is not promoted. Resolve it with `approve-pending.mjs` and require immediate
+   wire-control retirement.
 7. Run two configured agents with different judge models. Confirm each verdict records its own agent model, the exact execution policy hash, the generic rubric hash, and content-free evidence references.
 8. Start a durable run, restart the daemon, and inspect the resumed checkpoint. Confirm the original workspace-policy hash survives restart and no workspace reread changes it.
 9. Exercise `comis system-health --format json`, `obs.system.health`, `obs_system_health`, and `system_health`. Confirm the returned contract is `SystemHealthReport`, the support bundle contains `system-health.json`, and old surface names are absent.
 10. Run the repository architecture gate and full validation on the deployed source revision.
+11. Run `conversation-audit.mjs` with an explicit locale, cost, and grounding contract. Require a
+    pass with non-empty wire, trajectory, and incident-report coverage, then run the daemon-wide
+    health sweep.
 
 ## Hard failure conditions
 

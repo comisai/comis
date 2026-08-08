@@ -14,6 +14,14 @@
 6. **DB / workspace** — `memory.db` (`lcd_*`, `memories`, `outcome_events`, `learned_skills`, `tuned_alpha`, `memory_usefulness`, `delivery_queue`, `delivery_mirror`, audit) + the workspace filesystem (the written file, the generated media). No `sqlite3` on the VPS → use **`scripts/db.mjs`** (the read-only DB oracle, reuses the daemon's better-sqlite3): `db.mjs tables|schema <t>|cols <t>|count <t>|rows <t> [n]|pick <t> <c1,c2> [n]|sql <raw>` — canned sub-commands so you never fight ssh→su→node quote-hell. This is the **primary oracle for offline/learning/memory capabilities** (see §offline-oracles). **Load-bearing column cheatsheet (run `cols <t>` if unsure — these have bitten with `no such column`):** `memories(content, trust_level, source_who, source_session_key, memory_type)` — NOT `source`/`kind`; `outcome_events(source, outcome, used_skill_ids)`; `learned_skills(name, state, trust_level, proof_count, source_traj_ids)`; `tuned_alpha` PK `(tenant_id, agent_id, intent)`.
 7. **Daemon log** (`~/.comis/logs/daemon.*.log`, Pino JSON — plus `journalctl -u comis` for pre-log FATALs) — **last resort**; if you needed it, that's a §obs-loop item.
 
+For one emulator-backed Telegram conversation, `node scripts/conversation-audit.mjs <chatId>
+[contract.json]` performs the session-level join in one call: actual nested session resolution,
+strict JSONL, wire, trajectory, offline incident report, approval/background lifecycles, optional
+locale fallbacks, row-level grounding assertions, and call/token/cost budgets. It fails closed when a
+lens is empty or corrupt and prints no message bodies, callback capabilities, tool payloads, or
+canary values. The daemon-wide follow-up remains `system --since N`; secret residency remains the
+separate value-in-memory `secret-residency.mjs SECRET_NAME` oracle.
+
 **The CLAUDE.md decision tree (run these BEFORE a raw grep):** "review the logs" / daemon-wide → `system --since N` (surfaces the worst session + the config-posture findings) → then `explain <ref>` on that session to root-cause it. The CLI is not on PATH locally (`node packages/cli/dist/cli.js …`); on the VPS the comis CLI is on the comis user's PATH (`sudo -u comis bash -lc "comis …"`).
 
 ## §offline-oracles — testing offline / cron / DB / event-resident capabilities (not channel-shaped)
