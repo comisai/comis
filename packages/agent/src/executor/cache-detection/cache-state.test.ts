@@ -1146,53 +1146,67 @@ describe("lookback-aware cache break attribution", () => {
     detector.reset();
   });
 
-  function triggerBreakWithBlockCount(
-    messageBlockCount: number,
+  function triggerBreakWithMarkerGap(
+    reportedMessageCount: number,
+    tailGapBlocks: number | null,
     lastResponseElapsedMs?: number,
   ): CacheBreakEvent | null {
-    detector.recordPromptState(makeBaseInput());
+    const sdkAutoPosition = tailGapBlocks === null ? null : 10 + tailGapBlocks;
+    const breakpointBudget = {
+      total: tailGapBlocks === null ? 1 : 3,
+      system: 1,
+      tool: 0,
+      message: tailGapBlocks === null ? 0 : 1,
+      sdkAuto: tailGapBlocks === null ? 0 : 1,
+      messagePositions: tailGapBlocks === null ? [] : [10],
+      sdkAutoPosition,
+      messageContentBlocks: sdkAutoPosition === null ? reportedMessageCount : sdkAutoPosition + 1,
+      tailGapBlocks,
+    } as unknown as NonNullable<RecordPromptStateInput["breakpointBudget"]>;
+    detector.recordPromptState(makeBaseInput({ breakpointBudget }));
     detector.checkResponseForCacheBreak({
       sessionKey: "test-session", provider: "anthropic",
       cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000,
     });
     // Record same state (no changes)
-    detector.recordPromptState(makeBaseInput());
+    detector.recordPromptState(makeBaseInput({ breakpointBudget }));
     return detector.checkResponseForCacheBreak({
       sessionKey: "test-session", provider: "anthropic",
       cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000,
       lastResponseElapsedMs,
-      messageBlockCount,
+      messageBlockCount: reportedMessageCount,
     });
   }
 
-  it("returns 'lookback_window_exceeded' when conversation > 20 blocks and elapsed < TTL_SHORT (5min)", () => {
-    const event = triggerBreakWithBlockCount(25, 60_000); // 1 min elapsed, 25 blocks
-    expect(event).not.toBeNull();
-    expect(event!.reason).toBe("lookback_window_exceeded");
-  });
-
-  it("returns 'likely_server_eviction' when conversation <= 20 blocks", () => {
-    const event = triggerBreakWithBlockCount(15, 60_000); // 1 min elapsed, 15 blocks
+  it("does not infer a lookback miss from a large conversation with a protected tail", () => {
+    const event = triggerBreakWithMarkerGap(89, 2, 60_000);
     expect(event).not.toBeNull();
     expect(event!.reason).toBe("likely_server_eviction");
   });
 
-  it("returns 'lookback_window_exceeded' for exactly 21 blocks (boundary)", () => {
-    const event = triggerBreakWithBlockCount(21, 60_000);
+  it("attributes a lookback miss from an observed marker gap above the provider window", () => {
+    const event = triggerBreakWithMarkerGap(15, 21, 60_000);
     expect(event).not.toBeNull();
     expect(event!.reason).toBe("lookback_window_exceeded");
   });
 
-  it("returns 'likely_server_eviction' for exactly 20 blocks (boundary)", () => {
-    const event = triggerBreakWithBlockCount(20, 60_000);
+  it("returns 'lookback_window_exceeded' for an observed marker gap of exactly 21 blocks", () => {
+    const event = triggerBreakWithMarkerGap(89, 21, 60_000);
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("lookback_window_exceeded");
+  });
+
+  it("returns 'likely_server_eviction' for an observed marker gap of exactly 20 blocks", () => {
+    const event = triggerBreakWithMarkerGap(89, 20, 60_000);
     expect(event).not.toBeNull();
     expect(event!.reason).toBe("likely_server_eviction");
   });
 
-  it("includes conversationBlockCount in event when lookback detected", () => {
-    const event = triggerBreakWithBlockCount(30, 60_000);
+  it("includes marker topology and the reported conversation count in a lookback event", () => {
+    const event = triggerBreakWithMarkerGap(30, 21, 60_000);
     expect(event).not.toBeNull();
     expect(event!.conversationBlockCount).toBe(30);
+    expect((event!.breakpointBudget as unknown as { tailGapBlocks: number }).tailGapBlocks).toBe(21);
   });
 
   it("defaults to 0 block count when messageBlockCount not provided", () => {
@@ -1215,7 +1229,7 @@ describe("lookback-aware cache break attribution", () => {
 
   it("returns 'ttl_expiry_short' when > 20 blocks but elapsed > TTL_SHORT (lookback requires elapsed <= TTL_SHORT)", () => {
     // elapsed 6 min > TTL_SHORT=5min, even with > 20 blocks, should be ttl_expiry_short not lookback
-    const event = triggerBreakWithBlockCount(25, 301_000);
+    const event = triggerBreakWithMarkerGap(25, 21, 301_000);
     expect(event).not.toBeNull();
     expect(event!.reason).toBe("ttl_expiry_short");
   });

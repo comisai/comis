@@ -109,6 +109,62 @@ describe("extractAnthropicPromptState", () => {
     expect(result.perToolHashes).toHaveProperty("bash");
     expect(result.perToolHashes).toHaveProperty("file_read");
   });
+
+  it("reconciles the breakpoint budget from observed message marker topology", () => {
+    const result = extractAnthropicPromptState({
+      ...fixtureParams,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "first" }] },
+        { role: "assistant", content: [{ type: "text", text: "answer" }] },
+        {
+          role: "user",
+          content: [{ type: "text", text: "cached turn", cache_control: { type: "ephemeral" } }],
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "thinking" },
+            { type: "tool_use", name: "bash", input: { cmd: "pwd" } },
+          ],
+        },
+        {
+          role: "user",
+          content: [{ type: "tool_result", content: "result", cache_control: { type: "ephemeral" } }],
+        },
+      ],
+    }, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
+
+    expect(result.breakpointBudget).toEqual({
+      total: 4,
+      system: 1,
+      tool: 1,
+      message: 1,
+      sdkAuto: 1,
+      messagePositions: [2],
+      sdkAutoPosition: 5,
+      messageContentBlocks: 6,
+      tailGapBlocks: 3,
+    });
+  });
+
+  it("does not invent an SDK breakpoint when the final user block has no marker", () => {
+    const result = extractAnthropicPromptState({
+      ...fixtureParams,
+      messages: [{ role: "user", content: [{ type: "text", text: "uncached" }] }],
+    }, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
+
+    expect(result.breakpointBudget).toEqual({
+      total: 2,
+      system: 1,
+      tool: 1,
+      message: 0,
+      sdkAuto: 0,
+      messagePositions: [],
+      sdkAutoPosition: null,
+      messageContentBlocks: 1,
+      tailGapBlocks: null,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -4887,7 +4887,18 @@ describe("attachTrajectoryToEventBus -- cache break (content-free)", () => {
       toolsSchemaChanged: ["schema_changed_tool"],
       systemCharDelta: 42,
       model: "claude-sonnet-4-5-20250929",
-    });
+      breakpointBudget: {
+        total: 3,
+        system: 1,
+        tool: 0,
+        message: 1,
+        sdkAuto: 1,
+        messagePositions: [76],
+        sdkAutoPosition: 79,
+        messageContentBlocks: 80,
+        tailGapBlocks: 3,
+      },
+    } as unknown as EventMap["observability:cache_break"]);
 
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0].type).toBe("cache.break");
@@ -4901,6 +4912,12 @@ describe("attachTrajectoryToEventBus -- cache break (content-free)", () => {
     const rewritePremium = Math.max(0, pricing.cacheWrite - pricing.cacheRead);
     expect(rewritePremium).toBeGreaterThan(0);
     expect(data.estCostUsd).toBeCloseTo(1000 * rewritePremium, 12);
+    expect(data.cacheTopology).toEqual({
+      messagePositions: [76],
+      sdkAutoPosition: 79,
+      messageContentBlocks: 80,
+      tailGapBlocks: 3,
+    });
 
     // NO tool-name arrays, NO system text crosses into the trajectory.
     const serialized = JSON.stringify(data);
