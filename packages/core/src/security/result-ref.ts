@@ -8,7 +8,7 @@
  *   - proactive: a handle BY DEFAULT above a per-tool threshold (the guard is
  *     reactive — it offloads AFTER a result is already too big).
  *   - workspace-relative `results/<id>.<kind>` (the guard writes
- *     `<sessionDir>/tool-results/<id>.json`).
+ *     `<sessionDir>/tool-results/<id>.{json,txt}`, matching the payload).
  *   - a structured handle `{ref, kind, bytes, rows?, schema?, preview,
  *     expiresAt}` (the guard returns a head+tail text-preview string).
  *   - per-run GC lifecycle, cleaned on orchestrate-run end (the guard is

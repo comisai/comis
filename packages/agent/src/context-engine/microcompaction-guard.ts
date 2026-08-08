@@ -27,8 +27,8 @@
  * - Tool results exceeding inline threshold saved to disk (clean payload)
  * - Per-tool thresholds applied (8K/15K/15K)
  * - Hard cap (100K) truncation applied before disk offload
- * - Inline reference carries the disk path + a recovery example verified
- *   against the written bytes (json.load only when the file parses)
+ * - Inline reference carries the disk path + recovery guidance matching the
+ *   artifact type (`.json` for parseable JSON, `.txt` otherwise)
  *
  * @module
  */
@@ -108,18 +108,17 @@ function unwrapToolResultText(content: ToolResultMessage["content"]): CleanToolR
  * The offload file is a storage artifact: it holds payload bytes only — the
  * `wrapExternalContent` security envelope is presentation-layer and is
  * re-applied at the boundaries instead (the inline reference's preview and
- * the read-tool recovery path). Before this, the envelope was baked into the
- * `.json` file at rest and the marker's own `json.load` recovery example
- * failed on every offloaded MCP result (live incident 2026-07-12).
+ * the read-tool recovery path).
  *
  * External-origin offloads additionally get a `<toolCallId>.origin.json`
  * sidecar recording the source, so the recovery-read path can restore the
- * taint boundary. The main pointer format (`tool-results/<toolCallId>.json`)
- * is unchanged.
+ * taint boundary.
  *
  * Uses synchronous file I/O because `appendMessage()` is synchronous.
  * Path construction uses `safePath()` to prevent traversal attacks.
- * File extension remains `.json` for stable offloaded-file references.
+ * Parseable, complete JSON uses `.json`; plain text and truncated structured
+ * output use `.txt`. The returned path is the authoritative pointer threaded
+ * to the inline reference and trajectory event.
  *
  * @returns `{ diskPath, written }` — `diskPath` is the absolute target path;
  *   `written` is `false` when the parent-dir or file write was rejected
@@ -132,10 +131,21 @@ function saveToDisk(
   dataDir: string,
   toolCallId: string,
   diskText: string,
+  diskTruncated: boolean,
   origin: { source: ExternalContentSource; truncated: boolean; originalChars: number } | null,
   logger: ComisLogger,
 ): { diskPath: string; written: boolean } {
-  const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}.json`);
+  let parsesAsJson = false;
+  if (!diskTruncated) {
+    try {
+      JSON.parse(diskText);
+      parsesAsJson = true;
+    } catch {
+      // Plain text is a valid offload payload and receives a truthful suffix.
+    }
+  }
+  const extension = parsesAsJson ? ".json" : ".txt";
+  const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}${extension}`);
   // Parent dir at 0o700 via the fs-safe substrate (file-mode invariant).
   // confinedBaseDir threads dataDir (typically ~/.comis/) so the ancestor-
   // symlink escape is rejected. When the dir creation is rejected the file
@@ -146,7 +156,7 @@ function saveToDisk(
   const writeResult = writeRegularFile({ path: diskPath, content: diskText, confinedBaseDir: dataDir });
 
   if (origin) {
-    const sidecarPath = diskPath.slice(0, -".json".length) + ".origin.json";
+    const sidecarPath = diskPath.slice(0, -extension.length) + ".origin.json";
     const sidecarBody = JSON.stringify({
       source: origin.source,
       ...(origin.truncated ? { truncated: true, originalChars: origin.originalChars } : {}),
@@ -178,8 +188,13 @@ function saveToDisk(
  * the pre-sidecar behavior for those files.
  */
 function readOffloadOrigin(filePath: string): ExternalContentSource | null {
-  if (!filePath.endsWith(".json")) return null;
-  const sidecarPath = filePath.slice(0, -".json".length) + ".origin.json";
+  const extension = filePath.endsWith(".json")
+    ? ".json"
+    : filePath.endsWith(".txt")
+      ? ".txt"
+      : null;
+  if (extension === null) return null;
+  const sidecarPath = filePath.slice(0, -extension.length) + ".origin.json";
   try {
     const st = statSync(sidecarPath);
     if (!st.isFile() || st.size > 4096) return null;
@@ -211,14 +226,11 @@ function slicePreview(cleanText: string, headChars: number, tailChars: number): 
 // ---------------------------------------------------------------------------
 
 /**
- * Recovery guidance that is TRUE for the bytes just written: the `json.load`
- * example is emitted only when the disk payload actually parses as JSON
- * (verified right here, at write time), a truncated disk copy says so instead
- * of promising a parse that must fail, and plain text gets text tooling. The
- * old unconditional `json.load` example failed on every non-JSON offload —
- * and, before clean-at-rest offloads, on every security-wrapped MCP result.
+ * Recovery guidance that matches the bytes just written: `.json` artifacts
+ * get a `json.load` example, a truncated disk copy says so instead of
+ * promising structured parsing, and `.txt` artifacts get text tooling.
  */
-function recoveryGuidance(diskText: string, diskPath: string, diskTruncated: boolean): string {
+function recoveryGuidance(diskPath: string, diskTruncated: boolean): string {
   // The read tool is exempt from re-offload for tool-results recovery reads
   // (and disk copies are capped at the hard cap), so reading the whole file
   // back always works — exec just keeps only the extracted data in context.
@@ -229,14 +241,7 @@ function recoveryGuidance(diskText: string, diskPath: string, diskTruncated: boo
       `NOTE: the disk copy was truncated at ${TOOL_RESULT_HARD_CAP_CHARS} chars — structured parsing may fail; inspect with text tools (grep/head).\n`;
     return guidance;
   }
-  let parsesAsJson = false;
-  try {
-    JSON.parse(diskText);
-    parsesAsJson = true;
-  } catch {
-    // not JSON — fall through to the text guidance
-  }
-  if (parsesAsJson) {
+  if (diskPath.endsWith(".json")) {
     guidance += `The file is valid JSON. Example: exec python3 -c "import json; data=json.load(open('${diskPath}')); print(type(data).__name__, list(data)[:20] if isinstance(data, dict) else len(data))"\n`;
   } else {
     guidance += `The file is plain text (not JSON) — use text tools, e.g.: exec grep -n '<term>' '${diskPath}' | head\n`;
@@ -276,7 +281,7 @@ function createInlineReference(
   // keeps only the extracted data in context, where a read tool recovery
   // re-enters the whole file.
   if (totalChars >= MAX_INLINE_FILE_READ_RESULT_CHARS) {
-    referenceText += `Full content saved at: ${diskPath}\n` + recoveryGuidance(diskText, diskPath, diskTruncated);
+    referenceText += `Full content saved at: ${diskPath}\n` + recoveryGuidance(diskPath, diskTruncated);
   } else {
     referenceText += `Full content saved — use the read tool to re-access: ${diskPath}\n`;
   }
@@ -452,6 +457,7 @@ export function installMicrocompactionGuard(
         dataDir,
         toolResultMsg.toolCallId,
         diskText,
+        diskTruncated,
         external ? { source: external.source, truncated: diskTruncated, originalChars: totalChars } : null,
         logger,
       );
@@ -481,7 +487,7 @@ export function installMicrocompactionGuard(
       // tool:result_offloaded would record a phantom pointer the
       // IncidentReport.offloads[] drill-down cannot open. Log+suppress instead.
       if (written) {
-        const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
+        const diskPathRel = relative(sessionDir, diskPath);
         onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
       } else {
         logger.warn(
@@ -514,6 +520,7 @@ export function installMicrocompactionGuard(
         dataDir,
         toolResultMsg.toolCallId,
         cleanText,
+        false,
         external ? { source: external.source, truncated: false, originalChars: totalChars } : null,
         logger,
       );
@@ -541,7 +548,7 @@ export function installMicrocompactionGuard(
       // Suppress the offload event on a failed write so the
       // trajectory never records a pointer at a file that was not persisted.
       if (written) {
-        const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
+        const diskPathRel = relative(sessionDir, diskPath);
         onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
       } else {
         logger.warn(

@@ -231,7 +231,8 @@ export interface AgentEvents {
     toolCallId: string;
     /** Character count of the original (pre-offload) result. */
     originalChars: number;
-    /** Workspace-relative path (sessionDir-relative): `tool-results/<toolCallId>.json`. `obs.explain` drill-down target. */
+    /** Workspace-relative path (sessionDir-relative):
+     * `tool-results/<toolCallId>.{json,txt}`. `obs.explain` drill-down target. */
     diskPathRel: string;
     timestamp: number;
   };
