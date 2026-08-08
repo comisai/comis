@@ -116,6 +116,7 @@ export type {
   LocalizationPort,
   LocalizationRequest,
   LocalizationKey,
+  DeterministicLocalizationMessageId,
   LocalizationError,
 } from "./localization.js";
 export type { ComputeDailyResetNextRun } from "./schedule-callback.js";

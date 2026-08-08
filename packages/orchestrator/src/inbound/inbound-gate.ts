@@ -63,10 +63,12 @@ export type GateDeps = Pick<
 function localized(
   deps: GateDeps,
   msg: NormalizedMessage,
+  agentId: string,
   key: LocalizationKey,
   values?: Readonly<Record<string, string | number>>,
 ): string {
   return renderLocalized(deps.localization, {
+    agentId,
     key,
     ...(typeof msg.metadata?.locale === "string" ? { locale: msg.metadata.locale } : {}),
     ...(values === undefined ? {} : { values }),
@@ -148,7 +150,7 @@ async function routeInteractiveCallback(
       }
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        localized(deps, msg, "error.report_unavailable"),
+        localized(deps, msg, agentId, "error.report_unavailable"),
         inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
       break;
@@ -159,7 +161,7 @@ async function routeInteractiveCallback(
     case "ambiguous":
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        localized(deps, msg, "error.callback_invalid"),
+        localized(deps, msg, agentId, "error.callback_invalid"),
         inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
       break;
@@ -551,7 +553,7 @@ export async function evaluateInboundGate(
     await deps.deliveryService.deliverToChannel(
       adapter,
       msg.channelId,
-      localized(deps, msg, "help.commands"),
+      localized(deps, msg, agentId, "help.commands"),
       inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
     );
     return { action: "handled" };
@@ -608,7 +610,7 @@ export async function evaluateInboundGate(
     await deps.deliveryService.deliverToChannel(
       adapter,
       msg.channelId,
-      localized(deps, msg, "session.reset"),
+      localized(deps, msg, agentId, "session.reset"),
       inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
     );
     return { action: "handled" }; // Do not route to agent
@@ -673,7 +675,7 @@ async function handleApprovalCommand(
     await deps.deliveryService.deliverToChannel(
       adapter,
       msg.channelId,
-      localized(deps, msg, "approval.resolved_one", {
+      localized(deps, msg, agentId, "approval.resolved_one", {
         outcome: approved ? "approved" : "denied",
         action: matches[0].toolName ?? matches[0].action,
         id: matches[0].shortId,
@@ -695,7 +697,7 @@ async function handleApprovalCommand(
       await deps.deliveryService.deliverToChannel(
         adapter,
         msg.channelId,
-        localized(deps, msg, "approval.none_pending"),
+        localized(deps, msg, agentId, "approval.none_pending"),
         inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
       );
     } else if (matches.length === 1) {
@@ -703,7 +705,7 @@ async function handleApprovalCommand(
       gate.resolveApproval(matches[0].requestId, isApprove, approvedBy);
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        localized(deps, msg, "approval.resolved_one", {
+        localized(deps, msg, agentId, "approval.resolved_one", {
           outcome: isApprove ? "approved" : "denied",
           action: matches[0].toolName ?? matches[0].action,
           id: matches[0].shortId,
@@ -717,7 +719,7 @@ async function handleApprovalCommand(
       const cmd = isApprove ? "/approve" : "/deny";
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        localized(deps, msg, "approval.multiple", {
+        localized(deps, msg, agentId, "approval.multiple", {
           command: cmd,
           choices: lines.join("\n"),
         }),
@@ -747,7 +749,7 @@ async function handleApprovalCommand(
         await deps.deliveryService.deliverToChannel(
           adapter,
           msg.channelId,
-          localized(deps, msg, "approval.none_pending_resolve"),
+          localized(deps, msg, agentId, "approval.none_pending_resolve"),
           inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
       } else {
@@ -756,7 +758,7 @@ async function handleApprovalCommand(
         }
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          localized(deps, msg, "approval.resolved_many", {
+          localized(deps, msg, agentId, "approval.resolved_many", {
             outcome: isApprove ? "approved" : "denied",
             count: matches.length,
           }),
@@ -773,14 +775,14 @@ async function handleApprovalCommand(
       if (match === undefined) {
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          localized(deps, msg, "approval.not_found", { id: arg }),
+          localized(deps, msg, agentId, "approval.not_found", { id: arg }),
           inboundDeliveryOptions(turnScope, conversationRef, { skipChunking: true }),
         );
       } else {
         gate.resolveApproval(match.requestId, isApprove, approvedBy);
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          localized(deps, msg, "approval.resolved_one", {
+          localized(deps, msg, agentId, "approval.resolved_one", {
             outcome: isApprove ? "approved" : "denied",
             action: match.toolName ?? match.action,
             id: match.shortId,

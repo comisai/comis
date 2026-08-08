@@ -250,7 +250,20 @@ export async function buildAndStartChannelManager(
       commandQueue,
       sessionManager,
       principalResolver: container.principalResolver,
-      localization: createDeterministicLocalization(),
+      localization: createDeterministicLocalization({
+        getLocaleConfig: (agentId) => {
+          if (agentId === undefined) return undefined;
+          const agentConfig = agents[agentId];
+          return agentConfig === undefined
+            ? undefined
+            : {
+                ...(agentConfig.language === undefined ? {} : { language: agentConfig.language }),
+                ...(agentConfig.localePacks === undefined
+                  ? {}
+                  : { localePacks: agentConfig.localePacks }),
+              };
+        },
+      }),
       getDmScope: (agentId: string) => DmScopeConfigSchema.parse(
         agents[agentId]?.session?.dmScope ?? {},
       ),
