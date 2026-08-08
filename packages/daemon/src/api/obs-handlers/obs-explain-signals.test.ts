@@ -1035,6 +1035,15 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
       agents_manage: { ok: 0, failed: 1, topErrorKind: "validation" },
       cron: { ok: 1, failed: 0 },
     });
+    expect(
+      (s as unknown as { failureHistory?: unknown[] }).failureHistory,
+    ).toEqual([
+      expect.objectContaining({
+        seq: 2,
+        toolName: "agents_manage",
+        errorPreview: "old turn failure",
+      }),
+    ]);
     expect(s.failures).toEqual([]);
     expect(s.nodeBudgetBreaches).toEqual([]);
     expect(s.subagentCompletions).toBeUndefined();
