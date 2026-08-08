@@ -26,6 +26,9 @@ describe("conversation evidence audit oracle", () => {
           requestId: "approval_a",
           approved: true,
         }),
+        trajectoryRecord("background_task.completed", "trace_a", "2026-08-07T16:47:15.500Z", {
+          taskId: "task_a",
+        }),
         trajectoryRecord("tool.call", "trace_a", "2026-08-07T16:47:16.000Z", {
           toolName: "fleet_snapshot",
           toolCallId: "call_a",
