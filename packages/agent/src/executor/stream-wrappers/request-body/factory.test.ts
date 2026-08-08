@@ -6891,13 +6891,12 @@ describe("fence-aware microcompaction", () => {
       expect(countUnstableWarns(testLogger)).toBeGreaterThanOrEqual(1);
     });
 
-    it("WARN names the first divergent message index + its poison class", async () => {
+    it("does not warn when the runtime preamble changes inside the current turn", async () => {
       const testLogger = createMockLogger();
 
-      // Mutate index 2 with a varying DATETIME-PREAMBLE each turn — a cache-poison
-      // class that reaches the diagnostic (unlike the inline-recall block, which
-      // the recall strip removes upstream). The diagnostic must identify WHICH message +
-      // WHAT content class, so the next incident needs no ad-hoc instrumentation.
+      // The runtime envelope is intentionally rebuilt from current time, policy,
+      // and request-scoped context. Its movement is visible in the DEBUG probe,
+      // but actual cache-read telemetry decides whether it harmed reuse.
       for (let turn = 0; turn < 4; turn++) {
         const msgs = buildMessages(6);
         (msgs[2].content as any[])[0].text =
@@ -6908,10 +6907,7 @@ describe("fence-aware microcompaction", () => {
       const warn = (testLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => typeof c[1] === "string" && c[1].includes("Unstable prefix detected"),
       );
-      expect(warn).toBeDefined();
-      const payload = warn![0] as Record<string, unknown>;
-      expect(payload.firstDivergentIndex).toBe(2);
-      expect(String(payload.mutationClass)).toContain("datetime-preamble");
+      expect(warn).toBeUndefined();
     });
 
     it("WARN classifies a CONTENT-cleared structural delta (no content leak)", async () => {

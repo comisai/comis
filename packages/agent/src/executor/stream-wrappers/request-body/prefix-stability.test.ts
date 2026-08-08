@@ -174,6 +174,24 @@ describe("runPrefixStabilityDiagnostic — onPrefixUnstable system callback", ()
     expect(onPrefixUnstable).not.toHaveBeenCalled();
     expect((logger as unknown as { warn: ReturnType<typeof vi.fn> }).warn).not.toHaveBeenCalled();
   });
+
+  it("does not elevate runtime-preamble projection into cache-prefix churn", () => {
+    const onPrefixUnstable = vi.fn();
+    const logger = noopLogger();
+    const config = makeConfig(onPrefixUnstable);
+    const wrapped = (stamp: string) => makeResult(
+      "user",
+      `[System context]\n## Current Date & Time\n${stamp}\n[End system context]\n\nrequest`,
+    );
+
+    runPrefixStabilityDiagnostic(wrapped("2026-08-08T10:00:00Z"), config, logger);
+    runPrefixStabilityDiagnostic(makeResult("user", "request"), config, logger);
+    runPrefixStabilityDiagnostic(wrapped("2026-08-08T10:01:00Z"), config, logger);
+    runPrefixStabilityDiagnostic(makeResult("user", "request"), config, logger);
+
+    expect(onPrefixUnstable).not.toHaveBeenCalled();
+    expect((logger as unknown as { warn: ReturnType<typeof vi.fn> }).warn).not.toHaveBeenCalled();
+  });
 });
 
 describe("runPrefixStabilityDiagnostic — a sliding history window is the costliest churn", () => {
