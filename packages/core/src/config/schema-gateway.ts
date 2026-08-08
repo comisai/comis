@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
 import { SecretRefSchema } from "../domain/secret-ref.js";
-import { ENV_VAR_PATTERN } from "./env-substitution.js";
 
 const WholeEnvVarReferenceSchema = z.string().regex(
-  new RegExp(`^${ENV_VAR_PATTERN.source}$`),
+  /^\$\{[A-Z_][A-Z0-9_]*\}$/,
   "Expected a whole ${VAR_NAME} environment reference",
 );
 

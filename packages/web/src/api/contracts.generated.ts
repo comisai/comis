@@ -13642,6 +13642,27 @@ export const CONTRACTS = {
             "type": "number"
           }
         },
+        "worstDegradedExecution": {
+          "type": "object",
+          "properties": {
+            "sessionKey": {
+              "type": "string"
+            },
+            "traceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "endReason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionKey",
+            "traceId",
+            "endReason"
+          ],
+          "additionalProperties": false
+        },
         "breakerTripTotal": {
           "type": "number"
         },
@@ -15233,10 +15254,14 @@ export const CONTRACTS = {
           "type": "string"
         },
         "offset": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
         }
       },
       "required": [
@@ -15481,9 +15506,6 @@ export const CONTRACTS = {
               "messageCount": {
                 "type": "number"
               },
-              "totalTokens": {
-                "type": "number"
-              },
               "updatedAt": {
                 "type": "number"
               },
@@ -15496,7 +15518,6 @@ export const CONTRACTS = {
               "agentId",
               "kind",
               "messageCount",
-              "totalTokens",
               "updatedAt",
               "createdAt"
             ],
