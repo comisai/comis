@@ -9,10 +9,10 @@
  * CONTENT-FREE (the load-bearing constraint): a closed `reason`,
  * the `tokenDrop` counts, a changed-dims DIGEST (counts only — the
  * toolsAdded/Removed/SchemaChanged NAME arrays are NEVER forwarded), and a
- * COMPUTED `estCostUsd` (a number — the directly-lost cache-read saving, SAME
- * formula as the `obs_diagnostics` row-builder:
- * `tokenDrop × resolveModelPricing(provider, model).cacheRead`; 0 for an unknown
- * model). `provider`/`model` are closed labels (already on the event, already
+ * COMPUTED `estCostUsd` (a number — the rewrite premium, using the SAME formula
+ * as the `obs_diagnostics` row-builder:
+ * `tokenDrop × max(0, cacheWrite - cacheRead)`; 0 for an unknown model).
+ * `provider`/`model` are closed labels (already on the event, already
  * forwarded by the image/vision records), never bodies. Correlation keys
  * (`agentId`/`sessionKey`/`traceId`) are envelope-only and NOT echoed into `data`.
  *
@@ -27,11 +27,13 @@ export function translateCacheBreakPayload(
   const toLen = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
   const str = (v: unknown): string => (typeof v === "string" ? v : "");
   const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+  const pricing = resolveModelPricing(str(payload.provider), str(payload.model));
+  const rewritePremium = Math.max(0, pricing.cacheWrite - pricing.cacheRead);
   return {
     reason: payload.reason,
     tokenDrop: payload.tokenDrop,
     tokenDropRelative: payload.tokenDropRelative,
-    estCostUsd: num(payload.tokenDrop) * resolveModelPricing(str(payload.provider), str(payload.model)).cacheRead,
+    estCostUsd: num(payload.tokenDrop) * rewritePremium,
     changedDimsDigest: {
       added: toLen(payload.toolsAdded),
       removed: toLen(payload.toolsRemoved),

@@ -8,15 +8,15 @@
  * changed-dims DIGEST (counts only — never the tool-name arrays or system text),
  * and a COMPUTED est-$ (the event carries no `$` field).
  *
- * The est-$ is `tokenDrop × resolveModelPricing(provider, model).cacheRead`:
- * non-zero for a catalog-priced model, 0 for an unknown model (ZERO_COST.cacheRead).
+ * The est-$ is `tokenDrop × max(0, cacheWrite - cacheRead)`:
+ * non-zero for a catalog-priced model, 0 for an unknown model.
  */
 import { describe, it, expect } from "vitest";
 import type { EventMap } from "@comis/core";
 import { resolveModelPricing } from "@comis/core";
 import { cacheBreakEventToRow } from "./observability-mutations.js";
 
-/** A catalog-priced model — resolveModelPricing(...).cacheRead is non-zero (3e-7). */
+/** A catalog-priced model with a non-zero cache rewrite premium. */
 const PRICED_PROVIDER = "anthropic";
 const PRICED_MODEL = "claude-sonnet-4-5-20250929";
 /** A native provider with no catalog entry → ZERO_COST.cacheRead === 0 (the unknown/chimera case). */

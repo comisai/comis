@@ -39,8 +39,8 @@ export type ObservabilityMutations = Pick<
  * `sandboxDowngradeRefusedEventToRow` row-builder mold.
  *
  * **est-$ is COMPUTED here.** The event carries NO
- * dollar field, so the directly-lost cache-read saving is reconstructed as
- * `tokenDrop × resolveModelPricing(provider, model).cacheRead`: a catalog-priced
+ * dollar field, so the rewrite premium is reconstructed as
+ * `tokenDrop × max(0, cacheWrite - cacheRead)`: a catalog-priced
  * model yields a non-zero estimate; an unknown model yields 0 (ZERO_COST.cacheRead
  * === 0 — honest best-effort, never a fabricated cost). The companion
  * `pricing_state` column on `obs_token_usage` surfaces the unknown so
