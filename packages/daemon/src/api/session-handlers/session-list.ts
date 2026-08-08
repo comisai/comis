@@ -252,7 +252,6 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
           kind: session.kind,
           ...(session.endpoint === undefined ? {} : { endpoint: session.endpoint }),
           messageCount: session.messageCount,
-          totalTokens: session.messageCount * 500,
           updatedAt: session.updatedAt,
           createdAt: session.createdAt,
         })),

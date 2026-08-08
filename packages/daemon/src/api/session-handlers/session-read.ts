@@ -31,7 +31,7 @@ import type {
   DeliveryQueuePort,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
-import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
+import { findLcdConversation, IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
 import { AuthorizationError, PreconditionError } from "../errors.js";
 import {
   resolveSubagentController,
@@ -122,6 +122,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const projected = conversationScopeToSessionKey(data.conversationScope);
       if (!projected.ok) throw projected.error;
       const sessionKey = formatSessionKey(projected.value);
+      const lcdConversation = findLcdConversation(deps, authority, parsedRef.data);
       let sourceMessages = data.messages;
       let messageSource: "session-store" | "lcd" = "session-store";
       if (sourceMessages.length === 0 && deps.lcdStore) {
@@ -326,8 +327,8 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         toolCalls,
         compactions: Number(meta.compactions ?? 0),
         resetCount: Number(meta.resetCount ?? 0),
-        createdAt: data.createdAt,
-        lastActiveAt: data.updatedAt,
+        createdAt: Math.min(data.createdAt, lcdConversation?.createdAt ?? data.createdAt),
+        lastActiveAt: Math.max(data.updatedAt, lcdConversation?.updatedAt ?? data.updatedAt),
         label: (meta.label as string) ?? undefined,
       };
 

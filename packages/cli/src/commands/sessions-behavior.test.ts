@@ -49,7 +49,7 @@ const clackPrompts = await import("@clack/prompts");
 /**
  * Session data matching `SessionListContract.response`:
  * `{ sessions: SessionInfo[], total }` where SessionInfo carries
- * `sessionKey/agentId/userId/channelId/kind/messageCount/totalTokens/updatedAt/createdAt`.
+ * `conversationRef/agentId/kind/messageCount/updatedAt/createdAt`.
  * The CLI renders the canonical conversation reference and agent partition
  * returned by the session list contract.
  */
@@ -60,7 +60,6 @@ const SESSIONS_DATA = {
       agentId: "default",
       kind: "discord",
       messageCount: 42,
-      totalTokens: 1000,
       updatedAt: Date.now() - 5 * 60 * 1000,
       createdAt: Date.now() - 60 * 60 * 1000,
     },
@@ -69,7 +68,6 @@ const SESSIONS_DATA = {
       agentId: "default",
       kind: "telegram",
       messageCount: 7,
-      totalTokens: 200,
       updatedAt: Date.now() - 2 * 60 * 60 * 1000,
       createdAt: Date.now() - 3 * 60 * 60 * 1000,
     },
@@ -78,7 +76,6 @@ const SESSIONS_DATA = {
       agentId: "default",
       kind: "slack",
       messageCount: 1,
-      totalTokens: 50,
       updatedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
       createdAt: Date.now() - 4 * 24 * 60 * 60 * 1000,
     },
@@ -285,8 +282,8 @@ describe("sessions inspect full details", () => {
       { role: "assistant", content: "build passed", timestamp: 200 },
     ],
     total: 45,
-    offset: 0,
-    limit: 20,
+    offset: 20,
+    limit: 2,
     hasMore: true,
   };
 
