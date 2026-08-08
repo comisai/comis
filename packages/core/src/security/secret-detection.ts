@@ -230,6 +230,16 @@ const SECRET_FIELD_NAMES: ReadonlySet<string> = new Set([
   "api-key",
 ]);
 
+/**
+ * Credential metadata fields whose values identify a secret-store entry rather
+ * than carrying the credential itself. A raw credential placed in one of
+ * these fields is still caught by `looksLikeSecretValue` during the value
+ * scan.
+ */
+const CREDENTIAL_REFERENCE_FIELD_NAMES: ReadonlySet<string> = new Set([
+  "apikeyname",
+]);
+
 // ── Keyword-boundary matcher (closes the end-anchor hole) ──
 
 /**
@@ -313,6 +323,7 @@ function hasCredentialSegments(name: string): boolean {
  */
 export function isSecretFieldName(name: string): boolean {
   const lower = name.toLowerCase();
+  if (CREDENTIAL_REFERENCE_FIELD_NAMES.has(lower)) return false;
   return (
     SECRET_FIELD_PATTERN.test(name)
     || SECRET_FIELD_NAMES.has(lower)

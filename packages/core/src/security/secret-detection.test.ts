@@ -84,6 +84,9 @@ describe("isSecretFieldName — superset", () => {
         },
       },
     })).toEqual([]);
+    expect(scanForSecrets({ apiKeyName: "sk-abcdefghijklmnop1234" })).toEqual([
+      expect.objectContaining({ path: "apiKeyName", reason: "secret-value" }),
+    ]);
   });
 
   it("flags the Authorization header field name", () => {

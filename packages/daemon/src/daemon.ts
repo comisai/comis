@@ -2853,7 +2853,7 @@ async function bootShutdown(
     const activeConfigPath = configPaths[configPaths.length - 1]!;
     const auditEnabled =
       container.config.diagnostics?.configAudit?.enabled !== false;
-    const lkg = saveLastKnownGood(activeConfigPath, auditEnabled);
+    const lkg = saveLastKnownGood(activeConfigPath, auditEnabled, daemonLogger);
     if (lkg.saved) {
       daemonLogger.debug({ lkgPath: lkg.path }, "Last-known-good config snapshot saved");
     }
