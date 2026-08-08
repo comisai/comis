@@ -1,12 +1,34 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const CYBER_ABUSE_AUTH_ENV = "COMIS_LIVE_CYBER_ABUSE_TESTS";
 export const CYBER_ABUSE_AUTH_VALUE = "operator-authorized";
 export const LIVE_TEST_RISK_ENV = "COMIS_LIVE_TEST_RISK";
+
+// Generic RPC callers reach the provider with caller-supplied text, so every
+// method is classified unless it is a purely operational or diagnostic call
+// that carries no model prompt. Default-deny keeps a newly used RPC gated
+// instead of silently escaping the suspension.
+export const UNGATED_RPC_METHODS = Object.freeze([
+  "capabilities.introspect",
+  "cron.list",
+  "cron.runs",
+  "cron.status",
+  "lease.revoke",
+  "obs.explain",
+  "obs.system.health",
+  "run.kill",
+  "session.reset_conversation",
+  "tokens.create",
+]);
+
+const UNGATED_RPC_METHOD_SET = new Set(UNGATED_RPC_METHODS);
+const RPC_TEXT_MAX_NODES = 500;
+const RPC_TEXT_MAX_DEPTH = 12;
 
 const RISK_PATTERNS = [
   {
@@ -56,7 +78,9 @@ const RISK_PATTERNS = [
     category: "internal-network-probing",
     patterns: [
       /\b169\.254\.169\.254\b/,
-      /https?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?=[:/\s]|$)/i,
+      /\bmetadata\.google\.internal\b/i,
+      /https?:\/\/(?:localhost|0(?:\.0){3}|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?![\w.-])/i,
+      /https?:\/\/\[(?:::1|0{1,4}(?::0{1,4}){6}:0{0,3}1)\](?::\d{1,5})?/i,
       /\b(?:cloud metadata|instance metadata|metadata service)\b/i,
     ],
   },
@@ -78,16 +102,51 @@ const RISK_PATTERNS = [
   },
 ];
 
+// The bounded `[^\n]{0,N}` distances keep a pattern from spanning two unrelated
+// candidate texts, so "\n" stays the inter-text separator while every run of
+// whitespace *inside* one text collapses to a single space. Without this, a
+// risky phrase wrapped across a line break — the normal shape of a file-borne
+// or heredoc prompt — matches nothing. Only the matching copy is normalized;
+// callers keep their raw text, which is never echoed.
 export function classifyLiveProviderCyberRisk(texts) {
   const candidates = Array.isArray(texts) ? texts : [texts];
   const joined = candidates
     .filter((text) => typeof text === "string" && text.length > 0)
+    .map((text) => text.replace(/\s+/gu, " "))
     .join("\n");
   if (joined.length === 0) return [];
 
   return RISK_PATTERNS
     .filter(({ patterns }) => patterns.some((pattern) => pattern.test(joined)))
     .map(({ category }) => category);
+}
+
+export function isGatedRpcMethod(method) {
+  return !UNGATED_RPC_METHOD_SET.has(method);
+}
+
+// Any string anywhere in a resolved params object can become a model prompt
+// (`graph.execute` node tasks, `message.send` text, cron payloads), and inline
+// JSON, key+val, and --file mode all converge on the same object. Collect every
+// string rather than named keys so a new prompt-bearing field is classified too.
+export function collectRpcRiskTexts(params) {
+  const texts = [];
+  const visit = (value, depth) => {
+    if (texts.length >= RPC_TEXT_MAX_NODES || depth > RPC_TEXT_MAX_DEPTH) return;
+    if (typeof value === "string") {
+      if (value.length > 0) texts.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const item of Object.values(value)) visit(item, depth + 1);
+    }
+  };
+  visit(params, 0);
+  return texts;
 }
 
 export function liveProviderRiskDecision({
@@ -118,8 +177,8 @@ export function liveProviderRiskError({
 } = {}) {
   const decision = liveProviderRiskDecision({
     texts,
-    declaredRisk: declaredRisk ?? env.COMIS_LIVE_TEST_RISK,
-    authorization: env.COMIS_LIVE_CYBER_ABUSE_TESTS,
+    declaredRisk: declaredRisk ?? env[LIVE_TEST_RISK_ENV],
+    authorization: env[CYBER_ABUSE_AUTH_ENV],
   });
   if (decision.allowed) return undefined;
 
@@ -147,7 +206,24 @@ function parseCliArgs(argv) {
   return options;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Node resolves symlinks for `import.meta.url` but not for argv[1], so a plain
+// comparison would skip the CLI block when this module is invoked through a
+// symlinked path and exit 0 — which `|| exit $?` callers would read as
+// authorization. Realpath both sides; fall back to the literal comparison when
+// the path cannot be resolved, so the gate still runs.
+function isDirectCliInvocation(entry) {
+  if (!entry) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  const entryPath = resolve(entry);
+  if (entryPath === modulePath) return true;
+  try {
+    return realpathSync(entryPath) === realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectCliInvocation(process.argv[1])) {
   const error = liveProviderRiskError(parseCliArgs(process.argv.slice(2)));
   if (error) {
     console.error(error);

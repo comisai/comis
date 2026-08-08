@@ -62,7 +62,8 @@ in their test plan and use the risk declaration even if the current text classif
 
 `scripts/live-provider-risk-gate.mjs` runs before network activity in the arbitrary provider-backed
 injectors: `drive.mjs`, `burst-inject.mjs`, `parallel-chat.mjs`, `media-drive.mjs`, `webhook-drive.mjs`,
-`msteams-drive.mjs`, `wg.mjs`, and `model-battery.mjs`. It blocks declared risk and bounded text matches for:
+`msteams-drive.mjs`, `wg.mjs`, `model-battery.mjs`, and the generic RPC caller `revoke.mjs`. It blocks
+declared risk and bounded text matches for:
 
 - cyber operations, malware, exploitation, scanning, and threat hunting;
 - credential, password, secret, API-key, bearer-token, or environment extraction;
@@ -74,4 +75,13 @@ injectors: `drive.mjs`, `burst-inject.mjs`, `parallel-chat.mjs`, `media-drive.mj
 
 The classifier is a safety backstop, not permission to omit plan labeling. It is intentionally conservative:
 a false positive suspends a provider call until the operator decides, while a false negative could expose an
-account to unrequested policy-sensitive traffic.
+account to unrequested policy-sensitive traffic. It matches on a whitespace-normalized copy of the payload, so
+wrapping a risky phrase across a line break does not evade it; the raw text is never echoed.
+
+`revoke.mjs` can call any gateway RPC, so it classifies the **resolved** params — inline JSON, `key val`, and
+`--file` alike — for every method except the purely operational or diagnostic ones that carry no model prompt:
+`capabilities.introspect`, `obs.system.health`, `obs.explain`, `cron.list`, `cron.runs`, `cron.status`,
+`lease.revoke`, `run.kill`, `tokens.create`, and `session.reset_conversation`. Everything else — including
+`graph.execute` node tasks, `cron.run`, `message.send`, and cron authoring — is gated by default, so a newly
+used provider-driving RPC cannot silently escape the suspension. Live triage stays available because the
+exempt list covers it and a benign payload classifies clean.
