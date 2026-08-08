@@ -793,6 +793,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     toolStats,
     failures: currentTurnFailures,
+    failureHistory: acc.failures,
     breakerEvents: acc.breakerEvents,
     ...(acc.queueTimeline.length > 0 ? { queueTimeline: acc.queueTimeline } : {}),
     offloads: acc.offloads,

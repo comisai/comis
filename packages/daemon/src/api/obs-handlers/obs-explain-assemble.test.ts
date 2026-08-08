@@ -70,10 +70,16 @@ function makeFailure(overrides: Partial<IncidentFailure> = {}): IncidentFailure 
 }
 
 function makeSignals(overrides: Partial<IncidentSignals> = {}): IncidentSignals {
+  const failures = [
+    makeFailure({ seq: 1 }),
+    makeFailure({ seq: 2 }),
+    makeFailure({ seq: 3 }),
+  ];
   return {
     sessionKey: SESSION_KEY,
     toolStats: { web_fetch: { ok: 2, failed: 8, topErrorKind: "dependency" } },
-    failures: [makeFailure({ seq: 1 }), makeFailure({ seq: 2 }), makeFailure({ seq: 3 })],
+    failures,
+    failureHistory: overrides.failureHistory ?? overrides.failures ?? failures,
     breakerEvents: [],
     offloads: [],
     nodeBudgetBreaches: [],

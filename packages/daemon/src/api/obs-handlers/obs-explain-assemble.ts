@@ -6,8 +6,9 @@
  * {@link IncidentReport}:
  *
  *   1. `signals` — the {@link IncidentSignals} from `toIncidentSignals`:
- *      per-tool stats, normalized failures (newest-first), the breaker timeline,
- *      and large-result offloads. Its `errorPreview` is already ≤200 chars and
+ *      per-tool stats, acute verdict failures, session failure history, the
+ *      breaker timeline, and large-result offloads. Its `errorPreview` is
+ *      already ≤200 chars and
  *      redacted, its offload pointers already relativized — this assembler only
  *      re-shapes them onto the wire type and introduces NO raw body.
  *   2. `metadata` — the F1 `_session-metadata.json` rollup (PRIMARY):
@@ -434,7 +435,7 @@ export function assembleIncidentReport(
   // --- failures (newest-first), breaker timeline, offloads -----------------
   // Copy then sort defensively (descending seq) so "newest-first" is well-
   // defined regardless of upstream ordering. The entries are already bounded.
-  const failures = [...signals.failures].sort((a, b) => b.seq - a.seq);
+  const failures = [...signals.failureHistory].sort((a, b) => b.seq - a.seq);
   const breakerTimeline = [...signals.breakerEvents];
   const offloads = [...signals.offloads];
 

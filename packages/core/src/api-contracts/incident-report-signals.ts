@@ -246,7 +246,14 @@ export interface IncidentSignals {
     maxBytes: number;
     configKey: "integrations.media.infrastructure.maxRemoteFetchBytes";
   }>;
-  failures: IncidentFailure[]; // normalized, newest-first
+  /** Latest-turn failures used by outcome and root-cause ranking. Keeping this
+   * scope acute prevents an earlier failed turn from degrading a later clean
+   * turn. Normalized and newest-first. */
+  failures: IncidentFailure[];
+  /** All normalized failures in the inspected record window, newest-first.
+   * Report assembly uses this view so whole-session tool counts retain their
+   * corresponding drill-down even when the latest turn is clean. */
+  failureHistory: IncidentFailure[];
   breakerEvents: Array<{
     seq: number;
     event: "opened" | "reset";
