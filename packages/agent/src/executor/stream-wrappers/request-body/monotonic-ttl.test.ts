@@ -152,6 +152,7 @@ describe("enforceMonotonicTtlOrdering", () => {
       expect.objectContaining({
         upgradedCount: 1,
         upgradedLocations: ["messages[8].content[0]"],
+        oneHourLocations: ["system[0]", "messages[10].content[0]"],
         totalMarkers: 3, // system + messages[8] + messages[10]
         errorKind: "internal",
         hint: expect.stringContaining("Safety-net sweep"),

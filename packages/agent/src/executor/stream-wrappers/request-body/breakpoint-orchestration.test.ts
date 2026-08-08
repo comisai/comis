@@ -139,6 +139,41 @@ describe("runCacheBreakpointPhase — system marker coordinates with the UNTRUST
   });
 });
 
+describe("runCacheBreakpointPhase — message retention cannot outrun the execution latch", () => {
+  it("keeps message markers at 5m when the latched system retention is still short", () => {
+    const logger = makeLogger();
+    const messages: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 8; i++) {
+      messages.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: "x".repeat(5_000) }],
+      });
+    }
+    const result = makeResult(messages);
+
+    runCacheBreakpointPhase(
+      result,
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" },
+      makeConfig({
+        getCacheRetention: () => "short",
+        // The adaptive ladder can advance between model calls while the
+        // execution-level retention latch intentionally stays short.
+        getMessageRetention: () => "long",
+      }),
+      true,
+      false,
+      0,
+      logger,
+    );
+
+    expect(JSON.stringify(result)).not.toContain('"ttl":"1h"');
+    const monotonicWarnings = (
+      logger.warn as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.filter((call) => String(call[1] ?? "").includes("MONOTONIC-TTL"));
+    expect(monotonicWarnings).toEqual([]);
+  });
+});
+
 describe("runCacheBreakpointPhase — system-prompt breakpoint sits on the stable prefix", () => {
   const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" };
 
