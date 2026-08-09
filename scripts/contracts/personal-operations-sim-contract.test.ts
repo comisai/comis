@@ -435,6 +435,27 @@ describe("personal operations simulator", () => {
     expect(String(run.grade["rationale"])).toContain("did not name the source");
   });
 
+  for (const inflected of [
+    "I scheduled the follow-up for 11:00 UTC",
+    "I rescheduled nothing",
+    "rescheduling was not required",
+  ]) {
+    it(`does not accept "${inflected}" as naming the unreachable source`, async () => {
+      const sim = await loadVariant("A-degraded");
+      const run = driveDailyReview(sim, { degradedNote: inflected });
+
+      expect(run.grade["outcome"]).toBe("failure");
+      expect(String(run.grade["rationale"])).toContain("did not name the source");
+    });
+  }
+
+  it("still accepts the bare alias as a name for the unreachable source", async () => {
+    const sim = await loadVariant("A-degraded");
+    const run = driveDailyReview(sim, { degradedNote: "nothing else is on the schedule" });
+
+    expect(run.grade["outcome"]).toBe("success");
+  });
+
   it("fails the review when the unreachable source is reported as having delivered", async () => {
     const sim = await loadVariant("A-degraded");
     const run = driveDailyReview(sim, { sourceStatus: "delivered" });
