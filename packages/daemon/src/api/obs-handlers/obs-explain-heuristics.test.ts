@@ -1237,6 +1237,24 @@ describe("obs-explain-heuristics", () => {
     expect(result?.detail).toContain("authentication failure");
   });
 
+  it("ranks a terminal dependency failure above an incidental recall miss", () => {
+    const result = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "dependency",
+        reason: "a step failed outside the tool timeline",
+        reclassified: true,
+      },
+    }));
+
+    expect(result?.code).toBe("execution_dependency_failure");
+    expect(result?.suggestedNextSteps.join(" ")).toMatch(/provider|dependency/iu);
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
