@@ -2,6 +2,11 @@
 // @comis/core exports — Config (layered configuration with Zod validation)
 
 export {
+  CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+  CapabilityServiceScopeSchema,
+  CapabilityServiceDefinitionSchema,
+  CapabilityServiceInstanceConfigSchema,
+  buildCapabilityServiceActivationPlan,
   AppConfigSchema,
   AgentConfigSchema,
   AgentsMapSchema,
@@ -176,6 +181,15 @@ export {
 } from "../config/index.js";
 
 export type {
+  CapabilityServiceScope,
+  CapabilityServiceDefinition,
+  CapabilityServiceInstanceConfig,
+  CapabilityServiceContributionSection,
+  CapabilityServiceContributionRegistration,
+  PlannedCapabilityServiceDefinition,
+  PlannedCapabilityServiceInstance,
+  CapabilityServiceActivationPlan,
+  CapabilityServicePlanError,
   AppConfig,
   AgentConfig,
   BudgetConfig,

@@ -3,6 +3,24 @@
 
 // Schemas (for direct validation or extension)
 export { AppConfigSchema } from "./schema.js";
+export {
+  CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+  CapabilityServiceScopeSchema,
+  CapabilityServiceDefinitionSchema,
+  CapabilityServiceInstanceConfigSchema,
+  buildCapabilityServiceActivationPlan,
+} from "./capability-service-contributions.js";
+export type {
+  CapabilityServiceScope,
+  CapabilityServiceDefinition,
+  CapabilityServiceInstanceConfig,
+  CapabilityServiceContributionSection,
+  CapabilityServiceContributionRegistration,
+  PlannedCapabilityServiceDefinition,
+  PlannedCapabilityServiceInstance,
+  CapabilityServiceActivationPlan,
+  CapabilityServicePlanError,
+} from "./capability-service-contributions.js";
 export { IdentityConfigSchema } from "./schema-identity.js";
 export type { IdentityConfig } from "./schema-identity.js";
 export { ApprovalsConfigSchema, ApprovalRuleSchema, checkApprovalsConfig } from "./schema-approvals.js";
