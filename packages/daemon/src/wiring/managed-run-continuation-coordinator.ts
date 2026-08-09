@@ -170,6 +170,10 @@ export function createManagedRunContinuationCoordinator(
       let evidenceHealth: "available" | "malformed" | "stale" | "unavailable" = "available";
       const reports = range.ok ? range.value : [];
       if (!range.ok) evidenceHealth = "unavailable";
+      else if (
+        reports.length !== throughReportSequence - record.lastReducedReportSequence
+        || reports[0]?.sequence !== record.lastReducedReportSequence + 1
+      ) evidenceHealth = "malformed";
       const bodies: ManagedRunReportBody[] = [];
       if (evidenceHealth === "available") {
         for (const report of reports) {
