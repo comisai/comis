@@ -1,9 +1,10 @@
 # real-user everyday assistant — the pinned spec for the real-user Telegram drive
 
-> **Provider safety:** A4, A6, A9, A11; the security/destructive legs of B4, B5, B6, and B15; C1's
-> authority-escalation question; and C3–C7 are suspended unless the operator explicitly requests them.
-> See [`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md). Target inclusion and a HARD oracle
-> are not authorization.
+> **Provider safety:** several arcs and journeys below carry security, secret, injection, destructive or
+> self-escalation content and are suspended unless the operator explicitly requests them. The suspended
+> inventory for this target lives in [`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md) —
+> check it before planning or driving any such row. Target inclusion and a HARD oracle are not
+> authorization.
 
 > **What this is.** The authoritative arc list, predicates, oracles and coverage matrix for the real-user
 > Telegram drive launched by `DRIVE-PROMPT.md`.

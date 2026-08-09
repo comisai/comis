@@ -231,7 +231,8 @@ one for the exemplar.)
 
 **Offline only. No live drive, and therefore NO transfer result, has been recorded for this workload.** What
 is verified: `--selftest` reaches `success` on the golden path and `failure` on the naive path for variants
-`A`, `B`, `C` and `A-degraded`, and the contract suite (`scripts/contracts/personal-operations-sim-contract.test.ts`)
+`A`, `B`, `C` and `A-degraded`, and the contract suite
+(`<repo>/scripts/contracts/personal-operations-sim-contract.test.ts`)
 drives the full daily loop through the workload handle — reconciliation, staged-not-sent draft, one follow-up
 task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. None of that
 exercises the daemon, the reflection engine, or a model.

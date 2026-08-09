@@ -1,9 +1,11 @@
 # Design — real-world tool simulators + skills for the memory/learning workloads
 
-> **Status: IMPLEMENTED** (all 13 workloads built + verified; D1→MCP, D2→mechanics-only, D3→one server per
-> workload, D4→seeded `SIM_VARIANT`, all as proposed). Usage + copy-to-daemon instructions:
-> [`README.md`](./README.md). Build contract: [`HANDLERS-CONTRACT.md`](./HANDLERS-CONTRACT.md). This file is
-> kept as the design rationale (notably the MCP-vs-exec decision). Original proposal text follows.
+> **Status: IMPLEMENTED** (D1→MCP, D2→mechanics-only, D3→one server per workload, D4→seeded `SIM_VARIANT`,
+> all as proposed). The built workload inventory, each workload's validation status, and the usage +
+> copy-to-daemon instructions live in [`README.md`](./README.md) — the counts and per-workload claims below
+> are the ORIGINAL PROPOSAL's, not the current set. Build contract:
+> [`HANDLERS-CONTRACT.md`](./HANDLERS-CONTRACT.md). This file is kept as the design rationale (notably the
+> MCP-vs-exec decision). Original proposal text follows.
 >
 > This proposes HOW we give each catalog workload
 > ([`../targets/MEMORY-LEARNING-STRESS-CATALOG.md`](../targets/MEMORY-LEARNING-STRESS-CATALOG.md)) a set of
