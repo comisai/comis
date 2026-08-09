@@ -107,6 +107,7 @@ export const ManagedRunRecordSchema = z.strictObject({
   conversationRef: ConversationRefSchema,
   turnScope: ResolvedTurnScopeSchema,
   deliveryOrigin: DeliveryOriginSchema,
+  traceId: z.string().min(1).max(256),
   trustLevel: UserTrustLevelSchema,
   responseLocalePolicy: ResponseLocalePolicySchema,
   workspacePolicyHash: DigestSchema,

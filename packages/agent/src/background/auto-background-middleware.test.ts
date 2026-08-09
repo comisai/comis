@@ -99,6 +99,9 @@ function buildOrigin(
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
     ...Object.fromEntries(
       Object.entries(overrides).filter(([key]) => key !== "agentId" && key !== "sessionKey"),
     ),
@@ -561,6 +564,9 @@ describe("wrapToolForAutoBackground", () => {
         trustLevel: "user",
         responseLocalePolicy: { source: "unset", enforceLocale: false },
         backgroundHopCount: 0,
+        workspacePolicyHash: "a".repeat(64),
+        capturedToolIds: [],
+        capturedCapabilityViewHash: "b".repeat(64),
       };
       const promoteSpy = vi.spyOn(manager, "promote");
       const tool = createMockTool({

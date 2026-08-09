@@ -16,10 +16,10 @@ import {
   runWithContext,
   scrubSecretsFromText,
   TypedEventBus,
-  type BackgroundTaskOrigin,
   type RequestContext,
   type TurnActivityContext,
 } from "@comis/core";
+import type { BackgroundTaskOrigin } from "./background-task-types.js";
 
 // Build a real-ish event bus so on()/off()/emit() work end-to-end. We
 // mock the executor, sessionStore, taskManager.getTask, fallbackNotifyFn,
@@ -54,6 +54,9 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; s
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
     ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
   };
 }
@@ -190,6 +193,12 @@ describe("createBackgroundCompletionRunner", () => {
     return createBackgroundCompletionRunner({
       eventBus,
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
+      assembleToolsForAgent: assembleToolsForAgent ?? (async () => []),
+      resolveWorkspacePolicy: async (agentId, policyHash) => ok({
+        agentId,
+        sections: [],
+        combinedHash: policyHash,
+      }),
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
@@ -212,7 +221,6 @@ describe("createBackgroundCompletionRunner", () => {
       deliveryProtection: "ledger",
       resolveMaxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
-      ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
       ...(activityCoordinatorFactory ? { activityCoordinatorFactory } : {}),
       deliverCompletion,
       logger: makeLogger(),
@@ -493,7 +501,10 @@ describe("createBackgroundCompletionRunner", () => {
     >;
     const assembleToolsForAgent = vi.fn().mockResolvedValue(tools);
 
-    const task = buildTask({ result: "ok" });
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ capturedToolIds: ["next_report_page"] }),
+    });
     taskManager.getTask.mockReturnValue(task);
     const runner = build(3, undefined, assembleToolsForAgent);
     eventBus.emit("background_task:completed", {
@@ -513,7 +524,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(passedAgentId).toBe("default");
     expect(parsedKey).toBeDefined();
     expect(assembleToolsForAgent).toHaveBeenCalledWith("default", { sessionKey: parsedKey });
-    expect(passedTools).toBe(tools);
+    expect(passedTools).toEqual(tools);
     // reentered event fired exactly once with hopCount = 1.
     expect(reenteredEvents).toHaveLength(1);
     const reentered = reenteredEvents[0] as { taskId: string; hopCount: number; sessionKey: string };
@@ -529,8 +540,17 @@ describe("createBackgroundCompletionRunner", () => {
       { name: "managed_respond", description: "Respond to managed attention" },
     ];
     const assembleToolsForAgent = vi.fn(async () => toolDefinitions.map((tool) => ({ ...tool })));
-    const firstTask = buildTask({ id: "task-cache-a", continuationExecutionId: "task-cache-a" });
-    const secondTask = buildTask({ id: "task-cache-b", continuationExecutionId: "task-cache-b" });
+    const capturedToolIds = ["managed_respond", "managed_status"];
+    const firstTask = buildTask({
+      id: "task-cache-a",
+      continuationExecutionId: "task-cache-a",
+      origin: buildOrigin({ capturedToolIds }),
+    });
+    const secondTask = buildTask({
+      id: "task-cache-b",
+      continuationExecutionId: "task-cache-b",
+      origin: buildOrigin({ capturedToolIds }),
+    });
     let currentTask = firstTask;
     taskManager.getTask.mockImplementation(() => currentTask);
     const runner = build(3, undefined, assembleToolsForAgent);
@@ -559,8 +579,8 @@ describe("createBackgroundCompletionRunner", () => {
     const secondTools = executor.execute.mock.calls[1]![2];
     expect(secondTools).toEqual(firstTools);
     expect(secondTools?.map((tool: { name: string }) => tool.name)).toEqual([
-      "managed_status",
       "managed_respond",
+      "managed_status",
     ]);
     expect(executor.execute.mock.calls[1]![1]).toEqual(executor.execute.mock.calls[0]![1]);
     expect(assembleToolsForAgent).toHaveBeenNthCalledWith(
@@ -697,7 +717,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(executor.execute).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      undefined,
+      [],
       undefined,
       "default",
       undefined,
@@ -1269,6 +1289,12 @@ describe("trace continuity sub-tests", () => {
     return createBackgroundCompletionRunner({
       eventBus,
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
+      assembleToolsForAgent: async () => [],
+      resolveWorkspacePolicy: async (agentId, policyHash) => ok({
+        agentId,
+        sections: [],
+        combinedHash: policyHash,
+      }),
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),

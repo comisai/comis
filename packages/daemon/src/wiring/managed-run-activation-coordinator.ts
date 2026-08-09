@@ -28,6 +28,7 @@ export interface ManagedRunActivationAuthority {
   readonly conversationRef: ManagedRunRecord["conversationRef"];
   readonly turnScope: ManagedRunRecord["turnScope"];
   readonly deliveryOrigin: ManagedRunRecord["deliveryOrigin"];
+  readonly traceId: string;
   readonly trustLevel: ManagedRunRecord["trustLevel"];
   readonly responseLocalePolicy: ManagedRunRecord["responseLocalePolicy"];
   readonly workspacePolicyHash: string;
@@ -611,6 +612,7 @@ export function createManagedRunActivationCoordinator(
         conversationRef: record.conversationRef,
         turnScope: record.turnScope,
         deliveryOrigin: record.deliveryOrigin,
+        traceId: record.traceId,
         trustLevel: record.trustLevel,
         responseLocalePolicy: record.responseLocalePolicy,
         workspacePolicyHash: record.workspacePolicyHash,

@@ -6,12 +6,11 @@ import { randomUUID } from "node:crypto";
 import {
   safePath,
   createConversationLocator,
-  type BackgroundTaskOrigin,
   type ClockPort,
   type TimerPort,
   type TimerHandle,
 } from "@comis/core";
-import { createBackgroundTaskManager } from "@comis/agent";
+import { createBackgroundTaskManager, type BackgroundTaskOrigin } from "@comis/agent";
 import { ok } from "@comis/shared";
 import { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
 
@@ -134,8 +133,15 @@ function makeDeliveryDeps() {
       deliverToChannel: vi.fn(),
       drainInFlight: vi.fn(),
     } as unknown as import("@comis/core").DeliveryService,
+    resolveWorkspacePolicy,
   };
 }
+
+const resolveWorkspacePolicy = async (agentId: string, policyHash: string) => ok({
+  agentId,
+  sections: [],
+  combinedHash: policyHash,
+});
 
 function buildOrigin(
   over: Partial<BackgroundTaskOrigin> & { agentId?: string } = {},
@@ -174,6 +180,9 @@ function buildOrigin(
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
     ...authorityOverrides,
   };
 }
@@ -185,6 +194,7 @@ describe("setupBackgroundCompletionRunner", () => {
       ...makeDeliveryDeps(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      resolveWorkspacePolicy,
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -202,6 +212,7 @@ describe("setupBackgroundCompletionRunner", () => {
       ...makeDeliveryDeps(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      resolveWorkspacePolicy,
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -217,6 +228,7 @@ describe("setupBackgroundCompletionRunner", () => {
       ...makeDeliveryDeps(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      resolveWorkspacePolicy,
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -296,6 +308,7 @@ describe("setupBackgroundCompletionRunner", () => {
         })),
       }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      resolveWorkspacePolicy,
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
       resolveSessionManager: vi.fn(() => undefined),
       taskManager: taskManager as unknown as import("@comis/agent").BackgroundTaskManager,
@@ -406,6 +419,7 @@ describe("setupBackgroundCompletionRunner", () => {
       deliveryService: { deliverToChannel, drainInFlight: vi.fn() },
       getExecutor: () => ({ execute }) as never,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      resolveWorkspacePolicy,
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
       resolveSessionManager: vi.fn(() => undefined),
       taskManager,
@@ -517,6 +531,7 @@ describe("setupBackgroundCompletionRunner", () => {
         })),
       }) as never,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      resolveWorkspacePolicy,
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
       resolveSessionManager: vi.fn(() => undefined),
       taskManager,

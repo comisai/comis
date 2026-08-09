@@ -22,6 +22,7 @@ import {
   type TurnOutcome,
   type TypedEventBus,
   type UserTrustLevel,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { AgentExecutor, ExecutionResult } from "../executor/types.js";
 
@@ -46,7 +47,7 @@ export type ContinuationActivityCoordinatorFactory = (
 export interface ContinuationExecutionEngineDeps {
   readonly eventBus: TypedEventBus;
   readonly getExecutor: (agentId: string) => AgentExecutor;
-  readonly assembleToolsForAgent?: (
+  readonly assembleToolsForAgent: (
     agentId: string,
     options?: { sessionKey?: SessionKey },
   ) => Promise<AgentTool[]>;
@@ -74,6 +75,12 @@ export interface ContinuationExecutionInput<TFinalized> {
   readonly formattedSessionKey: string;
   readonly message: NormalizedMessage;
   readonly journalKey: string;
+  readonly workspacePolicyHash: string;
+  readonly workspacePolicySnapshot: WorkspacePolicySnapshot;
+  readonly capturedCapabilityCeiling: {
+    readonly toolIds: readonly string[];
+    readonly viewHash: string;
+  };
   readonly beforeExecute: () => void;
   readonly hooks: ContinuationExecutionHooks<TFinalized>;
 }
@@ -94,6 +101,7 @@ export interface ContinuationExecutionEngine {
 export function createContinuationRequestContext(
   authority: ContinuationOriginAuthority,
   sessionKey: SessionKey,
+  workspacePolicyHash: string,
 ): Result<RequestContext, Error> {
   const built = tryCatch(() => {
     const persistedTrace = RequestContextSchema.shape.traceId.safeParse(authority.traceId);
@@ -110,12 +118,56 @@ export function createContinuationRequestContext(
       learningEligible: false,
       channelType: deliveryOrigin.channelType,
       deliveryOrigin,
+      workspacePolicyHash,
       turnScope: authority.turnScope,
     };
     return seed;
   });
   if (!built.ok) return built;
   return createResolvedRequestContext(built.value);
+}
+
+function validateImmutableInputs(
+  input: ContinuationExecutionInput<unknown>,
+): Result<void, Error> {
+  if (
+    input.workspacePolicySnapshot.agentId !== input.agentId
+    || input.workspacePolicySnapshot.combinedHash !== input.workspacePolicyHash
+  ) {
+    return err(new Error("Continuation workspace policy does not match its recorded authority"));
+  }
+  if (!/^[a-f0-9]{64}$/.test(input.capturedCapabilityCeiling.viewHash)) {
+    return err(new Error("Continuation capability view hash is invalid"));
+  }
+  const toolIds = input.capturedCapabilityCeiling.toolIds;
+  for (let index = 0; index < toolIds.length; index += 1) {
+    const toolId = toolIds[index];
+    if (
+      typeof toolId !== "string"
+      || toolId.length === 0
+      || (index > 0 && (toolIds[index - 1] as string).localeCompare(toolId) >= 0)
+    ) {
+      return err(new Error("Continuation captured tool IDs must be unique and sorted"));
+    }
+  }
+  return ok(undefined);
+}
+
+function intersectTools(
+  currentTools: readonly AgentTool[],
+  capturedToolIds: readonly string[],
+): Result<AgentTool[], Error> {
+  const byName = new Map<string, AgentTool>();
+  for (const tool of currentTools) {
+    if (byName.has(tool.name)) {
+      return err(new Error("Current continuation tool surface contains duplicate names"));
+    }
+    byName.set(tool.name, tool);
+  }
+  return ok(capturedToolIds.flatMap((toolId) => {
+    const tool = byName.get(toolId);
+    return tool === undefined ? [] : [tool];
+  }));
 }
 
 export function createContinuationActivityContext(
@@ -252,6 +304,8 @@ export function createContinuationExecutionEngine(
       input: ContinuationExecutionInput<TFinalized>,
     ): Promise<Result<ContinuationExecutionOutcome<TFinalized>, Error>> => {
       if (stopped) return err(new Error("Continuation engine is stopped"));
+      const validated = validateImmutableInputs(input);
+      if (!validated.ok) return validated;
       const activity = startActivity(createContinuationActivityContext(
         input.authority,
         input.formattedSessionKey,
@@ -264,21 +318,27 @@ export function createContinuationExecutionEngine(
           input.beforeExecute();
           const executor = tryCatch(() => deps.getExecutor(input.agentId));
           if (!executor.ok) return executor;
-          const toolAssembly = deps.assembleToolsForAgent
-            ? await fromPromise(deps.assembleToolsForAgent(input.agentId, { sessionKey: input.sessionKey }))
-            : undefined;
-          if (toolAssembly !== undefined && !toolAssembly.ok) return toolAssembly;
+          const toolAssembly = await fromPromise(
+            deps.assembleToolsForAgent(input.agentId, { sessionKey: input.sessionKey }),
+          );
+          if (!toolAssembly.ok) return toolAssembly;
+          const intersectedTools = intersectTools(
+            toolAssembly.value,
+            input.capturedCapabilityCeiling.toolIds,
+          );
+          if (!intersectedTools.ok) return intersectedTools;
           let finalizedValue: TFinalized | undefined;
           const execution = tryCatch(() => executor.value.execute(
             input.message,
             input.sessionKey,
-            toolAssembly?.value,
+            intersectedTools.value,
             undefined,
             input.agentId,
             undefined,
             undefined,
             {
               operationType: "interactive",
+              workspacePolicySnapshot: input.workspacePolicySnapshot,
               responseLocalePolicy: input.authority.responseLocalePolicy,
               suppressFinalResponseAfterOutboundDelivery: {
                 channelType: input.authority.deliveryOrigin.channelType,
@@ -299,7 +359,7 @@ export function createContinuationExecutionEngine(
           return ok({
             result: settled.value,
             ...(finalizedValue === undefined ? {} : { finalizedValue }),
-            tools: toolAssembly?.value,
+            tools: intersectedTools.value,
           });
         },
       ));

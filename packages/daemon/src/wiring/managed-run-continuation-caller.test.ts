@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  computeWorkspacePolicyCombinedHash,
   createConversationRef,
   formatSessionKey,
   type ManagedRunRecord,
@@ -66,7 +67,7 @@ function makeRecord(): ManagedRunRecord {
     traceId: "10000000-0000-4000-8000-000000000001",
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
-    workspacePolicyHash: "a".repeat(64),
+    workspacePolicyHash: computeWorkspacePolicyCombinedHash([]),
     rootRunId: "root-a",
     initiationSource: "user_request",
     capturedAgentCapabilities: ["orch:mcp", "orch:read"],
@@ -131,13 +132,14 @@ describe("createManagedRunContinuationCaller", () => {
         toolIds: record.capturedToolIds,
         viewHash: record.capturedCapabilityViewHash,
       },
-      formattedSessionKey: formatSessionKey({
-        tenantId: "tenant-a",
-        agentId: "agent-a",
-        userId: "user-a",
-        channelId: "echo:recorded-conversation",
-      }),
       hooks,
+    }));
+    expect(input.formattedSessionKey).toBe(formatSessionKey(input.sessionKey));
+    expect(input.sessionKey).toEqual(expect.objectContaining({
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      userId: "user-a",
+      peerId: "user-a",
     }));
     expect(input.message).toEqual(expect.objectContaining({
       id: "claim-a",
@@ -171,6 +173,33 @@ describe("createManagedRunContinuationCaller", () => {
     });
 
     expect(outcome).toEqual(err(new Error("snapshot unavailable")));
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("rejects a policy snapshot whose content does not match its recorded hash", async () => {
+    const record = { ...makeRecord(), workspacePolicyHash: "f".repeat(64) };
+    const execute = vi.fn();
+    const caller = createManagedRunContinuationCaller({
+      engine: { execute, shutdown: vi.fn() } as unknown as ContinuationExecutionEngine,
+      resolveWorkspacePolicy: vi.fn().mockResolvedValue(ok({
+        agentId: record.agentId,
+        sections: [],
+        combinedHash: record.workspacePolicyHash,
+      })),
+      logger: makeLogger(),
+    });
+
+    const outcome = await caller.execute({
+      record,
+      claimId: "claim-corrupt-policy",
+      triggeringSequence: 2,
+      announcement: "Bounded managed-run snapshot",
+      hooks: {} as ContinuationExecutionHooks<undefined>,
+    });
+
+    expect(outcome).toEqual(err(new Error(
+      "Managed-run workspace policy does not match recorded authority",
+    )));
     expect(execute).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   conversationScopeToSessionKey,
-  type BackgroundTaskOrigin,
 } from "@comis/core";
 import { isSilentResponse, ok, type Result } from "@comis/shared";
 import type { BackgroundTaskManager } from "./background-task-manager.js";
@@ -11,6 +10,7 @@ import type {
   BackgroundContinuationOutbox,
   BackgroundFinalizedResultRecoveryInput,
   BackgroundSessionState,
+  BackgroundTaskOrigin,
 } from "./background-task-types.js";
 
 type RecoveryTaskManager = Pick<

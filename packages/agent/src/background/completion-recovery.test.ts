@@ -39,6 +39,9 @@ function makeOrigin(): BackgroundTaskOrigin {
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
   };
 }
 

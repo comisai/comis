@@ -125,6 +125,7 @@ function makeInput(overrides: Partial<ManagedRunActivationInput> = {}): ManagedR
         threadId: "thread_a",
         tenantId: "tenant_a",
       },
+      traceId: "10000000-0000-4000-8000-000000000001",
       trustLevel: "user",
       responseLocalePolicy: { locale: "en", source: "request", enforceLocale: true },
       workspacePolicyHash: "b".repeat(64),

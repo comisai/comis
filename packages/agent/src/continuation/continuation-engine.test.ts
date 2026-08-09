@@ -73,7 +73,7 @@ describe("createContinuationExecutionEngine", () => {
       userId: "user-a",
       channelId: "echo:conversation-a",
     };
-    const requestContext = createContinuationRequestContext(authority, sessionKey);
+    const requestContext = createContinuationRequestContext(authority, sessionKey, "a".repeat(64));
     expect(requestContext.ok).toBe(true);
     if (!requestContext.ok) return;
     const finalized = {
@@ -95,7 +95,7 @@ describe("createContinuationExecutionEngine", () => {
       await overrides?.onFinalizedResult?.(finalized, "ready");
       return finalized;
     });
-    const tools = [{ name: "managed_status" }, { name: "managed_respond" }];
+    const tools = [{ name: "managed_respond" }, { name: "managed_status" }];
     const currentTools = [
       { name: "unrelated_current_tool" },
       { name: "managed_respond" },

@@ -34,6 +34,7 @@
  */
 
 import * as os from "node:os";
+import { createHash } from "node:crypto";
 
 import {
   attachTrajectoryToEventBus,
@@ -168,7 +169,7 @@ import { getElapsedSinceLastResponse } from "../ttl-guard.js";
 import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
-import type { BackgroundTaskOrigin } from "@comis/core";
+import type { BackgroundTaskOrigin } from "../../background/background-task-types.js";
 import { applyMutationSerializer } from "../executor-tool-pipeline.js";
 import { OPERATION_TIMEOUT_DEFAULTS } from "../../model/operation-model-defaults.js";
 import type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "../types.js";
@@ -2954,6 +2955,10 @@ async function runSessionLocked(
   // background-continuation context (which lacks these locals).
   if (deps.backgroundTaskManager && config.backgroundTasks?.enabled !== false) {
     const bgConfig = BackgroundTasksConfigSchema.parse(config.backgroundTasks ?? {});
+    const capturedToolIds = [...new Set(mergedCustomTools.map((tool) => tool.name))].sort();
+    const capturedCapabilityViewHash = createHash("sha256")
+      .update(JSON.stringify(capturedToolIds), "utf8")
+      .digest("hex");
     const originResolver = (): BackgroundTaskOrigin | undefined => {
       // Defensive: if any required field is unexpectedly missing, fall through
       // to foreground execution (no background promotion). Promotion requires
@@ -2978,6 +2983,9 @@ async function runSessionLocked(
         trustLevel: context.trustLevel,
         responseLocalePolicy,
         backgroundHopCount: incomingHopCount,
+        workspacePolicyHash: workspacePolicySnapshot.combinedHash,
+        capturedToolIds,
+        capturedCapabilityViewHash,
       };
     };
     for (const tool of mergedCustomTools) {

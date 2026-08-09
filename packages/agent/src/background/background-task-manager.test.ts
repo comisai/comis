@@ -93,6 +93,9 @@ function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: stri
     trustLevel: "user",
     responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
+    workspacePolicyHash: "a".repeat(64),
+    capturedToolIds: [],
+    capturedCapabilityViewHash: "b".repeat(64),
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId" && key !== "sessionKey")),
   };
 }

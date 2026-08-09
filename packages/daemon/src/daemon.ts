@@ -2222,6 +2222,24 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, getExecutor: handle.getExecutor, sessionStore,
     resolveSessionManager: (agentId) => handle.piSessionAdapters.get(agentId),
     assembleToolsForAgent, adaptersByType, deliveryService,
+    resolveWorkspacePolicy: async (agentId, policyHash) => {
+      const cached = container.workspacePolicyPort?.get(policyHash);
+      const loaded = cached?.ok
+        ? cached
+        : await container.workspacePolicyPort?.load(agentId);
+      if (loaded === undefined || !loaded.ok) {
+        return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
+      }
+      const verified = verifyWorkspacePolicySnapshot(loaded.value);
+      if (
+        !verified.ok
+        || loaded.value.agentId !== agentId
+        || loaded.value.combinedHash !== policyHash
+      ) {
+        return err(new Error("The captured immutable workspace policy snapshot does not match the background continuation"));
+      }
+      return ok(loaded.value);
+    },
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),

@@ -19,4 +19,11 @@ describe("daemon workspace policy composition", () => {
     expect(source).toContain("workspacePolicyLiveConfig.current = container.config");
     expect(source).not.toContain("const agentConfig = config.agents[agentId];");
   });
+
+  it("prefers the captured policy snapshot before a cold-restart reload", () => {
+    const cachedLookup = source.indexOf("workspacePolicyPort?.get(policyHash)");
+    const coldReload = source.indexOf("workspacePolicyPort?.load(agentId)", cachedLookup);
+    expect(cachedLookup).toBeGreaterThan(-1);
+    expect(coldReload).toBeGreaterThan(cachedLookup);
+  });
 });

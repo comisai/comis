@@ -15,6 +15,7 @@ export const ManagedRunDbRowSchema = z.strictObject({
   conversation_ref: z.string(),
   turn_scope: z.string(),
   delivery_origin: z.string(),
+  trace_id: z.string(),
   trust_level: z.string(),
   response_locale_policy: z.string(),
   workspace_policy_hash: z.string(),

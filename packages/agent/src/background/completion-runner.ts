@@ -8,13 +8,13 @@ import {
   formatSessionKey,
   systemNowMs,
   toSafeErrorLogString,
-  type BackgroundTaskOrigin,
   type ComisLogger,
   type NormalizedMessage,
   type SessionKey,
   type SessionQueryScope,
   type SessionStoreError,
   type TypedEventBus,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
 import {
@@ -31,6 +31,7 @@ import type {
   BackgroundCompletionDeliveryOutcome,
   BackgroundContinuationOutbox,
   BackgroundFinalizedResultRecoveryInput,
+  BackgroundTaskOrigin,
 } from "./background-task-types.js";
 
 export interface BackgroundCompletionRunner {
@@ -47,10 +48,14 @@ export type BackgroundActivityCoordinatorFactory = ContinuationActivityCoordinat
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
-  assembleToolsForAgent?: (
+  assembleToolsForAgent: (
     agentId: string,
     options?: { sessionKey?: SessionKey },
   ) => Promise<AgentTool[]>;
+  resolveWorkspacePolicy(
+    agentId: string,
+    policyHash: string,
+  ): Promise<Result<WorkspacePolicySnapshot, Error>>;
   sessionStore: RunnerSessionStore;
   taskManager:
     Pick<
@@ -99,9 +104,7 @@ export function createBackgroundCompletionRunner(
   const continuationEngine = createContinuationExecutionEngine({
     eventBus: deps.eventBus,
     getExecutor: deps.getExecutor,
-    ...(deps.assembleToolsForAgent === undefined
-      ? {}
-      : { assembleToolsForAgent: deps.assembleToolsForAgent }),
+    assembleToolsForAgent: deps.assembleToolsForAgent,
     ...(deps.activityCoordinatorFactory === undefined
       ? {}
       : { activityCoordinatorFactory: deps.activityCoordinatorFactory }),
@@ -166,14 +169,14 @@ export function createBackgroundCompletionRunner(
     deliverPersistedOutbox,
   });
 
-  const onCompleted = (data: { agentId: string; taskId: string; toolName: string; durationMs: number; origin: BackgroundTaskOrigin; timestamp: number }) => {
+  const onCompleted = (data: { taskId: string }) => {
     if (stopped) return;
     const promise = handleEvent(data.taskId, "completed");
     inflight = inflight.then(() => promise).catch(() => undefined);
     suppressError(promise, "background completion handler (completed)");
   };
 
-  const onFailed = (data: { agentId: string; taskId: string; toolName: string; error: string; durationMs: number; origin: BackgroundTaskOrigin; timestamp: number }) => {
+  const onFailed = (data: { taskId: string }) => {
     if (stopped) return;
     const promise = handleEvent(data.taskId, "failed");
     inflight = inflight.then(() => promise).catch(() => undefined);
@@ -333,7 +336,35 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    const reentryContext = createContinuationRequestContext(origin, parsedKey);
+    const policyInvocation = tryCatch(() => deps.resolveWorkspacePolicy(
+      agentId,
+      origin.workspacePolicyHash,
+    ));
+    const policySettled = policyInvocation.ok
+      ? await fromPromise(policyInvocation.value)
+      : policyInvocation;
+    const policy = policySettled.ok ? policySettled.value : policySettled;
+    if (!policy.ok) {
+      log.warn({
+        taskId,
+        agentId,
+        traceId: origin.traceId ?? undefined,
+        hint: "Restore the recorded immutable workspace policy snapshot before retrying the continuation",
+        errorKind: "precondition" as const,
+      }, "Background completion workspace policy is unavailable");
+      await fallbackForTask(
+        task.id,
+        agentId,
+        task.toolName,
+        `Background task "${task.toolName}" completed, but its recorded workspace policy is unavailable.`,
+      );
+      return;
+    }
+    const reentryContext = createContinuationRequestContext(
+      origin,
+      parsedKey,
+      origin.workspacePolicyHash,
+    );
     if (!reentryContext.ok) {
       log.warn(
         {
@@ -385,6 +416,12 @@ export function createBackgroundCompletionRunner(
       formattedSessionKey,
       message: syntheticMsg,
       journalKey: task.continuationExecutionId,
+      workspacePolicyHash: origin.workspacePolicyHash,
+      workspacePolicySnapshot: policy.value,
+      capturedCapabilityCeiling: {
+        toolIds: origin.capturedToolIds,
+        viewHash: origin.capturedCapabilityViewHash,
+      },
       beforeExecute: () => {
         log.debug(
           {

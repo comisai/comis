@@ -76,7 +76,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       schema_version, managed_run_id, service_instance_id, external_run_ref_digest,
       activation_descriptor_digest,
       activation_descriptor_ref, display_label, tenant_id, agent_id, principal_id,
-      conversation_ref, turn_scope, delivery_origin, trust_level, response_locale_policy,
+      conversation_ref, turn_scope, delivery_origin, trace_id, trust_level, response_locale_policy,
       workspace_policy_hash, root_run_id, initiation_source, ingress_profile_id,
       ingress_event_digest, managed_run_group_id, parent_managed_run_id,
       captured_agent_capabilities, captured_tool_ids, captured_capability_view_hash,
@@ -87,7 +87,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
       ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
   const updateMutableRun = db.prepare(`

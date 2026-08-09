@@ -8,7 +8,6 @@ import {
 } from "./background-terminal-classify.js";
 import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import {
-  BackgroundTaskOriginSchema,
   conversationScopeToSessionKey,
   emitObservationalEventSafely,
   formatSessionKey,
@@ -40,6 +39,7 @@ import type {
   BackgroundRecoveryRecorderFailure,
 } from "./background-task-types.js";
 import {
+  BackgroundContinuationOriginSchema,
   BackgroundContinuationOutboxSchema,
   BackgroundFinalizedResultSchema,
   isClosedBackgroundTask,
@@ -326,7 +326,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
   const manager: BackgroundTaskManager = {
     promote(toolName, promise, ac, origin, notificationPolicy, correlation) {
-      const parsedOrigin = BackgroundTaskOriginSchema.safeParse(origin);
+      const parsedOrigin = BackgroundContinuationOriginSchema.safeParse(origin);
       if (!parsedOrigin.success) {
         return err(new Error("BackgroundTaskOrigin requires valid structured turn authority"));
       }
