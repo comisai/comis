@@ -57,6 +57,19 @@ function source(path: string): string {
 }
 
 describe("generic runtime specialization boundary", () => {
+  it("keeps capability-service contracts and conformance surfaces inside the scan", () => {
+    const covered = new Set(scannedFiles().map((file) => relative(REPO_ROOT, file)));
+    for (const path of [
+      "packages/capability-service-sdk/src/constants.ts",
+      "packages/capability-service-sdk/src/methods.ts",
+      "packages/capability-service-sdk/protocol/manifest.json",
+      "packages/capability-service-sdk/protocol/fixtures/valid.json",
+      "packages/daemon/src/__tests__/capability-service-protocol-fixture-host.ts",
+    ]) {
+      expect(covered.has(path), path).toBe(true);
+    }
+  });
+
   it("contains no retired domain terms or health surface identifiers", () => {
     const removedTerms = [
       "f" + "leet",
