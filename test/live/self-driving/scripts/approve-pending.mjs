@@ -3,42 +3,48 @@
 //
 // Every approval-gated row is otherwise undrivable: with `approvals.enabled`, a gated action
 // posts an inline-keyboard prompt and BLOCKS until someone taps it or the timeout denies it. A
-// drive that just waits therefore always records a timeout-denial, never the approved path — and
-// the prompt is `deleteMessage`d as soon as the progress notice supersedes it (F-APPROVAL-1), so
-// the payload has to be captured from the outbound stream, not read back later.
+// drive that just waits therefore always records a timeout-denial, never the approved path. The
+// payload has to be captured from the outbound stream while the prompt is active.
 //
-// The callback token stays valid after the prompt message is deleted, which is what makes this
-// work: capture `callback_data` when the prompt appears, then POST it whenever we are ready.
+// A successful drive also proves that the spent controls are retired promptly. Reporting success
+// after the callback POST alone misses the dangerous interval where the user can tap a second
+// visible button whose capability has already been disposed.
 //
-//   Usage:  node approve-pending.mjs <chatId> [approve|deny] [timeoutMs=120000] [fromUserId=chatId]
+//   Usage:  node approve-pending.mjs <chatId> [approve|deny] [timeoutMs=120000]
+//                 [fromUserId=chatId] [maxRetirementMs=500]
 //
-// Exits 0 having tapped exactly one prompt, 3 if none appeared inside the window (a caller that
-// expected a gate can treat that as "the action was NOT gated" — a real, distinguishable result).
+// Exits 0 only after tapping exactly one prompt and seeing its controls retire. Exit 3 means no
+// prompt appeared; exit 4 means the prompt stayed actionable past the retirement budget.
 import { readFileSync } from "node:fs";
 import { rig } from "./_rig.mjs";
+import {
+  approvalButtons,
+  classifyApprovalRetirement,
+} from "./approval-retirement-oracle.mjs";
 
 const chatId = process.argv[2];
 const verb = (process.argv[3] ?? "approve").toLowerCase();
 const timeoutMs = Number(process.argv[4] ?? 120_000);
 const fromUserId = Number(process.argv[5] ?? chatId);
+const maxRetirementMs = Number(process.argv[6] ?? 500);
 
-if (!chatId || !["approve", "deny"].includes(verb)) {
-  process.stderr.write("usage: approve-pending.mjs <chatId> [approve|deny] [timeoutMs] [fromUserId]\n");
+if (
+  !chatId
+  || !["approve", "deny"].includes(verb)
+  || !Number.isFinite(timeoutMs)
+  || timeoutMs <= 0
+  || !Number.isFinite(fromUserId)
+  || !Number.isFinite(maxRetirementMs)
+  || maxRetirementMs <= 0
+) {
+  process.stderr.write(
+    "usage: approve-pending.mjs <chatId> [approve|deny] [timeoutMs] [fromUserId] [maxRetirementMs]\n",
+  );
   process.exit(2);
 }
 
 const wiring = JSON.parse(readFileSync(rig.emuWiringPath, "utf8"));
 const base = `http://127.0.0.1:${wiring.port}`;
-
-/** Pull the button payload out of whichever casing the emulator recorded. */
-function approvalButtons(message) {
-  const markup = message?.reply_markup ?? message?.replyMarkup ?? message?.raw?.reply_markup ?? {};
-  const rows = markup.inline_keyboard ?? markup.inlineKeyboard ?? [];
-  return rows.flat().map((button) => ({
-    label: String(button?.text ?? ""),
-    data: String(button?.callback_data ?? button?.callbackData ?? ""),
-  }));
-}
 
 const startedAt = Date.now();
 // Start from the CURRENT tail: an already-resolved prompt from an earlier turn must not be
@@ -59,8 +65,7 @@ process.stderr.write(`watching chat ${chatId} for an approval prompt (sendMessag
 // A background-task approval does NOT arrive as a fresh sendMessage: the prompt is folded into an
 // `editMessageText` of the EXISTING progress message (`🔧 run bash / 🔧 importing skill / approval
 // required: …`), buttons attached. Watching only ids ABOVE the watermark therefore misses it and
-// reports "no approval prompt appeared" while a real request sits pending until it times out —
-// observed on B7-3 (skills.import), where the edit carried working Approve/Deny buttons.
+// reports "no approval prompt appeared" while a real request sits pending until it times out.
 // So: rescan the WHOLE tail each poll and advance by outbound EVENT count. Message ids cannot be
 // the cursor because an edit reuses the existing progress message id.
 const tapped = new Set();
@@ -94,11 +99,43 @@ for (;;) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ fromUserId, botMessageId: Number(message.messageId), data: wanted.data }),
     });
-    const outcome = await tap.text();
-    // Print the ACTION, never the token: the payload is an authorization capability.
-    process.stdout.write(
-      `${verb.toUpperCase()} tapped on messageId=${message.messageId} :: ${text.split("\n")[0].slice(0, 120)} :: ${outcome}\n`,
-    );
-    process.exit(0);
+    await tap.text();
+    if (!tap.ok) {
+      process.stderr.write(`callback delivery failed with HTTP ${tap.status}\n`);
+      process.exit(5);
+    }
+
+    const tappedAtEventCount = messages.length;
+    const tappedAt = Date.now();
+    for (;;) {
+      const retirementResponse = await fetch(
+        `${base}/control/chats/${chatId}/outbound?afterMessageId=0&waitMs=100`,
+      );
+      const retirementBody = await retirementResponse.json();
+      const currentMessages = Array.isArray(retirementBody)
+        ? retirementBody
+        : (retirementBody.messages ?? []);
+      const retirement = classifyApprovalRetirement({
+        messages: currentMessages,
+        messageId: message.messageId,
+        afterEventCount: tappedAtEventCount,
+        elapsedMs: Date.now() - tappedAt,
+        maxRetirementMs,
+      });
+      if (retirement.state === "pending") continue;
+      if (retirement.state === "retired") {
+        // Print the action and latency, never the callback token or endpoint response.
+        process.stdout.write(
+          `${verb.toUpperCase()} tapped and controls retired on messageId=${message.messageId} `
+          + `withinMs=${Date.now() - tappedAt}\n`,
+        );
+        process.exit(0);
+      }
+      process.stderr.write(
+        `approval controls were not retired within ${maxRetirementMs}ms `
+        + `(messageId=${message.messageId}, state=${retirement.state})\n`,
+      );
+      process.exit(4);
+    }
   }
 }

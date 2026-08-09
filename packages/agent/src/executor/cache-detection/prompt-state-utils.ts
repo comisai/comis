@@ -11,6 +11,7 @@
  */
 
 import type { PendingChanges, PromptStateSnapshot, CacheBreakReason } from "./cache-state-types.js";
+import { CACHE_LOOKBACK_WINDOW } from "../../context-engine/constants.js";
 
 // ---------------------------------------------------------------------------
 // Public helpers (exported)
@@ -145,13 +146,14 @@ export function buildPendingChanges(prev: PromptStateSnapshot, curr: PromptState
  * Priority: model > system > tools > retention > metadata > headers > extra_body > effort >
  *           cache_control > lookback_window > TTL > tiered server attribution.
  *
- * conversationBlockCount enables lookback window detection before TTL fallthrough.
+ * tailGapBlocks enables lookback attribution from observed request topology rather
+ * than using the total conversation size as a proxy.
  */
 export function attributeReason(
   changes: PendingChanges,
   ttlExpired: boolean,
   lastResponseElapsedMs: number | undefined,
-  conversationBlockCount: number,
+  tailGapBlocks: number | null | undefined,
 ): CacheBreakReason {
   if (changes.modelChanged) return "model_changed";
   if (changes.systemChanged) return "system_changed";
@@ -165,11 +167,13 @@ export function attributeReason(
   if (changes.effortChanged) return "effort_changed";
   if (changes.cacheControlChanged) return "cache_control_changed";
   if (ttlExpired) return "ttl_expiry";
-  // Lookback window exceeded -- conversation grew beyond cache anchoring range.
-  // cacheRead drops to system prefix baseline but no client-side changes explain it.
-  // This is expected behavior for long conversations, NOT a server eviction.
-  // Threshold: 20 blocks matches Anthropic's documented lookback window.
-  if (conversationBlockCount > 20 && lastResponseElapsedMs !== undefined && lastResponseElapsedMs <= TTL_SHORT_MS) {
+  // A lookback miss requires evidence that the two tail-reaching markers were
+  // farther apart than the provider window. Total conversation size alone cannot
+  // establish this: a recent marker can protect the tail of a very long request.
+  if (tailGapBlocks !== null && tailGapBlocks !== undefined
+    && tailGapBlocks > CACHE_LOOKBACK_WINDOW
+    && lastResponseElapsedMs !== undefined
+    && lastResponseElapsedMs <= TTL_SHORT_MS) {
     return "lookback_window_exceeded";
   }
   // Tiered server-side attribution when no client-side changes explain the break

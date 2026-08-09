@@ -90,6 +90,7 @@ export const SessionSummaryRollupDbRowSchema = z.strictObject({
   last_ts: z.number(),
   details: z.string(),
   severity: z.string(),
+  trace_id: z.string(),
 });
 /** Per-session GROUP-BY rollup row mapper (`aggregateSessionsInWindow`). */
 export const sessionSummaryRollupMapper = createRowMapper(SessionSummaryRollupDbRowSchema);
@@ -329,6 +330,8 @@ export interface CostBucketFilter {
  * A2 reducer filters on. */
 export interface SessionSummaryRollup {
   sessionKey: string;
+  /** Correlation id of the execution that established the sticky terminal state. */
+  traceId?: string;
   lastTs: number;
   degraded: boolean;
   costUsd: number;

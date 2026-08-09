@@ -5,7 +5,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams } from "./model-retry.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { createLastKnownModelTracker } from "../model/last-known-model.js";
-import { runWithContext } from "@comis/core";
+import { runWithContext, TypedEventBus } from "@comis/core";
 import { err, ok } from "@comis/shared";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
@@ -146,6 +146,72 @@ describe("runWithModelRetry", () => {
   // Primary success
   // -------------------------------------------------------------------
   describe("primary success", () => {
+    it("keeps a prompt alive while its correlated approval is pending", async () => {
+      vi.useFakeTimers();
+      try {
+        let resolvePrompt: (() => void) | undefined;
+        const session = makeSession({
+          prompt: vi.fn(() => new Promise<void>((resolve) => { resolvePrompt = resolve; })),
+        });
+        const eventBus = new TypedEventBus();
+        const params = makeParams({
+          session,
+          timeoutConfig: {
+            promptTimeoutMs: 100,
+            retryPromptTimeoutMs: 50,
+            stallCeilingMultiplier: 10,
+          },
+          deps: {
+            eventBus,
+            logger: createMockLogger(),
+            modelRegistry: makeModelRegistry(),
+            agentId: "test-agent",
+            sessionKey: "test-session",
+            clock: testClock,
+            timers: testTimers,
+          },
+        });
+        const traceId = "trace-approval-wait";
+        const execution = runWithContext(
+          { tenantId: "default", userId: "user_a", sessionKey: "test-session", traceId, startedAt: 0 },
+          () => runWithModelRetry(params),
+        );
+
+        eventBus.emit("approval:requested", {
+          requestId: "request-a",
+          shortId: "short-a",
+          toolName: "exec",
+          action: "system.exec",
+          params: {},
+          tenantId: "default",
+          agentId: "test-agent",
+          conversationRef: "conversation-a",
+          sessionKey: "test-session",
+          resolvingPrincipalId: "user_a",
+          trustLevel: "verified",
+          createdAt: 0,
+          timeoutMs: 500,
+          traceId,
+        });
+        await vi.advanceTimersByTimeAsync(300);
+
+        expect(session.abort).not.toHaveBeenCalled();
+        eventBus.emit("approval:resolved", {
+          requestId: "request-a",
+          approved: true,
+          approvedBy: "user_a",
+          resolvedAt: 300,
+        });
+        resolvePrompt?.();
+
+        await expect(execution).resolves.toMatchObject({ succeeded: true });
+        expect(eventBus.listenerCount("approval:requested")).toBe(0);
+        expect(eventBus.listenerCount("approval:resolved")).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("returns succeeded:true when prompt succeeds on first try", async () => {
       const params = makeParams();
       const result = await runWithModelRetry(params);

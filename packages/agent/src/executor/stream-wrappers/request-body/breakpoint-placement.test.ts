@@ -105,6 +105,43 @@ describe("placeCacheBreakpoints — tail-reaching coverage on long conversations
     expect(idx[idx.length - 1]!).toBe(46);
   });
 
+  it("spends a single available message breakpoint on the recent tail marker", () => {
+    const roles: string[] = [];
+    for (let i = 0; i < 50; i++) roles.push(i % 2 === 0 ? "user" : "assistant");
+    const msgs = makeMessages(roles);
+
+    const placed = placeCacheBreakpoints(msgs, {
+      minTokens: 0,
+      maxBreakpoints: 1,
+      strategy: "multi-zone",
+    });
+
+    expect(placed).toBe(1);
+    expect(markerIndices(msgs)).toEqual([46]);
+  });
+
+  it("counts assistant tool-use input when enforcing cacheable token gaps", () => {
+    const largeInput = { source: "x".repeat(4_000) };
+    const msgs: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "text", text: "first" }] },
+      { role: "assistant", content: [{ type: "tool_use", name: "inspect", input: largeInput }] },
+      { role: "user", content: [{ type: "text", text: "second" }] },
+      { role: "assistant", content: [{ type: "tool_use", name: "inspect", input: largeInput }] },
+      { role: "user", content: [{ type: "text", text: "third" }] },
+      { role: "assistant", content: [{ type: "tool_use", name: "inspect", input: largeInput }] },
+      { role: "user", content: [{ type: "text", text: "current" }] },
+    ];
+
+    const placed = placeCacheBreakpoints(msgs, {
+      minTokens: 1_024,
+      maxBreakpoints: 2,
+      strategy: "multi-zone",
+    });
+
+    expect(placed).toBe(2);
+    expect(markerIndices(msgs)).toEqual([2, 4]);
+  });
+
   it("anchors the first marker to a STABLE block-boundary position as the conversation grows (incremental hits)", () => {
     // The markers must NOT drift turn-to-turn: a drifting 50%-token marker lands on different
     // messages each turn, so the cache prefix the previous turn wrote is no longer marked →

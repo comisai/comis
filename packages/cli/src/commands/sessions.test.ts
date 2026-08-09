@@ -60,6 +60,18 @@ describe("registerSessionsCommand", () => {
     expect(optionNames).toContain("--format");
   });
 
+  it("inspect subcommand exposes bounded pagination options", () => {
+    const program = new Command();
+    registerSessionsCommand(program);
+
+    const sessionsCmd = program.commands.find((c) => c.name() === "sessions");
+    const inspectCmd = sessionsCmd!.commands.find((c) => c.name() === "inspect");
+    const optionNames = inspectCmd!.options.map((option) => option.long);
+
+    expect(optionNames).toContain("--offset");
+    expect(optionNames).toContain("--limit");
+  });
+
   it("delete subcommand has --yes option", () => {
     const program = new Command();
     registerSessionsCommand(program);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ContextExhaustionCause } from "../context-engine/errors.js";
-import type { ErrorKind } from "@comis/core";
+import { DETERMINISTIC_LOCALIZATION_MESSAGE_IDS, type ErrorKind } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 import { NO_PROGRESS_LOOP_THRESHOLD } from "./turn-loop-detector.js";
 
@@ -210,15 +210,15 @@ export const LOCALE_MESSAGE_IDS: readonly LocaleMessageId[] = Object.keys(
 ) as LocaleMessageId[];
 
 const KNOWN_MESSAGE_IDS = new Set<string>(LOCALE_MESSAGE_IDS);
+const KNOWN_INBOUND_MESSAGE_IDS = new Set<string>(DETERMINISTIC_LOCALIZATION_MESSAGE_IDS);
 
 /**
  * Build a catalog from the operator's raw `localePacks` config.
  *
- * This is the seam's ONLY production entry point. `createLocaleCatalog` takes a
- * typed pack; operator config arrives as an open `string -> string` record
- * because core does not own this runtime's message-id vocabulary. Unknown ids
- * are dropped and reported rather than silently retained — a typo in a pack
- * would otherwise look configured while the reply stayed English.
+ * `createLocaleCatalog` takes a typed pack; operator config arrives as an open
+ * `string -> string` record shared by multiple deterministic reply consumers.
+ * Ids owned by another consumer are ignored here without being misreported as
+ * dead configuration. Truly unknown ids are dropped and reported.
  */
 export function catalogFromLocalePacks(
   packs: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined,
@@ -230,7 +230,7 @@ export function catalogFromLocalePacks(
     const known: Partial<Record<LocaleMessageId, string>> = {};
     for (const [id, text] of Object.entries(pack)) {
       if (KNOWN_MESSAGE_IDS.has(id)) known[id as LocaleMessageId] = text;
-      else onUnknownId?.(locale, id);
+      else if (!KNOWN_INBOUND_MESSAGE_IDS.has(id)) onUnknownId?.(locale, id);
     }
     if (Object.keys(known).length > 0) typed[locale] = known;
   }

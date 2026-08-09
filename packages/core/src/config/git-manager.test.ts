@@ -452,6 +452,36 @@ describe("config/git-manager", () => {
         expect(result.error).toContain("git init failed");
       }
     });
+
+    it("returns the gitignore staging failure instead of seeding an incomplete repository", async () => {
+      const failCommands = new Map([
+        ["add .gitignore", "fatal: Unable to create '.git/index.lock': File exists"],
+      ]);
+      const { deps } = createMockDeps({ failCommands });
+
+      const result = await createConfigGitManager(deps).init();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("Failed to stage .gitignore");
+        expect(result.error).toContain("index.lock");
+      }
+    });
+
+    it("returns a YAML staging failure instead of creating an empty initial snapshot", async () => {
+      const failCommands = new Map([
+        ["add *.yaml", "fatal: Unable to create '.git/index.lock': File exists"],
+      ]);
+      const { deps } = createMockDeps({ failCommands });
+
+      const result = await createConfigGitManager(deps).init();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("Failed to stage *.yaml");
+        expect(result.error).toContain("index.lock");
+      }
+    });
   });
 
   describe("commit()", () => {
@@ -547,6 +577,59 @@ describe("config/git-manager", () => {
       if (result.ok) {
         expect(result.value).toBe("");
       }
+    });
+
+    it("returns the staging failure instead of claiming a config snapshot was committed", async () => {
+      const failCommands = new Map([
+        ["add *.yaml", "fatal: Unable to create '.git/index.lock': File exists"],
+      ]);
+      const { deps, repo } = createMockDeps({
+        preInitialized: true,
+        failCommands,
+        initialFiles: new Map([["config.yaml", "setting: changed"]]),
+      });
+      repo.dirty = true;
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.commit({
+        section: "agent",
+        summary: "Changed model",
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("Failed to stage *.yaml");
+        expect(result.error).toContain("index.lock");
+      }
+    });
+
+    it("serializes concurrent config history commits through one repository lane", async () => {
+      let activeCalls = 0;
+      let maximumActiveCalls = 0;
+      const execGit: ExecGitFn = async (args, cwd) => {
+        activeCalls += 1;
+        maximumActiveCalls = Math.max(maximumActiveCalls, activeCalls);
+        await Promise.resolve();
+        activeCalls -= 1;
+
+        if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return ok(cwd);
+        if (args[0] === "rev-parse" && args[1] === "--verify") return ok("test-head");
+        if (args[0] === "rev-parse" && args[1] === "HEAD") return ok("test-head");
+        return ok("");
+      };
+      const manager = createConfigGitManager({
+        configDir: "/test/config",
+        execGit,
+        writeFile: async () => ok(undefined),
+      });
+
+      const results = await Promise.all([
+        manager.commit({ section: "agent", summary: "Changed first setting" }),
+        manager.commit({ section: "gateway", summary: "Changed second setting" }),
+      ]);
+
+      expect(results.every((result) => result.ok)).toBe(true);
+      expect(maximumActiveCalls).toBe(1);
     });
 
     it("omits optional metadata fields when undefined", async () => {

@@ -223,8 +223,8 @@ describe("SessionListContract", () => {
     expect(() => SessionListContract.request.parse({ ...AUTHORITY, since_minutes: "60" })).toThrow();
   });
 
-  it("accepts response with sessions[] + total", () => {
-    expect(SessionListContract.response.parse({
+  it("omits unavailable token totals from session summaries", () => {
+    const parsed = SessionListContract.response.parse({
       sessions: [
         {
           conversationRef: "conversation-ref-1",
@@ -244,7 +244,9 @@ describe("SessionListContract", () => {
         },
       ],
       total: 1,
-    })).toBeDefined();
+    });
+
+    expect(parsed.sessions[0]).not.toHaveProperty("totalTokens");
   });
 
   it("rejects response missing total", () => {
@@ -295,6 +297,28 @@ describe("SessionHistoryContract", () => {
       offset: 10,
       limit: 50,
     })).toBeDefined();
+  });
+
+  it("rejects negative and fractional history offsets", () => {
+    expect(() => SessionHistoryContract.request.parse({
+      ...TARGET_AUTHORITY,
+      offset: -1,
+    })).toThrow();
+    expect(() => SessionHistoryContract.request.parse({
+      ...TARGET_AUTHORITY,
+      offset: 1.5,
+    })).toThrow();
+  });
+
+  it("rejects history limits outside the bounded page size", () => {
+    expect(() => SessionHistoryContract.request.parse({
+      ...TARGET_AUTHORITY,
+      limit: 0,
+    })).toThrow();
+    expect(() => SessionHistoryContract.request.parse({
+      ...TARGET_AUTHORITY,
+      limit: 201,
+    })).toThrow();
   });
 
   it("rejects request missing conversation authority", () => {

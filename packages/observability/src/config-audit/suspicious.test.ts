@@ -77,6 +77,23 @@ describe("config-audit/suspicious", () => {
     expect(flags).not.toContain("permission-restricted-caller");
   });
 
+  it("does not flag the expected permission model on the Comis daemon", () => {
+    const flags = detectSuspicious({
+      argv: [
+        "/usr/bin/node",
+        "/opt/comis/node_modules/@comis/daemon/dist/daemon.js",
+      ],
+      execArgv: [
+        "--permission",
+        "--allow-fs-read=*",
+        "--allow-fs-write=/var/lib/comis",
+      ],
+      entryScript: "/opt/comis/packages/daemon/dist/daemon.js",
+    });
+
+    expect(flags).not.toContain("permission-restricted-caller");
+  });
+
   it("accumulates multiple flags when several heuristics fire", () => {
     const flags = detectSuspicious({
       argv: ["/usr/local/bin/curl", "evil.sh"],

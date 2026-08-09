@@ -47,7 +47,7 @@ import { pipelineAuthoringAggregateFromRows } from "./system-findings.js";
 import { initSchema, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
-import { assembleSystemHealthReport, bindSystemHealthHandlers, pickWorstDegradedSessionKey } from "./system-health.js";
+import { assembleSystemHealthReport, bindSystemHealthHandlers, pickWorstDegradedExecution } from "./system-health.js";
 import type { ObsHandlerDeps } from "./obs-helpers.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -954,6 +954,7 @@ describe("assembleSystemHealthReport (bounded read fan-in)", () => {
       category: "session_summary",
       severity: "warning",
       sessionKey: "s-degraded",
+      traceId: "trace-degraded",
       message: "session:summary",
       details: summaryDetails({ degraded: true, costUsd: 0, turnCount: 2, endReason: "context_exhausted" }),
     });
@@ -982,7 +983,13 @@ describe("assembleSystemHealthReport (bounded read fan-in)", () => {
     // The exact worst session is NAMED — the operator pastes it straight into
     // `comis explain` instead of hunting for "the worst session" (live incident).
     expect(report.likelyRootCause?.detail).toContain("s-degraded");
-    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain s-degraded");
+    expect(report).toHaveProperty("worstDegradedExecution", {
+      sessionKey: "s-degraded",
+      traceId: "trace-degraded",
+      endReason: "context_exhausted",
+    });
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).toContain("comis explain trace-degraded");
+    expect(report.likelyRootCause?.suggestedNextSteps.join(" | ")).not.toContain("comis explain s-degraded");
   });
 
   it("HEURISTIC: chronic config posture still wins when no session degraded", async () => {
@@ -1916,9 +1923,9 @@ describe("bindSystemHealthHandlers (boot.clock wiring is load-bearing)", () => {
   });
 });
 
-describe("pickWorstDegradedSessionKey", () => {
-  const row = (o: Partial<{ sessionKey: string; degraded: boolean; endReason: string; lastTs: number; source: string }>) => ({
-    sessionKey: "s", degraded: false, endReason: "success", lastTs: 0, source: "runtime", ...o,
+describe("pickWorstDegradedExecution", () => {
+  const row = (o: Partial<{ sessionKey: string; traceId: string; degraded: boolean; endReason: string; lastTs: number; source: string }>) => ({
+    sessionKey: "s", traceId: "trace-s", degraded: false, endReason: "success", lastTs: 0, source: "runtime", ...o,
   });
 
   it("prefers a degraded session whose endReason matches the dominant cause", () => {
@@ -1926,7 +1933,7 @@ describe("pickWorstDegradedSessionKey", () => {
       row({ sessionKey: "s-other", degraded: true, endReason: "output_starved", lastTs: 9 }),
       row({ sessionKey: "s-match", degraded: true, endReason: "context_exhausted", lastTs: 5 }),
     ];
-    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBe("s-match");
+    expect(pickWorstDegradedExecution(rows, "context_exhausted")).toEqual({ sessionKey: "s-match", traceId: "trace-s", endReason: "context_exhausted" });
   });
 
   it("breaks ties on most-recent (lastTs desc) among matching causes", () => {
@@ -1934,7 +1941,7 @@ describe("pickWorstDegradedSessionKey", () => {
       row({ sessionKey: "s-old", degraded: true, endReason: "context_exhausted", lastTs: 1 }),
       row({ sessionKey: "s-new", degraded: true, endReason: "context_exhausted", lastTs: 9 }),
     ];
-    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBe("s-new");
+    expect(pickWorstDegradedExecution(rows, "context_exhausted")?.sessionKey).toBe("s-new");
   });
 
   it("falls back to the most-recent degraded session when none match the cause", () => {
@@ -1942,7 +1949,7 @@ describe("pickWorstDegradedSessionKey", () => {
       row({ sessionKey: "s-a", degraded: true, endReason: "output_starved", lastTs: 3 }),
       row({ sessionKey: "s-b", degraded: true, endReason: "provider_degraded", lastTs: 7 }),
     ];
-    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBe("s-b");
+    expect(pickWorstDegradedExecution(rows, "context_exhausted")?.sessionKey).toBe("s-b");
   });
 
   it("ignores synthetic and clean sessions; undefined when none degraded", () => {
@@ -1950,7 +1957,7 @@ describe("pickWorstDegradedSessionKey", () => {
       row({ sessionKey: "s-synth", degraded: true, endReason: "context_exhausted", lastTs: 9, source: "synthetic" }),
       row({ sessionKey: "s-clean", degraded: false, lastTs: 5 }),
     ];
-    expect(pickWorstDegradedSessionKey(rows, "context_exhausted")).toBeUndefined();
-    expect(pickWorstDegradedSessionKey([], undefined)).toBeUndefined();
+    expect(pickWorstDegradedExecution(rows, "context_exhausted")).toBeUndefined();
+    expect(pickWorstDegradedExecution([], undefined)).toBeUndefined();
   });
 });

@@ -71,13 +71,14 @@ For each requirement, write the row **before driving**:
 - **Edge** — empty / huge / malformed / boundary / quota / concurrency / **failure-injection** for every input-taking or stateful capability the target touches.
 - **Deep** — every requirement → ≥1 row; every capability category → ≥2 rows (happy + edge/abuse); every untrusted-input or outward-acting capability → a **HARD** oracle; every config knob → a **Track-M both-polarities** pair; every claimed mechanism → **verified at HEAD**.
 - **Broad** — the cross-cutting **system-level UCs** + the **surface sweep** (Track L, incl. L8 origin-gating) the target plausibly touches.
-- **Fifth axis (§D2)** — the six classes a functional predicate cannot see: latency regression · resource
+- **Fifth axis (§D2)** — the seven classes a functional predicate cannot see: latency regression · resource
   leak / long-run decay · upgrade-migration breakage · cost regression · first-run experience ·
-  concurrency. Latency and cost are mechanical (record a baseline, diff it) and belong in **every** plan.
+  concurrency · cross-lens conversation integrity. Latency and cost are mechanical (record a baseline,
+  diff it) and belong in **every** plan.
 
 ### D2. The FIFTH axis — defect classes a functional drive structurally cannot see
 
-The four axes above all ask *does it do the right thing once*. Six production defect classes answer "yes"
+The four axes above all ask *does it do the right thing once*. Seven production defect classes answer "yes"
 to that and still reach customers, because nothing in a pass/fail predicate looks at them. For each: if the
 target plausibly touches it, plan a row; if not, say so. **Every one of these has reached a real user in a
 system whose functional tests were green.**
@@ -90,6 +91,7 @@ system whose functional tests were green.**
 | **Cost regression** | Cost oracles check whether the agent reports spend *truthfully*, never whether spend *grew*. A change that doubles tokens per turn passes every predicate. | Record cost-per-representative-turn and diff it against the previous run. Cache-hit rate belongs here too: a prefix change that silently stops cache reads is a pure cost regression with no functional symptom. |
 | **First-run / onboarding** | The rig bootstraps config with a script, bypassing the real interactive setup a customer actually runs. So the highest-stakes ten minutes of the product are the least tested part of it. | Drive the real onboarding path on a genuinely fresh box at least once per release-shaped run, including the wrong-input branches (a too-short token, a bad key, an unreachable provider) — first-run defects are disproportionately abandonment-causing. |
 | **Concurrency / races** | The drive rule is "one clean inject per turn" — correct for attribution, but it means sustained concurrency is never exercised. Races are also the class that pass@k variance hints at and a single run hides. | Sustained overlapping load from ≥2 senders across ≥2 sessions (`scripts/parallel-chat.mjs`), asserting isolation and no duplicate delivery *under overlap*, not just in sequence. |
+| **Cross-lens conversation integrity** | The final answer can be plausible while spent approval controls remain visible, a deterministic notice uses the wrong locale, human wait is billed as autonomous work, a recovered failure disappears, or equal aggregate counts are joined as the same entities. A single reply predicate sees none of these. | Run `targets/conversation-integrity-regression-pack.md` on the exact conversation. Require the approval driver's bounded control retirement and `scripts/conversation-audit.mjs` to reconcile wire, session, trajectory, incident report, row-level entity sets, and explicit call/token/cost budgets. |
 
 Two of these — latency and cost — are **cheap and mechanical**: they need a recorded baseline and a diff,
 nothing more. Their absence is the reason a run can be green while the product gets slower and more

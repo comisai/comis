@@ -138,6 +138,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
       const elapsedMs =
         clock !== undefined && startedAtMs !== undefined ? clock.now() - startedAtMs : undefined;
       latestText = renderFrameText(frame, markers, elapsedMs);
+      const previousButtons = latestButtons;
       latestButtons = buildButtons?.(frame.visibleEvents);
 
       // First frame posts the placeholder; later frames only debounce an edit.
@@ -152,6 +153,21 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         const placed = await ensurePlaceholder(placeholderText, buttons);
         if (!placed.ok) return placed;
         return ok(undefined);
+      }
+
+      // Native approval controls carry authority after the visible text has
+      // changed. Retiring them must not wait behind the streaming debounce:
+      // once the approval gate has resolved the request, a still-visible button
+      // can submit a callback whose state has already been removed.
+      const hadNativeControls = previousButtons?.some((row) => row.length > 0) === true;
+      const hasNativeControls = latestButtons?.some((row) => row.length > 0) === true;
+      if (hadNativeControls && !hasNativeControls) {
+        clearPendingEdit();
+        return actions.edit(
+          messageId,
+          latestText,
+          { buttons: latestButtons ?? [] },
+        );
       }
 
       // Debounce: cancel the prior pending edit, schedule a fresh one. A burst

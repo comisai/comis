@@ -45,18 +45,13 @@ export const configValidationCheck: SecurityCheck = {
     // unavailable so the operator cannot read "PASSED" as a security guarantee.
 
     // (a) buildAuditContext captured a concrete load/validate error — report IT
-    //     verbatim rather than guessing "check YAML syntax". The audit validates
-    //     the file AS WRITTEN and does not resolve `${ENV}` secret references, so
-    //     a runtime-valid production config (e.g. gateway secret `${COMIS_GATEWAY_TOKEN}`)
-    //     fails length validation here; the note tells the operator that, so a
-    //     harmless env-ref is not mistaken for a syntax error.
+    //     verbatim rather than guessing "check YAML syntax".
     if (context.configError !== undefined) {
       findings.push({
         category: "config-validation",
         severity: "critical",
         message: `Config could not be validated — config-scoped checks were SKIPPED: ${context.configError}`,
-        remediation:
-          "Fix the reported violation. Note: the audit validates the config file as written and does NOT resolve ${ENV} secret references, so a runtime-valid config that uses e.g. ${COMIS_GATEWAY_TOKEN} will fail here — audit a fully-resolved config to evaluate the config-scoped checks.",
+        remediation: "Fix the reported violation and rerun the audit",
         code: "SEC-CFG-001",
       });
       return findings;

@@ -1133,6 +1133,43 @@ describe("createSkillRegistry", () => {
     );
   });
 
+  it("aggregates undeclared skill requirements once per registry snapshot", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkill(skillsDir, "first-undeclared", "First undeclared skill", "Body.");
+    createPromptSkill(skillsDir, "second-undeclared", "Second undeclared skill", "Body.");
+    const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const eligibilityContext = {
+      platform: "linux",
+      hasBin: vi.fn(() => true),
+      hasEnv: vi.fn(() => true),
+      populateBinaryCache: vi.fn(),
+    };
+    const registry = createSkillRegistry(
+      makeConfig([skillsDir]),
+      createMockEventBus(),
+      auditCtx,
+      mockLogger,
+      eligibilityContext,
+    );
+
+    registry.init();
+    registry.getPromptSkillDescriptions();
+    registry.getEligibleSkillNames();
+    registry.getPromptSkillCapabilities(() => undefined);
+
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillCount: 2,
+        skillNames: ["first-undeclared", "second-undeclared"],
+        errorKind: "precondition",
+        hint: expect.stringContaining("comis.requires"),
+      }),
+      "Eligible skills have undeclared runtime requirements",
+    );
+  });
+
   it("works without logger (backward compatible)", () => {
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });

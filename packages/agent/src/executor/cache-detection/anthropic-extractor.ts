@@ -126,7 +126,7 @@ export function extractAnthropicPromptState(
   // Counts cache_control markers on system blocks, tools, and messages.
   let systemBpCount = 0;
   let toolBpCount = 0;
-  let messageBpCount = 0;
+  const allMessagePositions: number[] = [];
   for (const block of system) {
     if (block.cache_control) systemBpCount++;
   }
@@ -136,15 +136,40 @@ export function extractAnthropicPromptState(
   const messages = Array.isArray(params.messages)
     ? (params.messages as Array<Record<string, unknown>>)
     : [];
-  for (const msg of messages) {
+  let lastUserMessageIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "user") {
+      lastUserMessageIndex = i;
+      break;
+    }
+  }
+  let messageContentBlocks = 0;
+  let sdkAutoPosition: number | null = null;
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const msg = messages[messageIndex]!;
     const content = msg.content;
     if (Array.isArray(content)) {
       for (const block of content as Array<Record<string, unknown>>) {
-        if (block.cache_control) { messageBpCount++; break; }
+        const position = messageContentBlocks++;
+        if (block.cache_control) {
+          allMessagePositions.push(position);
+          if (messageIndex === lastUserMessageIndex) sdkAutoPosition = position;
+        }
       }
+    } else if (typeof content === "string") {
+      messageContentBlocks++;
     }
   }
-  const sdkAutoCount = 1; // SDK always places a marker on the last user message
+  const sdkAutoCount = sdkAutoPosition === null ? 0 : 1;
+  const comisMessagePositions = sdkAutoPosition === null
+    ? allMessagePositions
+    : allMessagePositions.filter((position) => position !== sdkAutoPosition);
+  const previousMarkerPosition = comisMessagePositions.at(-1);
+  const tailGapBlocks = sdkAutoPosition === null
+    ? null
+    : sdkAutoPosition - (previousMarkerPosition ?? -1);
+  const messageBpCount = comisMessagePositions.length;
+  const totalBpCount = systemBpCount + toolBpCount + messageBpCount + sdkAutoCount;
 
   return {
     sessionKey,
@@ -163,11 +188,15 @@ export function extractAnthropicPromptState(
     cacheControlHash,
     buildDiffableContent,
     breakpointBudget: {
-      total: 4,
+      total: totalBpCount,
       system: systemBpCount,
       tool: toolBpCount,
       message: messageBpCount,
       sdkAuto: sdkAutoCount,
+      messagePositions: comisMessagePositions.slice(-4),
+      sdkAutoPosition,
+      messageContentBlocks,
+      tailGapBlocks,
     },
   };
 }

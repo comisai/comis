@@ -27,8 +27,8 @@
  * - Tool results exceeding inline threshold saved to disk (clean payload)
  * - Per-tool thresholds applied (8K/15K/15K)
  * - Hard cap (100K) truncation applied before disk offload
- * - Inline reference carries the disk path + a recovery example verified
- *   against the written bytes (json.load only when the file parses)
+ * - Inline reference carries the disk path + recovery guidance matching the
+ *   artifact type (`.json` for parseable JSON, `.txt` otherwise)
  *
  * @module
  */
@@ -108,34 +108,43 @@ function unwrapToolResultText(content: ToolResultMessage["content"]): CleanToolR
  * The offload file is a storage artifact: it holds payload bytes only — the
  * `wrapExternalContent` security envelope is presentation-layer and is
  * re-applied at the boundaries instead (the inline reference's preview and
- * the read-tool recovery path). Before this, the envelope was baked into the
- * `.json` file at rest and the marker's own `json.load` recovery example
- * failed on every offloaded MCP result (live incident 2026-07-12).
+ * the read-tool recovery path).
  *
  * External-origin offloads additionally get a `<toolCallId>.origin.json`
  * sidecar recording the source, so the recovery-read path can restore the
- * taint boundary. The main pointer format (`tool-results/<toolCallId>.json`)
- * is unchanged.
+ * taint boundary.
  *
  * Uses synchronous file I/O because `appendMessage()` is synchronous.
  * Path construction uses `safePath()` to prevent traversal attacks.
- * File extension remains `.json` for stable offloaded-file references.
+ * Parseable, complete JSON uses `.json`; plain text and truncated structured
+ * output use `.txt`. The returned path is the authoritative pointer threaded
+ * to the inline reference and trajectory event.
  *
  * @returns `{ diskPath, written }` — `diskPath` is the absolute target path;
- *   `written` is `false` when the parent-dir or file write was rejected
- *   (e.g. confinement-base escape), so the caller can suppress the
- *   `tool:result_offloaded` trajectory emit instead of recording a phantom
- *   pointer at a file that does not exist.
+ *   `written` is `false` when the parent-dir, payload, or required origin
+ *   sidecar write was rejected, so the caller can keep the original result
+ *   inline and suppress the `tool:result_offloaded` trajectory emit.
  */
 function saveToDisk(
   sessionDir: string,
   dataDir: string,
   toolCallId: string,
   diskText: string,
+  diskTruncated: boolean,
   origin: { source: ExternalContentSource; truncated: boolean; originalChars: number } | null,
   logger: ComisLogger,
 ): { diskPath: string; written: boolean } {
-  const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}.json`);
+  let parsesAsJson = false;
+  if (!diskTruncated) {
+    try {
+      JSON.parse(diskText);
+      parsesAsJson = true;
+    } catch {
+      // Plain text is a valid offload payload and receives a truthful suffix.
+    }
+  }
+  const extension = parsesAsJson ? ".json" : ".txt";
+  const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}${extension}`);
   // Parent dir at 0o700 via the fs-safe substrate (file-mode invariant).
   // confinedBaseDir threads dataDir (typically ~/.comis/) so the ancestor-
   // symlink escape is rejected. When the dir creation is rejected the file
@@ -145,22 +154,21 @@ function saveToDisk(
 
   const writeResult = writeRegularFile({ path: diskPath, content: diskText, confinedBaseDir: dataDir });
 
+  let originWritten = true;
   if (origin) {
-    const sidecarPath = diskPath.slice(0, -".json".length) + ".origin.json";
+    const sidecarPath = diskPath.slice(0, -extension.length) + ".origin.json";
     const sidecarBody = JSON.stringify({
       source: origin.source,
       ...(origin.truncated ? { truncated: true, originalChars: origin.originalChars } : {}),
     });
     const sidecarResult = writeRegularFile({ path: sidecarPath, content: `${sidecarBody}\n`, confinedBaseDir: dataDir });
     if (!sidecarResult.ok) {
-      // Best-effort: without the sidecar a later recovery read is delivered
-      // without its taint boundary — visible, not fatal (the inline preview
-      // stays wrapped either way).
+      originWritten = false;
       logger.warn(
         {
           toolCallId,
           sidecarPath,
-          hint: "Origin sidecar write failed; a read-tool recovery of this offload will not restore the external-content taint boundary. Check data-dir confinement and filesystem permissions.",
+          hint: "Origin sidecar write failed; the offload will be rejected and the external result kept inline so a recovery read cannot lose its taint boundary. Check data-dir confinement and filesystem permissions.",
           errorKind: "resource" as ErrorKind,
         },
         "Offload origin sidecar write failed",
@@ -168,7 +176,7 @@ function saveToDisk(
     }
   }
 
-  return { diskPath, written: dirResult.ok && writeResult.ok };
+  return { diskPath, written: dirResult.ok && writeResult.ok && originWritten };
 }
 
 /**
@@ -178,8 +186,13 @@ function saveToDisk(
  * the pre-sidecar behavior for those files.
  */
 function readOffloadOrigin(filePath: string): ExternalContentSource | null {
-  if (!filePath.endsWith(".json")) return null;
-  const sidecarPath = filePath.slice(0, -".json".length) + ".origin.json";
+  const extension = filePath.endsWith(".json")
+    ? ".json"
+    : filePath.endsWith(".txt")
+      ? ".txt"
+      : null;
+  if (extension === null) return null;
+  const sidecarPath = filePath.slice(0, -extension.length) + ".origin.json";
   try {
     const st = statSync(sidecarPath);
     if (!st.isFile() || st.size > 4096) return null;
@@ -211,14 +224,11 @@ function slicePreview(cleanText: string, headChars: number, tailChars: number): 
 // ---------------------------------------------------------------------------
 
 /**
- * Recovery guidance that is TRUE for the bytes just written: the `json.load`
- * example is emitted only when the disk payload actually parses as JSON
- * (verified right here, at write time), a truncated disk copy says so instead
- * of promising a parse that must fail, and plain text gets text tooling. The
- * old unconditional `json.load` example failed on every non-JSON offload —
- * and, before clean-at-rest offloads, on every security-wrapped MCP result.
+ * Recovery guidance that matches the bytes just written: `.json` artifacts
+ * get a `json.load` example, a truncated disk copy says so instead of
+ * promising structured parsing, and `.txt` artifacts get text tooling.
  */
-function recoveryGuidance(diskText: string, diskPath: string, diskTruncated: boolean): string {
+function recoveryGuidance(diskPath: string, diskTruncated: boolean): string {
   // The read tool is exempt from re-offload for tool-results recovery reads
   // (and disk copies are capped at the hard cap), so reading the whole file
   // back always works — exec just keeps only the extracted data in context.
@@ -229,14 +239,7 @@ function recoveryGuidance(diskText: string, diskPath: string, diskTruncated: boo
       `NOTE: the disk copy was truncated at ${TOOL_RESULT_HARD_CAP_CHARS} chars — structured parsing may fail; inspect with text tools (grep/head).\n`;
     return guidance;
   }
-  let parsesAsJson = false;
-  try {
-    JSON.parse(diskText);
-    parsesAsJson = true;
-  } catch {
-    // not JSON — fall through to the text guidance
-  }
-  if (parsesAsJson) {
+  if (diskPath.endsWith(".json")) {
     guidance += `The file is valid JSON. Example: exec python3 -c "import json; data=json.load(open('${diskPath}')); print(type(data).__name__, list(data)[:20] if isinstance(data, dict) else len(data))"\n`;
   } else {
     guidance += `The file is plain text (not JSON) — use text tools, e.g.: exec grep -n '<term>' '${diskPath}' | head\n`;
@@ -276,7 +279,7 @@ function createInlineReference(
   // keeps only the extracted data in context, where a read tool recovery
   // re-enters the whole file.
   if (totalChars >= MAX_INLINE_FILE_READ_RESULT_CHARS) {
-    referenceText += `Full content saved at: ${diskPath}\n` + recoveryGuidance(diskText, diskPath, diskTruncated);
+    referenceText += `Full content saved at: ${diskPath}\n` + recoveryGuidance(diskPath, diskTruncated);
   } else {
     referenceText += `Full content saved — use the read tool to re-access: ${diskPath}\n`;
   }
@@ -452,9 +455,34 @@ export function installMicrocompactionGuard(
         dataDir,
         toolResultMsg.toolCallId,
         diskText,
+        diskTruncated,
         external ? { source: external.source, truncated: diskTruncated, originalChars: totalChars } : null,
         logger,
       );
+
+      // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
+      // absolute diskPath leaks the host filesystem layout and is
+      // not a stable drill-down target. This guard holds no event bus and no
+      // clock: it computes the payload and hands it to onOffloaded;
+      // the executor callback (which has both) performs the trajectory emit.
+      //
+      // Offloading is successful only after every required artifact persists.
+      // On failure keep the original wrapped result inline: replacing it with
+      // a phantom pointer would lose data, and accepting an external payload
+      // without its origin sidecar would weaken the taint boundary.
+      if (!written) {
+        logger.warn(
+          {
+            toolName: toolResultMsg.toolName,
+            toolCallId: toolResultMsg.toolCallId,
+            diskPath,
+            hint: "Disk offload persistence failed; kept the original tool result inline and suppressed tool:result_offloaded. Check data-dir confinement and filesystem permissions.",
+            errorKind: "resource" as ErrorKind,
+          },
+          "Tool result offload persistence failed -- keeping result inline",
+        );
+        return originalAppend(message);
+      }
 
       logger.warn(
         {
@@ -468,33 +496,9 @@ export function installMicrocompactionGuard(
         "Tool result exceeded hard cap -- truncated and offloaded",
       );
 
+      const diskPathRel = relative(sessionDir, diskPath);
+      onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
       const reference = createInlineReference(toolResultMsg, totalChars, diskPath, diskText, external, diskTruncated);
-      // Pass only a WORKSPACE-RELATIVE pointer (sessionDir-relative) — the
-      // absolute diskPath leaks the host filesystem layout and is
-      // not a stable drill-down target. This guard holds no event bus and no
-      // clock: it computes the payload and hands it to onOffloaded;
-      // the executor callback (which has both) performs the trajectory emit.
-      //
-      // Only emit when the disk write actually persisted: a
-      // best-effort write failure (confinement-base escape, fs error) returns
-      // `written: false` and the file does not exist, so emitting
-      // tool:result_offloaded would record a phantom pointer the
-      // IncidentReport.offloads[] drill-down cannot open. Log+suppress instead.
-      if (written) {
-        const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
-        onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
-      } else {
-        logger.warn(
-          {
-            toolName: toolResultMsg.toolName,
-            toolCallId: toolResultMsg.toolCallId,
-            diskPath,
-            hint: "Disk offload write was rejected (confinement-base escape or fs error); suppressed tool:result_offloaded so the trajectory does not record a pointer at a non-existent file. Check the data-dir confinement and filesystem permissions.",
-            errorKind: "resource" as ErrorKind,
-          },
-          "Tool result offload write failed -- suppressing offload event",
-        );
-      }
 
       // Propagate the compact reference to the in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the
@@ -514,9 +518,26 @@ export function installMicrocompactionGuard(
         dataDir,
         toolResultMsg.toolCallId,
         cleanText,
+        false,
         external ? { source: external.source, truncated: false, originalChars: totalChars } : null,
         logger,
       );
+
+      // Keep the original result inline unless every artifact required for a
+      // safe recovery read persisted successfully.
+      if (!written) {
+        logger.warn(
+          {
+            toolName: toolResultMsg.toolName,
+            toolCallId: toolResultMsg.toolCallId,
+            diskPath,
+            hint: "Disk offload persistence failed; kept the original tool result inline and suppressed tool:result_offloaded. Check data-dir confinement and filesystem permissions.",
+            errorKind: "resource" as ErrorKind,
+          },
+          "Tool result offload persistence failed -- keeping result inline",
+        );
+        return originalAppend(message);
+      }
 
       const reference = createInlineReference(toolResultMsg, totalChars, diskPath, cleanText, external, false);
 
@@ -536,25 +557,8 @@ export function installMicrocompactionGuard(
         "Tool result offloaded to disk",
       );
 
-      // Same residency-safe pointer at the threshold branch — its own diskPath
-      // is in scope (returned by the saveToDisk above). Workspace-relative only.
-      // Suppress the offload event on a failed write so the
-      // trajectory never records a pointer at a file that was not persisted.
-      if (written) {
-        const diskPathRel = relative(sessionDir, diskPath); // "tool-results/<toolCallId>.json"
-        onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
-      } else {
-        logger.warn(
-          {
-            toolName: toolResultMsg.toolName,
-            toolCallId: toolResultMsg.toolCallId,
-            diskPath,
-            hint: "Disk offload write was rejected (confinement-base escape or fs error); suppressed tool:result_offloaded so the trajectory does not record a pointer at a non-existent file. Check the data-dir confinement and filesystem permissions.",
-            errorKind: "resource" as ErrorKind,
-          },
-          "Tool result offload write failed -- suppressing offload event",
-        );
-      }
+      const diskPathRel = relative(sessionDir, diskPath);
+      onOffloaded?.(toolResultMsg.toolName, totalChars, toolResultMsg.toolCallId, diskPathRel);
 
       // Propagate the compact reference to the in-memory message object.
       // Without this, currentContext.messages in the agent loop still holds the

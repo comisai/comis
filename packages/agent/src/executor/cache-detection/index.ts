@@ -10,6 +10,7 @@
 
 export type {
   PromptStateSnapshot,
+  BreakpointBudget,
   PendingChanges,
   CacheBreakReason,
   CacheBreakEvent,

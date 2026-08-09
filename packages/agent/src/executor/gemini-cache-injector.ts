@@ -15,6 +15,7 @@ import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
+import { isAuxiliaryStreamCall } from "./stream-wrappers/auxiliary-stream-call.js";
 import type { StreamFnWrapper } from "./stream-wrappers/types.js";
 import type { GeminiCacheManager, CacheEntry } from "./gemini-cache-manager.js";
 import { computeCacheContentHash } from "./gemini-cache-manager.js";
@@ -71,6 +72,9 @@ export function createGeminiCacheInjector(
   return function geminiCacheInjector(next: StreamFn): StreamFn {
     // Use implicit parameter types from StreamFn (same pattern as createRequestBodyInjector)
     return (model, context, options) => {
+      if (isAuxiliaryStreamCall(options)) {
+        return next(model, context, options);
+      }
       // Provider guard -- no-op for non-Google providers
       if (!isGoogleFamily(model.provider)) {
         return next(model, context, options);

@@ -7,6 +7,7 @@ export { ChannelCapabilitySchema } from "../domain/channel-capability.js";
 export { createNoOpDeliveryQueue } from "../delivery/no-op-delivery-queue.js";
 export { createNoOpDeliveryMirror } from "../delivery/no-op-delivery-mirror.js";
 export { createNoOpCapabilityPort } from "../tool-capability/no-op-tool-capability.js";
+export { DETERMINISTIC_LOCALIZATION_MESSAGE_IDS } from "../localization-message-ids.js";
 export { validateProfileId, PROFILE_ID_RE } from "../security/profile-id.js";
 export type {
   ChannelPort,
@@ -176,6 +177,7 @@ export type {
   LocalizationPort,
   LocalizationRequest,
   LocalizationKey,
+  DeterministicLocalizationMessageId,
   LocalizationError,
   CaManagerPort,
   EgressControlPort,

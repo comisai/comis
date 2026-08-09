@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { err, ok } from "@comis/shared";
+import { runWithContext } from "@comis/core";
 
 import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
 import { setSessionStateClock } from "../executor-session-state.js";
@@ -632,6 +633,32 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     // ms, which would understate latencyMs by up to the multiplier.
     // PromptTimeoutError.timeoutMs carries the fired limit.
     expect((usage![1] as Record<string, unknown>).latencyMs).toBe(1_800_000);
+  });
+
+  it("attributes timeout ghost cost to the request trace instead of the internal execution id", async () => {
+    const { params, emit } = makeFailureParams("c-ghost-trace");
+    const requestTraceId = "3a8b1ab5-a5e4-4a99-a5cb-3c241eefab3b";
+    const timeout = new PromptTimeoutError(180_000, {
+      limit: "stall",
+      stallBudgetMs: 180_000,
+    });
+
+    await runWithContext(
+      {
+        tenantId: "t1",
+        userId: "u1",
+        sessionKey: "t1:u1:c-ghost-trace",
+        traceId: requestTraceId,
+        startedAt: 1,
+      },
+      () => processFailurePath(params, "hello", undefined, timeout),
+    );
+
+    const usage = emit.mock.calls.find((call) => call[0] === "observability:token_usage");
+    expect(usage?.[1]).toMatchObject({
+      traceId: requestTraceId,
+      executionId: "exec-timeout-diagnostics",
+    });
   });
 
   it("maps a non-timeout terminal error to dependency failure with the all-models hint", async () => {

@@ -23917,6 +23917,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("gat
                 "type": "string"
               },
               {
+                "pattern": "^\\\\$\\\\{[A-Z_][A-Z0-9_]*\\\\}$",
+                "type": "string"
+              },
+              {
                 "additionalProperties": false,
                 "properties": {
                   "id": {
@@ -36508,6 +36512,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "anyOf": [
                   {
                     "minLength": 32,
+                    "type": "string"
+                  },
+                  {
+                    "pattern": "^\\\\$\\\\{[A-Z_][A-Z0-9_]*\\\\}$",
                     "type": "string"
                   },
                   {

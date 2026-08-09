@@ -25,7 +25,7 @@ import type { ExecutionOverrides, ExecutionResult } from "../types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "../prompt-assembly.js";
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
-import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
+import type { BreakpointBudget, CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
 import { lookbackWindowExceededHint } from "../cache-detection/index.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import { planInboundMessageProvenance } from "../../session/inbound-message-provenance.js";
@@ -7767,6 +7767,18 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
     cacheControlChanged: false,
   };
 
+  const LOOKBACK_BUDGET: BreakpointBudget = {
+    total: 3,
+    system: 1,
+    tool: 0,
+    message: 1,
+    sdkAuto: 1,
+    messagePositions: [10],
+    sdkAutoPosition: 35,
+    messageContentBlocks: 36,
+    tailGapBlocks: 25,
+  };
+
   function makeCacheBreakEvent(reason: CacheBreakReason, overrides: Partial<CacheBreakEvent> = {}): CacheBreakEvent {
     return {
       provider: "anthropic",
@@ -7808,10 +7820,11 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
             reason: event.reason,
             tokenDrop: event.tokenDrop,
             conversationBlockCount: event.conversationBlockCount,
+            breakpointBudget: event.breakpointBudget,
             // Imported from the SAME module the production log site uses, so the
             // stand-in handler cannot drift from the real hint (it did: the literal
             // was duplicated here and both said "No action needed." on a priced break).
-            hint: lookbackWindowExceededHint(event.conversationBlockCount),
+            hint: lookbackWindowExceededHint(event.breakpointBudget),
             errorKind: "internal" as const,
           },
           "Cache miss from lookback window exceeded (not server eviction)",
@@ -7842,7 +7855,10 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
     const logInfo = vi.fn();
 
     const handler = createEvictHandler({ reset, clearWarm, setCooldown, clearStability, clearSavings, logWarn, logInfo });
-    handler(makeCacheBreakEvent("lookback_window_exceeded", { conversationBlockCount: 25 }));
+    handler(makeCacheBreakEvent("lookback_window_exceeded", {
+      conversationBlockCount: 25,
+      breakpointBudget: LOOKBACK_BUDGET,
+    }));
 
     // reset functions should NOT be called
     expect(reset).not.toHaveBeenCalled();
@@ -7855,13 +7871,12 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
     expect(logWarn).toHaveBeenCalledOnce();
     expect(logWarn.mock.calls[0][1]).toContain("lookback window exceeded");
     expect(logWarn.mock.calls[0][0].errorKind).toBe("internal");
-    // The hint must name the cause + the knobs, and must NOT reassure — a
-    // lookback break re-pays the prefix at the cache-write rate (live: $1.17–$1.33
-    // each, ×4 in one session, all logged "No action needed.").
+    // The hint must name the measured cause and must not reassure: a lookback
+    // break re-pays the prefix at the cache-write rate.
     expect(logWarn.mock.calls[0][0].hint).toMatch(/lookback/i);
     expect(logWarn.mock.calls[0][0].hint).not.toMatch(/no action needed/i);
-    expect(logWarn.mock.calls[0][0].hint).toContain("contextEngine.freshTailTurns");
-    expect(logWarn.mock.calls[0][0].hint).toContain("25 blocks");
+    expect(logWarn.mock.calls[0][0].hint).toContain("25 content blocks");
+    expect(logWarn.mock.calls[0][0].breakpointBudget).toEqual(LOOKBACK_BUDGET);
 
     // INFO log (coordinated reset) should NOT be emitted
     expect(logInfo).not.toHaveBeenCalled();

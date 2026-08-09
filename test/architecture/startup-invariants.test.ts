@@ -80,4 +80,12 @@ describe("startup invariants architecture", () => {
       `emitStartupInvariants (line ${invariantsLine}) must appear BEFORE saveLastKnownGood (line ${lkgLine})`,
     ).toBeLessThan(lkgLine);
   });
+
+  it("daemon.ts gives last-known-good skips an operator-visible logger", () => {
+    const content = readFileSync(DAEMON_TS, "utf8");
+
+    expect(content).toMatch(
+      /saveLastKnownGood\(\s*activeConfigPath,\s*auditEnabled,\s*daemonLogger\s*\)/,
+    );
+  });
 });

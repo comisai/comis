@@ -72,27 +72,82 @@ export function withPromptTimeout<T>(
   abort: () => void | Promise<void>,
   timers: TimerPort,
 ): Promise<T> {
-  let timer: TimerHandle;
+  return withPausablePromptTimeout(promise, timeoutMs, abort, timers).promise;
+}
 
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+/** Controls for excluding an external wait from a prompt's stall budget. */
+export interface PausableTimeoutControl {
+  /** Stop the active stall timer without settling the raced promise. */
+  pauseTimer: () => void;
+  /** Restart a paused stall timer with a fresh full budget. */
+  resumeTimer: () => void;
+}
+
+/** A whole-turn prompt timeout with explicit pause/resume controls. */
+export interface PausableTimeout<T> extends PausableTimeoutControl {
+  promise: Promise<T>;
+}
+
+/**
+ * Race a promise against a whole-turn timeout that can exclude an external
+ * approval wait. Resume starts a fresh budget because approval resolution is
+ * an activity boundary; without pause/resume the behavior is byte-for-byte the
+ * same as `withPromptTimeout`.
+ */
+export function withPausablePromptTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  abort: () => void | Promise<void>,
+  timers: TimerPort,
+): PausableTimeout<T> {
+  let settled = false;
+  let paused = false;
+  let timer: TimerHandle | undefined;
+  let rejectFn: (reason: unknown) => void;
+
+  function startTimer(): void {
+    if (settled || paused) return;
+    if (timer) timer.cancel();
     timer = timers.setTimeout(() => {
-      // abort() may return Promise<void> -- handle both sync throw and async rejection
+      if (settled || paused) return;
+      settled = true;
       try {
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         void Promise.resolve(abort()).catch(() => {});
       } catch {
         /* best-effort -- sync throw from abort is suppressed */
       }
-      reject(new PromptTimeoutError(timeoutMs));
+      rejectFn(new PromptTimeoutError(timeoutMs));
     }, timeoutMs);
+  }
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    rejectFn = reject;
+    startTimer();
   });
 
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    timer.cancel();
+  const racedPromise = Promise.race([promise, timeoutPromise]).finally(() => {
+    settled = true;
+    if (timer) timer.cancel();
     // Suppress unhandled rejection when the original promise rejects after timeout wins
     // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     promise.catch(() => {});
   });
+
+  return {
+    promise: racedPromise,
+    pauseTimer: () => {
+      if (settled || paused) return;
+      paused = true;
+      if (timer) timer.cancel();
+      timer = undefined;
+    },
+    resumeTimer: () => {
+      if (settled || !paused) return;
+      paused = false;
+      startTimer();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +155,7 @@ export function withPromptTimeout<T>(
 // ---------------------------------------------------------------------------
 
 /** Return type of withResettablePromptTimeout -- includes a resetTimer callback. */
-export interface ResettableTimeout<T> {
+export interface ResettableTimeout<T> extends PausableTimeoutControl {
   /** The raced promise (resolves/rejects like withPromptTimeout). */
   promise: Promise<T>;
   /** Reset the timeout timer to a fresh full-budget deadline. */
@@ -158,11 +213,13 @@ export function withResettablePromptTimeout<T>(
   opts?: ResettablePromptTimeoutOptions,
 ): ResettableTimeout<T> {
   let settled = false;
+  let paused = false;
   let timer: TimerHandle | undefined;
   let makespanTimer: TimerHandle | undefined;
   let rejectFn: (reason: unknown) => void;
 
   function startTimer(budgetMs: number): void {
+    if (settled || paused) return;
     if (timer) timer.cancel();
     timer = timers.setTimeout(() => {
       if (settled) return;
@@ -221,9 +278,22 @@ export function withResettablePromptTimeout<T>(
   });
 
   function resetTimer(): void {
-    if (settled) return;
+    if (settled || paused) return;
     startTimer(timeoutMs);
   }
 
-  return { promise: racedPromise, resetTimer };
+  function pauseTimer(): void {
+    if (settled || paused) return;
+    paused = true;
+    if (timer) timer.cancel();
+    timer = undefined;
+  }
+
+  function resumeTimer(): void {
+    if (settled || !paused) return;
+    paused = false;
+    startTimer(timeoutMs);
+  }
+
+  return { promise: racedPromise, resetTimer, pauseTimer, resumeTimer };
 }

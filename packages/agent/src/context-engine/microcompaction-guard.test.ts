@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installMicrocompactionGuard, getInlineThreshold } from "./microcompaction-guard.js";
@@ -117,11 +117,36 @@ describe("installMicrocompactionGuard", () => {
     expect(appended.content[0].text).toContain("10000 chars");
 
     // Disk file should exist
-    const diskPath = join(tempDir, "tool-results", "call-large.json");
+    const diskPath = join(tempDir, "tool-results", "call-large.txt");
     expect(existsSync(diskPath)).toBe(true);
 
     // DEBUG log should have been emitted
     expect(logger.debug).toHaveBeenCalled();
+  });
+
+  it("uses a text filename and trajectory pointer for a plain-text offload", () => {
+    const sm = createMockSessionManager(tempDir);
+    const onOffloaded = vi.fn();
+    installMicrocompactionGuard(
+      sm as any,
+      tempDir,
+      tempDir,
+      logger,
+      onOffloaded,
+    );
+
+    sm.appendMessage(createToolResult("bash", 10_000, "call-text"));
+
+    const textPath = join(tempDir, "tool-results", "call-text.txt");
+    expect(existsSync(textPath)).toBe(true);
+    expect(existsSync(join(tempDir, "tool-results", "call-text.json"))).toBe(false);
+    expect((sm.appended[0] as any).content[0].text).toContain(textPath);
+    expect(onOffloaded).toHaveBeenCalledWith(
+      "bash",
+      10_000,
+      "call-text",
+      "tool-results/call-text.txt",
+    );
   });
 
   it("offloads MCP tabular results exceeding the default 8K threshold", () => {
@@ -136,7 +161,7 @@ describe("installMicrocompactionGuard", () => {
     const appended = sm.appended[0] as any;
     expect(appended.content[0].text).toContain("offloaded to disk");
 
-    const diskPath = join(tempDir, "tool-results", "call-mcp.json");
+    const diskPath = join(tempDir, "tool-results", "call-mcp.txt");
     expect(existsSync(diskPath)).toBe(true);
   });
 
@@ -170,7 +195,7 @@ describe("installMicrocompactionGuard", () => {
     expect(appended.content[0].text).toContain("150000 chars");
 
     // Disk file should exist with TRUNCATED raw text content (< original 150K)
-    const diskPath = join(tempDir, "tool-results", "call-huge.json");
+    const diskPath = join(tempDir, "tool-results", "call-huge.txt");
     expect(existsSync(diskPath)).toBe(true);
     const diskText = readFileSync(diskPath, "utf-8");
     expect(diskText.length).toBeLessThan(150_000);
@@ -189,7 +214,7 @@ describe("installMicrocompactionGuard", () => {
     const result = createToolResult("bash", 10_000, "call-structure");
     sm.appendMessage(result);
 
-    const diskPath = join(tempDir, "tool-results", "call-structure.json");
+    const diskPath = join(tempDir, "tool-results", "call-structure.txt");
     const diskText = readFileSync(diskPath, "utf-8");
 
     // File contains raw text, not a JSON envelope
@@ -234,12 +259,13 @@ describe("installMicrocompactionGuard", () => {
     sm.appendMessage(largeResult);
 
     // The callback carries (toolName, originalChars, toolCallId, diskPathRel).
-    // diskPathRel is WORKSPACE-RELATIVE (sessionDir-relative) — `tool-results/<id>.json`,
+    // diskPathRel is WORKSPACE-RELATIVE (sessionDir-relative) and carries the
+    // artifact's truthful suffix,
     // never the absolute host path (which would leak the host filesystem layout).
     // sessionDir == tempDir here,
-    // so relative(tempDir, <tempDir>/tool-results/call-offloaded.json) == that suffix.
+    // so relative(tempDir, <tempDir>/tool-results/call-offloaded.txt) is the pointer.
     expect(onOffloaded).toHaveBeenCalledTimes(1);
-    expect(onOffloaded).toHaveBeenCalledWith("bash", 10_000, "call-offloaded", "tool-results/call-offloaded.json");
+    expect(onOffloaded).toHaveBeenCalledWith("bash", 10_000, "call-offloaded", "tool-results/call-offloaded.txt");
   });
 
   it("fires onOffloaded callback when tool result exceeds hard cap", () => {
@@ -253,7 +279,7 @@ describe("installMicrocompactionGuard", () => {
     // originalChars is the pre-offload char count (150_000), even on the hard-cap
     // branch where content is truncated before offload; the pointer is still relative.
     expect(onOffloaded).toHaveBeenCalledTimes(1);
-    expect(onOffloaded).toHaveBeenCalledWith("bash", 150_000, "call-hardcap", "tool-results/call-hardcap.json");
+    expect(onOffloaded).toHaveBeenCalledWith("bash", 150_000, "call-hardcap", "tool-results/call-hardcap.txt");
   });
 
   it("mutates original message content in-place for pipeline visibility (threshold path)", () => {
@@ -304,9 +330,11 @@ describe("installMicrocompactionGuard", () => {
       sm.appendMessage(largeResult);
 
       // The disk write was rejected — the offload file must not exist...
-      expect(existsSync(join(tempDir, "tool-results", "call-writefail.json"))).toBe(false);
+      expect(existsSync(join(tempDir, "tool-results", "call-writefail.txt"))).toBe(false);
       // ...and the trajectory offload event must NOT have been emitted.
       expect(onOffloaded).not.toHaveBeenCalled();
+      expect(sm.appended[0]).toBe(largeResult);
+      expect(largeResult.content[0]!.text).toBe("x".repeat(10_000));
     } finally {
       rmSync(unrelatedBase, { recursive: true, force: true });
     }
@@ -324,11 +352,34 @@ describe("installMicrocompactionGuard", () => {
       const hugeResult = createToolResult("bash", 150_000, "call-hardcap-writefail");
       sm.appendMessage(hugeResult);
 
-      expect(existsSync(join(tempDir, "tool-results", "call-hardcap-writefail.json"))).toBe(false);
+      expect(existsSync(join(tempDir, "tool-results", "call-hardcap-writefail.txt"))).toBe(false);
       expect(onOffloaded).not.toHaveBeenCalled();
+      expect(sm.appended[0]).toBe(hugeResult);
+      expect(hugeResult.content[0]!.text).toBe("x".repeat(150_000));
     } finally {
       rmSync(unrelatedBase, { recursive: true, force: true });
     }
+  });
+
+  it("keeps an external result inline when its origin sidecar cannot be written", () => {
+    const sm = createMockSessionManager(tempDir);
+    const onOffloaded = vi.fn();
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger, onOffloaded);
+
+    const toolResultsDir = join(tempDir, "tool-results");
+    mkdirSync(join(toolResultsDir, "call-sidecar-fail.origin.json"), {
+      recursive: true,
+    });
+    const prose = "External plain-text result. ".repeat(500);
+    const result = createWrappedMcpResult(prose, "call-sidecar-fail");
+
+    sm.appendMessage(result);
+
+    expect(existsSync(join(toolResultsDir, "call-sidecar-fail.txt"))).toBe(true);
+    expect(onOffloaded).not.toHaveBeenCalled();
+    expect(sm.appended[0]).toBe(result);
+    expect(result.content[0]!.text).toContain("SECURITY NOTICE");
+    expect(result.content[0]!.text).not.toContain("offloaded to disk");
   });
 
   it("does not fire onOffloaded for under-threshold tool results", () => {
@@ -353,7 +404,7 @@ describe("installMicrocompactionGuard", () => {
     const referenceText: string = appended.content[0].text;
 
     // Should contain the disk path and correct tool name for recovery
-    const expectedDiskPath = join(tempDir, "tool-results", "call-pathcheck.json");
+    const expectedDiskPath = join(tempDir, "tool-results", "call-pathcheck.txt");
     expect(referenceText).toContain(expectedDiskPath);
     expect(referenceText).toContain("use the read tool to re-access");
     expect(referenceText).not.toContain("file_read");
@@ -381,7 +432,7 @@ describe("installMicrocompactionGuard", () => {
     expect(referenceText).not.toContain("re-offload");
     expect(referenceText).toContain("read tool also works");
     // Disk path should be present
-    const expectedDiskPath = join(tempDir, "tool-results", "call-exec-hint.json");
+    const expectedDiskPath = join(tempDir, "tool-results", "call-exec-hint.txt");
     expect(referenceText).toContain(expectedDiskPath);
     // Offloaded prefix preserved for isAlreadyOffloaded compatibility
     expect(referenceText.startsWith("[Tool result offloaded to disk:")).toBe(true);
@@ -653,7 +704,7 @@ describe("recovery read exemption", () => {
 
     // No disk file created (no re-offload)
     const toolResultsDir = join(tempDir, "tool-results");
-    expect(existsSync(join(toolResultsDir, "call-recovery.json"))).toBe(false);
+    expect(existsSync(join(toolResultsDir, "call-recovery.txt"))).toBe(false);
 
     // DEBUG log for recovery skip
     expect(logger.debug).toHaveBeenCalled();
@@ -858,7 +909,7 @@ describe("microcompaction-guard file/dir mode invariants", () => {
     const largeResult = createToolResult("bash", 10_000, "mode-file");
     sm.appendMessage(largeResult);
 
-    const diskPath = join(tempDir, "tool-results", "mode-file.json");
+    const diskPath = join(tempDir, "tool-results", "mode-file.txt");
     expect(existsSync(diskPath)).toBe(true);
     expect(statSync(diskPath).mode & 0o777).toBe(0o600);
   });
@@ -867,12 +918,9 @@ describe("microcompaction-guard file/dir mode invariants", () => {
 // ---------------------------------------------------------------------------
 // Clean-payload offload: external-wrapped results are UNWRAPPED at rest.
 //
-// Live incident 2026-07-12 (comis-harel, "when was I last in the Golan"): the
-// offload marker's own `json.load` example failed on every offloaded MCP
-// result because the wrapExternalContent security envelope was baked into the
-// .json file. The file is a STORAGE artifact — the taint boundary belongs to
-// the presentation layer: payload bytes on disk, origin recorded in a sidecar,
-// re-wrap at the boundaries (marker preview + read-tool recovery).
+// The file is a STORAGE artifact — the taint boundary belongs to the
+// presentation layer: payload bytes on disk, origin recorded in a sidecar,
+// and wrapping restored at marker-preview and recovery-read boundaries.
 // ---------------------------------------------------------------------------
 
 /** A JSON payload whose serialized form is at least `minChars` long. */
@@ -958,7 +1006,7 @@ describe("clean-payload offload (external wrapper stripped at rest)", () => {
 
     sm.appendMessage(createToolResult("bash", 10_000, "call-internal"));
 
-    expect(existsSync(join(tempDir, "tool-results", "call-internal.json"))).toBe(true);
+    expect(existsSync(join(tempDir, "tool-results", "call-internal.txt"))).toBe(true);
     expect(existsSync(join(tempDir, "tool-results", "call-internal.origin.json"))).toBe(false);
   });
 
@@ -1035,7 +1083,7 @@ describe("clean-payload offload (external wrapper stripped at rest)", () => {
     const payload = bigJsonPayload(120_000);
     sm.appendMessage(createWrappedMcpResult(JSON.stringify(payload), "call-hardcap"));
 
-    const diskPath = join(tempDir, "tool-results", "call-hardcap.json");
+    const diskPath = join(tempDir, "tool-results", "call-hardcap.txt");
     const fileText = readFileSync(diskPath, "utf8");
     // Clean payload prefix, no envelope, capped length.
     expect(fileText.startsWith('{"rows"')).toBe(true);
@@ -1097,7 +1145,24 @@ describe("wrap-on-read: recovery reads restore the taint boundary", () => {
     // ...around the clean payload the file holds.
     expect(text).toContain('{"rows"');
     // Still exempt from re-offload (no second disk file for the read).
-    expect(existsSync(join(tempDir, "tool-results", "call-wrapread-read.json"))).toBe(false);
+    expect(existsSync(join(tempDir, "tool-results", "call-wrapread-read.txt"))).toBe(false);
+  });
+
+  it("restores the external-content boundary from a plain-text offload sidecar", () => {
+    const sm = createMockSessionManager(tempDir);
+    installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
+
+    const prose = "External plain-text result. ".repeat(500);
+    sm.appendMessage(createWrappedMcpResult(prose, "call-text-wrapread"));
+    const diskPath = join(tempDir, "tool-results", "call-text-wrapread.txt");
+    expect(existsSync(diskPath)).toBe(true);
+    expect(existsSync(join(tempDir, "tool-results", "call-text-wrapread.origin.json"))).toBe(true);
+
+    sm.appendMessage(createRecoveryRead(diskPath, "call-text-wrapread-read"));
+
+    const text: string = (sm.appended[1] as any).content[0].text;
+    expect(text).toContain("SECURITY NOTICE");
+    expect(text).toContain("External plain-text result.");
   });
 
   it("passes through recovery reads of internal-origin offload files unwrapped", () => {
@@ -1105,7 +1170,7 @@ describe("wrap-on-read: recovery reads restore the taint boundary", () => {
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
     sm.appendMessage(createToolResult("bash", 10_000, "call-internal-read"));
-    const diskPath = join(tempDir, "tool-results", "call-internal-read.json");
+    const diskPath = join(tempDir, "tool-results", "call-internal-read.txt");
     const originalFileText = readFileSync(diskPath, "utf8");
 
     sm.appendMessage(createRecoveryRead(diskPath, "call-internal-read-read"));

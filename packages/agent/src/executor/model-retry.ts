@@ -34,7 +34,8 @@ import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
-import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
+import { withPausablePromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
+import { pauseDuringCorrelatedApprovals } from "../approval-timeout-pause.js";
 import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
@@ -231,6 +232,20 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
     ...(deps.sessionKey !== undefined && { sessionKey: deps.sessionKey }),
     ...(tryGetContext()?.traceId !== undefined && { traceId: tryGetContext()!.traceId }),
   };
+  const runRetryPrompt = async (): Promise<void> => {
+    const controlled = withPausablePromptTimeout(
+      session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
+      timeoutConfig.retryPromptTimeoutMs,
+      () => session.abort(),
+      timers,
+    );
+    const stopApprovalTracking = pauseDuringCorrelatedApprovals(eventBus, controlled, turnIds);
+    try {
+      await controlled.promise;
+    } finally {
+      stopApprovalTracking();
+    }
+  };
   // Use session-resolved model for diagnostic logs, falling back to agent config default
   const displayModel = params.resolvedModel ?? `${config.provider}:${config.model}`;
   // Track total elapsed time across all retry attempts
@@ -248,8 +263,8 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
 
   try {
     // Primary prompt uses resettable timeout so tool completions and stream
-    // deltas can reset the deadline. Retry/fallback paths use
-    // the original withPromptTimeout (fresh whole-turn timeout).
+    // deltas can reset the deadline. Retry/fallback paths retain a fresh
+    // whole-turn timeout; every path pauses only for a correlated approval.
     const resettable = withResettablePromptTimeout(
       session.prompt(messageText, {
         expandPromptTemplates: false,
@@ -279,9 +294,14 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         }),
       },
     );
+    const stopApprovalTracking = pauseDuringCorrelatedApprovals(eventBus, resettable, turnIds);
     // Expose resetTimer to the caller (pi-executor) for wiring to tool execution events
     deps.onResetTimer?.(resettable.resetTimer);
-    await resettable.promise;
+    try {
+      await resettable.promise;
+    } finally {
+      stopApprovalTracking();
+    }
     promptSucceeded = true;
     effectiveModel = { provider: config.provider, model: config.model };
     // Record success for auth rotation cooldown tracking
@@ -393,13 +413,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             // Scope decision: retry/fallback prompts KEEP whole-turn
             // retryPromptTimeoutMs semantics (non-resettable) — pinned
             // by test; extend only if local retries die spuriously in
-            // practice. Applies to ALL withPromptTimeout sites in this function.
-            await withPromptTimeout(
-              session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
-              timeoutConfig.retryPromptTimeoutMs,
-              () => session.abort(),
-              timers,
-            );
+            // practice. Correlated approvals pause this deadline without
+            // exposing the activity-reset callback to retry paths.
+            await runRetryPrompt();
             promptSucceeded = true;
             promptError = undefined;
             effectiveModel = { provider: config.provider, model: config.model };
@@ -437,12 +453,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           if (!rotatedDispatch.ok) {
             return Promise.reject(rotatedDispatch.error);
           }
-          await withPromptTimeout(
-            session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
-            timeoutConfig.retryPromptTimeoutMs,
-            () => session.abort(),
-            timers,
-          );
+          await runRetryPrompt();
           promptSucceeded = true;
           promptError = undefined;
           effectiveModel = { provider: config.provider, model: config.model };
@@ -549,15 +560,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         if (!fallbackDispatch.ok) {
           return Promise.reject(fallbackDispatch.error);
         }
-        await withPromptTimeout(
-          session.prompt(messageText, {
-            expandPromptTemplates: false,
-            images: promptImages,
-          }),
-          timeoutConfig.retryPromptTimeoutMs,
-          () => session.abort(),
-          timers,
-        );
+        await runRetryPrompt();
         promptSucceeded = true;
         promptError = undefined;
         if (parsed) {
@@ -671,15 +674,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           if (!lkwDispatch.ok) {
             return Promise.reject(lkwDispatch.error);
           }
-          await withPromptTimeout(
-            session.prompt(messageText, {
-              expandPromptTemplates: false,
-              images: promptImages,
-            }),
-            timeoutConfig.retryPromptTimeoutMs,
-            () => session.abort(),
-            timers,
-          );
+          await runRetryPrompt();
           promptSucceeded = true;
           promptError = undefined;
           effectiveModel = { provider: lkw.provider, model: lkw.model };

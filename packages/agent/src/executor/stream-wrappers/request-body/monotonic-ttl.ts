@@ -159,6 +159,12 @@ export function enforceMonotonicTtlOrdering(
 
   if (markers.length <= 1) return;
 
+  // Preserve the original 1h locations before the sweep mutates earlier 5m
+  // markers. Together with upgradedLocations, this makes the conflicting
+  // retention inputs diagnosable from the WARN without reconstructing a raw
+  // request body.
+  const oneHourLocations = markers.filter((marker) => marker.ttl === "1h").map((marker) => marker.location);
+
   // Walk backward; once we see a 1h marker, every earlier 5m marker must
   // be upgraded. We push upgraded locations as we encounter them (reverse
   // payload order) and call `.reverse()` once at the end so the log
@@ -190,8 +196,9 @@ export function enforceMonotonicTtlOrdering(
     {
       upgradedCount: upgradedLocations.length,
       upgradedLocations,
+      oneHourLocations,
       totalMarkers: markers.length,
-      hint: "Safety-net sweep upgraded 5m cache_control markers that preceded a 1h marker. This indicates an upstream placement bug — check breakpoint-orchestration.ts (Fix E coordination) and maybePromoteBreakpoints (factory.ts) for retention mismatches.",
+      hint: "Safety-net sweep upgraded 5m cache_control markers that preceded a 1h marker. Compare oneHourLocations with upgradedLocations and check the retention inputs in breakpoint-orchestration.ts and factory.ts.",
       errorKind: "internal" as const,
     },
     "MONOTONIC-TTL: upgraded out-of-order 5m markers to 1h",

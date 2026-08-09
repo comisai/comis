@@ -161,6 +161,22 @@ export function placeCacheBreakpoints(
   // a live-measurable cache-behavior change deliberately deferred, not a
   // correctness fix.
   function estimateTokensInRange(start: number, end: number): number {
+    function structuredChars(value: unknown): number {
+      if (typeof value === "string") return value.length + 2;
+      if (typeof value === "number" || typeof value === "boolean") return String(value).length;
+      if (value === null) return 4;
+      if (Array.isArray(value)) {
+        return 2 + value.reduce((total, item) => total + structuredChars(item) + 1, 0);
+      }
+      if (typeof value === "object") {
+        return 2 + Object.entries(value).reduce(
+          (total, [key, item]) => total + key.length + 3 + structuredChars(item) + 1,
+          0,
+        );
+      }
+      return 0;
+    }
+
     let tokens = 0;
     for (let i = start; i <= end && i < messages.length; i++) {
       const msg = messages[i] as any;
@@ -180,6 +196,14 @@ export function placeCacheBreakpoints(
           if (typeof block.text === "string") {
             // flat-by-design: cache-placement heuristic, never budget/fit — see function docstring
             tokens += Math.ceil(block.text.length / ratio);
+          }
+          if (block.type === "tool_use" && block.input !== undefined) {
+            // flat-by-design: aggregate structured JSON characters have no source text to factor
+            tokens += Math.ceil(structuredChars(block.input) / CHARS_PER_TOKEN_RATIO_STRUCTURED);
+          }
+          if (block.toolUse?.input !== undefined) {
+            // flat-by-design: aggregate structured JSON characters have no source text to factor
+            tokens += Math.ceil(structuredChars(block.toolUse.input) / CHARS_PER_TOKEN_RATIO_STRUCTURED);
           }
           // tool_result blocks nest text inside block.content[]
           if (Array.isArray(block.content)) {
@@ -233,17 +257,7 @@ export function placeCacheBreakpoints(
     if (semiStableIdx >= secondToLastUserIdx) semiStableIdx = -1;
   }
 
-  // Breakpoint #1 (semi-stable anchor): a stable early boundary (compaction summary or the
-  // pinned 2nd-user-message position). Caches [0..semiStable] as a durable fallback.
-  if (semiStableIdx >= 0 && placed < remaining) {
-    const tokensToPoint = estimateTokensInRange(0, semiStableIdx);
-    if (tokensToPoint >= minTokens) {
-      addCacheControlToLastBlock(messages[semiStableIdx] as any, resolvedRetention ?? retention);
-      placed++;
-    }
-  }
-
-  // Breakpoint #2 (RECENT / tail — PRIORITY over any bridge): on the second-to-last user message,
+  // Allocate the RECENT / tail marker first: on the second-to-last user message,
   // ADJACENT to the SDK's last-message marker. This is the load-bearing marker: its fresh write
   // caches [0..recent] (the WHOLE prefix — a fresh write does not need a nearby prior breakpoint),
   // and it chains the SDK tail marker + the previous turn's cache (≤window apart) so the cached
@@ -264,6 +278,18 @@ export function placeCacheBreakpoints(
         }
       }
       addCacheControlToLastBlock(messages[secondToLastUserIdx] as any, recentRetention);
+      placed++;
+    }
+  }
+
+  // Allocate the semi-stable anchor only after the load-bearing recent marker: a stable early
+  // boundary (compaction summary or the pinned 2nd-user-message position) that caches
+  // [0..semiStable] as a durable fallback. With only one available slot, protecting the tail
+  // prevents the prefix from freezing at this early anchor.
+  if (semiStableIdx >= 0 && placed < remaining) {
+    const tokensToPoint = estimateTokensInRange(0, semiStableIdx);
+    if (tokensToPoint >= minTokens) {
+      addCacheControlToLastBlock(messages[semiStableIdx] as any, resolvedRetention ?? retention);
       placed++;
     }
   }

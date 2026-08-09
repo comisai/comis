@@ -31,20 +31,6 @@ import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
 
 /**
- * Session list entry returned from the daemon.
- * Supports both canonical field names and daemon RPC field names.
- */
-interface SessionEntry {
-  conversationRef: string;
-  updatedAt: number;
-  createdAt: number;
-  messageCount: number;
-  agentId: string;
-  kind: string;
-  totalTokens: number;
-}
-
-/**
  * Format an epoch millisecond timestamp into a relative time string.
  *
  * @param timestamp - Epoch milliseconds
@@ -102,7 +88,7 @@ export function registerSessionsCommand(program: Command): void {
         );
 
         // The contract response shape is { sessions: [...], total }.
-        const entries: SessionEntry[] = result.sessions as unknown as SessionEntry[];
+        const entries = result.sessions;
 
         if (entries.length === 0) {
           info("No sessions found");
@@ -142,10 +128,12 @@ export function registerSessionsCommand(program: Command): void {
     .description("Display full details of a session")
     .requiredOption("--tenant <tenantId>", "Tenant ID")
     .requiredOption("--agent <agentId>", "Agent ID")
+    .option("--offset <n>", "History offset", "0")
+    .option("--limit <n>", "Messages per page (1-200)", "20")
     .option("--format <format>", "Output format (table|json)", "table")
     .action(async (
       conversationRef: string,
-      options: { tenant: string; agent: string; format: string },
+      options: { tenant: string; agent: string; offset: string; limit: string; format: string },
     ) => {
       try {
         const history = await withSpinner("Fetching session...", () =>
@@ -154,6 +142,8 @@ export function registerSessionsCommand(program: Command): void {
               tenant_id: options.tenant,
               agent_id: options.agent,
               conversation_ref: conversationRef,
+              offset: Number(options.offset),
+              limit: Number(options.limit),
             });
           }),
         );
@@ -191,6 +181,13 @@ export function registerSessionsCommand(program: Command): void {
             ]),
           );
         }
+
+        const pageStart = history.messages.length === 0 ? 0 : history.offset + 1;
+        const pageEnd = history.offset + history.messages.length;
+        const nextPage = history.hasMore
+          ? ` Next page: --offset ${pageEnd} --limit ${history.limit}`
+          : "";
+        info(`Showing ${pageStart}-${pageEnd} of ${history.total}.${nextPage}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to inspect session: ${msg}`);

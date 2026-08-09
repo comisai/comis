@@ -369,6 +369,7 @@ describe("applyResponseLocaleEnforcement", () => {
       draft,
       "The switch completed successfully.",
     );
+    session.agent.state.systemPrompt = "SOURCE_SYSTEM_PROMPT_MARKER ".repeat(4_000);
     const beforeMessages = JSON.stringify(session.messages);
     const result = { response: draft };
     const params = {
@@ -399,12 +400,17 @@ describe("applyResponseLocaleEnforcement", () => {
     expect(JSON.stringify(session.messages)).toBe(beforeMessages);
     expect(session.streamFunction).toHaveBeenCalledTimes(1);
     const providerContext = session.streamFunction.mock.calls[0]?.[1] as {
+      systemPrompt?: string;
       messages: Array<{ role: string; content: unknown }>;
       tools?: unknown[];
     };
+    expect(providerContext.systemPrompt).not.toContain("SOURCE_SYSTEM_PROMPT_MARKER");
+    expect(providerContext.systemPrompt?.length).toBeLessThan(1_000);
     expect(providerContext.messages).toHaveLength(1);
     expect(providerContext.messages[0]?.role).toBe("user");
     expect(providerContext.tools ?? []).toEqual([]);
+    const providerOptions = session.streamFunction.mock.calls[0]?.[2] as Record<PropertyKey, unknown>;
+    expect(providerOptions[Symbol.for("comis.auxiliary-stream-call")]).toBe(true);
   });
 
   it("recovers the locale terminal error when a later deterministic guard satisfies the policy", () => {

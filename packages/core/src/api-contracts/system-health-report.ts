@@ -74,6 +74,14 @@ export const SystemHealthReportSchema = z.object({
    * `endReason`. Required (the assembler always emits it, possibly `{}`).
    */
   degradedByCause: z.record(z.string(), z.number()),
+  /** The exact degraded execution selected for the system-to-incident drill-down. */
+  worstDegradedExecution: z
+    .object({
+      sessionKey: z.string(),
+      traceId: z.string().min(1),
+      endReason: z.string(),
+    })
+    .optional(),
   breakerTripTotal: z.number(),
   /** Bounded key set (per-tool ok/failed rollup) — mirrors `IncidentReport.toolStats`. */
   toolStats: z.record(z.string(), z.object({ ok: z.number(), failed: z.number() })),

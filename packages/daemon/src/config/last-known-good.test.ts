@@ -70,6 +70,22 @@ describe("last-known-good config", () => {
   });
 
   describe("saveLastKnownGood", () => {
+    it("snapshots provider credential reference names without treating them as plaintext", () => {
+      const source = yamlStringify({
+        providers: {
+          entries: {
+            example: { apiKeyName: "EXAMPLE_API_KEY" },
+          },
+        },
+      });
+      writeFileSync(configPath, source);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(true);
+      expect(readFileSync(result.path, "utf-8")).toBe(source);
+    });
+
     it("copies config to last-known-good path", () => {
       writeFileSync(configPath, "key: value\n");
       const result = saveLastKnownGood(configPath);

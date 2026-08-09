@@ -197,7 +197,7 @@ export function runCacheBreakpointPhase(
   // below so the earlier breakpoint placed by placeCacheBreakpoints uses 1h
   // instead of 5m — preventing a live-observed TTL ordering violation at the
   // source (the monotonic-ttl safety net remains as defense in depth).
-  let eFixFiredAt: number | undefined;
+  let untrustedAnchorIndex: number | undefined;
 
   // Breakpoint budget audit -- 1 per API call.
   {
@@ -281,9 +281,9 @@ export function runCacheBreakpointPhase(
       // that the lookback gap-bridge needs (observed live: small tool_results were stealing
       // the slot, leaving the mid-conversation gap unbridged on alternating tool turns). The
       // delimiter-wrap security is independent of this cost anchor, so gating on size is safe.
-      const EFIX_MIN_UNTRUSTED_CHARS = 16384; // ~4K tokens — clearly "large", well below ~32KB
+      const MIN_UNTRUSTED_ANCHOR_CHARS = 16384; // ~4K tokens — clearly "large", well below ~32KB
       const untrustedChars = content.reduce((sum, b) => sum + (typeof b.text === "string" ? (b.text as string).length : 0), 0);
-      if (untrustedChars < EFIX_MIN_UNTRUSTED_CHARS) continue;
+      if (untrustedChars < MIN_UNTRUSTED_ANCHOR_CHARS) continue;
       // Place (or upgrade) cache_control to 1h on the last block of this message.
       const lastBlock = content[content.length - 1];
       const alreadyPlaced = lastBlock != null && lastBlock.cache_control != null;
@@ -295,12 +295,12 @@ export function runCacheBreakpointPhase(
       }
       logger.debug(
         { messageIndex: i, modelId: model.id, sessionKey: config.sessionKey },
-        "E-FIX: 1h cache anchor placed on user message carrying UNTRUSTED_ block",
+        "Long-TTL cache anchor placed on user message carrying an untrusted block",
       );
       // Record the message index so the recent-zone retention below
       // upgrades from "short" (5m) to "long" (1h) — keeping the
       // tools->system->messages TTL sequence monotonically non-increasing.
-      eFixFiredAt = i;
+      untrustedAnchorIndex = i;
       break;
     }
   }
@@ -315,7 +315,7 @@ export function runCacheBreakpointPhase(
   // "MONOTONIC-TTL: upgraded out-of-order 5m markers to 1h" naming system[1] —
   // an upstream-placement-bug WARN on every such turn. Promote here instead, the
   // same coordination the recent-zone retention below already performs.
-  if (eFixFiredAt !== undefined && resolvedRetention !== "long" && Array.isArray(result.system)) {
+  if (untrustedAnchorIndex !== undefined && resolvedRetention !== "long" && Array.isArray(result.system)) {
     for (const block of result.system as Array<Record<string, unknown>>) {
       if (block.cache_control) {
         block.cache_control = { type: "ephemeral", ttl: "1h" };
@@ -330,7 +330,12 @@ export function runCacheBreakpointPhase(
   if (slotsAvailable > 0 && Array.isArray(result.messages)) {
     // Conversation breakpoints use zone-aware retention.
     // Recent zone always uses "short" (5m); semi-stable/mid zones get escalated retention.
-    const messageRetention = config.getMessageRetention?.() ?? resolvedRetention;
+    const requestedMessageRetention = config.getMessageRetention?.() ?? resolvedRetention;
+    // Adaptive retention is allowed to shorten message markers independently,
+    // but it cannot advance beyond the execution-level retention latch. If it
+    // did, a later model call in the same execution could emit system(5m) then
+    // message(1h), forcing the monotonic-TTL safety net to repair every request.
+    const messageRetention = resolvedRetention === "long" ? requestedMessageRetention : resolvedRetention;
     const placed = placeCacheBreakpoints(
       result.messages as Array<Record<string, unknown>>,
       {
@@ -342,7 +347,7 @@ export function runCacheBreakpointPhase(
         // Without this coordination, enforceMonotonicTtlOrdering catches the
         // violation but logs a WARN — coordinating here makes the placement intent
         // correct at source so the safety net stays quiet in the common UNTRUSTED path.
-        retention: eFixFiredAt !== undefined ? "long" : "short",
+        retention: untrustedAnchorIndex !== undefined ? "long" : "short",
         resolvedRetention: inCooldown ? "short" : messageRetention, // Force "short" during cooldown
         strategy: resolveBreakpointStrategy(config.cacheBreakpointStrategy, model.provider),
         skipCacheWrite: effectiveSkipCacheWrite,
@@ -403,7 +408,7 @@ export function runCacheBreakpointPhase(
           // last real user turn instead leaves the in-flight cycle outside the fence, where its
           // mutation is free.
           if ((content as Array<Record<string, unknown>>).every((b) => b.type === "tool_result")) continue;
-          addCacheControlToLastBlock(scanMsgs[i]!, eFixFiredAt !== undefined ? "long" : "short");
+          addCacheControlToLastBlock(scanMsgs[i]!, untrustedAnchorIndex !== undefined ? "long" : "short");
           highestBreakpointIdx = i;
           logger.debug(
             { highestBreakpointIdx: i, messageCount: scanMsgs.length, modelId: model.id, minTokens },

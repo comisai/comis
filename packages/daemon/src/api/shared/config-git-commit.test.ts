@@ -22,14 +22,16 @@ describe("commitConfigVersionBestEffort", () => {
     );
 
     expect(result).toEqual(err("git unavailable"));
-    expect(logger.debug).toHaveBeenCalledWith(
+    expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "config.patch",
         section: "logLevel",
         outcome: "failure",
         err: "git unavailable",
+        errorKind: "dependency",
+        hint: expect.stringContaining("comis config history"),
       }),
-      "Git commit failed (best-effort)",
+      "Config history commit failed; config write remains applied",
     );
     expect(logger.debug).not.toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "success" }),
@@ -67,9 +69,15 @@ describe("commitConfigVersionBestEffort", () => {
     );
 
     expect(result).toEqual(err("runner failed"));
-    expect(logger.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ method: "config.apply", outcome: "failure", err: "runner failed" }),
-      "Git commit failed (best-effort)",
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "config.apply",
+        outcome: "failure",
+        err: "runner failed",
+        errorKind: "dependency",
+        hint: expect.stringContaining("comis config history"),
+      }),
+      "Config history commit failed; config write remains applied",
     );
   });
 });

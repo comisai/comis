@@ -118,7 +118,6 @@ export const SessionListContract = defineContract({
       kind: z.string(),
       endpoint: ChannelEndpointSchema.optional(),
       messageCount: z.number(),
-      totalTokens: z.number(),
       updatedAt: z.number(),
       createdAt: z.number(),
     })),
@@ -201,8 +200,8 @@ export const SessionHistoryContract = defineContract({
     tenant_id: z.string(),
     agent_id: z.string(),
     conversation_ref: z.string(),
-    offset: z.number().optional(),
-    limit: z.number().optional(),
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
   }),
   response: z.object({
     session: z.object({

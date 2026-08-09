@@ -92,6 +92,34 @@ describe("createRequestBodyInjector", () => {
     expect(receivedOptions.onPayload).toBeUndefined();
   });
 
+  it("keeps auxiliary model calls out of the parent cache state", () => {
+    const base = createMockStreamFn();
+    const onPayloadForCacheDetection = vi.fn();
+    const onBreakpointsPlaced = vi.fn();
+    const wrapper = createRequestBodyInjector({
+      getCacheRetention: () => "long",
+      sessionKey: "parent-session",
+      onPayloadForCacheDetection,
+      onBreakpointsPlaced,
+    }, logger);
+    const wrappedFn = wrapper(base);
+    const options = {
+      [Symbol.for("comis.auxiliary-stream-call")]: true,
+    } as Record<PropertyKey, unknown>;
+
+    wrappedFn(
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as never,
+      makeContext([]),
+      options as never,
+    );
+
+    const receivedOptions = base.mock.calls[0]?.[2] as Record<PropertyKey, unknown>;
+    expect(receivedOptions).toBe(options);
+    expect(receivedOptions.onPayload).toBeUndefined();
+    expect(onPayloadForCacheDetection).not.toHaveBeenCalled();
+    expect(onBreakpointsPlaced).not.toHaveBeenCalled();
+  });
+
   it("injects breakpoints for Anthropic provider via onPayload", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
@@ -6863,13 +6891,12 @@ describe("fence-aware microcompaction", () => {
       expect(countUnstableWarns(testLogger)).toBeGreaterThanOrEqual(1);
     });
 
-    it("WARN names the first divergent message index + its poison class", async () => {
+    it("does not warn when the runtime preamble changes inside the current turn", async () => {
       const testLogger = createMockLogger();
 
-      // Mutate index 2 with a varying DATETIME-PREAMBLE each turn — a cache-poison
-      // class that reaches the diagnostic (unlike the inline-recall block, which
-      // the recall strip removes upstream). The diagnostic must identify WHICH message +
-      // WHAT content class, so the next incident needs no ad-hoc instrumentation.
+      // The runtime envelope is intentionally rebuilt from current time, policy,
+      // and request-scoped context. Its movement is visible in the DEBUG probe,
+      // but actual cache-read telemetry decides whether it harmed reuse.
       for (let turn = 0; turn < 4; turn++) {
         const msgs = buildMessages(6);
         (msgs[2].content as any[])[0].text =
@@ -6880,10 +6907,7 @@ describe("fence-aware microcompaction", () => {
       const warn = (testLogger.warn as ReturnType<typeof vi.fn>).mock.calls.find(
         (c: unknown[]) => typeof c[1] === "string" && c[1].includes("Unstable prefix detected"),
       );
-      expect(warn).toBeDefined();
-      const payload = warn![0] as Record<string, unknown>;
-      expect(payload.firstDivergentIndex).toBe(2);
-      expect(String(payload.mutationClass)).toContain("datetime-preamble");
+      expect(warn).toBeUndefined();
     });
 
     it("WARN classifies a CONTENT-cleared structural delta (no content leak)", async () => {

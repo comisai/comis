@@ -122,6 +122,9 @@ export function registerSystemHealthCommand(program: Command): void {
             `Degraded by cause: ${degradedByCause.map(([cause, count]) => `${cause}=${count}`).join(", ")}`,
           );
         }
+        if (report.worstDegradedExecution) {
+          info(`Worst:      comis explain ${report.worstDegradedExecution.traceId}`);
+        }
         info(`Breaker:    ${report.breakerTripTotal} trips`);
         // The cross-run AUTONOMY-health slice. Guarded like
         // degradedByCause (above): present ONLY when the daemon ran durable

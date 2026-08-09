@@ -548,7 +548,7 @@ export const IncidentReportSchema = z.object({
   /** The prompt-cache breaks the
    *  session incurred, aggregated per-reason from its `cache.break` trajectory
    *  records. `estCostUsd` is the re-write waste — tokenDrop x (cacheWrite - cacheRead) — summed
-   *  per reason (`tokenDrop × resolveModelPricing.cacheRead`; 0 for an unknown
+   *  per reason (0 for an unknown
    *  model — honest). Counts + a closed reason label + a number ONLY — never the
    *  changed tool NAMES (the trajectory carries only the changed-dims digest). The
    *  `cacheBreaks?` section answers "did caching break this session, why, and what

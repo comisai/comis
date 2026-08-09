@@ -2816,7 +2816,8 @@ async function runSessionLocked(
                 reason: event.reason,
                 tokenDrop: event.tokenDrop,
                 conversationBlockCount: event.conversationBlockCount,
-                hint: lookbackWindowExceededHint(event.conversationBlockCount),
+                breakpointBudget: event.breakpointBudget,
+                hint: lookbackWindowExceededHint(event.breakpointBudget),
                 errorKind: "internal" as const,
               },
               "Cache miss from lookback window exceeded (not server eviction)",
@@ -2987,6 +2988,7 @@ async function runSessionLocked(
         bgConfig,
         originResolver,
         bridge.markDeferredWork,
+        deps.eventBus,
       );
       tool.execute = (wrapped as unknown as typeof tool).execute;
     }

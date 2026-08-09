@@ -70,10 +70,16 @@ function makeFailure(overrides: Partial<IncidentFailure> = {}): IncidentFailure 
 }
 
 function makeSignals(overrides: Partial<IncidentSignals> = {}): IncidentSignals {
+  const failures = [
+    makeFailure({ seq: 1 }),
+    makeFailure({ seq: 2 }),
+    makeFailure({ seq: 3 }),
+  ];
   return {
     sessionKey: SESSION_KEY,
     toolStats: { web_fetch: { ok: 2, failed: 8, topErrorKind: "dependency" } },
-    failures: [makeFailure({ seq: 1 }), makeFailure({ seq: 2 }), makeFailure({ seq: 3 })],
+    failures,
+    failureHistory: overrides.failureHistory ?? overrides.failures ?? failures,
     breakerEvents: [],
     offloads: [],
     nodeBudgetBreaches: [],
@@ -1112,6 +1118,31 @@ describe("assembleIncidentReport — toolStats", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleIncidentReport — failures/breaker/offloads", () => {
+  it("keeps session failure drill-down when verdict evidence is scoped to the latest turn", () => {
+    const historicalFailure = makeFailure({
+      seq: 2,
+      toolName: "agents_manage",
+      errorPreview: "old turn failure",
+    });
+    const signals = makeSignals({
+      failures: [],
+      toolStats: {
+        agents_manage: { ok: 0, failed: 1, topErrorKind: "validation" },
+      },
+      failureHistory: [historicalFailure],
+    } as unknown as Partial<IncidentSignals>);
+
+    const report = assembleIncidentReport(
+      signals,
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(report.failures).toEqual([historicalFailure]);
+  });
+
   it("orders failures newest-first by descending seq", () => {
     const report = assembleIncidentReport(
       makeSignals({

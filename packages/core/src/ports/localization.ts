@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 
+export type { DeterministicLocalizationMessageId } from "../localization-message-ids.js";
+
 export type LocalizationKey =
   | "approval.none_pending"
   | "approval.none_pending_resolve"
@@ -14,6 +16,7 @@ export type LocalizationKey =
   | "session.reset";
 
 export interface LocalizationRequest {
+  readonly agentId?: string;
   readonly key: LocalizationKey;
   readonly locale?: string;
   readonly values?: Readonly<Record<string, string | number>>;

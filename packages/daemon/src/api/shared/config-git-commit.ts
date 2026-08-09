@@ -28,14 +28,16 @@ export async function commitConfigVersionBestEffort(
   const result = boundary.ok ? boundary.value : err(boundary.error.message);
 
   if (!result.ok) {
-    logger.debug(
+    logger.warn(
       {
         ...fields,
         durationMs: systemNowMs() - startMs,
         outcome: "failure",
         err: result.error,
+        errorKind: "dependency" as const,
+        hint: "Run 'comis config history'; inspect the active config directory's .git permissions and retry the config change",
       },
-      "Git commit failed (best-effort)",
+      "Config history commit failed; config write remains applied",
     );
     return result;
   }

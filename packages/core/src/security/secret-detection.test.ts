@@ -75,6 +75,20 @@ describe("looksLikeSecretValue — auth-scheme and quote stripping", () => {
 });
 
 describe("isSecretFieldName — superset", () => {
+  it("keeps credential reference-name fields out of secret detection", () => {
+    expect(isSecretFieldName("apiKeyName")).toBe(false);
+    expect(scanForSecrets({
+      providers: {
+        entries: {
+          example: { apiKeyName: "EXAMPLE_API_KEY" },
+        },
+      },
+    })).toEqual([]);
+    expect(scanForSecrets({ apiKeyName: "sk-abcdefghijklmnop1234" })).toEqual([
+      expect.objectContaining({ path: "apiKeyName", reason: "secret-value" }),
+    ]);
+  });
+
   it("flags the Authorization header field name", () => {
     expect(isSecretFieldName("Authorization")).toBe(true);
   });

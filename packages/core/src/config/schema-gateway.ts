@@ -2,6 +2,11 @@
 import { z } from "zod";
 import { SecretRefSchema } from "../domain/secret-ref.js";
 
+const WholeEnvVarReferenceSchema = z.string().regex(
+  /^\$\{[A-Z_][A-Z0-9_]*\}$/,
+  "Expected a whole ${VAR_NAME} environment reference",
+);
+
 /**
  * TLS configuration for the gateway HTTPS server.
  *
@@ -41,8 +46,8 @@ export const GatewayTlsConfigSchema = z.strictObject({
 export const GatewayTokenSchema = z.strictObject({
     /** Unique identifier for this token */
     id: z.string().min(1),
-    /** The secret value (min 32 chars; resolved at runtime if omitted; string or SecretRef) */
-    secret: z.union([z.string().min(32), SecretRefSchema]).optional(),
+    /** The secret value (min 32 chars), an unresolved environment reference, or a SecretRef. */
+    secret: z.union([z.string().min(32), WholeEnvVarReferenceSchema, SecretRefSchema]).optional(),
     /** Allowed scopes for this token. Each token expresses ONE trust posture:
      *  RPC/WS operator tokens (`["rpc"]`, `["rpc", "ws"]`, `["admin"]`,
      *  `["*"]`) OR an external MCP-server client (`["mcp-client"]` --

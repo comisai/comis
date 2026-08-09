@@ -169,6 +169,33 @@ describe("createGeminiCacheInjector", () => {
     expect(cacheManager.getOrCreate).not.toHaveBeenCalled();
   });
 
+  it("keeps auxiliary model calls out of the parent cache state", async () => {
+    vi.mocked(isGoogleFamily).mockReturnValue(true);
+    vi.mocked(isGoogleAIStudio).mockReturnValue(true);
+    vi.mocked(cacheManager.getOrCreate).mockResolvedValue(ok(undefined));
+    const onPayloadForCacheDetection = vi.fn();
+    const wrapper = createGeminiCacheInjector(
+      createConfig({ onPayloadForCacheDetection }),
+      logger,
+    );
+    const next = mockNextWithOnPayload();
+    const wrappedFn = wrapper(next);
+    const options = {
+      [Symbol.for("comis.auxiliary-stream-call")]: true,
+    } as Record<PropertyKey, unknown>;
+
+    const result = wrappedFn(
+      GOOGLE_MODEL as never,
+      { messages: [] } as never,
+      options as never,
+    );
+    for await (const _chunk of result) { /* consume */ }
+
+    expect(next).toHaveBeenCalledWith(GOOGLE_MODEL, { messages: [] }, options);
+    expect(cacheManager.getOrCreate).not.toHaveBeenCalled();
+    expect(onPayloadForCacheDetection).not.toHaveBeenCalled();
+  });
+
   it("injects cachedContent and strips 3 fields on cache hit", async () => {
     vi.mocked(isGoogleFamily).mockReturnValue(true);
     vi.mocked(isGoogleAIStudio).mockReturnValue(true);

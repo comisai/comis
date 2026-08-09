@@ -139,6 +139,12 @@ const CORRUPTION_PATTERNS = [
   "fatal: reference is not a tree",
 ];
 
+function isUnmatchedPathspec(errorMessage: string): boolean {
+  const normalized = errorMessage.toLowerCase();
+  return normalized.includes("pathspec")
+    && normalized.includes("did not match any files");
+}
+
 // ---------------------------------------------------------------------------
 // Commit message encoding / decoding
 // ---------------------------------------------------------------------------
@@ -251,6 +257,34 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
 
   /** Track whether init has succeeded at least once this session */
   let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  async function serializeOperation<T>(
+    operation: () => Promise<Result<T, string>>,
+  ): Promise<Result<T, string>> {
+    const priorOperation = operationQueue;
+    let release = (): void => undefined;
+    operationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await priorOperation;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  async function stageConfigPathspec(
+    pathspec: "*.yaml" | "*.yml",
+    execute: (args: string[]) => Promise<Result<string, string>>,
+  ): Promise<Result<void, string>> {
+    const stageResult = await execute(["add", pathspec]);
+    if (stageResult.ok || isUnmatchedPathspec(stageResult.error)) {
+      return ok(undefined);
+    }
+    return err(`Failed to stage ${pathspec}: ${stageResult.error}`);
+  }
 
   /**
    * Execute a git command with auto-reinitialize on corruption.
@@ -367,9 +401,20 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
     // Run *.yaml and *.yml as separate git-add calls because combining them
     // in one invocation causes a fatal pathspec error when one glob matches
     // no files, aborting the entire add (including the matching glob).
-    await execGit(["add", ".gitignore"], configDir);
-    await execGit(["add", "*.yaml"], configDir);
-    await execGit(["add", "*.yml"], configDir);
+    const gitignoreStage = await execGit(["add", ".gitignore"], configDir);
+    if (!gitignoreStage.ok) {
+      return err(`Failed to stage .gitignore: ${gitignoreStage.error}`);
+    }
+    const yamlStage = await stageConfigPathspec(
+      "*.yaml",
+      (args) => execGit(args, configDir),
+    );
+    if (!yamlStage.ok) return yamlStage;
+    const ymlStage = await stageConfigPathspec(
+      "*.yml",
+      (args) => execGit(args, configDir),
+    );
+    if (!ymlStage.ok) return ymlStage;
 
     // Create initial commit (allow-empty in case no YAML files exist)
     const commitResult = await execGit(
@@ -404,8 +449,10 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
 
       // Stage all YAML changes (separate calls to avoid fatal pathspec
       // error when one glob matches no files — see initRepo comment).
-      await execWithReinit(["add", "*.yaml"]);
-      await execWithReinit(["add", "*.yml"]);
+      const yamlStage = await stageConfigPathspec("*.yaml", execWithReinit);
+      if (!yamlStage.ok) return yamlStage;
+      const ymlStage = await stageConfigPathspec("*.yml", execWithReinit);
+      if (!ymlStage.ok) return ymlStage;
 
       // Build structured commit message
       const message = encodeCommitMessage(metadata);
@@ -718,5 +765,14 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
     },
   };
 
-  return manager;
+  return {
+    init: () => serializeOperation(() => manager.init()),
+    commit: (metadata) => serializeOperation(() => manager.commit(metadata)),
+    history: (opts) => serializeOperation(() => manager.history(opts)),
+    diff: (sha) => serializeOperation(() => manager.diff(sha)),
+    rollback: (sha) => serializeOperation(() => manager.rollback(sha)),
+    checkDirty: () => serializeOperation(() => manager.checkDirty()),
+    gc: () => serializeOperation(() => manager.gc()),
+    squash: (olderThan) => serializeOperation(() => manager.squash(olderThan)),
+  };
 }

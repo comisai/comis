@@ -110,6 +110,12 @@ describe("runCacheBreakpointPhase — system marker coordinates with the UNTRUST
     const warned = (logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls
       .some((call) => String(call[1] ?? "").includes("MONOTONIC-TTL"));
     expect(warned).toBe(false);
+    const anchorLog = (logger.debug as unknown as { mock: { calls: unknown[][] } }).mock.calls
+      .find((call) => String(call[1] ?? "").includes("cache anchor placed"));
+    expect(anchorLog?.[1]).toBe(
+      "Long-TTL cache anchor placed on user message carrying an untrusted block",
+    );
+    expect(String(anchorLog?.[1])).not.toContain("E-FIX");
   });
 
   it("leaves the system marker at 5m when no UNTRUSTED_ anchor fires", () => {
@@ -136,6 +142,41 @@ describe("runCacheBreakpointPhase — system marker coordinates with the UNTRUST
     const anchored = system.filter((block) => block.cache_control !== undefined);
     expect(anchored).toHaveLength(1);
     expect(anchored[0]!.cache_control).toEqual({ type: "ephemeral" });
+  });
+});
+
+describe("runCacheBreakpointPhase — message retention cannot outrun the execution latch", () => {
+  it("keeps message markers at 5m when the latched system retention is still short", () => {
+    const logger = makeLogger();
+    const messages: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 8; i++) {
+      messages.push({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: "x".repeat(5_000) }],
+      });
+    }
+    const result = makeResult(messages);
+
+    runCacheBreakpointPhase(
+      result,
+      { id: "claude-sonnet-4-5-20250929", provider: "anthropic" },
+      makeConfig({
+        getCacheRetention: () => "short",
+        // The adaptive ladder can advance between model calls while the
+        // execution-level retention latch intentionally stays short.
+        getMessageRetention: () => "long",
+      }),
+      true,
+      false,
+      0,
+      logger,
+    );
+
+    expect(JSON.stringify(result)).not.toContain('"ttl":"1h"');
+    const monotonicWarnings = (
+      logger.warn as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.filter((call) => String(call[1] ?? "").includes("MONOTONIC-TTL"));
+    expect(monotonicWarnings).toEqual([]);
   });
 });
 

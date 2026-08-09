@@ -222,6 +222,28 @@ describe("withResettablePromptTimeout", () => {
     expect(abort).not.toHaveBeenCalled();
   });
 
+  it("pauseTimer excludes an external approval wait from the stall budget", async () => {
+    const abort = vi.fn();
+    const hung = new Promise<never>(() => {});
+    const controlled = withResettablePromptTimeout(hung, 100, abort, testTimers, {
+      makespanMs: 1_000,
+    });
+    const caught = controlled.promise.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(80);
+    controlled.pauseTimer();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(abort).not.toHaveBeenCalled();
+
+    controlled.resumeTimer();
+    await vi.advanceTimersByTimeAsync(99);
+    expect(abort).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(await caught).toBeInstanceOf(PromptTimeoutError);
+    expect(abort).toHaveBeenCalledTimes(1);
+  });
+
   it("resetTimer after timeout has no effect", async () => {
     const abort = vi.fn();
     const promise = new Promise<string>((resolve) => {

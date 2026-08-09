@@ -2,11 +2,8 @@
 /**
  * Request-body injector factory.
  *
- * Composition root for the four concerns the wrapper consolidates:
- *  1. Cache breakpoints (Anthropic-family) -- breakpoint-orchestration.ts
- *  2. 1M beta header (direct Anthropic only) -- context-window.ts
- *  3. service_tier injection (Responses API + fastMode) -- service-tier.ts
- *  4. store flag injection (Responses API + storeCompletions) -- store-flag.ts
+ * Composition root for cache breakpoints, Anthropic context headers, Responses
+ * service-tier injection, and Responses storage flags.
  *
  * The onPayload pipeline composes sibling phase modules:
  *   - tool-cache.ts           (rendered tool memoization)
@@ -28,6 +25,7 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import type { ComisLogger } from "@comis/core";
+import { isAuxiliaryStreamCall } from "../auxiliary-stream-call.js";
 import type { StreamFnWrapper } from "../types.js";
 import { createAccumulativeLatch } from "../../session-latch.js";
 import { isAnthropicFamily, supportsExtendedCacheTtl } from "../../../provider/capabilities.js";
@@ -91,6 +89,11 @@ export function createRequestBodyInjector(
 ): StreamFnWrapper {
   return function requestBodyInjector(next: StreamFn): StreamFn {
     return (model, context, options) => {
+      // Utility-model payloads are outside the parent conversation, so bypass
+      // session-scoped cache mutations and preserve the parent's cache state.
+      if (isAuxiliaryStreamCall(options)) {
+        return next(model, context, options);
+      }
       const needsCacheBreakpoints = config.modelProfile?.supportsPromptCache
         ?? isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });

@@ -61,6 +61,7 @@ function makeSignals(
     sessionKey: SESSION_KEY,
     toolStats,
     failures: [],
+    failureHistory: [],
     breakerEvents: [],
     offloads: [],
     hasDoNotRetrySignal: false,

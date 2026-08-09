@@ -267,6 +267,33 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(r.lastTs).toBe(3_000);
   });
 
+  it("retains the trace id of the sticky degraded execution after a clean continuation", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      traceId: "trace-degraded",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "context_exhausted" }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s1",
+      traceId: "trace-clean",
+      message: "session:summary",
+      details: summaryDetails({ degraded: false, endReason: "success" }),
+    });
+
+    const rollup = store.aggregateSessionsInWindow(0)[0]!;
+
+    expect(rollup.degraded).toBe(true);
+    expect(rollup.endReason).toBe("context_exhausted");
+    expect(rollup).toHaveProperty("traceId", "trace-degraded");
+  });
+
   it("keeps the degradation cause when a later clean execution follows the degraded one (endReason = latest degraded row's cause)", () => {
     store.insertDiagnostic({
       timestamp: 1_000,

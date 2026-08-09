@@ -35,25 +35,21 @@ describe("configValidationCheck", () => {
     expect(findings[0].remediation).toContain("--config");
   });
 
-  it("reports the REAL captured validation error (not a guessed syntax error) and names the ${ENV} caveat", async () => {
-    // Regression: a production config whose gateway secret is `${COMIS_GATEWAY_TOKEN}`
-    // fails the audit's raw-file length validation; buildAuditContext captures that
-    // in configError. The check must report THAT (and that checks were skipped),
-    // not the misleading "Config file could not be parsed / check YAML syntax".
+  it("reports the captured schema violation instead of guessing a syntax error", async () => {
     const findings = await configValidationCheck.run({
       ...baseContext,
       configPaths: ["/home/comis/.comis/config.yaml"],
-      rawConfigContent: "gateway:\n  tokens:\n    - id: default\n      secret: ${COMIS_GATEWAY_TOKEN}\n",
-      configError: "Config validation failed: gateway.tokens.0.secret: Too small: expected string to have >=32 characters",
+      rawConfigContent: "logLevel: verbose\n",
+      configError: "Config validation failed: logLevel: Invalid option",
     });
 
     expect(findings).toHaveLength(1);
     expect(findings[0].code).toBe("SEC-CFG-001");
     expect(findings[0].severity).toBe("critical");
     expect(findings[0].message).toContain("SKIPPED");
-    expect(findings[0].message).toContain(">=32 characters");
+    expect(findings[0].message).toContain("logLevel");
     expect(findings[0].message).not.toContain("could not be parsed");
-    expect(findings[0].remediation).toContain("${ENV}");
+    expect(findings[0].remediation).toContain("rerun the audit");
   });
 
   it("produces info SEC-CFG-PASS when config already exists (pre-parsed)", async () => {
