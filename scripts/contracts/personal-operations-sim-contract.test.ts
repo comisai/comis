@@ -58,6 +58,9 @@ describe("personal operations simulator contract", () => {
     expect(Object.keys(world.variants ?? {})).toEqual(["A", "B", "C"]);
     expect(skill).toContain("teaches the tool mechanics");
     expect(skill).toContain("never send a staged draft unless the user explicitly asks");
+    expect(skill).toMatch(
+      /comis:\n {2}requires:\n(?: {4}#[^\n]*\n)* {4}bins: \[\]\n {4}env: \[\]/u,
+    );
     expect(driver).toContain("personal-operations");
     expect(driver).toContain("personal-ops-sim");
     expect(readme).toContain("all 15");
