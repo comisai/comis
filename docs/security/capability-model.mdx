@@ -263,7 +263,7 @@ call from a **non-admin** turn (guest/user trust, or a turn with no resolved
 trust) -- the confused-deputy floor: a low-trust or prompt-injected agent can
 never reach the control plane through the in-process dispatcher. An **admin-trust**
 agent turn -- one acting for a user the operator explicitly granted admin via
-`elevatedReply.senderTrustMap` (resolved per-message, default `user`) -- INHERITS
+`elevatedReply.senderTrustMap` (resolved per-message) -- INHERITS
 that user's control-plane privileges and is allowed through to the admin handler
 (which re-checks admin trust, defense-in-depth).
 
@@ -271,7 +271,14 @@ The trust signal is sound: `_trustLevel` is in the internal-field registry
 (stripped from external callers, like `_agentId`) and is re-injected in-process
 from the framework request context **after** the call's own params, so neither a
 tool nor the agent can forge it; an absent trust resolves to non-admin (denied).
-Admin is reached only via an explicit operator grant, never a default.
+Admin is reached only via an explicit operator grant, never a default. This gate
+reads only the three authority labels `admin` / `user` / `guest`: an unmapped
+sender falls back to
+[`elevatedReply.defaultTrustLevel`](/reference/config-yaml#elevated-reply-agents-elevatedreply)
+(itself defaulting to `external`), and every label outside those three -- that
+`external` default, a disabled `elevatedReply` block, or one of the free-form
+labels used for model/prompt routing -- lands on the non-admin `user`. An
+unresolved or anonymous sender (`chat:` / `unknown:`) lands on `guest`.
 
 That grant is **operator-file-only**: `elevatedReply.senderTrustMap` and
 `elevatedReply.defaultTrustLevel` cannot be set by any runtime RPC -- not
