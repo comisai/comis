@@ -32,6 +32,7 @@ import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-v
 import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
 import {
   executionAuthFailureVerdict,
+  executionDependencyFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
 import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
@@ -779,6 +780,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     authoritative `degraded` flag (full rationale in the sibling
   //     obs-explain-recall-verdict.ts module doc).
   executionAuthFailureVerdict,
+  executionDependencyFailureVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened

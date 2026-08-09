@@ -49,6 +49,24 @@ export const executionAuthFailureVerdict = (s: IncidentSignals): RecallVerdict |
   };
 };
 
+/** A terminal model-provider dependency failure is upstream of an incidental zero-hit recall. */
+export const executionDependencyFailureVerdict = (s: IncidentSignals): RecallVerdict | null => {
+  if (s.endReason !== "error" || s.failures.length > 0) return null;
+  if (s.turnFinalized?.outcome !== "failure") return null;
+  if (s.turnFinalized.errorKind !== "dependency") return null;
+  return {
+    code: "execution_dependency_failure",
+    detail:
+      "the execution ended with a model-provider dependency failure before a usable "
+      + "model response or tool result was produced",
+    suggestedNextSteps: [
+      "run comis system-health --since 1 and inspect the provider degradation and circuit-breaker signals",
+      "verify agents.<id>.model and the selected providers.entries.<name> endpoint and credential metadata",
+      "retry after the provider recovers or its configured circuit-breaker cooldown expires",
+    ],
+  };
+};
+
 /** `recall_miss` — fires only on an all-missed, degraded, no-tool-failure session. */
 export const recallMissVerdict = (s: IncidentSignals): RecallVerdict | null => {
   if (s.recall === undefined) return null;
