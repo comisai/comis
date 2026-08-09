@@ -31,7 +31,10 @@ type RecallVerdict = { code: string; detail: string; suggestedNextSteps: string[
 /** A terminal authentication failure is upstream of any incidental zero-hit recall. */
 export const executionAuthFailureVerdict = (s: IncidentSignals): RecallVerdict | null => {
   if (s.endReason !== "error" || s.failures.length > 0) return null;
-  const authFailures = s.summaryTopErrorKinds?.auth ?? 0;
+  const authFailures = Math.max(
+    s.summaryTopErrorKinds?.auth ?? 0,
+    s.turnFinalized?.errorKind === "auth" ? 1 : 0,
+  );
   if (authFailures <= 0) return null;
   return {
     code: "execution_auth_failure",
