@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import {
+  CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+  CapabilityServiceInstanceConfigSchema,
+  buildCapabilityServiceActivationPlan,
+  type CapabilityServiceContributionRegistration,
+  type CapabilityServiceInstanceConfig,
+} from "./capability-service-contributions.js";
+
+function makeContribution(
+  overrides: Partial<CapabilityServiceContributionRegistration> = {},
+): CapabilityServiceContributionRegistration {
+  return {
+    contributionId: "example.analysis",
+    configSections: [],
+    serviceDefinitions: [{
+      serviceDefinitionId: "example.analysis-service",
+      protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+      mcpServerName: "example-analysis",
+      requestedScopes: ["health", "report"],
+      dependsOn: [],
+    }],
+    ...overrides,
+  };
+}
+
+function makeInstance(
+  overrides: Partial<CapabilityServiceInstanceConfig> = {},
+): CapabilityServiceInstanceConfig {
+  return {
+    serviceInstanceId: "analysis-local",
+    serviceDefinitionId: "example.analysis-service",
+    enabled: true,
+    mcpServerName: "example-analysis",
+    control: {
+      transport: "unix",
+      socketPath: "/tmp/comis-test-analysis.sock",
+      credentialRef: "secret://capability-services/analysis-local",
+    },
+    allowedAgents: ["agent_a"],
+    ...overrides,
+  };
+}
+
+describe("capability-service contribution planning", () => {
+  it("builds one deterministic inactive plan without granting runtime authority", () => {
+    const contribution = makeContribution({
+      configSections: [{
+        namespace: "analysisService",
+        schema: z.strictObject({ enabled: z.boolean().default(true) }),
+        schemaSerializable: true,
+        fieldMetadataVisible: true,
+      }],
+    });
+
+    const result = buildCapabilityServiceActivationPlan([contribution], [makeInstance()]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.orderedDefinitions.map((entry) => entry.serviceDefinitionId)).toEqual([
+      "example.analysis-service",
+    ]);
+    expect(result.value.orderedInstances.map((entry) => entry.serviceInstanceId)).toEqual([
+      "analysis-local",
+    ]);
+    expect(result.value.configSections.analysisService?.owner).toEqual({
+      kind: "contribution",
+      contributionId: "example.analysis",
+    });
+    expect(result.value).not.toHaveProperty("activate");
+    expect(result.value).not.toHaveProperty("credentialRef");
+    expect(Object.isFrozen(result.value)).toBe(true);
+    expect(Object.isFrozen(result.value.orderedDefinitions)).toBe(true);
+    expect(Object.isFrozen(result.value.orderedInstances)).toBe(true);
+  });
+
+  it("sorts dependencies before dependents with lexical identifier tie breaks", () => {
+    const result = buildCapabilityServiceActivationPlan([
+      makeContribution({
+        contributionId: "example.worker",
+        serviceDefinitions: [{
+          serviceDefinitionId: "example.worker-service",
+          protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+          mcpServerName: "worker-service",
+          requestedScopes: ["health"],
+          dependsOn: ["example.base-service"],
+        }],
+      }),
+      makeContribution({
+        contributionId: "example.base",
+        serviceDefinitions: [{
+          serviceDefinitionId: "example.base-service",
+          protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+          mcpServerName: "base-service",
+          requestedScopes: ["health"],
+          dependsOn: [],
+        }],
+      }),
+    ], [
+      makeInstance({
+        serviceInstanceId: "worker-z",
+        serviceDefinitionId: "example.worker-service",
+        mcpServerName: "worker-service",
+      }),
+      makeInstance({
+        serviceInstanceId: "base-z",
+        serviceDefinitionId: "example.base-service",
+        mcpServerName: "base-service",
+      }),
+      makeInstance({
+        serviceInstanceId: "base-a",
+        serviceDefinitionId: "example.base-service",
+        mcpServerName: "base-service",
+      }),
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.orderedDefinitions.map((entry) => entry.serviceDefinitionId)).toEqual([
+      "example.base-service",
+      "example.worker-service",
+    ]);
+    expect(result.value.orderedInstances.map((entry) => entry.serviceInstanceId)).toEqual([
+      "base-a",
+      "base-z",
+      "worker-z",
+    ]);
+  });
+
+  it.each([
+    ["duplicate contribution", [makeContribution(), makeContribution()], [makeInstance()]],
+    ["duplicate definition", [
+      makeContribution(),
+      makeContribution({ contributionId: "example.second" }),
+    ], [makeInstance()]],
+    ["duplicate MCP ownership", [
+      makeContribution(),
+      makeContribution({
+        contributionId: "example.second",
+        serviceDefinitions: [{
+          serviceDefinitionId: "example.second-service",
+          protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+          mcpServerName: "example-analysis",
+          requestedScopes: ["health"],
+          dependsOn: [],
+        }],
+      }),
+    ], [makeInstance()]],
+    ["unknown definition dependency", [makeContribution({
+      serviceDefinitions: [{
+        serviceDefinitionId: "example.analysis-service",
+        protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+        mcpServerName: "example-analysis",
+        requestedScopes: ["health"],
+        dependsOn: ["example.missing-service"],
+      }],
+    })], [makeInstance()]],
+    ["dependency cycle", [makeContribution({
+      serviceDefinitions: [
+        {
+          serviceDefinitionId: "example.analysis-service",
+          protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+          mcpServerName: "example-analysis",
+          requestedScopes: ["health"],
+          dependsOn: ["example.second-service"],
+        },
+        {
+          serviceDefinitionId: "example.second-service",
+          protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+          mcpServerName: "example-second",
+          requestedScopes: ["health"],
+          dependsOn: ["example.analysis-service"],
+        },
+      ],
+    })], [makeInstance()]],
+  ])("rejects %s without exposing a partial plan", (_label, contributions, instances) => {
+    const result = buildCapabilityServiceActivationPlan(contributions, instances);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBeTypeOf("string");
+  });
+
+  it("rejects an instance whose definition identity or MCP ownership does not match", () => {
+    const unknown = buildCapabilityServiceActivationPlan(
+      [makeContribution()],
+      [makeInstance({ serviceDefinitionId: "example.unknown-service" })],
+    );
+    const mismatchedServer = buildCapabilityServiceActivationPlan(
+      [makeContribution()],
+      [makeInstance({ mcpServerName: "other-server" })],
+    );
+
+    expect(unknown).toMatchObject({ ok: false, error: { kind: "unknown_service_definition" } });
+    expect(mismatchedServer).toMatchObject({ ok: false, error: { kind: "mcp_owner_mismatch" } });
+  });
+
+  it("omits disabled instances while retaining their validated operator configuration", () => {
+    const result = buildCapabilityServiceActivationPlan(
+      [makeContribution()],
+      [makeInstance({ enabled: false })],
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.orderedInstances).toEqual([]);
+  });
+
+  it("rejects unsafe or noncanonical Unix control paths through the strict config schema", () => {
+    expect(CapabilityServiceInstanceConfigSchema.safeParse(makeInstance({
+      control: {
+        transport: "unix",
+        socketPath: "relative/service.sock",
+        credentialRef: "secret://capability-services/analysis-local",
+      },
+    })).success).toBe(false);
+    expect(CapabilityServiceInstanceConfigSchema.safeParse(makeInstance({
+      control: {
+        transport: "unix",
+        socketPath: "/tmp/../tmp/service.sock",
+        credentialRef: "secret://capability-services/analysis-local",
+      },
+    })).success).toBe(false);
+  });
+
+  it("rejects unknown config fields and protocol identities before planning", () => {
+    const unknownField = CapabilityServiceInstanceConfigSchema.safeParse({
+      ...makeInstance(),
+      token: "not-allowed",
+    });
+    const mismatchedProtocol = makeContribution({
+      serviceDefinitions: [{
+        serviceDefinitionId: "example.analysis-service",
+        protocolId: "comis.capability-service/2" as typeof CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+        mcpServerName: "example-analysis",
+        requestedScopes: ["health"],
+        dependsOn: [],
+      }],
+    });
+
+    expect(unknownField.success).toBe(false);
+    expect(buildCapabilityServiceActivationPlan([mismatchedProtocol], [makeInstance()]))
+      .toMatchObject({ ok: false, error: { kind: "invalid_contribution" } });
+  });
+});
