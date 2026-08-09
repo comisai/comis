@@ -45,7 +45,9 @@ node bin/cli.mjs threat-hunting query_telemetry --filter FS-01   # call one func
 SIM_VARIANT=B node bin/cli.mjs threat-hunting --selftest          # a rotated-surface variant (transfer)
 ```
 `--selftest` is the ground-truth check that a workload's success signal is reachable **and** that the naive
-shortcut (the thing the engine must learn to avoid) actually fails. All 15 pass on variants A/B/C.
+shortcut (the thing the engine must learn to avoid) actually fails. All 15 pass on variants A/B/C
+(`personal-operations` also on its derived `A-degraded` variant). This is an OFFLINE check — it does not
+stand in for a live drive on the daemon.
 
 ## Copy to the VPS
 Plain `.mjs`, no build. `deploy-sim.sh` ships the whole tree to a path the daemon (user `comis`) can read:

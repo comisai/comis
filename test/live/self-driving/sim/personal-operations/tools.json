@@ -7,42 +7,42 @@
       "kind": "observe",
       "terminal": false,
       "description": "Read the current inbox items for an active daily review, including sender, subject, body, and deadline metadata.",
-      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": ["case"] }
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
     },
     {
       "name": "read_calendar",
       "kind": "observe",
       "terminal": false,
       "description": "Read the current calendar entries and conflicts for an active daily review.",
-      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": ["case"] }
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
     },
     {
       "name": "read_tasks",
       "kind": "observe",
       "terminal": false,
       "description": "Read existing open and completed tasks for an active daily review.",
-      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": ["case"] }
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
     },
     {
       "name": "read_decisions",
       "kind": "observe",
       "terminal": false,
       "description": "Read prior decisions and their rationales for an active daily review.",
-      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": ["case"] }
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
     },
     {
       "name": "read_drafts",
       "kind": "observe",
       "terminal": false,
       "description": "Read drafts staged during an active daily review and whether any were sent.",
-      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": ["case"] }
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
     },
     {
       "name": "read_action_ledger",
       "kind": "observe",
       "terminal": false,
       "description": "Read the action ledger for an active daily review, including task, decision, draft, and send events.",
-      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": ["case"] }
+      "inputSchema": { "type": "object", "properties": { "case": { "type": "string" } }, "required": [] }
     },
     {
       "name": "begin_review",
@@ -64,7 +64,7 @@
           "subject": { "type": "string" },
           "body": { "type": "string" }
         },
-        "required": ["case", "recipient", "subject", "body"]
+        "required": ["recipient", "subject", "body"]
       }
     },
     {
@@ -79,7 +79,7 @@
           "title": { "type": "string" },
           "due": { "type": "string" }
         },
-        "required": ["case", "title", "due"]
+        "required": ["title", "due"]
       }
     },
     {
@@ -95,7 +95,7 @@
           "choice": { "type": "string" },
           "rationale": { "type": "string" }
         },
-        "required": ["case", "topic", "choice", "rationale"]
+        "required": ["topic", "choice", "rationale"]
       }
     },
     {
@@ -109,7 +109,7 @@
           "case": { "type": "string" },
           "draft": { "type": "string" }
         },
-        "required": ["case", "draft"]
+        "required": ["draft"]
       }
     },
     {
@@ -123,7 +123,7 @@
           "case": { "type": "string" },
           "summary": { "type": "string" }
         },
-        "required": ["case", "summary"]
+        "required": ["summary"]
       }
     }
   ]
