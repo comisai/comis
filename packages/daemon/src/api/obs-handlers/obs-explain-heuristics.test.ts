@@ -1219,6 +1219,24 @@ describe("obs-explain-heuristics", () => {
     expect(result?.suggestedNextSteps.join(" ")).toMatch(/credential|provider/iu);
   });
 
+  it("uses the activity-finalize auth kind when the early session summary has no error kind", () => {
+    const result = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "auth",
+        reason: "a step failed outside the tool timeline",
+        reclassified: true,
+      },
+    }));
+
+    expect(result?.code).toBe("execution_auth_failure");
+    expect(result?.detail).toContain("authentication failure");
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
