@@ -98,6 +98,7 @@ import {
   createActiveRunRegistry,
   createBackgroundSessionResolver,
   createContinuationExecutionEngine,
+  readExecutionResultJournal,
   clearSessionState,
   createGeminiCacheManager,
   createFilesystemWorkspacePolicyAdapter,
@@ -2221,6 +2222,13 @@ async function bootChannels(boot: BootContext): Promise<void> {
     contentStore: capabilityServices.contentStore,
     attentionReplies: managedAttentionReplies,
     engine: managedContinuationEngine,
+    recoverFinalizedResult: async ({ agentId, sessionKey, journalKey }) => {
+      const sessionManager = handle.piSessionAdapters.get(agentId);
+      if (sessionManager === undefined) {
+        return err(new Error(`No session manager is registered for ${agentId}`));
+      }
+      return readExecutionResultJournal(sessionManager, sessionKey, journalKey);
+    },
     resolveWorkspacePolicy: async (agentId, policyHash) => {
       const cached = container.workspacePolicyPort?.get(policyHash);
       const loaded = cached?.ok

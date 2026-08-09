@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
+  conversationScopeToSessionKey,
   resolvePlatformDeliveryResult,
   type ChannelPort,
   type ComisLogger,
@@ -9,13 +10,11 @@ import {
   type ManagedRunRecord,
   type ManagedRunStorePort,
   type OutwardSendLedgerPort,
+  type SessionKey,
   type TypedEventBus,
   type WorkspacePolicySnapshot,
 } from "@comis/core";
-import type {
-  ContinuationExecutionEngine,
-  ExecutionResult,
-} from "@comis/agent";
+import type { ContinuationExecutionEngine } from "@comis/agent";
 import { err, fromPromise, isSilentResponse, ok, type Result } from "@comis/shared";
 import { wrapOutwardSend } from "../api/outward-ledger-wrap.js";
 import { createManagedRunContinuationCaller } from "./managed-run-continuation-caller.js";
@@ -31,9 +30,21 @@ import {
 export type ManagedRunContinuationDelivery = (
   record: ManagedRunRecord,
   claimId: string,
-  finalized: ExecutionResult,
+  finalized: ManagedRunFinalizedResult,
   phase: "cleanup_pending" | "ready",
 ) => Promise<Result<ManagedRunContinuationExecutionOutcome, Error>>;
+
+export interface ManagedRunFinalizedResult {
+  readonly response: string;
+  readonly executionId: string;
+  readonly cleanupRequired: boolean;
+}
+
+export interface ManagedRunFinalizedResultRecoveryInput {
+  readonly agentId: string;
+  readonly sessionKey: SessionKey;
+  readonly journalKey: string;
+}
 
 export interface ManagedRunContinuationsContext {
   readonly runtime: ManagedRunContinuationRuntime;
@@ -112,6 +123,9 @@ export async function setupManagedRunContinuations(deps: {
   readonly contentStore: ManagedRunContentPort;
   readonly attentionReplies: ManagedAttentionReplyPort;
   readonly engine: ContinuationExecutionEngine;
+  readonly recoverFinalizedResult: (
+    input: ManagedRunFinalizedResultRecoveryInput,
+  ) => Promise<Result<ManagedRunFinalizedResult | undefined, Error>>;
   readonly resolveWorkspacePolicy: (
     agentId: string,
     policyHash: string,
@@ -137,6 +151,22 @@ export async function setupManagedRunContinuations(deps: {
     eventBus: deps.eventBus,
     logger: deps.logger,
     execute: async (input) => {
+      const projected = conversationScopeToSessionKey(input.record.turnScope.conversation);
+      if (!projected.ok) return err(new Error(projected.error.message));
+      const recovered = await deps.recoverFinalizedResult({
+        agentId: input.record.agentId,
+        sessionKey: projected.value,
+        journalKey: input.claimId,
+      });
+      if (!recovered.ok) return recovered;
+      if (recovered.value !== undefined) {
+        return deps.deliver(
+          input.record,
+          input.claimId,
+          recovered.value,
+          recovered.value.cleanupRequired ? "cleanup_pending" : "ready",
+        );
+      }
       const executed = await caller.execute({
         record: input.record,
         claimId: input.claimId,
@@ -145,12 +175,11 @@ export async function setupManagedRunContinuations(deps: {
         hooks: {
           onProviderStart: () => ok(undefined),
           onJournalFinalizedResult: async () => undefined,
-          onFinalizedResult: (finalized, phase) => deps.deliver(
-            input.record,
-            input.claimId,
-            finalized,
-            phase,
-          ).then((delivered) => {
+          onFinalizedResult: (finalized, phase) => deps.deliver(input.record, input.claimId, {
+            response: finalized.response,
+            executionId: finalized.executionId,
+            cleanupRequired: finalized.finishReason === "session_reset",
+          }, phase).then((delivered) => {
             if (!delivered.ok) return Promise.reject(delivered.error);
             return delivered.value;
           }),

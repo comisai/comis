@@ -156,6 +156,7 @@ describe("managed-run continuation composition", () => {
       contentStore,
       attentionReplies,
       engine,
+      recoverFinalizedResult: vi.fn(async () => ok(undefined)),
       resolveWorkspacePolicy: vi.fn(async () => ok({
         agentId: "agent-a",
         sections: [],
@@ -183,7 +184,11 @@ describe("managed-run continuation composition", () => {
     await setup.value.runtime.waitUntilIdle();
 
     expect(execute).toHaveBeenCalledOnce();
-    expect(deliver).toHaveBeenCalledWith(record, expect.stringMatching(/^continuation-/), finalized, "ready");
+    expect(deliver).toHaveBeenCalledWith(record, expect.stringMatching(/^continuation-/), {
+      response: finalized.response,
+      executionId: finalized.executionId,
+      cleanupRequired: false,
+    }, "ready");
     expect(store.commitReducedState).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       status: "succeeded",
       statusReason: "outcome_verified",
@@ -243,7 +248,7 @@ describe("managed-run continuation composition", () => {
       claimTtlMs: 60_000,
       recoveryBatchSize: 10,
       logger: makeLogger(),
-    } as unknown as Parameters<typeof setupManagedRunContinuations>[0]);
+    });
     expect(setup.ok).toBe(true);
     if (!setup.ok) return;
 
@@ -298,8 +303,8 @@ describe("managed-run continuation composition", () => {
     const result = await delivery(record, "claim-a", {
       response: "Final managed answer",
       executionId: "execution-a",
-      finishReason: "stop",
-    } as unknown as ExecutionResult, "ready");
+      cleanupRequired: false,
+    }, "ready");
 
     expect(result).toEqual(ok({ deliveryState: "verified" }));
     expect(ledger.allocateStep).toHaveBeenCalledWith("root-a", "managed-run-continuation:claim-a");
