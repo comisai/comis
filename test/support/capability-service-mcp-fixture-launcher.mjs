@@ -9,6 +9,7 @@
  */
 import { appendFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import process from "node:process";
 import { createInterface } from "node:readline";
 
 function valueAfter(flag) {
