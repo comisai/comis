@@ -33,6 +33,7 @@ import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection
 import {
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionTerminalFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
 import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
@@ -772,7 +773,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     not replace the pending completion lifecycle as the primary diagnosis.
   backgroundPendingVerdict,
 
-  // 9d) recall_miss. A DEGRADED session whose memory recalls ALL
+  // 9d) the NAMED terminal execution failures, then recall_miss. An empty memory
+  //     store makes EVERY recall a zero-hit, so recall evidence on a session that
+  //     died in the execution lifecycle is incidental and must never outrank the
+  //     death itself — hence auth and provider-dependency (the two kinds with their
+  //     own operator levers) sit ABOVE recall_miss, and recall_miss itself refuses to
+  //     fire on a failed finalize. Every REMAINING terminal kind is named by
+  //     executionTerminalFailureVerdict at 9h (below the specific drive/orchestrate
+  //     causes — specific-over-generic).
+  //
+  //     recall_miss: a DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
   //     cause above — the agent ran with no memory context. Low-noise by
   //     construction: requires EVERY recall to have missed (zeroHits === recalls),
@@ -809,6 +819,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     fixtures — they carry no orchestrate records), so it cannot regress them.
   //     Sibling file.
   orchestrateFailedVerdict,
+
+  // 9h) execution_terminal_failure — the session ended in error and its activity
+  //     surface painted a terminal failure, but no tool failure exists to attribute
+  //     it to and the kind is neither auth nor dependency (9d names those with their
+  //     own levers). BELOW 9e-9g so a drive/orchestrate cause keeps its specific
+  //     diagnosis; ABOVE the catch-all, which requires failures and so never
+  //     competes. Without it, suppressing recall_miss on a failed finalize would
+  //     leave internal / validation / rejection-fallback deaths with NO verdict.
+  //     Sibling file.
+  executionTerminalFailureVerdict,
 
   // A failed voice provider is more specific than the generic tool-error
   // catch-all below. Derive STT versus TTS from the failed tool rather than

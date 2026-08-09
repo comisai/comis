@@ -1255,6 +1255,69 @@ describe("obs-explain-heuristics", () => {
     expect(result?.suggestedNextSteps.join(" ")).toMatch(/provider|dependency/iu);
   });
 
+  it.each(["internal", "validation", "resource", "precondition"])(
+    "ranks a terminal %s failure above an incidental recall miss",
+    (errorKind) => {
+      const result = rootCause(makeSignals({
+        endReason: "error",
+        degraded: true,
+        recall: allMissRecall,
+        turnFinalized: {
+          strategy: "EditPlace",
+          outcome: "failure",
+          errorKind,
+          reason: "a step failed outside the tool timeline",
+          reclassified: false,
+        },
+      }));
+
+      expect(result?.code).toBe("execution_terminal_failure");
+      expect(result?.detail).toContain(errorKind);
+      expect(result?.detail).toContain("a step failed outside the tool timeline");
+    },
+  );
+
+  it("names an unclassified terminal failure rather than blaming the recall", () => {
+    const result = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "AppendOnly",
+        outcome: "failure",
+        reclassified: false,
+      },
+    }));
+
+    expect(result?.code).toBe("execution_terminal_failure");
+    expect(result?.detail).toContain("unclassified");
+  });
+
+  it("keeps the specific orchestrate cause above the generic terminal failure", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "internal",
+        reclassified: false,
+      },
+    });
+    signals.orchestrate = [{
+      runId: "r1",
+      outcome: "failure",
+      durationMs: 12,
+      exitCode: 1,
+      failureClass: "nonzero_exit",
+      toolCalls: [],
+      resultRefs: { count: 0, bytes: 0 },
+    }];
+
+    expect(rootCause(signals)?.code).toBe("orchestrate_failed");
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
