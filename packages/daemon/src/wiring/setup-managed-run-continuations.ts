@@ -5,6 +5,7 @@ import {
   type ComisLogger,
   type DeliveryService,
   type ManagedRunContentPort,
+  type ManagedAttentionReplyPort,
   type ManagedRunRecord,
   type ManagedRunStorePort,
   type OutwardSendLedgerPort,
@@ -17,7 +18,6 @@ import type {
 } from "@comis/agent";
 import { err, fromPromise, isSilentResponse, ok, type Result } from "@comis/shared";
 import { wrapOutwardSend } from "../api/outward-ledger-wrap.js";
-import { createManagedAttentionReplyBinder } from "./managed-attention-reply-binder.js";
 import { createManagedRunContinuationCaller } from "./managed-run-continuation-caller.js";
 import {
   createManagedRunContinuationCoordinator,
@@ -37,7 +37,7 @@ export type ManagedRunContinuationDelivery = (
 
 export interface ManagedRunContinuationsContext {
   readonly runtime: ManagedRunContinuationRuntime;
-  readonly attentionReplies: ReturnType<typeof createManagedAttentionReplyBinder>;
+  readonly attentionReplies: ManagedAttentionReplyPort;
   shutdown(): Promise<void>;
 }
 
@@ -110,6 +110,7 @@ export async function setupManagedRunContinuations(deps: {
   readonly eventBus: TypedEventBus;
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
+  readonly attentionReplies: ManagedAttentionReplyPort;
   readonly engine: ContinuationExecutionEngine;
   readonly resolveWorkspacePolicy: (
     agentId: string,
@@ -173,13 +174,9 @@ export async function setupManagedRunContinuations(deps: {
     await deps.engine.shutdown();
     return recovered;
   }
-  const attentionReplies = createManagedAttentionReplyBinder({
-    store: deps.store,
-    contentStore: deps.contentStore,
-  });
   return ok(Object.freeze({
     runtime,
-    attentionReplies,
+    attentionReplies: deps.attentionReplies,
     shutdown: async () => {
       await runtime.shutdown();
       await deps.engine.shutdown();

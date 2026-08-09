@@ -54,6 +54,13 @@ export interface ManagedRunEvents {
     durationMs: number;
     timestamp: number;
   };
+  "managed_run:attention_response_bound": {
+    managedRunId: string;
+    attentionId: string;
+    agentId: string;
+    durationMs: number;
+    timestamp: number;
+  };
   "managed_run:recovery_quarantined": {
     managedRunId: string;
     serviceInstanceId: string;

@@ -179,6 +179,7 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
     },
     deliveryService: makeFakeDeliveryService(),
     localization: createDeterministicLocalization(),
+    managedAttentionReplies: undefined,
     ...overrides,
   } as GateDeps;
 }

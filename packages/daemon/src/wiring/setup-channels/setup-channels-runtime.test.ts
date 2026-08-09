@@ -52,6 +52,7 @@ describe("setup-channels-runtime", () => {
       // The InteractiveCallbackRouter (verifier) threaded into
       // createChannelManager so the inbound button-callback intercept fires.
       interactiveCallbackRouter: true,
+      managedAttentionReplies: true,
       preprocessMessageCallback: true,
       preflightFn: true,
       assembleToolsForAgent: true,
@@ -75,7 +76,7 @@ describe("setup-channels-runtime", () => {
       // when absent; tests inject a known map to assert the production path is active).
       channelCredentialMap: true,
     };
-    expect(Object.keys(witness).length).toBe(37);
+    expect(Object.keys(witness).length).toBe(38);
   });
 
   it("ChannelManagerBuildResult witness pins the manager handle output keys", () => {

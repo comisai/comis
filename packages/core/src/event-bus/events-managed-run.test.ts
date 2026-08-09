@@ -45,4 +45,23 @@ describe("managed-run lifecycle events", () => {
       timestamp: 1_800_000_000_000,
     });
   });
+
+  it("delivers a content-free attention response transition", () => {
+    const bus = new TypedEventBus();
+    const listener = vi.fn();
+    bus.on("managed_run:attention_response_bound", listener);
+
+    bus.emit("managed_run:attention_response_bound", {
+      managedRunId: "managed-run_a",
+      attentionId: "attention_a",
+      agentId: "agent_a",
+      durationMs: 4,
+      timestamp: 1_800_000_000_000,
+    });
+
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+      attentionId: "attention_a",
+      durationMs: 4,
+    }));
+  });
 });

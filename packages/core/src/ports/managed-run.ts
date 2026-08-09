@@ -144,6 +144,29 @@ export type ManagedRunAttentionMutationOutcome =
   | { readonly kind: "state_mismatch" }
   | { readonly kind: "replay_conflict" };
 
+export interface ManagedAttentionReplyInput {
+  readonly operationId: string;
+  readonly attentionId?: string;
+  readonly text: string;
+  readonly respondedAtMs: number;
+}
+
+export type ManagedAttentionReplyBindingOutcome =
+  | { readonly kind: "bound"; readonly attention: ManagedRunAttentionRecord }
+  | {
+    readonly kind: "clarification_required";
+    readonly reason: "none_open" | "ambiguous" | "handle_not_found" | "already_answered";
+    readonly candidateAttentionIds: readonly string[];
+  };
+
+/** Owner-facing port that binds a private reply to one exact durable attention row. */
+export interface ManagedAttentionReplyPort {
+  bind(
+    scope: ManagedRunOwnerScope,
+    input: ManagedAttentionReplyInput,
+  ): Promise<Result<ManagedAttentionReplyBindingOutcome, Error>>;
+}
+
 export interface ManagedRunContinuationClaimInput {
   readonly managedRunId: string;
   readonly claimId: string;

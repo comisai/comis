@@ -268,6 +268,7 @@ function makeDeps(overrides: Partial<ChannelsDeps> & { container?: AppContainer 
     sessionStore: {} as any,
     logger: makeLogger(),
     channelsLogger: makeLogger(),
+    managedAttentionReplies: { bind: vi.fn() } as never,
     linkRunner: { processMessage: vi.fn() } as any,
     ssrfFetcher: { fetch: vi.fn() } as any,
     maxMediaBytes: 10_000_000,
@@ -466,6 +467,18 @@ describe("setupChannels", () => {
 
       const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
       expect(cmDeps.interactiveCallbackRouter).toBeUndefined();
+    });
+  });
+
+  describe("managed attention reply wiring", () => {
+    it("threads the exact binder instance into the inbound channel manager", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const managedAttentionReplies = { bind: vi.fn() } as any;
+      const { container } = makeContainer();
+      await setupChannels(makeDeps({ container, managedAttentionReplies }));
+
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      expect(cmDeps.managedAttentionReplies).toBe(managedAttentionReplies);
     });
   });
 });

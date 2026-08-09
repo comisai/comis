@@ -72,6 +72,7 @@ export {
   createManagedRunContinuationDelivery,
   type ManagedRunContinuationsContext,
 } from "./setup-managed-run-continuations.js";
+export { createManagedAttentionReplyBinder } from "./managed-attention-reply-binder.js";
 // The durable-run + resume engine wiring (stores + boot recovery +
 // watchdog + shutdown) + the daemon composition helpers. Gated behind
 // autonomy.durability.enabled.

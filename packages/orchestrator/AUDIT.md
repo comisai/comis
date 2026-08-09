@@ -1,9 +1,9 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts` (51-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts` (52-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels/setup-channels-runtime.ts` (single site — `createChannelManager({`)
-**Field count:** 51 (13 required + 38 optional + 0 stale-fallback)
+**Field count:** 52 (14 required + 38 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
@@ -60,6 +60,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | buildTemplateContext | optional | response-prefix template variables are not substituted (skipped silently if responsePrefixConfig is also absent) | packages/orchestrator/src/channel-manager.ts:176 |
 | approvalGate | optional | approval commands pass through as plain text | packages/orchestrator/src/channel-manager.ts:178 |
 | interactiveCallbackRouter | optional | button callbacks (metadata.isButtonCallback) fall through to the normal pipeline (no server-side route()/verify) | packages/orchestrator/src/channel-manager.ts:195 |
+| managedAttentionReplies | required | — | packages/orchestrator/src/channel-manager.ts:262 |
 | handleSlashCommand | optional | unknown slash commands pass through as plain text to the agent | packages/orchestrator/src/channel-manager.ts:201 |
 | getEnforceFinalTag | optional | enforceFinalTag executor option is undefined (executor default applies) | packages/orchestrator/src/channel-manager.ts:198 |
 | processInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:205 |
@@ -77,7 +78,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 50 (13 required + 37 optional)
+- **Total fields:** 52 (14 required + 38 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

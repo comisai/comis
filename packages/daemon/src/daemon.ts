@@ -80,6 +80,7 @@ import {
   setupBackgroundCompletionRunner,
   setupManagedRunContinuations,
   createManagedRunContinuationDelivery,
+  createManagedAttentionReplyBinder,
   createBackgroundRecoveryRecorder,
   setupTerminalWake,
   setupMcp,
@@ -308,9 +309,10 @@ function buildChannelManagerDeps(deps: {
   assembleToolsForAgent: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   getInboundMessageIdResolver: () => InboundMessageIdResolver | undefined;
   getSessionTracker: () => import("./notification/session-tracker.js").SessionTracker | undefined;
+  managedAttentionReplies: import("@comis/core").ManagedAttentionReplyPort;
   msTeamsConversationStore?: import("@comis/core").MsTeamsConversationStorePort; // → bootstrapAdapters → createMsTeamsPlugin
 }): Parameters<typeof setupChannels>[0] {
-  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, msTeamsConversationStore } = deps;
+  const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, managedAttentionReplies, msTeamsConversationStore } = deps;
   const {
     container, executors, defaultAgentId, agentsConfig, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber, voiceSelection,
@@ -432,6 +434,7 @@ function buildChannelManagerDeps(deps: {
       recordCurrentSessionEndpoint(getSessionTracker);
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
+    managedAttentionReplies,
     piSessionAdapters, costTrackers, deliveryQueue,
     // The outbound → trajectory binding (same callback the
     // delivery-queue drain receives) so the DIRECT ack path in createDeliveryService
@@ -2010,6 +2013,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
   //     setupChannels are not invoked during setupChannels itself).
   const sessionTrackerSlot: { current?: import("./notification/session-tracker.js").SessionTracker } = {};
   const inboundMessageIdResolverSlot: { current?: InboundMessageIdResolver } = {};
+  const managedAttentionReplies = createManagedAttentionReplyBinder({
+    store: capabilityServices.store,
+    contentStore: capabilityServices.contentStore,
+  });
 
   // 6.6.8.4.1. Sandbox + image generation providers (HOISTED before setupTools
   // because setupTools consumes both as direct inputs).
@@ -2177,6 +2184,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       assembleToolsForAgent,
       getInboundMessageIdResolver: () => inboundMessageIdResolverSlot.current,
       getSessionTracker: () => sessionTrackerSlot.current,
+      managedAttentionReplies,
     }),
   );
   channelPluginsRef.ref = channelPlugins;
@@ -2263,6 +2271,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus,
     store: capabilityServices.store,
     contentStore: capabilityServices.contentStore,
+    attentionReplies: managedAttentionReplies,
     engine: managedContinuationEngine,
     resolveWorkspacePolicy: async (agentId, policyHash) => {
       const cached = container.workspacePolicyPort?.get(policyHash);

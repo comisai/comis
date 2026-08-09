@@ -1,34 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 import type {
+  ManagedAttentionReplyBindingOutcome,
+  ManagedAttentionReplyInput,
+  ManagedAttentionReplyPort,
   ManagedRunAttentionRecord,
   ManagedRunContentPort,
   ManagedRunOwnerScope,
   ManagedRunStorePort,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
-
-export interface ManagedAttentionReplyInput {
-  readonly operationId: string;
-  readonly attentionId?: string;
-  readonly text: string;
-  readonly respondedAtMs: number;
-}
-
-export type ManagedAttentionReplyBindingOutcome =
-  | { readonly kind: "bound"; readonly attention: ManagedRunAttentionRecord }
-  | {
-    readonly kind: "clarification_required";
-    readonly reason: "none_open" | "ambiguous" | "handle_not_found" | "already_answered";
-    readonly candidateAttentionIds: readonly string[];
-  };
-
-export interface ManagedAttentionReplyBinder {
-  bind(
-    scope: ManagedRunOwnerScope,
-    input: ManagedAttentionReplyInput,
-  ): Promise<Result<ManagedAttentionReplyBindingOutcome, Error>>;
-}
 
 async function invoke<T>(operation: () => Promise<Result<T, Error>>): Promise<Result<T, Error>> {
   const invoked = tryCatch(operation);
@@ -57,7 +38,7 @@ function contentScope(attention: ManagedRunAttentionRecord) {
 export function createManagedAttentionReplyBinder(deps: {
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
-}): ManagedAttentionReplyBinder {
+}): ManagedAttentionReplyPort {
   return Object.freeze({
     bind: async (
       scope: ManagedRunOwnerScope,

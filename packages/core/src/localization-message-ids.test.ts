@@ -16,4 +16,15 @@ describe("deterministic localization message ids", () => {
       "approval.resolved_one.denied",
     );
   });
+
+  it("publishes every deterministic attention reply identifier", () => {
+    expect(DETERMINISTIC_LOCALIZATION_MESSAGE_IDS).toEqual(expect.arrayContaining([
+      "attention.response_bound",
+      "attention.multiple",
+      "attention.not_found",
+      "attention.already_answered",
+      "attention.usage",
+      "attention.unavailable",
+    ]));
+  });
 });

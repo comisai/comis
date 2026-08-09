@@ -149,10 +149,12 @@ describe("managed-run continuation composition", () => {
       return ok({ result: finalized, finalizedValue, tools: [] });
     });
     const engine = { execute, shutdown: vi.fn(async () => undefined) } as unknown as ContinuationExecutionEngine;
+    const attentionReplies = { bind: vi.fn() } as unknown as import("@comis/core").ManagedAttentionReplyPort;
     const setup = await setupManagedRunContinuations({
       eventBus,
       store,
       contentStore,
+      attentionReplies,
       engine,
       resolveWorkspacePolicy: vi.fn(async () => ok({
         agentId: "agent-a",
@@ -168,6 +170,7 @@ describe("managed-run continuation composition", () => {
     });
     expect(setup.ok).toBe(true);
     if (!setup.ok) return;
+    expect(setup.value.attentionReplies).toBe(attentionReplies);
 
     eventBus.emit("managed_run:report_accepted", {
       managedRunId: record.managedRunId,

@@ -35,7 +35,6 @@ import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
 import { err, fromPromise, tryCatch } from "@comis/shared";
 import { withConfigMutationFence } from "../../api/shared/persist-to-config.js";
-
 /** Closure-captured deps for building and starting the ChannelManager. */
 // @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The split mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte.
 export interface ChannelManagerBuildDeps {
@@ -76,6 +75,7 @@ export interface ChannelManagerBuildDeps {
   // Server-side interactive-callback router (verifier) — inbound-gate.ts verifies
   // a signed button callback BEFORE slash parsing so the payload never reaches the LLM.
   interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
+  managedAttentionReplies: import("@comis/core").ManagedAttentionReplyPort;
   preprocessMessageCallback: (
     msg: NormalizedMessage,
     turnScope: import("@comis/core").ResolvedTurnScope,
@@ -123,7 +123,6 @@ export interface ChannelManagerBuildResult {
   activityRenderers: Map<string, ActivityRendererFactory>; // per-channelId factory, see buildActivityRenderers
   activityCoordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
 }
-
 /**
  * Construct + start the ChannelManager (voice pipeline + command queue + slash handler +
  * retry engine) and wire lifecycle reactors. Builds the manager when adapters exist OR an
@@ -369,6 +368,7 @@ export async function buildAndStartChannelManager(
       approvalGate: deps.approvalGate,
       // Signed button-callback verifier (inbound-gate.ts), via pipelineDeps = deps.
       interactiveCallbackRouter: deps.interactiveCallbackRouter,
+      managedAttentionReplies: deps.managedAttentionReplies,
       // General slash command handling via createCommandHandler
       handleSlashCommand: async (text: string, sessionKey: SessionKey, agentId: string) => {
         const parsed = parseSlashCommand(text);
