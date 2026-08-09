@@ -168,6 +168,8 @@ export interface ShutdownDeps {
   mcpClientManagerDisconnectAll?: () => Promise<void>;
   /** Drain background completion runner. */
   bgCompletionRunnerShutdown?: () => Promise<void>;
+  /** Drain managed-run continuation events and shared execution engine. */
+  managedRunContinuationShutdown?: () => Promise<void>;
   /** Drain the terminal wake-FSM — unsubscribe from the bus + await in-flight woken turns (124-09). */
   terminalWakeShutdown?: () => Promise<void>;
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
@@ -254,6 +256,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll,
     bgCompletionRunnerShutdown,
+    managedRunContinuationShutdown,
     terminalWakeShutdown,
     proxyTypingCleanup,
     shutdownDeliveryQueue,
@@ -388,6 +391,14 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await subAgentRunner.shutdown();
           daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "sub-agent-runner", daemonLogger, SUB_AGENT_SHUTDOWN_TIMEOUT_MS);
+      }
+
+      if (managedRunContinuationShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await managedRunContinuationShutdown();
+          daemonLogger.info({ component: "managed-run-continuations", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "managed-run-continuations", daemonLogger);
       }
 
       // Drain background-completion-runner before stopping

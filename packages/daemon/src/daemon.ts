@@ -78,6 +78,8 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  setupManagedRunContinuations,
+  createManagedRunContinuationDelivery,
   createBackgroundRecoveryRecorder,
   setupTerminalWake,
   setupMcp,
@@ -96,6 +98,7 @@ import { SENSITIVE_EXACT_KEYS, SENSITIVE_PREFIXES, buildMergedEnv } from "./wiri
 import {
   createActiveRunRegistry,
   createBackgroundSessionResolver,
+  createContinuationExecutionEngine,
   clearSessionState,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
@@ -2249,6 +2252,52 @@ async function bootChannels(boot: BootContext): Promise<void> {
     resolveMaxBackgroundHops: (agentId) => resolveAgentBackgroundTasksConfig(agents, agentId).maxBackgroundHops,
     logger: daemonLogger,
   });
+  const managedContinuationEngine = createContinuationExecutionEngine({
+    eventBus: container.eventBus,
+    getExecutor: handle.getExecutor,
+    assembleToolsForAgent,
+    ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
+    logger: daemonLogger,
+  });
+  const managedRunContinuationsResult = await setupManagedRunContinuations({
+    eventBus: container.eventBus,
+    store: capabilityServices.store,
+    contentStore: capabilityServices.contentStore,
+    engine: managedContinuationEngine,
+    resolveWorkspacePolicy: async (agentId, policyHash) => {
+      const cached = container.workspacePolicyPort?.get(policyHash);
+      const loaded = cached?.ok
+        ? cached
+        : await container.workspacePolicyPort?.load(agentId);
+      if (loaded === undefined || !loaded.ok) {
+        return err(new Error("The captured immutable workspace policy snapshot is unavailable"));
+      }
+      const verified = verifyWorkspacePolicySnapshot(loaded.value);
+      if (
+        !verified.ok
+        || loaded.value.agentId !== agentId
+        || loaded.value.combinedHash !== policyHash
+      ) {
+        return err(new Error("The captured immutable workspace policy snapshot does not match the managed continuation"));
+      }
+      return ok(loaded.value);
+    },
+    deliver: createManagedRunContinuationDelivery({
+      adaptersByType,
+      deliveryService,
+      ...(durableResume.outwardLedger === undefined ? {} : { outwardLedger: durableResume.outwardLedger }),
+      logger: daemonLogger,
+    }),
+    nowMs: () => handle.clock.now(),
+    heartbeatMaxAgeMs: 300_000,
+    claimTtlMs: 900_000,
+    recoveryBatchSize: container.config.capabilityServices.recoveryBatchSize,
+    logger: daemonLogger,
+  });
+  if (!managedRunContinuationsResult.ok) {
+    throw new Error(`Managed-run continuation setup failed: ${managedRunContinuationsResult.error.message}`);
+  }
+  const managedRunContinuations = managedRunContinuationsResult.value;
   // eventBus.on("system:shutdown", () =>
   //   bgCompletionRunnerContext.runner.shutdown()) deleted — runner.shutdown
   // is threaded directly into setupShutdown via
@@ -2438,7 +2487,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     msTeamsIngress,
     commandQueue, deliveryService,
     inboundMessageIdResolver, channelHealthMonitor, stopChannelHealthMonitor, stopChannelLivenessMonitor,
-    notificationContext, bgCompletionRunnerContext, terminalWakeContext,
+    notificationContext, bgCompletionRunnerContext, managedRunContinuations, terminalWakeContext,
     crossSessionSender, subAgentRunner, sendToChannel, announceToParent,
     deadLetterQueue, announcementBatcher, gatewaySendRef,
     sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
@@ -2684,7 +2733,7 @@ async function bootShutdown(
     | "heartbeatRunner" | "duplicateDetector" | "heartbeatCoordinator"
     | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
     | "outputRetentionHandle"
-    | "bgCompletionRunnerContext" | "trajectoryRegistry"
+    | "bgCompletionRunnerContext" | "managedRunContinuations" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
     | "sessionManager"
     | "subprocessEnv" | "execToolEnv"
@@ -2720,7 +2769,7 @@ async function bootShutdown(
     // 9 new teardown handles surfaced through BootContext.
     shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
-    bgCompletionRunnerContext, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
+    bgCompletionRunnerContext, managedRunContinuations, terminalWakeContext, stopChannelHealthMonitor, stopChannelLivenessMonitor, mcpClientManager,
     // The background video poller (undefined when video disabled) —
     // its shutdown is threaded into setupShutdown below.
     videoPoller,
@@ -2769,6 +2818,7 @@ async function bootShutdown(
     shutdownBackgroundProcesses,
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
+    managedRunContinuationShutdown: () => managedRunContinuations.shutdown(),
     // Drain the terminal wake-FSM (unsubscribe + await in-flight woken turns).
     terminalWakeShutdown: terminalWakeContext ? () => terminalWakeContext.shutdown() : undefined,
     proxyTypingCleanup,

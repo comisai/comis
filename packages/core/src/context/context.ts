@@ -109,6 +109,7 @@ export interface ResolvedRequestContext {
 }
 
 /** Complete identity for a freshly-created synthetic request boundary. */
+// @optional-field-count: synthetic sources capture different identity facets; resolution normalizes omissions before ALS publication.
 export interface ResolvedRequestContextSeed {
   tenantId: string;
   userId: string;

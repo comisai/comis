@@ -47,6 +47,7 @@ import type { DeliveryTracer } from "./observability/delivery-tracer.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
 import type { CapabilityServicePlatform } from "./wiring/setup-capability-services.js";
+import type { ManagedRunContinuationsContext } from "./wiring/setup-managed-run-continuations.js";
 
 import type {
   bootstrap,
@@ -615,6 +616,7 @@ export interface BootContext {
   // Notifications + background completion
   notificationContext?: ReturnType<typeof setupNotifications>;
   bgCompletionRunnerContext?: ReturnType<typeof setupBackgroundCompletionRunner>;
+  managedRunContinuations?: ManagedRunContinuationsContext;
   // Terminal-driver wake-FSM — drained on shutdown.
   terminalWakeContext?: ReturnType<typeof setupTerminalWake>;
   // Cross-session + sub-agent runtime

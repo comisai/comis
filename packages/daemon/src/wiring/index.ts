@@ -67,6 +67,11 @@ export {
   type GatewayAttachmentPersister,
 } from "./gateway-attachment-persistence.js";
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
+export {
+  setupManagedRunContinuations,
+  createManagedRunContinuationDelivery,
+  type ManagedRunContinuationsContext,
+} from "./setup-managed-run-continuations.js";
 // The durable-run + resume engine wiring (stores + boot recovery +
 // watchdog + shutdown) + the daemon composition helpers. Gated behind
 // autonomy.durability.enabled.
