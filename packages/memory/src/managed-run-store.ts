@@ -353,6 +353,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       openAttentionCount: current.value.openAttentionCount
         + (input.kind === "attention" || input.kind === "blocked" ? 1 : 0),
       updatedAtMs: input.receivedAtMs,
+      lastHeartbeatAtMs: input.receivedAtMs,
     };
     const persisted = persistMutable(next);
     return persisted.ok ? ok({ kind: "accepted", report: candidate.data }) : persisted;
