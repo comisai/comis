@@ -8,6 +8,7 @@ import {
   getContext,
   type NormalizedMessage,
   type SessionKey,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import {
@@ -95,7 +96,12 @@ describe("createContinuationExecutionEngine", () => {
       return finalized;
     });
     const tools = [{ name: "managed_status" }, { name: "managed_respond" }];
-    const assembleToolsForAgent = vi.fn(async () => tools);
+    const currentTools = [
+      { name: "unrelated_current_tool" },
+      { name: "managed_respond" },
+      { name: "managed_status" },
+    ];
+    const assembleToolsForAgent = vi.fn(async () => currentTools);
     const engine = createContinuationExecutionEngine({
       eventBus: new TypedEventBus(),
       getExecutor: () => ({ execute }) as unknown as AgentExecutor,
@@ -115,6 +121,11 @@ describe("createContinuationExecutionEngine", () => {
       attachments: [],
       metadata: {},
     };
+    const workspacePolicySnapshot: WorkspacePolicySnapshot = {
+      agentId: "agent-a",
+      sections: [],
+      combinedHash: "a".repeat(64),
+    };
 
     const outcome = await engine.execute({
       continuationId: "continuation-a",
@@ -127,6 +138,12 @@ describe("createContinuationExecutionEngine", () => {
       formattedSessionKey: formatSessionKey(sessionKey),
       message,
       journalKey: "continuation-a",
+      workspacePolicyHash: workspacePolicySnapshot.combinedHash,
+      workspacePolicySnapshot,
+      capturedCapabilityCeiling: {
+        toolIds: ["managed_respond", "managed_status"],
+        viewHash: "b".repeat(64),
+      },
       beforeExecute,
       hooks: {
         onProviderStart: () => ok(undefined),
@@ -151,6 +168,7 @@ describe("createContinuationExecutionEngine", () => {
       expect.objectContaining({
         operationType: "interactive",
         finalizedResultJournalKey: "continuation-a",
+        workspacePolicySnapshot,
       }),
     );
     expect(assembleToolsForAgent).toHaveBeenCalledWith("agent-a", { sessionKey });
