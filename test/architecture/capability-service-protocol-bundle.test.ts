@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
+import { MAX_MANAGED_RUN_REPORT_BYTES } from "@comis/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
@@ -158,6 +159,7 @@ describe("capability-service protocol bundle contract", () => {
       maxResponseBytes: 65_536,
       reportRetentionDays: 30,
     });
+    expect(manifest.limits.maxReportBytes).toBe(MAX_MANAGED_RUN_REPORT_BYTES);
     expect(manifest.generator.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(manifest.mcpMeta).toEqual({
       callContextKey: "comis.callContext",

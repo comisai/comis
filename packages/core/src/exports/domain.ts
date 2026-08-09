@@ -144,6 +144,11 @@ export {
   ManagedRunTerminalOutcomeSchema,
   ManagedRunRecordSchema,
   parseManagedRunRecord,
+  MAX_MANAGED_RUN_REPORT_BYTES,
+  ManagedRunReportKindSchema,
+  ManagedRunActivationDescriptorSchema,
+  ManagedRunReportBodySchema,
+  ManagedRunReportIndexSchema,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -258,4 +263,8 @@ export type {
   ManagedRunInitiationSource,
   ManagedRunTerminalOutcome,
   ManagedRunRecord,
+  ManagedRunReportKind,
+  ManagedRunActivationDescriptor,
+  ManagedRunReportBody,
+  ManagedRunReportIndex,
 } from "../domain/index.js";

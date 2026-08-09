@@ -290,6 +290,19 @@ export type {
   ManagedRunTerminalOutcome,
   ManagedRunRecord,
 } from "./managed-run.js";
+export {
+  MAX_MANAGED_RUN_REPORT_BYTES,
+  ManagedRunReportKindSchema,
+  ManagedRunActivationDescriptorSchema,
+  ManagedRunReportBodySchema,
+  ManagedRunReportIndexSchema,
+} from "./managed-run-content.js";
+export type {
+  ManagedRunReportKind,
+  ManagedRunActivationDescriptor,
+  ManagedRunReportBody,
+  ManagedRunReportIndex,
+} from "./managed-run-content.js";
 
 // RPC typed-refusal classification — the single source of truth the daemon
 // rpc-dispatch classifier AND the @comis/gateway method-router classifier both

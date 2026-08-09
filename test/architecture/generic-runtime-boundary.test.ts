@@ -65,6 +65,8 @@ describe("generic runtime specialization boundary", () => {
       "packages/capability-service-sdk/protocol/manifest.json",
       "packages/capability-service-sdk/protocol/fixtures/valid.json",
       "packages/core/src/domain/managed-run.ts",
+      "packages/core/src/domain/managed-run-content.ts",
+      "packages/core/src/ports/managed-run.ts",
       "packages/daemon/src/__tests__/capability-service-protocol-fixture-host.ts",
       "packages/daemon/src/__tests__/capability-service-protocol-fixture-server.ts",
       "packages/daemon/src/__tests__/capability-service-protocol-fixture-host-entry.ts",
