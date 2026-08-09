@@ -37,11 +37,28 @@ map keyed by `SIM_VARIANT` (`A`/`B`/`C`) that **rotates the surface facts while 
 constant** (this is how TRANSFER is tested — a fact-memorizer fails the next variant; only a learned
 *behavioral* strategy carries).
 
+A variant may additionally carry (see `personal-operations/` for a worked example):
+- **`basedOn: "<variant>"`** — a DERIVED variant: it inherits that variant's surface facts and overrides only
+  what it declares (`truth` is merged key-by-key). Use it to vary the world's *condition* without disturbing
+  the A/B/C rotation — e.g. `A-degraded` is variant A with one source unreachable.
+- **`availability: { "<source>": false }`** — mark a source unreadable so its observe tool answers
+  `{ ok: false, unavailable: true, items: [] }`. An unreadable source must NOT satisfy the reconciliation
+  predicate as if it had answered, and the grader should require the agent to report it as unreadable rather
+  than as empty.
+
+**Fail loud on an unknown variant.** Resolve `variants[variant]` (and any `basedOn`) with a THROW naming the
+requested key and the available ones — never a silent `|| variants.A` / `|| {}` fallback. A mistyped variant
+that quietly serves a different world makes a leg of the run look driven when it never was.
+
 ## `handlers.mjs`
 ```js
 // Optional: derive the live world from the seed + the active variant.
 export function setup({ seedWorld, rng, variant, ctx }) {
-  const v = (seedWorld.variants && seedWorld.variants[variant]) || {};
+  const variants = seedWorld.variants || {};
+  const v = variants[variant];
+  if (!v) {
+    throw new Error(`unknown variant "${variant}" (available: ${Object.keys(variants).sort().join(", ")})`);
+  }
   return { ...seedWorld, iocs: v.iocs, telemetry: buildTelemetry(seedWorld, v) };
 }
 

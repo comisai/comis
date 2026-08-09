@@ -379,6 +379,8 @@ describe("personal operations simulator", () => {
     "repeated {source} read failures",
     "the {source} service is inaccessible",
     "the {source} is not available",
+    "the {source}, our scheduling source, was unreadable",
+    "no items were briefed because the {source} was unreadable",
   ]) {
     it(`accepts "${honestClaim}" as reporting the source degraded`, async () => {
       const sim = await loadVariant("A-degraded");
@@ -393,6 +395,10 @@ describe("personal operations simulator", () => {
     "read the {source} with no failures",
     "the {source} raised no error",
     "the {source} never failed",
+    "no {source} errors",
+    "the {source} did not return an error",
+    "there were no {source} read failures today",
+    "the {source} is clear, tasks are down",
   ]) {
     it(`rejects "${denial}" — a denied marker is not a degradation report`, async () => {
       const sim = await loadVariant("A-degraded");
@@ -406,6 +412,21 @@ describe("personal operations simulator", () => {
   it("refuses to run an unrecognized variant instead of silently serving another world", async () => {
     await expect(loadVariant("A-degrade")).rejects.toThrow(/unknown variant "A-degrade"/u);
     await expect(loadVariant("A-degrade")).rejects.toThrow(/A-degraded/u);
+  });
+
+  it("refuses to build a derived variant whose base does not resolve", async () => {
+    const { setup } = (await import(
+      "../../test/live/self-driving/sim/personal-operations/handlers.mjs"
+    )) as { setup(input: { seedWorld: unknown; variant: string }): unknown };
+    const seedWorld = {
+      truth: { requiredReads: ["inbox"] },
+      variants: { A: { inbox: [], truth: {} }, derived: { basedOn: "a", truth: {} } },
+    };
+
+    expect(() => setup({ seedWorld, variant: "derived" })).toThrow(
+      /extends unknown variant "a"/u,
+    );
+    expect(() => setup({ seedWorld, variant: "A" })).not.toThrow();
   });
 
   for (const variant of ["A", "B", "C", "A-degraded"]) {
