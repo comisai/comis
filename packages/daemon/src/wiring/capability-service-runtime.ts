@@ -47,6 +47,7 @@ export type ActiveCapabilityServiceInstance = Readonly<{
   serviceInstanceId: string;
   mcpServerName: string;
   allowedAgents: readonly string[];
+  allowedWorkspaceRoots: readonly string[];
   state: "active" | "failed";
   activeScopes: readonly CapabilityServiceScope[];
   reasonCode?: CapabilityServiceInstanceFailureReason;
@@ -160,6 +161,7 @@ function instanceView(
     serviceInstanceId: instance.serviceInstanceId,
     mcpServerName: instance.mcpServerName,
     allowedAgents: Object.freeze([...instance.allowedAgents]),
+    allowedWorkspaceRoots: Object.freeze([...instance.allowedWorkspaceRoots]),
     state,
     activeScopes: Object.freeze([...activeScopes]),
     ...(failure === undefined ? {} : failure),

@@ -97,6 +97,20 @@ export type { SessionKey } from "./session-key.js";
 export { SessionStoreError } from "./session-store-error.js";
 
 export {
+  WorkspaceLeaseFilesystemIdentitySchema,
+  WorkspaceLeaseDispositionSchema,
+  WorkspaceLeaseStateSchema,
+  WorkspaceLeaseRecordSchema,
+  parseWorkspaceLeaseRecord,
+} from "./workspace-lease.js";
+export type {
+  WorkspaceLeaseFilesystemIdentity,
+  WorkspaceLeaseDisposition,
+  WorkspaceLeaseState,
+  WorkspaceLeaseRecord,
+} from "./workspace-lease.js";
+
+export {
   PollInputSchema,
   PollOptionResultSchema,
   NormalizedPollResultSchema,

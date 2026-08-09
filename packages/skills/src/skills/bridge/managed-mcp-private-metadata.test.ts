@@ -111,6 +111,7 @@ function makeView(behavior: "prepare_run" | "run_command" = "prepare_run") {
       serviceInstanceId: "service-instance_a",
       mcpServerName: "fixture-service",
       allowedAgents: ["agent_a"],
+      allowedWorkspaceRoots: [],
       state: "active" as const,
       activeScopes: ["health", "report"] as const,
     }],

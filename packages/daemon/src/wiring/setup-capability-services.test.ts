@@ -229,6 +229,7 @@ describe("production capability-service setup", () => {
           credentialRef: "secret://capability-services/service-instance_a",
         },
         allowedAgents: ["agent_a"],
+        allowedWorkspaceRoots: [],
       }],
       privateContentDirectory: "managed-runs/private",
       reportRetentionMs: 60_000,

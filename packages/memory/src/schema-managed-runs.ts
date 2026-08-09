@@ -85,6 +85,36 @@ export function ensureManagedRunTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_managed_runs_recovery
       ON managed_runs (status, updated_at_ms);
 
+    CREATE TABLE IF NOT EXISTS workspace_leases (
+      schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+      workspace_lease_id TEXT PRIMARY KEY NOT NULL,
+      managed_run_id TEXT NOT NULL UNIQUE REFERENCES managed_runs(managed_run_id),
+      service_instance_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      canonical_path TEXT NOT NULL,
+      filesystem_device INTEGER NOT NULL CHECK(filesystem_device >= 0),
+      filesystem_inode INTEGER NOT NULL CHECK(filesystem_inode >= 0),
+      state TEXT NOT NULL CHECK(state IN ('active','released')),
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      last_recovered_at_ms INTEGER,
+      released_at_ms INTEGER,
+      release_disposition TEXT CHECK(release_disposition IN ('reap_safe','preserve'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_workspace_leases_recovery
+      ON workspace_leases (state, updated_at_ms, workspace_lease_id);
+
+    CREATE TABLE IF NOT EXISTS workspace_lease_operations (
+      workspace_lease_id TEXT NOT NULL REFERENCES workspace_leases(workspace_lease_id),
+      operation_id TEXT NOT NULL,
+      operation_kind TEXT NOT NULL CHECK(operation_kind IN ('release','reconcile')),
+      input_hash TEXT NOT NULL,
+      result_record TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (workspace_lease_id, operation_id, operation_kind)
+    );
+
     CREATE TABLE IF NOT EXISTS managed_run_reports (
       schema_version INTEGER NOT NULL CHECK(schema_version = 1),
       service_instance_id TEXT NOT NULL,

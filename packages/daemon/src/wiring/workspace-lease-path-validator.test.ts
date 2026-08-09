@@ -2,6 +2,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -21,7 +22,7 @@ describe("workspace lease path validation", () => {
   });
 
   function makeLayout() {
-    const root = mkdtempSync(join(tmpdir(), "workspace-lease-path-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "workspace-lease-path-")));
     temporaryDirectories.push(root);
     const allowedRoot = join(root, "allowed");
     const workspace = join(allowedRoot, "task-a");

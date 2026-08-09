@@ -46,6 +46,7 @@ function makeInstance(
       credentialRef: "secret://capability-services/analysis-local",
     },
     allowedAgents: ["agent_a"],
+    allowedWorkspaceRoots: [],
     ...overrides,
   };
 }

@@ -219,6 +219,14 @@ export type {
   ManagedRunStorePort,
   ManagedRunPrivateContentReceipt,
   ManagedRunContentPort,
+  WorkspaceLeaseScope,
+  WorkspaceLeaseCreateOutcome,
+  WorkspaceLeaseReleaseInput,
+  WorkspaceLeaseReconcileInput,
+  WorkspaceLeaseReleaseOutcome,
+  WorkspaceLeaseReconcileOutcome,
+  WorkspaceLeaseRecoveryScanInput,
+  WorkspaceLeasePort,
 } from "../ports/index.js";
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure
 // round-trip functions the memory adapter and context ingest consume. The port

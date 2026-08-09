@@ -20876,6 +20876,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cap
             "minItems": 1,
             "type": "array"
           },
+          "allowedWorkspaceRoots": {
+            "items": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
           "control": {
             "additionalProperties": false,
             "properties": {
@@ -20921,7 +20930,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("cap
           "enabled",
           "mcpServerName",
           "control",
-          "allowedAgents"
+          "allowedAgents",
+          "allowedWorkspaceRoots"
         ],
         "type": "object"
       },
@@ -32682,6 +32692,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "minItems": 1,
                 "type": "array"
               },
+              "allowedWorkspaceRoots": {
+                "items": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
               "control": {
                 "additionalProperties": false,
                 "properties": {
@@ -32727,7 +32746,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "enabled",
               "mcpServerName",
               "control",
-              "allowedAgents"
+              "allowedAgents",
+              "allowedWorkspaceRoots"
             ],
             "type": "object"
           },

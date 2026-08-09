@@ -59,6 +59,7 @@ function makeInstance(socketPath: string): PlannedCapabilityServiceInstance {
       credentialRef: "secret://capability-services/service-instance_a",
     },
     allowedAgents: ["agent_a"],
+    allowedWorkspaceRoots: [],
   };
 }
 

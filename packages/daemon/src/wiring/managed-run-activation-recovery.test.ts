@@ -69,10 +69,10 @@ function makeRecord(
     externalRunRef,
     registrationNonce: `registration-nonce_${suffix}`,
     expiresAtMs,
-    state: "prepared" as const,
     ...(requestedWorkspaceRoot === undefined
       ? {}
       : { requestedWorkspace: { rootHint: requestedWorkspaceRoot } }),
+    state: "prepared" as const,
   };
   return {
     schemaVersion: 1,

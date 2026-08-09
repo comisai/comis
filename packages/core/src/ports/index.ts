@@ -64,6 +64,16 @@ export type {
   ManagedRunContentPort,
 } from "./managed-run.js";
 export type {
+  WorkspaceLeaseScope,
+  WorkspaceLeaseCreateOutcome,
+  WorkspaceLeaseReleaseInput,
+  WorkspaceLeaseReconcileInput,
+  WorkspaceLeaseReleaseOutcome,
+  WorkspaceLeaseReconcileOutcome,
+  WorkspaceLeaseRecoveryScanInput,
+  WorkspaceLeasePort,
+} from "./workspace-lease.js";
+export type {
   MemoryPort,
   MemoryWriteEntry,
   MemorySearchOptions,

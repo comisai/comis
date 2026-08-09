@@ -265,6 +265,7 @@ describe("bootstrap", () => {
       "        socketPath: /tmp/example-service.sock",
       "        credentialRef: secret://capability-services/service-instance_a",
       "      allowedAgents: [agent_a]",
+      "      allowedWorkspaceRoots: []",
       "",
     ].join("\n"));
 

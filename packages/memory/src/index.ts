@@ -5,6 +5,7 @@
 // Schema and initialization
 export { initSchema, isVecAvailable } from "./schema.js";
 export { createSqliteManagedRunStore } from "./managed-run-store.js";
+export { createSqliteWorkspaceLeaseStore } from "./workspace-lease-store.js";
 export { createSqliteManagedRunContentStore } from "./managed-run-content-store.js";
 // The reconcile/classify helpers stay package-internal (schema + adapter +
 // queue import them relatively); only the rebuild REPORT shape is public — the

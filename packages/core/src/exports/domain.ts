@@ -147,6 +147,11 @@ export {
   ManagedRunReportIndexSchema,
   reduceManagedRunState,
   ManagedRunAttentionRecordSchema,
+  WorkspaceLeaseFilesystemIdentitySchema,
+  WorkspaceLeaseDispositionSchema,
+  WorkspaceLeaseStateSchema,
+  WorkspaceLeaseRecordSchema,
+  parseWorkspaceLeaseRecord,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -266,4 +271,8 @@ export type {
   ManagedRunReportIndex,
   ManagedRunReduction,
   ManagedRunAttentionRecord,
+  WorkspaceLeaseFilesystemIdentity,
+  WorkspaceLeaseDisposition,
+  WorkspaceLeaseState,
+  WorkspaceLeaseRecord,
 } from "../domain/index.js";

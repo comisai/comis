@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, normalize, parse } from "node:path";
 import { z } from "zod";
 
 const CONTRIBUTION_ID_SEGMENT_PATTERN = /^[a-z][a-z0-9]*$/u;
@@ -26,6 +26,15 @@ const CapabilityServiceControlConfigSchema = z.strictObject({
   credentialRef: z.string().regex(SECRET_REF_PATTERN),
 });
 
+const WorkspaceRootSchema = z.string().min(1).max(4_096).superRefine((path, ctx) => {
+  if (!isAbsolute(path) || normalize(path) !== path || parse(path).root === path) {
+    ctx.addIssue({
+      code: "custom",
+      message: "capability-service workspace roots must be absolute, normalized, and narrower than a filesystem root",
+    });
+  }
+});
+
 export const CapabilityServiceInstanceConfigSchema = z.strictObject({
   serviceInstanceId: z.string().regex(OPAQUE_ID_PATTERN),
   serviceDefinitionId: z.string().refine(isContributionId),
@@ -33,12 +42,20 @@ export const CapabilityServiceInstanceConfigSchema = z.strictObject({
   mcpServerName: z.string().regex(OPAQUE_ID_PATTERN),
   control: CapabilityServiceControlConfigSchema,
   allowedAgents: z.array(z.string().regex(OPAQUE_ID_PATTERN)).min(1).max(256),
+  allowedWorkspaceRoots: z.array(WorkspaceRootSchema).max(64),
 }).superRefine((value, ctx) => {
   if (new Set(value.allowedAgents).size !== value.allowedAgents.length) {
     ctx.addIssue({
       code: "custom",
       path: ["allowedAgents"],
       message: "capability-service allowedAgents must be unique",
+    });
+  }
+  if (new Set(value.allowedWorkspaceRoots).size !== value.allowedWorkspaceRoots.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["allowedWorkspaceRoots"],
+      message: "capability-service allowedWorkspaceRoots must be unique",
     });
   }
 });

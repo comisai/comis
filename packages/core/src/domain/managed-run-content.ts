@@ -49,6 +49,9 @@ export const ManagedRunActivationDescriptorSchema = z.strictObject({
   externalRunRef: OpaqueRefSchema,
   registrationNonce: z.string().min(16).max(256).regex(OPAQUE_REF_PATTERN),
   expiresAtMs: TimestampMsSchema,
+  requestedWorkspace: z.strictObject({
+    rootHint: z.string().min(1).max(512),
+  }).optional(),
 });
 
 /** Strict private MCP result extension supplied by a prepared service command. */

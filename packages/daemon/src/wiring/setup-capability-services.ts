@@ -17,10 +17,12 @@ import {
   type SecretManager,
   type TimerPort,
   type TypedEventBus,
+  type WorkspaceLeasePort,
 } from "@comis/core";
 import {
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
+  createSqliteWorkspaceLeaseStore,
 } from "@comis/memory";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import {
@@ -39,6 +41,7 @@ import {
   type ManagedRunReportBridge,
 } from "./managed-run-report-bridge.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
+import { validateWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
 
 const SECRET_REFERENCE_PREFIX = "secret://";
 
@@ -47,6 +50,7 @@ export interface CapabilityServicePlatform {
   readonly runtime: CapabilityServiceRuntime;
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
+  readonly workspaceLeases: WorkspaceLeasePort;
   readonly activationCoordinator: ManagedRunActivationCoordinator;
   readonly reportBridge: ManagedRunReportBridge;
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
@@ -73,8 +77,11 @@ function digest(kind: string, value: string): string {
 function controlIds(managedRunId: string): ManagedRunActivationControlIds {
   const id = (kind: string): string => `${kind}-${digest(kind, managedRunId).slice(0, 48)}`;
   return Object.freeze({
+    workspaceLeaseId: id("workspace-lease"),
     activationOperationId: id("activate"),
     abandonOperationId: id("abandon"),
+    leaseReleaseOperationId: id("lease-release"),
+    leaseRecoveryOperationId: id("lease-recover"),
     rejectionOperationId: id("reject"),
     joinMissingOperationId: id("join-missing"),
     outcomeUnknownOperationId: id("outcome-unknown"),
@@ -189,11 +196,12 @@ export async function setupCapabilityServices(
 
   const stores = tryCatch(() => {
     const store = createSqliteManagedRunStore(deps.db);
+    const workspaceLeases = createSqliteWorkspaceLeaseStore(deps.db);
     const contentStore = createSqliteManagedRunContentStore(deps.db, {
       directoryPath: directories.value,
       nowMs: () => deps.clock.now(),
     });
-    return { store, contentStore };
+    return { store, workspaceLeases, contentStore };
   });
   if (!stores.ok) {
     logSetupFailure(deps, "capability-service-stores", "internal");
@@ -204,6 +212,7 @@ export async function setupCapabilityServices(
     return err(stores.value.contentStore.error);
   }
   const store = stores.value.store;
+  const workspaceLeases = stores.value.workspaceLeases;
   const contentStore = stores.value.contentStore.value;
   const reportBridge = createManagedRunReportBridge({
     store,
@@ -257,8 +266,11 @@ export async function setupCapabilityServices(
   const activationCoordinator = createManagedRunActivationCoordinator({
     store,
     contentStore,
+    workspaceLeases,
     control: host.value.control,
     activeView: runtime,
+    validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
+      validateWorkspaceLeasePath({ requestedPath, allowedWorkspaceRoots, dataDir: deps.dataDir }),
     ids: { forOperation: operationIds, forManagedRun: controlIds },
     nowMs: () => deps.clock.now(),
     eventBus: deps.eventBus,
@@ -300,6 +312,7 @@ export async function setupCapabilityServices(
     runtime,
     store,
     contentStore,
+    workspaceLeases,
     activationCoordinator,
     reportBridge,
     recoverySummary: recovered.value,

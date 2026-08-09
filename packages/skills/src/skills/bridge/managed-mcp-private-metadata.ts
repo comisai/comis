@@ -41,6 +41,7 @@ export interface ManagedMcpActiveInstance {
   readonly serviceInstanceId: string;
   readonly mcpServerName: string;
   readonly allowedAgents: readonly string[];
+  readonly allowedWorkspaceRoots: readonly string[];
   readonly state: "active" | "failed";
 }
 
@@ -395,7 +396,7 @@ export function createManagedMcpPrivateMetadataBridge(
     const parsed = McpManagedRunResultSchema.safeParse(
       input.meta[MCP_MANAGED_RUN_RESULT_KEY],
     );
-    if (!parsed.success || parsed.data.requestedWorkspace !== undefined) {
+    if (!parsed.success) {
       return rejectCall(deps, input, "managed-run prepared result failed strict validation");
     }
     const expiresAtMs = Date.parse(parsed.data.expiresAt);
@@ -413,6 +414,9 @@ export function createManagedMcpPrivateMetadataBridge(
         ...(parsed.data.displayLabel === undefined
           ? {}
           : { displayLabel: parsed.data.displayLabel }),
+        ...(parsed.data.requestedWorkspace === undefined
+          ? {}
+          : { requestedWorkspace: parsed.data.requestedWorkspace }),
       },
       authority: captured.authority,
     }));

@@ -57,6 +57,7 @@ function makeInstance(
       credentialRef: `secret://capability-services/${serviceInstanceId}`,
     },
     allowedAgents: ["agent_a"],
+    allowedWorkspaceRoots: [],
   };
 }
 
