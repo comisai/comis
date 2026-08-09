@@ -192,6 +192,89 @@ describe("managed-run continuation composition", () => {
     expect(engine.shutdown).toHaveBeenCalledOnce();
   });
 
+  it("resumes a journaled managed result without executing the continuation again", async () => {
+    const eventBus = new TypedEventBus();
+    const record = makeRecord();
+    const evidence = reportAndBody();
+    const store = {
+      get: vi.fn(async () => ok(record)),
+      claimContinuation: vi.fn(async () => ok({ kind: "identical_replay" as const, record })),
+      listReportRange: vi.fn(async () => ok([evidence.report])),
+      commitReducedState: vi.fn(async (_scope, input) => ok({
+        kind: "updated" as const,
+        record: { ...record, ...input, pendingContinuation: false },
+      })),
+      markContinuationOutcome: vi.fn(async () => ok({
+        kind: "updated" as const,
+        record: { ...record, pendingContinuation: false },
+      })),
+      listRecoverable: vi.fn(async () => ok({ records: [], invalid: [] })),
+    } as unknown as ManagedRunStorePort;
+    const contentStore = {
+      getReportBody: vi.fn(async () => ok(evidence.body)),
+    } as unknown as ManagedRunContentPort;
+    const journaled = {
+      response: "Journaled managed answer",
+      executionId: "execution-journaled",
+      cleanupRequired: false,
+    };
+    const recoverFinalizedResult = vi.fn(async () => ok(journaled));
+    const deliver = vi.fn(async () => ok({ deliveryState: "verified" as const }));
+    const execute = vi.fn();
+    const engine = {
+      execute,
+      shutdown: vi.fn(async () => undefined),
+    } as unknown as ContinuationExecutionEngine;
+    const setup = await setupManagedRunContinuations({
+      eventBus,
+      store,
+      contentStore,
+      attentionReplies: { bind: vi.fn() } as unknown as import("@comis/core").ManagedAttentionReplyPort,
+      engine,
+      recoverFinalizedResult,
+      resolveWorkspacePolicy: vi.fn(async () => ok({
+        agentId: "agent-a",
+        sections: [],
+        combinedHash: record.workspacePolicyHash,
+      })),
+      deliver,
+      nowMs: () => NOW_MS,
+      heartbeatMaxAgeMs: 60_000,
+      claimTtlMs: 60_000,
+      recoveryBatchSize: 10,
+      logger: makeLogger(),
+    } as unknown as Parameters<typeof setupManagedRunContinuations>[0]);
+    expect(setup.ok).toBe(true);
+    if (!setup.ok) return;
+
+    eventBus.emit("managed_run:report_accepted", {
+      managedRunId: record.managedRunId,
+      serviceInstanceId: record.serviceInstanceId,
+      sequence: 1,
+      kind: "candidate_complete",
+      durationMs: 1,
+      timestamp: NOW_MS,
+    });
+    await setup.value.runtime.waitUntilIdle();
+
+    expect(recoverFinalizedResult).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: record.agentId,
+      journalKey: expect.stringMatching(/^continuation-/),
+    }));
+    expect(execute).not.toHaveBeenCalled();
+    expect(deliver).toHaveBeenCalledWith(
+      record,
+      expect.stringMatching(/^continuation-/),
+      journaled,
+      "ready",
+    );
+    expect(store.commitReducedState).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      status: "succeeded",
+      statusReason: "outcome_verified",
+    }));
+    await setup.value.shutdown();
+  });
+
   it("protects finalized delivery with exact endpoint authority and the outward ledger", async () => {
     const record = makeRecord();
     const adapter = { channelId: "echo-main", channelType: "echo" };
