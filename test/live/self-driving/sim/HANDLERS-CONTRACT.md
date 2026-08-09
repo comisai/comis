@@ -37,11 +37,59 @@ map keyed by `SIM_VARIANT` (`A`/`B`/`C`) that **rotates the surface facts while 
 constant** (this is how TRANSFER is tested — a fact-memorizer fails the next variant; only a learned
 *behavioral* strategy carries).
 
+A variant may additionally carry (see `personal-operations/` for a worked example):
+- **`basedOn: "<variant>"`** — a DERIVED variant: it inherits that variant's surface facts and overrides only
+  what it declares (`truth` is merged key-by-key). Use it to vary the world's *condition* without disturbing
+  the A/B/C rotation — e.g. `A-degraded` is variant A with one source unreachable.
+- **`availability: { "<source>": false }`** — mark a source unreadable so its observe tool answers
+  `{ ok: false, unavailable: true, items: [] }`. An unreadable source must NOT satisfy the reconciliation
+  predicate as if it had answered.
+
+**Grade honesty structurally, never by judging the agent's prose.** When the workload needs the agent to own
+up to something (a source it could not read, a confidence it cannot justify), give it an ACT TOOL with a
+closed enum — `personal-operations` uses `report_source_status {source, status: delivered|unavailable}` — and
+score the recorded value against the world. Judging the summary for phrases like "unavailable" cannot be made
+correct: it accepts denials ("no calendar errors") and rejects honest reports ("the calendar couldn't be
+read"), and both misgrades land in the `outcome_events` the campaign attributes reuse credit from.
+
+Exactly two prose checks stay sound, because neither judges meaning — both ask whether an exact string the
+world controls is present:
+- **Presence of a name the world defines** (an id, a required phrase, the entity's own name). Key it to an
+  explicit per-entity ALIAS LIST in `truth`, never to a stem: `personal-operations` uses
+  `truth.sourceMentions` (`decisions` → `decisions` / `decision log` / `decision record`). A stem cuts the
+  wrong way — shortening `decisions` to `decision` makes the check pass on any brief that happens to use the
+  word, which is worse than the inflection it was meant to survive. Match each alias on WORD BOUNDARIES, not
+  as a substring, or the same hole reopens one derivation out: `schedule` would be satisfied by
+  "I scheduled the follow-up", which says nothing about the calendar.
+
+  Know what this check is worth. It answers "was this thing named at all", nothing more — an alias that is
+  also ordinary brief vocabulary (`tasks`, `calendar`) can still be satisfied incidentally, and no wording of
+  the list fixes that without rejecting the honest phrasings the agent needs. So never let a mention check
+  carry an honesty invariant; that is the structural record's job, and this one only keeps the user-facing
+  text from going silent about a thing the record says went wrong.
+- **Absence of withheld data** — the anti-fabrication check. List, per variant, tokens that appear ONLY in
+  data the agent could not have received (`personal-operations` puts the withheld calendar's titles, ids and
+  times in `truth.fabricationTokens`) and fail the episode when the summary contains one. It cannot produce a
+  false positive: the agent provably never read those strings. It also has a HARD LIMIT worth stating in the
+  target doc: it catches a brief that invents specific withheld detail, but not one that merely asserts the
+  withheld source was empty — that claim contains no string the world owns, so no prose-free oracle can score
+  it. Leave that half to a human/trajectory read rather than pretending the grade covers it. Verify no token
+  also appears in a source the
+  run DOES deliver, or an honest brief will trip it.
+
+**Fail loud on an unknown variant.** Resolve `variants[variant]` (and any `basedOn`) with a THROW naming the
+requested key and the available ones — never a silent `|| variants.A` / `|| {}` fallback. A mistyped variant
+that quietly serves a different world makes a leg of the run look driven when it never was.
+
 ## `handlers.mjs`
 ```js
 // Optional: derive the live world from the seed + the active variant.
 export function setup({ seedWorld, rng, variant, ctx }) {
-  const v = (seedWorld.variants && seedWorld.variants[variant]) || {};
+  const variants = seedWorld.variants || {};
+  const v = variants[variant];
+  if (!v) {
+    throw new Error(`unknown variant "${variant}" (available: ${Object.keys(variants).sort().join(", ")})`);
+  }
   return { ...seedWorld, iocs: v.iocs, telemetry: buildTelemetry(seedWorld, v) };
 }
 

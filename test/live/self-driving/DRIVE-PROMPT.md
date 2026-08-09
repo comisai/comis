@@ -53,10 +53,10 @@ Before acting, read these files in order and follow them as the campaign protoco
     findings and the previous-run baseline
 
 The pinned target spec is authoritative for the cast; implementation-state claims; A0–A13, B1–B15, and
-C1–C7 arcs; predicates; ground-truth and HARD oracles; config polarities; capability coverage matrix;
-known traps; out-of-scope declarations; and defaults review. Re-confirm every implementation claim against
-HEAD before relying on it. If source and prose disagree, source is the implementation truth and the drift
-is a framework finding to correct.
+C1–C7 arcs; the D1–D9 journeys; predicates; ground-truth and HARD oracles; config polarities; capability
+coverage matrix; known traps; out-of-scope declarations; and defaults review. Re-confirm every
+implementation claim against HEAD before relying on it. If source and prose disagree, source is the
+implementation truth and the drift is a framework finding to correct.
 
 Before changing any production source, also read
 `docs/developer-guide/generic-agent-architecture.md`. Keep Comis domain-neutral: persona and fixture
@@ -183,7 +183,7 @@ not an improvisation.
 ## Plan gate
 
 Write a complete `TEST-PLAN.md` before the first scored inject, but do not stop after writing it. Expand
-every A, B, and C arc from the pinned spec, plus every Track CC row, into:
+every A, B, and C arc and every D-journey from the pinned spec, plus every Track CC row, into:
 
 - the real-world happy path in the continuous relationship;
 - edge, malformed, boundary, concurrency, outage, and recovery variants;
@@ -421,7 +421,7 @@ defer a pile of ordinary defects.
 Do not declare the campaign complete until all applicable stop conditions in `02-DISCIPLINE.md` hold,
 including:
 
-- every A, B, C and Track CC row and every capability-matrix row resolved;
+- every A, B, C, D and Track CC row and every capability-matrix row resolved;
 - every carried finding either re-verified, closed, or escalated with evidence;
 - all HARD oracles green and zero false successes;
 - Telegram outbound and delivery mirror reconciled with no duplicates or cross-chat leaks;

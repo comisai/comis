@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # drive-sim-workload.sh — the per-workload ACC→REFLECT composition for the memory/learning sim catalog.
 #
-# This loop was hand-orchestrated ~14x per run (restart→connect→reset→2 byte-identical feeders→reflect→read)
+# This loop was hand-orchestrated ~15x per run (restart→connect→reset→2 byte-identical feeders→reflect→read)
 # before being standardized here — the missing COMPOSITION over the primitives
 # (restart-daemon.sh / drive.mjs / reflect-run.mjs / db.mjs).
 #
@@ -39,7 +39,7 @@ export COMIS_GATEWAY_TOKEN="${COMIS_GATEWAY_TOKEN:-${GWTOKEN:-}}"
 
 # Keep this script runnable on the repository's supported macOS/Bash 3.2 host. Bash associative arrays
 # require Bash 4, so the workload registry uses case functions plus an indexed server list.
-ALL_WORKLOADS=(package-delivery threat-hunting market-making icu-clinical contract-negotiation wildfire-command content-moderation grid-operator lab-research customer-success aml-investigations tutoring humanitarian-logistics precision-apiary)
+ALL_WORKLOADS=(package-delivery threat-hunting market-making icu-clinical contract-negotiation wildfire-command content-moderation grid-operator lab-research customer-success aml-investigations tutoring humanitarian-logistics precision-apiary personal-operations)
 
 server_for() {
   case "$1" in
@@ -57,6 +57,7 @@ server_for() {
     tutoring) printf '%s' tutor-sim ;;
     humanitarian-logistics) printf '%s' relief-sim ;;
     precision-apiary) printf '%s' apiary-sim ;;
+    personal-operations) printf '%s' personal-ops-sim ;;
     *) return 1 ;;
   esac
 }
@@ -77,6 +78,7 @@ prompt_for() {
     tutoring) printf '%s' "Tutor the student on the tutor-sim console: read the student in, set an initial hypothesis about their misconception, test it with problems and diagnostics, revise your hypothesis if the evidence does not fit, give hints that target the actual misconception, and assess mastery on a related transfer topic." ;;
     humanitarian-logistics) printf '%s' "Coordinate the relief operation on the relief-sim console: open the operation, assess the crises, the live route status, the field reports (weigh each by its source reliability), inventory and needs, prioritize the area, choose a passable route, allocate supplies, dispatch the convoy, and confirm delivery." ;;
     precision-apiary) printf '%s' "Manage the apiary season on the apiary-sim console: survey and inspect the hives, sample pest pressure, read the forage map, weather and harvest forecast, then treat, place and harvest hives at the right times, and close the season." ;;
+    personal-operations) printf '%s' "Review my day on the personal-ops-sim console. Reconcile inbox, calendar, open tasks, and prior decisions; tell me what matters, stage the needed reply without sending it, create the missing follow-up task, and finish the review." ;;
     *) return 1 ;;
   esac
 }
@@ -213,6 +215,6 @@ echo "-- mental_models: ${MM0:-?} -> ${MM1:-?} (admit if +1) --"
 echo "-- newest skill --"; node /root/db.mjs pick mental_models name,kind,state,trust_level,proof_count 1 2>/dev/null
 echo "-- grounding: surface facts memorized as instructions? (want NONE outside topicTokens) --"
 node /root/db.mjs pick mental_models body 1 2>/dev/null \
-  | grep -oiE 'priya|3-01|ws-07|alvarez|MRN-[0-9]+|maya|ACC-[0-9]+' | sort -u | head \
+  | grep -oiE 'priya|3-01|ws-07|alvarez|MRN-[0-9]+|maya|ACC-[0-9]+|robin|casey|avery|newsdesk|bulletin|promos|(mail|task|decision|event)-[a-c][0-9]+|budget summary|written summary|site checklist|revised checklist|accessibility checklist|completed checklist' | sort -u | head \
   || echo "(no obvious memorized surface fact in the body)"
 echo "== done: $WL =="
