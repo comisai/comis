@@ -820,14 +820,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     Sibling file.
   orchestrateFailedVerdict,
 
-  // 9h) execution_terminal_failure — the session ended in error and its activity
+  // 9h) execution_terminal_failure — the session did not end cleanly and its activity
   //     surface painted a terminal failure, but no tool failure exists to attribute
   //     it to and the kind is neither auth nor dependency (9d names those with their
   //     own levers). BELOW 9e-9g so a drive/orchestrate cause keeps its specific
   //     diagnosis; ABOVE the catch-all, which requires failures and so never
   //     competes. Without it, suppressing recall_miss on a failed finalize would
-  //     leave internal / validation / rejection-fallback deaths with NO verdict.
-  //     Sibling file.
+  //     leave internal / validation / rejection-fallback deaths with NO verdict —
+  //     and the gate follows the SUPPRESSION, not the literal "error" end reason, so
+  //     a named cause carrying the same failed finalize (provider_degraded,
+  //     narration_stall) cannot be silenced without being named. Sibling file.
   executionTerminalFailureVerdict,
 
   // A failed voice provider is more specific than the generic tool-error

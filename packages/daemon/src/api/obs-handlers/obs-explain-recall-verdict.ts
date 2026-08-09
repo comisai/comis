@@ -21,15 +21,18 @@
  * A zero-hit recall is ALSO the ordinary state of an empty memory store, so on a
  * session that died in the execution lifecycle the recall evidence is incidental and
  * must never become the verdict. That boundary is shared, not per-errorKind: the
- * terminal-failure predicates below derive ONE `terminalFailureKind` (an
- * `endReason: "error"` session with no tool failures whose activity surface finalized
- * as a failure), `auth` and `dependency` get their own named codes and levers, EVERY
- * other kind still names the terminal failure generically, and `recallMissVerdict`
- * itself refuses to fire on a failed finalize. Patching only the kinds seen so far
- * left `internal` (session_reset / narration_stall), `validation` (input_too_large)
- * and the rejection-classifier fallbacks still root-caused as "the turn ran with no
- * memory context". The return type is structurally identical to the registry's
- * `RootCause` (no cross-module type import ⇒ no cycle).
+ * terminal-failure predicates below derive ONE `terminalFailureKind` from the SAME
+ * evidence the suppression keys on (a degraded, no-tool-failure session whose activity
+ * surface finalized as a failure, or the generic `error` end reason), `auth` and
+ * `dependency` get their own named codes and levers, EVERY other kind still names the
+ * terminal failure generically, and `recallMissVerdict` itself refuses to fire on a
+ * failed finalize. Patching only the kinds seen so far left `internal` (session_reset /
+ * narration_stall), `validation` (input_too_large) and the rejection-classifier
+ * fallbacks still root-caused as "the turn ran with no memory context"; keying the gate
+ * on the literal `error` end reason left the NAMED causes that carry the same failed
+ * finalize (`provider_degraded`, `narration_stall`, …) suppressed AND unnamed. The
+ * return type is structurally identical to the registry's `RootCause` (no cross-module
+ * type import ⇒ no cycle).
  *
  * @module
  */
@@ -40,17 +43,50 @@ import type { IncidentSignals } from "@comis/core";
 type RecallVerdict = { code: string; detail: string; suggestedNextSteps: string[] };
 
 /**
+ * End states that can never BE a terminal execution failure, so the predicates below
+ * must not claim them: an authoritative successful outcome, and a foreground turn whose
+ * terminal outcome belongs to promoted background work (named by its own verdict, which
+ * out-ranks these). Every other non-clean end reason is in scope — `error` is only the
+ * GENERIC one, and the named causes (`provider_degraded`, `narration_stall`,
+ * `session_reset` → `error`, …) carry the identical failed-finalize evidence.
+ */
+const NON_TERMINAL_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
+  "success",
+  "background_pending",
+]);
+
+/**
+ * Whether the session died in the execution lifecycle with NO tool failure to attribute
+ * its death to. Keyed on the same failed-finalize evidence `recallMissVerdict` defers
+ * to, so no end reason can be silenced there without one of the verdicts below naming
+ * it; the generic `error` end reason also qualifies on its own, since a hard abort can
+ * skip the activity finalize entirely.
+ */
+const endedInTerminalExecutionFailure = (s: IncidentSignals): boolean => {
+  if (s.failures.length > 0 || s.degraded === false) return false;
+  const endReason = s.endReason;
+  if (endReason !== undefined && NON_TERMINAL_FAILURE_END_REASONS.has(endReason)) return false;
+  return endReason === "error" || s.turnFinalized?.outcome === "failure";
+};
+
+/**
  * The terminal execution ErrorKind of a session that produced NO tool failure to
  * attribute its death to, or `undefined` when the session carries no such evidence.
- * `auth` also keys on the early session-summary tally, which can carry the kind when
- * the activity surface never finalized with one. A failed finalize with no recorded
- * kind still counts — the failure is real evidence even when unclassified.
+ * The TERMINAL finalize's kind wins whenever it recorded one: `summaryTopErrorKinds` is
+ * a session-WIDE running tally, so an `auth` entry from an earlier, since-repaired turn
+ * must never mask the kind the session actually died of. The tally is consulted only as
+ * the fallback for a terminal surface that finalized without a kind (or never finalized
+ * at all). A failed finalize with no recorded kind anywhere still counts — the failure
+ * is real evidence even when unclassified.
  */
 const terminalFailureKind = (s: IncidentSignals): string | undefined => {
-  if (s.endReason !== "error" || s.failures.length > 0) return undefined;
+  if (!endedInTerminalExecutionFailure(s)) return undefined;
+  const finalizedKind =
+    s.turnFinalized?.outcome === "failure" ? s.turnFinalized.errorKind : undefined;
+  if (finalizedKind !== undefined) return finalizedKind;
   if ((s.summaryTopErrorKinds?.auth ?? 0) > 0 || s.turnFinalized?.errorKind === "auth") return "auth";
   if (s.turnFinalized?.outcome !== "failure") return undefined;
-  return s.turnFinalized.errorKind ?? "unclassified";
+  return "unclassified";
 };
 
 /** A terminal authentication failure is upstream of any incidental zero-hit recall. */
