@@ -395,6 +395,11 @@ export function createSqliteManagedRunContentStore(
       const parsed = ManagedRunReportBodySchema.safeParse(decoded.value);
       return parsed.success ? ok(parsed.data) : err(new Error("stored report body is invalid"));
     }),
+    deleteReportBody: (scope, contentRef) => boundary(() => {
+      const row = selectRow(scope, contentRef);
+      if (!row.ok || row.value === undefined) return row.ok ? ok(false) : row;
+      return row.value.kind === "report" ? removeRow(row.value) : ok(false);
+    }),
     putEvidence: (scope, evidenceRef, input) => boundary(() => input.body.byteLength <= MAX_EVIDENCE_BYTES
       ? put(scope, evidenceRef, "evidence", input.body, input.expiresAtMs)
       : err(new Error("managed-run evidence body exceeds its byte limit"))),

@@ -295,6 +295,7 @@ export {
   ManagedRunReportKindSchema,
   ManagedRunActivationDescriptorSchema,
   ManagedRunPreparedStartSchema,
+  ManagedRunReportInputSchema,
   ManagedRunReportBodySchema,
   ManagedRunReportIndexSchema,
 } from "./managed-run-content.js";
@@ -302,6 +303,7 @@ export type {
   ManagedRunReportKind,
   ManagedRunActivationDescriptor,
   ManagedRunPreparedStart,
+  ManagedRunReportInput,
   ManagedRunReportBody,
   ManagedRunReportIndex,
 } from "./managed-run-content.js";

@@ -18,6 +18,31 @@ export const ManagedRunReportKindSchema = z.enum([
   "resolution",
 ]);
 
+const managedRunReportInputShape = {
+  serviceReportId: OpaqueRefSchema,
+  kind: ManagedRunReportKindSchema,
+  externalKey: z.string().min(1).max(256).optional(),
+  summary: z.string().max(MAX_MANAGED_RUN_REPORT_BYTES),
+  details: z.string().max(MAX_MANAGED_RUN_REPORT_BYTES).optional(),
+  artifactRefs: z.array(OpaqueRefSchema).max(32).optional(),
+  observedAtMs: TimestampMsSchema.optional(),
+};
+
+function validateReportBytes(
+  body: { readonly summary: string; readonly details?: string },
+  context: z.RefinementCtx,
+): void {
+  const bytes = Buffer.byteLength(body.summary, "utf8")
+    + (body.details === undefined ? 0 : Buffer.byteLength(body.details, "utf8"));
+  if (bytes > MAX_MANAGED_RUN_REPORT_BYTES) {
+    context.addIssue({
+      code: "custom",
+      path: ["summary"],
+      message: "combined report content exceeds the UTF-8 byte limit",
+    });
+  }
+}
+
 /** Private service preparation data. It carries no host authority fields. */
 export const ManagedRunActivationDescriptorSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -32,27 +57,16 @@ export const ManagedRunPreparedStartSchema = ManagedRunActivationDescriptorSchem
   displayLabel: z.string().trim().min(1).max(256).optional(),
 }).omit({ schemaVersion: true });
 
-/** Private report body stored outside the content-free managed-run index. */
+/** Strict unversioned payload accepted from an authenticated service. */
+export const ManagedRunReportInputSchema = z.strictObject({
+  ...managedRunReportInputShape,
+}).superRefine(validateReportBytes);
+
+/** Versioned private report body stored outside the content-free index. */
 export const ManagedRunReportBodySchema = z.strictObject({
   schemaVersion: z.literal(1),
-  serviceReportId: OpaqueRefSchema,
-  kind: ManagedRunReportKindSchema,
-  externalKey: z.string().min(1).max(256).optional(),
-  summary: z.string().max(MAX_MANAGED_RUN_REPORT_BYTES),
-  details: z.string().max(MAX_MANAGED_RUN_REPORT_BYTES).optional(),
-  artifactRefs: z.array(OpaqueRefSchema).max(32).optional(),
-  observedAtMs: TimestampMsSchema.optional(),
-}).superRefine((body, context) => {
-  const bytes = Buffer.byteLength(body.summary, "utf8")
-    + (body.details === undefined ? 0 : Buffer.byteLength(body.details, "utf8"));
-  if (bytes > MAX_MANAGED_RUN_REPORT_BYTES) {
-    context.addIssue({
-      code: "custom",
-      path: ["summary"],
-      message: "combined report content exceeds the UTF-8 byte limit",
-    });
-  }
-});
+  ...managedRunReportInputShape,
+}).superRefine(validateReportBytes);
 
 /** Content-free report metadata used for replay, reduction, and recovery scans. */
 export const ManagedRunReportIndexSchema = z.strictObject({
@@ -80,5 +94,6 @@ export const ManagedRunReportIndexSchema = z.strictObject({
 export type ManagedRunReportKind = z.infer<typeof ManagedRunReportKindSchema>;
 export type ManagedRunActivationDescriptor = z.infer<typeof ManagedRunActivationDescriptorSchema>;
 export type ManagedRunPreparedStart = z.infer<typeof ManagedRunPreparedStartSchema>;
+export type ManagedRunReportInput = z.infer<typeof ManagedRunReportInputSchema>;
 export type ManagedRunReportBody = z.infer<typeof ManagedRunReportBodySchema>;
 export type ManagedRunReportIndex = z.infer<typeof ManagedRunReportIndexSchema>;

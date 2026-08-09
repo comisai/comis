@@ -21,4 +21,28 @@ describe("managed-run lifecycle events", () => {
       durationMs: 12,
     }));
   });
+
+  it("delivers a content-free accepted report index", () => {
+    const bus = new TypedEventBus();
+    const listener = vi.fn();
+    bus.on("managed_run:report_accepted", listener);
+
+    bus.emit("managed_run:report_accepted", {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      sequence: 2,
+      kind: "progress",
+      durationMs: 7,
+      timestamp: 1_800_000_000_000,
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      sequence: 2,
+      kind: "progress",
+      durationMs: 7,
+      timestamp: 1_800_000_000_000,
+    });
+  });
 });

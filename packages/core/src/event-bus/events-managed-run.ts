@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ManagedRunReportKind } from "../domain/managed-run-content.js";
 
 /** Content-free managed-run binding transitions. */
 export interface ManagedRunEvents {
@@ -27,6 +28,20 @@ export interface ManagedRunEvents {
     serviceInstanceId: string;
     agentId: string;
     reasonCode: "activation_outcome_unknown" | "recovery_join_missing" | "service_state_unavailable";
+    timestamp: number;
+  };
+  "managed_run:report_accepted": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    sequence: number;
+    kind: ManagedRunReportKind;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:report_rejected": {
+    managedRunId?: string;
+    serviceInstanceId?: string;
+    reasonCode: "invalid_report" | "managed_run_not_found" | "observed_time_out_of_bounds" | "replay_conflict" | "state_mismatch" | "storage_failure";
     timestamp: number;
   };
 }

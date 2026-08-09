@@ -221,7 +221,8 @@ describe("managed-run report bridge", () => {
       decision: "deny",
       reasonCode: "replay_conflict",
     }), "Managed-run report rejected");
-    expect(JSON.stringify(logger.audit)).not.toContain("Altered private body");
+    const audit = logger.audit as ReturnType<typeof vi.fn>;
+    expect(JSON.stringify(audit.mock.calls)).not.toContain("Altered private body");
   });
 
   it("rejects forged ownership and advisory time before publishing private content", async () => {
