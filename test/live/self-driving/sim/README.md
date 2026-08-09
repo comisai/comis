@@ -230,12 +230,31 @@ one for the exemplar.)
 
 ## Validation status — `artifact-to-action` (2026-08-09)
 
-The workload's contract and `--selftest` drive A, B, C and `A-degraded`. A/B/C rotate from an object photo
-to a schedule document to a measurement report while preserving one method: inspect, corroborate, record
-provenance, stage, authorize, commit once and read back. The degraded variant makes the authority
-unavailable and succeeds only when authority-dependent fields remain unverified and no action is staged or
-committed. This deterministic transfer is not a live model-transfer result; record any daemon/model drive
-separately with its exact model, tool trace and terminal grade.
+**Deterministic offline coverage plus a real-transport redrive. No daemon or model drive is on record.**
+
+- **Workload handle (offline).** `--selftest` reaches `success` on the golden path and `failure` on the
+  naive path for `A`, `B`, `C` and `A-degraded`, and the contract suite
+  (`<repo>/scripts/contracts/artifact-to-action-sim-contract.test.ts`) drives the full case through the
+  workload handle: required-field discovery off the observe path, staged preview, fresh case-bound
+  authorization, exactly-once commit, durable readback, the corrected-revision and denied-authorization
+  recoveries, and the embedded-instruction, superseded-authorization, cross-case, duplicate-commit and
+  missing-readback failures.
+- **Real MCP stdio transport (redriven).** The same suite spawns `sim/bin/mcp-server.mjs artifact-to-action
+  <variant>` and speaks newline-delimited JSON-RPC 2.0 to that process: `initialize` reports
+  `artifact-action-sim`, `tools/list` publishes 13 tools, and `tools/call` drives `A`, `B` and `C` to a
+  terminal `success`, `A-degraded` to an honest no-commit `success`, and the embedded-instruction target to
+  an authorization denial with a terminal `failure`.
+
+A/B/C rotate from an object photo to a schedule document to a measurement report while preserving one
+method: inspect, corroborate, record provenance, stage, authorize, commit once and read back. The degraded
+variant makes the authority unavailable and succeeds only when authority-dependent fields remain unverified
+and no action is staged or committed.
+
+**Evidence boundary.** Both tiers prove transport and workload orchestration only — every tool call is
+issued by a deterministic driver, not chosen by a model. Neither is evidence of independent model reasoning
+or of learned transfer. No daemon drive, provider-backed session or reflection result exists for this
+workload; record one separately with its exact model, session/trace reference, tool trace and terminal
+grade before claiming either.
 
 ## Validation status — `personal-operations` (2026-08-09)
 

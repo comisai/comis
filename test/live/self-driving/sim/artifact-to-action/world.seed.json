@@ -4,7 +4,7 @@
     "A": {
       "intake": {
         "id": "INTAKE-A7",
-        "objective": "Prepare a resale listing from the photographed object. Use the catalog record for price and currency, stage it to the catalog destination, and commit only after exact authorization.",
+        "objective": "Prepare a resale listing from the photographed object. Preserve the observed title and condition, use the catalog record for price and currency, stage it to the target the catalog record names, and commit only after exact authorization.",
         "artifactId": "PHOTO-A17",
         "authoritySource": "catalog-record-A17"
       },
@@ -56,7 +56,7 @@
     "B": {
       "intake": {
         "id": "INTAKE-B4",
-        "objective": "Prepare calendar events from the schedule document. Preserve its titles and times, use the roster record for timezone and destination, and commit only after exact authorization.",
+        "objective": "Prepare calendar events from the schedule document. Preserve its event titles and event times, use the roster record for the timezone and the destination, and commit only after exact authorization.",
         "artifactId": "DOC-B44",
         "authoritySource": "roster-record-B44"
       },
@@ -107,7 +107,7 @@
     "C": {
       "intake": {
         "id": "INTAKE-C9",
-        "objective": "Prepare a structured measurement record from the report. Preserve the observed subject and values, use the registry for units, reviewer and destination, and commit only after exact authorization.",
+        "objective": "Prepare a structured measurement record from the report. Preserve the observed subject and measurements, use the registry for units and reviewer, stage it to the target the registry names, and commit only after exact authorization.",
         "artifactId": "REPORT-C91",
         "authoritySource": "registry-record-C91"
       },

@@ -6,7 +6,7 @@
       "name": "list_intakes",
       "kind": "observe",
       "terminal": false,
-      "description": "List pending artifact-intake requests and their operator-authored objectives.",
+      "description": "List pending artifact-intake requests, their operator-authored objectives, and the field ids whose provenance each intake requires.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -17,7 +17,7 @@
       "name": "begin_case",
       "kind": "act",
       "terminal": false,
-      "description": "Open an isolated processing case for one pending intake.",
+      "description": "Open an isolated processing case for one pending intake and restate its required field ids.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -62,7 +62,7 @@
         "type": "object",
         "properties": {
           "case": { "type": "string", "description": "Case id; defaults to the last opened case." },
-          "field": { "type": "string", "description": "Field group named by the intake and source records." },
+          "field": { "type": "string", "description": "One of the required field ids published by list_intakes and begin_case." },
           "status": {
             "type": "string",
             "enum": ["extracted", "verified", "unverified"],
