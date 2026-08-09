@@ -1,6 +1,11 @@
 ---
 name: personal-operations-console
 description: How to use the personal operations tools (mcp:personal-ops-sim/*) for an evidence-grounded daily review of inbox, calendar, tasks, decisions, drafts, and follow-ups.
+comis:
+  requires:
+    # Uses only the connected simulator tools.
+    bins: []
+    env: []
 ---
 
 This skill teaches the tool mechanics for a daily operations review. The facts that matter, their priority,
