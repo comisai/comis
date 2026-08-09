@@ -199,4 +199,251 @@ describe("SQLite workspace lease persistence", () => {
     })).toEqual({ ok: true, value: { kind: "identity_mismatch" } });
     db.close();
   });
+
+  it("rejects invalid creation and conflicting lease replays", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+
+    await expect(store.create(makeLease({ canonicalPath: "" }))).resolves.toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("canonicalPath") },
+    });
+    await expect(store.create(makeLease())).resolves.toMatchObject({
+      ok: true,
+      value: { kind: "created" },
+    });
+    await expect(store.create(makeLease())).resolves.toMatchObject({
+      ok: true,
+      value: { kind: "identical_replay" },
+    });
+    await expect(store.create(makeLease({ canonicalPath: "/srv/comis-workspaces/changed" })))
+      .resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    await expect(store.create(makeLease({ workspaceLeaseId: "workspace-lease_b" })))
+      .resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    db.close();
+  });
+
+  it("returns closed outcomes for missing scoped and stale release requests", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).ok).toBe(true);
+    const release = {
+      operationId: "release_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "reap_safe" as const,
+      releasedAtMs: NOW_MS + 1,
+    };
+
+    await expect(store.get({ ...LEASE_SCOPE, tenantId: "tenant_b" }, "workspace-lease_a"))
+      .resolves.toEqual({ ok: true, value: undefined });
+    await expect(store.release(LEASE_SCOPE, {
+      ...release,
+      workspaceLeaseId: "workspace-lease_missing",
+    })).resolves.toEqual({ ok: true, value: { kind: "not_found" } });
+    await expect(store.release({ ...LEASE_SCOPE, agentId: "agent_b" }, release))
+      .resolves.toEqual({ ok: true, value: { kind: "scope_mismatch" } });
+    await expect(store.release(LEASE_SCOPE, { ...release, releasedAtMs: NOW_MS - 1 }))
+      .resolves.toMatchObject({
+        ok: false,
+        error: { message: "workspace lease release time cannot move backward" },
+      });
+    await expect(store.release(LEASE_SCOPE, release)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: "released" },
+    });
+    await expect(store.release(LEASE_SCOPE, { ...release, operationId: "release_b" }))
+      .resolves.toEqual({ ok: true, value: { kind: "state_mismatch" } });
+    db.close();
+  });
+
+  it("returns closed outcomes for missing scoped replay and stale recovery requests", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).ok).toBe(true);
+    const recovered = {
+      operationId: "recover_a",
+      workspaceLeaseId: "workspace-lease_a",
+      filesystemIdentity: { device: 10, inode: 20 },
+      recoveredAtMs: NOW_MS + 1,
+    };
+
+    await expect(store.reconcile(LEASE_SCOPE, {
+      ...recovered,
+      workspaceLeaseId: "workspace-lease_missing",
+    })).resolves.toEqual({ ok: true, value: { kind: "not_found" } });
+    await expect(store.reconcile({ ...LEASE_SCOPE, serviceInstanceId: "service-instance_b" }, recovered))
+      .resolves.toEqual({ ok: true, value: { kind: "scope_mismatch" } });
+    await expect(store.reconcile(LEASE_SCOPE, { ...recovered, recoveredAtMs: NOW_MS - 1 }))
+      .resolves.toMatchObject({
+        ok: false,
+        error: { message: "workspace lease recovery time cannot move backward" },
+      });
+    await expect(store.reconcile(LEASE_SCOPE, recovered)).resolves.toMatchObject({
+      ok: true,
+      value: { kind: "recovered" },
+    });
+    await expect(store.reconcile(LEASE_SCOPE, { ...recovered, recoveredAtMs: NOW_MS + 2 }))
+      .resolves.toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    await expect(store.release(LEASE_SCOPE, {
+      operationId: "release_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "preserve",
+      releasedAtMs: NOW_MS + 2,
+    })).resolves.toMatchObject({ ok: true, value: { kind: "released" } });
+    await expect(store.reconcile(LEASE_SCOPE, { ...recovered, operationId: "recover_b" }))
+      .resolves.toEqual({ ok: true, value: { kind: "state_mismatch" } });
+    db.close();
+  });
+
+  it("rejects invalid recovery limits and contains closed database failures", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    const store = createSqliteWorkspaceLeaseStore(db);
+
+    await expect(store.listRecoverable({ kind: "recovery", limit: 0 })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "workspace lease recovery scan limit is invalid" },
+    });
+    db.close();
+    await expect(store.get(LEASE_SCOPE, "workspace-lease_a")).resolves.toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("database connection is not open") },
+    });
+  });
+
+  it("contains malformed durable operation records as result errors", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).ok).toBe(true);
+    const release = {
+      operationId: "release_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "preserve" as const,
+      releasedAtMs: NOW_MS + 1,
+    };
+    expect((await store.release(LEASE_SCOPE, release)).ok).toBe(true);
+    db.prepare(`
+      UPDATE workspace_lease_operations
+      SET result_record = '{'
+      WHERE workspace_lease_id = ? AND operation_id = ? AND operation_kind = 'release'
+    `).run("workspace-lease_a", "release_a");
+
+    await expect(store.release(LEASE_SCOPE, release)).resolves.toMatchObject({
+      ok: false,
+      error: { name: "SyntaxError" },
+    });
+    db.close();
+  });
+
+  it("contains malformed lease rows across durable authority operations", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).ok).toBe(true);
+    db.prepare("UPDATE workspace_leases SET created_at_ms = 'invalid'").run();
+
+    await expect(store.get(LEASE_SCOPE, "workspace-lease_a")).resolves.toMatchObject({ ok: false });
+    await expect(store.release(LEASE_SCOPE, {
+      operationId: "release_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "preserve",
+      releasedAtMs: NOW_MS + 1,
+    })).resolves.toMatchObject({ ok: false });
+    await expect(store.reconcile(LEASE_SCOPE, {
+      operationId: "recover_a",
+      workspaceLeaseId: "workspace-lease_a",
+      filesystemIdentity: { device: 10, inode: 20 },
+      recoveredAtMs: NOW_MS + 1,
+    })).resolves.toMatchObject({ ok: false });
+    await expect(store.create(makeLease({ workspaceLeaseId: "workspace-lease_b" })))
+      .resolves.toMatchObject({ ok: false });
+    await expect(store.listRecoverable({ kind: "recovery", limit: 10 }))
+      .resolves.toMatchObject({ ok: false });
+    db.close();
+  });
+
+  it("contains domain-invalid rows and malformed operation hashes", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).ok).toBe(true);
+    db.prepare("UPDATE workspace_leases SET canonical_path = ''").run();
+
+    await expect(store.get(LEASE_SCOPE, "workspace-lease_a")).resolves.toMatchObject({ ok: false });
+    await expect(store.listRecoverable({ kind: "recovery", limit: 10 }))
+      .resolves.toMatchObject({ ok: false });
+
+    db.prepare("UPDATE workspace_leases SET canonical_path = ?")
+      .run("/srv/comis-workspaces/task-a");
+    const recovered = {
+      operationId: "recover_a",
+      workspaceLeaseId: "workspace-lease_a",
+      filesystemIdentity: { device: 10, inode: 20 },
+      recoveredAtMs: NOW_MS + 1,
+    };
+    expect((await store.reconcile(LEASE_SCOPE, recovered)).ok).toBe(true);
+    db.prepare(`
+      UPDATE workspace_lease_operations
+      SET input_hash = X'00'
+      WHERE workspace_lease_id = ? AND operation_id = ? AND operation_kind = 'reconcile'
+    `).run("workspace-lease_a", "recover_a");
+    await expect(store.reconcile(LEASE_SCOPE, recovered)).resolves.toMatchObject({ ok: false });
+    db.close();
+  });
+
+  it("reports lost atomic lease updates as durable errors", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+    const store = createSqliteWorkspaceLeaseStore(db);
+    expect((await store.create(makeLease())).ok).toBe(true);
+    db.exec(`
+      CREATE TRIGGER remove_lease_before_update
+      BEFORE UPDATE ON workspace_leases
+      BEGIN
+        DELETE FROM workspace_leases WHERE workspace_lease_id = OLD.workspace_lease_id;
+        SELECT RAISE(IGNORE);
+      END;
+    `);
+
+    await expect(store.release(LEASE_SCOPE, {
+      operationId: "release_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "preserve",
+      releasedAtMs: NOW_MS + 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "workspace lease update lost its row" },
+    });
+    db.exec("DROP TRIGGER remove_lease_before_update");
+    expect((await store.create(makeLease())).ok).toBe(true);
+    db.exec(`
+      CREATE TRIGGER remove_lease_before_update
+      BEFORE UPDATE ON workspace_leases
+      BEGIN
+        DELETE FROM workspace_leases WHERE workspace_lease_id = OLD.workspace_lease_id;
+        SELECT RAISE(IGNORE);
+      END;
+    `);
+    await expect(store.reconcile(LEASE_SCOPE, {
+      operationId: "recover_a",
+      workspaceLeaseId: "workspace-lease_a",
+      filesystemIdentity: { device: 10, inode: 20 },
+      recoveredAtMs: NOW_MS + 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { message: "workspace lease update lost its row" },
+    });
+    db.close();
+  });
 });
