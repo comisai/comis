@@ -148,8 +148,8 @@ function freezeDefinition(
   return Object.freeze({
     ...definition,
     contributionId,
-    requestedScopes: Object.freeze([...definition.requestedScopes]),
-    dependsOn: Object.freeze([...definition.dependsOn]),
+    requestedScopes: Object.freeze([...definition.requestedScopes].sort()),
+    dependsOn: Object.freeze([...definition.dependsOn].sort()),
   });
 }
 
@@ -161,7 +161,7 @@ function freezeInstance(
     ...instance,
     contributionId,
     control: Object.freeze({ ...instance.control }),
-    allowedAgents: Object.freeze([...instance.allowedAgents]),
+    allowedAgents: Object.freeze([...instance.allowedAgents].sort()),
   });
 }
 

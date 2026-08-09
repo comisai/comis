@@ -7,6 +7,7 @@ import type { LearningEvents } from "./events-learning.js";
 import type { TrajectoryEvents } from "./events-trajectory.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
+import type { CapabilityServiceEvents } from "./events-capability-service.js";
 import type { BackgroundRecoveryEvents } from "./events-background-recovery.js";
 import type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 import type { TerminalEvents } from "./events-terminal.js";
@@ -47,6 +48,7 @@ export interface EventMap
     TrajectoryEvents,
     ChannelEvents,
     InfraEvents,
+    CapabilityServiceEvents,
     BackgroundRecoveryEvents,
     SchedulerTaskEvents,
     TerminalEvents,
