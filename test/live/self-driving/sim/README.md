@@ -12,7 +12,7 @@ rationale (and why MCP, not `exec`) is in [`DESIGN-DRAFT.md`](./DESIGN-DRAFT.md)
 > ([`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md)); `drive-sim-workload.sh threat-hunting`
 > declares that risk itself and exits `4` without the operator acknowledgement. It is nonetheless the
 > worked example below — substitute another workload when you are not authorized. The offline CLI
-> (`--selftest`, `--list`, single-function calls) needs no authorization, and the other 14 workloads'
+> (`--selftest`, `--list`, single-function calls) needs no authorization, and the other 15 workloads'
 > canonical feeder prompts classify clean.
 
 **The one principle:** every `SKILL.md` teaches tool **mechanics** (the tools, the call order, the goal) —
@@ -27,7 +27,7 @@ sim/
   bin/{mcp-server,cli}.mjs          # generic entry points (load any workload by name)
   HANDLERS-CONTRACT.md              # how a workload is built (the contract)
   deploy-sim.sh                     # copy this tree to the VPS
-  <workload>/                       # one dir per workload (15):
+  <workload>/                       # one dir per workload (16):
     tools.json  world.seed.json  handlers.mjs  SKILL.md
 ```
 There is **one generic MCP server**; each workload is a separate *process* launched with its name as an arg
@@ -38,15 +38,15 @@ The **agent** uses the MCP server; this CLI is for you. Each CLI call is a *fres
 episode state does NOT persist across separate calls — use `--selftest` (a full episode in one process).
 ```bash
 cd test/live/self-driving/sim
-node bin/cli.mjs --workloads                      # list all 15 workloads
+node bin/cli.mjs --workloads                      # list all 16 workloads
 node bin/cli.mjs threat-hunting --list            # the tools (functions) + schemas
 node bin/cli.mjs threat-hunting --selftest        # golden path → success, naive → failure  (ground truth)
 node bin/cli.mjs threat-hunting query_telemetry --filter FS-01   # call one function, print JSON
 SIM_VARIANT=B node bin/cli.mjs threat-hunting --selftest          # a rotated-surface variant (transfer)
 ```
 `--selftest` is the ground-truth check that a workload's success signal is reachable **and** that the naive
-shortcut (the thing the engine must learn to avoid) actually fails. All 15 pass on variants A/B/C
-(`personal-operations` also on its derived `A-degraded` variant). This is an OFFLINE check — it does not
+shortcut (the thing the engine must learn to avoid) actually fails. All 16 pass on variants A/B/C
+(`personal-operations` and `artifact-to-action` also pass on their derived `A-degraded` variants). This is an OFFLINE check — it does not
 stand in for a live drive on the daemon.
 
 ## Copy to the VPS
@@ -92,11 +92,11 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 > (far less friction than a per-workload
 > discoveryPath+restart). The skills are namespaced + distinctly-described, so a capable model picks the
 > right one per task; `drive-sim-workload.sh` then only swaps the MCP *server* (live, no restart) per
-> workload. Patch all 15: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 15 … ]}}}}`.
+> workload. Patch all 16: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 16 … ]}}}}`.
 
 > **Size the learned-procedure surface for the accumulating campaign.** The runtime selects the
-> highest-corroboration procedures first, so a campaign that keeps all 15 workload skills in one store must
-> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 15 (20 leaves diagnostic
+> highest-corroboration procedures first, so a campaign that keeps all 16 workload skills in one store must
+> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 16 (20 leaves diagnostic
 > headroom). A smaller cap is valid for production, but it deterministically hides lower-proof candidates
 > once enough earlier skills become active; hidden candidates cannot earn reuse credit. The campaign
 > preflight therefore uses `20` and verifies the startup config before driving transfer variants.
@@ -205,7 +205,7 @@ su - comis -c 'comis mcp disconnect th-sim'
 # remove the discoveryPath from config; WIPE_CRONS=1 clean-restart for the next from-scratch run
 ```
 
-## The 15 workloads
+## The 16 workloads
 | dir | MCP server | skill | primary stressor (catalog) |
 |---|---|---|---|
 | `package-delivery` | `depot-sim` | depot-courier | **learn the building layout + best route** (the Hindsight exemplar: cold = wander/slow, learned = direct/fast) |
@@ -223,19 +223,30 @@ su - comis -c 'comis mcp disconnect th-sim'
 | `humanitarian-logistics` | `relief-sim` | — | transfer (flood→quake) + report trust-tiering + map supersede |
 | `precision-apiary` | `apiary-sim` | — | extreme seasonal delay + retain-through-long-dormancy |
 | `personal-operations` | `personal-ops-sim` | personal-operations-console | cross-source daily review + draft/send state + durable follow-up |
+| `artifact-to-action` | `artifact-action-sim` | artifact-to-action-console | cross-domain artifact provenance + exact authorization + commit readback |
 
 (skill `name:` shown where authored; each workload ships its own `SKILL.md` — the table lists the canonical
 one for the exemplar.)
 
+## Validation status — `artifact-to-action` (2026-08-09)
+
+The workload's contract and `--selftest` drive A, B, C and `A-degraded`. A/B/C rotate from an object photo
+to a schedule document to a measurement report while preserving one method: inspect, corroborate, record
+provenance, stage, authorize, commit once and read back. The degraded variant makes the authority
+unavailable and succeeds only when authority-dependent fields remain unverified and no action is staged or
+committed. This deterministic transfer is not a live model-transfer result; record any daemon/model drive
+separately with its exact model, tool trace and terminal grade.
+
 ## Validation status — `personal-operations` (2026-08-09)
 
-**Offline only. No live drive, and therefore NO transfer result, has been recorded for this workload.** What
-is verified: `--selftest` reaches `success` on the golden path and `failure` on the naive path for variants
-`A`, `B`, `C` and `A-degraded`, and the contract suite
+**Deterministic transfer passes; bounded local-model transfer did not complete.** `--selftest` reaches
+`success` on the golden path and `failure` on the naive path for variants `A`, `B`, `C` and `A-degraded`, and the contract suite
 (`<repo>/scripts/contracts/personal-operations-sim-contract.test.ts`)
 drives the full daily loop through the workload handle — reconciliation, staged-not-sent draft, one follow-up
-task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. None of that
-exercises the daemon, the reflection engine, or a model.
+task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. A later
+isolated local drive reached the real daemon with 12 tools and one skill, but qwen2.5 1.5B timed out after
+420 seconds with zero tool calls; earlier qwen3 4B and 1.7B attempts also failed inside their bounds. That
+attempt exercised the daemon and model assembly, but did not produce an episode or reflection evidence.
 
 Keep the two senses of "transfer" apart, because only the first one is measured:
 - **Fixture transfer (verified).** The same behavioral loop — reconcile every reachable source, honor the
@@ -243,9 +254,8 @@ Keep the two senses of "transfer" apart, because only the first one is measured:
   though every correspondent, subject, deadline, artifact phrase and injected address rotates between them,
   and a run that writes the reply from the loudest inbox item alone fails on all three. So the workload can
   distinguish a learned behavior from a memorized fact.
-- **Model transfer (UNMEASURED).** Whether a bounded local model actually learns that loop on A and reuses it
-  on B — the `proof_count`/`candidate→active` signal the campaign reads — has not been driven. No number,
-  positive or negative, exists for it.
+- **Model transfer (FAILED BEFORE EPISODE).** The bounded local-model attempt produced no tool call and no
+  terminal grade, so it proves neither learning nor reuse. No `proof_count`/`candidate→active` result exists.
 
 Producing the missing result means driving the loop for real and reading GROUND TRUTH (never the reply):
 

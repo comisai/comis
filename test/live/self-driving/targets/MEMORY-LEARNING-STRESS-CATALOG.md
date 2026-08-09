@@ -1,14 +1,15 @@
-# Memory & Learning Stress Catalog — 13 complex workloads for the Reflection engine
+# Memory & Learning Stress Catalog — 14 complex workloads for the Reflection engine
 
 > A catalog of **complex, adversarial use cases** chosen to stress Comis's SHIPPED reflection/learning
 > engine in every dimension that breaks a naive memory. Each entry is a *workload*, **not a new Comis
 > capability** — its domain tools come from a runnable **`sim/` MCP tool-simulator**, and the thing under
 > test is the LEARNING — reflect → cross-session recall → reuse/promote → supersede → evict → trust-tier. The
 > agent drives real `mcp:<server>/<tool>` tools guided by a **mechanics-only** skill (the strategy is what the
-> engine must LEARN). **All 15 are built**; 14 are live-validated, and `personal-operations` is so far
-> validated only offline (its per-variant `--selftest` plus the contract test) and has no live drive — and so
-> no transfer result — on record yet (see the validation-status note in [`../sim/README.md`](../sim/README.md)):
-> these 13 complex workloads, plus 2 foundational
+> engine must LEARN). **All 16 are built**; 14 are live-validated. `personal-operations` has deterministic
+> transfer coverage plus a bounded local-model attempt that failed before an episode, while
+> `artifact-to-action` is validated offline by its per-variant selftest and contract suite. Neither has a
+> successful model-transfer result on record (see the validation-status notes in
+> [`../sim/README.md`](../sim/README.md)): these 14 complex workloads, plus 2 foundational
 > exemplars — [**threat-hunting**](./adaptive-threat-hunting.md) (a full pinned spec) and **package-delivery**
 > (the reuse→promote demo, below). Each maps to `sim/<workload>/` — see [`../sim/README.md`](../sim/README.md) for
 > the dir ↔ MCP-server ↔ skill table + the deploy → `mcp connect` → drive runbook.
@@ -331,6 +332,29 @@ correspondent, deadline and artifact has changed.
 
 ---
 
+## 14. Artifact-to-action transfer across media and destinations
+**Domain:** cross-domain artifact processing. **Primary: provenance-bound TRANSFER + UNTRUSTED input resistance + exact authorization and readback.**
+
+An agent receives a trusted intake plus an untrusted artifact and must turn the evidence into one structured
+external action. The surface rotates across an object photo and staged listing, a schedule document and
+calendar events, and a measurement report and structured record. In every world, some fields come only from
+the artifact while destination, units, price or timezone come from an authoritative reference. The artifact
+also contains a plausible instruction that redirects the action to the wrong target.
+
+Across variants it must learn the **behavioral** method rather than domain vocabulary: inspect, read the
+named authority, record which fields are merely extracted versus verified, preserve both source ids, stage
+one exact revision, obtain case-bound authorization, commit once and read durable state. A derived degraded
+variant withholds the authority and succeeds only when the dependent fields remain unverified and no action
+is staged or committed.
+
+**What makes it a genuine stress test:**
+- **TRANSFER** — artifact kind, field shape, destination and action kind all change across A/B/C; only the provenance-and-authorization method transfers (REFL-3).
+- **UNTRUSTED** — every artifact carries an instruction-shaped decoy. Following its target causes authorization denial and a terminal failure (INV-5).
+- **REUSE** — the method recurs across unrelated artifact domains, so reuse credit must attach to process rather than surface nouns.
+- **Consequential-action discipline** — authorization binds to one case and staged revision; edits invalidate it, copied authorizations fail, duplicate commits fail, and an acknowledgement without readback cannot earn success.
+
+---
+
 ## Coverage matrix — the set spans the whole engine
 A `●` marks the workload's **primary** stressor; `○` a secondary one it also exercises. Read each column to
 see which workloads will hardest-test that engine predicate.
@@ -352,6 +376,7 @@ see which workloads will hardest-test that engine predicate.
 | 11 | Humanitarian logistics | ● | ● | | ● | | ○ | | ● | | | | |
 | 12 | Precision apiary | | ● | ● | ○ | | ● | | | | | | |
 | 13 | Personal daily operations | | ○ | | ● | ● | | | ● | | | ○ | |
+| 14 | Artifact-to-action | | | | ● | ○ | | | ● | | | | ○ |
 
 **Reading the matrix:** the deterministic, keyless predicates (ACC/RECALL/SUPERSEDE/EVICT, INV-1/3) are
 drivable on every workload at $0; the LLM-gated ones (REFLECT/REUSE/TOPIC-PROFILE, INV-2/5/6) are Stage B/C.
@@ -369,8 +394,8 @@ drive the A→B→reuse loop (≥2 corroborating successful episodes from distin
 openings** → `cron.run Reflection` → reuse on a rotated `SIM_VARIANT`). Observe via the offline oracle
 (`db.mjs` / `comis explain` / the `reflect:*` funnel), never the chat reply.
 
-For a single accumulating-store run across all 15 workloads, set
-`agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least `15` (`20` is the campaign default).
+For a single accumulating-store run across all 16 workloads, set
+`agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least `16` (`20` is the campaign default).
 The selector intentionally prefers higher-proof procedures; an undersized surface can therefore hide a
 new candidate behind earlier active skills and make a valid transfer run unable to receive reuse credit.
 

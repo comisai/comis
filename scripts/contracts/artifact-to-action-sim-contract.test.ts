@@ -461,7 +461,7 @@ describe("artifact to action simulator", () => {
     expect(output).toContain("OK: all 16 sim workloads covered");
 
     const driver = readFileSync(driverScript, "utf8");
-    expect(driver).toContain('artifact-to-action) echo "artifact-action-sim"');
+    expect(driver).toContain("artifact-to-action) printf '%s' artifact-action-sim");
     expect(driver).toContain("artifact-to-action)");
 
     const readme = readFileSync(resolve(simRoot, "README.md"), "utf8");
