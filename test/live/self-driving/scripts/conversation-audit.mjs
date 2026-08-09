@@ -29,6 +29,15 @@ export function readJsonlEvidence(file) {
   return records;
 }
 
+function readOptionalSessionEvidence(file) {
+  try {
+    return readJsonlEvidence(file);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
 function sessionIdFor(sessionFile) {
   const pointerFile = `${sessionFile}.trajectory-path.json`;
   let pointer;
@@ -66,7 +75,7 @@ export async function auditChatConversation({
   ]);
   const report = auditConversationEvidence({
     trajectoryRecords: readJsonlEvidence(artifacts.trajectoryFile),
-    sessionRecords: readJsonlEvidence(artifacts.sessionFile),
+    sessionRecords: readOptionalSessionEvidence(artifacts.sessionFile),
     wireRecords,
     incidentReport,
     contract,
