@@ -319,6 +319,7 @@ function createEndpoint(
     const sockets = new Set<net.Socket>();
     const pending = new Map<string, PendingControl>();
     const replay = new Map<string, InboundReplay>();
+    const inboundOperations = new Set<Promise<void>>();
     let inboundCount = 0;
     let boundSocket: net.Socket | undefined;
     let handshakeValue: {
@@ -470,6 +471,22 @@ function createEndpoint(
       }, "Capability-service report request completed");
     }
 
+    function trackReport(socket: net.Socket, request: z.infer<typeof CapabilityReportRequestSchema>): void {
+      const operation = routeReport(socket, request);
+      inboundOperations.add(operation);
+      void operation.then(
+        () => inboundOperations.delete(operation),
+        () => {
+          inboundOperations.delete(operation);
+          deps.logger.error({
+            serviceInstanceId: configured.instance.serviceInstanceId,
+            errorKind: "internal" as const,
+            hint: "Inspect the managed-run report bridge and durable stores before reconnecting the capability service",
+          }, "Capability-service report routing failed unexpectedly");
+        },
+      );
+    }
+
     function routeHandshake(
       socket: net.Socket,
       request: z.infer<typeof CapabilityHandshakeRequestSchema>,
@@ -618,7 +635,7 @@ function createEndpoint(
           rejectRequest(socket, "invalid_params", id);
           return;
         }
-        void routeReport(socket, parsed.data);
+        trackReport(socket, parsed.data);
         return;
       }
       if (frame["method"] === "managedRuns.activate" || frame["method"] === "managedRuns.abandon") {
@@ -807,12 +824,15 @@ function createEndpoint(
           handshakeWaiter = undefined;
         }
         failPending("endpoint_closed");
+        for (const socket of sockets) socket.pause();
+        const drained = await fromPromise(Promise.all([...inboundOperations]).then(() => undefined));
         for (const socket of sockets) socket.destroy();
         sockets.clear();
         const closedServer = await fromPromise(new Promise<void>((resolveClose, rejectClose) => {
           server.close((closeError) => closeError ? rejectClose(closeError) : resolveClose());
         }));
         const removedSocket = removeStaleSocket(configured.instance.control.socketPath);
+        if (!drained.ok) return drained;
         if (!closedServer.ok) return closedServer;
         return removedSocket;
       },
