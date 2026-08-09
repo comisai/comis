@@ -1,0 +1,442 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/error-response.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "error": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32012,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "bundle_digest_mismatch",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32017,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "deadline_exceeded",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32603,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "internal_error",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32602,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "invalid_params",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32600,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "invalid_request",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32601,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "method_not_found",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32018,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "precondition_failed",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32011,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "protocol_mismatch",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32016,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "rate_limited",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32014,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "replay_conflict",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32015,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "size_limit_exceeded",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": -32013,
+              "type": "number"
+            },
+            "hint": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "unauthorized_instance",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "retryable": {
+              "const": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code",
+            "kind",
+            "retryable",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id",
+    "error"
+  ],
+  "type": "object"
+}

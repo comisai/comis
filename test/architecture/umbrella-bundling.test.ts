@@ -44,6 +44,9 @@ import { formatViolations } from "../support/architecture-helpers.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
+/** Private packages distributed as release artifacts instead of npm content. */
+const RELEASE_ARTIFACT_ONLY_PACKAGES = new Set(["capability-service-sdk"]);
+
 function readUmbrellaPackageJson(): {
   bundledDependencies: string[];
   exports: Record<string, unknown>;
@@ -99,6 +102,7 @@ function readPackagesDirectories(): string[] {
       const stat = statSync(join(packagesDir, name));
       if (!stat.isDirectory()) return false;
       if (name === "comis") return false; // exclude the umbrella itself
+      if (RELEASE_ARTIFACT_ONLY_PACKAGES.has(name)) return false;
       return existsSync(join(packagesDir, name, "package.json"));
     })
     .sort();
@@ -110,6 +114,18 @@ function readPrepackSource(): string {
 }
 
 describe("umbrella-bundling -- bidirectional 5-way alignment vs bundledDependencies", () => {
+  it("release-artifact-only packages remain private and absent from the umbrella", () => {
+    const bundled = new Set(ALL_BUNDLED_PACKAGES);
+    const violations = [...RELEASE_ARTIFACT_ONLY_PACKAGES].filter((name) => {
+      const manifest = JSON.parse(
+        readFileSync(resolve(REPO_ROOT, `packages/${name}/package.json`), "utf8"),
+      ) as { private?: boolean };
+      return manifest.private !== true || bundled.has(name);
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   // Dimension 5 — packages/ directories vs canonical source.
   it("packages/ directories match ALL_BUNDLED_PACKAGES (set equality)", () => {
     const dirs = new Set(readPackagesDirectories());

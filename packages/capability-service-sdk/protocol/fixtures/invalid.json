@@ -1,0 +1,24 @@
+{
+  "class": "invalid",
+  "name": "invalid opaque reference",
+  "steps": [
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_invalid",
+        "jsonrpc": "2.0",
+        "method": "capability.activate",
+        "params": {
+          "externalRunRef": "contains spaces",
+          "managedRunRef": "managed-run_a",
+          "operationId": "operation_invalid",
+          "registrationExpiresAtMs": 1900000000000,
+          "registrationNonce": "registration-nonce_a",
+          "serviceInstanceRef": "service-instance_a"
+        }
+      },
+      "target": "request"
+    }
+  ]
+}

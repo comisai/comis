@@ -1,0 +1,223 @@
+{
+  "class": "valid",
+  "name": "canonical request response and private metadata examples",
+  "steps": [
+    {
+      "expectation": "accept",
+      "payload": {
+        "bundleDigest": "__BUNDLE_DIGEST__",
+        "operationId": "operation_prepare",
+        "protocolId": "comis.capability-service/1",
+        "serviceInstanceRef": "service-instance_a"
+      },
+      "target": "mcp-call-context"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAtMs": 1900000000000,
+        "externalRunRef": "external-run_a",
+        "registrationNonce": "registration-nonce_a",
+        "serviceInstanceRef": "service-instance_a",
+        "state": "prepared"
+      },
+      "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_handshake",
+        "jsonrpc": "2.0",
+        "method": "capability.handshake",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_handshake",
+          "protocolId": "comis.capability-service/1",
+          "serviceInstanceRef": "service-instance_a",
+          "supportedMethods": [
+            "capability.abandon",
+            "capability.activate",
+            "capability.handshake",
+            "capability.health",
+            "capability.report"
+          ]
+        }
+      },
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_handshake",
+        "jsonrpc": "2.0",
+        "result": {
+          "acceptedMethods": [
+            "capability.abandon",
+            "capability.activate",
+            "capability.handshake",
+            "capability.health",
+            "capability.report"
+          ],
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "limits": {
+            "maxEvidenceBytes": 1048576,
+            "maxInFlightRequests": 32,
+            "maxLineBytes": 65536,
+            "maxReportBytes": 16384,
+            "maxRequestBytes": 65536,
+            "maxResponseBytes": 65536,
+            "reportRetentionDays": 30
+          },
+          "protocolId": "comis.capability-service/1",
+          "serviceInstanceRef": "service-instance_a"
+        }
+      },
+      "target": "handshake-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_activate",
+        "jsonrpc": "2.0",
+        "method": "capability.activate",
+        "params": {
+          "externalRunRef": "external-run_a",
+          "managedRunRef": "managed-run_a",
+          "operationId": "operation_activate",
+          "registrationExpiresAtMs": 1900000000000,
+          "registrationNonce": "registration-nonce_a",
+          "serviceInstanceRef": "service-instance_a"
+        }
+      },
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_activate",
+        "jsonrpc": "2.0",
+        "result": {
+          "activatedAtMs": 1800000000000,
+          "externalRunRef": "external-run_a",
+          "managedRunRef": "managed-run_a",
+          "state": "active"
+        }
+      },
+      "target": "activate-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_report",
+        "jsonrpc": "2.0",
+        "method": "capability.report",
+        "params": {
+          "evidence": [
+            {
+              "evidenceRef": "evidence_a",
+              "mediaType": "application/json",
+              "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "sizeBytes": 128
+            }
+          ],
+          "managedRunRef": "managed-run_a",
+          "operationId": "operation_report",
+          "reportRef": "report_a",
+          "sequence": 1,
+          "serviceInstanceRef": "service-instance_a",
+          "state": "active",
+          "summary": "Synthetic progress report"
+        }
+      },
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_report",
+        "jsonrpc": "2.0",
+        "result": {
+          "acceptedSequence": 1,
+          "managedRunRef": "managed-run_a",
+          "reportRef": "report_a",
+          "retainedUntilMs": 1900000000000
+        }
+      },
+      "target": "report-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_health",
+        "jsonrpc": "2.0",
+        "method": "capability.health",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_health",
+          "protocolId": "comis.capability-service/1",
+          "serviceInstanceRef": "service-instance_a"
+        }
+      },
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_health",
+        "jsonrpc": "2.0",
+        "result": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "observedAtMs": 1800000000000,
+          "protocolId": "comis.capability-service/1",
+          "reasonCodes": [],
+          "serviceInstanceRef": "service-instance_a",
+          "status": "healthy"
+        }
+      },
+      "target": "health-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_abandon",
+        "jsonrpc": "2.0",
+        "method": "capability.abandon",
+        "params": {
+          "externalRunRef": "external-run_a",
+          "operationId": "operation_abandon",
+          "reason": "owner_cancelled",
+          "registrationNonce": "registration-nonce_a",
+          "serviceInstanceRef": "service-instance_a"
+        }
+      },
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_abandon",
+        "jsonrpc": "2.0",
+        "result": {
+          "externalRunRef": "external-run_a",
+          "state": "abandoned"
+        }
+      },
+      "target": "abandon-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "error": {
+          "code": -32018,
+          "hint": "Refresh the managed-run state before retrying",
+          "kind": "precondition_failed",
+          "message": "The requested transition is not available",
+          "retryable": false
+        },
+        "id": "operation_example_error",
+        "jsonrpc": "2.0"
+      },
+      "target": "error-response"
+    }
+  ]
+}

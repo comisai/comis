@@ -1,0 +1,76 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/handshake.request.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "method": {
+      "const": "capability.handshake",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "bundleDigest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "operationId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "protocolId": {
+          "const": "comis.capability-service/1",
+          "type": "string"
+        },
+        "serviceInstanceRef": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "supportedMethods": {
+          "items": {
+            "enum": [
+              "capability.abandon",
+              "capability.activate",
+              "capability.handshake",
+              "capability.health",
+              "capability.report"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 5,
+          "type": "array"
+        }
+      },
+      "required": [
+        "protocolId",
+        "bundleDigest",
+        "operationId",
+        "serviceInstanceRef",
+        "supportedMethods"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,42 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/mcp-managed-run-result.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "expiresAtMs": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "externalRunRef": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "registrationNonce": {
+      "maxLength": 256,
+      "minLength": 16,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "serviceInstanceRef": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "state": {
+      "const": "prepared",
+      "type": "string"
+    }
+  },
+  "required": [
+    "state",
+    "serviceInstanceRef",
+    "externalRunRef",
+    "registrationNonce",
+    "expiresAtMs"
+  ],
+  "type": "object"
+}

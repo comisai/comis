@@ -1,0 +1,108 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/handshake.response.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "result": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptedMethods": {
+          "items": {
+            "enum": [
+              "capability.abandon",
+              "capability.activate",
+              "capability.handshake",
+              "capability.health",
+              "capability.report"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 5,
+          "type": "array"
+        },
+        "bundleDigest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "limits": {
+          "additionalProperties": false,
+          "properties": {
+            "maxEvidenceBytes": {
+              "const": 1048576,
+              "type": "number"
+            },
+            "maxInFlightRequests": {
+              "const": 32,
+              "type": "number"
+            },
+            "maxLineBytes": {
+              "const": 65536,
+              "type": "number"
+            },
+            "maxReportBytes": {
+              "const": 16384,
+              "type": "number"
+            },
+            "maxRequestBytes": {
+              "const": 65536,
+              "type": "number"
+            },
+            "maxResponseBytes": {
+              "const": 65536,
+              "type": "number"
+            },
+            "reportRetentionDays": {
+              "const": 30,
+              "type": "number"
+            }
+          },
+          "required": [
+            "maxEvidenceBytes",
+            "maxInFlightRequests",
+            "maxLineBytes",
+            "maxReportBytes",
+            "maxRequestBytes",
+            "maxResponseBytes",
+            "reportRetentionDays"
+          ],
+          "type": "object"
+        },
+        "protocolId": {
+          "const": "comis.capability-service/1",
+          "type": "string"
+        },
+        "serviceInstanceRef": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocolId",
+        "bundleDigest",
+        "serviceInstanceRef",
+        "acceptedMethods",
+        "limits"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id",
+    "result"
+  ],
+  "type": "object"
+}

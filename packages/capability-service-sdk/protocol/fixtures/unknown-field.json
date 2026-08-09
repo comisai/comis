@@ -1,0 +1,30 @@
+{
+  "class": "unknown-field",
+  "name": "unknown handshake parameter",
+  "steps": [
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_unknown",
+        "jsonrpc": "2.0",
+        "method": "capability.handshake",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_unknown",
+          "protocolId": "comis.capability-service/1",
+          "serviceInstanceRef": "service-instance_a",
+          "supportedMethods": [
+            "capability.abandon",
+            "capability.activate",
+            "capability.handshake",
+            "capability.health",
+            "capability.report"
+          ],
+          "unrecognized": true
+        }
+      },
+      "target": "request"
+    }
+  ]
+}

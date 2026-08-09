@@ -1,0 +1,29 @@
+{
+  "class": "version-mismatch",
+  "name": "handshake rejects a different protocol identifier",
+  "steps": [
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "protocol_mismatch",
+      "payload": {
+        "id": "operation_version",
+        "jsonrpc": "2.0",
+        "method": "capability.handshake",
+        "params": {
+          "bundleDigest": "__BUNDLE_DIGEST__",
+          "operationId": "operation_version",
+          "protocolId": "comis.capability-service/2",
+          "serviceInstanceRef": "service-instance_a",
+          "supportedMethods": [
+            "capability.abandon",
+            "capability.activate",
+            "capability.handshake",
+            "capability.health",
+            "capability.report"
+          ]
+        }
+      },
+      "target": "request"
+    }
+  ]
+}

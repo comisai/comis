@@ -1,0 +1,45 @@
+{
+  "class": "altered-replay",
+  "name": "operation identity rejects altered replay",
+  "steps": [
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_replay",
+        "jsonrpc": "2.0",
+        "method": "capability.report",
+        "params": {
+          "evidence": [],
+          "managedRunRef": "managed-run_a",
+          "operationId": "operation_replay",
+          "reportRef": "report_replay",
+          "sequence": 4,
+          "serviceInstanceRef": "service-instance_a",
+          "state": "active",
+          "summary": "First payload"
+        }
+      },
+      "target": "request"
+    },
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "replay_conflict",
+      "payload": {
+        "id": "operation_replay",
+        "jsonrpc": "2.0",
+        "method": "capability.report",
+        "params": {
+          "evidence": [],
+          "managedRunRef": "managed-run_a",
+          "operationId": "operation_replay",
+          "reportRef": "report_replay",
+          "sequence": 4,
+          "serviceInstanceRef": "service-instance_a",
+          "state": "active",
+          "summary": "Altered payload"
+        }
+      },
+      "target": "request"
+    }
+  ]
+}
