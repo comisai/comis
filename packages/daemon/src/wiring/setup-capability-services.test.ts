@@ -235,7 +235,7 @@ describe("production capability-service setup", () => {
     });
     const db = new Database(":memory:");
     databases.push(db);
-    initSchema(db);
+    initSchema(db, 4);
     return {
       dataDir,
       socketPath,
