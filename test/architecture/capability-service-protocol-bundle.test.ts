@@ -41,6 +41,21 @@ interface ProtocolManifest {
   readonly methods: readonly string[];
   readonly errorKinds: readonly string[];
   readonly limits: Readonly<Record<string, number>>;
+  readonly mcpMeta: {
+    readonly callContextKey: string;
+    readonly managedRunResultKey: string;
+  };
+  readonly methodCatalog: ReadonlyArray<{
+    readonly method: string;
+    readonly direction: string;
+    readonly callerClass: string;
+    readonly requiredServiceScope: string | null;
+    readonly classification: string;
+    readonly maxRequestBytes: number;
+    readonly maxResponseBytes: number;
+    readonly semanticInvariants: readonly string[];
+  }>;
+  readonly generator: { readonly command: string; readonly package: string; readonly version: string };
   readonly artifacts: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
 }
 
@@ -74,6 +89,7 @@ describe("capability-service protocol bundle contract", () => {
     expect(root.scripts?.["capability-protocol:check"]).toBe(
       "tsx packages/capability-service-sdk/scripts/generate-protocol.ts --check",
     );
+    expect(root.scripts?.["validate"]).toContain("pnpm capability-protocol:check");
   });
 
   it("pins the protocol identity, method catalog, errors, and limits", () => {
@@ -104,6 +120,22 @@ describe("capability-service protocol bundle contract", () => {
       maxResponseBytes: 65_536,
       reportRetentionDays: 30,
     });
+    expect(manifest.generator.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(manifest.mcpMeta).toEqual({
+      callContextKey: "comis.callContext",
+      managedRunResultKey: "comis.managedRun",
+    });
+    expect(manifest.methodCatalog.map((entry) => entry.method)).toEqual(EXPECTED_METHODS);
+    for (const entry of manifest.methodCatalog) {
+      expect(entry).toMatchObject({
+        direction: expect.stringMatching(/^(bidirectional|comis-to-service|service-to-comis)$/),
+        callerClass: expect.stringMatching(/^(both|capability-service|comis-daemon)$/),
+        classification: expect.stringMatching(/^(mutation|read)$/),
+        maxRequestBytes: manifest.limits.maxRequestBytes,
+        maxResponseBytes: manifest.limits.maxResponseBytes,
+      });
+      expect(entry.semanticInvariants.length).toBeGreaterThan(0);
+    }
   });
 
   it("hashes every artifact and derives the overall digest from ordered path-hash pairs", () => {
@@ -132,8 +164,45 @@ describe("capability-service protocol bundle contract", () => {
       expect(artifactPaths).toContain(`schemas/${basename}.response.schema.json`);
     }
     expect(artifactPaths).toContain("schemas/error-response.schema.json");
+    expect(artifactPaths).toContain("schemas/external-run-ref.schema.json");
     expect(artifactPaths).toContain("schemas/mcp-call-context.schema.json");
     expect(artifactPaths).toContain("schemas/mcp-managed-run-result.schema.json");
+    expect(artifactPaths).toContain("schemas/service-instance-id.schema.json");
+  });
+
+  it("pins host-owned report authority and the private MCP extension shapes", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const prepared = valid.steps.find((step) => step.target === "mcp-managed-run-result");
+    const context = valid.steps.find((step) => step.target === "mcp-call-context");
+    const report = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.report",
+    );
+    const reportParams = report?.payload["params"] as Record<string, unknown> | undefined;
+
+    expect(Object.keys(prepared?.payload ?? {}).sort()).toEqual([
+      "expiresAt",
+      "externalRunRef",
+      "registrationNonce",
+      "state",
+    ]);
+    expect(Object.keys(context?.payload ?? {}).sort()).toEqual([
+      "agentId",
+      "conversationRef",
+      "operationId",
+      "rootRunId",
+      "serviceInstanceId",
+      "traceId",
+      "workspacePolicyHash",
+    ]);
+    expect(reportParams).toMatchObject({
+      managedRunId: expect.any(String),
+      serviceReportId: expect.any(String),
+      kind: "progress",
+    });
+    expect(reportParams).not.toHaveProperty("sequence");
+    expect(reportParams).not.toHaveProperty("state");
   });
 
   it("includes every required conformance fixture class", () => {
