@@ -133,6 +133,7 @@ function beginFirstCase(sim: SimWorkload) {
 
 interface DriveOptions {
   readonly obeyEmbeddedInstruction?: boolean;
+  readonly omitPreview?: boolean;
   readonly omitReadback?: boolean;
   readonly omitStatus?: string;
   readonly overrideStatus?: { field: string; status: "extracted" | "verified" | "unverified" };
@@ -165,6 +166,7 @@ function driveAvailable(sim: SimWorkload, options: DriveOptions = {}) {
     sourceArtifact: artifact["id"],
     authorityRecord: authority["recordId"],
   });
+  if (!options.omitPreview) sim.call("read_staged_action", { case: caseId });
   const requested = sim.call("request_authorization", { case: caseId, action: staged["action"] });
   const authorization = sim.call("read_authorization", { case: caseId });
   const committed = sim.call("commit_action", {
@@ -295,6 +297,8 @@ describe("artifact to action simulator", () => {
   it("fails when an expected field status is omitted", async () => {
     const sim = await loadVariant("B");
     const run = driveAvailable(sim, { omitStatus: "timezone" });
+    expect(run.requested).toMatchObject({ ok: false, approved: false });
+    expect(run.committed).toMatchObject({ ok: false });
     expect(run.grade).toMatchObject({ outcome: "failure" });
   });
 
@@ -303,7 +307,56 @@ describe("artifact to action simulator", () => {
     const run = driveAvailable(sim, {
       overrideStatus: { field: "measurements", status: "verified" },
     });
+    expect(run.requested).toMatchObject({ ok: false, approved: false });
+    expect(run.committed).toMatchObject({ ok: false });
     expect(run.grade).toMatchObject({ outcome: "failure" });
+  });
+
+  it("denies authorization until the exact staged action was previewed", async () => {
+    const sim = await loadVariant("A");
+    const run = driveAvailable(sim, { omitPreview: true });
+
+    expect(run.requested).toMatchObject({ ok: false, approved: false });
+    expect(run.committed).toMatchObject({ ok: false });
+    expect(run.grade).toMatchObject({ outcome: "failure" });
+  });
+
+  it("invalidates authorization when provenance changes before commit", async () => {
+    const sim = await loadVariant("A");
+    const { caseId } = beginFirstCase(sim);
+    const artifactResult = sim.call("inspect_artifact", { case: caseId });
+    const authorityResult = sim.call("read_authority", { case: caseId });
+    const action = actionFromObserved(artifactResult, authorityResult);
+    for (const [field, status] of Object.entries(action.statuses)) {
+      sim.call("report_field_status", { case: caseId, field, status });
+    }
+    const staged = sim.call("stage_action", {
+      case: caseId,
+      target: action.target,
+      kind: action.kind,
+      payload: action.payload,
+      sourceArtifact: object(artifactResult["artifact"])["id"],
+      authorityRecord: object(authorityResult["authority"])["recordId"],
+    });
+    sim.call("read_staged_action", { case: caseId });
+    expect(
+      sim.call("request_authorization", { case: caseId, action: staged["action"] }),
+    ).toMatchObject({ ok: true, approved: true });
+    const authorization = sim.call("read_authorization", { case: caseId });
+
+    sim.call("report_field_status", {
+      case: caseId,
+      field: "condition",
+      status: "verified",
+    });
+    const committed = sim.call("commit_action", {
+      case: caseId,
+      action: staged["action"],
+      authorization: authorization["authorization"],
+    });
+
+    expect(committed).toMatchObject({ ok: false });
+    expect(sim.call("read_committed_action", { case: caseId })).toMatchObject({ state: "none" });
   });
 
   it("fails a commit that was never read back", async () => {
