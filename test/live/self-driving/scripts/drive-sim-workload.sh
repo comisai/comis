@@ -215,6 +215,6 @@ echo "-- mental_models: ${MM0:-?} -> ${MM1:-?} (admit if +1) --"
 echo "-- newest skill --"; node /root/db.mjs pick mental_models name,kind,state,trust_level,proof_count 1 2>/dev/null
 echo "-- grounding: surface facts memorized as instructions? (want NONE outside topicTokens) --"
 node /root/db.mjs pick mental_models body 1 2>/dev/null \
-  | grep -oiE 'priya|3-01|ws-07|alvarez|MRN-[0-9]+|maya|ACC-[0-9]+' | sort -u | head \
+  | grep -oiE 'priya|3-01|ws-07|alvarez|MRN-[0-9]+|maya|ACC-[0-9]+|robin|casey|avery|(mail|task|decision)-[a-c][0-9]+|budget summary|revised checklist|accessibility checklist' | sort -u | head \
   || echo "(no obvious memorized surface fact in the body)"
 echo "== done: $WL =="

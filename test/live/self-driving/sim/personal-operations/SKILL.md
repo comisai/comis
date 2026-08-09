@@ -18,6 +18,8 @@ and the correct response must be discovered from the tool results.
    `read_decisions`. Reconcile them rather than treating one source as complete by itself.
 3. Use `read_drafts` and `read_action_ledger` when checking what actually changed or answering a later
    status question.
+4. A source tool can answer `unavailable: true` with an empty item list. That means the source could not be
+   read at all — it does not mean the source is empty.
 
 ## Prepare changes
 

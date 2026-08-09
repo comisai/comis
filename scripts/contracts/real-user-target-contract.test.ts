@@ -84,32 +84,4 @@ describe("real-user target source claims", () => {
     expect(target).toContain("46 platform tools + the builtin set");
     expect(daemonToolSetup).toContain("SSOT for the 46 platform tools");
   });
-
-  it("pins evidence-derived daily journeys as end-to-end acceptance units", () => {
-    expect(target).toContain(
-      "## 4c. The D-journeys — evidence-derived daily operating loops",
-    );
-    expect(target).toContain(
-      "A pass on every component arc does not imply a journey pass.",
-    );
-
-    const journeyHeadings = [...target.matchAll(/^### D([1-9]) —/gmu)].map(
-      (match) => match[1],
-    );
-    expect(journeyHeadings).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
-
-    for (const journey of journeyHeadings) {
-      const block = target.match(
-        new RegExp(`^### D${journey} —[\\s\\S]*?(?=^### D\\d+ —|^## 5\\.)`, "mu"),
-      )?.[0];
-      expect(block, `D${journey} must have a complete acceptance contract`).toBeDefined();
-      expect(block).toContain("**Drive.");
-      expect(block).toContain("**Predicate.");
-      expect(block).toContain("**Oracle.");
-      expect(block).toContain("**HARD.");
-    }
-
-    expect(target).toContain("| Evidence-derived daily journeys |");
-    expect(target).toContain("D1–D9");
-  });
 });

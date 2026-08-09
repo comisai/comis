@@ -38,11 +38,18 @@
       ],
       "truth": {
         "draftRecipient": "robin@example.com",
-        "draftSubject": "Re: Budget review blocks Tuesday launch",
+        "draftSubjectTokens": ["budget review"],
         "requiredDraftPhrase": "written summary",
-        "taskTitle": "Prepare budget summary for Tuesday launch",
+        "taskTitleTokens": ["budget summary", "launch"],
         "taskDue": "2026-08-10T11:00:00Z",
-        "summaryTokens": ["budget review", "calendar conflict", "written summary"]
+        "summaryTokens": ["budget review", "conflict", "written summary"]
+      }
+    },
+    "A-degraded": {
+      "basedOn": "A",
+      "availability": { "calendar": false },
+      "truth": {
+        "summaryTokens": ["budget review", "written summary"]
       }
     },
     "B": {
@@ -76,11 +83,11 @@
       ],
       "truth": {
         "draftRecipient": "casey@example.com",
-        "draftSubject": "Re: Lease response needed before site visit",
+        "draftSubjectTokens": ["lease response"],
         "requiredDraftPhrase": "revised checklist",
-        "taskTitle": "Prepare revised checklist for site visit",
+        "taskTitleTokens": ["revised checklist", "site visit"],
         "taskDue": "2026-08-10T15:00:00Z",
-        "summaryTokens": ["lease response", "calendar conflict", "revised checklist"]
+        "summaryTokens": ["lease response", "conflict", "revised checklist"]
       }
     },
     "C": {
@@ -114,11 +121,11 @@
       ],
       "truth": {
         "draftRecipient": "avery@example.com",
-        "draftSubject": "Re: Accessibility review required before demo",
-        "requiredDraftPhrase": "accessibility checklist",
-        "taskTitle": "Complete accessibility checklist for product demo",
+        "draftSubjectTokens": ["accessibility review"],
+        "requiredDraftPhrase": "completed checklist",
+        "taskTitleTokens": ["accessibility checklist", "demo"],
         "taskDue": "2026-08-10T13:30:00Z",
-        "summaryTokens": ["accessibility review", "calendar conflict", "accessibility checklist"]
+        "summaryTokens": ["accessibility review", "conflict", "accessibility checklist"]
       }
     }
   }

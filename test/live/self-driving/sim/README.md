@@ -190,6 +190,9 @@ a case whose surface facts all changed.**
 ## Knobs
 - **`SIM_VARIANT`** (`A`/`B`/`C`) — rotates the surface facts (IOCs, ids, numbers) while the behavior the
   engine must learn stays constant. Use a *different* variant for the reuse step to test TRANSFER.
+  A workload may also ship a *derived* variant that keeps one base variant's surface facts and changes only
+  the world's condition — `personal-operations` ships `A-degraded` (variant A with the calendar source
+  unreachable) so the degraded-input behavior is drivable without disturbing the A/B/C transfer rotation.
 - **`SIM_SEED`** (number or word) — reproducible world. Same seed → same episode.
 - **World state lives in the MCP server process** — `mcp reconnect`/`disconnect`+`connect` resets the world
   to a fresh episode; each `open_*` act starts an isolated case so two sessions don't interfere.
