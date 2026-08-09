@@ -67,6 +67,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@comis/capability-service-sdk": "workspace:*",
     "@comis/observability-otel": "workspace:*",
     "@earendil-works/pi-coding-agent": "0.84.0",
     "@types/better-sqlite3": "7.6.13",

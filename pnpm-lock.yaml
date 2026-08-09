@@ -856,6 +856,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@comis/capability-service-sdk':
+        specifier: workspace:*
+        version: link:../capability-service-sdk
       '@comis/observability-otel':
         specifier: workspace:*
         version: link:../observability-otel
