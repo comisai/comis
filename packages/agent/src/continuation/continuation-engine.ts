@@ -30,6 +30,7 @@ export interface ContinuationOriginAuthority {
   readonly turnScope: ResolvedTurnScope;
   readonly deliveryOrigin: DeliveryOrigin;
   readonly traceId: string | null;
+  readonly rootRunId?: string;
   readonly trustLevel: UserTrustLevel;
   readonly responseLocalePolicy: ResponseLocalePolicy;
 }
@@ -120,6 +121,7 @@ export function createContinuationRequestContext(
       deliveryOrigin,
       workspacePolicyHash,
       turnScope: authority.turnScope,
+      ...(authority.rootRunId === undefined ? {} : { rootRunId: authority.rootRunId }),
     };
     return seed;
   });
