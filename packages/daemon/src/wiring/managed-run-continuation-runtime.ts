@@ -124,8 +124,7 @@ export function createManagedRunContinuationRuntime(deps: {
     }
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
-    let handle!: TimerHandle;
-    handle = deps.timers.setTimeout(() => {
+    const handle = deps.timers.setTimeout(() => {
       const current = pendingReportStarts.get(managedRunId);
       if (current?.handle !== handle) return;
       pendingReportStarts.delete(managedRunId);
