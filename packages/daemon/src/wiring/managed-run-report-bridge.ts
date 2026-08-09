@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   ManagedRunReportInputSchema,
@@ -66,6 +67,18 @@ async function invoke<T>(operation: () => Promise<Result<T, Error>>): Promise<Re
 
 function sameBody(left: ManagedRunReportBody, right: ManagedRunReportBody): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function attentionId(identity: {
+  readonly serviceInstanceId: string;
+  readonly managedRunId: string;
+}, body: ManagedRunReportBody): string {
+  const key = body.externalKey ?? body.serviceReportId;
+  const digest = createHash("sha256")
+    .update(`${identity.serviceInstanceId}\0${identity.managedRunId}\0${key}`, "utf8")
+    .digest("hex")
+    .slice(0, 48);
+  return `attention-${digest}`;
 }
 
 function contentScope(
@@ -209,6 +222,18 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
           receivedAtMs,
           retainedUntilMs,
           ...(body.observedAtMs === undefined ? {} : { observedAtMs: body.observedAtMs }),
+          ...(body.kind === "attention" || body.kind === "blocked"
+            ? {
+              attention: {
+                attentionId: attentionId(identity, body),
+                attentionRef: published.value.contentRef,
+                ...(body.externalKey === undefined ? {} : { externalKey: body.externalKey }),
+              },
+            }
+            : {}),
+          ...(body.kind === "resolution" && body.externalKey !== undefined
+            ? { resolutionExternalKey: body.externalKey }
+            : {}),
         },
       ));
       if (!appended.ok) {

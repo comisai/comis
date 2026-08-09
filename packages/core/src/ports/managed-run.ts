@@ -13,6 +13,7 @@ import type {
   ManagedRunReportIndex,
   ManagedRunReportKind,
 } from "../domain/managed-run-content.js";
+import type { ManagedRunAttentionRecord } from "../domain/managed-run-attention.js";
 
 /** Exact human or configured internal-principal authority for owner operations. */
 export interface ManagedRunOwnerScope {
@@ -94,6 +95,13 @@ export interface ManagedRunReportAppendInput {
   readonly receivedAtMs: number;
   readonly retainedUntilMs: number;
   readonly observedAtMs?: number;
+  readonly attention?: {
+    readonly attentionId: string;
+    readonly attentionRef: string;
+    readonly externalKey?: string;
+    readonly expiresAtMs?: number;
+  };
+  readonly resolutionExternalKey?: string;
 }
 
 export type ManagedRunReportAppendOutcome =
@@ -109,6 +117,32 @@ export interface ManagedRunReportRangeInput {
   readonly afterSequence: number;
   readonly throughSequence: number;
 }
+
+export interface ManagedRunAttentionListInput {
+  readonly managedRunId?: string;
+  readonly limit: number;
+}
+
+export interface ManagedRunAttentionResponseInput {
+  readonly operationId: string;
+  readonly attentionId: string;
+  readonly responseRef: string;
+  readonly respondedAtMs: number;
+}
+
+export interface ManagedRunAttentionDeliveryInput {
+  readonly operationId: string;
+  readonly attentionId: string;
+  readonly deliveredAtMs: number;
+}
+
+export type ManagedRunAttentionMutationOutcome =
+  | { readonly kind: "updated"; readonly record: ManagedRunAttentionRecord }
+  | { readonly kind: "identical_replay"; readonly record: ManagedRunAttentionRecord }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "scope_mismatch" }
+  | { readonly kind: "state_mismatch" }
+  | { readonly kind: "replay_conflict" };
 
 export interface ManagedRunContinuationClaimInput {
   readonly managedRunId: string;
@@ -195,6 +229,10 @@ export interface ManagedRunStorePort {
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;
   listReportRange(scope: ManagedRunOwnerScope, input: ManagedRunReportRangeInput): Promise<Result<ManagedRunReportIndex[], Error>>;
+  getAttention(scope: ManagedRunOwnerScope, attentionId: string): Promise<Result<ManagedRunAttentionRecord | undefined, Error>>;
+  listOpenAttention(scope: ManagedRunOwnerScope, input: ManagedRunAttentionListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
+  claimAttentionResponse(scope: ManagedRunOwnerScope, input: ManagedRunAttentionResponseInput): Promise<Result<ManagedRunAttentionMutationOutcome, Error>>;
+  markAttentionDelivered(scope: ManagedRunOwnerScope, input: ManagedRunAttentionDeliveryInput): Promise<Result<ManagedRunAttentionMutationOutcome, Error>>;
   claimContinuation(scope: ManagedRunOwnerScope, input: ManagedRunContinuationClaimInput): Promise<Result<ManagedRunContinuationClaimOutcome, Error>>;
   commitReducedState(scope: ManagedRunOwnerScope, input: ManagedRunReducedStateInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   markContinuationOutcome(scope: ManagedRunOwnerScope, input: ManagedRunContinuationOutcomeInput): Promise<Result<ManagedRunMutationOutcome, Error>>;

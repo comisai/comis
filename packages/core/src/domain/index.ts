@@ -313,6 +313,14 @@ export type {
   ManagedRunReductionInput,
   ManagedRunReduction,
 } from "./managed-run-reducer.js";
+export {
+  ManagedRunAttentionStatusSchema,
+  ManagedRunAttentionRecordSchema,
+} from "./managed-run-attention.js";
+export type {
+  ManagedRunAttentionStatus,
+  ManagedRunAttentionRecord,
+} from "./managed-run-attention.js";
 
 // RPC typed-refusal classification — the single source of truth the daemon
 // rpc-dispatch classifier AND the @comis/gateway method-router classifier both

@@ -146,6 +146,8 @@ export {
   ManagedRunReportBodySchema,
   ManagedRunReportIndexSchema,
   reduceManagedRunState,
+  ManagedRunAttentionStatusSchema,
+  ManagedRunAttentionRecordSchema,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -266,4 +268,6 @@ export type {
   ManagedRunEvidenceHealth,
   ManagedRunReductionInput,
   ManagedRunReduction,
+  ManagedRunAttentionStatus,
+  ManagedRunAttentionRecord,
 } from "../domain/index.js";

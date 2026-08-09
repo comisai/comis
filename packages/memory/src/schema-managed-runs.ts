@@ -103,6 +103,40 @@ export function ensureManagedRunTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_managed_run_reports_reduce
       ON managed_run_reports (managed_run_id, sequence);
 
+    CREATE TABLE IF NOT EXISTS managed_run_attention (
+      schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+      attention_id TEXT PRIMARY KEY NOT NULL,
+      managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),
+      service_instance_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      principal_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
+      external_key TEXT,
+      report_sequence INTEGER NOT NULL CHECK(report_sequence > 0),
+      attention_ref TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('open','response_pending','delivered','resolved','cancelled','expired')),
+      response_ref TEXT,
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      expires_at_ms INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_managed_run_attention_external
+      ON managed_run_attention (managed_run_id, external_key)
+      WHERE external_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_managed_run_attention_open
+      ON managed_run_attention (tenant_id, agent_id, principal_id, conversation_ref, status, created_at_ms);
+
+    CREATE TABLE IF NOT EXISTS managed_run_attention_operations (
+      attention_id TEXT NOT NULL REFERENCES managed_run_attention(attention_id),
+      operation_id TEXT NOT NULL,
+      operation_kind TEXT NOT NULL CHECK(operation_kind IN ('response','delivery')),
+      input_hash TEXT NOT NULL,
+      result_record TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (attention_id, operation_id, operation_kind)
+    );
+
     CREATE TABLE IF NOT EXISTS managed_run_operations (
       managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),
       operation_id TEXT NOT NULL,

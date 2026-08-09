@@ -44,6 +44,7 @@ import {
   transitionAllowed,
   validateManagedRunRecord,
 } from "./managed-run-store-record.js";
+import { createManagedRunAttentionStoreStatements } from "./managed-run-attention-store.js";
 import { createRowMapper } from "./row-mapper.js";
 
 const runMapper = createRowMapper(ManagedRunDbRowSchema);
@@ -72,6 +73,7 @@ function resultRecord<K extends "bound" | "claimed" | "identical_replay" | "upda
 
 /** Create the SQLite implementation of the content-free managed-run state port. */
 export function createSqliteManagedRunStore(db: Database.Database): ManagedRunStorePort {
+  const attention = createManagedRunAttentionStoreStatements(db);
   const selectRun = db.prepare("SELECT * FROM managed_runs WHERE managed_run_id = ?");
   const insertRun = db.prepare(`
     INSERT INTO managed_runs (
@@ -346,12 +348,13 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       input.retainedUntilMs,
       input.observedAtMs ?? null,
     );
+    const openAttentionCount = attention.applyReport(current.value, sequence, input);
+    if (!openAttentionCount.ok) return openAttentionCount;
     const next: ManagedRunRecord = {
       ...current.value,
       lastAcceptedReportSequence: sequence,
       pendingContinuation: true,
-      openAttentionCount: current.value.openAttentionCount
-        + (input.kind === "attention" || input.kind === "blocked" ? 1 : 0),
+      openAttentionCount: openAttentionCount.value,
       updatedAtMs: input.receivedAtMs,
       lastHeartbeatAtMs: input.receivedAtMs,
     };
@@ -591,6 +594,14 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       }
       return ok(reports);
     }),
+    getAttention: (scope, attentionId) => boundary(() => attention.get(scope, attentionId)),
+    listOpenAttention: (scope, input) => boundary(() => attention.listOpen(scope, input)),
+    claimAttentionResponse: (scope, input) => boundary(
+      () => db.transaction(() => attention.claimResponse(scope, input)).immediate(),
+    ),
+    markAttentionDelivered: (scope, input) => boundary(
+      () => db.transaction(() => attention.markDelivered(scope, input)).immediate(),
+    ),
     claimContinuation: (scope, input) => boundary(
       () => claimContinuationTransaction.immediate(scope, input),
     ),
