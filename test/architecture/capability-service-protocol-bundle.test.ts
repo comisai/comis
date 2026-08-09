@@ -18,11 +18,11 @@ const SDK_ROOT = resolve(REPO_ROOT, "packages/capability-service-sdk");
 const PROTOCOL_ROOT = resolve(SDK_ROOT, "protocol");
 
 const EXPECTED_METHODS = [
-  "capability.abandon",
-  "capability.activate",
-  "capability.handshake",
-  "capability.health",
-  "capability.report",
+  "capabilityServices.handshake",
+  "capabilityServices.health",
+  "managedRuns.abandon",
+  "managedRuns.activate",
+  "managedRuns.report",
 ] as const;
 
 const EXPECTED_FIXTURE_CLASSES = [
@@ -127,7 +127,7 @@ describe("capability-service protocol bundle contract", () => {
     const artifactPaths = new Set(manifest.artifacts.map((artifact) => artifact.path));
 
     for (const method of EXPECTED_METHODS) {
-      const basename = method.replace("capability.", "");
+      const basename = method.split(".")[1];
       expect(artifactPaths).toContain(`schemas/${basename}.request.schema.json`);
       expect(artifactPaths).toContain(`schemas/${basename}.response.schema.json`);
     }
