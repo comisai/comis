@@ -345,6 +345,137 @@ describe("evaluateInboundGate history serialization", () => {
   });
 });
 
+describe("evaluateInboundGate managed attention replies", () => {
+  it("binds an explicit attention handle before normal agent execution", async () => {
+    const bind = vi.fn(async () => ok({
+      kind: "bound" as const,
+      attention: {
+        attentionId: "attention_a",
+        managedRunId: "managed_run_a",
+      },
+    }));
+    const deps = makeDeps({
+      managedAttentionReplies: { bind },
+      autoReplyEngineConfig: { enabled: false } as never,
+    } as unknown as Partial<GateDeps>);
+    const msg = makeMsg({ id: "message_a", text: "/attention attention_a proceed carefully" });
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      msg,
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toEqual({ action: "handled" });
+    expect(bind).toHaveBeenCalledWith(
+      {
+        kind: "owner",
+        tenantId: "default",
+        agentId: "agent-1",
+        principalId: "principal-user-1",
+        conversationRef: TURN_CONVERSATION_REF,
+      },
+      expect.objectContaining({
+        attentionId: "attention_a",
+        text: "proceed carefully",
+      }),
+    );
+    expect(vi.mocked(deps.deliveryService.deliverToChannel).mock.calls[0]?.[2])
+      .toContain("attention_a");
+  });
+
+  it("binds a bare reply when exactly one attention request is open", async () => {
+    const bind = vi.fn(async () => ok({
+      kind: "bound" as const,
+      attention: {
+        attentionId: "attention_only",
+        managedRunId: "managed_run_a",
+      },
+    }));
+    const deps = makeDeps({
+      managedAttentionReplies: { bind },
+      autoReplyEngineConfig: { enabled: false } as never,
+    } as unknown as Partial<GateDeps>);
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "use the second option" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toEqual({ action: "handled" });
+    expect(bind).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationRef: TURN_CONVERSATION_REF }),
+      expect.objectContaining({ text: "use the second option" }),
+    );
+  });
+
+  it("prompts with exact candidates instead of guessing among open attention", async () => {
+    const bind = vi.fn(async () => ok({
+      kind: "clarification_required" as const,
+      reason: "ambiguous" as const,
+      candidateAttentionIds: ["attention_a", "attention_b"],
+    }));
+    const deps = makeDeps({
+      managedAttentionReplies: { bind },
+      autoReplyEngineConfig: { enabled: false } as never,
+    } as unknown as Partial<GateDeps>);
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "continue" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toEqual({ action: "handled" });
+    const delivered = vi.mocked(deps.deliveryService.deliverToChannel).mock.calls[0]?.[2];
+    expect(delivered).toContain("attention_a");
+    expect(delivered).toContain("attention_b");
+    expect(delivered).toContain("/attention");
+  });
+
+  it("leaves ordinary chat untouched when no attention request is open", async () => {
+    const bind = vi.fn(async () => ok({
+      kind: "clarification_required" as const,
+      reason: "none_open" as const,
+      candidateAttentionIds: [],
+    }));
+    const deps = makeDeps({
+      managedAttentionReplies: { bind },
+      autoReplyEngineConfig: { enabled: false } as never,
+    } as unknown as Partial<GateDeps>);
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "ordinary chat" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toMatchObject({ action: "process", processedMsg: { text: "ordinary chat" } });
+    expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+});
+
 /** Build a full ApprovalRequest fixture (the slash path reads shortId/toolName/action/sessionKey). */
 function makeRequest(overrides?: Partial<ApprovalRequest>): ApprovalRequest {
   return {
