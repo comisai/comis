@@ -309,11 +309,13 @@ verify the client's transport configuration matches.
 
 ## Resource caching
 
-`resources/read` returns the **current CONFIRMED state** of a session.
-Re-reading the same URI may return _additional_ messages as outbound
-delivery completes (an in-flight outbound message that was hidden on the
-first read may appear on a later read once the channel adapter confirms
-delivery).
+`resources/read` returns the **current CONFIRMED state** of a session, as a
+single bounded page of up to the **200 most recent** messages (the same
+page-size ceiling the `session.history` RPC enforces), with the unconfirmed ones
+filtered out. Re-reading the same URI
+may return _additional_ messages as outbound delivery completes (an in-flight
+outbound message that was hidden on the first read may appear on a later read
+once the channel adapter confirms delivery).
 
 This matches the MCP spec's "resources may change" semantics. Cache
 invalidation is the client's responsibility — if your client caches by

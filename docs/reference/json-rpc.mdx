@@ -1170,7 +1170,7 @@ when that scope is not endpoint-bound.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` — `offset` is a non-negative integer (default `0`, counted from the OLDEST message); `limit` is an integer in `1..200` (default `20`). A `limit` above `200` is rejected as a validation error, not clamped — page through a longer conversation with `offset`, or read its tail with `offset = total - limit`. |
 | **Returns** | `{ session: { key, agentId, channelType, endpoint?: ChannelEndpoint, messageCount, totalTokens, inputTokens, outputTokens, toolCalls, compactions, resetCount, createdAt, lastActiveAt, label? }, messages: Array<{ role, content, timestamp, deliveryStatus? }>, total, offset, limit, hasMore }` |
 
 ### `session.list`

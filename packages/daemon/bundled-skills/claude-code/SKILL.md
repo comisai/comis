@@ -1,8 +1,15 @@
 ---
 name: claude-code
 type: prompt
-version: "1.1.5"
+version: "1.1.6"
 description: Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to "use Claude" / "Claude Code" — even if they don't name the tool. This is for INTERACTIVE sessions only; never the headless one-shot mode.
+comis:
+  requires:
+    # The driven CLI is reached through an operator terminal allow-entry, which
+    # pins an absolute `match.path` — not a PATH lookup — so it is not a
+    # pre-flightable `bins` entry. Nothing else is needed on the host.
+    bins: []
+    env: []
 ---
 
 # Driving Claude Code (interactive)

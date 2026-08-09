@@ -147,6 +147,15 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // conversational-turn fallback is a no-op until a key is set. Same posture.
   { level: "warn", msg: /outcome judge unavailable \(non-fatal, default-deferred\)/ },
 
+  // Every test config carries a LITERAL `gateway.tokens[].secret` (the harness needs the
+  // value to authenticate), so the boot-time last-known-good snapshot correctly refuses to
+  // copy it — a config.last-good.yaml holding a live bearer token could re-introduce the
+  // credential via a restore. The daemon emits ONE startup WARN naming the skip so the
+  // operator knows the snapshot is stale. Intentional security behavior on a fixture that
+  // opts into a plaintext secret, not a regression: a production config using a `${VAR}`
+  // token reference snapshots cleanly and never emits this line.
+  { level: "warn", msg: /^LKG snapshot skipped: source config contains a plaintext secret/ },
+
   // Benign control-plane guard: channel-manager.injectMessage warns + skips when a
   // heartbeat/continuation injection targets a channel type with no registered
   // adapter (non-deterministic at startup — races adapter registration; also fires

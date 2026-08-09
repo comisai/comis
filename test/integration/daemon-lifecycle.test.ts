@@ -182,6 +182,13 @@ describe("Daemon Lifecycle", () => {
         // at startup (channel-manager.injectMessage warns + skips when no adapter is
         // registered for the channel type — "continuation skipped", not data loss).
         if (msg.includes("Cannot inject message: adapter not found")) return false;
+        // Exclude the last-known-good snapshot skip: this config carries a LITERAL
+        // `gateway.tokens[].secret` (the harness needs the value to authenticate), and the
+        // daemon correctly refuses to copy a config holding a live bearer token into
+        // config.last-good.yaml — a restore would re-introduce the credential. One startup
+        // WARN names the skip so the operator knows the snapshot is stale. A production
+        // config using a `${VAR}` token reference snapshots cleanly and never emits it.
+        if (msg.includes("LKG snapshot skipped: source config contains a plaintext secret")) return false;
         return true;
       });
 

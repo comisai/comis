@@ -1318,7 +1318,7 @@ describe("obs-explain-heuristics", () => {
     expect(rootCause(signals)?.code).toBe("orchestrate_failed");
   });
 
-  it("the terminal finalize kind outranks a stale session-wide auth tally", () => {
+  it("ranks the terminal finalize kind above a stale session-wide auth tally", () => {
     // An auth failure on an early turn (credential since repaired) must not mask the
     // dependency the session actually died of.
     const signals = makeSignals({

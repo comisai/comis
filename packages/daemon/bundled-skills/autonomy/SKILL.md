@@ -1,8 +1,12 @@
 ---
 name: autonomy
 type: prompt
-version: "0.3.0"
+version: "0.3.1"
 description: Use when a task is more than a single step — a read/research fan-out, spawning sub-agents, running a DAG, scheduling your own work, or messaging your channel. Teaches when to route work through `orchestrate(script)`, how to fan out with capability attenuation, how to read a denial, and the bounded contract you operate under.
+comis:
+  requires:
+    bins: []
+    env: []
 ---
 
 # Acting on your own (the orchestration surface)
