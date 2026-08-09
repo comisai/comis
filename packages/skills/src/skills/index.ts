@@ -66,6 +66,20 @@ export {
   sanitizeMcpToolName,
   classifyMcpErrorType,
 } from "./bridge/mcp-tool-bridge.js";
+export { createManagedMcpPrivateMetadataBridge } from "./bridge/managed-mcp-private-metadata.js";
+export type {
+  ManagedMcpActiveDefinition,
+  ManagedMcpActiveInstance,
+  ManagedMcpActiveView,
+  ManagedMcpActivationAuthority,
+  ManagedMcpActivationInput,
+  ManagedMcpActivationOutcome,
+  ManagedMcpPrivateMetadataDeps,
+} from "./bridge/managed-mcp-private-metadata.js";
+export type {
+  McpPrivateMetadataBridge,
+  McpPrivateMetadataCall,
+} from "./bridge/mcp-tool-bridge.js";
 
 // Prompt processor
 export {

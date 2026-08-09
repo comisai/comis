@@ -174,13 +174,13 @@ describe("MCP private metadata viability", () => {
 
     let acceptedResultMeta: Readonly<Record<string, unknown>> | undefined;
     const privateMetadataBridge: McpPrivateMetadataBridge = {
-      createRequestMeta: () => {
+      createRequestMeta: async () => {
         const parsed = McpCapabilityCallContextSchema.safeParse(callContext);
         return parsed.success
           ? ok({ [MCP_CAPABILITY_CALL_CONTEXT_KEY]: parsed.data })
           : err(parsed.error);
       },
-      acceptResultMeta: (input) => {
+      acceptResultMeta: async (input) => {
         const parsed = McpManagedRunResultSchema.safeParse(
           input.meta[MCP_MANAGED_RUN_RESULT_KEY],
         );
@@ -188,6 +188,7 @@ describe("MCP private metadata viability", () => {
         acceptedResultMeta = { [MCP_MANAGED_RUN_RESULT_KEY]: parsed.data };
         return ok(undefined);
       },
+      discardCall: vi.fn(),
     };
     const tools = mcpToolsToAgentTools(
       [{

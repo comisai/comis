@@ -250,6 +250,10 @@ describe("managed MCP private metadata boundary", () => {
     const record = {
       managedRunId: "managed-run_a",
       serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationRef.value,
     } as ManagedRunRecord;
     const getManagedRun = vi.fn(async () => ok(record));
     const deps = makeDeps({

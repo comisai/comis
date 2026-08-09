@@ -1418,7 +1418,10 @@ async function runSessionLocked(
   // both operator configuration and request metadata. Sub-agent and graph legs
   // inherit this live context value instead of a config-only approximation.
   const turnContext = tryGetContext();
-  if (turnContext) turnContext.resolvedLanguage = responseLocalePolicy.locale;
+  if (turnContext) {
+    turnContext.resolvedLanguage = responseLocalePolicy.locale;
+    turnContext.responseLocalePolicy = Object.freeze({ ...responseLocalePolicy });
+  }
 
   const preparedTurnResult = await prepareTurn({
     scope: tryGetContext()?.turnScope,

@@ -36,6 +36,7 @@ export interface ManagedRunActivationAuthority {
   readonly initiationSource: ManagedRunInitiationSource;
   readonly capturedAgentCapabilities: ManagedRunRecord["capturedAgentCapabilities"];
   readonly capturedToolIds: readonly string[];
+  readonly capturedCapabilityViewHash: string;
 }
 
 export interface ManagedRunActivationInput {
@@ -500,7 +501,7 @@ export function createManagedRunActivationCoordinator(
       ...input.authority,
       capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities],
       capturedToolIds: [...input.authority.capturedToolIds],
-      capturedCapabilityViewHash: activeView.viewHash,
+      capturedCapabilityViewHash: input.authority.capturedCapabilityViewHash,
       executionAttachmentIds: [],
       terminalSessionIds: [],
       status: "preparing",
@@ -620,6 +621,7 @@ export function createManagedRunActivationCoordinator(
         initiationSource: record.initiationSource,
         capturedAgentCapabilities: record.capturedAgentCapabilities,
         capturedToolIds: record.capturedToolIds,
+        capturedCapabilityViewHash: record.capturedCapabilityViewHash,
       },
     });
   }

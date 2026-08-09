@@ -134,6 +134,7 @@ function makeInput(overrides: Partial<ManagedRunActivationInput> = {}): ManagedR
       initiationSource: "user_request",
       capturedAgentCapabilities: ["orch:read", "orch:web"],
       capturedToolIds: ["mcp:service_a.inspect", "web_search"],
+      capturedCapabilityViewHash: "c".repeat(64),
     },
     ...overrides,
   };

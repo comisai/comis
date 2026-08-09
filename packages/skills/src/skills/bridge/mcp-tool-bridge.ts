@@ -44,6 +44,7 @@ export interface McpPrivateMetadataCall {
   readonly toolName: string;
   readonly qualifiedName: string;
   readonly toolCallId: string;
+  readonly params: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -55,10 +56,11 @@ export interface McpPrivateMetadataCall {
 export interface McpPrivateMetadataBridge {
   createRequestMeta(
     input: McpPrivateMetadataCall,
-  ): Result<McpPrivateMeta | undefined, Error>;
+  ): Promise<Result<McpPrivateMeta | undefined, Error>>;
   acceptResultMeta(
-    input: McpPrivateMetadataCall & { readonly meta: McpPrivateMeta },
-  ): Result<void, Error>;
+    input: McpPrivateMetadataCall & { readonly meta: McpPrivateMeta | undefined },
+  ): Promise<Result<void, Error>>;
+  discardCall(input: McpPrivateMetadataCall): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,10 +392,13 @@ export function mcpToolsToAgentTools(
           toolName: tool.name,
           qualifiedName: tool.qualifiedName,
           toolCallId: _toolCallId,
+          params: params as Readonly<Record<string, unknown>>,
         };
         let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
-          const privateRequestMeta = privateMetadataBridge?.createRequestMeta(privateMetadataCall);
+          const privateRequestMeta = privateMetadataBridge === undefined
+            ? undefined
+            : await privateMetadataBridge.createRequestMeta(privateMetadataCall);
           if (privateRequestMeta && !privateRequestMeta.ok) {
             throw new Error("MCP private request metadata could not be created", {
               cause: privateRequestMeta.error,
@@ -416,6 +421,7 @@ export function mcpToolsToAgentTools(
             result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
           }
         } catch (error: unknown) {
+          privateMetadataBridge?.discardCall(privateMetadataCall);
           // Defense-in-depth: callTool returns Result and should never throw.
           // Throwing here is deliberate: pi-agent-core is the immediate boundary
           // that converts this exception into an isError=true tool result.
@@ -430,6 +436,7 @@ export function mcpToolsToAgentTools(
         }
 
         if (!result.ok) {
+          privateMetadataBridge?.discardCall(privateMetadataCall);
           const errorText = `MCP tool error: ${result.error.message}`;
           const errorResult = {
             content: [{ type: "text" as const, text: errorText }],
@@ -441,8 +448,8 @@ export function mcpToolsToAgentTools(
 
         const value: McpToolCallResult = result.value;
 
-        if (value.privateMeta !== undefined && privateMetadataBridge !== undefined) {
-          const accepted = privateMetadataBridge.acceptResultMeta({
+        if (privateMetadataBridge !== undefined) {
+          const accepted = await privateMetadataBridge.acceptResultMeta({
             ...privateMetadataCall,
             meta: value.privateMeta,
           });

@@ -1181,6 +1181,9 @@ importers:
       '@comis/agent':
         specifier: workspace:*
         version: link:../agent
+      '@comis/capability-service-sdk':
+        specifier: workspace:*
+        version: link:../capability-service-sdk
       '@comis/core':
         specifier: workspace:*
         version: link:../core
@@ -1275,9 +1278,6 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
-      '@comis/capability-service-sdk':
-        specifier: workspace:*
-        version: link:../capability-service-sdk
       '@comis/infra':
         specifier: workspace:*
         version: link:../infra
