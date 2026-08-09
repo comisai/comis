@@ -29,6 +29,12 @@ function makeContribution(
       serviceDefinitionId: definitionId,
       protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
       mcpServerName,
+      managedToolBindings: [{
+        toolName: "prepare_work",
+        behavior: "prepare_run",
+        actionClassification: "mutate",
+        invocationSideEffects: ["deferred_work"],
+      }],
       requestedScopes: ["health", "report"],
       dependsOn: [...dependsOn],
     }],
@@ -159,6 +165,16 @@ describe("capability-service runtime publication", () => {
     expect(Object.isFrozen(result.value)).toBe(true);
     expect(Object.isFrozen(result.value.instances)).toBe(true);
     expect(Object.isFrozen(result.value.instances[0]?.activeScopes)).toBe(true);
+    expect(result.value.definitions[0]?.managedToolBindings).toEqual([{
+      toolName: "prepare_work",
+      behavior: "prepare_run",
+      actionClassification: "mutate",
+      invocationSideEffects: ["deferred_work"],
+    }]);
+    expect(Object.isFrozen(result.value.definitions[0]?.managedToolBindings)).toBe(true);
+    expect(Object.isFrozen(
+      result.value.definitions[0]?.managedToolBindings[0]?.invocationSideEffects,
+    )).toBe(true);
     expect(JSON.stringify(result.value)).not.toContain("credentialRef");
     expect(JSON.stringify(result.value)).not.toContain("/tmp/");
     expect(completed).toHaveBeenCalledWith(expect.objectContaining({

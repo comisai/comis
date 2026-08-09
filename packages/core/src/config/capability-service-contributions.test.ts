@@ -19,6 +19,12 @@ function makeContribution(
       serviceDefinitionId: "example.analysis-service",
       protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
       mcpServerName: "example-analysis",
+      managedToolBindings: [{
+        toolName: "prepare_analysis",
+        behavior: "prepare_run",
+        actionClassification: "mutate",
+        invocationSideEffects: ["deferred_work"],
+      }],
       requestedScopes: ["health", "report"],
       dependsOn: [],
     }],
@@ -73,7 +79,56 @@ describe("capability-service contribution planning", () => {
     expect(result.value).not.toHaveProperty("credentialRef");
     expect(Object.isFrozen(result.value)).toBe(true);
     expect(Object.isFrozen(result.value.orderedDefinitions)).toBe(true);
+    expect(Object.isFrozen(result.value.orderedDefinitions[0]?.managedToolBindings)).toBe(true);
+    expect(Object.isFrozen(
+      result.value.orderedDefinitions[0]?.managedToolBindings[0]?.invocationSideEffects,
+    )).toBe(true);
     expect(Object.isFrozen(result.value.orderedInstances)).toBe(true);
+  });
+
+  it("validates exact managed-tool bindings and run-handle ownership", () => {
+    const validRunCommand = makeContribution({
+      serviceDefinitions: [{
+        serviceDefinitionId: "example.analysis-service",
+        protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+        mcpServerName: "example-analysis",
+        managedToolBindings: [{
+          toolName: "send_command",
+          behavior: "run_command",
+          runHandleArgument: "managed_run",
+          actionClassification: "mutate",
+          invocationSideEffects: ["external_mutation"],
+        }],
+        requestedScopes: ["health"],
+        dependsOn: [],
+      }],
+    });
+    const missingRunHandle = makeContribution({
+      serviceDefinitions: [{
+        ...validRunCommand.serviceDefinitions[0]!,
+        managedToolBindings: [{
+          toolName: "send_command",
+          behavior: "run_command",
+          actionClassification: "mutate",
+          invocationSideEffects: [],
+        }],
+      }],
+    });
+    const duplicateExactTool = makeContribution({
+      serviceDefinitions: [{
+        ...validRunCommand.serviceDefinitions[0]!,
+        managedToolBindings: [
+          validRunCommand.serviceDefinitions[0]!.managedToolBindings[0]!,
+          validRunCommand.serviceDefinitions[0]!.managedToolBindings[0]!,
+        ],
+      }],
+    });
+
+    expect(buildCapabilityServiceActivationPlan([validRunCommand], [makeInstance()]).ok).toBe(true);
+    expect(buildCapabilityServiceActivationPlan([missingRunHandle], [makeInstance()]))
+      .toMatchObject({ ok: false, error: { kind: "invalid_contribution" } });
+    expect(buildCapabilityServiceActivationPlan([duplicateExactTool], [makeInstance()]))
+      .toMatchObject({ ok: false, error: { kind: "invalid_contribution" } });
   });
 
   it("sorts dependencies before dependents with lexical identifier tie breaks", () => {
@@ -84,6 +139,7 @@ describe("capability-service contribution planning", () => {
           serviceDefinitionId: "example.worker-service",
           protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
           mcpServerName: "worker-service",
+          managedToolBindings: [],
           requestedScopes: ["health"],
           dependsOn: ["example.base-service"],
         }],
@@ -94,6 +150,7 @@ describe("capability-service contribution planning", () => {
           serviceDefinitionId: "example.base-service",
           protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
           mcpServerName: "base-service",
+          managedToolBindings: [],
           requestedScopes: ["health"],
           dependsOn: [],
         }],
@@ -143,6 +200,7 @@ describe("capability-service contribution planning", () => {
           serviceDefinitionId: "example.second-service",
           protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
           mcpServerName: "example-analysis",
+          managedToolBindings: [],
           requestedScopes: ["health"],
           dependsOn: [],
         }],
@@ -153,6 +211,7 @@ describe("capability-service contribution planning", () => {
         serviceDefinitionId: "example.analysis-service",
         protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
         mcpServerName: "example-analysis",
+        managedToolBindings: [],
         requestedScopes: ["health"],
         dependsOn: ["example.missing-service"],
       }],
@@ -163,6 +222,7 @@ describe("capability-service contribution planning", () => {
           serviceDefinitionId: "example.analysis-service",
           protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
           mcpServerName: "example-analysis",
+          managedToolBindings: [],
           requestedScopes: ["health"],
           dependsOn: ["example.second-service"],
         },
@@ -170,6 +230,7 @@ describe("capability-service contribution planning", () => {
           serviceDefinitionId: "example.second-service",
           protocolId: CAPABILITY_SERVICE_CONTROL_PROTOCOL,
           mcpServerName: "example-second",
+          managedToolBindings: [],
           requestedScopes: ["health"],
           dependsOn: ["example.analysis-service"],
         },
@@ -235,6 +296,7 @@ describe("capability-service contribution planning", () => {
         serviceDefinitionId: "example.analysis-service",
         protocolId: "comis.capability-service/2" as typeof CAPABILITY_SERVICE_CONTROL_PROTOCOL,
         mcpServerName: "example-analysis",
+        managedToolBindings: [],
         requestedScopes: ["health"],
         dependsOn: [],
       }],
