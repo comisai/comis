@@ -112,4 +112,76 @@ describe("daemon capability-service fixture host", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("size_limit_exceeded");
   });
+
+  it("enforces workspace lease presence against the prepared workspace request", () => {
+    const workspaceHost = createCapabilityServiceProtocolFixtureHost({
+      bundleDigest: manifest.bundleDigest,
+    });
+    expect(workspaceHost.validate({
+      target: "mcp-managed-run-result",
+      expectation: "accept",
+      schemaExpectation: "accept",
+      payload: {
+        state: "prepared",
+        externalRunRef: "external-run_workspace",
+        registrationNonce: "registration-nonce_workspace",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+        requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+      },
+    }).ok).toBe(true);
+    const missingLease = workspaceHost.validateRequest({
+      jsonrpc: "2.0",
+      id: "operation_activate_missing_lease",
+      method: "managedRuns.activate",
+      params: {
+        operationId: "operation_activate_missing_lease",
+        managedRunId: "managed-run_workspace",
+        externalRunRef: "external-run_workspace",
+        registrationNonce: "registration-nonce_workspace",
+      },
+    });
+    expect(missingLease.ok).toBe(false);
+    if (!missingLease.ok) expect(missingLease.error.kind).toBe("invalid_params");
+    expect(workspaceHost.validateRequest({
+      jsonrpc: "2.0",
+      id: "operation_activate_workspace",
+      method: "managedRuns.activate",
+      params: {
+        operationId: "operation_activate_workspace",
+        managedRunId: "managed-run_workspace",
+        externalRunRef: "external-run_workspace",
+        registrationNonce: "registration-nonce_workspace",
+        workspaceLeaseId: "workspace-lease_workspace",
+      },
+    }).ok).toBe(true);
+
+    const workspaceLessHost = createCapabilityServiceProtocolFixtureHost({
+      bundleDigest: manifest.bundleDigest,
+    });
+    expect(workspaceLessHost.validate({
+      target: "mcp-managed-run-result",
+      expectation: "accept",
+      schemaExpectation: "accept",
+      payload: {
+        state: "prepared",
+        externalRunRef: "external-run_without_workspace",
+        registrationNonce: "registration-nonce_without_workspace",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+      },
+    }).ok).toBe(true);
+    const unexpectedLease = workspaceLessHost.validateRequest({
+      jsonrpc: "2.0",
+      id: "operation_activate_unexpected_lease",
+      method: "managedRuns.activate",
+      params: {
+        operationId: "operation_activate_unexpected_lease",
+        managedRunId: "managed-run_without_workspace",
+        externalRunRef: "external-run_without_workspace",
+        registrationNonce: "registration-nonce_without_workspace",
+        workspaceLeaseId: "workspace-lease_unexpected",
+      },
+    });
+    expect(unexpectedLease.ok).toBe(false);
+    if (!unexpectedLease.ok) expect(unexpectedLease.error.kind).toBe("invalid_params");
+  });
 });

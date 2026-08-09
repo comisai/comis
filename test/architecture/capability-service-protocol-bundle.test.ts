@@ -184,6 +184,39 @@ describe("capability-service protocol bundle contract", () => {
     ).toContain("utf8-report-content-bytes-at-most-max-report-bytes");
   });
 
+  it("pins activation workspace atomicity and closed abandonment disposition", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const prepared = valid.steps.find((step) => step.target === "mcp-managed-run-result");
+    const activate = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.activate",
+    );
+    const abandon = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.abandon",
+    );
+    const abandonResponse = valid.steps.find((step) => step.target === "abandon-response");
+    const activateParams = activate?.payload["params"] as Record<string, unknown> | undefined;
+    const abandonParams = abandon?.payload["params"] as Record<string, unknown> | undefined;
+    const abandonResult = abandonResponse?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.activate")
+        ?.semanticInvariants,
+    ).toContain("present-iff-the-preparation-requested-a-workspace");
+    expect(prepared?.payload).toMatchObject({
+      requestedWorkspace: { rootHint: expect.stringMatching(/^\//u) },
+    });
+    expect(activateParams).toMatchObject({ workspaceLeaseId: expect.any(String) });
+    expect(abandonParams).toMatchObject({ disposition: "preserve" });
+    expect(abandonResult).toMatchObject({
+      state: "abandoned",
+      disposition: "preserve",
+      terminalTransition: "unbound_preparation_abandoned",
+    });
+  });
+
   it("hashes every artifact and derives the overall digest from ordered path-hash pairs", () => {
     const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
     const paths = manifest.artifacts.map((artifact) => artifact.path);
