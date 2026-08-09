@@ -12,7 +12,7 @@ rationale (and why MCP, not `exec`) is in [`DESIGN-DRAFT.md`](./DESIGN-DRAFT.md)
 > ([`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md)); `drive-sim-workload.sh threat-hunting`
 > declares that risk itself and exits `4` without the operator acknowledgement. It is nonetheless the
 > worked example below — substitute another workload when you are not authorized. The offline CLI
-> (`--selftest`, `--list`, single-function calls) needs no authorization, and the other 13 workloads'
+> (`--selftest`, `--list`, single-function calls) needs no authorization, and the other 14 workloads'
 > canonical feeder prompts classify clean.
 
 **The one principle:** every `SKILL.md` teaches tool **mechanics** (the tools, the call order, the goal) —
@@ -27,7 +27,7 @@ sim/
   bin/{mcp-server,cli}.mjs          # generic entry points (load any workload by name)
   HANDLERS-CONTRACT.md              # how a workload is built (the contract)
   deploy-sim.sh                     # copy this tree to the VPS
-  <workload>/                       # one dir per workload (14):
+  <workload>/                       # one dir per workload (15):
     tools.json  world.seed.json  handlers.mjs  SKILL.md
 ```
 There is **one generic MCP server**; each workload is a separate *process* launched with its name as an arg
@@ -38,14 +38,14 @@ The **agent** uses the MCP server; this CLI is for you. Each CLI call is a *fres
 episode state does NOT persist across separate calls — use `--selftest` (a full episode in one process).
 ```bash
 cd test/live/self-driving/sim
-node bin/cli.mjs --workloads                      # list all 14 workloads
+node bin/cli.mjs --workloads                      # list all 15 workloads
 node bin/cli.mjs threat-hunting --list            # the tools (functions) + schemas
 node bin/cli.mjs threat-hunting --selftest        # golden path → success, naive → failure  (ground truth)
 node bin/cli.mjs threat-hunting query_telemetry --filter FS-01   # call one function, print JSON
 SIM_VARIANT=B node bin/cli.mjs threat-hunting --selftest          # a rotated-surface variant (transfer)
 ```
 `--selftest` is the ground-truth check that a workload's success signal is reachable **and** that the naive
-shortcut (the thing the engine must learn to avoid) actually fails. All 14 pass on variants A/B/C.
+shortcut (the thing the engine must learn to avoid) actually fails. All 15 pass on variants A/B/C.
 
 ## Copy to the VPS
 Plain `.mjs`, no build. `deploy-sim.sh` ships the whole tree to a path the daemon (user `comis`) can read:
@@ -86,15 +86,15 @@ ssh root@$VPS 'printf "%s" "{\"agents\":{\"default\":{\"skills\":{\"discoveryPat
 ```
 A from-scratch memory/learning drive restarts anyway (next section), so the skill comes up with it.
 
-> **Driving ALL 14 (or several) workloads? Set EVERY sim dir in `discoveryPaths` ONCE + restart ONCE**
+> **Driving ALL 15 (or several) workloads? Set EVERY sim dir in `discoveryPaths` ONCE + restart ONCE**
 > (far less friction than a per-workload
 > discoveryPath+restart). The skills are namespaced + distinctly-described, so a capable model picks the
 > right one per task; `drive-sim-workload.sh` then only swaps the MCP *server* (live, no restart) per
-> workload. Patch all 14: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 14 … ]}}}}`.
+> workload. Patch all 15: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 15 … ]}}}}`.
 
 > **Size the learned-procedure surface for the accumulating campaign.** The runtime selects the
-> highest-corroboration procedures first, so a campaign that keeps all 14 workload skills in one store must
-> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 14 (20 leaves diagnostic
+> highest-corroboration procedures first, so a campaign that keeps all 15 workload skills in one store must
+> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 15 (20 leaves diagnostic
 > headroom). A smaller cap is valid for production, but it deterministically hides lower-proof candidates
 > once enough earlier skills become active; hidden candidates cannot earn reuse credit. The campaign
 > preflight therefore uses `20` and verifies the startup config before driving transfer variants.
@@ -200,7 +200,7 @@ su - comis -c 'comis mcp disconnect th-sim'
 # remove the discoveryPath from config; WIPE_CRONS=1 clean-restart for the next from-scratch run
 ```
 
-## The 14 workloads
+## The 15 workloads
 | dir | MCP server | skill | primary stressor (catalog) |
 |---|---|---|---|
 | `package-delivery` | `depot-sim` | depot-courier | **learn the building layout + best route** (the Hindsight exemplar: cold = wander/slow, learned = direct/fast) |
@@ -217,6 +217,7 @@ su - comis -c 'comis mcp disconnect th-sim'
 | `tutoring` | `tutor-sim` | — | self-supersession of the agent's own hypothesis + leak-free |
 | `humanitarian-logistics` | `relief-sim` | — | transfer (flood→quake) + report trust-tiering + map supersede |
 | `precision-apiary` | `apiary-sim` | — | extreme seasonal delay + retain-through-long-dormancy |
+| `personal-operations` | `personal-ops-sim` | personal-operations-console | cross-source daily review + draft/send state + durable follow-up |
 
 (skill `name:` shown where authored; each workload ships its own `SKILL.md` — the table lists the canonical
 one for the exemplar.)
