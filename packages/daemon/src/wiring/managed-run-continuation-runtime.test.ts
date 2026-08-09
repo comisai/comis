@@ -163,4 +163,41 @@ describe("managed-run continuation event runtime", () => {
     expect(process).toHaveBeenCalledOnce();
     await runtime.shutdown();
   });
+
+  it("repeats processing when the durable outcome retains pending work", async () => {
+    const eventBus = new TypedEventBus();
+    const record = makeRecord();
+    const store = {
+      get: vi.fn(async () => ok(record)),
+      listRecoverable: vi.fn(async () => ok({ records: [], invalid: [] })),
+    } as unknown as ManagedRunStorePort;
+    const process = vi.fn()
+      .mockResolvedValueOnce(ok<ManagedRunContinuationProcessOutcome>({
+        kind: "processed",
+        throughReportSequence: 1,
+        pendingAfterCurrent: true,
+      }))
+      .mockResolvedValueOnce(ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" }));
+    const runtime = createManagedRunContinuationRuntime({
+      eventBus,
+      store,
+      coordinator: { process } as ManagedRunContinuationCoordinator,
+      nowMs: () => 100,
+      recoveryBatchSize: 10,
+      logger: makeLogger(),
+    });
+
+    eventBus.emit("managed_run:report_accepted", {
+      managedRunId: "managed-run-a",
+      serviceInstanceId: "service-a",
+      sequence: 1,
+      kind: "progress",
+      durationMs: 1,
+      timestamp: 10,
+    });
+    await runtime.waitUntilIdle();
+
+    expect(process).toHaveBeenCalledTimes(2);
+    await runtime.shutdown();
+  });
 });
