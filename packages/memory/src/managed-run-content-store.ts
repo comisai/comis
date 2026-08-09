@@ -318,12 +318,13 @@ export function createSqliteManagedRunContentStore(
     scope: ManagedRunContentScope,
     contentRef: string,
     kind: ContentKind,
+    includeExpired = false,
   ): Result<Uint8Array | undefined, Error> {
     const row = selectRow(scope, contentRef);
     if (!row.ok) return row;
     if (row.value === undefined) return ok(undefined);
     if (row.value.kind !== kind) return ok(undefined);
-    if (row.value.expires_at_ms !== null && row.value.expires_at_ms <= nowMs()) {
+    if (!includeExpired && row.value.expires_at_ms !== null && row.value.expires_at_ms <= nowMs()) {
       return ok(undefined);
     }
     return readVerifiedBody(options.directoryPath, row.value);
@@ -366,6 +367,16 @@ export function createSqliteManagedRunContentStore(
     }),
     getActivationDescriptor: (scope, descriptorRef) => boundary<ManagedRunActivationDescriptor | undefined>(() => {
       const body = read(scope, descriptorRef, "activation");
+      if (!body.ok) return body;
+      if (body.value === undefined) return ok(undefined);
+      const bytes = body.value;
+      const decoded = tryCatch(() => JSON.parse(Buffer.from(bytes).toString("utf8")) as unknown);
+      if (!decoded.ok) return err(fromCause(decoded.error));
+      const parsed = ManagedRunActivationDescriptorSchema.safeParse(decoded.value);
+      return parsed.success ? ok(parsed.data) : err(new Error("stored activation descriptor is invalid"));
+    }),
+    getActivationDescriptorForRecovery: (scope, descriptorRef) => boundary<ManagedRunActivationDescriptor | undefined>(() => {
+      const body = read(scope, descriptorRef, "activation", true);
       if (!body.ok) return body;
       if (body.value === undefined) return ok(undefined);
       const bytes = body.value;

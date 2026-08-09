@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,12 +59,21 @@ function makeRecord(
   descriptorRef: string,
   overrides: Partial<ManagedRunRecord> = {},
 ): ManagedRunRecord {
+  const suffix = managedRunId.replace("managed-run_", "");
+  const externalRunRef = `external-run_${suffix}`;
+  const expiresAtMs = suffix === "expired" ? NOW_MS - 1 : NOW_MS + 60_000;
+  const prepared = {
+    externalRunRef,
+    registrationNonce: `registration-nonce_${suffix}`,
+    expiresAtMs,
+    state: "prepared" as const,
+  };
   return {
     schemaVersion: 1,
     managedRunId,
     serviceInstanceId,
-    externalRunRefDigest: "a".repeat(64),
-    activationDescriptorDigest: "d".repeat(64),
+    externalRunRefDigest: createHash("sha256").update(externalRunRef).digest("hex"),
+    activationDescriptorDigest: createHash("sha256").update(JSON.stringify(prepared)).digest("hex"),
     activationDescriptorRef: descriptorRef,
     tenantId: "tenant_a",
     agentId: "agent_a",
@@ -273,8 +283,12 @@ describe("managed-run activation restart recovery", () => {
       operationId: "abandon-managed-run_expired",
       reason: "registration_expired",
     }));
-    expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_valid"))
-      .toMatchObject({ ok: true, value: { status: "active", activationDescriptorRef: undefined } });
+    const validRecord = await store.get(
+      { kind: "service", serviceInstanceId: "service-instance_a" },
+      "managed-run_valid",
+    );
+    expect(validRecord).toMatchObject({ ok: true, value: { status: "active" } });
+    expect(validRecord.ok && validRecord.value?.activationDescriptorRef).toBeUndefined();
     expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_expired"))
       .toMatchObject({ ok: true, value: { status: "cancelled" } });
     expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_missing"))

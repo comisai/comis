@@ -150,6 +150,21 @@ function makeIds(operationId: string) {
   };
 }
 
+function makeControlIds(managedRunId: string) {
+  const operationId = managedRunId.startsWith("managed-")
+    ? managedRunId.slice("managed-".length)
+    : managedRunId;
+  const ids = makeIds(operationId);
+  return {
+    activationOperationId: ids.activationOperationId,
+    abandonOperationId: ids.abandonOperationId,
+    rejectionOperationId: ids.rejectionOperationId,
+    joinMissingOperationId: ids.joinMissingOperationId,
+    outcomeUnknownOperationId: ids.outcomeUnknownOperationId,
+    unavailableOperationId: ids.unavailableOperationId,
+  };
+}
+
 describe("managed-run two-phase activation", () => {
   const temporaryDirectories: string[] = [];
   let db: Database.Database;
@@ -202,7 +217,7 @@ describe("managed-run two-phase activation", () => {
       contentStore,
       control,
       activeView: { getActiveView: () => makeActiveView() },
-      ids: { forOperation: makeIds },
+      ids: { forOperation: makeIds, forManagedRun: makeControlIds },
       nowMs: () => NOW_MS,
       eventBus,
       logger,

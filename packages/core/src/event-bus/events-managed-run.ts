@@ -44,4 +44,25 @@ export interface ManagedRunEvents {
     reasonCode: "invalid_report" | "managed_run_not_found" | "observed_time_out_of_bounds" | "replay_conflict" | "state_mismatch" | "storage_failure";
     timestamp: number;
   };
+  "managed_run:recovery_quarantined": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    reason: "record_validation_failed";
+    timestamp: number;
+  };
+  "managed_run:recovery_failed": {
+    managedRunId: string;
+    serviceInstanceId: string;
+    reasonCode: "reconciliation_failed";
+    timestamp: number;
+  };
+  "managed_run:recovery_completed": {
+    activatedCount: number;
+    cancelledCount: number;
+    unknownCount: number;
+    invalidCount: number;
+    failedCount: number;
+    durationMs: number;
+    timestamp: number;
+  };
 }

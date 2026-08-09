@@ -218,6 +218,7 @@ export interface ManagedRunContentRecoveryInput {
 export interface ManagedRunContentPort {
   putActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string, descriptor: ManagedRunActivationDescriptor): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
   getActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string): Promise<Result<ManagedRunActivationDescriptor | undefined, Error>>;
+  getActivationDescriptorForRecovery(scope: ManagedRunContentScope, descriptorRef: string, input: { readonly kind: "recovery" }): Promise<Result<ManagedRunActivationDescriptor | undefined, Error>>;
   deleteActivationDescriptor(scope: ManagedRunContentScope, descriptorRef: string): Promise<Result<boolean, Error>>;
   putReportBody(scope: ManagedRunContentScope, body: ManagedRunReportBody, retainedUntilMs: number): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
   getReportBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<ManagedRunReportBody | undefined, Error>>;

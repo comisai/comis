@@ -9,15 +9,13 @@ import {
   type CapabilityServiceControlPort,
   type ComisLogger,
   type ManagedRunContentPort,
+  type ManagedRunActivationDescriptor,
   type ManagedRunInitiationSource,
+  type InvalidManagedRunRecord,
   type ManagedRunOwnerScope,
   type ManagedRunPreparedStart,
   type ManagedRunRecord,
   type ManagedRunStorePort,
-  type ResponseLocalePolicy,
-  type ResolvedTurnScope,
-  type DeliveryOrigin,
-  type TrustLevel,
   type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -28,13 +26,13 @@ export interface ManagedRunActivationAuthority {
   readonly agentId: string;
   readonly principalId: string;
   readonly conversationRef: ManagedRunRecord["conversationRef"];
-  readonly turnScope: ResolvedTurnScope;
-  readonly deliveryOrigin: DeliveryOrigin;
-  readonly trustLevel: TrustLevel;
-  readonly responseLocalePolicy: ResponseLocalePolicy;
+  readonly turnScope: ManagedRunRecord["turnScope"];
+  readonly deliveryOrigin: ManagedRunRecord["deliveryOrigin"];
+  readonly trustLevel: ManagedRunRecord["trustLevel"];
+  readonly responseLocalePolicy: ManagedRunRecord["responseLocalePolicy"];
   readonly workspacePolicyHash: string;
   readonly rootRunId: string;
-  readonly initiationSource: Exclude<ManagedRunInitiationSource, "service_event">;
+  readonly initiationSource: ManagedRunInitiationSource;
   readonly capturedAgentCapabilities: ManagedRunRecord["capturedAgentCapabilities"];
   readonly capturedToolIds: readonly string[];
 }
@@ -49,6 +47,15 @@ export interface ManagedRunActivationInput {
 export interface ManagedRunActivationIds {
   readonly managedRunId: string;
   readonly activationDescriptorRef: string;
+  readonly activationOperationId: string;
+  readonly abandonOperationId: string;
+  readonly rejectionOperationId: string;
+  readonly joinMissingOperationId: string;
+  readonly outcomeUnknownOperationId: string;
+  readonly unavailableOperationId: string;
+}
+
+export interface ManagedRunActivationControlIds {
   readonly activationOperationId: string;
   readonly abandonOperationId: string;
   readonly rejectionOperationId: string;
@@ -79,6 +86,28 @@ export interface ManagedRunActivationCoordinator {
   activatePrepared(
     input: ManagedRunActivationInput,
   ): Promise<Result<ManagedRunActivationOutcome, Error>>;
+  recoverPreparations(
+    input: ManagedRunActivationRecoveryInput,
+  ): Promise<Result<ManagedRunActivationRecoverySummary, Error>>;
+}
+
+export interface ManagedRunActivationRecoveryInput {
+  readonly updatedBeforeMs: number;
+  readonly limit: number;
+}
+
+export interface ManagedRunActivationRecoveryFailure {
+  readonly managedRunId: string;
+  readonly serviceInstanceId: string;
+  readonly reasonCode: "reconciliation_failed";
+}
+
+export interface ManagedRunActivationRecoverySummary {
+  readonly activated: readonly string[];
+  readonly cancelled: readonly string[];
+  readonly unknown: readonly string[];
+  readonly invalid: readonly InvalidManagedRunRecord[];
+  readonly failed: readonly ManagedRunActivationRecoveryFailure[];
 }
 
 export interface ManagedRunActivationCoordinatorDeps {
@@ -86,7 +115,10 @@ export interface ManagedRunActivationCoordinatorDeps {
   readonly contentStore: ManagedRunContentPort;
   readonly control: CapabilityServiceControlPort;
   readonly activeView: Pick<CapabilityServiceRuntime, "getActiveView">;
-  readonly ids: { forOperation(operationId: string): ManagedRunActivationIds };
+  readonly ids: {
+    forOperation(operationId: string): Pick<ManagedRunActivationIds, "managedRunId" | "activationDescriptorRef">;
+    forManagedRun(managedRunId: string): ManagedRunActivationControlIds;
+  };
   readonly nowMs: () => number;
   readonly eventBus: TypedEventBus;
   readonly logger: ComisLogger;
@@ -191,7 +223,7 @@ export function createManagedRunActivationCoordinator(
   }
 
   async function markUnknown(
-    input: ManagedRunActivationInput,
+    identity: { readonly serviceInstanceId: string; readonly agentId: string },
     ids: ManagedRunActivationIds,
     reason: "activation_outcome_unknown" | "recovery_join_missing" | "service_state_unavailable",
   ): Promise<Result<ManagedRunRecord, Error>> {
@@ -201,7 +233,7 @@ export function createManagedRunActivationCoordinator(
         ? ids.joinMissingOperationId
         : ids.unavailableOperationId;
     const transitioned = await invokeStore(() => deps.store.claimTransition(
-      { kind: "service", serviceInstanceId: input.serviceInstanceId },
+      { kind: "service", serviceInstanceId: identity.serviceInstanceId },
       {
         operationId,
         managedRunId: ids.managedRunId,
@@ -229,7 +261,7 @@ export function createManagedRunActivationCoordinator(
       {
         managedRunId: record.managedRunId,
         serviceInstanceId: record.serviceInstanceId,
-        agentId: record.agentId,
+        agentId: identity.agentId,
         reasonCode: reason,
         timestamp: deps.nowMs(),
       },
@@ -262,7 +294,10 @@ export function createManagedRunActivationCoordinator(
   ): Promise<Result<ManagedRunActivationOutcome, Error>> {
     const descriptorRef = preparedRecord.activationDescriptorRef;
     if (descriptorRef === undefined) {
-      const unknown = await markUnknown(input, ids, "recovery_join_missing");
+      const unknown = await markUnknown({
+        serviceInstanceId: input.serviceInstanceId,
+        agentId: input.authority.agentId,
+      }, ids, "recovery_join_missing");
       return unknown.ok ? ok({ kind: "activation_unknown", record: unknown.value }) : unknown;
     }
     const descriptor = await invokeStore(() => deps.contentStore.getActivationDescriptor({
@@ -277,7 +312,10 @@ export function createManagedRunActivationCoordinator(
       || descriptor.value.registrationNonce !== input.prepared.registrationNonce
       || descriptor.value.expiresAtMs !== input.prepared.expiresAtMs
     ) {
-      const unknown = await markUnknown(input, ids, "recovery_join_missing");
+      const unknown = await markUnknown({
+        serviceInstanceId: input.serviceInstanceId,
+        agentId: input.authority.agentId,
+      }, ids, "recovery_join_missing");
       return unknown.ok ? ok({ kind: "activation_unknown", record: unknown.value }) : unknown;
     }
     deps.logger.debug({
@@ -311,7 +349,7 @@ export function createManagedRunActivationCoordinator(
         if (rejected.value.kind !== "claimed" && rejected.value.kind !== "identical_replay") {
           return err(new Error(`managed-run rejection transition failed: ${rejected.value.kind}`));
         }
-        await removeDescriptor(rejected.value.record, ids.activationDescriptorRef);
+        await removeDescriptor(rejected.value.record, descriptorRef);
         emitRejected(input, "activation_rejected", ids.managedRunId);
         return ok({
           kind: "rejected",
@@ -322,7 +360,10 @@ export function createManagedRunActivationCoordinator(
       const reason = activation.error.kind === "unavailable"
         ? "service_state_unavailable"
         : "activation_outcome_unknown";
-      const unknown = await markUnknown(input, ids, reason);
+      const unknown = await markUnknown({
+        serviceInstanceId: input.serviceInstanceId,
+        agentId: input.authority.agentId,
+      }, ids, reason);
       return unknown.ok ? ok({ kind: "activation_unknown", record: unknown.value }) : unknown;
     }
 
@@ -336,7 +377,10 @@ export function createManagedRunActivationCoordinator(
         errorKind: "dependency" as const,
         hint: "Inspect the service activation response and reconcile the retained private join before retrying",
       }, "Capability-service activation acknowledgement did not match its durable binding");
-      const unknown = await markUnknown(input, ids, "activation_outcome_unknown");
+      const unknown = await markUnknown({
+        serviceInstanceId: input.serviceInstanceId,
+        agentId: input.authority.agentId,
+      }, ids, "activation_outcome_unknown");
       return unknown.ok ? ok({ kind: "activation_unknown", record: unknown.value }) : unknown;
     }
 
@@ -391,7 +435,11 @@ export function createManagedRunActivationCoordinator(
     input: ManagedRunActivationInput,
   ): Promise<Result<ManagedRunActivationOutcome, Error>> {
     const startedAtMs = deps.nowMs();
-    const ids = deps.ids.forOperation(input.operationId);
+    const mintedIds = deps.ids.forOperation(input.operationId);
+    const ids: ManagedRunActivationIds = {
+      ...mintedIds,
+      ...deps.ids.forManagedRun(mintedIds.managedRunId),
+    };
     const prepared = ManagedRunPreparedStartSchema.safeParse(input.prepared);
     if (!prepared.success) {
       emitRejected(input, "invalid_preparation");
@@ -525,5 +573,219 @@ export function createManagedRunActivationCoordinator(
     );
   }
 
-  return Object.freeze({ activatePrepared });
+  function recoveryIds(record: ManagedRunRecord): ManagedRunActivationIds {
+    return {
+      managedRunId: record.managedRunId,
+      activationDescriptorRef: record.activationDescriptorRef
+        ?? `missing-${digest(record.managedRunId)}`,
+      ...deps.ids.forManagedRun(record.managedRunId),
+    };
+  }
+
+  function recoveryActivationInput(
+    record: ManagedRunRecord,
+    descriptor: ManagedRunActivationDescriptor,
+  ): Result<ManagedRunActivationInput, Error> {
+    const prepared = ManagedRunPreparedStartSchema.safeParse({
+      state: "prepared",
+      externalRunRef: descriptor.externalRunRef,
+      registrationNonce: descriptor.registrationNonce,
+      expiresAtMs: descriptor.expiresAtMs,
+      ...(record.displayLabel === undefined ? {} : { displayLabel: record.displayLabel }),
+    });
+    if (!prepared.success) return err(new Error("managed-run recovery descriptor is invalid"));
+    if (
+      digest(prepared.data.externalRunRef) !== record.externalRunRefDigest
+      || digest(JSON.stringify(prepared.data)) !== record.activationDescriptorDigest
+    ) {
+      return err(new Error("managed-run recovery descriptor does not match its durable digest"));
+    }
+    return ok({
+      operationId: `recovery-${record.managedRunId}`,
+      serviceInstanceId: record.serviceInstanceId,
+      prepared: prepared.data,
+      authority: {
+        tenantId: record.tenantId,
+        agentId: record.agentId,
+        principalId: record.principalId,
+        conversationRef: record.conversationRef,
+        turnScope: record.turnScope,
+        deliveryOrigin: record.deliveryOrigin,
+        trustLevel: record.trustLevel,
+        responseLocalePolicy: record.responseLocalePolicy,
+        workspacePolicyHash: record.workspacePolicyHash,
+        rootRunId: record.rootRunId,
+        initiationSource: record.initiationSource,
+        capturedAgentCapabilities: record.capturedAgentCapabilities,
+        capturedToolIds: record.capturedToolIds,
+      },
+    });
+  }
+
+  async function cancelExpiredRecovery(
+    input: ManagedRunActivationInput,
+    ids: ManagedRunActivationIds,
+    record: ManagedRunRecord,
+  ): Promise<Result<ManagedRunRecord, Error>> {
+    await abandonPrepared(input, ids, "registration_expired");
+    const transitioned = await invokeStore(() => deps.store.claimTransition(
+      { kind: "service", serviceInstanceId: record.serviceInstanceId },
+      {
+        operationId: ids.rejectionOperationId,
+        managedRunId: record.managedRunId,
+        expectedStatuses: ["preparing", "unknown"],
+        nextStatus: "cancelled",
+        nextStatusReason: "activation_rejected",
+        transitionedAtMs: deps.nowMs(),
+        terminalOutcome: { kind: "cancelled", recordedAtMs: deps.nowMs() },
+      },
+    ));
+    if (!transitioned.ok) return transitioned;
+    if (transitioned.value.kind !== "claimed" && transitioned.value.kind !== "identical_replay") {
+      return err(new Error(`managed-run expired recovery transition failed: ${transitioned.value.kind}`));
+    }
+    await removeDescriptor(transitioned.value.record, ids.activationDescriptorRef);
+    emitRejected(input, "preparation_expired", record.managedRunId);
+    return ok(transitioned.value.record);
+  }
+
+  async function reconcileRecoveryRecord(
+    record: ManagedRunRecord,
+  ): Promise<Result<"activated" | "cancelled" | "unknown", Error>> {
+    const ids = recoveryIds(record);
+    const descriptorRef = record.activationDescriptorRef;
+    if (descriptorRef === undefined) {
+      const unknown = await markUnknown(record, ids, "recovery_join_missing");
+      return unknown.ok ? ok("unknown") : unknown;
+    }
+    const descriptor = await invokeStore(() => deps.contentStore.getActivationDescriptorForRecovery({
+      tenantId: record.tenantId,
+      agentId: record.agentId,
+      managedRunId: record.managedRunId,
+    }, descriptorRef, { kind: "recovery" }));
+    if (!descriptor.ok) return descriptor;
+    if (descriptor.value === undefined) {
+      const unknown = await markUnknown(record, ids, "recovery_join_missing");
+      return unknown.ok ? ok("unknown") : unknown;
+    }
+    const input = recoveryActivationInput(record, descriptor.value);
+    if (!input.ok) {
+      const unknown = await markUnknown(record, ids, "recovery_join_missing");
+      return unknown.ok ? ok("unknown") : unknown;
+    }
+    if (input.value.prepared.expiresAtMs <= deps.nowMs()) {
+      const cancelled = await cancelExpiredRecovery(input.value, ids, record);
+      return cancelled.ok ? ok("cancelled") : cancelled;
+    }
+    const activeInstance = deps.activeView.getActiveView().instances.find(
+      (instance) => instance.serviceInstanceId === record.serviceInstanceId
+        && instance.state === "active",
+    );
+    if (activeInstance === undefined || !activeInstance.allowedAgents.includes(record.agentId)) {
+      const unknown = await markUnknown(record, ids, "service_state_unavailable");
+      return unknown.ok ? ok("unknown") : unknown;
+    }
+    const activated = await activateDurable(input.value, ids, record, true, deps.nowMs());
+    if (!activated.ok) return activated;
+    if (activated.value.kind === "activation_unknown") return ok("unknown");
+    if (activated.value.kind === "rejected") return ok("cancelled");
+    return ok("activated");
+  }
+
+  async function recoverPreparations(
+    input: ManagedRunActivationRecoveryInput,
+  ): Promise<Result<ManagedRunActivationRecoverySummary, Error>> {
+    const startedAtMs = deps.nowMs();
+    const scanned = await invokeStore(() => deps.store.listRecoverable({
+      kind: "recovery",
+      statuses: ["preparing", "unknown"],
+      updatedBeforeMs: input.updatedBeforeMs,
+      limit: input.limit,
+    }));
+    if (!scanned.ok) return scanned;
+    const summary: {
+      activated: string[];
+      cancelled: string[];
+      unknown: string[];
+      invalid: InvalidManagedRunRecord[];
+      failed: ManagedRunActivationRecoveryFailure[];
+    } = {
+      activated: [],
+      cancelled: [],
+      unknown: [],
+      invalid: [...scanned.value.invalid],
+      failed: [],
+    };
+    for (const invalid of scanned.value.invalid) {
+      deps.logger.error({
+        managedRunId: invalid.managedRunId,
+        serviceInstanceId: invalid.serviceInstanceId,
+        errorKind: "internal" as const,
+        hint: "Inspect the content-free managed-run row and restore or remove it before the next recovery scan",
+      }, "Corrupt managed-run recovery row was quarantined");
+      emitObservationalEventSafely(
+        { eventBus: deps.eventBus, logger: deps.logger },
+        "managed_run:recovery_quarantined",
+        { ...invalid, timestamp: deps.nowMs() },
+      );
+    }
+    for (const record of scanned.value.records) {
+      deps.logger.debug({
+        managedRunId: record.managedRunId,
+        serviceInstanceId: record.serviceInstanceId,
+        step: "managed-run-activation-recovery",
+      }, "Reconciling durable managed-run preparation");
+      const reconciled = await reconcileRecoveryRecord(record);
+      if (reconciled.ok) {
+        summary[reconciled.value].push(record.managedRunId);
+        continue;
+      }
+      summary.failed.push({
+        managedRunId: record.managedRunId,
+        serviceInstanceId: record.serviceInstanceId,
+        reasonCode: "reconciliation_failed",
+      });
+      deps.logger.error({
+        managedRunId: record.managedRunId,
+        serviceInstanceId: record.serviceInstanceId,
+        errorKind: "internal" as const,
+        hint: "Inspect the durable run, private activation join, and service control health before retrying recovery",
+      }, "Managed-run activation recovery failed");
+      emitObservationalEventSafely(
+        { eventBus: deps.eventBus, logger: deps.logger },
+        "managed_run:recovery_failed",
+        {
+          managedRunId: record.managedRunId,
+          serviceInstanceId: record.serviceInstanceId,
+          reasonCode: "reconciliation_failed",
+          timestamp: deps.nowMs(),
+        },
+      );
+    }
+    const durationMs = Math.max(0, deps.nowMs() - startedAtMs);
+    deps.logger.info({
+      recoveredCount: summary.activated.length,
+      cancelledCount: summary.cancelled.length,
+      unknownCount: summary.unknown.length,
+      invalidCount: summary.invalid.length,
+      failedCount: summary.failed.length,
+      durationMs,
+    }, "Managed-run activation recovery completed");
+    emitObservationalEventSafely(
+      { eventBus: deps.eventBus, logger: deps.logger },
+      "managed_run:recovery_completed",
+      {
+        activatedCount: summary.activated.length,
+        cancelledCount: summary.cancelled.length,
+        unknownCount: summary.unknown.length,
+        invalidCount: summary.invalid.length,
+        failedCount: summary.failed.length,
+        durationMs,
+        timestamp: deps.nowMs(),
+      },
+    );
+    return ok(summary);
+  }
+
+  return Object.freeze({ activatePrepared, recoverPreparations });
 }
