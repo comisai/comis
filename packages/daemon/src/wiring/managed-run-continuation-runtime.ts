@@ -55,7 +55,7 @@ export function createManagedRunContinuationRuntime(deps: {
   const coalescer = createManagedRunContinuationCoalescer({
     process: async (managedRunId) => {
       const serviceInstanceId = serviceByRun.get(managedRunId);
-      if (serviceInstanceId === undefined) return;
+      if (serviceInstanceId === undefined) return false;
       const recoveredRecord = recoveredRecordByRun.get(managedRunId);
       recoveredRecordByRun.delete(managedRunId);
       const loaded = recoveredRecord === undefined
@@ -72,7 +72,7 @@ export function createManagedRunContinuationRuntime(deps: {
       }
       if (loaded.value === undefined) {
         log.debug({ managedRunId, serviceInstanceId, step: "owner-resolution" }, "Managed-run continuation event no longer has a scoped record");
-        return;
+        return false;
       }
       const processed = await deps.coordinator.process(ownerScope(loaded.value), managedRunId);
       if (!processed.ok) {
@@ -84,6 +84,7 @@ export function createManagedRunContinuationRuntime(deps: {
         }, "Managed-run continuation processing failed");
         return Promise.reject(processed.error);
       }
+      return processed.value.kind === "processed" && processed.value.pendingAfterCurrent;
     },
   });
 

@@ -319,7 +319,7 @@ export interface ManagedRunContinuationCoalescer {
 
 /** Serialize work per run while folding every in-flight notification into one bit. */
 export function createManagedRunContinuationCoalescer(deps: {
-  readonly process: (managedRunId: string) => Promise<unknown>;
+  readonly process: (managedRunId: string) => Promise<boolean>;
 }): ManagedRunContinuationCoalescer {
   const active = new Map<string, { pendingAfterCurrent: boolean; drain: Promise<void> }>();
   return Object.freeze({
@@ -334,7 +334,8 @@ export function createManagedRunContinuationCoalescer(deps: {
         try {
           do {
             state.pendingAfterCurrent = false;
-            await deps.process(managedRunId);
+            const durablePending = await deps.process(managedRunId);
+            state.pendingAfterCurrent ||= durablePending;
           } while (state.pendingAfterCurrent);
         } finally {
           active.delete(managedRunId);

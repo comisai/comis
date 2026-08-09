@@ -226,18 +226,18 @@ describe("managed-run continuation coordination", () => {
   });
 
   it("folds concurrent notifications into at most one follow-up execution per run", async () => {
-    let releaseFirst!: () => void;
-    const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let releaseFirst!: (pending: boolean) => void;
+    const first = new Promise<boolean>((resolve) => { releaseFirst = resolve; });
     const process = vi.fn()
       .mockImplementationOnce(async () => first)
-      .mockResolvedValue(undefined);
+      .mockResolvedValue(false);
     const coalescer = createManagedRunContinuationCoalescer({ process });
 
     const initial = coalescer.request("managed-run-a");
     const foldedA = coalescer.request("managed-run-a");
     const foldedB = coalescer.request("managed-run-a");
     await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(1));
-    releaseFirst();
+    releaseFirst(false);
     await Promise.all([initial, foldedA, foldedB]);
 
     expect(process).toHaveBeenCalledTimes(2);
