@@ -9,13 +9,10 @@
         "jsonrpc": "2.0",
         "method": "managedRuns.report",
         "params": {
-          "evidence": [],
-          "managedRunRef": "managed-run_a",
+          "kind": "progress",
+          "managedRunId": "managed-run_a",
           "operationId": "operation_replay",
-          "reportRef": "report_replay",
-          "sequence": 4,
-          "serviceInstanceRef": "service-instance_a",
-          "state": "active",
+          "serviceReportId": "report_replay",
           "summary": "First payload"
         }
       },
@@ -29,13 +26,10 @@
         "jsonrpc": "2.0",
         "method": "managedRuns.report",
         "params": {
-          "evidence": [],
-          "managedRunRef": "managed-run_a",
+          "kind": "progress",
+          "managedRunId": "managed-run_a",
           "operationId": "operation_replay",
-          "reportRef": "report_replay",
-          "sequence": 4,
-          "serviceInstanceRef": "service-instance_a",
-          "state": "active",
+          "serviceReportId": "report_replay",
           "summary": "Altered payload"
         }
       },

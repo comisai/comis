@@ -5,8 +5,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { runWithContext, type RequestContext } from "@comis/core";
+import {
+  MCP_CAPABILITY_CALL_CONTEXT_KEY,
+  MCP_MANAGED_RUN_RESULT_KEY,
+  McpCapabilityCallContextSchema,
+  McpManagedRunResultSchema,
+} from "@comis/capability-service-sdk";
 import { callTool } from "../integrations/mcp-client/mcp-client-call.js";
 import type {
   McpClientManagerDeps,
@@ -88,19 +94,26 @@ describe("MCP private metadata viability", () => {
   });
 
   it("carries private request and prepared-result metadata without exposing it to the model", async () => {
+    const callContext = {
+      operationId: "operation_fixture_a",
+      serviceInstanceId: "service_instance_fixture_a",
+      agentId: "agent_a",
+      conversationRef: "conversation_a",
+      workspacePolicyHash: "c".repeat(64),
+      rootRunId: "root_run_fixture_a",
+      traceId: makeContext().traceId,
+    } as const;
     const requestMeta = {
-      "comis.callContext": {
-        operationId: "operation_fixture_a",
-        serviceInstanceId: "service_instance_fixture_a",
-      },
+      [MCP_CAPABILITY_CALL_CONTEXT_KEY]: callContext,
+    } as const;
+    const preparedRun = {
+      state: "prepared",
+      externalRunRef: "external_run_fixture_a",
+      registrationNonce: "registration_nonce_fixture_a",
+      expiresAt: "2030-01-01T00:00:00.000Z",
     } as const;
     const preparedResultMeta = {
-      "comis.managedRun": {
-        state: "prepared",
-        externalRunRef: "external_run_fixture_a",
-        registrationNonce: "registration_nonce_fixture_a",
-        expiresAt: "2030-01-01T00:00:00.000Z",
-      },
+      [MCP_MANAGED_RUN_RESULT_KEY]: preparedRun,
     } as const;
 
     let receivedRequestMeta: Readonly<Record<string, unknown>> | undefined;
@@ -139,9 +152,18 @@ describe("MCP private metadata viability", () => {
 
     let acceptedResultMeta: Readonly<Record<string, unknown>> | undefined;
     const privateMetadataBridge: McpPrivateMetadataBridge = {
-      createRequestMeta: () => ok(requestMeta),
+      createRequestMeta: () => {
+        const parsed = McpCapabilityCallContextSchema.safeParse(callContext);
+        return parsed.success
+          ? ok({ [MCP_CAPABILITY_CALL_CONTEXT_KEY]: parsed.data })
+          : err(parsed.error);
+      },
       acceptResultMeta: (input) => {
-        acceptedResultMeta = input.meta;
+        const parsed = McpManagedRunResultSchema.safeParse(
+          input.meta[MCP_MANAGED_RUN_RESULT_KEY],
+        );
+        if (!parsed.success) return err(parsed.error);
+        acceptedResultMeta = { [MCP_MANAGED_RUN_RESULT_KEY]: parsed.data };
         return ok(undefined);
       },
     };
@@ -188,6 +210,10 @@ describe("MCP private metadata viability", () => {
       "registrationNonce",
       "registration_nonce_fixture_a",
       "expiresAt",
+      "serviceInstanceId",
+      "service_instance_fixture_a",
+      "workspacePolicyHash",
+      "root_run_fixture_a",
     ]) {
       expect(modelVisibleOutput).not.toContain(privateToken);
     }

@@ -8,8 +8,8 @@ import {
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 
-/** Service-minted identity. Consumers compare it but never parse it. */
-export const ServiceInstanceRefSchema = z
+/** Operator-configured service identity. Consumers compare it but never parse it. */
+export const ServiceInstanceIdSchema = z
   .string()
   .min(1)
   .max(256)
@@ -19,10 +19,12 @@ export const ServiceInstanceRefSchema = z
 export const ExternalRunRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
 /** Comis-minted managed-run identity. Consumers compare it but never parse it. */
-export const ManagedRunRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
+export const ManagedRunIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
 /** Stable idempotency identity for a single protocol operation. */
 export const OperationIdSchema = z.string().min(1).max(128).regex(OPAQUE_REF_PATTERN);
+export const ServiceReportIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
+export const EvidenceRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
 /** One-time proof used to bind a prepared external run. */
 export const RegistrationNonceSchema = z.string().min(16).max(256).regex(OPAQUE_REF_PATTERN);
@@ -30,6 +32,7 @@ export const RegistrationNonceSchema = z.string().min(16).max(256).regex(OPAQUE_
 export const BundleDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const TimestampMsSchema = z.number().int().nonnegative();
 export const CapabilityServiceMethodSchema = z.enum(CAPABILITY_SERVICE_METHODS);
+export const CapabilityServiceScopeSchema = z.enum(["health", "report"]);
 
 export const CapabilityServiceLimitsSchema = z.strictObject({
   maxEvidenceBytes: z.literal(CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes),
@@ -72,10 +75,11 @@ export const CapabilityServiceErrorResponseSchema = z.strictObject({
   error: CapabilityServiceErrorSchema,
 });
 
-export type ServiceInstanceRef = z.infer<typeof ServiceInstanceRefSchema>;
+export type ServiceInstanceId = z.infer<typeof ServiceInstanceIdSchema>;
 export type ExternalRunRef = z.infer<typeof ExternalRunRefSchema>;
-export type ManagedRunRef = z.infer<typeof ManagedRunRefSchema>;
+export type ManagedRunId = z.infer<typeof ManagedRunIdSchema>;
 export type OperationId = z.infer<typeof OperationIdSchema>;
+export type ServiceReportId = z.infer<typeof ServiceReportIdSchema>;
 export type CapabilityServiceError = z.infer<typeof CapabilityServiceErrorSchema>;
 export type CapabilityServiceErrorResponse = z.infer<
   typeof CapabilityServiceErrorResponseSchema

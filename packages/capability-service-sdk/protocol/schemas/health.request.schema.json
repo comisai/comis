@@ -34,7 +34,7 @@
           "const": "comis.capability-service/1",
           "type": "string"
         },
-        "serviceInstanceRef": {
+        "serviceInstanceId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
@@ -45,7 +45,7 @@
         "protocolId",
         "bundleDigest",
         "operationId",
-        "serviceInstanceRef"
+        "serviceInstanceId"
       ],
       "type": "object"
     }

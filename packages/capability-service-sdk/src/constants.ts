@@ -2,6 +2,7 @@
 
 /** Exact lockstep identifier carried by every protocol handshake. */
 export const CAPABILITY_SERVICE_PROTOCOL_ID = "comis.capability-service/1" as const;
+export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.59" as const;
 
 /** Placeholder resolved from manifest.json before a generated fixture is sent. */
 export const BUNDLE_DIGEST_FIXTURE_TOKEN = "__BUNDLE_DIGEST__" as const;
@@ -15,6 +16,9 @@ export const CAPABILITY_SERVICE_METHODS = [
 ] as const;
 
 export type CapabilityServiceMethod = (typeof CAPABILITY_SERVICE_METHODS)[number];
+
+export const MCP_CAPABILITY_CALL_CONTEXT_KEY = "comis.callContext" as const;
+export const MCP_MANAGED_RUN_RESULT_KEY = "comis.managedRun" as const;
 
 export const CAPABILITY_SERVICE_ERROR_KINDS = [
   "bundle_digest_mismatch",

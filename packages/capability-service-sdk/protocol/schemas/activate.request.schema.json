@@ -26,7 +26,7 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
         },
-        "managedRunRef": {
+        "managedRunId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
@@ -38,31 +38,18 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
         },
-        "registrationExpiresAtMs": {
-          "maximum": 9007199254740991,
-          "minimum": 0,
-          "type": "integer"
-        },
         "registrationNonce": {
           "maxLength": 256,
           "minLength": 16,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
-        },
-        "serviceInstanceRef": {
-          "maxLength": 256,
-          "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
         }
       },
       "required": [
         "operationId",
-        "serviceInstanceRef",
-        "managedRunRef",
+        "managedRunId",
         "externalRunRef",
-        "registrationNonce",
-        "registrationExpiresAtMs"
+        "registrationNonce"
       ],
       "type": "object"
     }

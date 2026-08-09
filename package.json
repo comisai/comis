@@ -61,7 +61,7 @@
     "docs:check": "tsx scripts/check-mcp-doc-examples.ts && node scripts/check-mdx.mjs",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
-    "validate": "pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage",
+    "validate": "pnpm docs:check && pnpm capability-protocol:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage",
     "validate:full": "pnpm validate && pnpm test:integration --coverage && pnpm smoke:tarball",
     "test:architecture": "vitest run --project architecture",
     "test:transparency": "vitest run packages/skills/src/__tests__/transparency-label-coverage.test.ts",

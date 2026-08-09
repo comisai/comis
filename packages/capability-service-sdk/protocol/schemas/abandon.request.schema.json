@@ -46,17 +46,10 @@
           "minLength": 16,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
-        },
-        "serviceInstanceRef": {
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
         }
       },
       "required": [
         "operationId",
-        "serviceInstanceRef",
         "externalRunRef",
         "registrationNonce",
         "reason"

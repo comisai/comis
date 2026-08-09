@@ -3,8 +3,26 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "properties": {
-    "bundleDigest": {
-      "pattern": "^[a-f0-9]{64}$",
+    "agentId": {
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "conversationRef": {
+      "maxLength": 512,
+      "minLength": 1,
+      "type": "string"
+    },
+    "managedRunGroupId": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "managedRunId": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
       "type": "string"
     },
     "operationId": {
@@ -13,22 +31,36 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
       "type": "string"
     },
-    "protocolId": {
-      "const": "comis.capability-service/1",
-      "type": "string"
-    },
-    "serviceInstanceRef": {
+    "rootRunId": {
       "maxLength": 256,
       "minLength": 1,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
       "type": "string"
+    },
+    "serviceInstanceId": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "traceId": {
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "workspacePolicyHash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
     }
   },
   "required": [
-    "protocolId",
-    "bundleDigest",
     "operationId",
-    "serviceInstanceRef"
+    "serviceInstanceId",
+    "agentId",
+    "conversationRef",
+    "workspacePolicyHash",
+    "rootRunId",
+    "traceId"
   ],
   "type": "object"
 }

@@ -5,20 +5,22 @@
     {
       "expectation": "accept",
       "payload": {
-        "bundleDigest": "__BUNDLE_DIGEST__",
+        "agentId": "agent_a",
+        "conversationRef": "conversation_a",
         "operationId": "operation_prepare",
-        "protocolId": "comis.capability-service/1",
-        "serviceInstanceRef": "service-instance_a"
+        "rootRunId": "root-run_a",
+        "serviceInstanceId": "service-instance_a",
+        "traceId": "40000000-0000-4000-8000-000000000004",
+        "workspacePolicyHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       },
       "target": "mcp-call-context"
     },
     {
       "expectation": "accept",
       "payload": {
-        "expiresAtMs": 1900000000000,
+        "expiresAt": "2030-01-01T00:00:00.000Z",
         "externalRunRef": "external-run_a",
         "registrationNonce": "registration-nonce_a",
-        "serviceInstanceRef": "service-instance_a",
         "state": "prepared"
       },
       "target": "mcp-managed-run-result"
@@ -33,14 +35,11 @@
           "bundleDigest": "__BUNDLE_DIGEST__",
           "operationId": "operation_handshake",
           "protocolId": "comis.capability-service/1",
-          "serviceInstanceRef": "service-instance_a",
-          "supportedMethods": [
-            "capabilityServices.handshake",
-            "capabilityServices.health",
-            "managedRuns.abandon",
-            "managedRuns.activate",
-            "managedRuns.report"
-          ]
+          "requestedScopes": [
+            "health",
+            "report"
+          ],
+          "serviceInstanceId": "service-instance_a"
         }
       },
       "target": "request"
@@ -51,12 +50,9 @@
         "id": "operation_handshake",
         "jsonrpc": "2.0",
         "result": {
-          "acceptedMethods": [
-            "capabilityServices.handshake",
-            "capabilityServices.health",
-            "managedRuns.abandon",
-            "managedRuns.activate",
-            "managedRuns.report"
+          "activeScopes": [
+            "health",
+            "report"
           ],
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {
@@ -69,7 +65,7 @@
             "reportRetentionDays": 30
           },
           "protocolId": "comis.capability-service/1",
-          "serviceInstanceRef": "service-instance_a"
+          "serviceInstanceId": "service-instance_a"
         }
       },
       "target": "handshake-response"
@@ -82,11 +78,9 @@
         "method": "managedRuns.activate",
         "params": {
           "externalRunRef": "external-run_a",
-          "managedRunRef": "managed-run_a",
+          "managedRunId": "managed-run_a",
           "operationId": "operation_activate",
-          "registrationExpiresAtMs": 1900000000000,
-          "registrationNonce": "registration-nonce_a",
-          "serviceInstanceRef": "service-instance_a"
+          "registrationNonce": "registration-nonce_a"
         }
       },
       "target": "request"
@@ -99,7 +93,7 @@
         "result": {
           "activatedAtMs": 1800000000000,
           "externalRunRef": "external-run_a",
-          "managedRunRef": "managed-run_a",
+          "managedRunId": "managed-run_a",
           "state": "active"
         }
       },
@@ -112,20 +106,14 @@
         "jsonrpc": "2.0",
         "method": "managedRuns.report",
         "params": {
-          "evidence": [
-            {
-              "evidenceRef": "evidence_a",
-              "mediaType": "application/json",
-              "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-              "sizeBytes": 128
-            }
+          "artifactRefs": [
+            "evidence_a"
           ],
-          "managedRunRef": "managed-run_a",
+          "kind": "progress",
+          "managedRunId": "managed-run_a",
+          "observedAtMs": 1800000000000,
           "operationId": "operation_report",
-          "reportRef": "report_a",
-          "sequence": 1,
-          "serviceInstanceRef": "service-instance_a",
-          "state": "active",
+          "serviceReportId": "service-report_a",
           "summary": "Synthetic progress report"
         }
       },
@@ -138,9 +126,9 @@
         "jsonrpc": "2.0",
         "result": {
           "acceptedSequence": 1,
-          "managedRunRef": "managed-run_a",
-          "reportRef": "report_a",
-          "retainedUntilMs": 1900000000000
+          "managedRunId": "managed-run_a",
+          "retainedUntilMs": 1900000000000,
+          "serviceReportId": "service-report_a"
         }
       },
       "target": "report-response"
@@ -155,7 +143,7 @@
           "bundleDigest": "__BUNDLE_DIGEST__",
           "operationId": "operation_health",
           "protocolId": "comis.capability-service/1",
-          "serviceInstanceRef": "service-instance_a"
+          "serviceInstanceId": "service-instance_a"
         }
       },
       "target": "request"
@@ -170,7 +158,7 @@
           "observedAtMs": 1800000000000,
           "protocolId": "comis.capability-service/1",
           "reasonCodes": [],
-          "serviceInstanceRef": "service-instance_a",
+          "serviceInstanceId": "service-instance_a",
           "status": "healthy"
         }
       },
@@ -186,8 +174,7 @@
           "externalRunRef": "external-run_a",
           "operationId": "operation_abandon",
           "reason": "owner_cancelled",
-          "registrationNonce": "registration-nonce_a",
-          "serviceInstanceRef": "service-instance_a"
+          "registrationNonce": "registration-nonce_a"
         }
       },
       "target": "request"

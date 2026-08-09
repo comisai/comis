@@ -1,30 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
-import { CAPABILITY_SERVICE_PROTOCOL_ID } from "./constants.js";
 import {
-  BundleDigestSchema,
   ExternalRunRefSchema,
+  ManagedRunIdSchema,
   OperationIdSchema,
   RegistrationNonceSchema,
-  ServiceInstanceRefSchema,
-  TimestampMsSchema,
+  ServiceInstanceIdSchema,
 } from "./common.js";
 
 /** Private MCP request metadata supplied after model-authored arguments are fixed. */
 export const McpCapabilityCallContextSchema = z.strictObject({
-  protocolId: z.literal(CAPABILITY_SERVICE_PROTOCOL_ID),
-  bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
-  serviceInstanceRef: ServiceInstanceRefSchema,
+  serviceInstanceId: ServiceInstanceIdSchema,
+  agentId: z.string().min(1).max(256),
+  conversationRef: z.string().min(1).max(512),
+  workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/),
+  rootRunId: ManagedRunIdSchema,
+  traceId: z.string().min(1).max(128),
+  managedRunGroupId: ManagedRunIdSchema.optional(),
+  managedRunId: ManagedRunIdSchema.optional(),
 });
 
 /** Private MCP result metadata describing a prepared external run. */
 export const McpManagedRunResultSchema = z.strictObject({
   state: z.literal("prepared"),
-  serviceInstanceRef: ServiceInstanceRefSchema,
   externalRunRef: ExternalRunRefSchema,
   registrationNonce: RegistrationNonceSchema,
-  expiresAtMs: TimestampMsSchema,
+  expiresAt: z.iso.datetime(),
+  displayLabel: z.string().min(1).max(256).optional(),
+  requestedWorkspace: z
+    .strictObject({
+      rootHint: z.string().min(1).max(512),
+    })
+    .optional(),
 });
 
 export type McpCapabilityCallContext = z.infer<typeof McpCapabilityCallContextSchema>;

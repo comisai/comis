@@ -20,47 +20,47 @@
     "params": {
       "additionalProperties": false,
       "properties": {
-        "evidence": {
+        "artifactRefs": {
           "items": {
-            "additionalProperties": false,
-            "properties": {
-              "evidenceRef": {
-                "maxLength": 256,
-                "minLength": 1,
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-                "type": "string"
-              },
-              "mediaType": {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              "sha256": {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
-              },
-              "sizeBytes": {
-                "maximum": 1048576,
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "evidenceRef",
-              "mediaType",
-              "sizeBytes",
-              "sha256"
-            ],
-            "type": "object"
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+            "type": "string"
           },
           "maxItems": 32,
           "type": "array"
         },
-        "managedRunRef": {
+        "details": {
+          "maxLength": 16384,
+          "type": "string"
+        },
+        "externalKey": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "attention",
+            "blocked",
+            "candidate_complete",
+            "failed",
+            "paused",
+            "progress",
+            "resolution"
+          ],
+          "type": "string"
+        },
+        "managedRunId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
+        },
+        "observedAtMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
         },
         "operationId": {
           "maxLength": 128,
@@ -68,30 +68,10 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
         },
-        "reportRef": {
+        "serviceReportId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
-        },
-        "sequence": {
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991,
-          "type": "integer"
-        },
-        "serviceInstanceRef": {
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
-        },
-        "state": {
-          "enum": [
-            "active",
-            "blocked",
-            "completed",
-            "failed"
-          ],
           "type": "string"
         },
         "summary": {
@@ -101,13 +81,10 @@
       },
       "required": [
         "operationId",
-        "serviceInstanceRef",
-        "managedRunRef",
-        "reportRef",
-        "sequence",
-        "state",
-        "summary",
-        "evidence"
+        "managedRunId",
+        "serviceReportId",
+        "kind",
+        "summary"
       ],
       "type": "object"
     }

@@ -34,34 +34,31 @@
           "const": "comis.capability-service/1",
           "type": "string"
         },
-        "serviceInstanceRef": {
+        "requestedScopes": {
+          "items": {
+            "enum": [
+              "health",
+              "report"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "type": "array"
+        },
+        "serviceInstanceId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
-        },
-        "supportedMethods": {
-          "items": {
-            "enum": [
-              "capabilityServices.handshake",
-              "capabilityServices.health",
-              "managedRuns.abandon",
-              "managedRuns.activate",
-              "managedRuns.report"
-            ],
-            "type": "string"
-          },
-          "maxItems": 5,
-          "minItems": 5,
-          "type": "array"
         }
       },
       "required": [
         "protocolId",
         "bundleDigest",
         "operationId",
-        "serviceInstanceRef",
-        "supportedMethods"
+        "serviceInstanceId",
+        "requestedScopes"
       ],
       "type": "object"
     }

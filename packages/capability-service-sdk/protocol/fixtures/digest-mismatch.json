@@ -13,14 +13,11 @@
           "bundleDigest": "0000000000000000000000000000000000000000000000000000000000000000",
           "operationId": "operation_digest",
           "protocolId": "comis.capability-service/1",
-          "serviceInstanceRef": "service-instance_a",
-          "supportedMethods": [
-            "capabilityServices.handshake",
-            "capabilityServices.health",
-            "managedRuns.abandon",
-            "managedRuns.activate",
-            "managedRuns.report"
-          ]
+          "requestedScopes": [
+            "health",
+            "report"
+          ],
+          "serviceInstanceId": "service-instance_a"
         }
       },
       "target": "request"

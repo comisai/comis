@@ -1,0 +1,8 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/external-run-ref.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "maxLength": 256,
+  "minLength": 1,
+  "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+  "type": "string"
+}

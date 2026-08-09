@@ -13,14 +13,11 @@
           "bundleDigest": "__BUNDLE_DIGEST__",
           "operationId": "operation_unknown",
           "protocolId": "comis.capability-service/1",
-          "serviceInstanceRef": "service-instance_a",
-          "supportedMethods": [
-            "capabilityServices.handshake",
-            "capabilityServices.health",
-            "managedRuns.abandon",
-            "managedRuns.activate",
-            "managedRuns.report"
+          "requestedScopes": [
+            "health",
+            "report"
           ],
+          "serviceInstanceId": "service-instance_a",
           "unrecognized": true
         }
       },

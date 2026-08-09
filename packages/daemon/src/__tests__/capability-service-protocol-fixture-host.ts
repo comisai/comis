@@ -103,18 +103,6 @@ function validateReportSizes(
   ) {
     return reject("size_limit_exceeded");
   }
-  const evidence = params["evidence"];
-  if (Array.isArray(evidence)) {
-    for (const descriptor of evidence) {
-      const sizeBytes = asRecord(descriptor)?.["sizeBytes"];
-      if (
-        typeof sizeBytes === "number" &&
-        sizeBytes > CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes
-      ) {
-        return reject("size_limit_exceeded");
-      }
-    }
-  }
   return ok(undefined);
 }
 

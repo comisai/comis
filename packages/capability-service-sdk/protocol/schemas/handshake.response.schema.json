@@ -16,19 +16,16 @@
     "result": {
       "additionalProperties": false,
       "properties": {
-        "acceptedMethods": {
+        "activeScopes": {
           "items": {
             "enum": [
-              "capabilityServices.handshake",
-              "capabilityServices.health",
-              "managedRuns.abandon",
-              "managedRuns.activate",
-              "managedRuns.report"
+              "health",
+              "report"
             ],
             "type": "string"
           },
-          "maxItems": 5,
-          "minItems": 5,
+          "maxItems": 2,
+          "minItems": 1,
           "type": "array"
         },
         "bundleDigest": {
@@ -82,7 +79,7 @@
           "const": "comis.capability-service/1",
           "type": "string"
         },
-        "serviceInstanceRef": {
+        "serviceInstanceId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
@@ -92,8 +89,8 @@
       "required": [
         "protocolId",
         "bundleDigest",
-        "serviceInstanceRef",
-        "acceptedMethods",
+        "serviceInstanceId",
+        "activeScopes",
         "limits"
       ],
       "type": "object"

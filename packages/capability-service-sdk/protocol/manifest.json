@@ -2,35 +2,35 @@
   "artifacts": [
     {
       "path": "fixtures/altered-replay.json",
-      "sha256": "5e1eeead80cb7fb099acbd01beffc8328fc295c826de9ac7db58c9f153b37ccf"
+      "sha256": "6a18bfd83ed7934666f18ca610e951957a7b30216d58204ceffe68cefc18e692"
     },
     {
       "path": "fixtures/boundary-size.json",
-      "sha256": "bbfa7002c09f5b47bb6681207e932fc09860264243dc1d8c4752ad4d43916c8b"
+      "sha256": "385e264a88d2b19fc301230e6516cc38334412fe658242f9f8a0f690e3b8c127"
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "a6420ed907df44553b90f25e4c25bd52b380bac37630bd53cd8151f00746ae35"
+      "sha256": "dea66a78580c156166647e742630e1b2930c9bc41f9b54f01b5747e59a111ab9"
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "39754f62fdd73f8bd550c090b974b878a323315bf4baa5fd33fe18ba2d198098"
+      "sha256": "bc82dd6f0db45da7cb157ec17981d671f5211642763edaf4562447ea29bd2de7"
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "38829aa026684718ba09abbe508c33c264938e0d592ec7d9b76132586874bfbd"
+      "sha256": "e4bc175ae2d7bce46c5968de41fd748bdcf7ed583d48e372095e8b6aa58e907f"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "53e7bd15b5d3039543535af4c1f4fbc6afe5f5910f52786584623cd101c31132"
+      "sha256": "bfa0964979f96ec741f584824b269b7483973fd8c416c85200580d6a32919bb0"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "0725052b139f756b33f77ccc61f616e526e283e5ebb13990074c80cc87f26689"
+      "sha256": "010ccc1936ea82e969b9cf5fc0de302b81d4a4c19cbebdc8f486506ee8e65520"
     },
     {
       "path": "schemas/abandon.request.schema.json",
-      "sha256": "e4c60f0ee0d71eb87283be8293714f25e7a8dadfa60ded8c16bf06b6c3e56d71"
+      "sha256": "94d38fd50f0ba091fbdbf520813dc7ca684a54ba7f412e3159df76f75495d215"
     },
     {
       "path": "schemas/abandon.response.schema.json",
@@ -38,50 +38,58 @@
     },
     {
       "path": "schemas/activate.request.schema.json",
-      "sha256": "357d8dd913fd331cd99f51cb15dd1fb451b81a96146afa9b5f51c0ebdc64fc56"
+      "sha256": "35dc548a3bc737175a922ae1304d9983f3dfc017c54c644203ae0f38a53f7052"
     },
     {
       "path": "schemas/activate.response.schema.json",
-      "sha256": "91ea28efe99e7203226e3cf1bc3766d35fb05a54af218015f2f9300651e96b36"
+      "sha256": "a7f3a5b4c128ef5bbcab0f7c68d50f040dbbd1f179ed467fc3c144998e6e9428"
     },
     {
       "path": "schemas/error-response.schema.json",
       "sha256": "072e5adc20191294b68bbea18015d2e97279174344385bb0982a5af25b5e3c45"
     },
     {
+      "path": "schemas/external-run-ref.schema.json",
+      "sha256": "6ce7c2e98c72c234146c75606a1d2d02f2616d2bc71f03bac9098d055038e201"
+    },
+    {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "ac7579d6be0682a9cb621ad39ba000403745c64c5415a8ae96665baa157f0048"
+      "sha256": "885ddabb75bcc98012f9667d2044a8df90d5c79885c41aa96e1c763c407fa2d9"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "7212483c4640d07fc2e949b6cdbf49933794a37851bc0ff40780fb909af5a946"
+      "sha256": "19d7b13111d3cc188fcf3e20da3e961268e069494a78c82b8fe6e62849a60419"
     },
     {
       "path": "schemas/health.request.schema.json",
-      "sha256": "c45dbce4595fd2a9b0d431146b1480cea655dd436621a1e8df865f0adb5df1d9"
+      "sha256": "157b0d0bddf1820e0b0a29a3871ba64a333088ca840a25a55c9dc972c6a67ed5"
     },
     {
       "path": "schemas/health.response.schema.json",
-      "sha256": "e10b32b031d3ae7e393b571c8a1d098267c7c48e4ca7b9ad36fc515f40c950f2"
+      "sha256": "3cd00c4f53ef90872e2f457463304294b47aa8dfe29f3db3eda603e5cedac420"
     },
     {
       "path": "schemas/mcp-call-context.schema.json",
-      "sha256": "21b1f8665ee19fb477fd6b3b69fa2b5909439ee88d97a53cd0fd058ed7aa42d4"
+      "sha256": "8a50e1da6cf1ddbfd77c3f23e9517390aa2f6e081438a2e4d11d583b8dc2351c"
     },
     {
       "path": "schemas/mcp-managed-run-result.schema.json",
-      "sha256": "4bf12318e628732b6dc899b8f9591a6157cf70ce1697c7e9e3f5c23ac1b05e63"
+      "sha256": "cf4d8223ebf23be62c0f583bdeb409b4f8d45f82ce6b6226603e85ed89551274"
     },
     {
       "path": "schemas/report.request.schema.json",
-      "sha256": "9127b3113bcf818a9e3f7f6e9e17f26bc2cea810ac98adb2aa2a13048ea7eea8"
+      "sha256": "0401f97d2d39f1ba2b16be699cb5b0cf278147d87b39ca5403b909c849c3f0e6"
     },
     {
       "path": "schemas/report.response.schema.json",
-      "sha256": "b55069e1457e85f3486bde1fb36bf2adbe17c622bb6261f7772cee1c836594f4"
+      "sha256": "d01e2ceee491c4a3099da2b3320f00f017f9f5df01ed1d13cd3e3f1b5936eb0a"
+    },
+    {
+      "path": "schemas/service-instance-id.schema.json",
+      "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
     }
   ],
-  "bundleDigest": "54190dcdf288146d54a446fe780710bb83a62720a7a68b5f6e1f973869ed1b68",
+  "bundleDigest": "d155a2462773e1ef3264cd84c4212706bf134ac2e89cac78361868d8158badcc",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -162,7 +170,8 @@
   "fixtureDigestToken": "__BUNDLE_DIGEST__",
   "generator": {
     "command": "pnpm capability-protocol:generate",
-    "package": "@comis/capability-service-sdk"
+    "package": "@comis/capability-service-sdk",
+    "version": "1.0.59"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
@@ -173,46 +182,95 @@
     "maxResponseBytes": 65536,
     "reportRetentionDays": 30
   },
+  "mcpMeta": {
+    "callContextKey": "comis.callContext",
+    "managedRunResultKey": "comis.managedRun"
+  },
   "methodCatalog": [
     {
-      "caller": "service",
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
       "method": "capabilityServices.handshake",
       "operationIdRequired": true,
       "requestSchema": "schemas/handshake.request.schema.json",
+      "requiredServiceScope": null,
       "responseSchema": "schemas/handshake.response.schema.json",
-      "sideEffect": "connection-state"
+      "semanticInvariants": [
+        "exact-protocol-identifier",
+        "exact-bundle-digest",
+        "requested-scopes-must-be-active"
+      ]
     },
     {
-      "caller": "either",
+      "callerClass": "both",
+      "classification": "read",
+      "direction": "bidirectional",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
       "method": "capabilityServices.health",
       "operationIdRequired": true,
       "requestSchema": "schemas/health.request.schema.json",
+      "requiredServiceScope": "health",
       "responseSchema": "schemas/health.response.schema.json",
-      "sideEffect": "none"
+      "semanticInvariants": [
+        "exact-protocol-identifier",
+        "exact-bundle-digest"
+      ]
     },
     {
-      "caller": "comis",
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.abandon",
       "operationIdRequired": true,
       "requestSchema": "schemas/abandon.request.schema.json",
+      "requiredServiceScope": null,
       "responseSchema": "schemas/abandon.response.schema.json",
-      "sideEffect": "prepared-run-state"
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected"
+      ]
     },
     {
-      "caller": "comis",
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.activate",
       "operationIdRequired": true,
       "requestSchema": "schemas/activate.request.schema.json",
+      "requiredServiceScope": null,
       "responseSchema": "schemas/activate.response.schema.json",
-      "sideEffect": "managed-run-state"
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected"
+      ]
     },
     {
-      "caller": "service",
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.report",
       "operationIdRequired": true,
       "requestSchema": "schemas/report.request.schema.json",
+      "requiredServiceScope": "report",
       "responseSchema": "schemas/report.response.schema.json",
-      "sideEffect": "report-store"
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "utf8-summary-bytes-at-most-max-report-bytes",
+        "service-report-id-identical-replay-returns-original-sequence",
+        "service-report-id-altered-replay-is-rejected"
+      ]
     }
   ],
   "methods": [

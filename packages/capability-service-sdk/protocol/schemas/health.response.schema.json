@@ -38,7 +38,7 @@
           "maxItems": 16,
           "type": "array"
         },
-        "serviceInstanceRef": {
+        "serviceInstanceId": {
           "maxLength": 256,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
@@ -55,7 +55,7 @@
       "required": [
         "protocolId",
         "bundleDigest",
-        "serviceInstanceRef",
+        "serviceInstanceId",
         "status",
         "observedAtMs",
         "reasonCodes"

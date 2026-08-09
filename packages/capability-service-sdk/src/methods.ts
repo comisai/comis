@@ -4,12 +4,14 @@ import { CAPABILITY_SERVICE_LIMITS, CAPABILITY_SERVICE_PROTOCOL_ID } from "./con
 import {
   BundleDigestSchema,
   CapabilityServiceLimitsSchema,
-  CapabilityServiceMethodSchema,
+  CapabilityServiceScopeSchema,
+  EvidenceRefSchema,
   ExternalRunRefSchema,
-  ManagedRunRefSchema,
+  ManagedRunIdSchema,
   OperationIdSchema,
   RegistrationNonceSchema,
-  ServiceInstanceRefSchema,
+  ServiceInstanceIdSchema,
+  ServiceReportIdSchema,
   TimestampMsSchema,
 } from "./common.js";
 
@@ -19,8 +21,8 @@ const HandshakeParamsSchema = z.strictObject({
   protocolId: ProtocolIdSchema,
   bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
-  serviceInstanceRef: ServiceInstanceRefSchema,
-  supportedMethods: z.array(CapabilityServiceMethodSchema).length(5),
+  serviceInstanceId: ServiceInstanceIdSchema,
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(2),
 });
 
 export const CapabilityHandshakeRequestSchema = z.strictObject({
@@ -36,8 +38,8 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
   result: z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
-    serviceInstanceRef: ServiceInstanceRefSchema,
-    acceptedMethods: z.array(CapabilityServiceMethodSchema).length(5),
+    serviceInstanceId: ServiceInstanceIdSchema,
+    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(2),
     limits: CapabilityServiceLimitsSchema,
   }),
 });
@@ -48,11 +50,9 @@ export const CapabilityActivateRequestSchema = z.strictObject({
   method: z.literal("managedRuns.activate"),
   params: z.strictObject({
     operationId: OperationIdSchema,
-    serviceInstanceRef: ServiceInstanceRefSchema,
-    managedRunRef: ManagedRunRefSchema,
+    managedRunId: ManagedRunIdSchema,
     externalRunRef: ExternalRunRefSchema,
     registrationNonce: RegistrationNonceSchema,
-    registrationExpiresAtMs: TimestampMsSchema,
   }),
 });
 
@@ -60,7 +60,7 @@ export const CapabilityActivateResponseSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
   result: z.strictObject({
-    managedRunRef: ManagedRunRefSchema,
+    managedRunId: ManagedRunIdSchema,
     externalRunRef: ExternalRunRefSchema,
     state: z.literal("active"),
     activatedAtMs: TimestampMsSchema,
@@ -73,7 +73,6 @@ export const CapabilityAbandonRequestSchema = z.strictObject({
   method: z.literal("managedRuns.abandon"),
   params: z.strictObject({
     operationId: OperationIdSchema,
-    serviceInstanceRef: ServiceInstanceRefSchema,
     externalRunRef: ExternalRunRefSchema,
     registrationNonce: RegistrationNonceSchema,
     reason: z.enum([
@@ -94,26 +93,28 @@ export const CapabilityAbandonResponseSchema = z.strictObject({
   }),
 });
 
-const EvidenceDescriptorSchema = z.strictObject({
-  evidenceRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/),
-  mediaType: z.string().min(1).max(128),
-  sizeBytes: z.number().int().min(0).max(CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes),
-  sha256: BundleDigestSchema,
-});
-
 export const CapabilityReportRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
   method: z.literal("managedRuns.report"),
   params: z.strictObject({
     operationId: OperationIdSchema,
-    serviceInstanceRef: ServiceInstanceRefSchema,
-    managedRunRef: ManagedRunRefSchema,
-    reportRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/),
-    sequence: z.number().int().positive(),
-    state: z.enum(["active", "blocked", "completed", "failed"]),
+    managedRunId: ManagedRunIdSchema,
+    serviceReportId: ServiceReportIdSchema,
+    kind: z.enum([
+      "attention",
+      "blocked",
+      "candidate_complete",
+      "failed",
+      "paused",
+      "progress",
+      "resolution",
+    ]),
+    externalKey: z.string().min(1).max(256).optional(),
     summary: z.string().max(CAPABILITY_SERVICE_LIMITS.maxReportBytes),
-    evidence: z.array(EvidenceDescriptorSchema).max(32),
+    details: z.string().max(CAPABILITY_SERVICE_LIMITS.maxReportBytes).optional(),
+    artifactRefs: z.array(EvidenceRefSchema).max(32).optional(),
+    observedAtMs: TimestampMsSchema.optional(),
   }),
 });
 
@@ -121,8 +122,8 @@ export const CapabilityReportResponseSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
   result: z.strictObject({
-    managedRunRef: ManagedRunRefSchema,
-    reportRef: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/),
+    managedRunId: ManagedRunIdSchema,
+    serviceReportId: ServiceReportIdSchema,
     acceptedSequence: z.number().int().positive(),
     retainedUntilMs: TimestampMsSchema,
   }),
@@ -136,7 +137,7 @@ export const CapabilityHealthRequestSchema = z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
     operationId: OperationIdSchema,
-    serviceInstanceRef: ServiceInstanceRefSchema,
+    serviceInstanceId: ServiceInstanceIdSchema,
   }),
 });
 
@@ -146,7 +147,7 @@ export const CapabilityHealthResponseSchema = z.strictObject({
   result: z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
-    serviceInstanceRef: ServiceInstanceRefSchema,
+    serviceInstanceId: ServiceInstanceIdSchema,
     status: z.enum(["degraded", "healthy"]),
     observedAtMs: TimestampMsSchema,
     reasonCodes: z.array(z.string().min(1).max(128)).max(16),

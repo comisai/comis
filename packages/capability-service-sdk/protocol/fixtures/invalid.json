@@ -11,11 +11,9 @@
         "method": "managedRuns.activate",
         "params": {
           "externalRunRef": "contains spaces",
-          "managedRunRef": "managed-run_a",
+          "managedRunId": "managed-run_a",
           "operationId": "operation_invalid",
-          "registrationExpiresAtMs": 1900000000000,
-          "registrationNonce": "registration-nonce_a",
-          "serviceInstanceRef": "service-instance_a"
+          "registrationNonce": "registration-nonce_a"
         }
       },
       "target": "request"

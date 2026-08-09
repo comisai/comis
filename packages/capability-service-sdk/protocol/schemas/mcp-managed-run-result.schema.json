@@ -3,10 +3,15 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "properties": {
-    "expiresAtMs": {
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
+    "displayLabel": {
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "expiresAt": {
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+      "type": "string"
     },
     "externalRunRef": {
       "maxLength": 256,
@@ -20,11 +25,19 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
       "type": "string"
     },
-    "serviceInstanceRef": {
-      "maxLength": 256,
-      "minLength": 1,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-      "type": "string"
+    "requestedWorkspace": {
+      "additionalProperties": false,
+      "properties": {
+        "rootHint": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "rootHint"
+      ],
+      "type": "object"
     },
     "state": {
       "const": "prepared",
@@ -33,10 +46,9 @@
   },
   "required": [
     "state",
-    "serviceInstanceRef",
     "externalRunRef",
     "registrationNonce",
-    "expiresAtMs"
+    "expiresAt"
   ],
   "type": "object"
 }

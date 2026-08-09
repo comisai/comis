@@ -46,13 +46,13 @@ export const ProtocolFixtureScenarioSchema = z.strictObject({
 export type ProtocolFixtureScenario = z.infer<typeof ProtocolFixtureScenarioSchema>;
 export type ProtocolFixtureStep = z.infer<typeof ProtocolFixtureStepSchema>;
 
-const serviceInstanceRef = "service-instance_a";
+const serviceInstanceId = "service-instance_a";
 const externalRunRef = "external-run_a";
-const managedRunRef = "managed-run_a";
+const managedRunId = "managed-run_a";
 const registrationNonce = "registration-nonce_a";
-const reportRef = "report_a";
+const serviceReportId = "service-report_a";
 const emptyDigest = "0".repeat(64);
-const evidenceDigest = "e".repeat(64);
+const workspacePolicyHash = "c".repeat(64);
 
 function request(
   id: string,
@@ -66,8 +66,8 @@ const handshakeParams = {
   protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
   bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
   operationId: "operation_handshake",
-  serviceInstanceRef,
-  supportedMethods: CAPABILITY_SERVICE_METHODS,
+  serviceInstanceId,
+  requestedScopes: ["health", "report"],
 };
 
 export const PROTOCOL_FIXTURE_SCENARIOS = [
@@ -79,10 +79,13 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "mcp-call-context",
         expectation: "accept",
         payload: {
-          protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
-          bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
           operationId: "operation_prepare",
-          serviceInstanceRef,
+          serviceInstanceId,
+          agentId: "agent_a",
+          conversationRef: "conversation_a",
+          workspacePolicyHash,
+          rootRunId: "root-run_a",
+          traceId: "40000000-0000-4000-8000-000000000004",
         },
       },
       {
@@ -90,10 +93,9 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "accept",
         payload: {
           state: "prepared",
-          serviceInstanceRef,
           externalRunRef,
           registrationNonce,
-          expiresAtMs: 1_900_000_000_000,
+          expiresAt: "2030-01-01T00:00:00.000Z",
         },
       },
       {
@@ -110,8 +112,8 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           result: {
             protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
             bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
-            serviceInstanceRef,
-            acceptedMethods: CAPABILITY_SERVICE_METHODS,
+            serviceInstanceId,
+            activeScopes: ["health", "report"],
             limits: CAPABILITY_SERVICE_LIMITS,
           },
         },
@@ -121,11 +123,9 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "accept",
         payload: request("operation_activate", "managedRuns.activate", {
           operationId: "operation_activate",
-          serviceInstanceRef,
-          managedRunRef,
+          managedRunId,
           externalRunRef,
           registrationNonce,
-          registrationExpiresAtMs: 1_900_000_000_000,
         }),
       },
       {
@@ -135,7 +135,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           jsonrpc: "2.0",
           id: "operation_activate",
           result: {
-            managedRunRef,
+            managedRunId,
             externalRunRef,
             state: "active",
             activatedAtMs: 1_800_000_000_000,
@@ -147,20 +147,12 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "accept",
         payload: request("operation_report", "managedRuns.report", {
           operationId: "operation_report",
-          serviceInstanceRef,
-          managedRunRef,
-          reportRef,
-          sequence: 1,
-          state: "active",
+          managedRunId,
+          serviceReportId,
+          kind: "progress",
           summary: "Synthetic progress report",
-          evidence: [
-            {
-              evidenceRef: "evidence_a",
-              mediaType: "application/json",
-              sizeBytes: 128,
-              sha256: evidenceDigest,
-            },
-          ],
+          artifactRefs: ["evidence_a"],
+          observedAtMs: 1_800_000_000_000,
         }),
       },
       {
@@ -170,8 +162,8 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           jsonrpc: "2.0",
           id: "operation_report",
           result: {
-            managedRunRef,
-            reportRef,
+            managedRunId,
+            serviceReportId,
             acceptedSequence: 1,
             retainedUntilMs: 1_900_000_000_000,
           },
@@ -184,7 +176,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
           bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
           operationId: "operation_health",
-          serviceInstanceRef,
+          serviceInstanceId,
         }),
       },
       {
@@ -196,7 +188,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           result: {
             protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
             bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
-            serviceInstanceRef,
+            serviceInstanceId,
             status: "healthy",
             observedAtMs: 1_800_000_000_000,
             reasonCodes: [],
@@ -208,7 +200,6 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "accept",
         payload: request("operation_abandon", "managedRuns.abandon", {
           operationId: "operation_abandon",
-          serviceInstanceRef,
           externalRunRef,
           registrationNonce,
           reason: "owner_cancelled",
@@ -250,11 +241,9 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectedErrorKind: "invalid_params",
         payload: request("operation_invalid", "managedRuns.activate", {
           operationId: "operation_invalid",
-          serviceInstanceRef,
-          managedRunRef,
+          managedRunId,
           externalRunRef: "contains spaces",
           registrationNonce,
-          registrationExpiresAtMs: 1_900_000_000_000,
         }),
       },
     ],
@@ -284,13 +273,10 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "accept",
         payload: request("operation_boundary_ok", "managedRuns.report", {
           operationId: "operation_boundary_ok",
-          serviceInstanceRef,
-          managedRunRef,
-          reportRef: "report_boundary_ok",
-          sequence: 2,
-          state: "active",
+          managedRunId,
+          serviceReportId: "report_boundary_ok",
+          kind: "progress",
           summary: "x".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes),
-          evidence: [],
         }),
       },
       {
@@ -299,13 +285,10 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectedErrorKind: "size_limit_exceeded",
         payload: request("operation_boundary_large", "managedRuns.report", {
           operationId: "operation_boundary_large",
-          serviceInstanceRef,
-          managedRunRef,
-          reportRef: "report_boundary_large",
-          sequence: 3,
-          state: "active",
+          managedRunId,
+          serviceReportId: "report_boundary_large",
+          kind: "progress",
           summary: "x".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes + 1),
-          evidence: [],
         }),
       },
     ],
@@ -319,13 +302,10 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "accept",
         payload: request("operation_replay", "managedRuns.report", {
           operationId: "operation_replay",
-          serviceInstanceRef,
-          managedRunRef,
-          reportRef: "report_replay",
-          sequence: 4,
-          state: "active",
+          managedRunId,
+          serviceReportId: "report_replay",
+          kind: "progress",
           summary: "First payload",
-          evidence: [],
         }),
       },
       {
@@ -334,13 +314,10 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectedErrorKind: "replay_conflict",
         payload: request("operation_replay", "managedRuns.report", {
           operationId: "operation_replay",
-          serviceInstanceRef,
-          managedRunRef,
-          reportRef: "report_replay",
-          sequence: 4,
-          state: "active",
+          managedRunId,
+          serviceReportId: "report_replay",
+          kind: "progress",
           summary: "Altered payload",
-          evidence: [],
         }),
       },
     ],
