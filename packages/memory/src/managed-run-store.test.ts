@@ -238,6 +238,44 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(db.prepare("SELECT COUNT(*) AS count FROM managed_run_reports").get()).toEqual({ count: 2 });
   });
 
+  it("reads an exact contiguous report range only through the run owner scope", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_b",
+      contentRef: "report-content_b",
+      contentHash: "e".repeat(64),
+      kind: "paused",
+      receivedAtMs: 1_800_000_000_200,
+      retainedUntilMs: 1_802_592_000_200,
+    }))).ok).toBe(true);
+
+    const range = await store.listReportRange(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      afterSequence: 0,
+      throughSequence: 2,
+    });
+    expect(range).toMatchObject({
+      ok: true,
+      value: [
+        { sequence: 1, kind: "progress", serviceReportId: "service-report_a" },
+        { sequence: 2, kind: "paused", serviceReportId: "service-report_b" },
+      ],
+    });
+    expect(await store.listReportRange(OTHER_OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      afterSequence: 0,
+      throughSequence: 2,
+    })).toEqual({ ok: true, value: [] });
+    expect((await store.listReportRange(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      afterSequence: 2,
+      throughSequence: 1,
+    })).ok).toBe(false);
+  });
+
   it("rejects altered report replay and service ownership mismatches without advancing", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
