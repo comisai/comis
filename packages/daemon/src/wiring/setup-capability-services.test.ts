@@ -13,11 +13,11 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CapabilityServicesConfigSchema,
   TypedEventBus,
   createConversationRef,
   createSecretManager,
   type CapabilityServiceContributionRegistration,
+  type CapabilityServicesConfig,
   type ComisLogger,
   type ManagedRunPreparedStart,
 } from "@comis/core";
@@ -214,7 +214,7 @@ describe("production capability-service setup", () => {
     temporaryDirectories.push(dataDir);
     chmodSync(dataDir, 0o700);
     const socketPath = join(dataDir, "control", "service.sock");
-    const config = CapabilityServicesConfigSchema.parse({
+    const config: CapabilityServicesConfig = {
       instances: [{
         serviceInstanceId: "service-instance_a",
         serviceDefinitionId: "example.service-definition",
@@ -232,7 +232,7 @@ describe("production capability-service setup", () => {
       maxObservedClockSkewMs: 5_000,
       recoveryBatchSize: 32,
       requestDeadlineMs: 5_000,
-    });
+    };
     const db = new Database(":memory:");
     databases.push(db);
     initSchema(db, 4);
@@ -385,13 +385,13 @@ describe("production capability-service setup", () => {
     chmodSync(outside, 0o700);
     const result = await setupCapabilityServices({
       contributions: [CONTRIBUTION],
-      config: CapabilityServicesConfigSchema.parse({
+      config: {
         ...fixture.config,
         instances: [{
           ...fixture.config.instances[0],
           control: { ...fixture.config.instances[0]!.control, socketPath: join(outside, "service.sock") },
         }],
-      }),
+      },
       db: fixture.db,
       dataDir: fixture.dataDir,
       secretManager: fixture.secretManager,
@@ -409,7 +409,7 @@ describe("production capability-service setup", () => {
     const fixture = makeRuntime();
     const result = await setupCapabilityServices({
       contributions: [],
-      config: CapabilityServicesConfigSchema.parse({}),
+      config: { ...fixture.config, instances: [] },
       db: fixture.db,
       dataDir: fixture.dataDir,
       secretManager: fixture.secretManager,
