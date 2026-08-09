@@ -3,6 +3,7 @@ import net from "node:net";
 import { chmodSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setImmediate as waitForTurn } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type ComisLogger,
@@ -329,5 +330,66 @@ describe("daemon-owned capability-service Unix host", () => {
       error: { kind: "uncertain", reasonCode: "deadline_exceeded" },
     });
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("drains an accepted report mutation before closing its socket", async () => {
+    const root = makeRoot();
+    let resolveReport!: (value: Awaited<ReturnType<ManagedRunReportBridge["ingestReport"]>>) => void;
+    const pendingReport = new Promise<Awaited<ReturnType<ManagedRunReportBridge["ingestReport"]>>>((resolve) => {
+      resolveReport = resolve;
+    });
+    const reportBridge: ManagedRunReportBridge = {
+      ingestReport: vi.fn(() => pendingReport),
+    };
+    const host = makeHost(root.socketPath, reportBridge);
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER));
+    await peer.next();
+    if (!(await started).ok) return;
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_report_drain",
+      method: "managedRuns.report",
+      params: {
+        operationId: "operation_report_drain",
+        managedRunId: "managed-run_a",
+        serviceReportId: "service-report_drain",
+        kind: "progress",
+        summary: "Synthetic progress",
+      },
+    });
+    await vi.waitFor(() => expect(reportBridge.ingestReport).toHaveBeenCalledOnce());
+
+    let closeSettled = false;
+    const closing = constructed.value.close().then((result) => {
+      closeSettled = true;
+      return result;
+    });
+    await waitForTurn();
+    expect(closeSettled).toBe(false);
+
+    resolveReport(ok({
+      kind: "accepted",
+      report: {
+        schemaVersion: 1,
+        serviceInstanceId: "service-instance_a",
+        managedRunId: "managed-run_a",
+        serviceReportId: "service-report_drain",
+        sequence: 1,
+        kind: "progress",
+        contentRef: "service-report_drain",
+        contentHash: "a".repeat(64),
+        receivedAtMs: NOW_MS,
+        retainedUntilMs: NOW_MS + 60_000,
+      },
+    }));
+    expect(await closing).toEqual({ ok: true, value: undefined });
   });
 });
