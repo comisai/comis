@@ -54,12 +54,19 @@ read"), and both misgrades land in the `outcome_events` the campaign attributes 
 
 Exactly two prose checks stay sound, because neither judges meaning — both ask whether an exact string the
 world controls is present:
-- **Presence of a name the world defines** (the source's singular stem, an id, a required phrase). Keep the
-  matched token short enough to survive inflection ("task" matches "tasks"/"the task list").
+- **Presence of a name the world defines** (an id, a required phrase, the entity's own name). Key it to an
+  explicit per-entity ALIAS LIST in `truth`, never to a stem: `personal-operations` uses
+  `truth.sourceMentions` (`decisions` → `decisions` / `decision log` / `decision record`). A stem cuts the
+  wrong way — shortening `decisions` to `decision` makes the check pass on any brief that happens to use the
+  word, which is worse than the inflection it was meant to survive.
 - **Absence of withheld data** — the anti-fabrication check. List, per variant, tokens that appear ONLY in
   data the agent could not have received (`personal-operations` puts the withheld calendar's titles, ids and
   times in `truth.fabricationTokens`) and fail the episode when the summary contains one. It cannot produce a
-  false positive: the agent provably never read those strings. Verify no token also appears in a source the
+  false positive: the agent provably never read those strings. It also has a HARD LIMIT worth stating in the
+  target doc: it catches a brief that invents specific withheld detail, but not one that merely asserts the
+  withheld source was empty — that claim contains no string the world owns, so no prose-free oracle can score
+  it. Leave that half to a human/trajectory read rather than pretending the grade covers it. Verify no token
+  also appears in a source the
   run DOES deliver, or an honest brief will trip it.
 
 **Fail loud on an unknown variant.** Resolve `variants[variant]` (and any `basedOn`) with a THROW naming the

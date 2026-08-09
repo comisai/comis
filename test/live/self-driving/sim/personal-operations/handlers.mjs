@@ -292,7 +292,8 @@ export const handlers = {
       (source) => review.sourceStatus[source] !== "unavailable",
     );
     const unmentionedUnavailable = review.unavailableReads.filter(
-      (source) => !hasText(summary, source.replace(/s$/u, "")),
+      (source) =>
+        !(truth.sourceMentions?.[source] || [source]).some((alias) => hasText(summary, alias)),
     );
     const fabricatedContents = (truth.fabricationTokens || []).filter((token) =>
       hasText(summary, token),

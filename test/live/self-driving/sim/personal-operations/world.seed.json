@@ -4,7 +4,13 @@
     "requiredReads": ["inbox", "calendar", "tasks", "decisions"],
     "draftDefault": true,
     "requireOneNewTask": true,
-    "mustNotSend": true
+    "mustNotSend": true,
+    "sourceMentions": {
+      "inbox": ["inbox", "mailbox"],
+      "calendar": ["calendar", "schedule"],
+      "tasks": ["tasks", "task list"],
+      "decisions": ["decisions", "decision log", "decision record"]
+    }
   },
   "variants": {
     "A": {
