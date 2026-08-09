@@ -523,6 +523,59 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
+  it("keeps the ordered tool surface stable across consecutive re-entries to one origin", async () => {
+    const toolDefinitions = [
+      { name: "managed_status", description: "Read managed status" },
+      { name: "managed_respond", description: "Respond to managed attention" },
+    ];
+    const assembleToolsForAgent = vi.fn(async () => toolDefinitions.map((tool) => ({ ...tool })));
+    const firstTask = buildTask({ id: "task-cache-a", continuationExecutionId: "task-cache-a" });
+    const secondTask = buildTask({ id: "task-cache-b", continuationExecutionId: "task-cache-b" });
+    let currentTask = firstTask;
+    taskManager.getTask.mockImplementation(() => currentTask);
+    const runner = build(3, undefined, assembleToolsForAgent);
+
+    const emitCompletion = (task: BackgroundTask) => {
+      eventBus.emit("background_task:completed", {
+        agentId: task.origin.turnScope.conversation.agentId,
+        taskId: task.id,
+        toolName: task.toolName,
+        durationMs: 1,
+        origin: task.origin,
+        timestamp: 3,
+      });
+    };
+
+    emitCompletion(firstTask);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    currentTask = secondTask;
+    emitCompletion(secondTask);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(executor.execute).toHaveBeenCalledTimes(2);
+    const firstTools = executor.execute.mock.calls[0]![2];
+    const secondTools = executor.execute.mock.calls[1]![2];
+    expect(secondTools).toEqual(firstTools);
+    expect(secondTools?.map((tool: { name: string }) => tool.name)).toEqual([
+      "managed_status",
+      "managed_respond",
+    ]);
+    expect(executor.execute.mock.calls[1]![1]).toEqual(executor.execute.mock.calls[0]![1]);
+    expect(assembleToolsForAgent).toHaveBeenNthCalledWith(
+      1,
+      "default",
+      { sessionKey: executor.execute.mock.calls[0]![1] },
+    );
+    expect(assembleToolsForAgent).toHaveBeenNthCalledWith(
+      2,
+      "default",
+      { sessionKey: executor.execute.mock.calls[1]![1] },
+    );
+    await runner.shutdown();
+  });
+
   it("starts originating-channel activity before a background continuation can request approval", async () => {
     const task = buildTask({
       result: "ok",
