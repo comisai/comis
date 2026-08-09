@@ -79,6 +79,11 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 vi.mock("@comis/skills", () => ({
   assembleToolPipeline: mockAssembleToolPipeline,
   mcpToolsToAgentTools: mockMcpToolsToAgentTools,
+  createManagedMcpPrivateMetadataBridge: vi.fn(() => ({
+    createRequestMeta: vi.fn(),
+    acceptResultMeta: vi.fn(),
+    discardCall: vi.fn(),
+  })),
   extractServerToolFilters: vi.fn(() => undefined),
   TOOL_PROFILES: {
     minimal: ["exec"],
@@ -269,6 +274,12 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
       })),
     } as any,
     mcpClientManager: createDefaultMockMcpClientManager() as any,
+    capabilityServices: {
+      runtime: { getActiveView: vi.fn(() => ({ viewHash: "c".repeat(64), definitions: [], instances: [] })) },
+      store: { get: vi.fn() },
+      activationCoordinator: { activatePrepared: vi.fn() },
+    } as any,
+    clock: { now: () => 1_800_000_000_000 } as any,
     sessionTrackerRegistry: createMockSessionTrackerRegistry() as any,
     getCapabilityPortForAgent: vi.fn(() => portStub) as any,
     getMcpServerEntries: () => [],

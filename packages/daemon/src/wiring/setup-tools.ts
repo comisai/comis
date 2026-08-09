@@ -7,7 +7,7 @@
 
 import { resolve } from "node:path";
 import { resolveSkillDiscoveryPaths } from "./setup-agents/skill-discovery-paths.js";
-import type { AgentCapability, AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, DeliveryOrigin, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort, OutwardSendLedgerPort } from "@comis/core";
+import type { AgentCapability, AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, DeliveryOrigin, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort, OutwardSendLedgerPort, ClockPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -39,12 +39,14 @@ import {
   TOOL_GROUPS,
   assembleToolPipeline,
   mcpToolsToAgentTools,
+  createManagedMcpPrivateMetadataBridge,
   extractServerToolFilters,
   type LinkRunner,
   type McpClientManager,
   type ToolSourceProfile,
   type PlatformToolProvider,
 } from "@comis/skills";
+import { err, ok } from "@comis/shared";
 import type { RpcCall } from "@comis/skills/platform-tools";
 
 // Tool capability adapters + factories (exec/process/apply-patch, file-state
@@ -81,7 +83,6 @@ import { setupChildProcessCleanup } from "./setup-child-process-cleanup.js";
 // Agent-scoped rpcCall factory (the _capabilities injection point)
 // extracted to setup-tools-capabilities.ts (file-size cap).
 import { makeCreateAgentRpcCall } from "./setup-tools-capabilities.js";
-
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
 // factories.
@@ -101,7 +102,7 @@ import type { BrokerContextDeps } from "./setup-broker-activation.js";
 import type { CapabilityLayerHandle } from "./setup-capability-endpoint-boot.js";
 import { buildAutonomyToolWiring } from "./setup-tools-autonomy.js";
 import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tools-coordinator.js"; // role:coordinator narrowing
-
+import type { CapabilityServicePlatform } from "./setup-capability-services.js";
 /**
  * Platform tools whose schemas expose capability-gated orchestration actions.
  * Omitting the whole schema is the honest posture when the agent does not hold
@@ -116,7 +117,6 @@ const PLATFORM_TOOL_CAPABILITY_REQUIREMENTS = new Map<string, AgentCapability>([
 ]);
 
 // Deps / Result types
-
 /** Dependencies for tool assembly setup. */
 // @optional-field-count: composition-root deps; each optional field is an independent capability
 // seam (image/video/sandbox/broker/lcd/timers/cap), present only when configured — a sub-object
@@ -129,6 +129,8 @@ export interface ToolsDeps {
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
+  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "activationCoordinator">;
+  clock: ClockPort;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
   /** Per-agent config map (container.config.agents). */
@@ -389,7 +391,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   });
 
   /** Create MCP tools from connected servers (extracted to bypass profile filtering). */
-  function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>): ReturnType<PlatformToolProvider> {
+  function getMcpTools(toolSourceProfiles?: Record<string, Partial<ToolSourceProfile>>, privateMetadataBridge?: ReturnType<typeof createManagedMcpPrivateMetadataBridge>): ReturnType<PlatformToolProvider> {
     const mcpTools = mcpClientManager.getTools();
     if (mcpTools.length === 0) return [];
     const agentMcpTools = mcpToolsToAgentTools(
@@ -412,6 +414,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // in scope — stamps the timestamp and does the emit. Payload carries only
       // sizes + identifiers, never the truncated content.
       (e) => eventBus.emit("mcp:server:result_truncated", { ...e, timestamp: systemNowMs() }),
+      privateMetadataBridge,
     );
     return agentMcpTools;
   }
@@ -421,6 +424,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     agentId: string,
     options?: AssembleToolsOptions,
   ): Promise<Awaited<ReturnType<typeof assembleToolPipeline>>> {
+    const managedMcpActiveView = deps.capabilityServices.runtime.getActiveView();
+    let capturedToolIds: readonly string[] | undefined;
     const includePlatform = options?.includePlatformTools ?? true;
     const toolGroups = options?.toolGroups;
     const sharedPaths = options?.sharedPaths;
@@ -473,6 +478,31 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     const heldCapabilities = options?.autonomyParent === undefined
       ? resolvedAutonomy.capabilities
       : attenuateCaps(options.autonomyParent.caps, resolvedAutonomy.capabilities);
+    const managedMcpPrivateMetadataBridge = createManagedMcpPrivateMetadataBridge({
+      agentId,
+      activeView: managedMcpActiveView,
+      capturedAgentCapabilities: heldCapabilities,
+      getCapturedToolIds: () => capturedToolIds,
+      nowMs: () => deps.clock.now(),
+      resolveRootRunId: (rootAgentId, sessionKey) => {
+        const resolved = deps.resolveRootRunId?.(rootAgentId, sessionKey);
+        return resolved === undefined
+          ? err(new Error("trusted root-run resolver is unavailable"))
+          : resolved.ok
+            ? ok(resolved.value)
+            : err(new Error(resolved.error.message));
+      },
+      getManagedRun: (scope, managedRunId) =>
+        deps.capabilityServices.store.get(scope, managedRunId),
+      activatePrepared: (input) => deps.capabilityServices.activationCoordinator
+        .activatePrepared({
+          ...input,
+          authority: { ...input.authority,
+            capturedAgentCapabilities: [...input.authority.capturedAgentCapabilities],
+            capturedToolIds: [...input.authority.capturedToolIds] },
+        }),
+      logger: skillsLogger,
+    });
 
     // Use the agent's own skills config (SkillsConfigSchema defaults apply if not specified).
     const skillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
@@ -881,7 +911,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const basePlatformProvider = platformToolProvider;
       platformToolProvider = () => {
         const baseTools = basePlatformProvider();
-        const mcpTools = getMcpTools(toolSourceProfiles);
+        const mcpTools = getMcpTools(toolSourceProfiles, managedMcpPrivateMetadataBridge);
         if (mcpTools.length > 0) {
           skillsLogger.debug(
             { agentId, mcpToolCount: mcpTools.length },
@@ -892,7 +922,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       };
     }
 
-    return assembleToolPipeline({
+    const assembledTools = await assembleToolPipeline({
       config: skillsConfig,
       workspacePath: agentWorkspaceDir,
       secretManager,
@@ -909,6 +939,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       hiddenPaths: securityBoundary?.hiddenPaths,
       hiddenReadAllowPaths,
     });
+    capturedToolIds = Object.freeze(assembledTools.map((tool) => tool.name));
+    return assembledTools;
   }
 
   /**

@@ -1988,6 +1988,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
     linkRunner, rpcCall, approvalGate,
     deliveryQueue, wakeGateRunnerRef, singleAgentDeps,
+    capabilityServices,
     // The concrete LCD ContextStorePort (createLcdStore),
     // populated on the BootContext by bootFoundation's setupMemory Object.assign.
     // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
@@ -2090,6 +2091,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const { assembleToolsForAgent, preprocessMessageText, shutdownBackgroundProcesses, terminalRegistries, getTerminalAttentionConfig, terminalDurability } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir, capEndpointHandle, namespacePreflightOk, // degrade the orchestrate surface + lease mint when the host cannot build the jail (no silent unjailed fallback)
     memoryCostFeaturesEnabled: container.config.memory.enabled !== false,
+    capabilityServices,
+    clock: boot.clock,
     // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
     ...(durableResume.durableRunStore ? { durableRuns: durableResume.durableRunStore } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
