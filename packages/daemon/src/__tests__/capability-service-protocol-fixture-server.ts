@@ -50,6 +50,7 @@ export interface CapabilityServiceProtocolFixtureServerOptions {
   readonly expectedBearer: string;
   readonly requestDeadlineMs: number;
   readonly serviceInstanceId: string;
+  readonly workspacePreparationRefs?: readonly string[];
 }
 
 export interface CapabilityServiceProtocolFixtureServerReady {
@@ -138,6 +139,7 @@ export function createCapabilityServiceProtocolFixtureServer(
   const validator = createCapabilityServiceProtocolFixtureHost({ bundleDigest: options.bundleDigest });
   const operations = new Map<string, OperationReplay>();
   const reports = new Map<string, ReportReplay>();
+  const workspacePreparationRefs = new Set(options.workspacePreparationRefs ?? []);
   const openSockets = new Set<net.Socket>();
   let acceptedSequence = 0;
   let server: net.Server | undefined;
@@ -167,7 +169,16 @@ export function createCapabilityServiceProtocolFixtureServer(
           },
         };
       case "managedRuns.abandon":
-        return { jsonrpc: "2.0", id: request.id, result: { externalRunRef: request.params.externalRunRef, state: "abandoned" } };
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            externalRunRef: request.params.externalRunRef,
+            state: "abandoned",
+            disposition: request.params.disposition,
+            terminalTransition: "unbound_preparation_abandoned",
+          },
+        };
       case "managedRuns.activate":
         return {
           jsonrpc: "2.0", id: request.id, result: {
@@ -245,6 +256,13 @@ export function createCapabilityServiceProtocolFixtureServer(
     const parsed = CapabilityServiceRequestSchema.safeParse(payload);
     if (!parsed.success) return errorResponse("invalid_params", id);
     if (parsed.data.id !== parsed.data.params.operationId) return errorResponse("invalid_request", id);
+    if (
+      parsed.data.method === "managedRuns.activate"
+      && workspacePreparationRefs.has(parsed.data.params.externalRunRef)
+        !== (parsed.data.params.workspaceLeaseId !== undefined)
+    ) {
+      return errorResponse("invalid_params", id);
+    }
     if (
       (parsed.data.method === "capabilityServices.handshake" || parsed.data.method === "capabilityServices.health") &&
       parsed.data.params.serviceInstanceId !== options.serviceInstanceId

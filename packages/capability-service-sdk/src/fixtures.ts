@@ -99,6 +99,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           externalRunRef,
           registrationNonce,
           expiresAt: "2030-01-01T00:00:00.000Z",
+          requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
         },
       },
       {
@@ -132,6 +133,29 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           managedRunId,
           externalRunRef,
           registrationNonce,
+          workspaceLeaseId: "workspace-lease_a",
+        }),
+      },
+      {
+        target: "mcp-managed-run-result",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          state: "prepared",
+          externalRunRef: "external-run_without_workspace",
+          registrationNonce: "registration-nonce_without_workspace",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        },
+      },
+      {
+        target: "request",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: request("operation_activate_without_workspace", "managedRuns.activate", {
+          operationId: "operation_activate_without_workspace",
+          managedRunId: "managed-run_without_workspace",
+          externalRunRef: "external-run_without_workspace",
+          registrationNonce: "registration-nonce_without_workspace",
         }),
       },
       {
@@ -215,6 +239,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           externalRunRef,
           registrationNonce,
           reason: "owner_cancelled",
+          disposition: "preserve",
         }),
       },
       {
@@ -224,7 +249,12 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         payload: {
           jsonrpc: "2.0",
           id: "operation_abandon",
-          result: { externalRunRef, state: "abandoned" },
+          result: {
+            externalRunRef,
+            state: "abandoned",
+            disposition: "preserve",
+            terminalTransition: "unbound_preparation_abandoned",
+          },
         },
       },
       {
@@ -247,7 +277,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
   },
   {
     class: "invalid",
-    name: "invalid opaque reference",
+    name: "invalid opaque reference and activation workspace correlation",
     steps: [
       {
         target: "request",
@@ -259,6 +289,54 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           managedRunId,
           externalRunRef: "contains spaces",
           registrationNonce,
+        }),
+      },
+      {
+        target: "mcp-managed-run-result",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          state: "prepared",
+          externalRunRef: "external-run_workspace_missing_lease",
+          registrationNonce: "registration-nonce_workspace_missing_lease",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+          requestedWorkspace: { rootHint: "/approved/workspaces/task-missing-lease" },
+        },
+      },
+      {
+        target: "request",
+        expectation: "reject",
+        schemaExpectation: "accept",
+        expectedErrorKind: "invalid_params",
+        payload: request("operation_workspace_missing_lease", "managedRuns.activate", {
+          operationId: "operation_workspace_missing_lease",
+          managedRunId: "managed-run_workspace_missing_lease",
+          externalRunRef: "external-run_workspace_missing_lease",
+          registrationNonce: "registration-nonce_workspace_missing_lease",
+        }),
+      },
+      {
+        target: "mcp-managed-run-result",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          state: "prepared",
+          externalRunRef: "external-run_workspace_unexpected_lease",
+          registrationNonce: "registration-nonce_workspace_unexpected_lease",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+        },
+      },
+      {
+        target: "request",
+        expectation: "reject",
+        schemaExpectation: "accept",
+        expectedErrorKind: "invalid_params",
+        payload: request("operation_workspace_unexpected_lease", "managedRuns.activate", {
+          operationId: "operation_workspace_unexpected_lease",
+          managedRunId: "managed-run_workspace_unexpected_lease",
+          externalRunRef: "external-run_workspace_unexpected_lease",
+          registrationNonce: "registration-nonce_workspace_unexpected_lease",
+          workspaceLeaseId: "workspace-lease_unexpected",
         }),
       },
     ],

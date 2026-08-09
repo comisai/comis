@@ -28,7 +28,7 @@ import type { ManagedRunActivationInput } from "./managed-run-activation-coordin
 import { setupCapabilityServices } from "./setup-capability-services.js";
 
 const NOW_MS = 1_800_000_000_000;
-const BUNDLE_DIGEST = "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297";
+const BUNDLE_DIGEST = "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725";
 const BEARER = "synthetic-capability-service-bearer";
 const CONVERSATION_SCOPE = {
   tenantId: "tenant_a",
@@ -339,13 +339,22 @@ describe("production capability-service setup", () => {
     const abandonRequest = await secondPeer.next();
     expect(abandonRequest).toMatchObject({
       method: "managedRuns.abandon",
-      params: { externalRunRef: "external-run-uncertain", reason: "registration_expired" },
+      params: {
+        externalRunRef: "external-run-uncertain",
+        reason: "registration_expired",
+        disposition: "reap_safe",
+      },
     });
     const abandonParams = abandonRequest["params"] as Record<string, unknown>;
     secondPeer.send({
       jsonrpc: "2.0",
       id: abandonRequest["id"],
-      result: { externalRunRef: abandonParams["externalRunRef"], state: "abandoned" },
+      result: {
+        externalRunRef: abandonParams["externalRunRef"],
+        state: "abandoned",
+        disposition: abandonParams["disposition"],
+        terminalTransition: "unbound_preparation_abandoned",
+      },
     });
     const second = await secondSetup;
     expect(second.ok).toBe(true);

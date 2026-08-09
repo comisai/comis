@@ -1,6 +1,6 @@
 {
   "class": "invalid",
-  "name": "invalid opaque reference",
+  "name": "invalid opaque reference and activation workspace correlation",
   "steps": [
     {
       "expectation": "reject",
@@ -17,6 +17,66 @@
         }
       },
       "schemaExpectation": "reject",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "externalRunRef": "external-run_workspace_missing_lease",
+        "registrationNonce": "registration-nonce_workspace_missing_lease",
+        "requestedWorkspace": {
+          "rootHint": "/approved/workspaces/task-missing-lease"
+        },
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_workspace_missing_lease",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.activate",
+        "params": {
+          "externalRunRef": "external-run_workspace_missing_lease",
+          "managedRunId": "managed-run_workspace_missing_lease",
+          "operationId": "operation_workspace_missing_lease",
+          "registrationNonce": "registration-nonce_workspace_missing_lease"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "externalRunRef": "external-run_workspace_unexpected_lease",
+        "registrationNonce": "registration-nonce_workspace_unexpected_lease",
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_workspace_unexpected_lease",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.activate",
+        "params": {
+          "externalRunRef": "external-run_workspace_unexpected_lease",
+          "managedRunId": "managed-run_workspace_unexpected_lease",
+          "operationId": "operation_workspace_unexpected_lease",
+          "registrationNonce": "registration-nonce_workspace_unexpected_lease",
+          "workspaceLeaseId": "workspace-lease_unexpected"
+        }
+      },
+      "schemaExpectation": "accept",
       "target": "request"
     }
   ]

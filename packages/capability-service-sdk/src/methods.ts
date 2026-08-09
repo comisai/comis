@@ -13,6 +13,7 @@ import {
   ServiceInstanceIdSchema,
   ServiceReportIdSchema,
   TimestampMsSchema,
+  WorkspaceLeaseIdSchema,
 } from "./common.js";
 
 const ProtocolIdSchema = z.literal(CAPABILITY_SERVICE_PROTOCOL_ID);
@@ -53,6 +54,7 @@ export const CapabilityActivateRequestSchema = z.strictObject({
     managedRunId: ManagedRunIdSchema,
     externalRunRef: ExternalRunRefSchema,
     registrationNonce: RegistrationNonceSchema,
+    workspaceLeaseId: WorkspaceLeaseIdSchema.optional(),
   }),
 });
 
@@ -81,6 +83,7 @@ export const CapabilityAbandonRequestSchema = z.strictObject({
       "registration_expired",
       "service_unavailable",
     ]),
+    disposition: z.enum(["reap_safe", "preserve"]),
   }),
 });
 
@@ -90,6 +93,8 @@ export const CapabilityAbandonResponseSchema = z.strictObject({
   result: z.strictObject({
     externalRunRef: ExternalRunRefSchema,
     state: z.literal("abandoned"),
+    disposition: z.enum(["reap_safe", "preserve"]),
+    terminalTransition: z.literal("unbound_preparation_abandoned"),
   }),
 });
 

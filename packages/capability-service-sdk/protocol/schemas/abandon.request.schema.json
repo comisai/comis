@@ -20,6 +20,13 @@
     "params": {
       "additionalProperties": false,
       "properties": {
+        "disposition": {
+          "enum": [
+            "reap_safe",
+            "preserve"
+          ],
+          "type": "string"
+        },
         "externalRunRef": {
           "maxLength": 256,
           "minLength": 1,
@@ -52,7 +59,8 @@
         "operationId",
         "externalRunRef",
         "registrationNonce",
-        "reason"
+        "reason",
+        "disposition"
       ],
       "type": "object"
     }

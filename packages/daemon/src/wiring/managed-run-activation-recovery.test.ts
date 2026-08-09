@@ -235,6 +235,8 @@ describe("managed-run activation restart recovery", () => {
     const abandon = vi.fn(async (command) => ok({
       externalRunRef: command.externalRunRef,
       state: "abandoned" as const,
+      disposition: command.disposition,
+      terminalTransition: "unbound_preparation_abandoned" as const,
     }));
     const control: CapabilityServiceControlPort = { activate, abandon };
     const logger = makeLogger();

@@ -7,6 +7,7 @@ export interface CapabilityServiceActivateCommand {
   readonly managedRunId: string;
   readonly externalRunRef: string;
   readonly registrationNonce: string;
+  readonly workspaceLeaseId?: string;
 }
 
 export interface CapabilityServiceActivateAcknowledgement {
@@ -27,11 +28,14 @@ export interface CapabilityServiceAbandonCommand {
   readonly externalRunRef: string;
   readonly registrationNonce: string;
   readonly reason: "activation_rejected" | "owner_cancelled" | "registration_expired" | "service_unavailable";
+  readonly disposition: "reap_safe" | "preserve";
 }
 
 export interface CapabilityServiceAbandonAcknowledgement {
   readonly externalRunRef: string;
   readonly state: "abandoned";
+  readonly disposition: "reap_safe" | "preserve";
+  readonly terminalTransition: "unbound_preparation_abandoned";
 }
 
 /** Authenticated instance-scoped control boundary; implementations never select authority. */

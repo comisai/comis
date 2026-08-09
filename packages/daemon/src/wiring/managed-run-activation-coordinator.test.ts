@@ -201,6 +201,8 @@ describe("managed-run two-phase activation", () => {
     abandon = vi.fn(async (command) => ok({
       externalRunRef: command.externalRunRef,
       state: "abandoned" as const,
+      disposition: command.disposition,
+      terminalTransition: "unbound_preparation_abandoned" as const,
     }));
     control = { activate, abandon };
     logger = makeLogger();
@@ -363,6 +365,7 @@ describe("managed-run two-phase activation", () => {
     expect(activate).not.toHaveBeenCalled();
     expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
       reason: "activation_rejected",
+      disposition: "reap_safe",
     }));
     expect(await contentStore.getActivationDescriptor({
       tenantId: "tenant_a",

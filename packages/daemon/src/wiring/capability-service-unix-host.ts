@@ -850,6 +850,9 @@ function createEndpoint(
             managedRunId: command.managedRunId,
             externalRunRef: command.externalRunRef,
             registrationNonce: command.registrationNonce,
+            ...(command.workspaceLeaseId === undefined
+              ? {}
+              : { workspaceLeaseId: command.workspaceLeaseId }),
           },
         }, CapabilityActivateRequestSchema, CapabilityActivateResponseSchema);
         return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
@@ -864,6 +867,7 @@ function createEndpoint(
             externalRunRef: command.externalRunRef,
             registrationNonce: command.registrationNonce,
             reason: command.reason,
+            disposition: command.disposition,
           },
         }, CapabilityAbandonRequestSchema, CapabilityAbandonResponseSchema);
         return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });

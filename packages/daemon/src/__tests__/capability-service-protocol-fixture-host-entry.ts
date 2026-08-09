@@ -85,6 +85,7 @@ async function run(): Promise<Result<void>> {
     expectedBearer: bearer,
     requestDeadlineMs: 5_000,
     serviceInstanceId: options.value.serviceInstanceId,
+    workspacePreparationRefs: ["external-run_a"],
   });
   const started = await server.start();
   if (!started.ok) return started;

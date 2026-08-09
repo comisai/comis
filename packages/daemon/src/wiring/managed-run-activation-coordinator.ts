@@ -181,6 +181,7 @@ export function createManagedRunActivationCoordinator(
     input: ManagedRunActivationInput,
     ids: ManagedRunActivationIds,
     reason: CapabilityServiceAbandonCommand["reason"],
+    disposition: CapabilityServiceAbandonCommand["disposition"],
   ): Promise<void> {
     const abandoned = await invokeControl(() => deps.control.abandon({
       operationId: ids.abandonOperationId,
@@ -188,6 +189,7 @@ export function createManagedRunActivationCoordinator(
       externalRunRef: input.prepared.externalRunRef,
       registrationNonce: input.prepared.registrationNonce,
       reason,
+      disposition,
     }));
     if (!abandoned.ok) {
       deps.logger.warn({
@@ -331,10 +333,13 @@ export function createManagedRunActivationCoordinator(
       managedRunId: ids.managedRunId,
       externalRunRef: input.prepared.externalRunRef,
       registrationNonce: input.prepared.registrationNonce,
+      ...(preparedRecord.workspaceLeaseId === undefined
+        ? {}
+        : { workspaceLeaseId: preparedRecord.workspaceLeaseId }),
     }));
     if (!activation.ok) {
       if (activation.error.kind === "rejected") {
-        await abandonPrepared(input, ids, "activation_rejected");
+        await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
         const rejected = await invokeStore(() => deps.store.claimTransition(
           { kind: "service", serviceInstanceId: input.serviceInstanceId },
           {
@@ -471,7 +476,7 @@ export function createManagedRunActivationCoordinator(
     }
 
     if (prepared.data.expiresAtMs <= deps.nowMs()) {
-      await abandonPrepared(input, ids, "registration_expired");
+      await abandonPrepared(input, ids, "registration_expired", "reap_safe");
       emitRejected(input, "preparation_expired");
       return ok({ kind: "rejected", reasonCode: "preparation_expired" });
     }
@@ -480,12 +485,12 @@ export function createManagedRunActivationCoordinator(
       (instance) => instance.serviceInstanceId === input.serviceInstanceId && instance.state === "active",
     );
     if (activeInstance === undefined) {
-      await abandonPrepared(input, ids, "service_unavailable");
+      await abandonPrepared(input, ids, "service_unavailable", "reap_safe");
       emitRejected(input, "service_unavailable");
       return ok({ kind: "rejected", reasonCode: "service_unavailable" });
     }
     if (!activeInstance.allowedAgents.includes(input.authority.agentId)) {
-      await abandonPrepared(input, ids, "activation_rejected");
+      await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       emitRejected(input, "agent_not_allowed");
       return ok({ kind: "rejected", reasonCode: "agent_not_allowed" });
     }
@@ -514,7 +519,7 @@ export function createManagedRunActivationCoordinator(
       updatedAtMs: deps.nowMs(),
     });
     if (!recordCandidate.success) {
-      await abandonPrepared(input, ids, "activation_rejected");
+      await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       emitRejected(input, "invalid_preparation");
       return ok({ kind: "rejected", reasonCode: "invalid_preparation" });
     }
@@ -540,18 +545,18 @@ export function createManagedRunActivationCoordinator(
       },
     ));
     if (!body.ok) {
-      await abandonPrepared(input, ids, "activation_rejected");
+      await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       return body;
     }
     const created = await invokeStore(() => deps.store.create(record));
     if (!created.ok) {
       await removeDescriptor(record, ids.activationDescriptorRef);
-      await abandonPrepared(input, ids, "activation_rejected");
+      await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       return created;
     }
     if (created.value.kind === "replay_conflict") {
       await removeDescriptor(record, ids.activationDescriptorRef);
-      await abandonPrepared(input, ids, "activation_rejected");
+      await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
       emitRejected(input, "replay_conflict", ids.managedRunId);
       return ok({ kind: "rejected", reasonCode: "replay_conflict" });
     }
@@ -631,7 +636,7 @@ export function createManagedRunActivationCoordinator(
     ids: ManagedRunActivationIds,
     record: ManagedRunRecord,
   ): Promise<Result<ManagedRunRecord, Error>> {
-    await abandonPrepared(input, ids, "registration_expired");
+    await abandonPrepared(input, ids, "registration_expired", "reap_safe");
     const transitioned = await invokeStore(() => deps.store.claimTransition(
       { kind: "service", serviceInstanceId: record.serviceInstanceId },
       {

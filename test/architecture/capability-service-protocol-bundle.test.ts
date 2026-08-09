@@ -264,6 +264,7 @@ describe("capability-service protocol bundle contract", () => {
       "expiresAt",
       "externalRunRef",
       "registrationNonce",
+      "requestedWorkspace",
       "state",
     ]);
     expect(Object.keys(context?.payload ?? {}).sort()).toEqual([

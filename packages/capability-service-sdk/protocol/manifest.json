@@ -14,7 +14,7 @@
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "31ac3583dc5b1501db8d57cbbdf207e3e77fc1d642c9bd7046db4b5d47fff176"
+      "sha256": "d3f8f43b855f2f58bee370738869ba555dd45bd76a3f48e13a3fc2e9e474657d"
     },
     {
       "path": "fixtures/unknown-field.json",
@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "ed53b1fc4ff2657e4b20dce0cc4dc691fea884b955a2652176830f9862a35b44"
+      "sha256": "14cae3ae9a53fdb2822017a757a5060f0093bed0c0b67f4f618c8175fedd3f4b"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -30,15 +30,15 @@
     },
     {
       "path": "schemas/abandon.request.schema.json",
-      "sha256": "94d38fd50f0ba091fbdbf520813dc7ca684a54ba7f412e3159df76f75495d215"
+      "sha256": "091a32b4545142ee14c4feeb8d7e0eabf67b1508e3dcdfac43681603312d5345"
     },
     {
       "path": "schemas/abandon.response.schema.json",
-      "sha256": "809dd7608595a3460d4c4ef0e7bec15f58807196135f8c66c9467a54dc4dce15"
+      "sha256": "fcc4f0260462193df3aca4e03e469bf72c6a7005ca94bc1a1329f8cf35eb4186"
     },
     {
       "path": "schemas/activate.request.schema.json",
-      "sha256": "35dc548a3bc737175a922ae1304d9983f3dfc017c54c644203ae0f38a53f7052"
+      "sha256": "8a9af9ed3a1196bce04b4619c2735d20100f60ab6e120f55f9df8b09e7d75516"
     },
     {
       "path": "schemas/activate.response.schema.json",
@@ -89,7 +89,7 @@
       "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
     }
   ],
-  "bundleDigest": "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297",
+  "bundleDigest": "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -234,7 +234,9 @@
       "semanticInvariants": [
         "operation-id-must-match-envelope-id",
         "identical-replay-returns-original-result",
-        "altered-replay-is-rejected"
+        "altered-replay-is-rejected",
+        "disposition-defines-unbound-preparation-cleanup",
+        "response-confirms-unbound-preparation-terminal-transition"
       ]
     },
     {
@@ -251,7 +253,8 @@
       "semanticInvariants": [
         "operation-id-must-match-envelope-id",
         "identical-replay-returns-original-result",
-        "altered-replay-is-rejected"
+        "altered-replay-is-rejected",
+        "present-iff-the-preparation-requested-a-workspace"
       ]
     },
     {

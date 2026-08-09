@@ -116,6 +116,7 @@ function validateRequest(
   payload: unknown,
   bundleDigest: string,
   operations: Map<string, string>,
+  preparationWorkspaceRequests: ReadonlyMap<string, boolean>,
 ): Result<void, CapabilityServiceProtocolFixtureRejection> {
   const envelope = asRecord(payload);
   const params = asRecord(envelope?.["params"]);
@@ -136,6 +137,17 @@ function validateRequest(
   const parsed = CapabilityServiceRequestSchema.safeParse(payload);
   if (!parsed.success) return reject("invalid_params");
   if (parsed.data.id !== parsed.data.params.operationId) return reject("invalid_request");
+  if (parsed.data.method === "managedRuns.activate") {
+    const requestedWorkspace = preparationWorkspaceRequests.get(
+      parsed.data.params.externalRunRef,
+    );
+    if (
+      requestedWorkspace !== undefined
+      && requestedWorkspace !== (parsed.data.params.workspaceLeaseId !== undefined)
+    ) {
+      return reject("invalid_params");
+    }
+  }
 
   const canonical = JSON.stringify(parsed.data);
   const previous = operations.get(parsed.data.params.operationId);
@@ -148,12 +160,18 @@ export function createCapabilityServiceProtocolFixtureHost(
   options: CapabilityServiceProtocolFixtureHostOptions,
 ): CapabilityServiceProtocolFixtureHost {
   const operations = new Map<string, string>();
+  const preparationWorkspaceRequests = new Map<string, boolean>();
   const validatePayload = (
     payload: unknown,
   ): Result<void, CapabilityServiceProtocolFixtureRejection> => {
     const size = validateWireSize("request", payload);
     if (!size.ok) return size;
-    return validateRequest(payload, options.bundleDigest, operations);
+    return validateRequest(
+      payload,
+      options.bundleDigest,
+      operations,
+      preparationWorkspaceRequests,
+    );
   };
   return {
     validateRequest: validatePayload,
@@ -165,7 +183,17 @@ export function createCapabilityServiceProtocolFixtureHost(
       const size = validateWireSize(step.target, payload);
       if (!size.ok) return size;
       const schema = RESPONSE_SCHEMAS[step.target];
-      return schema.safeParse(payload).success ? ok(undefined) : reject("invalid_params");
+      const parsed = schema.safeParse(payload);
+      if (!parsed.success) return reject("invalid_params");
+      if (step.target === "mcp-managed-run-result") {
+        const preparation = McpManagedRunResultSchema.safeParse(payload);
+        if (!preparation.success) return reject("invalid_params");
+        preparationWorkspaceRequests.set(
+          preparation.data.externalRunRef,
+          preparation.data.requestedWorkspace !== undefined,
+        );
+      }
+      return ok(undefined);
     },
   };
 }

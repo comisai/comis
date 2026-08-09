@@ -3,7 +3,7 @@
 /** Exact lockstep identifier carried by every protocol handshake. */
 export const CAPABILITY_SERVICE_PROTOCOL_ID = "comis.capability-service/1" as const;
 /** Exact digest of the generated protocol artifacts shipped with this SDK release. */
-export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297" as const;
+export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725" as const;
 export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.59" as const;
 
 /** Placeholder resolved from manifest.json before a generated fixture is sent. */

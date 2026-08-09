@@ -16,6 +16,13 @@
     "result": {
       "additionalProperties": false,
       "properties": {
+        "disposition": {
+          "enum": [
+            "reap_safe",
+            "preserve"
+          ],
+          "type": "string"
+        },
         "externalRunRef": {
           "maxLength": 256,
           "minLength": 1,
@@ -25,11 +32,17 @@
         "state": {
           "const": "abandoned",
           "type": "string"
+        },
+        "terminalTransition": {
+          "const": "unbound_preparation_abandoned",
+          "type": "string"
         }
       },
       "required": [
         "externalRunRef",
-        "state"
+        "state",
+        "disposition",
+        "terminalTransition"
       ],
       "type": "object"
     }

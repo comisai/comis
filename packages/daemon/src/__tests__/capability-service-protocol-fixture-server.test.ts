@@ -28,7 +28,7 @@ import { createCapabilityServiceProtocolFixtureServer } from "./capability-servi
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(here, "../../../..");
-const BUNDLE_DIGEST = "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297";
+const BUNDLE_DIGEST = "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725";
 const EXPECTED_BEARER = "fixture-bearer-0000000000000000000000000001";
 const SERVICE_INSTANCE_ID = "service-instance_a";
 const NOW_MS = 1_800_000_000_000;
@@ -102,6 +102,7 @@ function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
     expectedBearer: EXPECTED_BEARER,
     requestDeadlineMs,
     serviceInstanceId: SERVICE_INSTANCE_ID,
+    workspacePreparationRefs: ["external-run_a"],
   });
 }
 
@@ -148,6 +149,7 @@ describe("standalone capability-service protocol fixture server", () => {
           managedRunId: "managed-run_a",
           externalRunRef: "external-run_a",
           registrationNonce: "registration-nonce_a",
+          workspaceLeaseId: "workspace-lease_a",
         },
       )));
       expect(activate).toEqual({
@@ -214,12 +216,18 @@ describe("standalone capability-service protocol fixture server", () => {
           externalRunRef: "external-run_a",
           registrationNonce: "registration-nonce_a",
           reason: "owner_cancelled",
+          disposition: "preserve",
         },
       )));
       expect(abandon).toEqual({
         jsonrpc: "2.0",
         id: "operation_abandon",
-        result: { externalRunRef: "external-run_a", state: "abandoned" },
+        result: {
+          externalRunRef: "external-run_a",
+          state: "abandoned",
+          disposition: "preserve",
+          terminalTransition: "unbound_preparation_abandoned",
+        },
       });
     } finally {
       expect((await server.close()).ok).toBe(true);
