@@ -25,7 +25,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { resolve as pathResolve } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { CapabilityServicesConfigSchema, PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
+import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
 import { main, type DaemonOverrides } from "./daemon.js";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
@@ -38,7 +38,14 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
   return {
     config: {
       daemon: { logLevels: {} },
-      capabilityServices: CapabilityServicesConfigSchema.parse({}),
+      capabilityServices: {
+        instances: [],
+        privateContentDirectory: "managed-runs/private",
+        reportRetentionMs: 30 * 86_400_000,
+        maxObservedClockSkewMs: 300_000,
+        recoveryBatchSize: 256,
+        requestDeadlineMs: 5_000,
+      },
       gateway: {
         enabled: false,
         host: "0.0.0.0",

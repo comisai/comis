@@ -204,18 +204,12 @@ export type {
   ManagedRunContinuationClaimInput,
   ManagedRunContinuationClaimOutcome,
   ManagedRunReducedStateInput,
-  ManagedRunContinuationOutcomeKind,
   ManagedRunContinuationOutcomeInput,
   ManagedRunMutationOutcome,
-  ManagedRunScopedListInput,
-  ManagedRunRecoveryScanInput,
   InvalidManagedRunRecord,
   ManagedRunRecoveryScan,
-  ManagedRunRevokeInput,
   ManagedRunStorePort,
   ManagedRunPrivateContentReceipt,
-  ManagedRunRawPrivateContentInput,
-  ManagedRunContentRecoveryInput,
   ManagedRunContentPort,
 } from "../ports/index.js";
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure

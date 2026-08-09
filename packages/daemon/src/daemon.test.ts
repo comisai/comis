@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { CapabilityServicesConfigSchema, PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
+import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -28,7 +28,14 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
   return {
     config: {
       daemon: { logLevels: {} },
-      capabilityServices: CapabilityServicesConfigSchema.parse({}),
+      capabilityServices: {
+        instances: [],
+        privateContentDirectory: "managed-runs/private",
+        reportRetentionMs: 30 * 86_400_000,
+        maxObservedClockSkewMs: 300_000,
+        recoveryBatchSize: 256,
+        requestDeadlineMs: 5_000,
+      },
       gateway: {
         enabled: false,
         host: "0.0.0.0",

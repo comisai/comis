@@ -3,10 +3,6 @@
 
 export {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
-  CapabilityServiceScopeSchema,
-  CapabilityServiceDefinitionSchema,
-  CapabilityServiceInstanceConfigSchema,
-  CapabilityServicesConfigSchema,
   buildCapabilityServiceActivationPlan,
   AppConfigSchema,
   AgentConfigSchema,
@@ -183,15 +179,11 @@ export {
 
 export type {
   CapabilityServiceScope,
-  CapabilityServiceDefinition,
-  CapabilityServiceInstanceConfig,
   CapabilityServicesConfig,
-  CapabilityServiceContributionSection,
   CapabilityServiceContributionRegistration,
   PlannedCapabilityServiceDefinition,
   PlannedCapabilityServiceInstance,
   CapabilityServiceActivationPlan,
-  CapabilityServicePlanError,
   AppConfig,
   AgentConfig,
   BudgetConfig,
