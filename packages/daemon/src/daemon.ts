@@ -36,6 +36,7 @@ import {
   type WrapExternalContentOptions,
   verifyWorkspacePolicySnapshot,
   type WorkspacePolicySnapshot,
+  type CapabilityServiceContributionRegistration,
 } from "@comis/core";
 // Runtime adapter factories are constructed at this composition root.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
@@ -88,6 +89,7 @@ import {
   setupBroker,
   acquireDataDirLock,
   releaseDataDirLock,
+  setupCapabilityServices,
 } from "./wiring/index.js";
 import { resolveEffectiveTrajectoryConfig } from "./wiring/trajectory-runtime-config.js";
 import { SENSITIVE_EXACT_KEYS, SENSITIVE_PREFIXES, buildMergedEnv } from "./wiring/env-scrub.js";
@@ -150,7 +152,7 @@ import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
@@ -196,6 +198,10 @@ export const DEFAULT_CONFIG_PATHS = [
   safePath(safePath(os.homedir(), ".comis"), "config.yaml"),
   safePath(safePath(os.homedir(), ".comis"), "config.local.yaml"),
 ];
+
+const LINKED_CAPABILITY_SERVICE_CONTRIBUTIONS = Object.freeze(
+  [] satisfies CapabilityServiceContributionRegistration[],
+);
 
 // util.inspect depth/breakLength deepening for Anthropic SDK debug logs —
 // extracted to wiring/apply-inspect-defaults.ts to keep this composition root
@@ -1464,6 +1470,24 @@ async function bootFoundation(
     seedBundledSkills(defaultSeedBundledSkillsDeps(bundledSkillsRoot, safePath(dataDir, "skills"), agentLogger));
   }
 
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonicalizes the already-validated daemon data directory before confined capability-service path checks
+  const capabilityServiceDataDir = realpathSync(container.config.dataDir || dataDir);
+  const capabilityServicesResult = await setupCapabilityServices({
+    contributions: LINKED_CAPABILITY_SERVICE_CONTRIBUTIONS,
+    config: container.config.capabilityServices,
+    db,
+    dataDir: capabilityServiceDataDir,
+    secretManager: container.secretManager,
+    eventBus: container.eventBus,
+    logger: daemonLogger,
+    clock,
+    timers,
+  });
+  if (!capabilityServicesResult.ok) {
+    throw new Error(`Capability-service platform setup failed: ${capabilityServicesResult.error.message}`);
+  }
+  const capabilityServices = capabilityServicesResult.value;
+
   // Mutate boot with all Group A foundation fields. The 2 forward-ref slots
   // (channelPluginsRef, bgNotifyRef) were eagerly initialized by
   // createEmptyBootContext(); here we wire the bgNotifyFn closure that reads
@@ -1483,6 +1507,7 @@ async function bootFoundation(
     contextPipelineCollector,
     processMonitor,
     bindLearningCredentialResolver, disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
+    capabilityServices,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
     embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
@@ -2653,7 +2678,7 @@ async function bootShutdown(
     logger, logLevelManager, daemonLogger, daemonVersion,
     tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    contextPipelineCollector, backgroundIndexingPromise, db,
+    contextPipelineCollector, backgroundIndexingPromise, db, capabilityServices,
     disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
     disposeActivityStream, otelHandle,
     injectionRateLimiter, destroyReactionWiring, geminiCacheManager, backgroundTaskManager,
@@ -2741,6 +2766,7 @@ async function bootShutdown(
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
     capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // stops+unlinks cap.sock
+    capabilityServicesShutdown: () => capabilityServices.shutdown(),
     timeoutMs: container.config.daemon.shutdownTimeoutMs,
   });
 
@@ -2862,6 +2888,7 @@ async function bootShutdown(
   return {
     container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
+    capabilityServices,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
     channelManager,
     deliveryAdapters: channelAdaptersRef,

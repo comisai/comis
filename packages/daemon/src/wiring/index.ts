@@ -13,6 +13,10 @@ export { setupLogging, type LoggingResult } from "./setup-logging.js";
 export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult } from "./setup-observability.js";
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
+export {
+  setupCapabilityServices,
+  type CapabilityServicePlatform,
+} from "./setup-capability-services.js";
 export { bindLearningOAuthCredentialResolver } from "./setup-learning-judge.js";
 export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-media.js";
 export { createImageProviderSelector, makeUnavailableImagePort } from "./setup-image-provider.js";

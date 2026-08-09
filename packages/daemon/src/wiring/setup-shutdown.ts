@@ -188,6 +188,8 @@ export interface ShutdownDeps {
   /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
   brokerStop?: () => Promise<void>;
   capEndpointStop?: () => Promise<void>; // present only with an autonomy agent.
+  /** Close capability-service admission and drain accepted report mutations before the shared database closes. */
+  capabilityServicesShutdown?: () => Promise<Result<void, Error>>;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -264,6 +266,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     unsubscribeHealthAggregator,
     brokerStop,
     capEndpointStop,
+    capabilityServicesShutdown,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -631,6 +634,24 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await capEndpointStop();
           daemonLogger.info({ component: "capability-endpoint", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "capability-endpoint", daemonLogger);
+      }
+      if (capabilityServicesShutdown) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          const result = await capabilityServicesShutdown();
+          if (!result.ok) {
+            daemonLogger.error({
+              errorKind: "internal" as const,
+              hint: "Inspect capability-service report ingress and endpoint cleanup before restarting the daemon",
+            }, "Capability-service platform shutdown failed");
+            return;
+          }
+          daemonLogger.info({
+            component: "capability-services",
+            durationMs: systemNowMs() - stopMs,
+            shutdownOrder: ++shutdownOrder,
+          }, "Component stopped");
+        }, "capability-services", daemonLogger);
       }
       if (mcpClientManagerDisconnectAll) {
         const stopMs = systemNowMs();

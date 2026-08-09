@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
+import { CapabilityServicesConfigSchema, PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -28,6 +28,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
   return {
     config: {
       daemon: { logLevels: {} },
+      capabilityServices: CapabilityServicesConfigSchema.parse({}),
       gateway: {
         enabled: false,
         host: "0.0.0.0",
@@ -423,7 +424,7 @@ describe("daemon main()", () => {
     expect(instance.shutdownHandle).toBeDefined();
     expect(typeof instance.shutdownHandle.trigger).toBe("function");
     expect(typeof instance.shutdownHandle.dispose).toBe("function");
-    expect((instance as unknown as { capabilityServices?: unknown }).capabilityServices).toBeDefined();
+    expect(instance.capabilityServices.runtime.getActiveView().instances).toEqual([]);
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {

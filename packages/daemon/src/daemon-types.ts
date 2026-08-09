@@ -46,6 +46,7 @@ import type { ChannelActivityTracker } from "./observability/channel-activity-tr
 import type { DeliveryTracer } from "./observability/delivery-tracer.js";
 import type { ShutdownHandle } from "./wiring/setup-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
+import type { CapabilityServicePlatform } from "./wiring/setup-capability-services.js";
 
 import type {
   bootstrap,
@@ -166,6 +167,7 @@ export interface DaemonInstance {
   readonly tokenTracker: TokenTracker;
   readonly processMonitor: ProcessMonitor;
   readonly shutdownHandle: ShutdownHandle;
+  readonly capabilityServices: CapabilityServicePlatform;
   readonly cronSchedulers: Map<string, CronScheduler>;
   readonly resetSchedulers: Map<string, SessionResetScheduler>;
   readonly browserServices: Map<string, BrowserService>;
@@ -377,6 +379,7 @@ export interface BootContext {
   cachedPort: Awaited<ReturnType<typeof setupMemory>>["cachedPort"];
   memoryAdapter: Awaited<ReturnType<typeof setupMemory>>["memoryAdapter"];
   db: Awaited<ReturnType<typeof setupMemory>>["db"];
+  capabilityServices: CapabilityServicePlatform;
   sessionStore: Awaited<ReturnType<typeof setupMemory>>["sessionStore"];
   memoryApi: Awaited<ReturnType<typeof setupMemory>>["memoryApi"];
   embeddingQueue: Awaited<ReturnType<typeof setupMemory>>["embeddingQueue"];
