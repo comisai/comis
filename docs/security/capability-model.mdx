@@ -272,6 +272,19 @@ The trust signal is sound: `_trustLevel` is in the internal-field registry
 from the framework request context **after** the call's own params, so neither a
 tool nor the agent can forge it; an absent trust resolves to non-admin (denied).
 Admin is reached only via an explicit operator grant, never a default.
+
+That grant is **operator-file-only**: `elevatedReply.senderTrustMap` and
+`elevatedReply.defaultTrustLevel` cannot be set by any runtime RPC -- not
+`config.patch` (the whole `agents.*` prefix is immutable there), and not
+`agents_manage` / `agents.create` / `agents.update`, which otherwise legitimately
+write agent config (name, model, budgets, autonomy tuning, tool toggles). So an
+admin-trust agent can never raise its own sender's trust, or grant admin to
+another sender, through a self-change; only editing the config file and
+restarting the daemon can. Matching is on **presence, not truthiness** -- sending
+either key at all in a runtime call is the operator-only action, and the refusal
+is audited (`outcome: "failure"`, naming the refused fields). The same file-only
+rule covers the sandbox and command-allowlist switches -- see
+[the terminal driver's security model](/agent-tools/terminal-driver#security-model).
 </Warning>
 
 ## How Capabilities Get Granted
