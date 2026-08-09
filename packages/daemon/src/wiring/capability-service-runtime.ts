@@ -6,6 +6,7 @@ import {
   type CapabilityServiceActivationPlan,
   type CapabilityServiceScope,
   type ComisLogger,
+  type PlannedManagedToolBinding,
   type PlannedCapabilityServiceDefinition,
   type PlannedCapabilityServiceInstance,
   type TypedEventBus,
@@ -34,6 +35,7 @@ export interface ActiveCapabilityServiceDefinition {
   readonly contributionId: string;
   readonly serviceDefinitionId: string;
   readonly mcpServerName: string;
+  readonly managedToolBindings: readonly Readonly<PlannedManagedToolBinding>[];
   readonly requestedScopes: readonly CapabilityServiceScope[];
 }
 
@@ -135,6 +137,10 @@ function definitionView(
     contributionId: definition.contributionId,
     serviceDefinitionId: definition.serviceDefinitionId,
     mcpServerName: definition.mcpServerName,
+    managedToolBindings: Object.freeze(definition.managedToolBindings.map((binding) => Object.freeze({
+      ...binding,
+      invocationSideEffects: Object.freeze([...binding.invocationSideEffects]),
+    }))),
     requestedScopes: Object.freeze([...definition.requestedScopes]),
   });
 }

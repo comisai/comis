@@ -55,6 +55,7 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = {
     serviceDefinitionId: "example.service-definition",
     protocolId: "comis.capability-service/1",
     mcpServerName: "example-service",
+    managedToolBindings: [],
     requestedScopes: ["health", "report"],
     dependsOn: [],
   }],

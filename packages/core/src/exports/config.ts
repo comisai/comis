@@ -3,6 +3,9 @@
 
 export {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
+  ManagedToolActionClassificationSchema,
+  ManagedToolBehaviorSchema,
+  ManagedToolBindingSchema,
   buildCapabilityServiceActivationPlan,
   AppConfigSchema,
   AgentConfigSchema,
@@ -179,6 +182,10 @@ export {
 
 export type {
   CapabilityServiceScope,
+  ManagedToolActionClassification,
+  ManagedToolBehavior,
+  ManagedToolBinding,
+  PlannedManagedToolBinding,
   CapabilityServicesConfig,
   CapabilityServiceContributionRegistration,
   PlannedCapabilityServiceDefinition,

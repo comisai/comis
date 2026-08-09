@@ -28,10 +28,54 @@ function isContributionId(value: string): boolean {
 
 export const CapabilityServiceScopeSchema = z.enum(["health", "report"]);
 
+export const ManagedToolBehaviorSchema = z.enum([
+  "prepare_run",
+  "prepare_run_group",
+  "run_command",
+  "read_only",
+]);
+
+export const ManagedToolActionClassificationSchema = z.enum([
+  "read",
+  "mutate",
+  "destructive",
+]);
+
+export const ManagedToolBindingSchema = z.strictObject({
+  toolName: z.string().regex(OPAQUE_ID_PATTERN),
+  behavior: ManagedToolBehaviorSchema,
+  runHandleArgument: z.string().regex(OPAQUE_ID_PATTERN).optional(),
+  actionClassification: ManagedToolActionClassificationSchema,
+  invocationSideEffects: z.array(z.string().regex(OPAQUE_ID_PATTERN)).max(32),
+}).superRefine((binding, context) => {
+  if (binding.behavior === "run_command" && binding.runHandleArgument === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["runHandleArgument"],
+      message: "run-command bindings require an exact model-visible run-handle argument",
+    });
+  }
+  if (binding.behavior !== "run_command" && binding.runHandleArgument !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["runHandleArgument"],
+      message: "only run-command bindings may declare a run-handle argument",
+    });
+  }
+  if (new Set(binding.invocationSideEffects).size !== binding.invocationSideEffects.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["invocationSideEffects"],
+      message: "managed-tool side effects must be unique",
+    });
+  }
+});
+
 export const CapabilityServiceDefinitionSchema = z.strictObject({
   serviceDefinitionId: z.string().refine(isContributionId),
   protocolId: z.literal(CAPABILITY_SERVICE_CONTROL_PROTOCOL),
   mcpServerName: z.string().regex(OPAQUE_ID_PATTERN),
+  managedToolBindings: z.array(ManagedToolBindingSchema).max(128),
   requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(2),
   dependsOn: z.array(z.string().refine(isContributionId)).max(32),
 }).superRefine((value, ctx) => {
@@ -49,6 +93,14 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
       message: "capability-service definition dependencies must be unique",
     });
   }
+  if (new Set(value.managedToolBindings.map((binding) => binding.toolName)).size
+    !== value.managedToolBindings.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["managedToolBindings"],
+      message: "managed-tool names must be unique within a service definition",
+    });
+  }
   if (value.dependsOn.includes(value.serviceDefinitionId)) {
     ctx.addIssue({
       code: "custom",
@@ -59,6 +111,14 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
 });
 
 export type CapabilityServiceScope = z.infer<typeof CapabilityServiceScopeSchema>;
+export type ManagedToolBehavior = z.infer<typeof ManagedToolBehaviorSchema>;
+export type ManagedToolActionClassification = z.infer<
+  typeof ManagedToolActionClassificationSchema
+>;
+export type ManagedToolBinding = z.infer<typeof ManagedToolBindingSchema>;
+export type PlannedManagedToolBinding = Omit<ManagedToolBinding, "invocationSideEffects"> & {
+  readonly invocationSideEffects: readonly string[];
+};
 export type CapabilityServiceDefinition = z.infer<typeof CapabilityServiceDefinitionSchema>;
 
 export interface CapabilityServiceContributionSection {
@@ -77,9 +137,10 @@ export interface CapabilityServiceContributionRegistration {
 
 export type PlannedCapabilityServiceDefinition = Omit<
   CapabilityServiceDefinition,
-  "requestedScopes" | "dependsOn"
+  "managedToolBindings" | "requestedScopes" | "dependsOn"
 > & {
   readonly contributionId: string;
+  readonly managedToolBindings: readonly Readonly<PlannedManagedToolBinding>[];
   readonly requestedScopes: readonly CapabilityServiceScope[];
   readonly dependsOn: readonly string[];
 };
@@ -120,6 +181,10 @@ function freezeDefinition(
   return Object.freeze({
     ...definition,
     contributionId,
+    managedToolBindings: Object.freeze(definition.managedToolBindings.map((binding) => Object.freeze({
+      ...binding,
+      invocationSideEffects: Object.freeze([...binding.invocationSideEffects].sort()),
+    }))),
     requestedScopes: Object.freeze([...definition.requestedScopes].sort()),
     dependsOn: Object.freeze([...definition.dependsOn].sort()),
   });

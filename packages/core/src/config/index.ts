@@ -8,11 +8,18 @@ export {
   CapabilityServiceScopeSchema,
   CapabilityServiceDefinitionSchema,
   CapabilityServiceInstanceConfigSchema,
+  ManagedToolActionClassificationSchema,
+  ManagedToolBehaviorSchema,
+  ManagedToolBindingSchema,
   buildCapabilityServiceActivationPlan,
 } from "./capability-service-contributions.js";
 export type {
   CapabilityServiceScope,
   CapabilityServiceDefinition,
+  ManagedToolActionClassification,
+  ManagedToolBehavior,
+  ManagedToolBinding,
+  PlannedManagedToolBinding,
   CapabilityServiceInstanceConfig,
   CapabilityServiceContributionSection,
   CapabilityServiceContributionRegistration,

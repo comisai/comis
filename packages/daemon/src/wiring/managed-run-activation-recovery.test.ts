@@ -123,6 +123,7 @@ function makeActiveView(): ActiveCapabilityServiceView {
       contributionId: "example.service",
       serviceDefinitionId: "example.service-definition",
       mcpServerName: "example-service",
+      managedToolBindings: Object.freeze([]),
       requestedScopes: Object.freeze(["health"] as const),
     })]),
     instances: Object.freeze([Object.freeze({

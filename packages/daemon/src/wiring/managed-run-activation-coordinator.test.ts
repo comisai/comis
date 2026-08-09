@@ -77,6 +77,7 @@ function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): A
       contributionId: "example.service",
       serviceDefinitionId: "example.service-definition",
       mcpServerName: "example-service",
+      managedToolBindings: Object.freeze([]),
       requestedScopes: Object.freeze(["health", "report"] as const),
     })]),
     instances: Object.freeze([Object.freeze({
