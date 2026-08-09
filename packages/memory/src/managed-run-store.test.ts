@@ -12,6 +12,7 @@ import {
   type ManagedRunServiceScope,
 } from "@comis/core";
 import { ensureManagedRunTables } from "./schema-managed-runs.js";
+import { createManagedRunAttentionStoreStatements } from "./managed-run-attention-store.js";
 import { createSqliteManagedRunStore } from "./managed-run-store.js";
 import {
   parseStoredManagedRunRecord,
@@ -357,6 +358,218 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       ok: true,
       value: { openAttentionCount: 0 },
     });
+  });
+
+  it("enforces durable attention replay scope state and timestamp boundaries", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention_replay",
+      contentRef: "report-content_attention_replay",
+      kind: "attention",
+      attention: {
+        attentionId: "attention-replay",
+        attentionRef: "report-content_attention_replay",
+        externalKey: "approval-replay",
+      },
+    }))).value?.kind).toBe("accepted");
+
+    const response = {
+      operationId: "attention-response-replay",
+      attentionId: "attention-replay",
+      responseRef: "attention-response-content-replay",
+      respondedAtMs: 1_800_000_000_200,
+    };
+    expect((await store.markAttentionDelivered(OWNER_SCOPE, {
+      operationId: "attention-delivery-too-early",
+      attentionId: "attention-replay",
+      deliveredAtMs: 1_800_000_000_150,
+    })).value?.kind).toBe("state_mismatch");
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, {
+      ...response,
+      operationId: "attention-response-missing",
+      attentionId: "attention-missing",
+    })).value?.kind).toBe("not_found");
+    expect((await store.claimAttentionResponse(OTHER_OWNER_SCOPE, response)).value?.kind).toBe("scope_mismatch");
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, {
+      ...response,
+      operationId: "attention-response-backward",
+      respondedAtMs: 1_799_999_999_999,
+    })).ok).toBe(false);
+
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, response)).value?.kind).toBe("updated");
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, response)).value?.kind).toBe("identical_replay");
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, {
+      ...response,
+      responseRef: "attention-response-content-altered",
+    })).value?.kind).toBe("replay_conflict");
+    expect((await store.claimAttentionResponse(OTHER_OWNER_SCOPE, response)).value?.kind).toBe("scope_mismatch");
+    expect((await store.claimAttentionResponse(OWNER_SCOPE, {
+      ...response,
+      operationId: "attention-response-after-claim",
+    })).value?.kind).toBe("state_mismatch");
+
+    const delivery = {
+      operationId: "attention-delivery-replay",
+      attentionId: "attention-replay",
+      deliveredAtMs: 1_800_000_000_300,
+    };
+    expect((await store.markAttentionDelivered(OWNER_SCOPE, delivery)).value?.kind).toBe("updated");
+    expect((await store.markAttentionDelivered(OWNER_SCOPE, delivery)).value?.kind).toBe("identical_replay");
+    expect((await store.markAttentionDelivered(OWNER_SCOPE, {
+      ...delivery,
+      deliveredAtMs: 1_800_000_000_301,
+    })).value?.kind).toBe("replay_conflict");
+    expect((await store.markAttentionDelivered(OTHER_OWNER_SCOPE, delivery)).value?.kind).toBe("scope_mismatch");
+  });
+
+  it("rejects malformed attention descriptors collisions and invalid list bounds", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention_primary",
+      contentRef: "report-content_attention_primary",
+      kind: "attention",
+      attention: {
+        attentionId: "attention-primary",
+        attentionRef: "report-content_attention_primary",
+        externalKey: "approval-primary",
+      },
+    }))).value?.kind).toBe("accepted");
+
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention_missing",
+      contentRef: "report-content_attention_missing",
+      kind: "attention",
+    }))).ok).toBe(false);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention_unexpected",
+      contentRef: "report-content_attention_unexpected",
+      kind: "progress",
+      attention: {
+        attentionId: "attention-unexpected",
+        attentionRef: "report-content_attention_unexpected",
+      },
+    }))).ok).toBe(false);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_resolution_unexpected",
+      contentRef: "report-content_resolution_unexpected",
+      kind: "progress",
+      resolutionExternalKey: "approval-primary",
+    }))).ok).toBe(false);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention_collision",
+      contentRef: "report-content_attention_collision",
+      kind: "attention",
+      attention: {
+        attentionId: "attention-collision",
+        attentionRef: "report-content_attention_collision",
+        externalKey: "approval-primary",
+      },
+    }))).ok).toBe(false);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention_identity_conflict",
+      contentRef: "report-content_attention_identity_conflict",
+      kind: "attention",
+      attention: {
+        attentionId: "attention-primary",
+        attentionRef: "report-content_attention_identity_conflict",
+        externalKey: "approval-other",
+      },
+    }))).ok).toBe(false);
+    expect((await store.listOpenAttention(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      limit: 0,
+    })).ok).toBe(false);
+  });
+
+  it("validates direct attention transitions and stored row corruption", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    const loaded = await store.get(OWNER_SCOPE, "managed-run_a");
+    if (!loaded.ok || loaded.value === undefined) throw new Error("expected active managed run");
+    const record = loaded.value;
+    const attention = createManagedRunAttentionStoreStatements(db);
+    const attentionInput = (attentionId: string, externalKey: string) => reportInput({
+      kind: "attention",
+      attention: {
+        attentionId,
+        attentionRef: `attention-content-${attentionId}`,
+        externalKey,
+      },
+    });
+
+    expect(attention.applyReport(record, 1, attentionInput("attention-direct", "approval-direct")).ok).toBe(true);
+    expect(attention.applyReport(record, 2, attentionInput("attention-collision", "approval-direct")).ok).toBe(false);
+    expect(attention.applyReport(record, 2, attentionInput("attention-direct", "approval-other")).ok).toBe(false);
+    expect(attention.applyReport(record, 2, reportInput({
+      kind: "attention",
+      attention: {
+        attentionId: "",
+        attentionRef: "attention-content-invalid",
+      },
+    })).ok).toBe(false);
+    expect(attention.applyReport(record, 2, reportInput({
+      resolutionExternalKey: "approval-direct",
+    })).ok).toBe(false);
+    expect(attention.applyReport(record, 2, attentionInput("attention-invalid-response", "approval-invalid-response")).ok).toBe(true);
+    expect(attention.claimResponse(OWNER_SCOPE, {
+      operationId: "attention-response-invalid",
+      attentionId: "attention-invalid-response",
+      responseRef: "",
+      respondedAtMs: 1_800_000_000_200,
+    }).ok).toBe(false);
+
+    expect(attention.claimResponse(OWNER_SCOPE, {
+      operationId: "attention-response-corrupt",
+      attentionId: "attention-direct",
+      responseRef: "attention-response-content-direct",
+      respondedAtMs: 1_800_000_000_200,
+    }).value?.kind).toBe("updated");
+    db.prepare(`
+      UPDATE managed_run_attention_operations SET result_record = ?
+      WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
+    `).run("{", "attention-direct", "attention-response-corrupt");
+    expect(attention.claimResponse(OWNER_SCOPE, {
+      operationId: "attention-response-corrupt",
+      attentionId: "attention-direct",
+      responseRef: "attention-response-content-direct",
+      respondedAtMs: 1_800_000_000_200,
+    }).ok).toBe(false);
+    db.prepare(`
+      UPDATE managed_run_attention_operations SET result_record = ?
+      WHERE attention_id = ? AND operation_id = ? AND operation_kind = 'response'
+    `).run("{}", "attention-direct", "attention-response-corrupt");
+    expect(attention.claimResponse(OWNER_SCOPE, {
+      operationId: "attention-response-corrupt",
+      attentionId: "attention-direct",
+      responseRef: "attention-response-content-direct",
+      respondedAtMs: 1_800_000_000_200,
+    }).ok).toBe(false);
+
+    expect(attention.applyReport(record, 3, attentionInput("attention-corrupt-row", "approval-corrupt-row")).ok).toBe(true);
+    db.prepare("UPDATE managed_run_attention SET updated_at_ms = 'bad' WHERE attention_id = ?")
+      .run("attention-corrupt-row");
+    expect(attention.get(OWNER_SCOPE, "attention-corrupt-row").ok).toBe(false);
+    expect(attention.applyReport(record, 3, attentionInput("attention-corrupt-row", "approval-corrupt-row")).ok).toBe(false);
+    expect(attention.claimResponse(OWNER_SCOPE, {
+      operationId: "attention-response-corrupt-row",
+      attentionId: "attention-corrupt-row",
+      responseRef: "attention-response-content-corrupt-row",
+      respondedAtMs: 1_800_000_000_300,
+    }).ok).toBe(false);
+    expect(attention.listOpen(OWNER_SCOPE, { limit: 10 }).ok).toBe(false);
+    db.prepare("UPDATE managed_run_attention SET updated_at_ms = ?, agent_id = '' WHERE attention_id = ?")
+      .run(1_800_000_000_100, "attention-corrupt-row");
+    expect(attention.listOpen({ ...OWNER_SCOPE, agentId: "" }, { limit: 10 }).ok).toBe(false);
+
+    expect(attention.applyReport(record, 4, attentionInput("attention-corrupt-collision", "approval-corrupt-collision")).ok).toBe(true);
+    db.prepare("UPDATE managed_run_attention SET updated_at_ms = 'bad' WHERE attention_id = ?")
+      .run("attention-corrupt-collision");
+    expect(attention.applyReport(record, 5, attentionInput("attention-collision-candidate", "approval-corrupt-collision")).ok).toBe(false);
   });
 
   it("rejects altered report replay and service ownership mismatches without advancing", async () => {
