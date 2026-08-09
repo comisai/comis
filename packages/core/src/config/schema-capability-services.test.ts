@@ -53,6 +53,24 @@ describe("capability-services application configuration", () => {
     }).success).toBe(false);
   });
 
+  it("accepts canonical workspace roots and rejects broad workspace authority", () => {
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{ ...makeInstance(), allowedWorkspaceRoots: ["/srv/comis-workspaces"] }],
+    }).success).toBe(true);
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{ ...makeInstance(), allowedWorkspaceRoots: ["/"] }],
+    }).success).toBe(false);
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{ ...makeInstance(), allowedWorkspaceRoots: ["relative/workspaces"] }],
+    }).success).toBe(false);
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{
+        ...makeInstance(),
+        allowedWorkspaceRoots: ["/srv/comis-workspaces", "/srv/comis-workspaces"],
+      }],
+    }).success).toBe(false);
+  });
+
   it("exposes the restart-only section while keeping every field immutable", () => {
     expect(getConfigSections()).toContain("capabilityServices");
     expect(isImmutableConfigPath("capabilityServices")).toBe(true);

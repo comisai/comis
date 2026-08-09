@@ -209,6 +209,29 @@ describe("managed MCP private metadata boundary", () => {
     }));
   });
 
+  it("passes a validated workspace request into managed-run activation", async () => {
+    const deps = makeDeps();
+    const bridge = createManagedMcpPrivateMetadataBridge(deps);
+    const call = makeCall();
+
+    const accepted = await runWithContext(makeContext(), async () => {
+      expect((await bridge.createRequestMeta(call)).ok).toBe(true);
+      return bridge.acceptResultMeta({
+        ...call,
+        meta: makePreparedMeta({
+          requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
+        }),
+      });
+    });
+
+    expect(accepted.ok).toBe(true);
+    expect(deps.activatePrepared).toHaveBeenCalledWith(expect.objectContaining({
+      prepared: expect.objectContaining({
+        requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
+      }),
+    }));
+  });
+
   it("rejects prepared metadata after active-turn policy ownership changes", async () => {
     const deps = makeDeps();
     const bridge = createManagedMcpPrivateMetadataBridge(deps);

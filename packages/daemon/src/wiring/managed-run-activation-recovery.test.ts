@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -15,11 +15,13 @@ import {
 import {
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
+  createSqliteWorkspaceLeaseStore,
   initSchema,
 } from "@comis/memory";
 import { ok } from "@comis/shared";
 import { createManagedRunActivationCoordinator } from "./managed-run-activation-coordinator.js";
 import type { ActiveCapabilityServiceView } from "./capability-service-runtime.js";
+import { validateWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
 
 const NOW_MS = 1_800_000_000_000;
 const conversationScope = {
@@ -58,6 +60,7 @@ function makeRecord(
   serviceInstanceId: string,
   descriptorRef: string,
   overrides: Partial<ManagedRunRecord> = {},
+  requestedWorkspaceRoot?: string,
 ): ManagedRunRecord {
   const suffix = managedRunId.replace("managed-run_", "");
   const externalRunRef = `external-run_${suffix}`;
@@ -67,6 +70,9 @@ function makeRecord(
     registrationNonce: `registration-nonce_${suffix}`,
     expiresAtMs,
     state: "prepared" as const,
+    ...(requestedWorkspaceRoot === undefined
+      ? {}
+      : { requestedWorkspace: { rootHint: requestedWorkspaceRoot } }),
   };
   return {
     schemaVersion: 1,
@@ -113,7 +119,7 @@ function makeRecord(
   };
 }
 
-function makeActiveView(): ActiveCapabilityServiceView {
+function makeActiveView(allowedWorkspaceRoots: readonly string[] = []): ActiveCapabilityServiceView {
   return Object.freeze({
     schemaVersion: 1,
     revision: 1,
@@ -132,6 +138,7 @@ function makeActiveView(): ActiveCapabilityServiceView {
       serviceInstanceId: "service-instance_a",
       mcpServerName: "example-service",
       allowedAgents: Object.freeze(["agent_a"]),
+      allowedWorkspaceRoots: Object.freeze([...allowedWorkspaceRoots]),
       state: "active" as const,
       activeScopes: Object.freeze(["health"] as const),
     })]),
@@ -142,6 +149,9 @@ function controlIds(managedRunId: string) {
   return {
     activationOperationId: `activate-${managedRunId}`,
     abandonOperationId: `abandon-${managedRunId}`,
+    workspaceLeaseId: `workspace-${managedRunId}`,
+    leaseReleaseOperationId: `lease-release-${managedRunId}`,
+    leaseRecoveryOperationId: `lease-recover-${managedRunId}`,
     rejectionOperationId: `reject-${managedRunId}`,
     joinMissingOperationId: `join-missing-${managedRunId}`,
     outcomeUnknownOperationId: `outcome-unknown-${managedRunId}`,
@@ -163,7 +173,12 @@ describe("managed-run activation restart recovery", () => {
     temporaryDirectories.push(root);
     chmodSync(root, 0o700);
     const contentDirectory = join(root, "private-content");
+    const dataDirectory = join(root, "comis-data");
+    const workspaceRoot = join(root, "workspaces");
+    const workspaceDirectory = join(workspaceRoot, "task-valid");
     mkdirSync(contentDirectory, { mode: 0o700 });
+    mkdirSync(dataDirectory, { mode: 0o700 });
+    mkdirSync(workspaceDirectory, { recursive: true, mode: 0o700 });
     const databasePath = join(root, "managed-runs.db");
 
     const firstDb = new Database(databasePath);
@@ -185,10 +200,27 @@ describe("managed-run activation restart recovery", () => {
         status: "unknown",
         statusReason: "service_state_unavailable",
       }),
-      makeRecord("managed-run_valid", "service-instance_a", "descriptor_valid"),
+      makeRecord("managed-run_valid", "service-instance_a", "descriptor_valid", {
+        workspaceLeaseId: "workspace-lease_valid",
+      }, workspaceDirectory),
       makeRecord("managed-run_corrupt", "service-instance_a", "descriptor_corrupt"),
     ];
     for (const record of records) expect((await firstStore.create(record)).ok).toBe(true);
+    const workspaceIdentity = statSync(workspaceDirectory);
+    const firstWorkspaceLeases = createSqliteWorkspaceLeaseStore(firstDb);
+    expect((await firstWorkspaceLeases.create({
+      schemaVersion: 1,
+      workspaceLeaseId: "workspace-lease_valid",
+      managedRunId: "managed-run_valid",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      canonicalPath: workspaceDirectory,
+      filesystemIdentity: { device: workspaceIdentity.dev, inode: workspaceIdentity.ino },
+      state: "active",
+      createdAtMs: NOW_MS - 10_000,
+      updatedAtMs: NOW_MS - 10_000,
+    })).ok).toBe(true);
     expect((await firstContent.putActivationDescriptor({
       tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_expired",
     }, "descriptor_expired", {
@@ -212,6 +244,7 @@ describe("managed-run activation restart recovery", () => {
       externalRunRef: "external-run_valid",
       registrationNonce: "registration-nonce_valid",
       expiresAtMs: NOW_MS + 60_000,
+      requestedWorkspace: { rootHint: workspaceDirectory },
     })).ok).toBe(true);
     firstDb.prepare("UPDATE managed_runs SET turn_scope = ? WHERE managed_run_id = ?")
       .run("{not-json", "managed-run_corrupt");
@@ -220,6 +253,7 @@ describe("managed-run activation restart recovery", () => {
     const reopenedDb = new Database(databasePath);
     initSchema(reopenedDb, 4);
     const store = createSqliteManagedRunStore(reopenedDb);
+    const workspaceLeases = createSqliteWorkspaceLeaseStore(reopenedDb);
     const contentResult = createSqliteManagedRunContentStore(reopenedDb, {
       directoryPath: realpathSync(contentDirectory),
       nowMs: () => NOW_MS,
@@ -243,8 +277,11 @@ describe("managed-run activation restart recovery", () => {
     const coordinator = createManagedRunActivationCoordinator({
       store,
       contentStore,
+      workspaceLeases,
       control,
-      activeView: { getActiveView: makeActiveView },
+      activeView: { getActiveView: () => makeActiveView([workspaceRoot]) },
+      validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
+        validateWorkspaceLeasePath({ requestedPath, allowedWorkspaceRoots, dataDir: dataDirectory }),
       ids: {
         forOperation: (operationId) => ({
           managedRunId: `managed-${operationId}`,
@@ -281,6 +318,7 @@ describe("managed-run activation restart recovery", () => {
     expect(activate).toHaveBeenCalledWith(expect.objectContaining({
       operationId: "activate-managed-run_valid",
       managedRunId: "managed-run_valid",
+      workspaceLeaseId: "workspace-lease_valid",
     }));
     expect(abandon).toHaveBeenCalledTimes(1);
     expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
@@ -292,6 +330,15 @@ describe("managed-run activation restart recovery", () => {
       "managed-run_valid",
     );
     expect(validRecord).toMatchObject({ ok: true, value: { status: "active" } });
+    expect(await workspaceLeases.get({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_valid",
+    }, "workspace-lease_valid")).toMatchObject({
+      ok: true,
+      value: { state: "active", lastRecoveredAtMs: NOW_MS },
+    });
     expect(validRecord.ok && validRecord.value?.activationDescriptorRef).toBeUndefined();
     expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_expired"))
       .toMatchObject({ ok: true, value: { status: "cancelled" } });

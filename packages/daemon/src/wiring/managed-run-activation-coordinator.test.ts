@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { chmodSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -13,10 +13,12 @@ import {
   type ManagedRunOwnerScope,
   type ManagedRunPreparedStart,
   type ManagedRunStorePort,
+  type WorkspaceLeasePort,
 } from "@comis/core";
 import {
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
+  createSqliteWorkspaceLeaseStore,
   initSchema,
 } from "@comis/memory";
 import { err, ok } from "@comis/shared";
@@ -26,6 +28,7 @@ import {
   type ManagedRunActivationInput,
 } from "./managed-run-activation-coordinator.js";
 import type { ActiveCapabilityServiceView } from "./capability-service-runtime.js";
+import { validateWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
 
 const NOW_MS = 1_800_000_000_000;
 const CONVERSATION_SCOPE = {
@@ -86,6 +89,7 @@ function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): A
       serviceInstanceId: "service-instance_a",
       mcpServerName: "example-service",
       allowedAgents: Object.freeze(["agent_a"]),
+      allowedWorkspaceRoots: Object.freeze([]),
       state: "active" as const,
       activeScopes: Object.freeze(["health", "report"] as const),
     })]),
@@ -144,8 +148,11 @@ function makeIds(operationId: string) {
   return {
     managedRunId: `managed-${operationId}`,
     activationDescriptorRef: `descriptor-${operationId}`,
+    workspaceLeaseId: `workspace-${operationId}`,
     activationOperationId: `activate-${operationId}`,
     abandonOperationId: `abandon-${operationId}`,
+    leaseReleaseOperationId: `lease-release-${operationId}`,
+    leaseRecoveryOperationId: `lease-recover-${operationId}`,
     rejectionOperationId: `reject-${operationId}`,
     joinMissingOperationId: `join-missing-${operationId}`,
     outcomeUnknownOperationId: `outcome-unknown-${operationId}`,
@@ -161,6 +168,9 @@ function makeControlIds(managedRunId: string) {
   return {
     activationOperationId: ids.activationOperationId,
     abandonOperationId: ids.abandonOperationId,
+    workspaceLeaseId: ids.workspaceLeaseId,
+    leaseReleaseOperationId: ids.leaseReleaseOperationId,
+    leaseRecoveryOperationId: ids.leaseRecoveryOperationId,
     rejectionOperationId: ids.rejectionOperationId,
     joinMissingOperationId: ids.joinMissingOperationId,
     outcomeUnknownOperationId: ids.outcomeUnknownOperationId,
@@ -173,25 +183,37 @@ describe("managed-run two-phase activation", () => {
   let db: Database.Database;
   let store: ManagedRunStorePort;
   let contentStore: ManagedRunContentPort;
+  let workspaceLeases: WorkspaceLeasePort;
   let control: CapabilityServiceControlPort;
   let logger: ComisLogger;
   let eventBus: TypedEventBus;
   let activate: ReturnType<typeof vi.fn>;
   let abandon: ReturnType<typeof vi.fn>;
+  let dataDirectory: string;
+  let workspaceRoot: string;
+  let workspaceDirectory: string;
 
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 4);
     store = createSqliteManagedRunStore(db);
-    const directory = realpathSync(mkdtempSync(join(tmpdir(), "managed-run-activation-")));
-    temporaryDirectories.push(directory);
-    chmodSync(directory, 0o700);
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "managed-run-activation-")));
+    temporaryDirectories.push(root);
+    chmodSync(root, 0o700);
+    dataDirectory = join(root, "data");
+    workspaceRoot = join(root, "workspaces");
+    workspaceDirectory = join(workspaceRoot, "task-a");
+    mkdirSync(dataDirectory, { mode: 0o700 });
+    mkdirSync(workspaceDirectory, { recursive: true, mode: 0o700 });
+    const directory = join(dataDirectory, "private");
+    mkdirSync(directory, { mode: 0o700 });
     const content = createSqliteManagedRunContentStore(db, {
       directoryPath: directory,
       nowMs: () => NOW_MS,
     });
     if (!content.ok) throw content.error;
     contentStore = content.value;
+    workspaceLeases = createSqliteWorkspaceLeaseStore(db);
     activate = vi.fn(async (command) => ok({
       managedRunId: command.managedRunId,
       externalRunRef: command.externalRunRef,
@@ -220,8 +242,18 @@ describe("managed-run two-phase activation", () => {
     return createManagedRunActivationCoordinator({
       store,
       contentStore,
+      workspaceLeases,
       control,
-      activeView: { getActiveView: () => makeActiveView() },
+      activeView: {
+        getActiveView: () => makeActiveView({
+          instances: Object.freeze([Object.freeze({
+            ...makeActiveView().instances[0]!,
+            allowedWorkspaceRoots: Object.freeze([workspaceRoot]),
+          })]),
+        }),
+      },
+      validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
+        validateWorkspaceLeasePath({ requestedPath, allowedWorkspaceRoots, dataDir: dataDirectory }),
       ids: { forOperation: makeIds, forManagedRun: makeControlIds },
       nowMs: () => NOW_MS,
       eventBus,
@@ -296,6 +328,96 @@ describe("managed-run two-phase activation", () => {
     const persisted = JSON.stringify(db.prepare("SELECT * FROM managed_runs").all());
     expect(persisted).not.toContain("external-run_a");
     expect(persisted).not.toContain("registration-nonce_a");
+  });
+
+  it("mints and binds a requested workspace lease before atomic activation", async () => {
+    activate.mockImplementation(async (command) => {
+      expect(command.workspaceLeaseId).toBe("workspace-operation_prepare_workspace");
+      expect(await store.get(OWNER_SCOPE, command.managedRunId)).toMatchObject({
+        ok: true,
+        value: { workspaceLeaseId: command.workspaceLeaseId, status: "preparing" },
+      });
+      expect(await workspaceLeases.get({
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        serviceInstanceId: "service-instance_a",
+        managedRunId: command.managedRunId,
+      }, command.workspaceLeaseId)).toMatchObject({
+        ok: true,
+        value: {
+          canonicalPath: workspaceDirectory,
+          state: "active",
+          filesystemIdentity: { device: expect.any(Number), inode: expect.any(Number) },
+        },
+      });
+      return ok({
+        managedRunId: command.managedRunId,
+        externalRunRef: command.externalRunRef,
+        state: "active" as const,
+        activatedAtMs: NOW_MS + 10,
+      });
+    });
+
+    const result = await makeCoordinator().activatePrepared(makeInput({
+      operationId: "operation_prepare_workspace",
+      prepared: makePrepared({ requestedWorkspace: { rootHint: workspaceDirectory } }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        kind: "activated",
+        record: { workspaceLeaseId: "workspace-operation_prepare_workspace" },
+      },
+    });
+  });
+
+  it("rejects a workspace request outside instance authority before activation", async () => {
+    const outside = join(dataDirectory, "forbidden-workspace");
+    mkdirSync(outside);
+
+    const result = await makeCoordinator().activatePrepared(makeInput({
+      operationId: "operation_forbidden_workspace",
+      prepared: makePrepared({ requestedWorkspace: { rootHint: outside } }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "workspace_not_allowed" },
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
+      disposition: "reap_safe",
+    }));
+  });
+
+  it("releases a minted lease with the abandonment disposition", async () => {
+    activate.mockResolvedValue(err({
+      kind: "rejected" as const,
+      reasonCode: "precondition_failed",
+    }));
+
+    const result = await makeCoordinator().activatePrepared(makeInput({
+      operationId: "operation_rejected_workspace",
+      prepared: makePrepared({ requestedWorkspace: { rootHint: workspaceDirectory } }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "activation_rejected" },
+    });
+    expect(await workspaceLeases.get({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-operation_rejected_workspace",
+    }, "workspace-operation_rejected_workspace")).toMatchObject({
+      ok: true,
+      value: { state: "released", releaseDisposition: "reap_safe" },
+    });
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
+      disposition: "reap_safe",
+    }));
   });
 
   it("returns the durable original without repeating service activation", async () => {
