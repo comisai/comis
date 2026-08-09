@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
-import { MAX_MANAGED_RUN_REPORT_BYTES } from "@comis/core";
+import { MAX_MANAGED_RUN_REPORT_BYTES } from "../../packages/core/src/domain/managed-run-content.js";
 import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "../../packages/capability-service-sdk/src/constants.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
