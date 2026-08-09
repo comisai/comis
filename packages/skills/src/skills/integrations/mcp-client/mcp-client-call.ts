@@ -43,10 +43,6 @@ import { handleDisconnection } from "./mcp-client-reconnect.js";
 import { reconnectServer } from "./mcp-client-connect.js";
 import { resetIdleActivity } from "./mcp-client-idle-eviction.js";
 
-// ---------------------------------------------------------------------------
-// Lazy reconnect
-// ---------------------------------------------------------------------------
-
 /**
  * Resolve a live connection for a server, lazily reconnecting when it is
  * missing. A server that was idle-evicted has its connection deleted but its
