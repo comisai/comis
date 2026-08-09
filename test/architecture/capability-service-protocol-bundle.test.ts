@@ -14,6 +14,7 @@ import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 import { MAX_MANAGED_RUN_REPORT_BYTES } from "@comis/core";
+import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "../../packages/capability-service-sdk/src/constants.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
@@ -135,6 +136,7 @@ describe("capability-service protocol bundle contract", () => {
     const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
 
     expect(manifest.protocolId).toBe("comis.capability-service/1");
+    expect(CAPABILITY_SERVICE_BUNDLE_DIGEST).toBe(manifest.bundleDigest);
     expect(manifest.methods).toEqual(EXPECTED_METHODS);
     expect(manifest.errorKinds).toEqual([
       "bundle_digest_mismatch",
