@@ -2,10 +2,9 @@
 import net from "node:net";
 import { chmodSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  TypedEventBus,
   type ComisLogger,
   type PlannedCapabilityServiceDefinition,
   type PlannedCapabilityServiceInstance,
@@ -143,8 +142,9 @@ describe("daemon-owned capability-service Unix host", () => {
       created: createUnixCapabilityServiceHostRuntime({
         definitions: [makeDefinition()],
         instances: [makeInstance(socketPath)],
-        credentials: new Map([["service-instance_a", BEARER]]),
+        credentials: new Map([["service-instance_a", () => BEARER]]),
         bundleDigest: BUNDLE_DIGEST,
+        socketRoot: dirname(socketPath),
         reportBridge: reportBridge ?? {
           ingestReport: vi.fn(async () => ok({
             kind: "accepted" as const,
@@ -165,7 +165,6 @@ describe("daemon-owned capability-service Unix host", () => {
         requestDeadlineMs: 5_000,
         clock,
         timers,
-        eventBus: new TypedEventBus(),
         logger: makeLogger(),
       }),
     };
