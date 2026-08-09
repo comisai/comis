@@ -275,6 +275,22 @@ export {
 } from "./sub-agent-tool-denylist.js";
 export type { UnreachableToolEntry } from "./sub-agent-tool-denylist.js";
 
+export {
+  ManagedRunStatusSchema,
+  ManagedRunStatusReasonSchema,
+  ManagedRunInitiationSourceSchema,
+  ManagedRunTerminalOutcomeSchema,
+  ManagedRunRecordSchema,
+  parseManagedRunRecord,
+} from "./managed-run.js";
+export type {
+  ManagedRunStatus,
+  ManagedRunStatusReason,
+  ManagedRunInitiationSource,
+  ManagedRunTerminalOutcome,
+  ManagedRunRecord,
+} from "./managed-run.js";
+
 // RPC typed-refusal classification — the single source of truth the daemon
 // rpc-dispatch classifier AND the @comis/gateway method-router classifier both
 // delegate to, so intentional policy/security refusals classify consistently

@@ -138,6 +138,12 @@ export {
   AgentTurnExecutionOutcomeSchema,
   classifyAgentFinishErrorKind,
   classifyAgentTurnExecutionOutcome,
+  ManagedRunStatusSchema,
+  ManagedRunStatusReasonSchema,
+  ManagedRunInitiationSourceSchema,
+  ManagedRunTerminalOutcomeSchema,
+  ManagedRunRecordSchema,
+  parseManagedRunRecord,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -247,4 +253,9 @@ export type {
   ModelResolutionSource,
   ExecutionSideEffectSummary,
   AgentTurnExecutionOutcome,
+  ManagedRunStatus,
+  ManagedRunStatusReason,
+  ManagedRunInitiationSource,
+  ManagedRunTerminalOutcome,
+  ManagedRunRecord,
 } from "../domain/index.js";

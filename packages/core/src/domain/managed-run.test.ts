@@ -159,12 +159,12 @@ describe("ManagedRunRecord domain authority validation", () => {
     })).ok).toBe(true);
   });
 
-  it("requires a private activation pointer only while preparing", () => {
+  it("requires an activation pointer while preparing and preserves it for uncertain recovery", () => {
     expect(parseManagedRunRecord(makeRecord({ activationDescriptorRef: undefined })).ok).toBe(false);
     expect(parseManagedRunRecord(makeRecord({
       status: "unknown",
       statusReason: "recovery_join_missing",
-    })).ok).toBe(false);
+    })).ok).toBe(true);
     expect(parseManagedRunRecord(makeRecord({
       status: "unknown",
       statusReason: "recovery_join_missing",
