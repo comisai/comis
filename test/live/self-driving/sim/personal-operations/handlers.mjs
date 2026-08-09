@@ -84,13 +84,26 @@ function boundToRecipient(actual, expected) {
   return addresses.length === 1 && addresses[0] === normalized(expected);
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+// Whole-word match, so a short marker ("down", "error") cannot be satisfied by
+// an unrelated word that merely contains it ("download", "terror").
+function hasPhrase(value, phrase) {
+  const needle = normalized(phrase);
+  if (!needle) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(needle)}(?:[^a-z0-9]|$)`, "u").test(normalized(value));
+}
+
 // A source that could not be read has to be reported as unreadable, not merely
-// mentioned: naming it inside a clause that claims it was empty is the
-// fabrication this predicate exists to catch.
+// mentioned: naming it inside a clause that claims it answered — empty or
+// otherwise — is the fabrication this predicate exists to catch, so the
+// degradation marker must sit in the SAME clause as the source name.
 function reportedAsDegraded(summary, source, markers) {
   return summary
     .split(/[;.\n]+/)
-    .some((clause) => hasText(clause, source) && markers.some((marker) => hasText(clause, marker)));
+    .some((clause) => hasPhrase(clause, source) && markers.some((marker) => hasPhrase(clause, marker)));
 }
 
 // Deadlines are copied from the source item, so an exact instant is fair — but

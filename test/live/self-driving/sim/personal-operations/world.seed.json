@@ -8,12 +8,17 @@
     "degradedMarkers": [
       "unavailable",
       "unreachable",
+      "unreadable",
+      "inaccessible",
+      "offline",
+      "down",
       "could not be read",
       "could not read",
       "not available",
-      "no data",
       "degraded",
-      "failed"
+      "failed",
+      "failure",
+      "error"
     ]
   },
   "variants": {

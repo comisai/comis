@@ -6,8 +6,9 @@
 > test is the LEARNING — reflect → cross-session recall → reuse/promote → supersede → evict → trust-tier. The
 > agent drives real `mcp:<server>/<tool>` tools guided by a **mechanics-only** skill (the strategy is what the
 > engine must LEARN). **All 15 are built**; 14 are live-validated, and `personal-operations` is so far
-> validated only offline (its per-variant `--selftest` plus the contract test) and has no live drive on
-> record yet: these 13 complex workloads, plus 2 foundational
+> validated only offline (its per-variant `--selftest` plus the contract test) and has no live drive — and so
+> no transfer result — on record yet (see the validation-status note in [`../sim/README.md`](../sim/README.md)):
+> these 13 complex workloads, plus 2 foundational
 > exemplars — [**threat-hunting**](./adaptive-threat-hunting.md) (a full pinned spec) and **package-delivery**
 > (the reuse→promote demo, below). Each maps to `sim/<workload>/` — see [`../sim/README.md`](../sim/README.md) for
 > the dir ↔ MCP-server ↔ skill table + the deploy → `mcp connect` → drive runbook.

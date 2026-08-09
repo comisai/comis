@@ -227,6 +227,26 @@ su - comis -c 'comis mcp disconnect th-sim'
 (skill `name:` shown where authored; each workload ships its own `SKILL.md` — the table lists the canonical
 one for the exemplar.)
 
+## Validation status — `personal-operations` (2026-08-09)
+
+**Offline only. No live drive, and therefore NO transfer result, has been recorded for this workload.** What
+is verified: `--selftest` reaches `success` on the golden path and `failure` on the naive path for variants
+`A`, `B`, `C` and `A-degraded`, and the contract suite (`scripts/contracts/personal-operations-sim-contract.test.ts`)
+drives the full daily loop through the workload handle — reconciliation, staged-not-sent draft, one follow-up
+task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. None of that
+exercises the daemon, the reflection engine, or a model, so it says nothing about whether a learned skill
+transfers from one variant to another.
+
+Producing the missing result means driving the loop for real and reading GROUND TRUTH (never the reply):
+
+```bash
+bash /root/drive-sim-workload.sh personal-operations A              # 2 corroborating episodes → reflect → admit
+REUSE_ONLY=1 bash /root/drive-sim-workload.sh personal-operations B <fresh-sender>   # the transfer/reuse step
+node /root/db.mjs pick mental_models name,kind,state,proof_count    # proof_count↑ / candidate→active
+```
+
+Record the outcome here — including a negative one — before any doc claims this workload is live-validated.
+
 ## Live-run findings (package-delivery on the VPS — don't re-discover)
 - **`mcp connect --args` is VARIADIC (space-separated), not comma-joined.** `--args "path,workload"` is passed
   as ONE arg → the child node throws `Cannot find module '…/mcp-server.mjs,workload'` → `mcp list` shows the
