@@ -425,7 +425,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     options?: AssembleToolsOptions,
   ): Promise<Awaited<ReturnType<typeof assembleToolPipeline>>> {
     const managedMcpActiveView = deps.capabilityServices.runtime.getActiveView();
-    let capturedToolIds: readonly string[] | undefined;
+    const capturedToolIds = { current: undefined as readonly string[] | undefined };
     const includePlatform = options?.includePlatformTools ?? true;
     const toolGroups = options?.toolGroups;
     const sharedPaths = options?.sharedPaths;
@@ -482,7 +482,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       agentId,
       activeView: managedMcpActiveView,
       capturedAgentCapabilities: heldCapabilities,
-      getCapturedToolIds: () => capturedToolIds,
+      getCapturedToolIds: () => capturedToolIds.current,
       nowMs: () => deps.clock.now(),
       resolveRootRunId: (rootAgentId, sessionKey) => {
         const resolved = deps.resolveRootRunId?.(rootAgentId, sessionKey);
@@ -939,7 +939,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       hiddenPaths: securityBoundary?.hiddenPaths,
       hiddenReadAllowPaths,
     });
-    capturedToolIds = Object.freeze(assembledTools.map((tool) => tool.name));
+    capturedToolIds.current = Object.freeze(assembledTools.map((tool) => tool.name));
     return assembledTools;
   }
 
