@@ -233,7 +233,11 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(second.ok && "report" in second.value && second.value.report.sequence).toBe(2);
     expect(await store.get(OWNER_SCOPE, "managed-run_a")).toMatchObject({
       ok: true,
-      value: { lastAcceptedReportSequence: 2, pendingContinuation: true },
+      value: {
+        lastAcceptedReportSequence: 2,
+        pendingContinuation: true,
+        lastHeartbeatAtMs: 1_800_000_000_200,
+      },
     });
     expect(db.prepare("SELECT COUNT(*) AS count FROM managed_run_reports").get()).toEqual({ count: 2 });
   });
