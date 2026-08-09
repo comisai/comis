@@ -135,6 +135,9 @@ describe("createManagedRunContinuationCaller", () => {
       hooks,
     }));
     expect(input.formattedSessionKey).toBe(formatSessionKey(input.sessionKey));
+    expect(input.requestContext).toEqual(expect.objectContaining({
+      rootRunId: record.rootRunId,
+    }));
     expect(input.sessionKey).toEqual(expect.objectContaining({
       tenantId: "tenant-a",
       agentId: "agent-a",
