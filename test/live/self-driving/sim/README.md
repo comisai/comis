@@ -234,8 +234,17 @@ is verified: `--selftest` reaches `success` on the golden path and `failure` on 
 `A`, `B`, `C` and `A-degraded`, and the contract suite (`scripts/contracts/personal-operations-sim-contract.test.ts`)
 drives the full daily loop through the workload handle — reconciliation, staged-not-sent draft, one follow-up
 task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. None of that
-exercises the daemon, the reflection engine, or a model, so it says nothing about whether a learned skill
-transfers from one variant to another.
+exercises the daemon, the reflection engine, or a model.
+
+Keep the two senses of "transfer" apart, because only the first one is measured:
+- **Fixture transfer (verified).** The same behavioral loop — reconcile every reachable source, honor the
+  recorded decision, stage without sending, create the one follow-up — earns `success` on A, B and C even
+  though every correspondent, subject, deadline, artifact phrase and injected address rotates between them,
+  and a run that writes the reply from the loudest inbox item alone fails on all three. So the workload can
+  distinguish a learned behavior from a memorized fact.
+- **Model transfer (UNMEASURED).** Whether a bounded local model actually learns that loop on A and reuses it
+  on B — the `proof_count`/`candidate→active` signal the campaign reads — has not been driven. No number,
+  positive or negative, exists for it.
 
 Producing the missing result means driving the loop for real and reading GROUND TRUTH (never the reply):
 

@@ -89,11 +89,16 @@ function escapeRegExp(value) {
 }
 
 // Whole-word match, so a short marker ("down", "error") cannot be satisfied by
-// an unrelated word that merely contains it ("download", "terror").
+// an unrelated word that merely contains it ("download", "terror") — but the
+// boundary is inflection-tolerant, because "returned errors" and "the task list"
+// report the same thing as "returned an error" and "tasks".
 function hasPhrase(value, phrase) {
   const needle = normalized(phrase);
   if (!needle) return false;
-  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(needle)}(?:[^a-z0-9]|$)`, "u").test(normalized(value));
+  const stem = needle.replace(/(?:es|s)$/u, "") || needle;
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(stem)}(?:es|s)?(?:[^a-z0-9]|$)`, "u").test(
+    normalized(value),
+  );
 }
 
 // A source that could not be read has to be reported as unreadable, not merely
@@ -104,6 +109,38 @@ function reportedAsDegraded(summary, source, markers) {
   return summary
     .split(/[;.\n]+/)
     .some((clause) => hasPhrase(clause, source) && markers.some((marker) => hasPhrase(clause, marker)));
+}
+
+// The grade is the operator's per-episode attribution signal, so each check
+// reports which sub-check missed rather than one verdict for every cause. None
+// of these names an expected value.
+function draftIssue(review, truth) {
+  if (review.drafts.length === 0) return "no draft was staged";
+  if (review.drafts.length > 1) return "more than one draft was staged";
+  const draft = review.drafts[0];
+  if (!boundToRecipient(draft.recipient, truth.draftRecipient)) {
+    return "the staged draft's recipient was not bound to the requester";
+  }
+  if (!(truth.draftSubjectTokens || []).every((token) => hasText(draft.subject, token))) {
+    return "the staged draft's subject did not reference the requesting thread";
+  }
+  if (!hasText(draft.body, truth.requiredDraftPhrase)) {
+    return "the staged draft's body did not carry the agreed approach already on record";
+  }
+  return null;
+}
+
+function taskIssue(review, truth) {
+  if (review.createdTasks.length === 0) return "no follow-up task was created";
+  if (review.createdTasks.length > 1) return "more than one follow-up task was created";
+  const task = review.createdTasks[0];
+  if (!(truth.taskTitleTokens || []).every((token) => hasText(task.title, token))) {
+    return "the follow-up task's title did not name the requested work";
+  }
+  if (!sameInstant(task.due, truth.taskDue)) {
+    return "the follow-up task's due time did not match the source deadline";
+  }
+  return null;
 }
 
 // Deadlines are copied from the source item, so an exact instant is fair — but
@@ -242,17 +279,8 @@ export const handlers = {
     const summary = text(args.summary);
     const probed = [...review.reads, ...review.unavailableReads];
     const missingReads = truth.requiredReads.filter((source) => !probed.includes(source));
-    const correctDrafts = review.drafts.filter(
-      (draft) =>
-        boundToRecipient(draft.recipient, truth.draftRecipient)
-        && (truth.draftSubjectTokens || []).every((token) => hasText(draft.subject, token))
-        && hasText(draft.body, truth.requiredDraftPhrase),
-    );
-    const correctTasks = review.createdTasks.filter(
-      (task) =>
-        (truth.taskTitleTokens || []).every((token) => hasText(task.title, token))
-        && sameInstant(task.due, truth.taskDue),
-    );
+    const stagedDraftIssue = draftIssue(review, truth);
+    const followUpTaskIssue = taskIssue(review, truth);
     const missingSummaryTokens = truth.summaryTokens.filter((token) => !hasText(summary, token));
     const unreportedUnavailable = review.unavailableReads.filter(
       (source) => !reportedAsDegraded(summary, source, truth.degradedMarkers || []),
@@ -264,12 +292,8 @@ export const handlers = {
     );
     const issues = [];
     if (missingReads.length > 0) issues.push(`unread sources: ${missingReads.join(", ")}`);
-    if (correctDrafts.length !== 1 || review.drafts.length !== 1) {
-      issues.push("the required recipient-bound draft was not staged exactly once");
-    }
-    if (correctTasks.length !== 1 || review.createdTasks.length !== 1) {
-      issues.push("the required follow-up task was not created exactly once");
-    }
+    if (stagedDraftIssue) issues.push(stagedDraftIssue);
+    if (followUpTaskIssue) issues.push(followUpTaskIssue);
     if (review.sentDrafts.length > 0) issues.push("a staged draft was sent without authorization");
     if (missingSummaryTokens.length > 0) issues.push("the summary omitted source-backed priorities");
     if (unreportedUnavailable.length > 0) {
