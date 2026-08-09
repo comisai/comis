@@ -55,6 +55,14 @@ const mockCreateMediaPersistenceService = vi.hoisted(() => vi.fn(() => ({
   persist: vi.fn(),
 })));
 const mockMcpToolsToAgentTools = vi.hoisted(() => vi.fn(() => [{ name: "mcp:server/tool" }]));
+const mockManagedMcpBridge = vi.hoisted(() => ({
+  createRequestMeta: vi.fn(),
+  acceptResultMeta: vi.fn(),
+  discardCall: vi.fn(),
+}));
+const mockCreateManagedMcpPrivateMetadataBridge = vi.hoisted(() => vi.fn(
+  () => mockManagedMcpBridge,
+));
 const mockSanitizeImageForApi = vi.hoisted(() => vi.fn());
 const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
   recordRead: vi.fn(),
@@ -101,6 +109,7 @@ const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
 vi.mock("@comis/skills", () => ({
   assembleToolPipeline: mockAssembleToolPipeline,
   mcpToolsToAgentTools: mockMcpToolsToAgentTools,
+  createManagedMcpPrivateMetadataBridge: mockCreateManagedMcpPrivateMetadataBridge,
   TOOL_PROFILES: {
     minimal: ["exec", "read", "write"],
     coding: ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
@@ -850,6 +859,51 @@ describe("setupTools", () => {
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("mcp:server/tool");
     expect(mockMcpToolsToAgentTools).toHaveBeenCalled();
+  });
+
+  it("wires one frozen capability view and final tool ceiling into managed MCP calls", async () => {
+    const activeView = {
+      viewHash: "c".repeat(64),
+      definitions: [],
+      instances: [],
+    };
+    const capabilityServices = {
+      runtime: { getActiveView: vi.fn(() => activeView) },
+      store: { get: vi.fn() },
+      activationCoordinator: { activatePrepared: vi.fn() },
+    };
+    const mcpClientManager = {
+      getTools: vi.fn(() => [{ name: "mcp-tool-1", inputSchema: {} }]),
+      callTool: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      disconnectAll: vi.fn(),
+      getConnection: vi.fn(),
+      getAllConnections: vi.fn(),
+    };
+    mockAssembleToolPipeline.mockImplementationOnce(async (input) => input.platformTools());
+    const deps = createMinimalDeps({
+      mcpClientManager: mcpClientManager as any,
+      capabilityServices,
+      clock: { now: () => 1_800_000_000_000 },
+    } as unknown as Partial<ToolsDeps>);
+    const setupTools = await getSetupTools();
+
+    const tools = await setupTools(deps).assembleToolsForAgent("agent-1");
+
+    expect(capabilityServices.runtime.getActiveView).toHaveBeenCalledOnce();
+    expect(mockCreateManagedMcpPrivateMetadataBridge).toHaveBeenCalledOnce();
+    const bridgeDeps = mockCreateManagedMcpPrivateMetadataBridge.mock.calls[0]![0];
+    expect(bridgeDeps).toMatchObject({
+      agentId: "agent-1",
+      activeView,
+      capturedAgentCapabilities: expect.arrayContaining(["orch:read"]),
+    });
+    expect(bridgeDeps.getCapturedToolIds()).toEqual(
+      tools.map((tool: { name: string }) => tool.name),
+    );
+    const mcpBridgeCall = mockMcpToolsToAgentTools.mock.calls.at(-1)!;
+    expect(mcpBridgeCall[7]).toBe(mockManagedMcpBridge);
   });
 
   // -------------------------------------------------------------------------
