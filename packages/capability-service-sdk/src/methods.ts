@@ -26,7 +26,7 @@ const HandshakeParamsSchema = z.strictObject({
 export const CapabilityHandshakeRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
-  method: z.literal("capability.handshake"),
+  method: z.literal("capabilityServices.handshake"),
   params: HandshakeParamsSchema,
 });
 
@@ -45,7 +45,7 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
 export const CapabilityActivateRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
-  method: z.literal("capability.activate"),
+  method: z.literal("managedRuns.activate"),
   params: z.strictObject({
     operationId: OperationIdSchema,
     serviceInstanceRef: ServiceInstanceRefSchema,
@@ -70,7 +70,7 @@ export const CapabilityActivateResponseSchema = z.strictObject({
 export const CapabilityAbandonRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
-  method: z.literal("capability.abandon"),
+  method: z.literal("managedRuns.abandon"),
   params: z.strictObject({
     operationId: OperationIdSchema,
     serviceInstanceRef: ServiceInstanceRefSchema,
@@ -104,7 +104,7 @@ const EvidenceDescriptorSchema = z.strictObject({
 export const CapabilityReportRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
-  method: z.literal("capability.report"),
+  method: z.literal("managedRuns.report"),
   params: z.strictObject({
     operationId: OperationIdSchema,
     serviceInstanceRef: ServiceInstanceRefSchema,
@@ -131,7 +131,7 @@ export const CapabilityReportResponseSchema = z.strictObject({
 export const CapabilityHealthRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
-  method: z.literal("capability.health"),
+  method: z.literal("capabilityServices.health"),
   params: z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,

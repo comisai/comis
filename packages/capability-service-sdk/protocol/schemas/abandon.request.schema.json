@@ -14,7 +14,7 @@
       "type": "string"
     },
     "method": {
-      "const": "capability.abandon",
+      "const": "managedRuns.abandon",
       "type": "string"
     },
     "params": {

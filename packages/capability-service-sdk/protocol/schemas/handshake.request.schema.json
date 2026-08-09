@@ -14,7 +14,7 @@
       "type": "string"
     },
     "method": {
-      "const": "capability.handshake",
+      "const": "capabilityServices.handshake",
       "type": "string"
     },
     "params": {
@@ -43,11 +43,11 @@
         "supportedMethods": {
           "items": {
             "enum": [
-              "capability.abandon",
-              "capability.activate",
-              "capability.handshake",
-              "capability.health",
-              "capability.report"
+              "capabilityServices.handshake",
+              "capabilityServices.health",
+              "managedRuns.abandon",
+              "managedRuns.activate",
+              "managedRuns.report"
             ],
             "type": "string"
           },

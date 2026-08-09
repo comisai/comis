@@ -95,7 +95,7 @@ function validateReportSizes(
   method: unknown,
   params: Readonly<Record<string, unknown>>,
 ): Result<void, CapabilityServiceProtocolFixtureRejection> {
-  if (method !== "capability.report") return ok(undefined);
+  if (method !== "managedRuns.report") return ok(undefined);
   const summary = params["summary"];
   if (
     typeof summary === "string" &&

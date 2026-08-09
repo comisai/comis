@@ -8,18 +8,18 @@
       "payload": {
         "id": "operation_digest",
         "jsonrpc": "2.0",
-        "method": "capability.handshake",
+        "method": "capabilityServices.handshake",
         "params": {
           "bundleDigest": "0000000000000000000000000000000000000000000000000000000000000000",
           "operationId": "operation_digest",
           "protocolId": "comis.capability-service/1",
           "serviceInstanceRef": "service-instance_a",
           "supportedMethods": [
-            "capability.abandon",
-            "capability.activate",
-            "capability.handshake",
-            "capability.health",
-            "capability.report"
+            "capabilityServices.handshake",
+            "capabilityServices.health",
+            "managedRuns.abandon",
+            "managedRuns.activate",
+            "managedRuns.report"
           ]
         }
       },

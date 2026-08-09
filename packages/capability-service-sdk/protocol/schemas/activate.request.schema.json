@@ -14,7 +14,7 @@
       "type": "string"
     },
     "method": {
-      "const": "capability.activate",
+      "const": "managedRuns.activate",
       "type": "string"
     },
     "params": {

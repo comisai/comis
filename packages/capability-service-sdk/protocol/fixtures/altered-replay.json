@@ -7,7 +7,7 @@
       "payload": {
         "id": "operation_replay",
         "jsonrpc": "2.0",
-        "method": "capability.report",
+        "method": "managedRuns.report",
         "params": {
           "evidence": [],
           "managedRunRef": "managed-run_a",
@@ -27,7 +27,7 @@
       "payload": {
         "id": "operation_replay",
         "jsonrpc": "2.0",
-        "method": "capability.report",
+        "method": "managedRuns.report",
         "params": {
           "evidence": [],
           "managedRunRef": "managed-run_a",

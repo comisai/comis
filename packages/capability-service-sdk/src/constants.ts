@@ -7,11 +7,11 @@ export const CAPABILITY_SERVICE_PROTOCOL_ID = "comis.capability-service/1" as co
 export const BUNDLE_DIGEST_FIXTURE_TOKEN = "__BUNDLE_DIGEST__" as const;
 
 export const CAPABILITY_SERVICE_METHODS = [
-  "capability.abandon",
-  "capability.activate",
-  "capability.handshake",
-  "capability.health",
-  "capability.report",
+  "capabilityServices.handshake",
+  "capabilityServices.health",
+  "managedRuns.abandon",
+  "managedRuns.activate",
+  "managedRuns.report",
 ] as const;
 
 export type CapabilityServiceMethod = (typeof CAPABILITY_SERVICE_METHODS)[number];

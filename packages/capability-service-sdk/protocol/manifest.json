@@ -2,35 +2,35 @@
   "artifacts": [
     {
       "path": "fixtures/altered-replay.json",
-      "sha256": "ccd00bea1ef69d18adff347ac18a5b79294ec165945af7e0800406fe81b6db27"
+      "sha256": "5e1eeead80cb7fb099acbd01beffc8328fc295c826de9ac7db58c9f153b37ccf"
     },
     {
       "path": "fixtures/boundary-size.json",
-      "sha256": "9f46c08a4301e15f8ea032c9dc483bb41aa38e996053f2cc844d87ed79f0fd11"
+      "sha256": "bbfa7002c09f5b47bb6681207e932fc09860264243dc1d8c4752ad4d43916c8b"
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "1646da9b6e65900e2f8193685ca31a0d60ad5e47742bc0751516f71ec57bbe01"
+      "sha256": "a6420ed907df44553b90f25e4c25bd52b380bac37630bd53cd8151f00746ae35"
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "3fc0382785a376f8175d40392bb5d03ea505069b69aac561a137baab227498db"
+      "sha256": "39754f62fdd73f8bd550c090b974b878a323315bf4baa5fd33fe18ba2d198098"
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "230c9c778d1b8389d180a9ebaf694aa64481abeb182aa51dbdcce7f4028f3408"
+      "sha256": "38829aa026684718ba09abbe508c33c264938e0d592ec7d9b76132586874bfbd"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "d99137292ec241c8e28eeb8b4e530b859a5f455c1d90ccbc8505837fa64611a9"
+      "sha256": "53e7bd15b5d3039543535af4c1f4fbc6afe5f5910f52786584623cd101c31132"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "598e057be4fcdc1fae169d4aaf5f390d75984a1311a447440c7e08b17b63e3a9"
+      "sha256": "0725052b139f756b33f77ccc61f616e526e283e5ebb13990074c80cc87f26689"
     },
     {
       "path": "schemas/abandon.request.schema.json",
-      "sha256": "29c4cab57747e53c961e3429dfa9ff96737b832153fa1ea219e1ea1b740ce50c"
+      "sha256": "e4c60f0ee0d71eb87283be8293714f25e7a8dadfa60ded8c16bf06b6c3e56d71"
     },
     {
       "path": "schemas/abandon.response.schema.json",
@@ -38,7 +38,7 @@
     },
     {
       "path": "schemas/activate.request.schema.json",
-      "sha256": "eaf613bb251c8f40e0e6887b3418472a4e2dc4d3020071246766d40df46633b8"
+      "sha256": "357d8dd913fd331cd99f51cb15dd1fb451b81a96146afa9b5f51c0ebdc64fc56"
     },
     {
       "path": "schemas/activate.response.schema.json",
@@ -50,15 +50,15 @@
     },
     {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "ace722f186ccd51e1f066af9d9b4f1dd5225f743ae65c3a8250184152ededb9a"
+      "sha256": "ac7579d6be0682a9cb621ad39ba000403745c64c5415a8ae96665baa157f0048"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "1ee49d2a9eaeb4d014558e8255e09aa7bd5303607a03a541816644e155c4823a"
+      "sha256": "7212483c4640d07fc2e949b6cdbf49933794a37851bc0ff40780fb909af5a946"
     },
     {
       "path": "schemas/health.request.schema.json",
-      "sha256": "d1b57a3332b5ba0cd0607151e124d8bf24c708a0df6731ffeb64bbc9c3476c82"
+      "sha256": "c45dbce4595fd2a9b0d431146b1480cea655dd436621a1e8df865f0adb5df1d9"
     },
     {
       "path": "schemas/health.response.schema.json",
@@ -74,14 +74,14 @@
     },
     {
       "path": "schemas/report.request.schema.json",
-      "sha256": "74bd8ce2080f1e21855b7d99540525a473e5334eea72ecc66e0c6a1f4c2d556d"
+      "sha256": "9127b3113bcf818a9e3f7f6e9e17f26bc2cea810ac98adb2aa2a13048ea7eea8"
     },
     {
       "path": "schemas/report.response.schema.json",
       "sha256": "b55069e1457e85f3486bde1fb36bf2adbe17c622bb6261f7772cee1c836594f4"
     }
   ],
-  "bundleDigest": "7cb1a8a4e1ccdf1b7c1c3da7d5a423f5190b51ce31d66920e4efe6060ac2f838",
+  "bundleDigest": "54190dcdf288146d54a446fe780710bb83a62720a7a68b5f6e1f973869ed1b68",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -175,24 +175,8 @@
   },
   "methodCatalog": [
     {
-      "caller": "comis",
-      "method": "capability.abandon",
-      "operationIdRequired": true,
-      "requestSchema": "schemas/abandon.request.schema.json",
-      "responseSchema": "schemas/abandon.response.schema.json",
-      "sideEffect": "prepared-run-state"
-    },
-    {
-      "caller": "comis",
-      "method": "capability.activate",
-      "operationIdRequired": true,
-      "requestSchema": "schemas/activate.request.schema.json",
-      "responseSchema": "schemas/activate.response.schema.json",
-      "sideEffect": "managed-run-state"
-    },
-    {
       "caller": "service",
-      "method": "capability.handshake",
+      "method": "capabilityServices.handshake",
       "operationIdRequired": true,
       "requestSchema": "schemas/handshake.request.schema.json",
       "responseSchema": "schemas/handshake.response.schema.json",
@@ -200,15 +184,31 @@
     },
     {
       "caller": "either",
-      "method": "capability.health",
+      "method": "capabilityServices.health",
       "operationIdRequired": true,
       "requestSchema": "schemas/health.request.schema.json",
       "responseSchema": "schemas/health.response.schema.json",
       "sideEffect": "none"
     },
     {
+      "caller": "comis",
+      "method": "managedRuns.abandon",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/abandon.request.schema.json",
+      "responseSchema": "schemas/abandon.response.schema.json",
+      "sideEffect": "prepared-run-state"
+    },
+    {
+      "caller": "comis",
+      "method": "managedRuns.activate",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/activate.request.schema.json",
+      "responseSchema": "schemas/activate.response.schema.json",
+      "sideEffect": "managed-run-state"
+    },
+    {
       "caller": "service",
-      "method": "capability.report",
+      "method": "managedRuns.report",
       "operationIdRequired": true,
       "requestSchema": "schemas/report.request.schema.json",
       "responseSchema": "schemas/report.response.schema.json",
@@ -216,11 +216,11 @@
     }
   ],
   "methods": [
-    "capability.abandon",
-    "capability.activate",
-    "capability.handshake",
-    "capability.health",
-    "capability.report"
+    "capabilityServices.handshake",
+    "capabilityServices.health",
+    "managedRuns.abandon",
+    "managedRuns.activate",
+    "managedRuns.report"
   ],
   "protocolId": "comis.capability-service/1"
 }

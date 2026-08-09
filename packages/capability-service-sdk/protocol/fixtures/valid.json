@@ -28,18 +28,18 @@
       "payload": {
         "id": "operation_handshake",
         "jsonrpc": "2.0",
-        "method": "capability.handshake",
+        "method": "capabilityServices.handshake",
         "params": {
           "bundleDigest": "__BUNDLE_DIGEST__",
           "operationId": "operation_handshake",
           "protocolId": "comis.capability-service/1",
           "serviceInstanceRef": "service-instance_a",
           "supportedMethods": [
-            "capability.abandon",
-            "capability.activate",
-            "capability.handshake",
-            "capability.health",
-            "capability.report"
+            "capabilityServices.handshake",
+            "capabilityServices.health",
+            "managedRuns.abandon",
+            "managedRuns.activate",
+            "managedRuns.report"
           ]
         }
       },
@@ -52,11 +52,11 @@
         "jsonrpc": "2.0",
         "result": {
           "acceptedMethods": [
-            "capability.abandon",
-            "capability.activate",
-            "capability.handshake",
-            "capability.health",
-            "capability.report"
+            "capabilityServices.handshake",
+            "capabilityServices.health",
+            "managedRuns.abandon",
+            "managedRuns.activate",
+            "managedRuns.report"
           ],
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {
@@ -79,7 +79,7 @@
       "payload": {
         "id": "operation_activate",
         "jsonrpc": "2.0",
-        "method": "capability.activate",
+        "method": "managedRuns.activate",
         "params": {
           "externalRunRef": "external-run_a",
           "managedRunRef": "managed-run_a",
@@ -110,7 +110,7 @@
       "payload": {
         "id": "operation_report",
         "jsonrpc": "2.0",
-        "method": "capability.report",
+        "method": "managedRuns.report",
         "params": {
           "evidence": [
             {
@@ -150,7 +150,7 @@
       "payload": {
         "id": "operation_health",
         "jsonrpc": "2.0",
-        "method": "capability.health",
+        "method": "capabilityServices.health",
         "params": {
           "bundleDigest": "__BUNDLE_DIGEST__",
           "operationId": "operation_health",
@@ -181,7 +181,7 @@
       "payload": {
         "id": "operation_abandon",
         "jsonrpc": "2.0",
-        "method": "capability.abandon",
+        "method": "managedRuns.abandon",
         "params": {
           "externalRunRef": "external-run_a",
           "operationId": "operation_abandon",

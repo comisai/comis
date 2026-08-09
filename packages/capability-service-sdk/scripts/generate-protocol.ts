@@ -51,23 +51,7 @@ interface GeneratedBundle {
 
 const METHOD_CATALOG = [
   {
-    method: "capability.abandon",
-    caller: "comis",
-    operationIdRequired: true,
-    sideEffect: "prepared-run-state",
-    requestSchema: "schemas/abandon.request.schema.json",
-    responseSchema: "schemas/abandon.response.schema.json",
-  },
-  {
-    method: "capability.activate",
-    caller: "comis",
-    operationIdRequired: true,
-    sideEffect: "managed-run-state",
-    requestSchema: "schemas/activate.request.schema.json",
-    responseSchema: "schemas/activate.response.schema.json",
-  },
-  {
-    method: "capability.handshake",
+    method: "capabilityServices.handshake",
     caller: "service",
     operationIdRequired: true,
     sideEffect: "connection-state",
@@ -75,7 +59,7 @@ const METHOD_CATALOG = [
     responseSchema: "schemas/handshake.response.schema.json",
   },
   {
-    method: "capability.health",
+    method: "capabilityServices.health",
     caller: "either",
     operationIdRequired: true,
     sideEffect: "none",
@@ -83,7 +67,23 @@ const METHOD_CATALOG = [
     responseSchema: "schemas/health.response.schema.json",
   },
   {
-    method: "capability.report",
+    method: "managedRuns.abandon",
+    caller: "comis",
+    operationIdRequired: true,
+    sideEffect: "prepared-run-state",
+    requestSchema: "schemas/abandon.request.schema.json",
+    responseSchema: "schemas/abandon.response.schema.json",
+  },
+  {
+    method: "managedRuns.activate",
+    caller: "comis",
+    operationIdRequired: true,
+    sideEffect: "managed-run-state",
+    requestSchema: "schemas/activate.request.schema.json",
+    responseSchema: "schemas/activate.response.schema.json",
+  },
+  {
+    method: "managedRuns.report",
     caller: "service",
     operationIdRequired: true,
     sideEffect: "report-store",

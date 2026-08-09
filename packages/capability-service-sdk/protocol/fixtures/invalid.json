@@ -8,7 +8,7 @@
       "payload": {
         "id": "operation_invalid",
         "jsonrpc": "2.0",
-        "method": "capability.activate",
+        "method": "managedRuns.activate",
         "params": {
           "externalRunRef": "contains spaces",
           "managedRunRef": "managed-run_a",

@@ -14,7 +14,7 @@
       "type": "string"
     },
     "method": {
-      "const": "capability.health",
+      "const": "capabilityServices.health",
       "type": "string"
     },
     "params": {

@@ -99,7 +99,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_handshake", "capability.handshake", handshakeParams),
+        payload: request("operation_handshake", "capabilityServices.handshake", handshakeParams),
       },
       {
         target: "handshake-response",
@@ -119,7 +119,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_activate", "capability.activate", {
+        payload: request("operation_activate", "managedRuns.activate", {
           operationId: "operation_activate",
           serviceInstanceRef,
           managedRunRef,
@@ -145,7 +145,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_report", "capability.report", {
+        payload: request("operation_report", "managedRuns.report", {
           operationId: "operation_report",
           serviceInstanceRef,
           managedRunRef,
@@ -180,7 +180,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_health", "capability.health", {
+        payload: request("operation_health", "capabilityServices.health", {
           protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
           bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
           operationId: "operation_health",
@@ -206,7 +206,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_abandon", "capability.abandon", {
+        payload: request("operation_abandon", "managedRuns.abandon", {
           operationId: "operation_abandon",
           serviceInstanceRef,
           externalRunRef,
@@ -248,7 +248,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "request",
         expectation: "reject",
         expectedErrorKind: "invalid_params",
-        payload: request("operation_invalid", "capability.activate", {
+        payload: request("operation_invalid", "managedRuns.activate", {
           operationId: "operation_invalid",
           serviceInstanceRef,
           managedRunRef,
@@ -267,7 +267,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "request",
         expectation: "reject",
         expectedErrorKind: "invalid_params",
-        payload: request("operation_unknown", "capability.handshake", {
+        payload: request("operation_unknown", "capabilityServices.handshake", {
           ...handshakeParams,
           operationId: "operation_unknown",
           unrecognized: true,
@@ -282,7 +282,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_boundary_ok", "capability.report", {
+        payload: request("operation_boundary_ok", "managedRuns.report", {
           operationId: "operation_boundary_ok",
           serviceInstanceRef,
           managedRunRef,
@@ -297,7 +297,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "request",
         expectation: "reject",
         expectedErrorKind: "size_limit_exceeded",
-        payload: request("operation_boundary_large", "capability.report", {
+        payload: request("operation_boundary_large", "managedRuns.report", {
           operationId: "operation_boundary_large",
           serviceInstanceRef,
           managedRunRef,
@@ -317,7 +317,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
-        payload: request("operation_replay", "capability.report", {
+        payload: request("operation_replay", "managedRuns.report", {
           operationId: "operation_replay",
           serviceInstanceRef,
           managedRunRef,
@@ -332,7 +332,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "request",
         expectation: "reject",
         expectedErrorKind: "replay_conflict",
-        payload: request("operation_replay", "capability.report", {
+        payload: request("operation_replay", "managedRuns.report", {
           operationId: "operation_replay",
           serviceInstanceRef,
           managedRunRef,
@@ -353,7 +353,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "request",
         expectation: "reject",
         expectedErrorKind: "protocol_mismatch",
-        payload: request("operation_version", "capability.handshake", {
+        payload: request("operation_version", "capabilityServices.handshake", {
           ...handshakeParams,
           protocolId: "comis.capability-service/2",
           operationId: "operation_version",
@@ -369,7 +369,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         target: "request",
         expectation: "reject",
         expectedErrorKind: "bundle_digest_mismatch",
-        payload: request("operation_digest", "capability.handshake", {
+        payload: request("operation_digest", "capabilityServices.handshake", {
           ...handshakeParams,
           bundleDigest: emptyDigest,
           operationId: "operation_digest",
