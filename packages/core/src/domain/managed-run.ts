@@ -46,6 +46,8 @@ export const ManagedRunStatusReasonSchema = z.enum([
   "recovery_join_missing",
   "service_state_unavailable",
   "activation_outcome_unknown",
+  "required_evidence_invalid",
+  "required_evidence_stale",
 ]);
 
 export const ManagedRunInitiationSourceSchema = z.enum([
@@ -90,6 +92,8 @@ const STATUS_REASONS = {
     "recovery_join_missing",
     "service_state_unavailable",
     "activation_outcome_unknown",
+    "required_evidence_invalid",
+    "required_evidence_stale",
   ]),
 } as const satisfies Readonly<Record<z.infer<typeof ManagedRunStatusSchema>, ReadonlySet<string>>>;
 

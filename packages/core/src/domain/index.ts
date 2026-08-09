@@ -307,6 +307,12 @@ export type {
   ManagedRunReportBody,
   ManagedRunReportIndex,
 } from "./managed-run-content.js";
+export { reduceManagedRunState } from "./managed-run-reducer.js";
+export type {
+  ManagedRunEvidenceHealth,
+  ManagedRunReductionInput,
+  ManagedRunReduction,
+} from "./managed-run-reducer.js";
 
 // RPC typed-refusal classification — the single source of truth the daemon
 // rpc-dispatch classifier AND the @comis/gateway method-router classifier both
