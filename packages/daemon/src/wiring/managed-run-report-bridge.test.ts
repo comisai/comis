@@ -226,6 +226,53 @@ describe("managed-run report bridge", () => {
     expect(JSON.stringify(audit.mock.calls)).not.toContain("Altered private body");
   });
 
+  it("derives durable attention identity and closes it only from a matching resolution", async () => {
+    const bridge = makeBridge();
+    const attention = await bridge.ingestReport({
+      ...makeInput(),
+      report: {
+        serviceReportId: "service-report_attention",
+        kind: "attention",
+        externalKey: "approval-a",
+        summary: "Approval is required",
+      },
+    });
+    expect(attention).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    const open = await store.listOpenAttention({
+      kind: "owner",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationReference.value,
+    }, { managedRunId: "managed-run_a", limit: 10 });
+    expect(open).toMatchObject({
+      ok: true,
+      value: [{
+        attentionId: expect.stringMatching(/^attention-[a-f0-9]{48}$/),
+        externalKey: "approval-a",
+        status: "open",
+      }],
+    });
+
+    const resolution = await bridge.ingestReport({
+      ...makeInput(),
+      report: {
+        serviceReportId: "service-report_resolution",
+        kind: "resolution",
+        externalKey: "approval-a",
+        summary: "Approval was applied",
+      },
+    });
+    expect(resolution).toMatchObject({ ok: true, value: { kind: "accepted" } });
+    expect(await store.listOpenAttention({
+      kind: "owner",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationReference.value,
+    }, { managedRunId: "managed-run_a", limit: 10 })).toEqual({ ok: true, value: [] });
+  });
+
   it("rejects forged ownership and advisory time before publishing private content", async () => {
     const forged = await makeBridge().ingestReport({
       ...makeInput(),

@@ -280,6 +280,85 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).ok).toBe(false);
   });
 
+  it("creates delivers and resolves durable attention without equating delivery to resolution", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_attention",
+      contentRef: "report-content_attention",
+      kind: "attention",
+      attention: {
+        attentionId: "attention-a",
+        attentionRef: "report-content_attention",
+        externalKey: "approval-a",
+      },
+    }))).value?.kind).toBe("accepted");
+
+    const open = await store.listOpenAttention(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      limit: 10,
+    });
+    expect(open).toMatchObject({
+      ok: true,
+      value: [{
+        attentionId: "attention-a",
+        externalKey: "approval-a",
+        status: "open",
+        reportSequence: 1,
+      }],
+    });
+    expect(await store.listOpenAttention(OTHER_OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      limit: 10,
+    })).toEqual({ ok: true, value: [] });
+
+    const claimed = await store.claimAttentionResponse(OWNER_SCOPE, {
+      operationId: "attention-response-a",
+      attentionId: "attention-a",
+      responseRef: "attention-response-content-a",
+      respondedAtMs: 1_800_000_000_200,
+    });
+    expect(claimed).toMatchObject({
+      ok: true,
+      value: { kind: "updated", record: { status: "response_pending" } },
+    });
+    const delivered = await store.markAttentionDelivered(OWNER_SCOPE, {
+      operationId: "attention-delivery-a",
+      attentionId: "attention-a",
+      deliveredAtMs: 1_800_000_000_300,
+    });
+    expect(delivered).toMatchObject({
+      ok: true,
+      value: { kind: "updated", record: { status: "delivered" } },
+    });
+    expect(await store.listOpenAttention(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      limit: 10,
+    })).toMatchObject({ ok: true, value: [{ status: "delivered" }] });
+
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_resolution",
+      contentRef: "report-content_resolution",
+      kind: "resolution",
+      receivedAtMs: 1_800_000_000_400,
+      retainedUntilMs: 1_802_592_000_400,
+      resolutionExternalKey: "approval-a",
+    }))).value?.kind).toBe("accepted");
+    expect(await store.listOpenAttention(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      limit: 10,
+    })).toEqual({ ok: true, value: [] });
+    expect(await store.getAttention(OWNER_SCOPE, "attention-a")).toMatchObject({
+      ok: true,
+      value: { status: "resolved", responseRef: "attention-response-content-a" },
+    });
+    expect(await store.get(OWNER_SCOPE, "managed-run_a")).toMatchObject({
+      ok: true,
+      value: { openAttentionCount: 0 },
+    });
+  });
+
   it("rejects altered report replay and service ownership mismatches without advancing", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
