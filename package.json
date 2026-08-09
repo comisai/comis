@@ -51,6 +51,7 @@
     "contracts:generate": "npx tsx scripts/contracts/generate-web-artifact.ts",
     "capability-protocol:generate": "tsx packages/capability-service-sdk/scripts/generate-protocol.ts",
     "capability-protocol:check": "tsx packages/capability-service-sdk/scripts/generate-protocol.ts --check",
+    "capability-service-fixture-host": "pnpm --filter @comis/daemon capability-service-fixture-host",
     "sdk:generate": "npx tsx scripts/orchestrate-sdk/generate-comis-tools-sdk.ts",
     "agent-cli:manifest": "npx tsx scripts/orchestrate-sdk/generate-comis-agent-manifest.ts",
     "cycles": "node scripts/check-cycles.mjs",

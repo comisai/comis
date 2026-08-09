@@ -2,11 +2,16 @@
 import net from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -36,7 +41,7 @@ interface WireError {
 }
 
 function temporaryDirectory(): string {
-  const directory = mkdtempSync(join(tmpdir(), "comis-capability-host-"));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "cph-")));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -286,6 +291,10 @@ describe("standalone capability-service protocol fixture server", () => {
         kind: "invalid_request",
         line: `{"bearer":"${EXPECTED_BEARER}","jsonrpc":"2.0","id":"operation_duplicate","id":"operation_other","method":"capabilityServices.health","params":{}}`,
       },
+      {
+        kind: "invalid_request",
+        line: `{"bearer":"${EXPECTED_BEARER}","jsonrpc":"2.0","id":"operation_nested_duplicate","method":"capabilityServices.health","params":{"operationId":"operation_nested_duplicate","operationId":"operation_other"}}`,
+      },
     ];
 
     try {
@@ -309,6 +318,31 @@ describe("standalone capability-service protocol fixture server", () => {
     } finally {
       expect((await server.close()).ok).toBe(true);
     }
+  });
+
+  it("rejects unsafe noncanonical broad and occupied fixture directories", async () => {
+    const relative = makeServer("relative-fixture-directory");
+    expect((await relative.start()).ok).toBe(false);
+
+    const broad = temporaryDirectory();
+    chmodSync(broad, 0o755);
+    expect((await makeServer(broad).start()).ok).toBe(false);
+    chmodSync(broad, 0o700);
+
+    const symlinkTarget = temporaryDirectory();
+    const symlinkParent = temporaryDirectory();
+    const symlinkPath = join(symlinkParent, "linked");
+    symlinkSync(symlinkTarget, symlinkPath);
+    expect((await makeServer(symlinkPath).start()).ok).toBe(false);
+
+    const occupied = temporaryDirectory();
+    writeFileSync(join(occupied, "capability-service.sock"), "not a socket", { mode: 0o600 });
+    expect((await makeServer(occupied).start()).ok).toBe(false);
+
+    const longRoot = temporaryDirectory();
+    const longDirectory = join(longRoot, "x".repeat(70));
+    mkdirSync(longDirectory, { mode: 0o700 });
+    expect((await makeServer(longDirectory).start()).ok).toBe(false);
   });
 
   it("returns original replay results and rejects altered operation or report reuse", async () => {
@@ -355,7 +389,7 @@ describe("standalone capability-service protocol fixture server", () => {
 
   it("bounds stalled requests by the manifest deadline and in-flight limits", async () => {
     const directory = temporaryDirectory();
-    const server = makeServer(directory, 50);
+    const server = makeServer(directory, 2_000);
     const started = await server.start();
     expect(started.ok).toBe(true);
     if (!started.ok) return;

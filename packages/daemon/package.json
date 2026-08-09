@@ -38,6 +38,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "capability-service-fixture-host": "node --import tsx src/__tests__/capability-service-protocol-fixture-host-entry.ts",
     "test": "vitest run"
   },
   "dependencies": {

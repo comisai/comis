@@ -28,6 +28,9 @@ export interface CapabilityServiceProtocolFixtureRejection {
 }
 
 export interface CapabilityServiceProtocolFixtureHost {
+  validateRequest(
+    payload: unknown,
+  ): Result<void, CapabilityServiceProtocolFixtureRejection>;
   validate(
     step: ProtocolFixtureStep,
   ): Result<void, CapabilityServiceProtocolFixtureRejection>;
@@ -145,14 +148,22 @@ export function createCapabilityServiceProtocolFixtureHost(
   options: CapabilityServiceProtocolFixtureHostOptions,
 ): CapabilityServiceProtocolFixtureHost {
   const operations = new Map<string, string>();
+  const validatePayload = (
+    payload: unknown,
+  ): Result<void, CapabilityServiceProtocolFixtureRejection> => {
+    const size = validateWireSize("request", payload);
+    if (!size.ok) return size;
+    return validateRequest(payload, options.bundleDigest, operations);
+  };
   return {
+    validateRequest: validatePayload,
     validate(step) {
       const payload = materializeProtocolFixtureDigest(step.payload, options.bundleDigest);
+      if (step.target === "request") {
+        return validatePayload(payload);
+      }
       const size = validateWireSize(step.target, payload);
       if (!size.ok) return size;
-      if (step.target === "request") {
-        return validateRequest(payload, options.bundleDigest, operations);
-      }
       const schema = RESPONSE_SCHEMAS[step.target];
       return schema.safeParse(payload).success ? ok(undefined) : reject("invalid_params");
     },
