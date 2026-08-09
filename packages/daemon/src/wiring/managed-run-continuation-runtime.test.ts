@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it, vi } from "vitest";
+import {
+  TypedEventBus,
+  createConversationRef,
+  type ManagedRunRecord,
+  type ManagedRunStorePort,
+} from "@comis/core";
+import { ok } from "@comis/shared";
+import type {
+  ManagedRunContinuationCoordinator,
+  ManagedRunContinuationProcessOutcome,
+} from "./managed-run-continuation-coordinator.js";
+import { createManagedRunContinuationRuntime } from "./managed-run-continuation-runtime.js";
+
+function makeLogger() {
+  const child = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  return {
+    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn(() => child),
+  } as unknown as import("@comis/core").ComisLogger;
+}
+
+function makeRecord(): ManagedRunRecord {
+  const endpoint = {
+    channelType: "echo",
+    channelInstanceId: "echo-main",
+    conversationId: "conversation-a",
+    conversationKind: "direct" as const,
+  };
+  const conversation = {
+    tenantId: "tenant-a",
+    agentId: "agent-a",
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint,
+      principalId: "user-a",
+    },
+  };
+  const conversationRef = createConversationRef(conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
+  return {
+    schemaVersion: 1,
+    managedRunId: "managed-run-a",
+    serviceInstanceId: "service-a",
+    externalRunRefDigest: "1".repeat(64),
+    activationDescriptorDigest: "2".repeat(64),
+    tenantId: "tenant-a",
+    agentId: "agent-a",
+    principalId: "user-a",
+    conversationRef: conversationRef.value,
+    turnScope: { conversation, principal: { principalId: "user-a" }, endpoint },
+    deliveryOrigin: {
+      tenantId: "tenant-a", channelType: "echo", channelId: "conversation-a", userId: "user-a",
+    },
+    traceId: "10000000-0000-4000-8000-000000000001",
+    trustLevel: "user",
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    workspacePolicyHash: "a".repeat(64),
+    rootRunId: "root-a",
+    initiationSource: "user_request",
+    capturedAgentCapabilities: ["orch:read"],
+    capturedToolIds: ["managed_status"],
+    capturedCapabilityViewHash: "b".repeat(64),
+    executionAttachmentIds: [],
+    terminalSessionIds: [],
+    status: "active",
+    statusReason: "report_activity",
+    lastAcceptedReportSequence: 1,
+    lastReducedReportSequence: 0,
+    pendingContinuation: true,
+    openAttentionCount: 0,
+    createdAtMs: 1,
+    updatedAtMs: 2,
+    lastHeartbeatAtMs: 2,
+  };
+}
+
+describe("managed-run continuation event runtime", () => {
+  it("subscribes accepted reports to exact-owner processing and folds in-flight events", async () => {
+    const eventBus = new TypedEventBus();
+    const record = makeRecord();
+    const store = {
+      get: vi.fn(async () => ok(record)),
+      listRecoverable: vi.fn(async () => ok({ records: [], invalid: [] })),
+    } as unknown as ManagedRunStorePort;
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const process = vi.fn()
+      .mockImplementationOnce(async () => {
+        await first;
+        return ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" });
+      })
+      .mockResolvedValue(ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" }));
+    const coordinator = { process } as ManagedRunContinuationCoordinator;
+    const runtime = createManagedRunContinuationRuntime({
+      eventBus,
+      store,
+      coordinator,
+      nowMs: () => 100,
+      recoveryBatchSize: 10,
+      logger: makeLogger(),
+    });
+
+    eventBus.emit("managed_run:report_accepted", {
+      managedRunId: "managed-run-a",
+      serviceInstanceId: "service-a",
+      sequence: 1,
+      kind: "progress",
+      durationMs: 1,
+      timestamp: 10,
+    });
+    eventBus.emit("managed_run:report_accepted", {
+      managedRunId: "managed-run-a",
+      serviceInstanceId: "service-a",
+      sequence: 2,
+      kind: "candidate_complete",
+      durationMs: 1,
+      timestamp: 11,
+    });
+    await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(1));
+    releaseFirst();
+    await runtime.waitUntilIdle();
+
+    expect(store.get).toHaveBeenCalledWith({ kind: "service", serviceInstanceId: "service-a" }, "managed-run-a");
+    expect(process).toHaveBeenCalledTimes(2);
+    expect(process).toHaveBeenCalledWith({
+      kind: "owner",
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      principalId: "user-a",
+      conversationRef: record.conversationRef,
+    }, "managed-run-a");
+    await runtime.shutdown();
+    expect(eventBus.listenerCount("managed_run:report_accepted")).toBe(0);
+  });
+
+  it("recovers only durable records whose continuation is pending", async () => {
+    const eventBus = new TypedEventBus();
+    const pending = makeRecord();
+    const settled = { ...makeRecord(), managedRunId: "managed-run-b", pendingContinuation: false };
+    const store = {
+      get: vi.fn(),
+      listRecoverable: vi.fn(async () => ok({ records: [pending, settled], invalid: [] })),
+    } as unknown as ManagedRunStorePort;
+    const process = vi.fn(async () => ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" }));
+    const runtime = createManagedRunContinuationRuntime({
+      eventBus,
+      store,
+      coordinator: { process } as ManagedRunContinuationCoordinator,
+      nowMs: () => 100,
+      recoveryBatchSize: 10,
+      logger: makeLogger(),
+    });
+
+    expect(await runtime.recover()).toEqual(ok({ scheduledCount: 1, invalidCount: 0 }));
+    await runtime.waitUntilIdle();
+    expect(store.listRecoverable).toHaveBeenCalledWith({
+      kind: "recovery",
+      statuses: ["active", "waiting", "paused", "candidate_complete", "unknown"],
+      updatedBeforeMs: 100,
+      limit: 10,
+    });
+    expect(process).toHaveBeenCalledOnce();
+    await runtime.shutdown();
+  });
+});
