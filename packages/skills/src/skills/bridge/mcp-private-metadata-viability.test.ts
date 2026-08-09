@@ -84,6 +84,28 @@ function makeState(client: Client): McpClientManagerState {
   };
 }
 
+function collectPrivateTokens(value: unknown, tokens: Set<string> = new Set()): Set<string> {
+  if (typeof value === "string") {
+    tokens.add(value);
+    return tokens;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    tokens.add(String(value));
+    return tokens;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectPrivateTokens(entry, tokens);
+    return tokens;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const [key, entry] of Object.entries(value)) {
+      tokens.add(key);
+      collectPrivateTokens(entry, tokens);
+    }
+  }
+  return tokens;
+}
+
 describe("MCP private metadata viability", () => {
   let client: Client | undefined;
   let server: Server | undefined;
@@ -203,18 +225,8 @@ describe("MCP private metadata viability", () => {
 
     const modelVisibleOutput = JSON.stringify(agentResult.content);
     expect(modelVisibleOutput).toContain("Preparation accepted");
-    for (const privateToken of [
-      "comis.managedRun",
-      "externalRunRef",
-      "external_run_fixture_a",
-      "registrationNonce",
-      "registration_nonce_fixture_a",
-      "expiresAt",
-      "serviceInstanceId",
-      "service_instance_fixture_a",
-      "workspacePolicyHash",
-      "root_run_fixture_a",
-    ]) {
+    const privateTokens = collectPrivateTokens({ requestMeta, preparedResultMeta });
+    for (const privateToken of privateTokens) {
       expect(modelVisibleOutput).not.toContain(privateToken);
     }
   });
