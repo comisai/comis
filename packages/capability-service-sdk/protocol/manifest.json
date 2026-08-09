@@ -2,31 +2,31 @@
   "artifacts": [
     {
       "path": "fixtures/altered-replay.json",
-      "sha256": "6a18bfd83ed7934666f18ca610e951957a7b30216d58204ceffe68cefc18e692"
+      "sha256": "36b876228910b55e0b6677a371b3ae3a2c219a98e4b032430213b55723d0221c"
     },
     {
       "path": "fixtures/boundary-size.json",
-      "sha256": "385e264a88d2b19fc301230e6516cc38334412fe658242f9f8a0f690e3b8c127"
+      "sha256": "4dd6ef192b25ab0233cf68b27ac55db4139a43409ffbb3e82ae52eb6b5572b70"
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "dea66a78580c156166647e742630e1b2930c9bc41f9b54f01b5747e59a111ab9"
+      "sha256": "99603e6a17bfc29bc35a8d37633b6b98d0e7be52629e60204e7489f2b28cd409"
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "bc82dd6f0db45da7cb157ec17981d671f5211642763edaf4562447ea29bd2de7"
+      "sha256": "31ac3583dc5b1501db8d57cbbdf207e3e77fc1d642c9bd7046db4b5d47fff176"
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "e4bc175ae2d7bce46c5968de41fd748bdcf7ed583d48e372095e8b6aa58e907f"
+      "sha256": "167bdcaef56398ed60eefadec676c120e21f4f94f60a483c52a91d725b93bd59"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "bfa0964979f96ec741f584824b269b7483973fd8c416c85200580d6a32919bb0"
+      "sha256": "ed53b1fc4ff2657e4b20dce0cc4dc691fea884b955a2652176830f9862a35b44"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "010ccc1936ea82e969b9cf5fc0de302b81d4a4c19cbebdc8f486506ee8e65520"
+      "sha256": "81c5d62a85e78f67f584df3fc5a220724f62bb271b9518183b6637004432be14"
     },
     {
       "path": "schemas/abandon.request.schema.json",
@@ -89,7 +89,7 @@
       "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
     }
   ],
-  "bundleDigest": "d155a2462773e1ef3264cd84c4212706bf134ac2e89cac78361868d8158badcc",
+  "bundleDigest": "fa8b8c4e09033cbf876f9b5adbca31fbedac754f0b7eb370fb8d5374dc6fadc1",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",

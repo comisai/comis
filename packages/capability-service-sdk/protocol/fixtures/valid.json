@@ -13,6 +13,7 @@
         "traceId": "40000000-0000-4000-8000-000000000004",
         "workspacePolicyHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       },
+      "schemaExpectation": "accept",
       "target": "mcp-call-context"
     },
     {
@@ -23,6 +24,7 @@
         "registrationNonce": "registration-nonce_a",
         "state": "prepared"
       },
+      "schemaExpectation": "accept",
       "target": "mcp-managed-run-result"
     },
     {
@@ -42,6 +44,7 @@
           "serviceInstanceId": "service-instance_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     },
     {
@@ -68,6 +71,7 @@
           "serviceInstanceId": "service-instance_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "handshake-response"
     },
     {
@@ -83,6 +87,7 @@
           "registrationNonce": "registration-nonce_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     },
     {
@@ -97,6 +102,7 @@
           "state": "active"
         }
       },
+      "schemaExpectation": "accept",
       "target": "activate-response"
     },
     {
@@ -117,6 +123,7 @@
           "summary": "Synthetic progress report"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     },
     {
@@ -131,6 +138,7 @@
           "serviceReportId": "service-report_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "report-response"
     },
     {
@@ -146,6 +154,7 @@
           "serviceInstanceId": "service-instance_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     },
     {
@@ -162,6 +171,7 @@
           "status": "healthy"
         }
       },
+      "schemaExpectation": "accept",
       "target": "health-response"
     },
     {
@@ -177,6 +187,7 @@
           "registrationNonce": "registration-nonce_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     },
     {
@@ -189,6 +200,7 @@
           "state": "abandoned"
         }
       },
+      "schemaExpectation": "accept",
       "target": "abandon-response"
     },
     {
@@ -204,6 +216,7 @@
         "id": "operation_example_error",
         "jsonrpc": "2.0"
       },
+      "schemaExpectation": "accept",
       "target": "error-response"
     }
   ]

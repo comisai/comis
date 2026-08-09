@@ -33,6 +33,7 @@ export const ProtocolFixtureTargetSchema = z.enum([
 export const ProtocolFixtureStepSchema = z.strictObject({
   target: ProtocolFixtureTargetSchema,
   expectation: z.enum(["accept", "reject"]),
+  schemaExpectation: z.enum(["accept", "reject"]),
   expectedErrorKind: z.enum(CAPABILITY_SERVICE_ERROR_KINDS).optional(),
   payload: z.unknown(),
 });
@@ -78,6 +79,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "mcp-call-context",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           operationId: "operation_prepare",
           serviceInstanceId,
@@ -91,6 +93,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "mcp-managed-run-result",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           state: "prepared",
           externalRunRef,
@@ -101,11 +104,13 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_handshake", "capabilityServices.handshake", handshakeParams),
       },
       {
         target: "handshake-response",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           jsonrpc: "2.0",
           id: "operation_handshake",
@@ -121,6 +126,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_activate", "managedRuns.activate", {
           operationId: "operation_activate",
           managedRunId,
@@ -131,6 +137,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "activate-response",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           jsonrpc: "2.0",
           id: "operation_activate",
@@ -145,6 +152,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_report", "managedRuns.report", {
           operationId: "operation_report",
           managedRunId,
@@ -158,6 +166,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "report-response",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           jsonrpc: "2.0",
           id: "operation_report",
@@ -172,6 +181,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_health", "capabilityServices.health", {
           protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
           bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
@@ -182,6 +192,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "health-response",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           jsonrpc: "2.0",
           id: "operation_health",
@@ -198,6 +209,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_abandon", "managedRuns.abandon", {
           operationId: "operation_abandon",
           externalRunRef,
@@ -208,6 +220,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "abandon-response",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           jsonrpc: "2.0",
           id: "operation_abandon",
@@ -217,6 +230,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "error-response",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: {
           jsonrpc: "2.0",
           id: "operation_example_error",
@@ -238,6 +252,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "reject",
+        schemaExpectation: "reject",
         expectedErrorKind: "invalid_params",
         payload: request("operation_invalid", "managedRuns.activate", {
           operationId: "operation_invalid",
@@ -255,6 +270,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "reject",
+        schemaExpectation: "reject",
         expectedErrorKind: "invalid_params",
         payload: request("operation_unknown", "capabilityServices.handshake", {
           ...handshakeParams,
@@ -271,6 +287,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_boundary_ok", "managedRuns.report", {
           operationId: "operation_boundary_ok",
           managedRunId,
@@ -282,6 +299,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "reject",
+        schemaExpectation: "reject",
         expectedErrorKind: "size_limit_exceeded",
         payload: request("operation_boundary_large", "managedRuns.report", {
           operationId: "operation_boundary_large",
@@ -300,6 +318,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "accept",
+        schemaExpectation: "accept",
         payload: request("operation_replay", "managedRuns.report", {
           operationId: "operation_replay",
           managedRunId,
@@ -311,6 +330,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "reject",
+        schemaExpectation: "accept",
         expectedErrorKind: "replay_conflict",
         payload: request("operation_replay", "managedRuns.report", {
           operationId: "operation_replay",
@@ -329,6 +349,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "reject",
+        schemaExpectation: "reject",
         expectedErrorKind: "protocol_mismatch",
         payload: request("operation_version", "capabilityServices.handshake", {
           ...handshakeParams,
@@ -345,6 +366,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
       {
         target: "request",
         expectation: "reject",
+        schemaExpectation: "accept",
         expectedErrorKind: "bundle_digest_mismatch",
         payload: request("operation_digest", "capabilityServices.handshake", {
           ...handshakeParams,

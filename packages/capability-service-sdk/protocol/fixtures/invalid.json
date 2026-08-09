@@ -16,6 +16,7 @@
           "registrationNonce": "registration-nonce_a"
         }
       },
+      "schemaExpectation": "reject",
       "target": "request"
     }
   ]

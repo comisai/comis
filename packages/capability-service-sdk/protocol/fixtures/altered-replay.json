@@ -16,6 +16,7 @@
           "summary": "First payload"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     },
     {
@@ -33,6 +34,7 @@
           "summary": "Altered payload"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     }
   ]

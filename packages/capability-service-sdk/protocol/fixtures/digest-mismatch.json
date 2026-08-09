@@ -20,6 +20,7 @@
           "serviceInstanceId": "service-instance_a"
         }
       },
+      "schemaExpectation": "accept",
       "target": "request"
     }
   ]
