@@ -104,6 +104,12 @@ export type ManagedRunReportAppendOutcome =
   | { readonly kind: "state_mismatch"; readonly status: ManagedRunStatus }
   | { readonly kind: "replay_conflict" };
 
+export interface ManagedRunReportRangeInput {
+  readonly managedRunId: string;
+  readonly afterSequence: number;
+  readonly throughSequence: number;
+}
+
 export interface ManagedRunContinuationClaimInput {
   readonly managedRunId: string;
   readonly claimId: string;
@@ -188,6 +194,7 @@ export interface ManagedRunStorePort {
   bindTerminal(scope: ManagedRunOwnerScope, input: ManagedRunTerminalBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;
+  listReportRange(scope: ManagedRunOwnerScope, input: ManagedRunReportRangeInput): Promise<Result<ManagedRunReportIndex[], Error>>;
   claimContinuation(scope: ManagedRunOwnerScope, input: ManagedRunContinuationClaimInput): Promise<Result<ManagedRunContinuationClaimOutcome, Error>>;
   commitReducedState(scope: ManagedRunOwnerScope, input: ManagedRunReducedStateInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   markContinuationOutcome(scope: ManagedRunOwnerScope, input: ManagedRunContinuationOutcomeInput): Promise<Result<ManagedRunMutationOutcome, Error>>;

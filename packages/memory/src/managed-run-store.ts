@@ -17,6 +17,8 @@ import {
   type ManagedRunReducedStateInput,
   type ManagedRunReportAppendInput,
   type ManagedRunReportAppendOutcome,
+  type ManagedRunReportIndex,
+  type ManagedRunReportRangeInput,
   type ManagedRunServiceScope,
   type ManagedRunStorePort,
   type ManagedRunTerminalBindingInput,
@@ -119,6 +121,11 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       sequence, kind, content_ref, content_hash, received_at_ms,
       retained_until_ms, observed_at_ms
     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const listReportRangeRows = db.prepare(`
+    SELECT * FROM managed_run_reports
+    WHERE managed_run_id = ? AND sequence > ? AND sequence <= ?
+    ORDER BY sequence ASC
   `);
   const selectClaim = db.prepare(`
     SELECT * FROM managed_run_continuation_claims WHERE claim_id = ?
@@ -558,6 +565,31 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     appendReportAndAdvanceAcceptedCursor: (scope, input) => boundary(
       () => reportTransaction.immediate(scope, input),
     ),
+    listReportRange: (scope, input: ManagedRunReportRangeInput) => boundary(() => {
+      if (
+        !Number.isInteger(input.afterSequence)
+        || input.afterSequence < 0
+        || !Number.isInteger(input.throughSequence)
+        || input.throughSequence < input.afterSequence
+        || input.throughSequence - input.afterSequence > 10_000
+      ) return err(new Error("managed-run report range is invalid"));
+      const record = readRecord(input.managedRunId);
+      if (!record.ok) return record;
+      if (record.value === undefined || !scopeMatches(record.value, scope)) return ok([]);
+      const rows = reportMapper.parseRows(listReportRangeRows.all(
+        input.managedRunId,
+        input.afterSequence,
+        input.throughSequence,
+      ));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      const reports: ManagedRunReportIndex[] = [];
+      for (const row of rows.value) {
+        const report = rowToManagedRunReport(row);
+        if (!report.ok) return report;
+        reports.push(report.value);
+      }
+      return ok(reports);
+    }),
     claimContinuation: (scope, input) => boundary(
       () => claimContinuationTransaction.immediate(scope, input),
     ),

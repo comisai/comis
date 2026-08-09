@@ -38,6 +38,7 @@ export type {
   ManagedRunBindingOutcome,
   ManagedRunReportAppendInput,
   ManagedRunReportAppendOutcome,
+  ManagedRunReportRangeInput,
   ManagedRunContinuationClaimInput,
   ManagedRunContinuationClaimOutcome,
   ManagedRunReducedStateInput,
