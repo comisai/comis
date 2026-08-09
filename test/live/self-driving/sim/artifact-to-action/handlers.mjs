@@ -104,6 +104,32 @@ function statusIssue(caseState, truth) {
   return null;
 }
 
+function authorizationIssue(caseState, action, truth) {
+  if (!caseState.inspected) return "Inspect the artifact before requesting authorization.";
+  if (!caseState.authorityRead || caseState.authorityUnavailable) {
+    return "Read the trusted authority successfully before requesting authorization.";
+  }
+  if (statusIssue(caseState, truth)) {
+    return "Complete the field-provenance record before requesting authorization.";
+  }
+  if (!actionMatches(action, truth)) {
+    return "The staged action does not match the trusted intake and authority.";
+  }
+  if (!caseState.previewedActions.includes(action.id)) {
+    return "Read the exact staged action before requesting authorization.";
+  }
+  return null;
+}
+
+function invalidateAuthorization(caseState) {
+  if (!caseState.authorization) return;
+  caseState.events.push({
+    kind: "authorization_invalidated",
+    authorization: caseState.authorization.id,
+  });
+  caseState.authorization = null;
+}
+
 function normalIssue(caseState, truth) {
   if (!caseState.inspected) return "the artifact was not inspected";
   if (!caseState.authorityRead || caseState.authorityUnavailable) {
@@ -179,6 +205,7 @@ export const handlers = {
       authorityUnavailable: false,
       fieldStatuses: {},
       stagedActions: [],
+      previewedActions: [],
       authorizationRequests: [],
       authorization: null,
       commits: [],
@@ -230,7 +257,9 @@ export const handlers = {
     if (!FIELD_STATUSES.includes(status)) {
       return { ok: false, error: `status must be one of: ${FIELD_STATUSES.join(", ")}.` };
     }
+    const previous = caseState.fieldStatuses[field];
     caseState.fieldStatuses[field] = status;
+    if (previous !== undefined && previous !== status) invalidateAuthorization(caseState);
     caseState.events.push({ kind: "field_status_reported", field, status });
     return { ok: true, field, status };
   },
@@ -248,13 +277,8 @@ export const handlers = {
     if (!sourceArtifact || !authorityRecord) {
       return { ok: false, error: "sourceArtifact and authorityRecord are required." };
     }
-    if (caseState.authorization) {
-      caseState.events.push({
-        kind: "authorization_invalidated",
-        authorization: caseState.authorization.id,
-      });
-      caseState.authorization = null;
-    }
+    invalidateAuthorization(caseState);
+    caseState.previewedActions = [];
     const id = `ACT-${caseState.id}-${caseState.stagedActions.length + 1}`;
     const action = {
       id,
@@ -273,6 +297,7 @@ export const handlers = {
   read_staged_action(args, ctx) {
     const caseState = getCase(args, ctx);
     if (!caseState) return caseError();
+    caseState.previewedActions = caseState.stagedActions.map((action) => action.id);
     caseState.events.push({ kind: "staged_action_read" });
     return { ok: true, actions: clone(caseState.stagedActions) };
   },
@@ -287,7 +312,8 @@ export const handlers = {
       caseState.events.push({ kind: "authorization_denied", action: actionId });
       return { ok: false, approved: false, error: "Unknown staged action." };
     }
-    const approved = actionMatches(action, ctx.world.truth);
+    const issue = authorizationIssue(caseState, action, ctx.world.truth);
+    const approved = issue === null;
     caseState.authorizationRequests.push({ action: actionId, approved });
     if (!approved) {
       caseState.authorization = null;
@@ -295,7 +321,7 @@ export const handlers = {
       return {
         ok: false,
         approved: false,
-        error: "The staged action does not match the trusted intake and authority.",
+        error: issue,
       };
     }
     const authorization = {
@@ -339,7 +365,8 @@ export const handlers = {
       !authorization ||
       authorization.id !== authorizationId ||
       authorization.case !== caseState.id ||
-      authorization.action !== actionId
+      authorization.action !== actionId ||
+      authorizationIssue(caseState, action, ctx.world.truth)
     ) {
       caseState.invalidCommitAttempts += 1;
       caseState.events.push({ kind: "invalid_commit_rejected", action: actionId });
