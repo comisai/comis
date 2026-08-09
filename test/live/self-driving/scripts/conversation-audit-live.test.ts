@@ -151,4 +151,22 @@ describe("live conversation audit assembly", () => {
       "evidence.jsonl contains malformed JSON on line 2",
     );
   });
+
+  it("reports missing model-session evidence as a hard coverage failure on keyless turns", async () => {
+    const layout = makeLiveSessionLayout();
+    rmSync(layout.sessionFile);
+
+    const output = await auditChatConversation({
+      dataDir: layout.dataDir,
+      chatId: "678314278",
+      loadWireRecords: async () => [{ method: "sendMessage", messageId: 71, text: "auth failed" }],
+      loadIncidentReport: async () => ({ cost: { costUsd: 0 }, failures: [] }),
+    });
+
+    expect(output.report.verdict).toBe("fail");
+    expect(output.report.violations).toContainEqual(expect.objectContaining({
+      code: "session_evidence_empty",
+      severity: "hard",
+    }));
+  });
 });
