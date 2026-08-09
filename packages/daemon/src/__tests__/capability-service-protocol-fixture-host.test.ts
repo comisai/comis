@@ -94,4 +94,22 @@ describe("daemon capability-service fixture host", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("size_limit_exceeded");
   });
+
+  it("enforces the report limit across all content fields", () => {
+    const scenarios = loadScenarios();
+    const boundary = firstStep(scenarios, "boundary-size");
+    const payload = structuredClone(boundary.payload) as {
+      params: { details?: string; summary: string };
+    };
+    payload.params.summary = "x".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes / 2);
+    payload.params.details = "y".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes / 2 + 1);
+    const host = createCapabilityServiceProtocolFixtureHost({
+      bundleDigest: manifest.bundleDigest,
+    });
+
+    const result = host.validate({ ...boundary, payload });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("size_limit_exceeded");
+  });
 });

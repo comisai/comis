@@ -174,6 +174,10 @@ describe("capability-service protocol bundle contract", () => {
       });
       expect(entry.semanticInvariants.length).toBeGreaterThan(0);
     }
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.report")
+        ?.semanticInvariants,
+    ).toContain("utf8-report-content-bytes-at-most-max-report-bytes");
   });
 
   it("hashes every artifact and derives the overall digest from ordered path-hash pairs", () => {
