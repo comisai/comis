@@ -18,6 +18,14 @@ export type {
 } from "./channel.js";
 export type { PrincipalResolverPort } from "./principal-resolver.js";
 export type {
+  CapabilityServiceActivateCommand,
+  CapabilityServiceActivateAcknowledgement,
+  CapabilityServiceControlFailure,
+  CapabilityServiceAbandonCommand,
+  CapabilityServiceAbandonAcknowledgement,
+  CapabilityServiceControlPort,
+} from "./capability-service-control.js";
+export type {
   ManagedRunOwnerScope,
   ManagedRunServiceScope,
   ManagedRunLookupScope,

@@ -26,6 +26,12 @@ export const ManagedRunActivationDescriptorSchema = z.strictObject({
   expiresAtMs: TimestampMsSchema,
 });
 
+/** Strict private MCP result extension supplied by a prepared service command. */
+export const ManagedRunPreparedStartSchema = ManagedRunActivationDescriptorSchema.extend({
+  state: z.literal("prepared"),
+  displayLabel: z.string().trim().min(1).max(256).optional(),
+}).omit({ schemaVersion: true });
+
 /** Private report body stored outside the content-free managed-run index. */
 export const ManagedRunReportBodySchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -73,5 +79,6 @@ export const ManagedRunReportIndexSchema = z.strictObject({
 
 export type ManagedRunReportKind = z.infer<typeof ManagedRunReportKindSchema>;
 export type ManagedRunActivationDescriptor = z.infer<typeof ManagedRunActivationDescriptorSchema>;
+export type ManagedRunPreparedStart = z.infer<typeof ManagedRunPreparedStartSchema>;
 export type ManagedRunReportBody = z.infer<typeof ManagedRunReportBodySchema>;
 export type ManagedRunReportIndex = z.infer<typeof ManagedRunReportIndexSchema>;

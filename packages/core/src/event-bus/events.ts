@@ -8,6 +8,7 @@ import type { TrajectoryEvents } from "./events-trajectory.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
 import type { CapabilityServiceEvents } from "./events-capability-service.js";
+import type { ManagedRunEvents } from "./events-managed-run.js";
 import type { BackgroundRecoveryEvents } from "./events-background-recovery.js";
 import type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 import type { TerminalEvents } from "./events-terminal.js";
@@ -49,6 +50,7 @@ export interface EventMap
     ChannelEvents,
     InfraEvents,
     CapabilityServiceEvents,
+    ManagedRunEvents,
     BackgroundRecoveryEvents,
     SchedulerTaskEvents,
     TerminalEvents,

@@ -34,6 +34,7 @@ export const ManagedRunStatusSchema = z.enum([
 export const ManagedRunStatusReasonSchema = z.enum([
   "awaiting_activation",
   "activation_acknowledged",
+  "activation_rejected",
   "report_activity",
   "attention_pending",
   "service_paused",
@@ -84,7 +85,7 @@ const STATUS_REASONS = {
   candidate_complete: new Set(["verification_pending"]),
   succeeded: new Set(["outcome_verified"]),
   failed: new Set(["failure_verified"]),
-  cancelled: new Set(["owner_cancelled", "authority_revoked"]),
+  cancelled: new Set(["activation_rejected", "owner_cancelled", "authority_revoked"]),
   unknown: new Set([
     "recovery_join_missing",
     "service_state_unavailable",
@@ -97,6 +98,7 @@ export const ManagedRunRecordSchema = z.strictObject({
   managedRunId: OpaqueIdSchema,
   serviceInstanceId: OpaqueIdSchema,
   externalRunRefDigest: DigestSchema,
+  activationDescriptorDigest: DigestSchema,
   activationDescriptorRef: OpaqueIdSchema.optional(),
   displayLabel: z.string().trim().min(1).max(256).optional(),
   tenantId: z.string().min(1).max(256),

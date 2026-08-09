@@ -28,7 +28,6 @@ import {
 import type { ActiveCapabilityServiceView } from "./capability-service-runtime.js";
 
 const NOW_MS = 1_800_000_000_000;
-const CONTENT_RETENTION_MS = 30 * 86_400_000;
 const CONVERSATION_SCOPE = {
   tenantId: "tenant_a",
   agentId: "agent_a",
@@ -144,6 +143,10 @@ function makeIds(operationId: string) {
     activationDescriptorRef: `descriptor-${operationId}`,
     activationOperationId: `activate-${operationId}`,
     abandonOperationId: `abandon-${operationId}`,
+    rejectionOperationId: `reject-${operationId}`,
+    joinMissingOperationId: `join-missing-${operationId}`,
+    outcomeUnknownOperationId: `outcome-unknown-${operationId}`,
+    unavailableOperationId: `unavailable-${operationId}`,
   };
 }
 
@@ -201,7 +204,6 @@ describe("managed-run two-phase activation", () => {
       activeView: { getActiveView: () => makeActiveView() },
       ids: { forOperation: makeIds },
       nowMs: () => NOW_MS,
-      contentRetentionMs: CONTENT_RETENTION_MS,
       eventBus,
       logger,
       ...overrides,
@@ -258,10 +260,10 @@ describe("managed-run two-phase activation", () => {
       value: {
         status: "active",
         statusReason: "activation_acknowledged",
-        activationDescriptorRef: undefined,
         externalRunRefDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
     });
+    expect(durable.ok && durable.value?.activationDescriptorRef).toBeUndefined();
     expect(await contentStore.getActivationDescriptor({
       tenantId: "tenant_a",
       agentId: "agent_a",
@@ -288,6 +290,26 @@ describe("managed-run two-phase activation", () => {
       value: { kind: "identical_replay", record: { status: "active" } },
     });
     expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an altered preparation replay after the private descriptor is deleted", async () => {
+    const coordinator = makeCoordinator();
+    expect((await coordinator.activatePrepared(makeInput())).ok).toBe(true);
+    activate.mockClear();
+
+    const replay = await coordinator.activatePrepared(makeInput({
+      prepared: makePrepared({ registrationNonce: "registration-nonce_altered" }),
+    }));
+
+    expect(replay).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "replay_conflict" },
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(logger.audit).toHaveBeenCalledWith(expect.objectContaining({
+      decision: "deny",
+      reasonCode: "replay_conflict",
+    }), "Managed-run activation rejected");
   });
 
   it("abandons an expired or unauthorized preparation without creating a run", async () => {
@@ -400,5 +422,31 @@ describe("managed-run two-phase activation", () => {
       errorKind: "dependency",
       hint: expect.any(String),
     }), "Capability-service activation acknowledgement did not match its durable binding");
+  });
+
+  it("does not activate a replay whose durable private join is missing", async () => {
+    activate.mockResolvedValueOnce(err({
+      kind: "uncertain" as const,
+      reasonCode: "deadline_exceeded",
+    }));
+    const coordinator = makeCoordinator();
+    expect((await coordinator.activatePrepared(makeInput())).ok).toBe(true);
+    await contentStore.deleteActivationDescriptor({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      managedRunId: "managed-operation_prepare_a",
+    }, "descriptor-operation_prepare_a");
+    activate.mockClear();
+
+    const replay = await coordinator.activatePrepared(makeInput());
+
+    expect(replay).toMatchObject({
+      ok: true,
+      value: {
+        kind: "activation_unknown",
+        record: { statusReason: "recovery_join_missing" },
+      },
+    });
+    expect(activate).not.toHaveBeenCalled();
   });
 });

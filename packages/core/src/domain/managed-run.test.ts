@@ -31,6 +31,7 @@ function makeRecord(overrides: Readonly<Record<string, unknown>> = {}): Record<s
     managedRunId: "managed-run_a",
     serviceInstanceId: "service-instance_a",
     externalRunRefDigest: "a".repeat(64),
+    activationDescriptorDigest: "d".repeat(64),
     activationDescriptorRef: "activation-descriptor_a",
     tenantId: "tenant_a",
     agentId: "agent_a",
@@ -90,6 +91,7 @@ describe("ManagedRunRecord domain authority validation", () => {
     expect(parseManagedRunRecord(makeRecord({ managedRunId: "contains spaces" })).ok).toBe(false);
     expect(parseManagedRunRecord(makeRecord({ workspacePolicyHash: "short" })).ok).toBe(false);
     expect(parseManagedRunRecord(makeRecord({ externalRunRefDigest: "z".repeat(64) })).ok).toBe(false);
+    expect(parseManagedRunRecord(makeRecord({ activationDescriptorDigest: "short" })).ok).toBe(false);
     expect(parseManagedRunRecord(makeRecord({ capturedCapabilityViewHash: "A".repeat(64) })).ok).toBe(false);
   });
 

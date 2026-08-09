@@ -74,6 +74,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
   const insertRun = db.prepare(`
     INSERT INTO managed_runs (
       schema_version, managed_run_id, service_instance_id, external_run_ref_digest,
+      activation_descriptor_digest,
       activation_descriptor_ref, display_label, tenant_id, agent_id, principal_id,
       conversation_ref, turn_scope, delivery_origin, trust_level, response_locale_policy,
       workspace_policy_hash, root_run_id, initiation_source, ingress_profile_id,
@@ -85,6 +86,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       last_heartbeat_at_ms, terminal_outcome
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+      ?,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);

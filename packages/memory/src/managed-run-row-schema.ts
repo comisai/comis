@@ -6,6 +6,7 @@ export const ManagedRunDbRowSchema = z.strictObject({
   managed_run_id: z.string(),
   service_instance_id: z.string(),
   external_run_ref_digest: z.string(),
+  activation_descriptor_digest: z.string(),
   activation_descriptor_ref: z.string().nullable(),
   display_label: z.string().nullable(),
   tenant_id: z.string(),

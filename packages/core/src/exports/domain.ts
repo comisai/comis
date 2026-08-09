@@ -147,6 +147,7 @@ export {
   MAX_MANAGED_RUN_REPORT_BYTES,
   ManagedRunReportKindSchema,
   ManagedRunActivationDescriptorSchema,
+  ManagedRunPreparedStartSchema,
   ManagedRunReportBodySchema,
   ManagedRunReportIndexSchema,
 } from "../domain/index.js";
@@ -265,6 +266,7 @@ export type {
   ManagedRunRecord,
   ManagedRunReportKind,
   ManagedRunActivationDescriptor,
+  ManagedRunPreparedStart,
   ManagedRunReportBody,
   ManagedRunReportIndex,
 } from "../domain/index.js";

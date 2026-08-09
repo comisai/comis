@@ -6,6 +6,7 @@ import { requireTableInfoRows } from "./schema-introspection.js";
 const REQUIRED_MANAGED_RUN_COLUMNS = [
   "managed_run_id",
   "service_instance_id",
+  "activation_descriptor_digest",
   "tenant_id",
   "agent_id",
   "principal_id",
@@ -40,6 +41,7 @@ export function ensureManagedRunTables(db: Database.Database): void {
       managed_run_id TEXT PRIMARY KEY NOT NULL,
       service_instance_id TEXT NOT NULL,
       external_run_ref_digest TEXT NOT NULL,
+      activation_descriptor_digest TEXT NOT NULL,
       activation_descriptor_ref TEXT,
       display_label TEXT,
       tenant_id TEXT NOT NULL,

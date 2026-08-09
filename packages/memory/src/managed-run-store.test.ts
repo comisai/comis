@@ -58,6 +58,7 @@ function makeRecord(overrides: Partial<ManagedRunRecord> = {}): ManagedRunRecord
     managedRunId: "managed-run_a",
     serviceInstanceId: "service-instance_a",
     externalRunRefDigest: "a".repeat(64),
+    activationDescriptorDigest: "d".repeat(64),
     activationDescriptorRef: "activation-descriptor_a",
     tenantId: "tenant_a",
     agentId: "agent_a",
