@@ -272,5 +272,6 @@ export interface ManagedRunContentPort {
   getEvidence(scope: ManagedRunContentScope, contentRef: string): Promise<Result<Uint8Array | undefined, Error>>;
   putAttentionBody(scope: ManagedRunContentScope, attentionRef: string, input: ManagedRunRawPrivateContentInput): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
   getAttentionBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<Uint8Array | undefined, Error>>;
+  deleteAttentionBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<boolean, Error>>;
   purgeExpired(input: ManagedRunContentRecoveryInput): Promise<Result<number, Error>>;
 }

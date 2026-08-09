@@ -419,6 +419,11 @@ export function createSqliteManagedRunContentStore(
       ? put(scope, attentionRef, "attention", input.body, input.expiresAtMs)
       : err(new Error("managed-run attention body exceeds its byte limit"))),
     getAttentionBody: (scope, contentRef) => boundary(() => read(scope, contentRef, "attention")),
+    deleteAttentionBody: (scope, contentRef) => boundary(() => {
+      const row = selectRow(scope, contentRef);
+      if (!row.ok || row.value === undefined) return row.ok ? ok(false) : row;
+      return row.value.kind === "attention" ? removeRow(row.value) : ok(false);
+    }),
     purgeExpired: (input) => boundary(() => {
       if (!Number.isInteger(input.limit) || input.limit <= 0 || input.limit > 10_000) {
         return err(new Error("managed-run content purge limit is invalid"));
