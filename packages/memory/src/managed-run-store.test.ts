@@ -111,6 +111,18 @@ function reportInput(overrides: Partial<ManagedRunReportAppendInput> = {}): Mana
   };
 }
 
+async function activate(store: ReturnType<typeof createSqliteManagedRunStore>): Promise<void> {
+  const activated = await store.claimTransition(SERVICE_SCOPE, {
+    operationId: "operation_activate",
+    managedRunId: "managed-run_a",
+    expectedStatuses: ["preparing"],
+    nextStatus: "active",
+    nextStatusReason: "activation_acknowledged",
+    transitionedAtMs: 1_800_000_000_050,
+  });
+  expect(activated.ok && activated.value.kind).toBe("claimed");
+}
+
 describe("createSqliteManagedRunStore durable state machine", () => {
   let db: Database.Database;
 
@@ -171,6 +183,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       activationDescriptorRef: undefined,
     });
     expect((await store.claimTransition(SERVICE_SCOPE, activation)).value?.kind).toBe("identical_replay");
+    expect((await store.claimTransition(OTHER_SERVICE_SCOPE, activation)).value?.kind).toBe("scope_mismatch");
     expect((await store.claimTransition(SERVICE_SCOPE, {
       ...activation,
       nextStatus: "unknown",
@@ -188,6 +201,8 @@ describe("createSqliteManagedRunStore durable state machine", () => {
   it("accepts reports transactionally with monotonic sequence and durable replay", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).value?.kind).toBe("state_mismatch");
+    await activate(store);
     const firstInput = reportInput();
 
     const first = await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, firstInput);
@@ -220,6 +235,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
   it("rejects altered report replay and service ownership mismatches without advancing", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
     expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).value?.kind).toBe("accepted");
     expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
       contentHash: "f".repeat(64),
@@ -236,6 +252,7 @@ describe("createSqliteManagedRunStore durable state machine", () => {
   it("claims reduces and settles one pending continuation without cursor regression", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
     expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
     const claim = {
       managedRunId: "managed-run_a",

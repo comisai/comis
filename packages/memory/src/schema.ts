@@ -14,6 +14,7 @@ import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
+import { ensureManagedRunTables } from "./schema-managed-runs.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureMsTeamsConversationTable } from "./schema-msteams-conversation.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
@@ -496,6 +497,7 @@ export function initSchema(
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only)
   ensureVideoJobTable(db); // durable async video-job store
   ensureDurableRunTable(db); // durable run checkpoint store
+  ensureManagedRunTables(db); // external managed-run authority and report indexes
   ensureOutwardLedgerTable(db); // outward-send duplicate-suppression and uncertainty ledger
   ensureMsTeamsConversationTable(db); // conversation-id → routing-tuple map (proactive send)
   ensureOutcomeEventsTable(db); // outcome_events ledger — no FK, (tenant,agent)-scoped

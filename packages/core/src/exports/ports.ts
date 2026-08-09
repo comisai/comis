@@ -203,6 +203,8 @@ export type {
   ManagedRunMutationOutcome,
   ManagedRunScopedListInput,
   ManagedRunRecoveryScanInput,
+  InvalidManagedRunRecord,
+  ManagedRunRecoveryScan,
   ManagedRunRevokeInput,
   ManagedRunStorePort,
   ManagedRunPrivateContentReceipt,

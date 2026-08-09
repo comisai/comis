@@ -4,6 +4,7 @@
 
 // Schema and initialization
 export { initSchema, isVecAvailable } from "./schema.js";
+export { createSqliteManagedRunStore } from "./managed-run-store.js";
 // The reconcile/classify helpers stay package-internal (schema + adapter +
 // queue import them relatively); only the rebuild REPORT shape is public — the
 // daemon threads it into the boot model_health diagnostic.

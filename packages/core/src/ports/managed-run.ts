@@ -59,6 +59,7 @@ export type ManagedRunTransitionClaimOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
   | { readonly kind: "state_mismatch"; readonly status: ManagedRunStatus }
+  | { readonly kind: "invalid_transition" }
   | { readonly kind: "replay_conflict" };
 
 export interface ManagedRunTerminalBindingInput {
@@ -100,6 +101,7 @@ export type ManagedRunReportAppendOutcome =
   | { readonly kind: "identical_replay"; readonly report: ManagedRunReportIndex }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
+  | { readonly kind: "state_mismatch"; readonly status: ManagedRunStatus }
   | { readonly kind: "replay_conflict" };
 
 export interface ManagedRunContinuationClaimInput {
@@ -126,6 +128,7 @@ export interface ManagedRunReducedStateInput {
   readonly status: ManagedRunStatus;
   readonly statusReason: ManagedRunStatusReason;
   readonly committedAtMs: number;
+  readonly terminalOutcome?: ManagedRunTerminalOutcome;
 }
 
 export type ManagedRunContinuationOutcomeKind = "completed" | "failed" | "abandoned";
@@ -143,6 +146,7 @@ export type ManagedRunMutationOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
   | { readonly kind: "claim_mismatch" }
+  | { readonly kind: "invalid_transition" }
   | { readonly kind: "cursor_regression" };
 
 export interface ManagedRunScopedListInput {
@@ -156,6 +160,17 @@ export interface ManagedRunRecoveryScanInput {
   readonly statuses: readonly ManagedRunStatus[];
   readonly updatedBeforeMs: number;
   readonly limit: number;
+}
+
+export interface InvalidManagedRunRecord {
+  readonly managedRunId: string;
+  readonly serviceInstanceId: string;
+  readonly reason: "record_validation_failed";
+}
+
+export interface ManagedRunRecoveryScan {
+  readonly records: readonly ManagedRunRecord[];
+  readonly invalid: readonly InvalidManagedRunRecord[];
 }
 
 export interface ManagedRunRevokeInput {
@@ -177,7 +192,7 @@ export interface ManagedRunStorePort {
   commitReducedState(scope: ManagedRunOwnerScope, input: ManagedRunReducedStateInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   markContinuationOutcome(scope: ManagedRunOwnerScope, input: ManagedRunContinuationOutcomeInput): Promise<Result<ManagedRunMutationOutcome, Error>>;
   listScoped(input: ManagedRunScopedListInput): Promise<Result<ManagedRunRecord[], Error>>;
-  listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecord[], Error>>;
+  listRecoverable(input: ManagedRunRecoveryScanInput): Promise<Result<ManagedRunRecoveryScan, Error>>;
   revoke(scope: ManagedRunOwnerScope, input: ManagedRunRevokeInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;
 }
 
