@@ -1,0 +1,404 @@
+// SPDX-License-Identifier: Apache-2.0
+import { chmodSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  TypedEventBus,
+  createConversationRef,
+  type CapabilityServiceControlPort,
+  type ComisLogger,
+  type ManagedRunContentPort,
+  type ManagedRunOwnerScope,
+  type ManagedRunPreparedStart,
+  type ManagedRunStorePort,
+} from "@comis/core";
+import {
+  createSqliteManagedRunContentStore,
+  createSqliteManagedRunStore,
+  initSchema,
+} from "@comis/memory";
+import { err, ok } from "@comis/shared";
+import {
+  createManagedRunActivationCoordinator,
+  type ManagedRunActivationCoordinatorDeps,
+  type ManagedRunActivationInput,
+} from "./managed-run-activation-coordinator.js";
+import type { ActiveCapabilityServiceView } from "./capability-service-runtime.js";
+
+const NOW_MS = 1_800_000_000_000;
+const CONTENT_RETENTION_MS = 30 * 86_400_000;
+const CONVERSATION_SCOPE = {
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  partition: {
+    kind: "endpoint-conversation-principal" as const,
+    endpoint: {
+      channelType: "telegram",
+      channelInstanceId: "channel-instance_a",
+      conversationId: "conversation_a",
+      threadId: "thread_a",
+      conversationKind: "direct" as const,
+    },
+    principalId: "principal_a",
+  },
+};
+const conversationReference = createConversationRef(CONVERSATION_SCOPE);
+if (!conversationReference.ok) throw conversationReference.error;
+const OWNER_SCOPE: ManagedRunOwnerScope = {
+  kind: "owner",
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  principalId: "principal_a",
+  conversationRef: conversationReference.value,
+};
+
+function makeLogger(): ComisLogger {
+  return {
+    level: "debug",
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    audit: vi.fn(),
+    child: vi.fn(function child() { return this; }),
+  } as unknown as ComisLogger;
+}
+
+function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): ActiveCapabilityServiceView {
+  return Object.freeze({
+    schemaVersion: 1,
+    revision: 1,
+    publishedAtMs: NOW_MS,
+    viewHash: "c".repeat(64),
+    definitions: Object.freeze([Object.freeze({
+      contributionId: "example.service",
+      serviceDefinitionId: "example.service-definition",
+      mcpServerName: "example-service",
+      requestedScopes: Object.freeze(["health", "report"] as const),
+    })]),
+    instances: Object.freeze([Object.freeze({
+      contributionId: "example.service",
+      serviceDefinitionId: "example.service-definition",
+      serviceInstanceId: "service-instance_a",
+      mcpServerName: "example-service",
+      allowedAgents: Object.freeze(["agent_a"]),
+      state: "active" as const,
+      activeScopes: Object.freeze(["health", "report"] as const),
+    })]),
+    ...overrides,
+  });
+}
+
+function makePrepared(overrides: Partial<ManagedRunPreparedStart> = {}): ManagedRunPreparedStart {
+  return {
+    state: "prepared",
+    externalRunRef: "external-run_a",
+    registrationNonce: "registration-nonce_a",
+    expiresAtMs: NOW_MS + 60_000,
+    displayLabel: "Synthetic managed run",
+    ...overrides,
+  };
+}
+
+function makeInput(overrides: Partial<ManagedRunActivationInput> = {}): ManagedRunActivationInput {
+  return {
+    operationId: "operation_prepare_a",
+    serviceInstanceId: "service-instance_a",
+    prepared: makePrepared(),
+    authority: {
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      principalId: "principal_a",
+      conversationRef: conversationReference.value,
+      turnScope: {
+        conversation: CONVERSATION_SCOPE,
+        principal: { principalId: "principal_a" },
+        endpoint: CONVERSATION_SCOPE.partition.endpoint,
+      },
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "conversation_a",
+        userId: "principal_a",
+        threadId: "thread_a",
+        tenantId: "tenant_a",
+      },
+      trustLevel: "user",
+      responseLocalePolicy: { locale: "en", source: "request", enforceLocale: true },
+      workspacePolicyHash: "b".repeat(64),
+      rootRunId: "root-run_a",
+      initiationSource: "user_request",
+      capturedAgentCapabilities: ["orch:read", "orch:web"],
+      capturedToolIds: ["mcp:service_a.inspect", "web_search"],
+    },
+    ...overrides,
+  };
+}
+
+function makeIds(operationId: string) {
+  return {
+    managedRunId: `managed-${operationId}`,
+    activationDescriptorRef: `descriptor-${operationId}`,
+    activationOperationId: `activate-${operationId}`,
+    abandonOperationId: `abandon-${operationId}`,
+  };
+}
+
+describe("managed-run two-phase activation", () => {
+  const temporaryDirectories: string[] = [];
+  let db: Database.Database;
+  let store: ManagedRunStorePort;
+  let contentStore: ManagedRunContentPort;
+  let control: CapabilityServiceControlPort;
+  let logger: ComisLogger;
+  let eventBus: TypedEventBus;
+  let activate: ReturnType<typeof vi.fn>;
+  let abandon: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 4);
+    store = createSqliteManagedRunStore(db);
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "managed-run-activation-")));
+    temporaryDirectories.push(directory);
+    chmodSync(directory, 0o700);
+    const content = createSqliteManagedRunContentStore(db, {
+      directoryPath: directory,
+      nowMs: () => NOW_MS,
+    });
+    if (!content.ok) throw content.error;
+    contentStore = content.value;
+    activate = vi.fn(async (command) => ok({
+      managedRunId: command.managedRunId,
+      externalRunRef: command.externalRunRef,
+      state: "active" as const,
+      activatedAtMs: NOW_MS + 10,
+    }));
+    abandon = vi.fn(async (command) => ok({
+      externalRunRef: command.externalRunRef,
+      state: "abandoned" as const,
+    }));
+    control = { activate, abandon };
+    logger = makeLogger();
+    eventBus = new TypedEventBus();
+  });
+
+  afterEach(() => {
+    db.close();
+    for (const directory of temporaryDirectories.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  function makeCoordinator(overrides: Partial<ManagedRunActivationCoordinatorDeps> = {}) {
+    return createManagedRunActivationCoordinator({
+      store,
+      contentStore,
+      control,
+      activeView: { getActiveView: () => makeActiveView() },
+      ids: { forOperation: makeIds },
+      nowMs: () => NOW_MS,
+      contentRetentionMs: CONTENT_RETENTION_MS,
+      eventBus,
+      logger,
+      ...overrides,
+    });
+  }
+
+  it("durably binds exact host authority before activating external work", async () => {
+    const activatedEvent = vi.fn();
+    eventBus.on("managed_run:activated", activatedEvent);
+    activate.mockImplementation(async (command) => {
+      const durable = await store.get(
+        { kind: "service", serviceInstanceId: "service-instance_a" },
+        command.managedRunId,
+      );
+      expect(durable).toMatchObject({
+        ok: true,
+        value: {
+          status: "preparing",
+          capturedCapabilityViewHash: "c".repeat(64),
+          activationDescriptorRef: "descriptor-operation_prepare_a",
+        },
+      });
+      const body = await contentStore.getActivationDescriptor({
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        managedRunId: command.managedRunId,
+      }, "descriptor-operation_prepare_a");
+      expect(body).toEqual({
+        ok: true,
+        value: {
+          schemaVersion: 1,
+          externalRunRef: "external-run_a",
+          registrationNonce: "registration-nonce_a",
+          expiresAtMs: NOW_MS + 60_000,
+        },
+      });
+      return ok({
+        managedRunId: command.managedRunId,
+        externalRunRef: command.externalRunRef,
+        state: "active" as const,
+        activatedAtMs: NOW_MS + 10,
+      });
+    });
+
+    const result = await makeCoordinator().activatePrepared(makeInput());
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "activated", record: { status: "active" } },
+    });
+    const durable = await store.get(OWNER_SCOPE, "managed-operation_prepare_a");
+    expect(durable).toMatchObject({
+      ok: true,
+      value: {
+        status: "active",
+        statusReason: "activation_acknowledged",
+        activationDescriptorRef: undefined,
+        externalRunRefDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    expect(await contentStore.getActivationDescriptor({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      managedRunId: "managed-operation_prepare_a",
+    }, "descriptor-operation_prepare_a")).toEqual({ ok: true, value: undefined });
+    expect(activatedEvent).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-operation_prepare_a",
+      serviceInstanceId: "service-instance_a",
+    }));
+    const persisted = JSON.stringify(db.prepare("SELECT * FROM managed_runs").all());
+    expect(persisted).not.toContain("external-run_a");
+    expect(persisted).not.toContain("registration-nonce_a");
+  });
+
+  it("returns the durable original without repeating service activation", async () => {
+    const coordinator = makeCoordinator();
+    expect((await coordinator.activatePrepared(makeInput())).ok).toBe(true);
+    activate.mockClear();
+
+    const replay = await coordinator.activatePrepared(makeInput());
+
+    expect(replay).toMatchObject({
+      ok: true,
+      value: { kind: "identical_replay", record: { status: "active" } },
+    });
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("abandons an expired or unauthorized preparation without creating a run", async () => {
+    const expired = await makeCoordinator().activatePrepared(makeInput({
+      operationId: "operation_expired",
+      prepared: makePrepared({ expiresAtMs: NOW_MS }),
+    }));
+    const unauthorized = await makeCoordinator({
+      activeView: {
+        getActiveView: () => makeActiveView({
+          instances: Object.freeze([Object.freeze({
+            ...makeActiveView().instances[0]!,
+            allowedAgents: Object.freeze(["agent_b"]),
+          })]),
+        }),
+      },
+    }).activatePrepared(makeInput({ operationId: "operation_unauthorized" }));
+
+    expect(expired).toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "preparation_expired" } });
+    expect(unauthorized).toMatchObject({ ok: true, value: { kind: "rejected", reasonCode: "agent_not_allowed" } });
+    expect(abandon).toHaveBeenCalledTimes(2);
+    expect(await store.listScoped({ scope: OWNER_SCOPE, limit: 10 })).toEqual({ ok: true, value: [] });
+  });
+
+  it("compensates private content and abandons when durable creation fails", async () => {
+    const failingStore: ManagedRunStorePort = {
+      ...store,
+      create: vi.fn(async () => err(new Error("synthetic database unavailable"))),
+    };
+    const result = await makeCoordinator({ store: failingStore }).activatePrepared(makeInput());
+
+    expect(result).toMatchObject({ ok: false });
+    expect(activate).not.toHaveBeenCalled();
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "activation_rejected",
+    }));
+    expect(await contentStore.getActivationDescriptor({
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      managedRunId: "managed-operation_prepare_a",
+    }, "descriptor-operation_prepare_a")).toEqual({ ok: true, value: undefined });
+  });
+
+  it("records a definitive activation rejection as cancelled after abandon", async () => {
+    activate.mockResolvedValue(err({
+      kind: "rejected" as const,
+      reasonCode: "precondition_failed",
+    }));
+
+    const result = await makeCoordinator().activatePrepared(makeInput());
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "activation_rejected", record: { status: "cancelled" } },
+    });
+    expect(abandon).toHaveBeenCalledOnce();
+    expect(await store.get(OWNER_SCOPE, "managed-operation_prepare_a")).toMatchObject({
+      ok: true,
+      value: { status: "cancelled", statusReason: "activation_rejected" },
+    });
+  });
+
+  it.each(["uncertain", "unavailable"] as const)(
+    "retains the private join and records durable unknown for %s activation",
+    async (failureKind) => {
+      activate.mockResolvedValue(err({
+        kind: failureKind,
+        reasonCode: failureKind === "uncertain" ? "deadline_exceeded" : "service_unavailable",
+      }));
+
+      const result = await makeCoordinator().activatePrepared(makeInput());
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          kind: "activation_unknown",
+          record: {
+            status: "unknown",
+            activationDescriptorRef: "descriptor-operation_prepare_a",
+          },
+        },
+      });
+      expect(abandon).not.toHaveBeenCalled();
+      expect(await contentStore.getActivationDescriptor({
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        managedRunId: "managed-operation_prepare_a",
+      }, "descriptor-operation_prepare_a")).toMatchObject({
+        ok: true,
+        value: { externalRunRef: "external-run_a" },
+      });
+    },
+  );
+
+  it("records an identity-mismatched activation acknowledgement as unknown", async () => {
+    activate.mockResolvedValue(ok({
+      managedRunId: "forged-run",
+      externalRunRef: "external-run_a",
+      state: "active" as const,
+      activatedAtMs: NOW_MS + 10,
+    }));
+
+    const result = await makeCoordinator().activatePrepared(makeInput());
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "activation_unknown", record: { statusReason: "activation_outcome_unknown" } },
+    });
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      errorKind: "dependency",
+      hint: expect.any(String),
+    }), "Capability-service activation acknowledgement did not match its durable binding");
+  });
+});
