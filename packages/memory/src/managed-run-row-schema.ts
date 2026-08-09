@@ -102,6 +102,10 @@ export const ManagedRunAttentionOperationDbRowSchema = z.strictObject({
   result_record: z.string(),
 });
 
+export const ManagedRunAttentionCountDbRowSchema = z.strictObject({
+  count: z.number().int().nonnegative(),
+});
+
 export type ManagedRunDbRow = z.infer<typeof ManagedRunDbRowSchema>;
 export type ManagedRunReportDbRow = z.infer<typeof ManagedRunReportDbRowSchema>;
 export type ManagedRunOperationDbRow = z.infer<typeof ManagedRunOperationDbRowSchema>;

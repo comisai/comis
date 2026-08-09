@@ -12,9 +12,7 @@ export {
 export type {
   ContinuationExecutionEngine,
   ContinuationExecutionHooks,
-  ContinuationExecutionInput,
   ContinuationExecutionOutcome,
-  ContinuationOriginAuthority,
 } from "./continuation/continuation-engine.js";
 export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
 export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";

@@ -146,7 +146,6 @@ export {
   ManagedRunReportBodySchema,
   ManagedRunReportIndexSchema,
   reduceManagedRunState,
-  ManagedRunAttentionStatusSchema,
   ManagedRunAttentionRecordSchema,
 } from "../domain/index.js";
 
@@ -265,9 +264,6 @@ export type {
   ManagedRunReportInput,
   ManagedRunReportBody,
   ManagedRunReportIndex,
-  ManagedRunEvidenceHealth,
-  ManagedRunReductionInput,
   ManagedRunReduction,
-  ManagedRunAttentionStatus,
   ManagedRunAttentionRecord,
 } from "../domain/index.js";

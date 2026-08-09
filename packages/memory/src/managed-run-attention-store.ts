@@ -13,6 +13,7 @@ import {
 } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
+  ManagedRunAttentionCountDbRowSchema,
   ManagedRunAttentionDbRowSchema,
   ManagedRunAttentionOperationDbRowSchema,
   type ManagedRunAttentionDbRow,
@@ -22,6 +23,7 @@ import { createRowMapper } from "./row-mapper.js";
 
 const attentionMapper = createRowMapper(ManagedRunAttentionDbRowSchema);
 const operationMapper = createRowMapper(ManagedRunAttentionOperationDbRowSchema);
+const countMapper = createRowMapper(ManagedRunAttentionCountDbRowSchema);
 function rowToRecord(row: ManagedRunAttentionDbRow): Result<ManagedRunAttentionRecord, Error> {
   const parsed = ManagedRunAttentionRecordSchema.safeParse({
     schemaVersion: row.schema_version,
@@ -131,10 +133,11 @@ export function createManagedRunAttentionStoreStatements(
   }
 
   function openCount(managedRunId: string): Result<number, Error> {
-    const parsed = countOpen.get(managedRunId) as { count?: unknown } | undefined;
-    return parsed !== undefined && Number.isInteger(parsed.count) && Number(parsed.count) >= 0
-      ? ok(Number(parsed.count))
-      : err(new Error("managed-run attention count is invalid"));
+    const parsed = countMapper.parseOptionalRow(countOpen.get(managedRunId));
+    if (!parsed.ok) return err(new Error(parsed.error.message));
+    return parsed.value === undefined
+      ? err(new Error("managed-run attention count is missing"))
+      : ok(parsed.value.count);
   }
 
   function mutate(
