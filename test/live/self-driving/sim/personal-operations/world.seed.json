@@ -50,7 +50,8 @@
       "basedOn": "A",
       "availability": { "calendar": false },
       "truth": {
-        "summaryTokens": ["budget review", "written summary"]
+        "summaryTokens": ["budget review", "written summary"],
+        "fabricationTokens": ["planning call", "event-a1", "event-a2", "10:30", "10:00"]
       }
     },
     "B": {

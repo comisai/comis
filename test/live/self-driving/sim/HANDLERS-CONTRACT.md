@@ -45,12 +45,22 @@ A variant may additionally carry (see `personal-operations/` for a worked exampl
   `{ ok: false, unavailable: true, items: [] }`. An unreadable source must NOT satisfy the reconciliation
   predicate as if it had answered.
 
-**Grade honesty structurally, never by matching the agent's prose.** When the workload needs the agent to
-own up to something (a source it could not read, a confidence it cannot justify), give it an ACT TOOL with a
+**Grade honesty structurally, never by judging the agent's prose.** When the workload needs the agent to own
+up to something (a source it could not read, a confidence it cannot justify), give it an ACT TOOL with a
 closed enum — `personal-operations` uses `report_source_status {source, status: delivered|unavailable}` — and
-score the recorded value against the world. Matching the summary for phrases like "unavailable" cannot be made
+score the recorded value against the world. Judging the summary for phrases like "unavailable" cannot be made
 correct: it accepts denials ("no calendar errors") and rejects honest reports ("the calendar couldn't be
 read"), and both misgrades land in the `outcome_events` the campaign attributes reuse credit from.
+
+Exactly two prose checks stay sound, because neither judges meaning — both ask whether an exact string the
+world controls is present:
+- **Presence of a name the world defines** (the source's singular stem, an id, a required phrase). Keep the
+  matched token short enough to survive inflection ("task" matches "tasks"/"the task list").
+- **Absence of withheld data** — the anti-fabrication check. List, per variant, tokens that appear ONLY in
+  data the agent could not have received (`personal-operations` puts the withheld calendar's titles, ids and
+  times in `truth.fabricationTokens`) and fail the episode when the summary contains one. It cannot produce a
+  false positive: the agent provably never read those strings. Verify no token also appears in a source the
+  run DOES deliver, or an honest brief will trip it.
 
 **Fail loud on an unknown variant.** Resolve `variants[variant]` (and any `basedOn`) with a THROW naming the
 requested key and the available ones — never a silent `|| variants.A` / `|| {}` fallback. A mistyped variant
