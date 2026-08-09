@@ -6,7 +6,7 @@
     },
     {
       "path": "fixtures/boundary-size.json",
-      "sha256": "4dd6ef192b25ab0233cf68b27ac55db4139a43409ffbb3e82ae52eb6b5572b70"
+      "sha256": "626884b173c1e4beaa55dd2d954df04aa1f2eb6726983fd969256d86bcffb914"
     },
     {
       "path": "fixtures/digest-mismatch.json",
@@ -89,7 +89,7 @@
       "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
     }
   ],
-  "bundleDigest": "fa8b8c4e09033cbf876f9b5adbca31fbedac754f0b7eb370fb8d5374dc6fadc1",
+  "bundleDigest": "e87e69511ea9e01ea2383cd211f9946233fdbe1ce8edf016e76ce55eae683297",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -267,7 +267,7 @@
       "responseSchema": "schemas/report.response.schema.json",
       "semanticInvariants": [
         "operation-id-must-match-envelope-id",
-        "utf8-summary-bytes-at-most-max-report-bytes",
+        "utf8-report-content-bytes-at-most-max-report-bytes",
         "service-report-id-identical-replay-returns-original-sequence",
         "service-report-id-altered-replay-is-rejected"
       ]

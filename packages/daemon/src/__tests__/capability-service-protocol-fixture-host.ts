@@ -97,9 +97,12 @@ function validateReportSizes(
 ): Result<void, CapabilityServiceProtocolFixtureRejection> {
   if (method !== "managedRuns.report") return ok(undefined);
   const summary = params["summary"];
+  const details = params["details"];
+  const contentBytes =
+    (typeof summary === "string" ? Buffer.byteLength(summary, "utf8") : 0) +
+    (typeof details === "string" ? Buffer.byteLength(details, "utf8") : 0);
   if (
-    typeof summary === "string" &&
-    Buffer.byteLength(summary, "utf8") > CAPABILITY_SERVICE_LIMITS.maxReportBytes
+    contentBytes > CAPABILITY_SERVICE_LIMITS.maxReportBytes
   ) {
     return reject("size_limit_exceeded");
   }

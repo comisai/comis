@@ -130,7 +130,7 @@ const METHOD_CATALOG = [
     maxResponseBytes: CAPABILITY_SERVICE_LIMITS.maxResponseBytes,
     semanticInvariants: [
       "operation-id-must-match-envelope-id",
-      "utf8-summary-bytes-at-most-max-report-bytes",
+      "utf8-report-content-bytes-at-most-max-report-bytes",
       "service-report-id-identical-replay-returns-original-sequence",
       "service-report-id-altered-replay-is-rejected",
     ],

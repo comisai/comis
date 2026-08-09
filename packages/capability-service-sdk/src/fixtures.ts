@@ -282,7 +282,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
   },
   {
     class: "boundary-size",
-    name: "report summary byte boundary",
+    name: "report content byte boundary",
     steps: [
       {
         target: "request",
@@ -307,6 +307,20 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           serviceReportId: "report_boundary_large",
           kind: "progress",
           summary: "x".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes + 1),
+        }),
+      },
+      {
+        target: "request",
+        expectation: "reject",
+        schemaExpectation: "accept",
+        expectedErrorKind: "size_limit_exceeded",
+        payload: request("operation_boundary_combined", "managedRuns.report", {
+          operationId: "operation_boundary_combined",
+          managedRunId,
+          serviceReportId: "report_boundary_combined",
+          kind: "progress",
+          summary: "x".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes / 2),
+          details: "y".repeat(CAPABILITY_SERVICE_LIMITS.maxReportBytes / 2 + 1),
         }),
       },
     ],
