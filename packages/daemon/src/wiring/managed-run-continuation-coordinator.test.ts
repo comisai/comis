@@ -212,6 +212,19 @@ describe("managed-run continuation coordination", () => {
     }));
   });
 
+  it("fails closed when the report range omits an accepted leading sequence", async () => {
+    const setup = makeCoordinator({ reports: [report(2, "candidate_complete")] });
+
+    const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
+
+    expect(result.ok).toBe(true);
+    expect(setup.execute).not.toHaveBeenCalled();
+    expect(setup.commitReducedState).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
+      status: "unknown",
+      statusReason: "required_evidence_invalid",
+    }));
+  });
+
   it("folds concurrent notifications into at most one follow-up execution per run", async () => {
     let releaseFirst!: () => void;
     const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
