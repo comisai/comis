@@ -1,0 +1,297 @@
+// SPDX-License-Identifier: Apache-2.0
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  TypedEventBus,
+  createConversationRef,
+  type CapabilityServiceControlPort,
+  type ComisLogger,
+  type ManagedRunRecord,
+} from "@comis/core";
+import {
+  createSqliteManagedRunContentStore,
+  createSqliteManagedRunStore,
+  initSchema,
+} from "@comis/memory";
+import { ok } from "@comis/shared";
+import { createManagedRunActivationCoordinator } from "./managed-run-activation-coordinator.js";
+import type { ActiveCapabilityServiceView } from "./capability-service-runtime.js";
+
+const NOW_MS = 1_800_000_000_000;
+const conversationScope = {
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  partition: {
+    kind: "endpoint-conversation-principal" as const,
+    endpoint: {
+      channelType: "telegram",
+      channelInstanceId: "channel-instance_a",
+      conversationId: "conversation_a",
+      conversationKind: "direct" as const,
+    },
+    principalId: "principal_a",
+  },
+};
+const conversationReference = createConversationRef(conversationScope);
+if (!conversationReference.ok) throw conversationReference.error;
+
+function makeLogger(): ComisLogger {
+  return {
+    level: "debug",
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    audit: vi.fn(),
+    child: vi.fn(function child() { return this; }),
+  } as unknown as ComisLogger;
+}
+
+function makeRecord(
+  managedRunId: string,
+  serviceInstanceId: string,
+  descriptorRef: string,
+  overrides: Partial<ManagedRunRecord> = {},
+): ManagedRunRecord {
+  return {
+    schemaVersion: 1,
+    managedRunId,
+    serviceInstanceId,
+    externalRunRefDigest: "a".repeat(64),
+    activationDescriptorDigest: "d".repeat(64),
+    activationDescriptorRef: descriptorRef,
+    tenantId: "tenant_a",
+    agentId: "agent_a",
+    principalId: "principal_a",
+    conversationRef: conversationReference.value,
+    turnScope: {
+      conversation: conversationScope,
+      principal: { principalId: "principal_a" },
+      endpoint: conversationScope.partition.endpoint,
+    },
+    deliveryOrigin: {
+      channelType: "telegram",
+      channelId: "conversation_a",
+      userId: "principal_a",
+      tenantId: "tenant_a",
+    },
+    trustLevel: "user",
+    responseLocalePolicy: { locale: "en", source: "request", enforceLocale: true },
+    workspacePolicyHash: "b".repeat(64),
+    rootRunId: "root-run_a",
+    initiationSource: "user_request",
+    capturedAgentCapabilities: ["orch:read"],
+    capturedToolIds: ["mcp:service_a.inspect"],
+    capturedCapabilityViewHash: "c".repeat(64),
+    executionAttachmentIds: [],
+    terminalSessionIds: [],
+    status: "preparing",
+    statusReason: "awaiting_activation",
+    lastAcceptedReportSequence: 0,
+    lastReducedReportSequence: 0,
+    pendingContinuation: false,
+    openAttentionCount: 0,
+    createdAtMs: NOW_MS - 10_000,
+    updatedAtMs: NOW_MS - 10_000,
+    ...overrides,
+  };
+}
+
+function makeActiveView(): ActiveCapabilityServiceView {
+  return Object.freeze({
+    schemaVersion: 1,
+    revision: 1,
+    publishedAtMs: NOW_MS,
+    viewHash: "c".repeat(64),
+    definitions: Object.freeze([Object.freeze({
+      contributionId: "example.service",
+      serviceDefinitionId: "example.service-definition",
+      mcpServerName: "example-service",
+      requestedScopes: Object.freeze(["health"] as const),
+    })]),
+    instances: Object.freeze([Object.freeze({
+      contributionId: "example.service",
+      serviceDefinitionId: "example.service-definition",
+      serviceInstanceId: "service-instance_a",
+      mcpServerName: "example-service",
+      allowedAgents: Object.freeze(["agent_a"]),
+      state: "active" as const,
+      activeScopes: Object.freeze(["health"] as const),
+    })]),
+  });
+}
+
+function controlIds(managedRunId: string) {
+  return {
+    activationOperationId: `activate-${managedRunId}`,
+    abandonOperationId: `abandon-${managedRunId}`,
+    rejectionOperationId: `reject-${managedRunId}`,
+    joinMissingOperationId: `join-missing-${managedRunId}`,
+    outcomeUnknownOperationId: `outcome-unknown-${managedRunId}`,
+    unavailableOperationId: `unavailable-${managedRunId}`,
+  };
+}
+
+describe("managed-run activation restart recovery", () => {
+  const temporaryDirectories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of temporaryDirectories.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles independent preparation outcomes after database reopen", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "managed-run-recovery-")));
+    temporaryDirectories.push(root);
+    chmodSync(root, 0o700);
+    const contentDirectory = join(root, "private-content");
+    mkdirSync(contentDirectory, { mode: 0o700 });
+    const databasePath = join(root, "managed-runs.db");
+
+    const firstDb = new Database(databasePath);
+    initSchema(firstDb, 4);
+    const firstStore = createSqliteManagedRunStore(firstDb);
+    const firstContentResult = createSqliteManagedRunContentStore(firstDb, {
+      directoryPath: realpathSync(contentDirectory),
+      nowMs: () => NOW_MS,
+    });
+    if (!firstContentResult.ok) throw firstContentResult.error;
+    const firstContent = firstContentResult.value;
+    const records = [
+      makeRecord("managed-run_expired", "service-instance_a", "descriptor_expired"),
+      makeRecord("managed-run_missing", "service-instance_a", "descriptor_missing", {
+        status: "unknown",
+        statusReason: "activation_outcome_unknown",
+      }),
+      makeRecord("managed-run_unavailable", "service-instance_b", "descriptor_unavailable", {
+        status: "unknown",
+        statusReason: "service_state_unavailable",
+      }),
+      makeRecord("managed-run_valid", "service-instance_a", "descriptor_valid"),
+      makeRecord("managed-run_corrupt", "service-instance_a", "descriptor_corrupt"),
+    ];
+    for (const record of records) expect((await firstStore.create(record)).ok).toBe(true);
+    expect((await firstContent.putActivationDescriptor({
+      tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_expired",
+    }, "descriptor_expired", {
+      schemaVersion: 1,
+      externalRunRef: "external-run_expired",
+      registrationNonce: "registration-nonce_expired",
+      expiresAtMs: NOW_MS - 1,
+    })).ok).toBe(true);
+    expect((await firstContent.putActivationDescriptor({
+      tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_unavailable",
+    }, "descriptor_unavailable", {
+      schemaVersion: 1,
+      externalRunRef: "external-run_unavailable",
+      registrationNonce: "registration-nonce_unavailable",
+      expiresAtMs: NOW_MS + 60_000,
+    })).ok).toBe(true);
+    expect((await firstContent.putActivationDescriptor({
+      tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_valid",
+    }, "descriptor_valid", {
+      schemaVersion: 1,
+      externalRunRef: "external-run_valid",
+      registrationNonce: "registration-nonce_valid",
+      expiresAtMs: NOW_MS + 60_000,
+    })).ok).toBe(true);
+    firstDb.prepare("UPDATE managed_runs SET turn_scope = ? WHERE managed_run_id = ?")
+      .run("{not-json", "managed-run_corrupt");
+    firstDb.close();
+
+    const reopenedDb = new Database(databasePath);
+    initSchema(reopenedDb, 4);
+    const store = createSqliteManagedRunStore(reopenedDb);
+    const contentResult = createSqliteManagedRunContentStore(reopenedDb, {
+      directoryPath: realpathSync(contentDirectory),
+      nowMs: () => NOW_MS,
+    });
+    if (!contentResult.ok) throw contentResult.error;
+    const contentStore = contentResult.value;
+    const activate = vi.fn(async (command) => ok({
+      managedRunId: command.managedRunId,
+      externalRunRef: command.externalRunRef,
+      state: "active" as const,
+      activatedAtMs: NOW_MS,
+    }));
+    const abandon = vi.fn(async (command) => ok({
+      externalRunRef: command.externalRunRef,
+      state: "abandoned" as const,
+    }));
+    const control: CapabilityServiceControlPort = { activate, abandon };
+    const logger = makeLogger();
+    const coordinator = createManagedRunActivationCoordinator({
+      store,
+      contentStore,
+      control,
+      activeView: { getActiveView: makeActiveView },
+      ids: {
+        forOperation: (operationId) => ({
+          managedRunId: `managed-${operationId}`,
+          activationDescriptorRef: `descriptor-${operationId}`,
+          ...controlIds(`managed-${operationId}`),
+        }),
+        forManagedRun: controlIds,
+      },
+      nowMs: () => NOW_MS,
+      eventBus: new TypedEventBus(),
+      logger,
+    });
+
+    const recovered = await coordinator.recoverPreparations({
+      updatedBeforeMs: NOW_MS,
+      limit: 10,
+    });
+
+    expect(recovered).toMatchObject({
+      ok: true,
+      value: {
+        activated: ["managed-run_valid"],
+        cancelled: ["managed-run_expired"],
+        unknown: ["managed-run_missing", "managed-run_unavailable"],
+        invalid: [{
+          managedRunId: "managed-run_corrupt",
+          serviceInstanceId: "service-instance_a",
+          reason: "record_validation_failed",
+        }],
+        failed: [],
+      },
+    });
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: "activate-managed-run_valid",
+      managedRunId: "managed-run_valid",
+    }));
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: "abandon-managed-run_expired",
+      reason: "registration_expired",
+    }));
+    expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_valid"))
+      .toMatchObject({ ok: true, value: { status: "active", activationDescriptorRef: undefined } });
+    expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_expired"))
+      .toMatchObject({ ok: true, value: { status: "cancelled" } });
+    expect(await store.get({ kind: "service", serviceInstanceId: "service-instance_a" }, "managed-run_missing"))
+      .toMatchObject({ ok: true, value: { status: "unknown", statusReason: "recovery_join_missing" } });
+    expect(await contentStore.getActivationDescriptor({
+      tenantId: "tenant_a", agentId: "agent_a", managedRunId: "managed-run_valid",
+    }, "descriptor_valid")).toEqual({ ok: true, value: undefined });
+
+    const rerun = await coordinator.recoverPreparations({ updatedBeforeMs: NOW_MS, limit: 10 });
+    expect(rerun.ok).toBe(true);
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_corrupt",
+      errorKind: "internal",
+      hint: expect.any(String),
+    }), "Corrupt managed-run recovery row was quarantined");
+    reopenedDb.close();
+  });
+});
