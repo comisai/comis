@@ -225,7 +225,6 @@ export type {
   WorkspaceLeaseReconcileInput,
   WorkspaceLeaseReleaseOutcome,
   WorkspaceLeaseReconcileOutcome,
-  WorkspaceLeaseRecoveryScanInput,
   WorkspaceLeasePort,
 } from "../ports/index.js";
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure

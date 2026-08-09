@@ -147,10 +147,6 @@ export {
   ManagedRunReportIndexSchema,
   reduceManagedRunState,
   ManagedRunAttentionRecordSchema,
-  WorkspaceLeaseFilesystemIdentitySchema,
-  WorkspaceLeaseDispositionSchema,
-  WorkspaceLeaseStateSchema,
-  WorkspaceLeaseRecordSchema,
   parseWorkspaceLeaseRecord,
 } from "../domain/index.js";
 
@@ -272,7 +268,5 @@ export type {
   ManagedRunReduction,
   ManagedRunAttentionRecord,
   WorkspaceLeaseFilesystemIdentity,
-  WorkspaceLeaseDisposition,
-  WorkspaceLeaseState,
   WorkspaceLeaseRecord,
 } from "../domain/index.js";
