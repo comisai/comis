@@ -69,8 +69,14 @@ const MCP_DEFAULT_TOOL_RATE_LIMIT = 30;
  * CONFIRMED messages. The MCP spec allows resources to change between reads
  * (re-reading may return additional messages as outbound delivery completes)
  * -- the bounded page keeps payloads small.
+ *
+ * MUST stay within `SessionHistoryContract`'s `limit` ceiling: the resource
+ * snapshot is served by calling that contract, so a page size above its bound
+ * fails validation and turns every `resources/read` into an MCP -32603 instead
+ * of a smaller page. `setup-gateway-routes.test.ts` parses the contract with
+ * this value so the two cannot drift apart again.
  */
-const MCP_RESOURCE_READ_LIMIT = 1000;
+export const MCP_RESOURCE_READ_LIMIT = 200;
 
 /**
  * Mapping from MCP tool name -> daemon RPC method name. Most tools are

@@ -19,7 +19,7 @@ import type { TerminalPlatformProfile } from "../terminal-platform-profile.js";
 export const codexProfile: TerminalPlatformProfile = {
   id: "codex",
   allowIds: ["codex"],
-  platformVersion: "1.1.1",
+  platformVersion: "1.1.2",
   // Codex perception signatures the classifier consumes (layered on the generic structural
   // detection). All anchored + ReDoS-safe (the registry guard enforces at load).
   perception: {

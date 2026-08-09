@@ -1,8 +1,15 @@
 ---
 name: codex
 type: prompt
-version: "1.1.1"
+version: "1.1.2"
 description: Drive the OpenAI Codex CLI interactively in a terminal session to build, fix, or extend software — launch it in a NAMED project folder, give it the task, detect completion, and verify. Use this when the user explicitly wants to use Codex (the OpenAI coding CLI) for a software task. For general coding without a named tool, prefer the claude-code skill. This is for INTERACTIVE sessions only; never the headless exec mode.
+comis:
+  requires:
+    # The driven CLI is reached through an operator terminal allow-entry, which
+    # pins an absolute `match.path` — not a PATH lookup — so it is not a
+    # pre-flightable `bins` entry. Nothing else is needed on the host.
+    bins: []
+    env: []
 ---
 
 # Driving Codex CLI (interactive)

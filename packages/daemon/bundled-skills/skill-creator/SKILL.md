@@ -1,7 +1,12 @@
 ---
 name: skill-creator
-version: "1.1.1"
+version: "1.1.2"
 description: Create new Comis skills, modify and improve existing skills, and validate them against the platform's manifest schema. Use this skill whenever the user wants to create a skill from scratch, turn a workflow into a reusable skill, update or fix an existing skill, understand the skill format, or asks about how skills work in Comis -- even if they don't use the word "skill" explicitly.
+comis:
+  requires:
+    # scripts/init-skill.py + scripts/validate-skill.py (step 6 of the workflow).
+    bins: ["python3"]
+    env: []
 ---
 
 # Skill Creator

@@ -1,7 +1,12 @@
 ---
 name: deep-research
-version: 1.0.1
+version: 1.0.2
 description: Conduct systematic, multi-angle web research on any topic. Use this skill instead of a single web search for ANY question requiring online information -- "what is X", "explain X", "compare X and Y", "research X", or before content generation tasks like articles, reports, presentations, or documentation. Provides thorough multi-source research methodology. Use proactively when the user's question needs current, comprehensive information from multiple angles.
+comis:
+  requires:
+    # Runs entirely on the built-in web_search / web_fetch tools.
+    bins: []
+    env: []
 ---
 
 # Deep Research

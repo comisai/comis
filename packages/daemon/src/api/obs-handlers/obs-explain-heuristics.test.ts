@@ -1219,6 +1219,185 @@ describe("obs-explain-heuristics", () => {
     expect(result?.suggestedNextSteps.join(" ")).toMatch(/credential|provider/iu);
   });
 
+  it("uses the activity-finalize auth kind when the early session summary has no error kind", () => {
+    const result = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "auth",
+        reason: "a step failed outside the tool timeline",
+        reclassified: true,
+      },
+    }));
+
+    expect(result?.code).toBe("execution_auth_failure");
+    expect(result?.detail).toContain("authentication failure");
+  });
+
+  it("ranks a terminal dependency failure above an incidental recall miss", () => {
+    const result = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "dependency",
+        reason: "a step failed outside the tool timeline",
+        reclassified: true,
+      },
+    }));
+
+    expect(result?.code).toBe("execution_dependency_failure");
+    expect(result?.suggestedNextSteps.join(" ")).toMatch(/provider|dependency/iu);
+  });
+
+  it.each(["internal", "validation", "resource", "precondition"])(
+    "ranks a terminal %s failure above an incidental recall miss",
+    (errorKind) => {
+      const result = rootCause(makeSignals({
+        endReason: "error",
+        degraded: true,
+        recall: allMissRecall,
+        turnFinalized: {
+          strategy: "EditPlace",
+          outcome: "failure",
+          errorKind,
+          reason: "a step failed outside the tool timeline",
+          reclassified: false,
+        },
+      }));
+
+      expect(result?.code).toBe("execution_terminal_failure");
+      expect(result?.detail).toContain(errorKind);
+      expect(result?.detail).toContain("a step failed outside the tool timeline");
+    },
+  );
+
+  it("names an unclassified terminal failure rather than blaming the recall", () => {
+    const result = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "AppendOnly",
+        outcome: "failure",
+        reclassified: false,
+      },
+    }));
+
+    expect(result?.code).toBe("execution_terminal_failure");
+    expect(result?.detail).toContain("unclassified");
+  });
+
+  it("keeps the specific orchestrate cause above the generic terminal failure", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "internal",
+        reclassified: false,
+      },
+    });
+    signals.orchestrate = [{
+      runId: "r1",
+      outcome: "failure",
+      durationMs: 12,
+      exitCode: 1,
+      failureClass: "nonzero_exit",
+      toolCalls: [],
+      resultRefs: { count: 0, bytes: 0 },
+    }];
+
+    expect(rootCause(signals)?.code).toBe("orchestrate_failed");
+  });
+
+  it("ranks the terminal finalize kind above a stale session-wide auth tally", () => {
+    // An auth failure on an early turn (credential since repaired) must not mask the
+    // dependency the session actually died of.
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "dependency",
+        reclassified: false,
+      },
+    }) as IncidentSignals & { summaryTopErrorKinds?: Record<string, number> };
+    signals.summaryTopErrorKinds = { auth: 1 };
+
+    const result = rootCause(signals);
+
+    expect(result?.code).toBe("execution_dependency_failure");
+  });
+
+  it("the session-wide auth tally still names a terminal surface that finalized with no kind", () => {
+    const signals = makeSignals({
+      endReason: "error",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "AppendOnly",
+        outcome: "failure",
+        reclassified: false,
+      },
+    }) as IncidentSignals & { summaryTopErrorKinds?: Record<string, number> };
+    signals.summaryTopErrorKinds = { auth: 2 };
+
+    expect(rootCause(signals)?.code).toBe("execution_auth_failure");
+  });
+
+  it.each([
+    ["provider_degraded", "dependency", "execution_dependency_failure"],
+    ["narration_stall", "internal", "execution_terminal_failure"],
+    ["unknown", "validation", "execution_terminal_failure"],
+  ])(
+    "names the terminal failure on a %s end reason instead of leaving it unrooted",
+    (endReason, errorKind, expected) => {
+      // The NAMED end reasons carry the same failed finalize as the generic "error"
+      // one, so suppressing recall_miss must not leave them with no verdict at all.
+      const result = rootCause(makeSignals({
+        endReason,
+        degraded: true,
+        recall: allMissRecall,
+        turnFinalized: {
+          strategy: "EditPlace",
+          outcome: "failure",
+          errorKind,
+          reclassified: false,
+        },
+      }));
+
+      expect(result?.code).toBe(expected);
+    },
+  );
+
+  it("an authoritative successful end reason is never a terminal execution failure", () => {
+    // A stale last-wins failure finalize beside a clean terminal outcome must not be
+    // promoted into a root cause.
+    const result = rootCause(makeSignals({
+      endReason: "success",
+      degraded: true,
+      recall: allMissRecall,
+      turnFinalized: {
+        strategy: "EditPlace",
+        outcome: "failure",
+        errorKind: "internal",
+        reclassified: false,
+      },
+    }));
+
+    expect(result?.code).not.toBe("execution_terminal_failure");
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();

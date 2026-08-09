@@ -29,6 +29,18 @@ export function readJsonlEvidence(file) {
   return records;
 }
 
+// A keyless turn can die before any session transcript is written. Absence must reach the
+// oracle as an empty lens — it scores the HARD `session_evidence_empty` violation — instead
+// of aborting the whole audit, which would drop every lens that IS readable.
+function readOptionalSessionEvidence(file) {
+  try {
+    return readJsonlEvidence(file);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
 function sessionIdFor(sessionFile) {
   const pointerFile = `${sessionFile}.trajectory-path.json`;
   let pointer;
@@ -66,7 +78,7 @@ export async function auditChatConversation({
   ]);
   const report = auditConversationEvidence({
     trajectoryRecords: readJsonlEvidence(artifacts.trajectoryFile),
-    sessionRecords: readJsonlEvidence(artifacts.sessionFile),
+    sessionRecords: readOptionalSessionEvidence(artifacts.sessionFile),
     wireRecords,
     incidentReport,
     contract,

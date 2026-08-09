@@ -12,7 +12,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { setupGateway, type GatewayDeps, type GatewayResult } from "./setup-gateway-routes.js";
+import { SessionHistoryContract } from "@comis/core";
+import {
+  setupGateway,
+  MCP_RESOURCE_READ_LIMIT,
+  type GatewayDeps,
+  type GatewayResult,
+} from "./setup-gateway-routes.js";
 
 describe("setup-gateway-routes", () => {
   it("setupGateway: exported as a callable function", () => {
@@ -60,5 +66,22 @@ describe("setup-gateway-routes", () => {
       wsConnections: true,
     };
     expect(Object.keys(witness).length).toBe(4);
+  });
+
+  // The MCP `resources/read` snapshot is served by calling `session.history`
+  // through the same validated contract every other caller uses. The page size
+  // is chosen HERE (composition root) but bounded THERE (contract), so the two
+  // can drift silently: a limit above the contract ceiling turns every
+  // `resources/read` into an MCP -32603 with a zod "Too big" payload, and the
+  // handler unit tests miss it because they stub the RPC indirection.
+  it("validates the MCP resources/read page size against the session.history contract bound", () => {
+    expect(() =>
+      SessionHistoryContract.request.parse({
+        tenant_id: "test",
+        agent_id: "default",
+        conversation_ref: "ref",
+        limit: MCP_RESOURCE_READ_LIMIT,
+      }),
+    ).not.toThrow();
   });
 });

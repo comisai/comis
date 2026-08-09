@@ -578,6 +578,12 @@ Array of broadcast group objects for simultaneous multi-channel message delivery
 | `defaultTrustLevel` | `string` | `"external"` | Default trust level for unknown senders |
 | `senderTrustMap` | `Record<string, string>` | `{}` | Per-sender trust level overrides |
 
+Trust labels are free-form for `trustModelRoutes` / `trustPromptOverrides`, but the
+control-plane gate reads only `admin` / `user` / `guest` -- see
+[Deny-by-origin on the control plane](/security/capability-model#deny-by-origin-on-the-control-plane)
+for how a label (including the `external` default) maps to authority. Both keys are
+operator-file-only: no runtime RPC can set them.
+
 #### Tracing (agents.*.tracing)
 
 | Key | Type | Default | Description |

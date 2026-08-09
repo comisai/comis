@@ -17,9 +17,6 @@ agents:
         # the DENY path (confused-deputy floor), flip to `user`/`guest` or __DELETE__ the
         # elevatedReply block via cfg-patch.mjs (01-SETUP.md §3 — test both sides).
         "678314278": admin
-    autonomy:
-      budget:
-        aggregateUsd: 30                             # NESTED key — raise from the $2 standard default so a full DAG completes
 security:
   storage: encrypted                                 # never downgrade to file (secrets.db + master key live here)
 gateway:
@@ -28,7 +25,7 @@ gateway:
   port: 4766
   tokens:
     - id: default
-      secret: REPLACE-WITH-YOUR-OWN-GATEWAY-TOKEN-min-32-chars   # LITERAL >=32 chars — ${ENV} refs do NOT resolve
+      secret: REPLACE-WITH-YOUR-OWN-GATEWAY-TOKEN-min-32-chars   # Literal >=32 chars, or a canonical ${VAR_NAME} reference backed by the encrypted store/environment
       scopes: ["*"]
   web:
     enabled: true

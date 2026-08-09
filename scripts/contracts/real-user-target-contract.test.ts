@@ -48,10 +48,14 @@ describe("real-user target source claims", () => {
     );
   });
 
-  it("does not claim a requirements block for the dependency-free research skill", () => {
-    expect(deepResearch).not.toContain("comis:\n  requires:");
+  it("declares an explicitly empty requirements block for the dependency-free research skill", () => {
+    // "No block" and "needs nothing" are different states to the runtime: a shipped skill with no
+    // `comis.requires` cannot be pre-flighted at all, and the registry warns about it on every
+    // boot. Dependency-free is declared with empty arrays, not by omission.
+    expect(deepResearch).toContain("comis:\n  requires:");
+    expect(deepResearch).toMatch(/comis:\n {2}requires:\n(?: {4}#[^\n]*\n)* {4}bins: \[\]\n {4}env: \[\]/u);
     expect(target).toContain(
-      "`deep-research` is dependency-free; every skill with external requirements declares its own `comis.requires`",
+      "`deep-research` declares an empty `comis.requires` (dependency-free); every skill with external requirements declares its own `comis.requires`",
     );
   });
 
