@@ -20,8 +20,6 @@ import {
   envSubset,
   createInjectionRateLimiter,
   checkApprovalsConfig,
-  formatSessionKey,
-  conversationScopeToSessionKey,
   safePath,
   resolveConfigSecretRefs,
   validateMemoryWrite,
@@ -102,19 +100,14 @@ import {
   createContinuationExecutionEngine,
   clearSessionState,
   createGeminiCacheManager,
-  createSessionTrackerRegistry,
   createFilesystemWorkspacePolicyAdapter,
   evaluateViableFloorForAgent,
   probeAllOllamaProviders,
   seedDefaultDagTemplates,
   validateProviderOverrides,
-  wireGeminiCacheCleanup,
-  wireMcpDisconnectCleanup,
-  wireSessionStateCleanup,
   type AgentBootWindowInfo,
   type GeminiCacheManager,
   type ServedWindowComparison,
-  type SessionTrackerRegistry,
 } from "@comis/agent";
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
@@ -124,7 +117,7 @@ import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resol
 import { createSchedulerCorePortBindings } from "./wiring/scheduler-core-port-bindings.js";
 import { setupProactiveSchedulers } from "./wiring/setup-proactive-schedulers.js";
 import { closePartialBootSchedulerAdmission } from "./wiring/daemon-utils.js";
-import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
+import { detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
 import { buildOrchestrateRepairResolver } from "./wiring/setup-tools-orchestrate-repair.js"; // the class-gated one-shot orchestrate repair-seam resolver (daemon-minted, injected into setupTools)
@@ -152,7 +145,7 @@ import { createTokenTracker } from "./observability/token-tracker.js";
 import { createTracingLogger } from "./observability/trace-logger.js";
 import { setupChannelHealthLogging } from "./observability/channel-health-logger.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
-import { ok, err, suppressError } from "@comis/shared";
+import { ok, err } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 import { randomUUID } from "node:crypto";
@@ -182,7 +175,7 @@ import {
 } from "./wiring/daemon-entrypoint.js";
 import { wireHealthLogging } from "./health-metrics.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn, resolveAgentBackgroundTasksConfig, recordCurrentSessionEndpoint, wirePostAgentsCleanup } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -225,51 +218,6 @@ export { runPreflightDoctor };
 // (SENSITIVE_PREFIXES / SENSITIVE_EXACT_KEYS / buildMergedEnv), imported above to
 // keep this composition root within its architecture line cap.
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Agents helpers
-// ---------------------------------------------------------------------------
-// Agent-stage helpers assemble session-scoped cleanup and state registries.
-// ---------------------------------------------------------------------------
-
-/**
- * Wire post-setupAgents cleanup listeners: session:expired releases
- * sessionTrackerRegistry, Gemini cache disposal, and MCP disconnect cleanup.
- * Schedules an orphan-cache cleanup pass for any stale comis:* caches.
- */
-function wirePostAgentsCleanup(deps: {
-  eventBus: BootContext["container"]["eventBus"];
-  geminiCacheManager: GeminiCacheManager;
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-}): SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>> {
-  const { eventBus, geminiCacheManager, daemonLogger } = deps;
-  // Clean up all session-scoped state on session expiry
-  wireSessionStateCleanup(eventBus);
-  // Per-session FileStateTracker pool -- keeps the LLM's file read state alive
-  // across turns. Registered trackers are released on session:expired.
-  const sessionTrackerRegistry = createSessionTrackerRegistry(createFileStateTracker);
-  eventBus.on("session:expired", (payload) => {
-    const displayKey = conversationScopeToSessionKey(payload.conversationScope);
-    if (displayKey.ok) sessionTrackerRegistry.release(formatSessionKey(displayKey.value));
-  });
-  // Dispose Gemini cache on session expiry (fire-and-forget)
-  wireGeminiCacheCleanup(eventBus, geminiCacheManager);
-  // Clean up orphaned comis:* caches from previous daemon runs
-  suppressError(
-    geminiCacheManager.cleanupOrphaned().then((result) => {
-      if (result.ok && (result.value.deleted > 0 || result.value.skipped > 0)) {
-        daemonLogger.info(
-          { deleted: result.value.deleted, skipped: result.value.skipped },
-          "Gemini cache: orphan cleanup complete",
-        );
-      }
-    }),
-    "gemini-cache-orphan-cleanup",
-  );
-  // Clean up discovery state when MCP servers disconnect or remove tools
-  wireMcpDisconnectCleanup(eventBus);
-  return sessionTrackerRegistry;
-}
 
 // ---------------------------------------------------------------------------
 // Channels helpers

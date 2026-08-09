@@ -16,12 +16,23 @@ import {
   RERANK_MULTILINGUAL,
   BackgroundTasksConfigSchema,
   tryGetContext,
+  formatSessionKey,
+  conversationScopeToSessionKey,
 } from "@comis/core";
 import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
-import { createImageGenRateLimiter } from "@comis/skills";
+import { createFileStateTracker, createImageGenRateLimiter } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
-import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
+import {
+  createSessionTrackerRegistry,
+  wireGeminiCacheCleanup,
+  wireMcpDisconnectCleanup,
+  wireSessionStateCleanup,
+  type BoundedAutonomyBudgetHolder,
+  type GeminiCacheManager,
+  type SessionTrackerRegistry,
+} from "@comis/agent";
+import { suppressError } from "@comis/shared";
 import { createRootRunIdRegistry } from "./setup-capability-endpoint-boot.js";
 // Video generation: the FAL queue factory + per-agent rate
 // limiter, imported from the bare @comis/skills barrel exactly like the image
@@ -61,6 +72,38 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
 import { restartChannelAdapter } from "./channel-adapter-restart.js";
 import type { SessionTracker } from "../notification/session-tracker.js";
+
+/**
+ * Wire post-agent cleanup listeners and schedule orphaned provider-cache
+ * cleanup before channels begin accepting work.
+ */
+export function wirePostAgentsCleanup(deps: {
+  eventBus: BootContext["container"]["eventBus"];
+  geminiCacheManager: GeminiCacheManager;
+  daemonLogger: LoggingResult["daemonLogger"];
+}): SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>> {
+  const { eventBus, geminiCacheManager, daemonLogger } = deps;
+  wireSessionStateCleanup(eventBus);
+  const sessionTrackerRegistry = createSessionTrackerRegistry(createFileStateTracker);
+  eventBus.on("session:expired", (payload) => {
+    const displayKey = conversationScopeToSessionKey(payload.conversationScope);
+    if (displayKey.ok) sessionTrackerRegistry.release(formatSessionKey(displayKey.value));
+  });
+  wireGeminiCacheCleanup(eventBus, geminiCacheManager);
+  suppressError(
+    geminiCacheManager.cleanupOrphaned().then((result) => {
+      if (result.ok && (result.value.deleted > 0 || result.value.skipped > 0)) {
+        daemonLogger.info(
+          { deleted: result.value.deleted, skipped: result.value.skipped },
+          "Gemini cache: orphan cleanup complete",
+        );
+      }
+    }),
+    "gemini-cache-orphan-cleanup",
+  );
+  wireMcpDisconnectCleanup(eventBus);
+  return sessionTrackerRegistry;
+}
 
 /** The bounded-autonomy late-bind seam built in
  *  `bootAgents`: the per-root budget holder (populated by the cap layer in bootChannels) +
