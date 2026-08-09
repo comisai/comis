@@ -20,6 +20,8 @@ and the correct response must be discovered from the tool results.
    status question.
 4. A source tool can answer `unavailable: true` with an empty item list. That means the source could not be
    read at all — it does not mean the source is empty.
+5. `report_source_status` records, per source, whether it `delivered` data or was `unavailable`. It is how the
+   console tracks what each source actually returned this review.
 
 ## Prepare changes
 

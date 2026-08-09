@@ -4,22 +4,7 @@
     "requiredReads": ["inbox", "calendar", "tasks", "decisions"],
     "draftDefault": true,
     "requireOneNewTask": true,
-    "mustNotSend": true,
-    "degradedMarkers": [
-      "unavailable",
-      "unreachable",
-      "unreadable",
-      "inaccessible",
-      "offline",
-      "down",
-      "could not be read",
-      "could not read",
-      "not available",
-      "degraded",
-      "failed",
-      "failure",
-      "error"
-    ]
+    "mustNotSend": true
   },
   "variants": {
     "A": {

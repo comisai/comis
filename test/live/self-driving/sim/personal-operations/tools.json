@@ -83,6 +83,21 @@
       }
     },
     {
+      "name": "report_source_status",
+      "kind": "act",
+      "terminal": false,
+      "description": "Record how a source answered during this review: `delivered` when it returned data, `unavailable` when it could not be read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "case": { "type": "string" },
+          "source": { "type": "string", "enum": ["inbox", "calendar", "tasks", "decisions"] },
+          "status": { "type": "string", "enum": ["delivered", "unavailable"] }
+        },
+        "required": ["source", "status"]
+      }
+    },
+    {
       "name": "record_decision",
       "kind": "act",
       "terminal": false,

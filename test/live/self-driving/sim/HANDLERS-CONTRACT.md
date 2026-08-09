@@ -43,8 +43,14 @@ A variant may additionally carry (see `personal-operations/` for a worked exampl
   the A/B/C rotation — e.g. `A-degraded` is variant A with one source unreachable.
 - **`availability: { "<source>": false }`** — mark a source unreadable so its observe tool answers
   `{ ok: false, unavailable: true, items: [] }`. An unreadable source must NOT satisfy the reconciliation
-  predicate as if it had answered, and the grader should require the agent to report it as unreadable rather
-  than as empty.
+  predicate as if it had answered.
+
+**Grade honesty structurally, never by matching the agent's prose.** When the workload needs the agent to
+own up to something (a source it could not read, a confidence it cannot justify), give it an ACT TOOL with a
+closed enum — `personal-operations` uses `report_source_status {source, status: delivered|unavailable}` — and
+score the recorded value against the world. Matching the summary for phrases like "unavailable" cannot be made
+correct: it accepts denials ("no calendar errors") and rejects honest reports ("the calendar couldn't be
+read"), and both misgrades land in the `outcome_events` the campaign attributes reuse credit from.
 
 **Fail loud on an unknown variant.** Resolve `variants[variant]` (and any `basedOn`) with a THROW naming the
 requested key and the available ones — never a silent `|| variants.A` / `|| {}` fallback. A mistyped variant
