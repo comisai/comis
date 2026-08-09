@@ -109,7 +109,7 @@ function scanValue(cursor: Cursor): Result<void> {
   }
 }
 
-/** Parse one complete JSON value while rejecting duplicate names at every depth. */
+/** Parse one complete protocol JSON value while rejecting duplicate names at every depth. */
 export function parseStrictJson(text: string): Result<unknown> {
   const cursor: Cursor = { text, index: 0 };
   const scanned = scanValue(cursor);

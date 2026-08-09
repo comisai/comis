@@ -21,7 +21,7 @@ import {
 import { safePath, type ClockPort } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { createCapabilityServiceProtocolFixtureHost } from "./capability-service-protocol-fixture-host.js";
-import { parseStrictJson } from "./capability-service-strict-json.js";
+import { parseStrictJson } from "../wiring/capability-service-strict-json.js";
 
 const SOCKET_NAME = "capability-service.sock";
 const MAXIMUM_UNIX_SOCKET_PATH_BYTES = 103;

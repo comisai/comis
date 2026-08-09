@@ -82,7 +82,8 @@ describe("generic runtime specialization boundary", () => {
       "packages/daemon/src/__tests__/capability-service-protocol-fixture-host.ts",
       "packages/daemon/src/__tests__/capability-service-protocol-fixture-server.ts",
       "packages/daemon/src/__tests__/capability-service-protocol-fixture-host-entry.ts",
-      "packages/daemon/src/__tests__/capability-service-strict-json.ts",
+      "packages/daemon/src/wiring/capability-service-strict-json.ts",
+      "packages/daemon/src/wiring/capability-service-unix-client.ts",
     ]) {
       expect(covered.has(path), path).toBe(true);
     }

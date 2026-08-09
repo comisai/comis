@@ -66,7 +66,7 @@ describe("capability-service Unix client runtime", () => {
   });
 
   async function startFixture() {
-    const directory = realpathSync(mkdtempSync(join(tmpdir(), "capability-client-")));
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "cpc-")));
     temporaryDirectories.push(directory);
     chmodSync(directory, 0o700);
     const server = createCapabilityServiceProtocolFixtureServer({
@@ -92,6 +92,7 @@ describe("capability-service Unix client runtime", () => {
       credentials: new Map([["service-instance_a", BEARER]]),
       bundleDigest: BUNDLE_DIGEST,
       requestDeadlineMs: 5_000,
+      nowMs: () => 1_800_000_000_000,
       logger: makeLogger(),
     });
     expect(created.ok).toBe(true);
@@ -144,6 +145,7 @@ describe("capability-service Unix client runtime", () => {
       credentials: new Map([["service-instance_a", "wrong-synthetic-bearer"]]),
       bundleDigest: BUNDLE_DIGEST,
       requestDeadlineMs: 5_000,
+      nowMs: () => 1_800_000_000_000,
       logger,
     });
     if (!created.ok) throw created.error;
@@ -163,6 +165,7 @@ describe("capability-service Unix client runtime", () => {
       credentials: new Map(),
       bundleDigest: BUNDLE_DIGEST,
       requestDeadlineMs: 5_000,
+      nowMs: () => 1_800_000_000_000,
       logger: makeLogger(),
     });
     if (!created.ok) throw created.error;
