@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import Ajv, { type ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -54,9 +56,23 @@ interface ProtocolManifest {
     readonly maxRequestBytes: number;
     readonly maxResponseBytes: number;
     readonly semanticInvariants: readonly string[];
+    readonly requestSchema: string;
+    readonly responseSchema: string;
   }>;
   readonly generator: { readonly command: string; readonly package: string; readonly version: string };
+  readonly fixtureDigestToken: string;
   readonly artifacts: ReadonlyArray<{ readonly path: string; readonly sha256: string }>;
+}
+
+interface ProtocolFixtureStep {
+  readonly target: string;
+  readonly schemaExpectation?: "accept" | "reject";
+  readonly payload: unknown;
+}
+
+interface ProtocolFixture {
+  readonly class: string;
+  readonly steps: readonly ProtocolFixtureStep[];
 }
 
 function readJson<T>(path: string): T {
@@ -65,6 +81,28 @@ function readJson<T>(path: string): T {
 
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function materializeDigest(value: unknown, token: string, digest: string): unknown {
+  if (value === token) return digest;
+  if (Array.isArray(value)) {
+    return value.map((entry) => materializeDigest(entry, token, digest));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      materializeDigest(entry, token, digest),
+    ]),
+  );
+}
+
+function requestMethod(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    return undefined;
+  }
+  const method = (payload as Readonly<Record<string, unknown>>)["method"];
+  return typeof method === "string" ? method : undefined;
 }
 
 describe("capability-service protocol bundle contract", () => {
@@ -215,5 +253,54 @@ describe("capability-service protocol bundle contract", () => {
     );
 
     expect([...new Set(fixtureClasses)].sort()).toEqual(EXPECTED_FIXTURE_CLASSES);
+  });
+
+  it("matches every fixture's structural outcome against the emitted JSON Schemas", () => {
+    const manifest = readJson<ProtocolManifest>(resolve(PROTOCOL_ROOT, "manifest.json"));
+    const ajv = new Ajv({ allErrors: true, strict: true });
+    addFormats(ajv);
+    const validators = new Map<string, ValidateFunction>();
+    for (const artifact of manifest.artifacts) {
+      if (!artifact.path.startsWith("schemas/")) continue;
+      validators.set(
+        artifact.path,
+        ajv.compile(readJson(resolve(PROTOCOL_ROOT, artifact.path))),
+      );
+    }
+    const responseSchemas: Readonly<Record<string, string>> = {
+      "abandon-response": "schemas/abandon.response.schema.json",
+      "activate-response": "schemas/activate.response.schema.json",
+      "error-response": "schemas/error-response.schema.json",
+      "handshake-response": "schemas/handshake.response.schema.json",
+      "health-response": "schemas/health.response.schema.json",
+      "mcp-call-context": "schemas/mcp-call-context.schema.json",
+      "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
+      "report-response": "schemas/report.response.schema.json",
+    };
+
+    for (const artifact of manifest.artifacts) {
+      if (!artifact.path.startsWith("fixtures/")) continue;
+      const fixture = readJson<ProtocolFixture>(resolve(PROTOCOL_ROOT, artifact.path));
+      for (const [index, step] of fixture.steps.entries()) {
+        expect(step.schemaExpectation, `${artifact.path} step ${index}`).toBeDefined();
+        const payload = materializeDigest(
+          step.payload,
+          manifest.fixtureDigestToken,
+          manifest.bundleDigest,
+        );
+        const method = requestMethod(payload);
+        const schemaPath = method
+          ? manifest.methodCatalog.find((entry) => entry.method === method)?.requestSchema
+          : responseSchemas[step.target];
+        expect(schemaPath, `${artifact.path} step ${index} schema`).toBeDefined();
+        const validator = schemaPath ? validators.get(schemaPath) : undefined;
+        expect(validator, `${artifact.path} step ${index} validator`).toBeDefined();
+        const accepted = validator?.(payload) ?? false;
+        expect(
+          accepted,
+          `${artifact.path} step ${index}: ${JSON.stringify(validator?.errors ?? [])}`,
+        ).toBe(step.schemaExpectation === "accept");
+      }
+    }
   });
 });

@@ -91,6 +91,8 @@
     "@slack/web-api": "7.16.0",
     "@types/node": "22.20.1",
     "@types/semver": "7.7.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "@types/ws": "8.18.1",
     "@vitest/coverage-v8": "4.1.10",
     "better-sqlite3": "12.10.0",
