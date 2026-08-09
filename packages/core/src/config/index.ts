@@ -21,6 +21,8 @@ export type {
   CapabilityServiceActivationPlan,
   CapabilityServicePlanError,
 } from "./capability-service-contributions.js";
+export { CapabilityServicesConfigSchema } from "./schema-capability-services.js";
+export type { CapabilityServicesConfig } from "./schema-capability-services.js";
 export { IdentityConfigSchema } from "./schema-identity.js";
 export type { IdentityConfig } from "./schema-identity.js";
 export { ApprovalsConfigSchema, ApprovalRuleSchema, checkApprovalsConfig } from "./schema-approvals.js";

@@ -99,8 +99,8 @@ describe("config.patch", () => {
   });
 
   it.each([
-    ["contributions", "instances.echo"],
-    ["contributions", "activation.enabled"],
+    ["capabilityServices", "instances.0.enabled"],
+    ["capabilityServices", "reportRetentionMs"],
     ["plugins", "plugins.echo.enabled"],
   ])("rejects contribution topology mutation through config.patch at %s.%s", async (section, key) => {
     const deps = makeDeps(tempConfig.configPath);
@@ -839,7 +839,7 @@ describe("config.apply", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it.each(["security", "contributions", "plugins"])(
+  it.each(["security", "capabilityServices", "plugins"])(
     "rejects immutable topology section %s through config.apply",
     async (section) => {
       const deps = makeDeps(tempConfig.configPath);

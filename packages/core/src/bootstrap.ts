@@ -169,6 +169,9 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   for (const entry of Object.values(config.providers.entries)) {
     if (entry.apiKeyName.length > 0) referencedNames.add(entry.apiKeyName);
   }
+  for (const instance of config.capabilityServices.instances) {
+    referencedNames.add(instance.control.credentialRef.slice("secret://".length));
+  }
 
   // 3. Create event bus
   const eventBus = new TypedEventBus();

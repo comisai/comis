@@ -3575,6 +3575,47 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("autoR
 ]"
 `;
 
+exports[`section-registry parity > field-metadata view > getFieldMetadata("capabilityServices") 1`] = `
+"[
+  {
+    "default": [],
+    "immutable": true,
+    "path": "capabilityServices.instances",
+    "type": "array"
+  },
+  {
+    "default": 300000,
+    "immutable": true,
+    "path": "capabilityServices.maxObservedClockSkewMs",
+    "type": "integer"
+  },
+  {
+    "default": "managed-runs/private",
+    "immutable": true,
+    "path": "capabilityServices.privateContentDirectory",
+    "type": "string"
+  },
+  {
+    "default": 256,
+    "immutable": true,
+    "path": "capabilityServices.recoveryBatchSize",
+    "type": "integer"
+  },
+  {
+    "default": 2592000000,
+    "immutable": true,
+    "path": "capabilityServices.reportRetentionMs",
+    "type": "integer"
+  },
+  {
+    "default": 5000,
+    "immutable": true,
+    "path": "capabilityServices.requestDeadlineMs",
+    "type": "integer"
+  }
+]"
+`;
+
 exports[`section-registry parity > field-metadata view > getFieldMetadata("channels") 1`] = `
 "[
   {
@@ -7424,6 +7465,39 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("monit
 ]"
 `;
 
+exports[`section-registry parity > field-metadata view > getFieldMetadata("orchestration") 1`] = `
+"[
+  {
+    "default": {
+      "gbnfConstrain": true,
+      "intentAction": true,
+      "repairProducer": true
+    },
+    "immutable": false,
+    "path": "orchestration.authoring",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "orchestration.authoring.gbnfConstrain",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "orchestration.authoring.intentAction",
+    "type": "boolean"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "orchestration.authoring.repairProducer",
+    "type": "boolean"
+  }
+]"
+`;
+
 exports[`section-registry parity > field-metadata view > getFieldMetadata("plugins") 1`] = `
 "[
   {
@@ -8953,6 +9027,55 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "default": 1280,
     "immutable": false,
     "path": "browser.viewport.width",
+    "type": "integer"
+  },
+  {
+    "default": {
+      "instances": [],
+      "maxObservedClockSkewMs": 300000,
+      "privateContentDirectory": "managed-runs/private",
+      "recoveryBatchSize": 256,
+      "reportRetentionMs": 2592000000,
+      "requestDeadlineMs": 5000
+    },
+    "immutable": true,
+    "path": "capabilityServices",
+    "type": "object"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "capabilityServices.instances",
+    "type": "array"
+  },
+  {
+    "default": 300000,
+    "immutable": true,
+    "path": "capabilityServices.maxObservedClockSkewMs",
+    "type": "integer"
+  },
+  {
+    "default": "managed-runs/private",
+    "immutable": true,
+    "path": "capabilityServices.privateContentDirectory",
+    "type": "string"
+  },
+  {
+    "default": 256,
+    "immutable": true,
+    "path": "capabilityServices.recoveryBatchSize",
+    "type": "integer"
+  },
+  {
+    "default": 2592000000,
+    "immutable": true,
+    "path": "capabilityServices.reportRetentionMs",
+    "type": "integer"
+  },
+  {
+    "default": 5000,
+    "immutable": true,
+    "path": "capabilityServices.requestDeadlineMs",
     "type": "integer"
   },
   {
@@ -20734,6 +20857,120 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("bro
 }"
 `;
 
+exports[`section-registry parity > schema-serializer view > getConfigSchema("capabilityServices") 1`] = `
+"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "instances": {
+      "default": [],
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "allowedAgents": {
+            "items": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+              "type": "string"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array"
+          },
+          "control": {
+            "additionalProperties": false,
+            "properties": {
+              "credentialRef": {
+                "pattern": "^secret:\\\\/\\\\/[A-Za-z0-9][A-Za-z0-9/._~-]{0,255}$",
+                "type": "string"
+              },
+              "socketPath": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "transport": {
+                "const": "unix",
+                "type": "string"
+              }
+            },
+            "required": [
+              "transport",
+              "socketPath",
+              "credentialRef"
+            ],
+            "type": "object"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "mcpServerName": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+            "type": "string"
+          },
+          "serviceDefinitionId": {
+            "type": "string"
+          },
+          "serviceInstanceId": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceInstanceId",
+          "serviceDefinitionId",
+          "enabled",
+          "mcpServerName",
+          "control",
+          "allowedAgents"
+        ],
+        "type": "object"
+      },
+      "maxItems": 256,
+      "type": "array"
+    },
+    "maxObservedClockSkewMs": {
+      "default": 300000,
+      "maximum": 86400000,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "privateContentDirectory": {
+      "default": "managed-runs/private",
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+    },
+    "recoveryBatchSize": {
+      "default": 256,
+      "exclusiveMinimum": 0,
+      "maximum": 10000,
+      "type": "integer"
+    },
+    "reportRetentionMs": {
+      "default": 2592000000,
+      "exclusiveMinimum": 0,
+      "maximum": 31536000000,
+      "type": "integer"
+    },
+    "requestDeadlineMs": {
+      "default": 5000,
+      "maximum": 60000,
+      "minimum": 100,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "instances",
+    "privateContentDirectory",
+    "reportRetentionMs",
+    "maxObservedClockSkewMs",
+    "recoveryBatchSize",
+    "requestDeadlineMs"
+  ],
+  "type": "object"
+}"
+`;
+
 exports[`section-registry parity > schema-serializer view > getConfigSchema("channels") 1`] = `
 "{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -25806,6 +26043,54 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mon
     "systemd",
     "securityUpdates",
     "git"
+  ],
+  "type": "object"
+}"
+`;
+
+exports[`section-registry parity > schema-serializer view > getConfigSchema("orchestration") 1`] = `
+"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "default": {
+    "authoring": {
+      "gbnfConstrain": true,
+      "intentAction": true,
+      "repairProducer": true
+    }
+  },
+  "properties": {
+    "authoring": {
+      "additionalProperties": false,
+      "default": {
+        "gbnfConstrain": true,
+        "intentAction": true,
+        "repairProducer": true
+      },
+      "properties": {
+        "gbnfConstrain": {
+          "default": true,
+          "type": "boolean"
+        },
+        "intentAction": {
+          "default": true,
+          "type": "boolean"
+        },
+        "repairProducer": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "intentAction",
+        "repairProducer",
+        "gbnfConstrain"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "authoring"
   ],
   "type": "object"
 }"
@@ -32369,6 +32654,124 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "baseCdpPort",
         "maxProfiles",
         "downloadTimeoutMs"
+      ],
+      "type": "object"
+    },
+    "capabilityServices": {
+      "additionalProperties": false,
+      "default": {
+        "instances": [],
+        "maxObservedClockSkewMs": 300000,
+        "privateContentDirectory": "managed-runs/private",
+        "recoveryBatchSize": 256,
+        "reportRetentionMs": 2592000000,
+        "requestDeadlineMs": 5000
+      },
+      "properties": {
+        "instances": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "allowedAgents": {
+                "items": {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "type": "array"
+              },
+              "control": {
+                "additionalProperties": false,
+                "properties": {
+                  "credentialRef": {
+                    "pattern": "^secret:\\\\/\\\\/[A-Za-z0-9][A-Za-z0-9/._~-]{0,255}$",
+                    "type": "string"
+                  },
+                  "socketPath": {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "transport": {
+                    "const": "unix",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "transport",
+                  "socketPath",
+                  "credentialRef"
+                ],
+                "type": "object"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "mcpServerName": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+                "type": "string"
+              },
+              "serviceDefinitionId": {
+                "type": "string"
+              },
+              "serviceInstanceId": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "serviceInstanceId",
+              "serviceDefinitionId",
+              "enabled",
+              "mcpServerName",
+              "control",
+              "allowedAgents"
+            ],
+            "type": "object"
+          },
+          "maxItems": 256,
+          "type": "array"
+        },
+        "maxObservedClockSkewMs": {
+          "default": 300000,
+          "maximum": 86400000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "privateContentDirectory": {
+          "default": "managed-runs/private",
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "recoveryBatchSize": {
+          "default": 256,
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "reportRetentionMs": {
+          "default": 2592000000,
+          "exclusiveMinimum": 0,
+          "maximum": 31536000000,
+          "type": "integer"
+        },
+        "requestDeadlineMs": {
+          "default": 5000,
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "instances",
+        "privateContentDirectory",
+        "reportRetentionMs",
+        "maxObservedClockSkewMs",
+        "recoveryBatchSize",
+        "requestDeadlineMs"
       ],
       "type": "object"
     },
@@ -41728,7 +42131,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "senderTrustDisplay",
     "documentation",
     "telegramFileRefGuard",
-    "tooling"
+    "tooling",
+    "capabilityServices"
   ],
   "type": "object"
 }"
@@ -41753,6 +42157,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSections() 
   "messages",
   "approvals",
   "tooling",
-  "orchestration"
+  "orchestration",
+  "capabilityServices"
 ]"
 `;

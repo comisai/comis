@@ -251,6 +251,35 @@ describe("bootstrap", () => {
     }
   });
 
+  it("adds configured capability-service credentials to the platform-secret deny surface", () => {
+    const dir = makeTmpDir();
+    const configPath = writeYaml(dir, "config.yaml", [
+      "capabilityServices:",
+      "  instances:",
+      "    - serviceInstanceId: service-instance_a",
+      "      serviceDefinitionId: example.service-definition",
+      "      enabled: true",
+      "      mcpServerName: example-service",
+      "      control:",
+      "        transport: unix",
+      "        socketPath: /tmp/example-service.sock",
+      "        credentialRef: secret://capability-services/service-instance_a",
+      "      allowedAgents: [agent_a]",
+      "",
+    ].join("\n"));
+
+    const result = bootstrap({ configPaths: [configPath], env: {} });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.platformSecretNames.has("capability-services/service-instance_a"))
+        .toBe(true);
+      expect(result.value.config.capabilityServices.instances[0]?.control.credentialRef)
+        .toBe("secret://capability-services/service-instance_a");
+    }
+  });
+
   it("includes custom provider apiKeyName values on the platform secret deny surface", () => {
     const dir = makeTmpDir();
     const configPath = writeYaml(

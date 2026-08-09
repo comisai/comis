@@ -45,6 +45,7 @@ import { SecurityConfigSchema } from "./schema-security.js";
 import { SendPolicyConfigSchema } from "./schema-send-policy.js";
 import { StreamingConfigSchema } from "./schema-streaming.js";
 import { ToolingConfigSchema } from "./schema-tooling.js";
+import { CapabilityServicesConfigSchema } from "./schema-capability-services.js";
 
 // ---------------------------------------------------------------------------
 // ManagedSectionRedirect lives here to break the source-level cycle that the
@@ -131,10 +132,10 @@ export interface SectionRegistryEntry {
 }
 
 /**
- * The 25 unique config sections. Bool flags select per-view membership.
+ * The 26 unique config sections. Bool flags select per-view membership.
  *
- * - 18 sections have schemaSerializable=true
- * - 20 sections have fieldMetadataVisible=true
+ * - 19 sections have schemaSerializable=true
+ * - 21 sections have fieldMetadataVisible=true
  * - 13 sections appear in both views (intersection)
  * - 3 sections (providers, channels, agents) have managedRedirect (top-level managed)
  *
@@ -325,10 +326,15 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
 
   // Orchestration authoring gate. Both views (like
   // tooling/approvals); plain boolean flags, so NO managedRedirect (it carries
-  // no managed write surface). Appended last so it extends BOTH the
-  // schemaSerializable and fieldMetadataVisible subsequences consistently.
+  // no managed write surface). Kept at the tail beside capabilityServices so
+  // both views expose restart-only topology after ordinary runtime settings.
   orchestration: {
     schema: OrchestrationConfigSchema,
+    schemaSerializable: true,
+    fieldMetadataVisible: true,
+  },
+  capabilityServices: {
+    schema: CapabilityServicesConfigSchema,
     schemaSerializable: true,
     fieldMetadataVisible: true,
   },
