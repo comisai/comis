@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +30,24 @@ const OTHER_SCOPE: ManagedRunContentScope = {
   agentId: "agent_b",
   managedRunId: "managed-run_a",
 };
+
+function sha256(value: Uint8Array | string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function bodyLocation(
+  root: string,
+  scope: ManagedRunContentScope,
+  kind: "activation" | "report" | "evidence" | "attention",
+  contentRef: string,
+): { readonly directory: string; readonly path: string } {
+  const scopeSegment = sha256(JSON.stringify([scope.tenantId, scope.agentId, scope.managedRunId]));
+  const filename = `${sha256(JSON.stringify([kind, contentRef]))}.body`;
+  return {
+    directory: join(root, scopeSegment),
+    path: join(root, scopeSegment, filename),
+  };
+}
 
 describe("createSqliteManagedRunContentStore confined bodies", () => {
   const temporaryDirectories: string[] = [];
@@ -236,5 +257,241 @@ describe("createSqliteManagedRunContentStore confined bodies", () => {
       "SELECT relative_path FROM managed_run_content_index WHERE content_ref = ?",
     ).get("service-report_restart") as { relative_path: string };
     expect(readFileSync(join(directoryPath, row.relative_path), "utf8")).toContain("Survives restart");
+  });
+
+  it("rejects invalid or oversized private bodies and invalid purge limits", async () => {
+    expect((await store.putActivationDescriptor(SCOPE, "activation-descriptor_invalid", {
+      schemaVersion: 1,
+      externalRunRef: "external-run_a",
+      registrationNonce: "short",
+      expiresAtMs: 1_800_000_060_000,
+    })).ok).toBe(false);
+    expect((await store.putReportBody(SCOPE, {
+      schemaVersion: 1,
+      serviceReportId: "service-report_oversized",
+      kind: "progress",
+      summary: "x".repeat(16_385),
+    }, 1_802_592_000_000)).ok).toBe(false);
+    expect((await store.putEvidence(SCOPE, "invalid ref", {
+      body: new Uint8Array([1]),
+    })).ok).toBe(false);
+    expect((await store.putEvidence(SCOPE, "evidence_empty", {
+      body: new Uint8Array(),
+    })).ok).toBe(false);
+    expect((await store.putEvidence(SCOPE, "evidence_oversized", {
+      body: new Uint8Array(1_048_577),
+    })).ok).toBe(false);
+    expect((await store.putAttentionBody(SCOPE, "attention_oversized", {
+      body: new Uint8Array(16_385),
+    })).ok).toBe(false);
+    expect((await store.purgeExpired({
+      kind: "recovery",
+      expiredBeforeMs: 1_800_000_000_000,
+      limit: 0,
+    })).ok).toBe(false);
+  });
+
+  it("enforces expiry recovery reads and exact content kinds during deletion", async () => {
+    const clocked = createSqliteManagedRunContentStore(db, {
+      directoryPath,
+      nowMs: () => 2_000,
+    });
+    expect(clocked.ok).toBe(true);
+    if (!clocked.ok) return;
+
+    expect((await clocked.value.putActivationDescriptor(SCOPE, "activation-descriptor_expired", {
+      schemaVersion: 1,
+      externalRunRef: "external-run_expired",
+      registrationNonce: "registration-nonce_expired",
+      expiresAtMs: 1_000,
+    })).ok).toBe(true);
+    expect(await clocked.value.getActivationDescriptor(SCOPE, "activation-descriptor_expired"))
+      .toEqual({ ok: true, value: undefined });
+    expect(await clocked.value.getActivationDescriptorForRecovery(SCOPE, "activation-descriptor_expired"))
+      .toMatchObject({ ok: true, value: { externalRunRef: "external-run_expired" } });
+
+    expect((await clocked.value.putEvidence(SCOPE, "evidence_kind", {
+      body: new TextEncoder().encode("evidence"),
+    })).ok).toBe(true);
+    expect(await clocked.value.getAttentionBody(SCOPE, "evidence_kind"))
+      .toEqual({ ok: true, value: undefined });
+    expect(await clocked.value.deleteReportBody(SCOPE, "evidence_kind"))
+      .toEqual({ ok: true, value: false });
+
+    expect((await clocked.value.putReportBody(SCOPE, {
+      schemaVersion: 1,
+      serviceReportId: "service-report_delete",
+      kind: "progress",
+      summary: "Delete me",
+    }, 3_000)).ok).toBe(true);
+    expect(await clocked.value.deleteReportBody(SCOPE, "service-report_delete"))
+      .toEqual({ ok: true, value: true });
+    expect(await clocked.value.deleteReportBody(SCOPE, "service-report_delete"))
+      .toEqual({ ok: true, value: false });
+  });
+
+  it("recovers identical orphan bodies and rejects occupied body paths", async () => {
+    const identicalRef = "evidence_orphan_identical";
+    const identicalBytes = new TextEncoder().encode("orphan bytes");
+    const identical = bodyLocation(directoryPath, SCOPE, "evidence", identicalRef);
+    mkdirSync(identical.directory, { mode: 0o700 });
+    writeFileSync(identical.path, identicalBytes, { mode: 0o600 });
+
+    expect(await store.putEvidence(SCOPE, identicalRef, { body: identicalBytes })).toMatchObject({
+      ok: true,
+      value: { contentHash: sha256(identicalBytes) },
+    });
+
+    const occupiedRef = "evidence_orphan_conflict";
+    const occupied = bodyLocation(directoryPath, SCOPE, "evidence", occupiedRef);
+    writeFileSync(occupied.path, "different bytes", { mode: 0o600 });
+    expect((await store.putEvidence(SCOPE, occupiedRef, {
+      body: new TextEncoder().encode("expected bytes"),
+    })).ok).toBe(false);
+  });
+
+  it("rejects unsafe file modes and malformed stored private JSON", async () => {
+    expect((await store.putActivationDescriptor(SCOPE, "activation-descriptor_corrupt", {
+      schemaVersion: 1,
+      externalRunRef: "external-run_corrupt",
+      registrationNonce: "registration-nonce_corrupt",
+      expiresAtMs: 1_800_000_060_000,
+    })).ok).toBe(true);
+    const activationRow = db.prepare(
+      "SELECT relative_path FROM managed_run_content_index WHERE content_ref = ?",
+    ).get("activation-descriptor_corrupt") as { relative_path: string };
+    const activationPath = join(directoryPath, activationRow.relative_path);
+    chmodSync(activationPath, 0o644);
+    expect((await store.getActivationDescriptor(SCOPE, "activation-descriptor_corrupt")).ok).toBe(false);
+    expect((await store.getActivationDescriptorForRecovery(SCOPE, "activation-descriptor_corrupt")).ok)
+      .toBe(false);
+    chmodSync(activationPath, 0o600);
+
+    const malformedActivation = Buffer.from("{not-json", "utf8");
+    writeFileSync(activationPath, malformedActivation, { mode: 0o600 });
+    db.prepare("UPDATE managed_run_content_index SET content_hash = ?, byte_length = ? WHERE content_ref = ?")
+      .run(sha256(malformedActivation), malformedActivation.byteLength, "activation-descriptor_corrupt");
+    expect((await store.getActivationDescriptor(SCOPE, "activation-descriptor_corrupt")).ok).toBe(false);
+    expect((await store.getActivationDescriptorForRecovery(SCOPE, "activation-descriptor_corrupt")).ok)
+      .toBe(false);
+
+    const invalidActivation = Buffer.from(JSON.stringify({ schemaVersion: 1 }), "utf8");
+    writeFileSync(activationPath, invalidActivation, { mode: 0o600 });
+    db.prepare("UPDATE managed_run_content_index SET content_hash = ?, byte_length = ? WHERE content_ref = ?")
+      .run(sha256(invalidActivation), invalidActivation.byteLength, "activation-descriptor_corrupt");
+    expect((await store.getActivationDescriptorForRecovery(SCOPE, "activation-descriptor_corrupt")).ok)
+      .toBe(false);
+
+    expect((await store.putReportBody(SCOPE, {
+      schemaVersion: 1,
+      serviceReportId: "service-report_corrupt",
+      kind: "progress",
+      summary: "Original",
+    }, 1_802_592_000_000)).ok).toBe(true);
+    const reportRow = db.prepare(
+      "SELECT relative_path FROM managed_run_content_index WHERE content_ref = ?",
+    ).get("service-report_corrupt") as { relative_path: string };
+    const reportPath = join(directoryPath, reportRow.relative_path);
+    const malformedReport = Buffer.from("{not-json", "utf8");
+    writeFileSync(reportPath, malformedReport, { mode: 0o600 });
+    db.prepare("UPDATE managed_run_content_index SET content_hash = ?, byte_length = ? WHERE content_ref = ?")
+      .run(sha256(malformedReport), malformedReport.byteLength, "service-report_corrupt");
+    expect((await store.getReportBody(SCOPE, "service-report_corrupt")).ok).toBe(false);
+
+    const invalidReport = Buffer.from(JSON.stringify({ schemaVersion: 1 }), "utf8");
+    writeFileSync(reportPath, invalidReport, { mode: 0o600 });
+    db.prepare("UPDATE managed_run_content_index SET content_hash = ?, byte_length = ? WHERE content_ref = ?")
+      .run(sha256(invalidReport), invalidReport.byteLength, "service-report_corrupt");
+    expect((await store.getReportBody(SCOPE, "service-report_corrupt")).ok).toBe(false);
+  });
+
+  it("purges an expired index even when its private body is already absent", async () => {
+    expect((await store.putEvidence(SCOPE, "evidence_missing_file", {
+      body: new TextEncoder().encode("temporary"),
+      expiresAtMs: 1_000,
+    })).ok).toBe(true);
+    const row = db.prepare(
+      "SELECT relative_path FROM managed_run_content_index WHERE content_ref = ?",
+    ).get("evidence_missing_file") as { relative_path: string };
+    unlinkSync(join(directoryPath, row.relative_path));
+
+    expect(await store.purgeExpired({
+      kind: "recovery",
+      expiredBeforeMs: 2_000,
+      limit: 10,
+    })).toEqual({ ok: true, value: 1 });
+  });
+
+  it("rejects malformed content indexes at replay read and purge boundaries", async () => {
+    const bytes = new TextEncoder().encode("indexed body");
+    expect((await store.putEvidence(SCOPE, "evidence_bad_index", {
+      body: bytes,
+      expiresAtMs: 1_000,
+    })).ok).toBe(true);
+    db.prepare("UPDATE managed_run_content_index SET content_hash = ? WHERE content_ref = ?")
+      .run("invalid", "evidence_bad_index");
+
+    expect((await store.putEvidence(SCOPE, "evidence_bad_index", { body: bytes })).ok).toBe(false);
+    expect((await store.getEvidence(SCOPE, "evidence_bad_index")).ok).toBe(false);
+    expect((await store.purgeExpired({
+      kind: "recovery",
+      expiredBeforeMs: 2_000,
+      limit: 10,
+    })).ok).toBe(false);
+  });
+
+  it("contains scope path occupation and failed index publication", async () => {
+    const blockedScope = { ...SCOPE, managedRunId: "managed-run_blocked_scope" };
+    const blocked = bodyLocation(directoryPath, blockedScope, "evidence", "evidence_blocked_scope");
+    writeFileSync(blocked.directory, "not a directory", { mode: 0o600 });
+    expect((await store.putEvidence(blockedScope, "evidence_blocked_scope", {
+      body: new TextEncoder().encode("body"),
+    })).ok).toBe(false);
+
+    const unsafeRef = "evidence_unsafe_orphan";
+    const unsafe = bodyLocation(directoryPath, SCOPE, "evidence", unsafeRef);
+    mkdirSync(unsafe.directory, { mode: 0o700 });
+    writeFileSync(unsafe.path, "occupied", { mode: 0o644 });
+    expect((await store.putEvidence(SCOPE, unsafeRef, {
+      body: new TextEncoder().encode("expected"),
+    })).ok).toBe(false);
+
+    db.exec(`
+      CREATE TRIGGER reject_managed_run_content_insert
+      BEFORE INSERT ON managed_run_content_index
+      WHEN NEW.content_ref = 'evidence_rejected_index'
+      BEGIN
+        SELECT RAISE(ABORT, 'index rejected');
+      END
+    `);
+    expect((await store.putEvidence(SCOPE, "evidence_rejected_index", {
+      body: new TextEncoder().encode("unindexed body"),
+    })).ok).toBe(false);
+  });
+
+  it("returns purge failure when an indexed body path becomes a directory", async () => {
+    expect((await store.putEvidence(SCOPE, "evidence_directory_body", {
+      body: new TextEncoder().encode("temporary"),
+      expiresAtMs: 1_000,
+    })).ok).toBe(true);
+    const row = db.prepare(
+      "SELECT relative_path FROM managed_run_content_index WHERE content_ref = ?",
+    ).get("evidence_directory_body") as { relative_path: string };
+    const path = join(directoryPath, row.relative_path);
+    unlinkSync(path);
+    mkdirSync(path, { mode: 0o700 });
+
+    expect((await store.purgeExpired({
+      kind: "recovery",
+      expiredBeforeMs: 2_000,
+      limit: 10,
+    })).ok).toBe(false);
+  });
+
+  it("converts closed database access into a content-store result", async () => {
+    db.close();
+    expect((await store.getEvidence(SCOPE, "evidence_after_close")).ok).toBe(false);
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
   });
 });

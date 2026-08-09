@@ -13,6 +13,10 @@ import {
 } from "@comis/core";
 import { ensureManagedRunTables } from "./schema-managed-runs.js";
 import { createSqliteManagedRunStore } from "./managed-run-store.js";
+import {
+  parseStoredManagedRunRecord,
+  rowToManagedRunRecord,
+} from "./managed-run-store-record.js";
 
 const CONVERSATION_SCOPE = {
   tenantId: "tenant_a",
@@ -341,6 +345,342 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       expect(runColumns.has(forbidden), forbidden).toBe(false);
       expect(reportColumns.has(forbidden), forbidden).toBe(false);
     }
+  });
+
+  it("returns explicit boundary outcomes for invalid transitions reports and bindings", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const transition = {
+      operationId: "operation_missing",
+      managedRunId: "managed-run_missing",
+      expectedStatuses: ["preparing" as const],
+      nextStatus: "active" as const,
+      nextStatusReason: "activation_acknowledged" as const,
+      transitionedAtMs: 1_800_000_000_100,
+    };
+    expect((await store.claimTransition(SERVICE_SCOPE, transition)).value?.kind).toBe("not_found");
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      managedRunId: "managed-run_missing",
+    }))).value?.kind).toBe("not_found");
+    expect((await store.bindTerminal(OWNER_SCOPE, {
+      managedRunId: "managed-run_missing",
+      terminalSessionId: "terminal_missing",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_100,
+    })).value?.kind).toBe("not_found");
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      managedRunId: "managed-run_missing",
+      claimId: "continuation-claim_missing",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_100,
+      expiresAtMs: 1_800_000_060_100,
+    })).value?.kind).toBe("not_found");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      managedRunId: "managed-run_missing",
+      claimId: "continuation-claim_missing",
+      throughReportSequence: 1,
+      status: "active",
+      statusReason: "report_activity",
+      committedAtMs: 1_800_000_000_200,
+    })).value?.kind).toBe("not_found");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      managedRunId: "managed-run_missing",
+      claimId: "continuation-claim_missing",
+      outcome: "completed",
+      recordedAtMs: 1_800_000_000_300,
+    })).value?.kind).toBe("not_found");
+    expect((await store.revoke(OWNER_SCOPE, {
+      operationId: "operation_revoke_missing",
+      managedRunId: "managed-run_missing",
+      reason: "owner_cancelled",
+      revokedAtMs: 1_800_000_000_100,
+    })).value?.kind).toBe("not_found");
+
+    expect((await store.create(makeRecord({ capturedToolIds: ["z_tool", "a_tool"] }))).ok).toBe(false);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    expect((await store.claimTransition(SERVICE_SCOPE, {
+      ...transition,
+      operationId: "operation_state_mismatch",
+      managedRunId: "managed-run_a",
+      expectedStatuses: ["active"],
+    })).value).toEqual({ kind: "state_mismatch", status: "preparing" });
+    expect((await store.claimTransition(SERVICE_SCOPE, {
+      ...transition,
+      operationId: "operation_time_regression",
+      managedRunId: "managed-run_a",
+      transitionedAtMs: 1_799_999_999_999,
+    })).ok).toBe(false);
+
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      receivedAtMs: 1_800_000_000_049,
+    }))).ok).toBe(false);
+    expect((await store.bindTerminal(OTHER_OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal_scope_mismatch",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_100,
+    })).value?.kind).toBe("scope_mismatch");
+    expect((await store.bindTerminal(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal_time_regression",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_049,
+    })).ok).toBe(false);
+
+    const terminalBinding = {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal_replay",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_100,
+    };
+    expect((await store.bindTerminal(OWNER_SCOPE, terminalBinding)).value?.kind).toBe("bound");
+    expect((await store.bindTerminal(OWNER_SCOPE, terminalBinding)).value?.kind).toBe("identical_replay");
+    const leaseBinding = {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_replay",
+      leaseTenantId: "tenant_a",
+      leaseAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_200,
+    };
+    expect((await store.setWorkspaceLease(OWNER_SCOPE, leaseBinding)).value?.kind).toBe("bound");
+    expect((await store.setWorkspaceLease(OWNER_SCOPE, leaseBinding)).value?.kind).toBe("identical_replay");
+    expect((await store.setWorkspaceLease(OWNER_SCOPE, {
+      ...leaseBinding,
+      workspaceLeaseId: "workspace-lease_conflict",
+      boundAtMs: 1_800_000_000_300,
+    })).value?.kind).toBe("ownership_mismatch");
+
+    expect((await store.listScoped({ scope: OWNER_SCOPE, limit: 0 })).ok).toBe(false);
+    expect(await store.listScoped({ scope: OWNER_SCOPE, statuses: ["waiting"], limit: 10 }))
+      .toEqual({ ok: true, value: [] });
+    expect((await store.listRecoverable({
+      kind: "recovery",
+      statuses: [],
+      updatedBeforeMs: 1_800_000_001_000,
+      limit: 10,
+    })).ok).toBe(false);
+  });
+
+  it("guards continuation claims reductions and outcomes across every authority check", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    const claim = {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_guarded",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_200,
+      expiresAtMs: 1_800_000_060_200,
+    };
+
+    expect((await store.claimContinuation(OTHER_OWNER_SCOPE, claim)).value?.kind).toBe("scope_mismatch");
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      ...claim,
+      expiresAtMs: claim.claimedAtMs,
+    })).ok).toBe(false);
+    expect((await store.claimContinuation(OWNER_SCOPE, claim)).value?.kind).toBe("claimed");
+    expect((await store.claimContinuation(OTHER_OWNER_SCOPE, claim)).value?.kind).toBe("scope_mismatch");
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      ...claim,
+      throughReportSequence: 2,
+    })).value?.kind).toBe("replay_conflict");
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      ...claim,
+      claimId: "continuation-claim_parallel",
+    })).value?.kind).toBe("not_pending");
+
+    const reduction = {
+      managedRunId: "managed-run_a",
+      claimId: claim.claimId,
+      throughReportSequence: 1,
+      status: "active" as const,
+      statusReason: "report_activity" as const,
+      committedAtMs: 1_800_000_000_300,
+    };
+    expect((await store.commitReducedState(OTHER_OWNER_SCOPE, reduction)).value?.kind).toBe("scope_mismatch");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      ...reduction,
+      claimId: "continuation-claim_missing",
+    })).value?.kind).toBe("claim_mismatch");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      ...reduction,
+      throughReportSequence: 2,
+    })).value?.kind).toBe("cursor_regression");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      ...reduction,
+      status: "preparing",
+      statusReason: "awaiting_activation",
+    })).value?.kind).toBe("invalid_transition");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      ...reduction,
+      committedAtMs: 1_800_000_000_099,
+    })).ok).toBe(false);
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: claim.claimId,
+      outcome: "completed",
+      recordedAtMs: 1_800_000_000_300,
+    })).value?.kind).toBe("claim_mismatch");
+    expect((await store.commitReducedState(OWNER_SCOPE, reduction)).value?.kind).toBe("updated");
+    expect((await store.commitReducedState(OWNER_SCOPE, reduction)).value?.kind).toBe("identical_replay");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      ...reduction,
+      status: "waiting",
+      statusReason: "attention_pending",
+    })).value?.kind).toBe("claim_mismatch");
+
+    const outcome = {
+      managedRunId: "managed-run_a",
+      claimId: claim.claimId,
+      outcome: "completed" as const,
+      recordedAtMs: 1_800_000_000_400,
+    };
+    expect((await store.markContinuationOutcome(OTHER_OWNER_SCOPE, outcome)).value?.kind).toBe("scope_mismatch");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      ...outcome,
+      claimId: "continuation-claim_missing",
+    })).value?.kind).toBe("claim_mismatch");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, outcome)).value?.kind).toBe("updated");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, outcome)).value?.kind).toBe("identical_replay");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      ...outcome,
+      outcome: "failed",
+    })).value?.kind).toBe("claim_mismatch");
+  });
+
+  it("supports revocation replay while preserving exact owner scope", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    const revocation = {
+      operationId: "operation_revoke",
+      managedRunId: "managed-run_a",
+      reason: "owner_cancelled" as const,
+      revokedAtMs: 1_800_000_000_100,
+    };
+    expect((await store.revoke(OTHER_OWNER_SCOPE, revocation)).value?.kind).toBe("scope_mismatch");
+    expect((await store.revoke(OWNER_SCOPE, revocation)).value?.kind).toBe("claimed");
+    expect((await store.revoke(OWNER_SCOPE, revocation)).value?.kind).toBe("identical_replay");
+    expect((await store.revoke(OWNER_SCOPE, {
+      ...revocation,
+      reason: "authority_revoked",
+    })).value?.kind).toBe("replay_conflict");
+  });
+
+  it("rejects every malformed serialized field before rebuilding a managed run", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    const row = db.prepare("SELECT * FROM managed_runs WHERE managed_run_id = ?")
+      .get("managed-run_a") as Parameters<typeof rowToManagedRunRecord>[0];
+
+    expect(parseStoredManagedRunRecord("{not-json").ok).toBe(false);
+    for (const field of [
+      "delivery_origin",
+      "response_locale_policy",
+      "captured_agent_capabilities",
+      "captured_tool_ids",
+      "execution_attachment_ids",
+      "terminal_session_ids",
+      "terminal_outcome",
+    ] as const) {
+      expect(rowToManagedRunRecord({ ...row, [field]: "{not-json" }).ok, field).toBe(false);
+    }
+  });
+
+  it("contains corrupt rows and converts database exceptions into results", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    db.pragma("ignore_check_constraints = ON");
+    db.prepare("UPDATE managed_runs SET pending_continuation = 2 WHERE managed_run_id = ?")
+      .run("managed-run_a");
+    expect((await store.get(OWNER_SCOPE, "managed-run_a")).ok).toBe(false);
+    expect((await store.listScoped({ scope: OWNER_SCOPE, limit: 10 })).ok).toBe(false);
+    db.prepare("UPDATE managed_runs SET pending_continuation = 0 WHERE managed_run_id = ?")
+      .run("managed-run_a");
+    db.close();
+    expect((await store.get(OWNER_SCOPE, "managed-run_a")).ok).toBe(false);
+    db = new Database(":memory:");
+    ensureManagedRunTables(db);
+  });
+
+  it("contains corrupt transactional rows without widening durable authority", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+
+    db.prepare("UPDATE managed_run_operations SET input_hash = ? WHERE operation_id = ?")
+      .run(Buffer.from([0]), "operation_activate");
+    expect((await store.claimTransition(SERVICE_SCOPE, {
+      operationId: "operation_activate",
+      managedRunId: "managed-run_a",
+      expectedStatuses: ["preparing"],
+      nextStatus: "active",
+      nextStatusReason: "activation_acknowledged",
+      transitionedAtMs: 1_800_000_000_050,
+    })).ok).toBe(false);
+
+    db.prepare("UPDATE managed_runs SET response_locale_policy = ? WHERE managed_run_id = ?")
+      .run("{not-json", "managed-run_a");
+    expect((await store.claimTransition(SERVICE_SCOPE, {
+      operationId: "operation_corrupt_run",
+      managedRunId: "managed-run_a",
+      expectedStatuses: ["active"],
+      nextStatus: "waiting",
+      nextStatusReason: "attention_pending",
+      transitionedAtMs: 1_800_000_000_100,
+    })).ok).toBe(false);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(false);
+    expect((await store.bindTerminal(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal_corrupt_run",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_100,
+    })).ok).toBe(false);
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_corrupt_run",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_100,
+      expiresAtMs: 1_800_000_060_100,
+    })).ok).toBe(false);
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_corrupt_run",
+      throughReportSequence: 1,
+      status: "active",
+      statusReason: "report_activity",
+      committedAtMs: 1_800_000_000_200,
+    })).ok).toBe(false);
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_corrupt_run",
+      outcome: "completed",
+      recordedAtMs: 1_800_000_000_300,
+    })).ok).toBe(false);
+    expect((await store.listScoped({ scope: OWNER_SCOPE, limit: 10 })).ok).toBe(false);
+
+    db.prepare("UPDATE managed_runs SET response_locale_policy = ? WHERE managed_run_id = ?")
+      .run(JSON.stringify(makeRecord().responseLocalePolicy), "managed-run_a");
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_bad_retention",
+      contentRef: "report-content_bad_retention",
+      receivedAtMs: 1_800_000_000_200,
+      retainedUntilMs: 1_800_000_000_199,
+    }))).ok).toBe(false);
+
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    db.pragma("ignore_check_constraints = ON");
+    db.prepare("UPDATE managed_run_reports SET schema_version = 2 WHERE service_report_id = ?")
+      .run("service-report_a");
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(false);
+    db.prepare("UPDATE managed_run_reports SET schema_version = 1, kind = ? WHERE service_report_id = ?")
+      .run("invalid-kind", "service-report_a");
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(false);
   });
 });
 
