@@ -1824,9 +1824,9 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
 
 describe("tool-metadata-registry -- gateway validateInput patchable path hints", () => {
   it.each([
-    ["patch", "contributions", "instances.echo"],
+    ["patch", "capabilityServices", "instances.0.enabled"],
     ["patch", "plugins", "plugins.echo.enabled"],
-    ["apply", "contributions", undefined],
+    ["apply", "capabilityServices", undefined],
     ["apply", "plugins", undefined],
   ])("rejects contribution topology through bridge action %s at %s", async (action, section, key) => {
     const meta = getToolMetadata("gateway");
