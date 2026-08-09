@@ -84,4 +84,29 @@ describe("real-user target source claims", () => {
     expect(target).toContain("46 platform tools + the builtin set");
     expect(daemonToolSetup).toContain("SSOT for the 46 platform tools");
   });
+
+  it("keeps every evidence-derived interesting journey structurally complete", () => {
+    expect(target).toContain("## 4d. The E-journeys — evidence-derived interesting workflows");
+
+    const section = target.match(
+      /## 4d\. The E-journeys — evidence-derived interesting workflows([\s\S]*?)\n## 5\./u,
+    )?.[1];
+    expect(section).toBeDefined();
+
+    const journeys = [...(section ?? "").matchAll(/^### E([1-6]) — .+$/gmu)];
+    expect(journeys.map((match) => match[1])).toEqual(["1", "2", "3", "4", "5", "6"]);
+
+    for (let index = 0; index < journeys.length; index += 1) {
+      const start = journeys[index]?.index ?? 0;
+      const end = journeys[index + 1]?.index ?? section?.length ?? 0;
+      const journey = section?.slice(start, end) ?? "";
+      expect(journey).toContain("**Drive.**");
+      expect(journey).toContain("**Predicate.**");
+      expect(journey).toContain("**Oracle.**");
+      expect(journey).toContain("**HARD.**");
+    }
+
+    expect(target).toContain("| Evidence-derived interesting journeys |");
+    expect(target).toContain("| E1–E6 |");
+  });
 });
