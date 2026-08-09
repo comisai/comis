@@ -15,6 +15,7 @@ import {
 } from "@comis/core";
 import type { ContinuationExecutionEngine, ExecutionResult } from "@comis/agent";
 import { ok } from "@comis/shared";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import {
   createManagedRunContinuationDelivery,
   setupManagedRunContinuations,
@@ -150,6 +151,7 @@ describe("managed-run continuation composition", () => {
     });
     const engine = { execute, shutdown: vi.fn(async () => undefined) } as unknown as ContinuationExecutionEngine;
     const attentionReplies = { bind: vi.fn() } as unknown as import("@comis/core").ManagedAttentionReplyPort;
+    const timers = createFakeTimers(NOW_MS);
     const setup = await setupManagedRunContinuations({
       eventBus,
       store,
@@ -164,6 +166,7 @@ describe("managed-run continuation composition", () => {
       })),
       deliver,
       nowMs: () => NOW_MS,
+      timers,
       heartbeatMaxAgeMs: 60_000,
       claimTtlMs: 60_000,
       recoveryBatchSize: 10,
@@ -181,6 +184,7 @@ describe("managed-run continuation composition", () => {
       durationMs: 1,
       timestamp: NOW_MS,
     });
+    timers.advance(50);
     await setup.value.runtime.waitUntilIdle();
 
     expect(execute).toHaveBeenCalledOnce();
@@ -230,6 +234,7 @@ describe("managed-run continuation composition", () => {
       execute,
       shutdown: vi.fn(async () => undefined),
     } as unknown as ContinuationExecutionEngine;
+    const timers = createFakeTimers(NOW_MS);
     const setup = await setupManagedRunContinuations({
       eventBus,
       store,
@@ -244,6 +249,7 @@ describe("managed-run continuation composition", () => {
       })),
       deliver,
       nowMs: () => NOW_MS,
+      timers,
       heartbeatMaxAgeMs: 60_000,
       claimTtlMs: 60_000,
       recoveryBatchSize: 10,
@@ -260,6 +266,7 @@ describe("managed-run continuation composition", () => {
       durationMs: 1,
       timestamp: NOW_MS,
     });
+    timers.advance(50);
     await setup.value.runtime.waitUntilIdle();
 
     expect(recoverFinalizedResult).toHaveBeenCalledWith(expect.objectContaining({

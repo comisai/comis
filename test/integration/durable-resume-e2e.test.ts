@@ -86,12 +86,13 @@ const BASE_CONFIG_PATH = resolve(__dirname, "../config/config.test-durable-resum
 /** The Echo channelType + a stable channelId for the chaos sends. */
 const ECHO_TYPE = "echo";
 
-/** A round-trip-safe caller session key → rootRunId = `root-session-<this>`. */
+/** A stable fixture root ID derived from the caller session key. */
 function sessionKeyFor(channelId: string): string {
   return `test:chaos-user:${channelId}`;
 }
 function rootRunIdFor(channelId: string): string {
-  return `root-session-${sessionKeyFor(channelId)}`;
+  const encodedSessionKey = Buffer.from(sessionKeyFor(channelId), "utf8").toString("base64url");
+  return `root-durable-resume-${encodedSessionKey}`;
 }
 
 // ---------------------------------------------------------------------------

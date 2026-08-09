@@ -19,7 +19,11 @@
  * @module
  */
 
-import type { ErrorKind, TimerPort } from "@comis/core";
+import type {
+  CapabilityServiceContributionRegistration,
+  ErrorKind,
+  TimerPort,
+} from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ChannelActivityRenderer } from "@comis/core";
@@ -258,6 +262,13 @@ export interface DaemonOverrides {
    * a real inbound turn. Production must never set this; the override is test-only.
    */
   activityRendererFactory?: (channelType: string) => ChannelActivityRenderer | undefined;
+  /**
+   * Override trusted linked capability-service declarations at the composition
+   * root. Integration tests use this to join a real external service without
+   * teaching the generic runtime about that service; production leaves it
+   * unset and uses the declarations linked into the daemon bundle.
+   */
+  capabilityServiceContributions?: readonly CapabilityServiceContributionRegistration[];
 }
 
 // ---------------------------------------------------------------------------

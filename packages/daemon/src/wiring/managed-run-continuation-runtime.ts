@@ -4,6 +4,8 @@ import type {
   ManagedRunOwnerScope,
   ManagedRunRecord,
   ManagedRunStorePort,
+  TimerHandle,
+  TimerPort,
   TypedEventBus,
 } from "@comis/core";
 import { sanitizeLogString } from "@comis/core";
@@ -20,6 +22,13 @@ const RECOVERABLE_STATUSES = [
   "candidate_complete",
   "unknown",
 ] as const;
+const REPORT_BURST_SETTLE_MS = 50;
+
+interface PendingReportStart {
+  readonly handle: TimerHandle;
+  readonly settled: Promise<void>;
+  readonly resolve: () => void;
+}
 
 export interface ManagedRunContinuationRuntime {
   recover(): Promise<Result<{ readonly scheduledCount: number; readonly invalidCount: number }, Error>>;
@@ -43,6 +52,7 @@ export function createManagedRunContinuationRuntime(deps: {
   readonly store: ManagedRunStorePort;
   readonly coordinator: ManagedRunContinuationCoordinator;
   readonly nowMs: () => number;
+  readonly timers: TimerPort;
   readonly recoveryBatchSize: number;
   readonly logger: ComisLogger;
 }): ManagedRunContinuationRuntime {
@@ -50,6 +60,7 @@ export function createManagedRunContinuationRuntime(deps: {
   const serviceByRun = new Map<string, string>();
   const recoveredRecordByRun = new Map<string, ManagedRunRecord>();
   const inFlight = new Set<Promise<void>>();
+  const pendingReportStarts = new Map<string, PendingReportStart>();
   let stopped = false;
 
   const coalescer = createManagedRunContinuationCoalescer({
@@ -88,7 +99,7 @@ export function createManagedRunContinuationRuntime(deps: {
     },
   });
 
-  function schedule(managedRunId: string, serviceInstanceId: string): void {
+  function startNow(managedRunId: string, serviceInstanceId: string): void {
     if (stopped) return;
     serviceByRun.set(managedRunId, serviceInstanceId);
     const drain = coalescer.request(managedRunId);
@@ -102,6 +113,29 @@ export function createManagedRunContinuationRuntime(deps: {
     });
   }
 
+  function schedule(managedRunId: string, serviceInstanceId: string): void {
+    if (stopped) return;
+    serviceByRun.set(managedRunId, serviceInstanceId);
+    const existing = pendingReportStarts.get(managedRunId);
+    if (existing !== undefined) {
+      existing.handle.cancel();
+      pendingReportStarts.delete(managedRunId);
+      existing.resolve();
+    }
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
+    let handle!: TimerHandle;
+    handle = deps.timers.setTimeout(() => {
+      const current = pendingReportStarts.get(managedRunId);
+      if (current?.handle !== handle) return;
+      pendingReportStarts.delete(managedRunId);
+      current.resolve();
+      startNow(managedRunId, serviceInstanceId);
+    }, REPORT_BURST_SETTLE_MS);
+    handle.unref();
+    pendingReportStarts.set(managedRunId, { handle, settled, resolve: resolveSettled });
+  }
+
   const onReportAccepted = (event: {
     readonly managedRunId: string;
     readonly serviceInstanceId: string;
@@ -111,8 +145,9 @@ export function createManagedRunContinuationRuntime(deps: {
   deps.eventBus.on("managed_run:report_accepted", onReportAccepted);
 
   async function waitUntilIdle(): Promise<void> {
-    while (inFlight.size > 0) {
-      await Promise.all([...inFlight].map(async (pending) => {
+    while (pendingReportStarts.size > 0 || inFlight.size > 0) {
+      const pendingStarts = [...pendingReportStarts.values()].map((pending) => pending.settled);
+      await Promise.all([...pendingStarts, ...inFlight].map(async (pending) => {
         const settled = await pending.then(
           () => ok(undefined),
           (cause: unknown) => err(cause instanceof Error ? cause : new Error(String(cause))),
@@ -134,7 +169,7 @@ export function createManagedRunContinuationRuntime(deps: {
       for (const record of recovered.value.records) {
         if (record.pendingContinuation) {
           recoveredRecordByRun.set(record.managedRunId, record);
-          schedule(record.managedRunId, record.serviceInstanceId);
+          startNow(record.managedRunId, record.serviceInstanceId);
         }
       }
       if (recovered.value.invalid.length > 0) {
@@ -154,6 +189,11 @@ export function createManagedRunContinuationRuntime(deps: {
       if (stopped) return;
       stopped = true;
       deps.eventBus.off("managed_run:report_accepted", onReportAccepted);
+      for (const pending of pendingReportStarts.values()) {
+        pending.handle.cancel();
+        pending.resolve();
+      }
+      pendingReportStarts.clear();
       await waitUntilIdle();
     },
   });

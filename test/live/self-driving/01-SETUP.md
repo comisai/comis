@@ -279,4 +279,4 @@ RIG_MODE=local DATA="$HOME/.comis-live" GW_PORT=4767 SERVICE=comis-local-drive .
 - **SSH drops on long sleeps** → add `-o ServerAliveInterval=5`. macOS has no `timeout`.
 - **`pgrep -f daemon.js` false-matches** your `bash -lc`/`sudo` wrappers → filter `grep -vE "bash|sudo|grep"`.
 - **Don't chase an `effectiveWindow:8192` viable-floor WARN** — for a catalog-unknown model it's usually an invalid/mistyped model, not a window bug. Pick a valid model.
-- **rootRunId has two formats:** orchestrate=`root-default-<id>`; graph/spawn=`root-session-<sessionKey>`.
+- **rootRunId has two formats:** orchestrate=`root-default-<id>`; graph/spawn=`root-session-<generation UUID>-<base64url formatted session key>`.

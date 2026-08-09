@@ -7,6 +7,7 @@ import {
   type ManagedRunStorePort,
 } from "@comis/core";
 import { ok } from "@comis/shared";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import type {
   ManagedRunContinuationCoordinator,
   ManagedRunContinuationProcessOutcome,
@@ -76,7 +77,7 @@ function makeRecord(): ManagedRunRecord {
 }
 
 describe("managed-run continuation event runtime", () => {
-  it("subscribes accepted reports to exact-owner processing and folds in-flight events", async () => {
+  it("subscribes accepted reports to exact-owner processing and folds a report burst", async () => {
     const eventBus = new TypedEventBus();
     const record = makeRecord();
     const store = {
@@ -92,11 +93,13 @@ describe("managed-run continuation event runtime", () => {
       })
       .mockResolvedValue(ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" }));
     const coordinator = { process } as ManagedRunContinuationCoordinator;
+    const timers = createFakeTimers();
     const runtime = createManagedRunContinuationRuntime({
       eventBus,
       store,
       coordinator,
       nowMs: () => 100,
+      timers,
       recoveryBatchSize: 10,
       logger: makeLogger(),
     });
@@ -117,12 +120,13 @@ describe("managed-run continuation event runtime", () => {
       durationMs: 1,
       timestamp: 11,
     });
+    timers.advance(50);
     await vi.waitFor(() => expect(process).toHaveBeenCalledTimes(1));
     releaseFirst();
     await runtime.waitUntilIdle();
 
     expect(store.get).toHaveBeenCalledWith({ kind: "service", serviceInstanceId: "service-a" }, "managed-run-a");
-    expect(process).toHaveBeenCalledTimes(2);
+    expect(process).toHaveBeenCalledTimes(1);
     expect(process).toHaveBeenCalledWith({
       kind: "owner",
       tenantId: "tenant-a",
@@ -148,6 +152,7 @@ describe("managed-run continuation event runtime", () => {
       store,
       coordinator: { process } as ManagedRunContinuationCoordinator,
       nowMs: () => 100,
+      timers: createFakeTimers(),
       recoveryBatchSize: 10,
       logger: makeLogger(),
     });
@@ -178,11 +183,13 @@ describe("managed-run continuation event runtime", () => {
         pendingAfterCurrent: true,
       }))
       .mockResolvedValueOnce(ok<ManagedRunContinuationProcessOutcome>({ kind: "idle" }));
+    const timers = createFakeTimers();
     const runtime = createManagedRunContinuationRuntime({
       eventBus,
       store,
       coordinator: { process } as ManagedRunContinuationCoordinator,
       nowMs: () => 100,
+      timers,
       recoveryBatchSize: 10,
       logger: makeLogger(),
     });
@@ -195,6 +202,7 @@ describe("managed-run continuation event runtime", () => {
       durationMs: 1,
       timestamp: 10,
     });
+    timers.advance(50);
     await runtime.waitUntilIdle();
 
     expect(process).toHaveBeenCalledTimes(2);

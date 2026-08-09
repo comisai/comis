@@ -3,7 +3,7 @@
 //
 // Usage:  node revoke.mjs <method> [paramKey paramVal | '<json-params>' | --file [path]]
 //   node revoke.mjs capabilities.introspect
-//   node revoke.mjs run.kill   rootRunId root-session-default:678314278:678314278:peer:678314278
+//   node revoke.mjs run.kill   rootRunId root-session-11111111-1111-4111-8111-111111111111-ZGVmYXVsdDphZ2VudDpkZWZhdWx0OnVzZXI6dGVsZWdyYW06MTcxNzAwMDAwMA
 //   node revoke.mjs lease.revoke leaseId <uuid>
 //   node revoke.mjs cron.list  agentId "*"
 //   node revoke.mjs obs.system.health sinceHours 1            # val JSON-parsed → number 1

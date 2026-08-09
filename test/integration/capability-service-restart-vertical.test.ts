@@ -95,9 +95,13 @@ async function stopDaemon(handle: TestDaemonHandle | undefined): Promise<void> {
   }
 }
 
-async function pollUntil(predicate: () => boolean, timeoutMs: number, label: string): Promise<void> {
+async function pollUntil(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error(`${label} timed out`);
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 25));
   }
@@ -122,15 +126,16 @@ function makeConfig(input: {
 }): Record<string, unknown> {
   return {
     tenantId: "test",
-    logLevel: "debug",
+    logLevel: "warn",
     dataDir: input.dataDir,
     providers: {
       entries: {
         fixture: {
-          type: "openai",
+          type: "fixture-openai-compatible",
           baseUrl: input.modelBaseUrl,
           apiKeyName: PROVIDER_SECRET_NAME,
           maxRetries: 0,
+          capabilities: { providerFamily: "openai" },
           models: [{
             id: "fixture-model",
             reasoning: false,
@@ -329,20 +334,20 @@ describe("restart-injected capability-service vertical join", () => {
       await localProxy.waitForReconciliation();
       await controlProxy.waitForHeldReport();
       expect(activated).toHaveLength(1);
-      expect(firstEcho.getSentMessages().some((message) => (
+      await pollUntil(() => firstEcho.getSentMessages().some((message) => (
         message.channelId === "conversation-origin"
         && message.text.includes("Managed fixture accepted")
-      ))).toBe(true);
+      )), 10_000, "initial managed fixture delivery");
 
       await channelManager!.injectMessage("echo", normalizedMessage(
         "conversation-newer",
         "user_b",
         "NEWER_CONVERSATION",
       ));
-      expect(firstEcho.getSentMessages().some((message) => (
+      await pollUntil(() => firstEcho.getSentMessages().some((message) => (
         message.channelId === "conversation-newer"
         && message.text.includes("Newer conversation acknowledged")
-      ))).toBe(true);
+      )), 10_000, "newer conversation delivery");
 
       const firstPids = readLauncherPids(launcherPidLog);
       expect(firstPids.length).toBeGreaterThan(0);
@@ -350,6 +355,7 @@ describe("restart-injected capability-service vertical join", () => {
       await stopDaemon(firstDaemon);
       firstDaemon = undefined;
       controlProxy.disconnectCurrentSession();
+      const launcherPidsAfterFirstStop = readLauncherPids(launcherPidLog);
 
       process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
       process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
@@ -362,6 +368,49 @@ describe("restart-injected capability-service vertical join", () => {
       secondDaemon.daemon.container.eventBus.on("managed_run:continuation_completed", (event) => continuations.push(event));
       secondDaemon.daemon.container.eventBus.on("tool:executed", (event) => secondToolEvents.push(event));
       await controlProxy.waitForHeldReport();
+      await pollUntil(
+        () => readLauncherPids(launcherPidLog).length > launcherPidsAfterFirstStop.length,
+        10_000,
+        "MCP facade replacement",
+      );
+      let replacementCallableNames: string[] = [];
+      await pollUntil(async () => {
+        try {
+          const status = await secondDaemon!.daemon.rpcCall("mcp.status", {
+            server_name: MCP_SERVER_NAME,
+            _trustLevel: "admin",
+          }) as { status?: string; tools?: Array<{ name?: string; callableName?: string }> };
+          const names = status.tools?.flatMap((tool) => (
+            typeof tool.name === "string" ? [tool.name] : []
+          )) ?? [];
+          replacementCallableNames = status.tools?.flatMap((tool) => (
+            typeof tool.callableName === "string" ? [tool.callableName] : []
+          )) ?? [];
+          return status.status === "connected"
+            && ["prepare_task", "list_tasks", "get_task", "explain_task"]
+              .every((name) => names.includes(name));
+        } catch {
+          return false;
+        }
+      }, 10_000, "replacement MCP tool catalog");
+      const originToolNames = model.requests.find((request) => (
+        request.toolNames.some((name) => name.includes("prepare_task"))
+      ))?.toolNames ?? [];
+      const originMcpToolNames = originToolNames.filter((name) => name.startsWith("mcp__"));
+      const authorityDb = new Database(join(canonicalDataDir, "memory.db"), { readonly: true });
+      try {
+        const authority = authorityDb.prepare("SELECT captured_tool_ids FROM managed_runs").get() as {
+          captured_tool_ids: string;
+        };
+        const captured = JSON.parse(authority.captured_tool_ids) as string[];
+        expect(originToolNames
+          .filter((name) => name !== "discover_tools")
+          .every((name) => captured.includes(name))).toBe(true);
+        expect(captured).toEqual([...new Set(captured)].sort());
+      } finally {
+        authorityDb.close();
+      }
+      expect(replacementCallableNames.sort()).toEqual([...originMcpToolNames].sort());
       controlProxy.releaseReports();
 
       await pollUntil(() => secondEcho.getSentMessages().some((message) => (
@@ -369,14 +418,13 @@ describe("restart-injected capability-service vertical join", () => {
       )), 30_000, "managed continuation delivery");
       await pollUntil(() => reports.length === 4, 10_000, "managed report ingestion");
       await pollUntil(() => continuations.length > 0, 10_000, "managed continuation completion");
-      await pollUntil(() => readLauncherPids(launcherPidLog).length > firstPids.length, 10_000, "MCP facade replacement");
 
       const reconcile = localProxy.records.filter((record) => (
-        record.method === "PrepareTask" || record.method === "Operation"
+        record.method === "PrepareTask" || record.method === "GetOperation"
       ));
       expect(reconcile.slice(0, 3).map((record) => record.method)).toEqual([
         "PrepareTask",
-        "Operation",
+        "GetOperation",
         "PrepareTask",
       ]);
       expect(reconcile[1]?.targetOperationId).toBe(reconcile[0]?.operationId);
@@ -470,7 +518,9 @@ describe("restart-injected capability-service vertical join", () => {
         const continuationRequests = model.requests.filter((request) => request.continuation);
         expect(continuationRequests.length).toBeGreaterThan(0);
         for (const request of continuationRequests) {
-          expect(request.toolNames.every((toolName) => capturedTools.includes(toolName))).toBe(true);
+          expect(request.toolNames.every((toolName) => (
+            toolName === "discover_tools" || capturedTools.includes(toolName)
+          ))).toBe(true);
         }
       } finally {
         db.close();
@@ -478,7 +528,7 @@ describe("restart-injected capability-service vertical join", () => {
 
       const modelTools = model.emittedToolCalls.map((call) => call.name);
       expect(modelTools.some((name) => name.includes("prepare_task"))).toBe(true);
-      expect(modelTools.some((name) => name.includes("get_task"))).toBe(true);
+      expect(modelTools.some((name) => name.includes("list_tasks"))).toBe(true);
       expect(modelTools.every((name) => !/(?:^|[_:/-])(exec|shell|bash)(?:$|[_:/-])/iu.test(name))).toBe(true);
       expect(model.emittedToolCalls.every((call) => {
         const encodedArguments = JSON.stringify(call.arguments);

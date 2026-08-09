@@ -304,7 +304,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     );
     expect(firstRoot).toEqual({
       ok: true,
-      value: "root-session-11111111-1111-4111-8111-111111111111-a1-t1:agent:a1:u1:c1",
+      value: "root-session-11111111-1111-4111-8111-111111111111-dDE6YWdlbnQ6YTE6dTE6YzE",
     });
     if (!firstRoot.ok) return;
 
@@ -333,7 +333,7 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     );
     expect(laterRoot).toEqual({
       ok: true,
-      value: "root-session-22222222-2222-4222-8222-222222222222-a1-t1:agent:a1:u1:c1",
+      value: "root-session-22222222-2222-4222-8222-222222222222-dDE6YWdlbnQ6YTE6dTE6YzE",
     });
     expect(runWithContext(
       firstContext.value,

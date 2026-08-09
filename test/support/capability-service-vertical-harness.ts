@@ -158,7 +158,7 @@ export class LocalDeadlineProxy {
     await waitUntil(() => {
       const methods = this.records.map((record) => record.method);
       return methods.filter((method) => method === "PrepareTask").length >= 2
-        && methods.includes("Operation");
+        && methods.includes("GetOperation");
     }, timeoutMs, "local operation reconciliation");
   }
 
@@ -317,7 +317,6 @@ export class FixtureModelServer {
   readonly requests: ModelRequestRecord[] = [];
   readonly emittedToolCalls: EmittedModelToolCall[] = [];
   private server: HttpServer | undefined;
-  private taskHandle: string | undefined;
   private baseUrlValue = "";
 
   get baseUrl(): string {
@@ -357,25 +356,43 @@ export class FixtureModelServer {
     });
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const allText = messages.map(messageText).join("\n");
-    const continuation = allText.includes("A capability service reported an update");
-    this.requests.push({ body, toolNames: Object.freeze([...toolNames]), continuation });
-    const encoded = JSON.stringify(body);
-    const taskMatch = /"taskHandle"\s*:\s*"([^"]+)"/u.exec(encoded);
-    if (taskMatch?.[1]) this.taskHandle = taskMatch[1];
     const last = messages[messages.length - 1] as { role?: string } | undefined;
+    const priorContinuationCall = this.emittedToolCalls.findLast((call) => call.continuation);
+    const continuation = allText.includes("A capability service reported an update")
+      || (last?.role === "tool" && priorContinuationCall !== undefined);
+    this.requests.push({ body, toolNames: Object.freeze([...toolNames]), continuation });
 
     let toolCall: { name: string; arguments: Record<string, unknown> } | undefined;
     let text: string | undefined;
-    if (continuation && last?.role === "tool") {
-      text = "CAPABILITY_VERTICAL_JOIN_COMPLETE";
-    } else if (continuation) {
-      const name = toolNames.find((candidate) => candidate.includes("get_task"));
-      if (name === undefined || this.taskHandle === undefined) {
+    if (continuation) {
+      if (last?.role === "tool" && priorContinuationCall?.name.includes("list_tasks") === true) {
+        text = "CAPABILITY_VERTICAL_JOIN_COMPLETE";
+      } else {
+        const discoveredListName = priorContinuationCall?.name === "discover_tools"
+          && last?.role === "tool"
+          ? /"name":"([^"]*list_tasks)"/u.exec(messageText(last))?.[1]
+          : undefined;
+        const listName = toolNames.find((candidate) => candidate.includes("list_tasks"))
+          ?? discoveredListName;
+        const discoverName = toolNames.find((candidate) => candidate === "discover_tools");
+        if (listName !== undefined) {
+          toolCall = { name: listName, arguments: {} };
+        } else if (priorContinuationCall === undefined && discoverName !== undefined) {
+          toolCall = {
+            name: discoverName,
+            arguments: { query: "select:mcp__fixture-worker--list_tasks" },
+          };
+        } else {
+          response.statusCode = 500;
+          response.end("continuation fixture tool authority is incomplete");
+          return;
+        }
+      }
+      if (toolCall === undefined && text === undefined) {
         response.statusCode = 500;
-        response.end("continuation fixture tool authority is incomplete");
+        response.end("continuation fixture did not choose an outcome");
         return;
       }
-      toolCall = { name, arguments: { taskHandle: this.taskHandle } };
     } else if (allText.includes("START_MANAGED_FIXTURE") && last?.role === "tool") {
       text = "Managed fixture accepted.";
     } else if (allText.includes("START_MANAGED_FIXTURE")) {

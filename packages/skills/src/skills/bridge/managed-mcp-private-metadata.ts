@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   ResponseLocalePolicySchema,
   createConversationRef,
-  parseSessionKey,
+  parseFormattedSessionKey,
   tryGetContext,
   type AgentCapability,
   type ComisLogger,
@@ -316,9 +316,11 @@ export function createManagedMcpPrivateMetadataBridge(
       if (context.sessionKey === undefined) {
         return rejectCall(deps, input, "managed MCP tool requires an exact session root");
       }
-      const sessionKey = parseSessionKey(context.sessionKey);
-      if (!sessionKey.ok) return rejectCall(deps, input, "managed MCP session identity is invalid");
-      const resolvedRoot = deps.resolveRootRunId(deps.agentId, sessionKey.value);
+      const sessionKey = parseFormattedSessionKey(context.sessionKey);
+      if (sessionKey === undefined) {
+        return rejectCall(deps, input, "managed MCP session identity is invalid");
+      }
+      const resolvedRoot = deps.resolveRootRunId(deps.agentId, sessionKey);
       if (!resolvedRoot.ok) return rejectCall(deps, input, resolvedRoot.error.message);
       rootRunId = resolvedRoot.value;
     }

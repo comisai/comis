@@ -122,9 +122,8 @@ export async function resolveTraceToSession(
  * `obs.explain` identity enters one assembler path. Four honest sources, in order:
  *
  *   1. **Session root (pure, no I/O):**
- *      `root-session-<generation>-<agentId>-<canonicalKey>` embeds a UUID
- *      generation plus the agent and canonical session key. The resolver
- *      validates that both agent identities agree.
+ *      `root-session-<generation>-<base64url-canonicalKey>` embeds a UUID
+ *      generation plus an opaque, reversible canonical session key.
  *
  *   2. **Cron root:** the scheduler mints `root-cron-<executionId>` and the model
  *      bridge indexes that occurrence with `traceId === executionId`. Strip only
@@ -158,29 +157,22 @@ export async function resolveRootRunToSession(
   rootRunId: string,
   taskEvidence?: TaskRootResolutionEvidence | null,
 ): Promise<string> {
-  // Source 1 (PURE, common case): strip the UUID generation, then match the
-  // repeated agent identity against the formatted session key. Agent ids may
-  // contain hyphens, so test each delimiter and accept only the split whose
-  // parsed session key carries the same agent id.
+  // Source 1 (PURE, common case): strip the UUID generation, strictly decode
+  // the opaque session-key projection, and require a canonical round trip.
   const SESSION_ROOT_PREFIX = "root-session-";
   if (rootRunId.startsWith(SESSION_ROOT_PREFIX)) {
     const generated = rootRunId.slice(SESSION_ROOT_PREFIX.length);
     const generationMatch = generated.match(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-(.+)$/i,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-([A-Za-z0-9_-]+)$/i,
     );
     if (generationMatch === null) return "";
     const encoded = generationMatch[1]!;
-    let delimiter = encoded.indexOf("-");
-    while (delimiter >= 0) {
-      const rootAgentId = encoded.slice(0, delimiter);
-      const formattedKey = encoded.slice(delimiter + 1);
-      const sessionKey = parseFormattedSessionKey(formattedKey);
-      if (sessionKey?.agentId === rootAgentId) {
-        return formattedKey;
-      }
-      delimiter = encoded.indexOf("-", delimiter + 1);
-    }
-    return "";
+    const formattedKey = Buffer.from(encoded, "base64url").toString("utf8");
+    const sessionKey = parseFormattedSessionKey(formattedKey);
+    return sessionKey !== undefined
+      && Buffer.from(formattedKey, "utf8").toString("base64url") === encoded
+      ? formattedKey
+      : "";
   }
 
   // Source 2 (cron root): the execution id is the indexed model trace id. Reuse

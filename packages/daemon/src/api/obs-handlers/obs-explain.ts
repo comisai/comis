@@ -91,8 +91,9 @@ export interface AssembleIncidentReportParams {
   /**
    * A governed run's rootRunId (the 3rd ref). Canonicalized to the
    * run's sessionKey FIRST via {@link resolveRootRunToSession} — the synthetic
-   * in-process root by a pure prefix-strip, a real socket/spawned root by the
-   * session-index scan. An unresolvable rootRunId soft-fails to "" → the
+   * in-process root by its validated encoded session suffix, a real
+   * socket/spawned root by the session-index scan. An unresolvable rootRunId
+   * soft-fails to "" → the
    * not-found marker (it never masquerades as a clean session). Lets the
    * system→explain drill-down paste the worst run's rootRunId straight in.
    */

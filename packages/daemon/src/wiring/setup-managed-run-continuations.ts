@@ -11,6 +11,7 @@ import {
   type ManagedRunStorePort,
   type OutwardSendLedgerPort,
   type SessionKey,
+  type TimerPort,
   type TypedEventBus,
   type WorkspacePolicySnapshot,
 } from "@comis/core";
@@ -132,6 +133,7 @@ export async function setupManagedRunContinuations(deps: {
   ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
   readonly deliver: ManagedRunContinuationDelivery;
   readonly nowMs: () => number;
+  readonly timers: TimerPort;
   readonly heartbeatMaxAgeMs: number;
   readonly claimTtlMs: number;
   readonly recoveryBatchSize: number;
@@ -194,6 +196,7 @@ export async function setupManagedRunContinuations(deps: {
     store: deps.store,
     coordinator,
     nowMs: deps.nowMs,
+    timers: deps.timers,
     recoveryBatchSize: deps.recoveryBatchSize,
     logger: deps.logger,
   });

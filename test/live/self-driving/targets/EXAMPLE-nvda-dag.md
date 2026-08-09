@@ -35,5 +35,5 @@ Inject via the Telegram emulator (`scripts/drive.mjs <chatId> "<text>"`):
 
 ## Known traps for this target
 - The graph runs **async past the drive's exit** (the agent announces "running it now… GraphId X" → the drive quiesces early). Read completion from the daemon log, not the drive.
-- `rootRunId` for a graph is `root-session-<sessionKey>` (not the orchestrate `root-default-<id>`).
+- `rootRunId` for a graph is `root-session-<generation UUID>-<base64url formatted session key>` (not the orchestrate `root-default-<id>`).
 - A capable model (Anthropic) **refuses** adversarial jail probes — frame JAIL benignly (a "sandbox connectivity check"), not "read the secrets."

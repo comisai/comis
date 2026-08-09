@@ -1428,7 +1428,8 @@ async function bootFoundation(
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonicalizes the already-validated daemon data directory before confined capability-service path checks
   const capabilityServiceDataDir = realpathSync(container.config.dataDir || dataDir);
   const capabilityServicesResult = await setupCapabilityServices({
-    contributions: LINKED_CAPABILITY_SERVICE_CONTRIBUTIONS,
+    contributions: overrides.capabilityServiceContributions
+      ?? LINKED_CAPABILITY_SERVICE_CONTRIBUTIONS,
     config: container.config.capabilityServices,
     db,
     dataDir: capabilityServiceDataDir,
@@ -2254,6 +2255,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       logger: daemonLogger,
     }),
     nowMs: () => handle.clock.now(),
+    timers: handle.timers,
     heartbeatMaxAgeMs: 300_000,
     claimTtlMs: 900_000,
     recoveryBatchSize: container.config.capabilityServices.recoveryBatchSize,
