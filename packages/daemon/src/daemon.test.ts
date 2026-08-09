@@ -423,6 +423,7 @@ describe("daemon main()", () => {
     expect(instance.shutdownHandle).toBeDefined();
     expect(typeof instance.shutdownHandle.trigger).toBe("function");
     expect(typeof instance.shutdownHandle.dispose).toBe("function");
+    expect((instance as unknown as { capabilityServices?: unknown }).capabilityServices).toBeDefined();
   });
 
   it("returns gatewayHandle when gateway is enabled", async () => {

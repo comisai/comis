@@ -649,6 +649,26 @@ describe("setupShutdown", () => {
     expect(gatewayEntry![0].shutdownOrder).toBe(minOrder);
   });
 
+  it("stops capability services before closing their shared database", async () => {
+    const callOrder: string[] = [];
+    const capabilityServicesShutdown = vi.fn(async () => {
+      callOrder.push("capability-services");
+      return ok(undefined);
+    });
+    const db = {
+      pragma: vi.fn(),
+      close: vi.fn(() => callOrder.push("memory-database")),
+    };
+    const deps = createMinimalDeps({ capabilityServicesShutdown, db } as any);
+
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(capabilityServicesShutdown).toHaveBeenCalledOnce();
+    expect(callOrder.indexOf("capability-services")).toBeLessThan(callOrder.indexOf("memory-database"));
+  });
+
   // -------------------------------------------------------------------------
   // 13. Embedding cache disposal
   // -------------------------------------------------------------------------
