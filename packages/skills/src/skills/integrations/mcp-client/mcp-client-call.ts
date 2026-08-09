@@ -27,6 +27,7 @@ import type {
   McpClientManagerDeps,
   McpClientManagerState,
   McpConnection,
+  McpPrivateMeta,
   McpToolCallContent,
   McpToolCallResult,
 } from "./mcp-client-types.js";
@@ -114,6 +115,7 @@ export async function callTool(
   qualifiedName: string,
   args: Record<string, unknown>,
   signal?: AbortSignal,
+  privateMeta?: McpPrivateMeta,
 ): Promise<Result<McpToolCallResult, Error>> {
   const { logger } = deps;
   // The deadline clock starts HERE, not at the SDK request. `callToolTimeoutMs` is
@@ -126,6 +128,10 @@ export async function callTool(
   // to prevent. Measuring from entry makes the configured number mean what it says.
   const callStartedAtMs = systemNowMs();
   const requestTraceId = tryGetContext()?.traceId;
+  const requestMeta = {
+    ...(privateMeta ?? {}),
+    ...(requestTraceId ? { "comis.ai/requestTraceId": requestTraceId } : {}),
+  };
   const parsed = parseQualifiedName(qualifiedName);
   if (!parsed) {
     return err(new Error(`Invalid MCP tool qualified name: "${qualifiedName}"`));
@@ -262,13 +268,7 @@ export async function callTool(
         {
           name: toolName,
           arguments: args,
-          ...(requestTraceId
-            ? {
-                _meta: {
-                  "comis.ai/requestTraceId": requestTraceId,
-                },
-              }
-            : {}),
+          ...(Object.keys(requestMeta).length > 0 ? { _meta: requestMeta } : {}),
         },
         undefined,
         {
@@ -334,6 +334,9 @@ export async function callTool(
       return ok({
         content,
         isError: "isError" in result ? (result.isError as boolean) === true : false,
+        ...("_meta" in result && result._meta !== undefined
+          ? { privateMeta: result._meta as McpPrivateMeta }
+          : {}),
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

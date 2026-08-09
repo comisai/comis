@@ -291,7 +291,12 @@ export interface McpToolCallResult {
   readonly content: McpToolCallContent[];
   /** Whether the tool call resulted in an error. */
   readonly isError: boolean;
+  /** Server result metadata retained for trusted host-side consumers only. */
+  readonly privateMeta?: McpPrivateMeta;
 }
+
+/** MCP `_meta` data that must never be projected into model-visible content. */
+export type McpPrivateMeta = Readonly<Record<string, unknown>>;
 
 /** A content item from an MCP tool call result. */
 export interface McpToolCallContent {
@@ -393,6 +398,7 @@ export interface McpClientManager {
     qualifiedName: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    privateMeta?: McpPrivateMeta,
   ): Promise<Result<McpToolCallResult, Error>>;
   reconnect(name: string, credentials?: McpReconnectCredentials): Promise<Result<McpConnection, Error>>;
 }

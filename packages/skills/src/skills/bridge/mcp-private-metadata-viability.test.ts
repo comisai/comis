@@ -5,61 +5,20 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { ok, type Result } from "@comis/shared";
+import { ok } from "@comis/shared";
 import { runWithContext, type RequestContext } from "@comis/core";
 import { callTool } from "../integrations/mcp-client/mcp-client-call.js";
 import type {
   McpClientManagerDeps,
+  McpClientManager,
   McpClientManagerState,
   McpConnection,
   McpServerConfig,
-  McpToolCallResult,
-  McpToolDefinition,
 } from "../integrations/mcp-client/mcp-client-types.js";
-import { mcpToolsToAgentTools } from "./mcp-tool-bridge.js";
-
-type PrivateMetadataBridge = {
-  createRequestMeta(input: {
-    readonly serverName: string;
-    readonly toolName: string;
-    readonly qualifiedName: string;
-    readonly toolCallId: string;
-  }): Result<Readonly<Record<string, unknown>> | undefined, Error>;
-  acceptResultMeta(input: {
-    readonly serverName: string;
-    readonly toolName: string;
-    readonly qualifiedName: string;
-    readonly toolCallId: string;
-    readonly meta: Readonly<Record<string, unknown>>;
-  }): Result<void, Error>;
-};
-
-type CallToolWithPrivateMeta = (
-  qualifiedName: string,
-  args: Record<string, unknown>,
-  signal?: AbortSignal,
-  privateMeta?: Readonly<Record<string, unknown>>,
-) => Promise<Result<McpToolCallResult, Error>>;
-
-const callToolWithPrivateMeta = callTool as unknown as (
-  state: McpClientManagerState,
-  deps: McpClientManagerDeps,
-  qualifiedName: string,
-  args: Record<string, unknown>,
-  signal?: AbortSignal,
-  privateMeta?: Readonly<Record<string, unknown>>,
-) => Promise<Result<McpToolCallResult, Error>>;
-
-const bridgeToolsWithPrivateMetadata = mcpToolsToAgentTools as unknown as (
-  tools: McpToolDefinition[],
-  callToolFn: CallToolWithPrivateMeta,
-  toolSourceProfiles: undefined,
-  logger: undefined,
-  onSuspiciousContent: undefined,
-  serverFiltersFn: undefined,
-  onResultTruncated: undefined,
-  privateMetadataBridge: PrivateMetadataBridge,
-) => ReturnType<typeof mcpToolsToAgentTools>;
+import {
+  mcpToolsToAgentTools,
+  type McpPrivateMetadataBridge,
+} from "./mcp-tool-bridge.js";
 
 function makeContext(): RequestContext {
   return {
@@ -171,22 +130,22 @@ describe("MCP private metadata viability", () => {
         debug: vi.fn(),
       },
     } as unknown as McpClientManagerDeps;
-    const callThroughRealClient: CallToolWithPrivateMeta = (
+    const callThroughRealClient: McpClientManager["callTool"] = (
       qualifiedName,
       args,
       signal,
       privateMeta,
-    ) => callToolWithPrivateMeta(state, deps, qualifiedName, args, signal, privateMeta);
+    ) => callTool(state, deps, qualifiedName, args, signal, privateMeta);
 
     let acceptedResultMeta: Readonly<Record<string, unknown>> | undefined;
-    const privateMetadataBridge: PrivateMetadataBridge = {
+    const privateMetadataBridge: McpPrivateMetadataBridge = {
       createRequestMeta: () => ok(requestMeta),
       acceptResultMeta: (input) => {
         acceptedResultMeta = input.meta;
         return ok(undefined);
       },
     };
-    const tools = bridgeToolsWithPrivateMetadata(
+    const tools = mcpToolsToAgentTools(
       [{
         name: "prepare",
         qualifiedName: "mcp:fixture-service/prepare",

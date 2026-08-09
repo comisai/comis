@@ -17,10 +17,15 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "typebox";
 import { registerToolMetadata, wrapExternalContent, tryGetContext, type WrapExternalContentOptions } from "@comis/core";
-import { extractMcpServerName } from "@comis/shared";
+import { extractMcpServerName, type Result } from "@comis/shared";
 export { extractMcpServerName };
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
-import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client/index.js";
+import type {
+  McpToolDefinition,
+  McpClientManager,
+  McpPrivateMeta,
+  McpToolCallResult,
+} from "../integrations/mcp-client/index.js";
 import { sanitizeMcpToolResult } from "../../tools/integrations/mcp-result-sanitizer.js";
 import { truncateJsonAware } from "./json-truncate.js";
 
@@ -31,6 +36,29 @@ import { truncateJsonAware } from "./json-truncate.js";
 /** Minimal pino-compatible logger for MCP bridge diagnostic logging. */
 interface McpBridgeLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** Stable call identity supplied to the trusted private-metadata bridge. */
+export interface McpPrivateMetadataCall {
+  readonly serverName: string;
+  readonly toolName: string;
+  readonly qualifiedName: string;
+  readonly toolCallId: string;
+}
+
+/**
+ * Trusted host seam for MCP metadata that must not enter tool parameters or
+ * model-visible result content. The request hook runs after model parameters
+ * are fixed; the result hook consumes `_meta` before the AgentTool result is
+ * constructed.
+ */
+export interface McpPrivateMetadataBridge {
+  createRequestMeta(
+    input: McpPrivateMetadataCall,
+  ): Result<McpPrivateMeta | undefined, Error>;
+  acceptResultMeta(
+    input: McpPrivateMetadataCall & { readonly meta: McpPrivateMeta },
+  ): Result<void, Error>;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +308,7 @@ export function mcpToolsToAgentTools(
     truncatedSize: number;
     traceId: string;
   }) => void,
+  privateMetadataBridge?: McpPrivateMetadataBridge,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
 ): AgentTool<any>[] {
   /** Log the content shape of an execute() return value for content-loss diagnosis. */
@@ -356,11 +385,36 @@ export function mcpToolsToAgentTools(
         params: unknown,
         signal?: AbortSignal,
       ): Promise<AgentToolResult<{ success: boolean }>> {
+        const privateMetadataCall: McpPrivateMetadataCall = {
+          serverName,
+          toolName: tool.name,
+          qualifiedName: tool.qualifiedName,
+          toolCallId: _toolCallId,
+        };
         let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
-          result = signal === undefined
-            ? await callTool(tool.qualifiedName, params as Record<string, unknown>)
-            : await callTool(tool.qualifiedName, params as Record<string, unknown>, signal);
+          const privateRequestMeta = privateMetadataBridge?.createRequestMeta(privateMetadataCall);
+          if (privateRequestMeta && !privateRequestMeta.ok) {
+            throw new Error("MCP private request metadata could not be created", {
+              cause: privateRequestMeta.error,
+            });
+          }
+          if (privateRequestMeta?.value !== undefined) {
+            result = await callTool(
+              tool.qualifiedName,
+              params as Record<string, unknown>,
+              signal,
+              privateRequestMeta.value,
+            );
+          } else if (signal !== undefined) {
+            result = await callTool(
+              tool.qualifiedName,
+              params as Record<string, unknown>,
+              signal,
+            );
+          } else {
+            result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
+          }
         } catch (error: unknown) {
           // Defense-in-depth: callTool returns Result and should never throw.
           // Throwing here is deliberate: pi-agent-core is the immediate boundary
@@ -386,6 +440,22 @@ export function mcpToolsToAgentTools(
         }
 
         const value: McpToolCallResult = result.value;
+
+        if (value.privateMeta !== undefined && privateMetadataBridge !== undefined) {
+          const accepted = privateMetadataBridge.acceptResultMeta({
+            ...privateMetadataCall,
+            meta: value.privateMeta,
+          });
+          if (!accepted.ok) {
+            const errorText = "MCP private result metadata was rejected by the host";
+            const errorResult = {
+              content: [{ type: "text" as const, text: errorText }],
+              details: { success: false },
+            };
+            logResult(errorResult, _toolCallId, sanitizedName, true);
+            throw new Error(errorText, { cause: accepted.error });
+          }
+        }
 
         const capText = (text: string): string => {
           const profile = resolveSourceProfile(sanitizedName, toolSourceProfiles?.[sanitizedName]);

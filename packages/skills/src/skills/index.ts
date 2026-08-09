@@ -66,6 +66,10 @@ export {
   sanitizeMcpToolName,
   classifyMcpErrorType,
 } from "./bridge/mcp-tool-bridge.js";
+export type {
+  McpPrivateMetadataBridge,
+  McpPrivateMetadataCall,
+} from "./bridge/mcp-tool-bridge.js";
 
 // Prompt processor
 export {
