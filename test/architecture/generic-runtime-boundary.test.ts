@@ -68,6 +68,8 @@ describe("generic runtime specialization boundary", () => {
       "packages/core/src/domain/managed-run-content.ts",
       "packages/core/src/ports/managed-run.ts",
       "packages/memory/src/managed-run-store.ts",
+      "packages/memory/src/managed-run-content-store.ts",
+      "packages/memory/src/managed-run-content-row-schema.ts",
       "packages/memory/src/managed-run-store-record.ts",
       "packages/memory/src/managed-run-row-schema.ts",
       "packages/memory/src/schema-managed-runs.ts",

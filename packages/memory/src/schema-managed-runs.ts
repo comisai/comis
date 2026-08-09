@@ -126,5 +126,22 @@ export function ensureManagedRunTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_managed_run_continuation_active
       ON managed_run_continuation_claims (managed_run_id, state, expires_at_ms);
+
+    CREATE TABLE IF NOT EXISTS managed_run_content_index (
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      managed_run_id TEXT NOT NULL,
+      content_ref TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('activation','report','evidence','attention')),
+      content_hash TEXT NOT NULL,
+      byte_length INTEGER NOT NULL CHECK(byte_length >= 0),
+      relative_path TEXT NOT NULL,
+      expires_at_ms INTEGER,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, agent_id, managed_run_id, content_ref)
+    );
+    CREATE INDEX IF NOT EXISTS idx_managed_run_content_expiry
+      ON managed_run_content_index (expires_at_ms)
+      WHERE expires_at_ms IS NOT NULL;
   `);
 }

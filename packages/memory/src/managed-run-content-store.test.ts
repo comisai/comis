@@ -3,6 +3,7 @@ import {
   chmodSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -34,7 +35,7 @@ describe("createSqliteManagedRunContentStore confined bodies", () => {
   let store: ManagedRunContentPort;
 
   function temporaryDirectory(): string {
-    const directory = mkdtempSync(join(tmpdir(), "managed-run-content-"));
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "managed-run-content-")));
     temporaryDirectories.push(directory);
     return directory;
   }
