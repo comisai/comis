@@ -310,6 +310,7 @@ describe("capability-service protocol bundle contract", () => {
       "expiresAt",
       "externalRunRef",
       "registrationNonce",
+      "requestedAttachment",
       "requestedWorkspace",
       "state",
     ]);
