@@ -9,10 +9,16 @@
 # revoke.mjs env: COMIS_CONFIG_PATHS + COMIS_GATEWAY_TOKEN (export them, or /root/comis-rig.env + the
 # data-dir .env supply them).
 #
-#   bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
-#   REUSE_ONLY=1 bash drive-sim-workload.sh <workload> B <fresh-sender>
+#   bash drive-sim-workload.sh <workload> [variant=A]                     # DRY RUN: decide the risk, touch nothing
+#   DRIVE_CONFIRM=1 bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
+#   REUSE_ONLY=1 DRIVE_CONFIRM=1 bash drive-sim-workload.sh <workload> B <fresh-sender>
 #   bash drive-sim-workload.sh --gate <workload>    # offline: the provider-risk decision alone (0 allowed, 4 suspended)
-#   DRIVE_GATE_ONLY=1 bash drive-sim-workload.sh <workload>   # the real path, stopped at the gate: no side effect
+#
+# The body that restarts the daemon, rewires MCP servers and drives live provider feeders requires an
+# affirmative DRIVE_CONFIRM=1. Everything before it — argument validation, the registry lookups and the
+# provider-risk decision — is side-effect free, so an invocation that does not opt in is a dry run rather than
+# a drive. Default-safe in that direction is the point: a test that shells out to this script, a mistyped
+# command or a wrapper that forgets the flag cannot restart a production daemon by omission.
 #
 # Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect live sim
 # servers + connect THIS workload's server (one server at a time, no tool confusion) → reset the 2 feeder
@@ -180,11 +186,11 @@ if [ -z "$SRV" ] || [ -z "$P" ] || [ -z "$RISK" ]; then
 fi
 # Before the daemon restart and every other side effect, so a suspended workload never touches the box.
 run_risk_gate "$WL" "$RISK" "$P" || exit $?
-# DRIVE_GATE_ONLY=1: stop HERE, once the gate has decided and before the first side effect. The gate's own
-# regression test drives this real path, and its failure mode must be a failed assertion rather than a
-# daemon restart, a server reconnect and two live provider feeders on whatever box the suite runs on.
-if [ "${DRIVE_GATE_ONLY:-}" = "1" ]; then
-  echo "gate-only: $WL cleared the provider-risk gate; stopping before any side effect"
+# The side-effecting body starts below, so it needs the operator's affirmative confirmation. Omitting it stops
+# here with the gate's verdict reported: an accidental invocation is a dry run, never a daemon restart, a
+# server rewire and two live provider feeders on whatever box the caller happens to be.
+if [ "${DRIVE_CONFIRM:-}" != "1" ]; then
+  echo "dry run: $WL cleared the provider-risk gate; re-run with DRIVE_CONFIRM=1 to restart the daemon, rewire $SRV and drive the feeders"
   exit 0
 fi
 if [ "$REUSE_ONLY" = "1" ]; then

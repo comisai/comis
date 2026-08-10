@@ -286,21 +286,22 @@ describe("sim workload driver provider-risk policy", () => {
     const env = { ...process.env };
     delete env[CYBER_ABUSE_AUTH_ENV];
     delete env[LIVE_TEST_RISK_ENV];
+    delete env.DRIVE_CONFIRM;
     return env;
   };
 
-  // DRIVE_GATE_ONLY is forced here rather than per call site: this project boots no daemon and drives no
-  // emulator, and the drive path's whole point is that a gate regression must not restart the box's daemon,
-  // reconnect its MCP servers or run live provider feeders. One choke point means no case in this suite can
-  // reach that body, whatever env a caller passes.
+  // This project boots no daemon and drives no emulator, so the confirmation the driver's side-effecting body
+  // requires is stripped at this one choke point. Nothing in the suite opts in, and an ambient DRIVE_CONFIRM
+  // in the caller's environment cannot opt it in either — the driver's own default is the dry run, so a
+  // regression in the risk gate surfaces as a failed assertion rather than a drive against a live box.
   const runDriver = (
     args: string[],
     env: NodeJS.ProcessEnv = cleanEnv(),
-  ): ReturnType<typeof spawnSync> => spawnSync(
-    "bash",
-    [driverScript, ...args],
-    { encoding: "utf8", env: { ...env, DRIVE_GATE_ONLY: "1" }, timeout: 60_000 },
-  );
+  ): ReturnType<typeof spawnSync> => {
+    const safe = { ...env };
+    delete safe.DRIVE_CONFIRM;
+    return spawnSync("bash", [driverScript, ...args], { encoding: "utf8", env: safe, timeout: 60_000 });
+  };
 
   const workloads = readdirSync(simRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(simRoot, entry.name, "tools.json")))
@@ -336,16 +337,16 @@ describe("sim workload driver provider-risk policy", () => {
     expect(drive.status).toBe(4);
     expect(drive.stderr).toContain("artifact-to-action");
     expect(drive.stderr).toContain("declared-cyber-abuse");
-    // The gate exits before the gate-only stop can even announce itself, so an empty stdout is proof the
-    // suspension came from the gate and not from the stop that bounds this suite.
+    // The gate exits before the unconfirmed-run notice can be printed, so an empty stdout is proof the
+    // suspension came from the gate itself and not from the confirmation the drive body separately requires.
     expect(drive.stdout).toBe("");
   });
 
-  it("halts the real drive path at the gate for a workload the gate allows", () => {
+  it("refuses to reach the drive body without an affirmative confirmation", () => {
     const drive = runDriver(["package-delivery"]);
 
     expect(drive.status, drive.stderr).toBe(0);
-    expect(drive.stdout).toContain("cleared the provider-risk gate; stopping before any side effect");
+    expect(drive.stdout).toContain("re-run with DRIVE_CONFIRM=1");
     // The run banner is the drive body's first output, so its absence proves nothing past the gate ran.
     expect(drive.stdout).not.toContain("== drive-sim-workload");
   });

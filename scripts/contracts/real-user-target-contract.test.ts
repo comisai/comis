@@ -28,6 +28,10 @@ const bundledDeepResearch = readFileSync(
   resolve(repoRoot, "packages/daemon/bundled-skills/deep-research/SKILL.md"),
   "utf8",
 );
+const drivePrompt = readFileSync(
+  resolve(repoRoot, "test/live/self-driving/DRIVE-PROMPT.md"),
+  "utf8",
+);
 
 describe("real-user target source claims", () => {
   it("states the complete pipeline action count including from_intent", () => {
@@ -85,37 +89,52 @@ describe("real-user target source claims", () => {
     expect(daemonToolSetup).toContain("SSOT for the 46 platform tools");
   });
 
-  // The target spec is this kit's owned acceptance contract: a journey is only drivable when
-  // it declares its drive, its pass predicate, the artifacts that decide it, and its hard
-  // failures, and the coverage matrix in §5 is the anti-silent-skip gate that must name every
-  // journey the spec defines. A journey missing a label, or a journey absent from the matrix,
-  // is a journey that can be skipped in a run and still read as covered.
-  it("keeps every evidence-derived interesting journey structurally complete and covered", () => {
-    const section = target.match(
-      /## 4d\. The E-journeys — evidence-derived interesting workflows([\s\S]*?)\n## 5\./u,
-    )?.[1];
-    expect(section).toBeDefined();
+  // Two owned text contracts declare the same journey census: the target spec defines the journeys, and
+  // DRIVE-PROMPT.md tells the driver which ranges that spec covers. A journey is only drivable when it
+  // declares its drive, its pass predicate, the artifacts that decide it and its hard failures; it is only
+  // unskippable when the §5 coverage matrix and the kickoff prompt's pointer both name it. Every range here
+  // is DERIVED from the spec's own journey headings, so adding a journey without extending the matrix row or
+  // the kickoff pointer fails instead of silently shipping a journey a run can skip.
+  const journeyBlocks = (heading: string, prefix: string) => {
+    const start = target.indexOf(`## ${heading}`);
+    expect(start, heading).toBeGreaterThanOrEqual(0);
+    const end = target.indexOf("\n## ", start + 1);
+    const section = target.slice(start, end === -1 ? undefined : end);
+    const found = [...section.matchAll(new RegExp(`^### (${prefix}\\d+) — .+$`, "gmu"))];
+    return found.map((match, index) => ({
+      id: match[1] as string,
+      body: section.slice(match.index ?? 0, found[index + 1]?.index ?? section.length),
+    }));
+  };
 
-    const journeys = [...(section ?? "").matchAll(/^### (E\d+) — .+$/gmu)];
-    expect(journeys.length).toBeGreaterThan(0);
+  const contiguousRange = (ids: string[], prefix: string): string => {
+    expect(ids).toEqual(ids.map((_, index) => `${prefix}${index + 1}`));
+    return `${ids[0]}–${ids.at(-1)}`;
+  };
 
-    for (let index = 0; index < journeys.length; index += 1) {
-      const start = journeys[index]?.index ?? 0;
-      const end = journeys[index + 1]?.index ?? section?.length ?? 0;
-      const journey = section?.slice(start, end) ?? "";
+  it("keeps every evidence-derived journey structurally complete and unskippable", () => {
+    const daily = journeyBlocks("4c. The D-journeys", "D");
+    const interesting = journeyBlocks("4d. The E-journeys", "E");
+    expect(daily.length).toBeGreaterThan(0);
+    expect(interesting.length).toBeGreaterThan(0);
+
+    for (const journey of [...daily, ...interesting]) {
       for (const label of ["**Drive.**", "**Predicate.**", "**Oracle.**", "**HARD.**"]) {
-        expect(journey, journeys[index]?.[1]).toContain(label);
+        expect(journey.body, journey.id).toContain(label);
       }
     }
 
-    const ids = journeys.map((match) => match[1] as string);
-    expect(ids).toEqual(ids.map((_, index) => `E${index + 1}`));
+    const dailyRange = contiguousRange(daily.map((journey) => journey.id), "D");
+    const interestingRange = contiguousRange(interesting.map((journey) => journey.id), "E");
 
-    const matrixRow = target
-      .split("\n")
-      .find((line) => line.startsWith("| Evidence-derived interesting journeys |"));
-    expect(matrixRow).toBeDefined();
-    expect(matrixRow).toContain(`| ${ids[0]}–${ids.at(-1)} |`);
+    const matrixRow = (label: string): string | undefined =>
+      target.split("\n").find((line) => line.startsWith(`| ${label} |`));
+    expect(matrixRow("Evidence-derived daily journeys")).toContain(`| ${dailyRange} |`);
+    expect(matrixRow("Evidence-derived interesting journeys")).toContain(`| ${interestingRange} |`);
+
+    const declaredRanges = [...drivePrompt.matchAll(/\b([DE]\d+–[DE]\d+)\b/gu)].map((match) => match[1]);
+    expect(declaredRanges).toContain(dailyRange);
+    expect(declaredRanges).toContain(interestingRange);
   });
 
   // E2's drive is the only journey backed by a shipped deterministic world, so its promises are

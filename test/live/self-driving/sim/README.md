@@ -117,9 +117,10 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 > ACC→REFLECT loop below is now `scripts/drive-sim-workload.sh`:
 > ```bash
 > ssh root@$VPS 'export COMIS_GATEWAY_TOKEN=<GWTOKEN> COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml; \
->                bash /root/drive-sim-workload.sh threat-hunting'        # restart→connect→reset→2 feeders→reflect→read
-> # for the REUSE/TRANSFER step, re-run on a rotated variant: … drive-sim-workload.sh threat-hunting B
-> # flaky link? wrap it: bash /root/bg.sh th 'bash /root/drive-sim-workload.sh threat-hunting'  then  bash /root/bg.sh --poll th
+>                DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh threat-hunting'   # restart→connect→reset→2 feeders→reflect→read
+> # DRIVE_CONFIRM=1 is the drive body's opt-in; without it the script decides the risk and stops, touching nothing.
+> # for the REUSE/TRANSFER step, re-run on a rotated variant: … DRIVE_CONFIRM=1 … drive-sim-workload.sh threat-hunting B
+> # flaky link? wrap it: bash /root/bg.sh th 'DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh threat-hunting'  then  bash /root/bg.sh --poll th
 > ```
 > It embeds the canonical byte-identical feeder prompt per workload, restarts-m1 (fresh per-root meter —
 > avoids a spurious-abort), connects ONE sim server at a time, and reads the ground truth (mm delta + the
@@ -315,8 +316,8 @@ Keep the two senses of "transfer" apart, because only the first one is measured:
 Producing the missing result means driving the loop for real and reading GROUND TRUTH (never the reply):
 
 ```bash
-bash /root/drive-sim-workload.sh personal-operations A              # 2 corroborating episodes → reflect → admit
-REUSE_ONLY=1 bash /root/drive-sim-workload.sh personal-operations B <fresh-sender>   # the transfer/reuse step
+DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh personal-operations A   # 2 corroborating episodes → reflect → admit
+REUSE_ONLY=1 DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh personal-operations B <fresh-sender>   # the transfer/reuse step
 node /root/db.mjs pick mental_models name,kind,state,proof_count    # proof_count↑ / candidate→active
 ```
 
