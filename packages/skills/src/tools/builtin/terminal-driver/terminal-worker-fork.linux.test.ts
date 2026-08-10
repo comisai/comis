@@ -17,14 +17,23 @@
  *     fork + frame-pump + IPC server half work end-to-end (no unjailed spawn).
  *   - Part B (`skipIf` no bwrap): real bwrapPath → create a jailed bash PTY, read
  *     its grid, kill it — the full jailed round-trip through the real fork.
- *   - Part C: a managed terminal reaches a host Unix socket only at its fixed
- *     attachment target, then confirmed termination stops every further call.
+ *   - Part C: a managed terminal can read and write only its leased root, cannot
+ *     reach a sibling lease or service credential, reaches one host Unix socket
+ *     only at its fixed target, and stops every call after confirmed termination.
  *
  * @module
  */
 
 import { describe, it, expect } from "vitest";
-import { realpathSync, existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -200,16 +209,26 @@ describe.skipIf(!isLinux() || !distBuilt)(
     );
 
     it.skipIf(!bwrapPathOrUndefined() || !existsSync("/usr/bin/python3"))(
-      "Part C: exposes one fixed Unix socket target and removes reachability before confirmed revocation returns",
+      "Part C: confines a managed terminal to its leased root and fixed attachment until confirmed revocation",
       async () => {
         const scratch = realpathSync(mkdtempSync(join(tmpdir(), "terminal-attachment-")));
         const dataDir = join(scratch, "data");
         const workspace = join(scratch, "workspace");
+        const siblingWorkspace = join(scratch, "sibling-workspace");
+        const leasedMarkerPath = join(workspace, "lease-marker.txt");
+        const leasedWritePath = join(workspace, "lease-write.txt");
+        const siblingMarkerPath = join(siblingWorkspace, "sibling-marker.txt");
+        const siblingWritePath = join(siblingWorkspace, "sibling-write.txt");
+        const serviceCredentialPath = join(dataDir, "service-control.credential");
         const sourcePath = join(scratch, "worker.sock");
         const targetName = `attachment-${"a".repeat(32)}.sock`;
         const targetPath = managedTerminalAttachmentTargetPath(targetName);
         mkdirSync(dataDir, { mode: 0o700 });
         mkdirSync(workspace, { mode: 0o700 });
+        mkdirSync(siblingWorkspace, { mode: 0o700 });
+        writeFileSync(leasedMarkerPath, "LEASE_MARKER", { mode: 0o600 });
+        writeFileSync(siblingMarkerPath, "SIBLING_MARKER", { mode: 0o600 });
+        writeFileSync(serviceCredentialPath, "CONTROL_CREDENTIAL_MARKER", { mode: 0o600 });
         let calls = 0;
         const server = createServer((socket) => {
           socket.once("data", () => {
@@ -231,8 +250,20 @@ describe.skipIf(!isLinux() || !distBuilt)(
         });
         const owner = { agentId: "agent-attachment-linux", sessionKey: "session-attachment-linux" };
         const python = [
-          "import socket,sys,time",
-          "source,target=sys.argv[1:3]",
+          "import pathlib,socket,sys,time",
+          "source,target,leased_marker,leased_write,sibling_marker,sibling_write,credential=sys.argv[1:8]",
+          "print('LEASE_READ_OK' if pathlib.Path(leased_marker).read_text() == 'LEASE_MARKER' else 'LEASE_READ_WRONG', flush=True)",
+          "pathlib.Path(leased_write).write_text('LEASE_WRITE_OK')",
+          "print('LEASE_WRITE_OK', flush=True)",
+          "for label,path in [('SIBLING',sibling_marker),('CONTROL_CREDENTIAL',credential)]:",
+          " try:",
+          "  pathlib.Path(path).read_text(); print(label + '_EXPOSED', flush=True)",
+          " except OSError:",
+          "  print(label + '_BLOCKED', flush=True)",
+          "try:",
+          " pathlib.Path(sibling_write).write_text('SIBLING_WRITE_EXPOSED'); print('SIBLING_WRITE_EXPOSED', flush=True)",
+          "except OSError:",
+          " print('SIBLING_WRITE_BLOCKED', flush=True)",
           "probe=socket.socket(socket.AF_UNIX)",
           "try:",
           " probe.connect(source); print('SOURCE_EXPOSED', flush=True); probe.close()",
@@ -247,7 +278,17 @@ describe.skipIf(!isLinux() || !distBuilt)(
           const created = await registry.create({
             allowId: "python-attachment-probe",
             bin: "/usr/bin/python3",
-            argv: ["-c", python, sourcePath, targetPath],
+            argv: [
+              "-c",
+              python,
+              sourcePath,
+              targetPath,
+              leasedMarkerPath,
+              leasedWritePath,
+              siblingMarkerPath,
+              siblingWritePath,
+              serviceCredentialPath,
+            ],
             cols: 100,
             rows: 30,
             scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "daemon" },
@@ -267,9 +308,29 @@ describe.skipIf(!isLinux() || !distBuilt)(
           let screen = "";
           for (let attempt = 0; attempt < 100; attempt += 1) {
             screen = (await registry.read(created.sessionId, owner)).screen;
-            if (screen.includes("SOURCE_BLOCKED") && screen.includes("ATTACHMENT_OK") && calls >= 2) break;
+            if (
+              screen.includes("LEASE_READ_OK")
+              && screen.includes("LEASE_WRITE_OK")
+              && screen.includes("SIBLING_BLOCKED")
+              && screen.includes("SIBLING_WRITE_BLOCKED")
+              && screen.includes("CONTROL_CREDENTIAL_BLOCKED")
+              && screen.includes("SOURCE_BLOCKED")
+              && screen.includes("ATTACHMENT_OK")
+              && calls >= 2
+            ) break;
             await new Promise((resolvePoll) => setTimeout(resolvePoll, 25));
           }
+          expect(screen).toContain("LEASE_READ_OK");
+          expect(screen).not.toContain("LEASE_READ_WRONG");
+          expect(screen).toContain("LEASE_WRITE_OK");
+          expect(readFileSync(leasedWritePath, "utf8")).toBe("LEASE_WRITE_OK");
+          expect(screen).toContain("SIBLING_BLOCKED");
+          expect(screen).not.toContain("SIBLING_EXPOSED");
+          expect(screen).toContain("SIBLING_WRITE_BLOCKED");
+          expect(screen).not.toContain("SIBLING_WRITE_EXPOSED");
+          expect(existsSync(siblingWritePath)).toBe(false);
+          expect(screen).toContain("CONTROL_CREDENTIAL_BLOCKED");
+          expect(screen).not.toContain("CONTROL_CREDENTIAL_EXPOSED");
           expect(screen).toContain("SOURCE_BLOCKED");
           expect(screen).not.toContain("SOURCE_EXPOSED");
           expect(screen).toContain("ATTACHMENT_OK");
