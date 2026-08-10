@@ -370,12 +370,23 @@ try {
     sessionKey: rollup.sessionKey,
     depth: "summary",
   }).catch((err) => ({ error: err.message }));
+  const trajectoryPath = resolveTrajectoryPath(bound.path);
+  let lastDurableToolResults = 0;
+  const durableToolResults = await waitFor(
+    () => {
+      lastDurableToolResults = traceBoundToolResults(trajectoryPath, rollup.traceId);
+      return lastDurableToolResults === dispatched.length ? lastDurableToolResults : undefined;
+    },
+    30_000,
+    () =>
+      `the trajectory to record all ${dispatched.length} dispatched tool results (last saw ${lastDurableToolResults})`,
+  );
 
   record = {
     variant,
     discoveredTools: servers.toolCount ?? servers.tools?.length,
     dispatchedTools: dispatched,
-    durableToolResults: traceBoundToolResults(resolveTrajectoryPath(bound.path), rollup.traceId),
+    durableToolResults,
     toolStats: rollup.sessionEnd?.toolStats,
     finishReason: executed.finishReason,
     executeError: executed.error ?? policyError,
@@ -385,7 +396,8 @@ try {
     runId: rollup.runId,
     endReason: rollup.sessionEnd?.endReason,
     degraded: rollup.sessionEnd?.degraded,
-    explainOutcome: explained.outcome ?? explained.error ?? null,
+    explainSeverity: explained.outcome?.severity ?? null,
+    explainError: explained.error ?? null,
     explainRootCause: explained.likelyRootCause ?? null,
     grade: terminalGrade,
   };

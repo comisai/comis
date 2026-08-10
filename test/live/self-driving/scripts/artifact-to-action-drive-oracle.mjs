@@ -321,6 +321,11 @@ export function driveFailures(record) {
   }
   if (record.endReason !== "success") failures.push(`session rollup ended as ${record.endReason}`);
   if (record.degraded !== false) failures.push("the session rollup reported a degraded turn");
+  if (record.explainSeverity !== "ok") {
+    failures.push(
+      `incident explanation was ${record.explainSeverity ?? "missing"}${record.explainError ? `: ${record.explainError}` : ""}`,
+    );
+  }
   return failures;
 }
 
