@@ -497,6 +497,14 @@ function reportCounts(dataDir: string, taskHandles: readonly string[]): number[]
   }
 }
 
+function launcherDiagnostic(worktree: string): string {
+  try {
+    return readFileSync(join(worktree, ".wave4-launch-error"), "utf8").trim();
+  } catch {
+    return "launcher did not write a failure marker";
+  }
+}
+
 describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", () => {
   it("confines two task-bound workers and preserves candidate custody across one terminal exit", async () => {
     expect(process.env["COMIS_DEV_CREW_COMMIT"]).toBe(REVIEWED_GO_COMMIT);
@@ -686,8 +694,14 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
         60_000,
         "two terminal launch handles",
       );
-      expect(sessionA, `worker A terminal launch failed; service stderr: ${service.stderr()}`).not.toBe("");
-      expect(sessionB, `worker B terminal launch failed; service stderr: ${service.stderr()}`).not.toBe("");
+      expect(
+        sessionA,
+        `worker A terminal launch failed (${launcherDiagnostic(bindingA.canonical_path)}); service stderr: ${service.stderr()}`,
+      ).not.toBe("");
+      expect(
+        sessionB,
+        `worker B terminal launch failed (${launcherDiagnostic(bindingB.canonical_path)}); service stderr: ${service.stderr()}`,
+      ).not.toBe("");
       expect(launchPlanAResult).toContain(taskA);
       expect(launchPlanBResult).toContain(taskB);
       expect(launchPlanAResult).not.toMatch(/executable|workingDirectory|sourcePath/iu);
