@@ -93,4 +93,11 @@ describe("capability-service Linux confinement runner", () => {
     expect(barrierOffset).toBeGreaterThan(-1);
     expect(attachmentOffset).toBeGreaterThan(barrierOffset);
   });
+
+  it("validates the protected bind mount without trusting find file types", () => {
+    const launcher = source(launcherPath);
+
+    expect(launcher).not.toMatch(/find \/run\/comis\/attachments[^\n]*-type s/u);
+    expect(launcher).toContain('test -S "${attachments[0]}"');
+  });
 });
