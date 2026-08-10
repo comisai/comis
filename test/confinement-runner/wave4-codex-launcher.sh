@@ -33,9 +33,12 @@ if [[ ! -f "${START_FILE}" ]]; then
   fail_launch "wave-four concurrent-start barrier timed out"
 fi
 
-mapfile -t attachments < <(find /run/comis/attachments -maxdepth 1 -type s -name 'attachment-*.sock' -print)
+mapfile -t attachments < <(find /run/comis/attachments -maxdepth 1 -name 'attachment-*.sock' -print)
 if [[ "${#attachments[@]}" -ne 1 ]]; then
   fail_launch "wave-four launch requires exactly one protected attachment"
+fi
+if ! test -S "${attachments[0]}"; then
+  fail_launch "wave-four protected attachment is not a Unix socket"
 fi
 readonly own_attachment="${attachments[0]}"
 readonly sibling_path="$(jq -er '.siblingPath' "${SIBLING_FILE}")"
