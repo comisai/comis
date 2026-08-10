@@ -9,6 +9,7 @@
  * @module
  */
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,12 +22,14 @@ import {
   DATA_ROOT_MARKER,
   disposeDataRoot,
   driveFailures,
+  monitorChildLifecycle,
   nextCall,
   observedFrom,
   resolveArtifactKind,
   resolveTrajectoryPath,
   selectRunRollup,
   traceBoundToolResults,
+  waitFor,
 } from "./artifact-to-action-drive-oracle.mjs";
 
 type JsonObject = Record<string, unknown>;
@@ -179,6 +182,43 @@ describe("artifact-to-action runtime-drive oracle", () => {
 
     expect(failures).toContain("the session rollup carried no degraded flag");
     expect(failures).not.toContain("the session rollup reported a degraded turn");
+  });
+
+  it("aborts a readiness check as soon as the daemon exits", async () => {
+    const child = new EventEmitter();
+    const lifecycle = monitorChildLifecycle(child, "the Comis daemon");
+    let markCheckStarted: (() => void) | undefined;
+    const checkStarted = new Promise<void>((resolveStarted) => {
+      markCheckStarted = resolveStarted;
+    });
+    const waiting = waitFor(
+      async () => {
+        markCheckStarted?.();
+        await new Promise(() => undefined);
+        return false;
+      },
+      60_000,
+      "the gateway health endpoint",
+      5_000,
+      lifecycle,
+    );
+
+    await checkStarted;
+    child.emit("exit", 7, null);
+
+    await expect(waiting).rejects.toThrow("the Comis daemon exited before the drive finished with code 7");
+    expect(lifecycle.settled).toBe(true);
+  });
+
+  it("turns a daemon spawn error into an immediate readiness failure", async () => {
+    const child = new EventEmitter();
+    const lifecycle = monitorChildLifecycle(child, "the Comis daemon");
+    child.emit("error", new Error("spawn EAGAIN"));
+
+    await expect(
+      waitFor(async () => false, 60_000, "the gateway health endpoint", 5_000, lifecycle),
+    ).rejects.toThrow("the Comis daemon failed to start: spawn EAGAIN");
+    expect(lifecycle.settled).toBe(true);
   });
 
   it("refuses to publish a drive whose terminal grade did not pass", () => {
