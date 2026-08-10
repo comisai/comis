@@ -161,7 +161,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
     name: "obs_query",
     label: "Observability Query",
     description:
-      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. For this task or cost-so-far questions, use billing.currentRoot: it includes spawned descendants. Report runtime cost separately from external purchases. billing.total is daemon-lifetime cost; billing.bySession excludes descendant sessions. Use system_health for failure or degraded counts; diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
+      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. For this task or cost-so-far questions, use billing.currentRoot: it includes spawned descendants. Report runtime cost separately from external purchases. billing.total is daemon-lifetime cost; billing.bySession excludes descendant sessions. Use system_health for failure or degraded counts; system_health does not rank duration, so its worst degraded execution is not evidence of the slowest execution. Cost is a runtime estimate from reported tokens and configured pricing, not a provider invoice; label it and say the invoice is unverified. diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
     parameters: ObsQueryToolParams,
 
     async execute(
