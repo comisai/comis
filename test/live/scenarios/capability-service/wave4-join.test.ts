@@ -229,7 +229,7 @@ interface TaskSummary {
   readonly state: string;
 }
 
-interface FleetSnapshot {
+interface TaskStatusSnapshot {
   readonly completeness: string;
   readonly tasks: TaskSummary[];
 }
@@ -711,13 +711,13 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
         "two real Codex process starts",
       );
 
-      let fleet = cli<FleetSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
-      expect(fleet.completeness).toBe("partial");
-      expect(new Set(fleet.tasks.map((task) => task.taskHandle))).toEqual(new Set([taskA, taskB]));
+      let status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+      expect(status.completeness).toBe("partial");
+      expect(new Set(status.tasks.map((task) => task.taskHandle))).toEqual(new Set([taskA, taskB]));
       await pollUntil(() => {
-        fleet = cli<FleetSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
-        return fleet.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
-      }, 30_000, `joined working state; observed ${JSON.stringify(fleet.tasks)}; service stderr: ${service.stderr()}`);
+        status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+        return status.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
+      }, 30_000, `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
       await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");
 
       const evidenceA = JSON.parse(readFileSync(join(bindingA.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
@@ -736,12 +736,12 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
         { tool: "terminal_session_list", arguments: {}, capture: (text) => { postKillList = text; } },
       ]);
       await channelManager.injectMessage("echo", normalizedMessage("STOP_ONLY_WORKER_A"));
-      await pollUntil(() => postKillList !== "", 30_000, "single-worker stop and fleet read");
+      await pollUntil(() => postKillList !== "", 30_000, "single-worker stop and task status read");
       expect(postKillList).not.toContain(sessionA);
       expect(postKillList).toContain(sessionB);
-      fleet = cli<FleetSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
-      expect(fleet.tasks.find((task) => task.taskHandle === taskA)?.state).toBe("validating");
-      expect(fleet.tasks.find((task) => task.taskHandle === taskB)?.state).toBe("validating");
+      status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+      expect(status.tasks.find((task) => task.taskHandle === taskA)?.state).toBe("validating");
+      expect(status.tasks.find((task) => task.taskHandle === taskB)?.state).toBe("validating");
 
       await pollUntil(() => model.idle, 10_000, "liaison idle before final stop");
       model.setScript([{ tool: "terminal_session_kill", arguments: { sessionId: sessionB } }]);
