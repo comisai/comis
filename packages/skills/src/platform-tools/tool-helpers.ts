@@ -151,7 +151,12 @@ export function dualImageResult(
     content: [
       {
         type: "text",
-        text: `Screenshot saved: ${relativePath}\nFull path: ${absolutePath}`,
+        text:
+          `Screenshot saved: ${relativePath}\n`
+          + `Full path: ${absolutePath}\n`
+          + "To deliver this screenshot to the active channel, call the `message` tool with "
+          + `action \`attach\`, \`attachment_url\` \`${relativePath}\`, and \`attachment_type\` \`image\`. `
+          + "Do not tell the user it was sent until that call succeeds.",
       },
       { type: "image", data: base64Data, mimeType },
     ],
