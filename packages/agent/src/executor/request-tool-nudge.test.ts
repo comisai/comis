@@ -141,6 +141,32 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("recovers a claimed message receipt during an outage that omitted obs_query", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "did you receive the message injected while you were down?",
+      requestRelevantToolNames: ["obs_query"],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () =>
+        "The current observability result does not prove when the message was accepted.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["obs_query"],
+      outcome: "recovered",
+    });
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 

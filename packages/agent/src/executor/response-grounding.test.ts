@@ -154,6 +154,23 @@ describe("response grounding module", () => {
     });
   });
 
+  it("requires observability before claiming receipt during an outage", () => {
+    const honestResponse =
+      "I could not verify whether that message was accepted while the service was down.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "did you receive the message injected while you were down?",
+      response:
+        "Yes, I received the earlier resume message after the restart.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
   it("requires duration-ranking evidence for a slowest-execution claim", () => {
     const honestResponse = "I could not verify which execution was slowest.";
     const unsupportedResponse = "The current report does not rank execution duration.";
