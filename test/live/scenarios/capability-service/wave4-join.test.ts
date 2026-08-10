@@ -26,7 +26,7 @@ import { getFreePort } from "../../../support/free-port.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
-const REVIEWED_GO_COMMIT = "ba71a97daac11962527ca9642388556fe012211c";
+const REVIEWED_GO_COMMIT = "eb499e6d3c8ee74cefd9a187a488ce49ebe4e645";
 const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
 const MCP_SERVER_NAME = "devcrew";
 const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
