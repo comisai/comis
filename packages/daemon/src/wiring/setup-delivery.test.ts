@@ -1344,6 +1344,7 @@ describe("setupDeliveryMirror", () => {
     // Call the handler with a mock event and context
     const event = {
       text: "Hello world",
+      mediaUrls: ["screenshots/current.png"],
       channelType: "telegram",
       channelId: "chat-1",
       result: { messageId: "123" },
@@ -1373,7 +1374,7 @@ describe("setupDeliveryMirror", () => {
       conversationRef,
       destinationEndpoint,
       text: "Hello world",
-      mediaUrls: [],
+      mediaUrls: ["screenshots/current.png"],
       channelType: "telegram",
       channelId: "chat-1",
       origin: "agent",
