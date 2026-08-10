@@ -185,6 +185,58 @@ describe("daemon capability-service fixture host", () => {
     if (!unexpectedLease.ok) expect(unexpectedLease.error.kind).toBe("invalid_params");
   });
 
+  it("enforces attachment handles against the prepared attachment request", () => {
+    const host = createCapabilityServiceProtocolFixtureHost({
+      bundleDigest: manifest.bundleDigest,
+    });
+    expect(host.validate({
+      target: "mcp-managed-run-result",
+      expectation: "accept",
+      schemaExpectation: "accept",
+      payload: {
+        state: "prepared",
+        externalRunRef: "external-run_attachment",
+        registrationNonce: "registration-nonce_attachment",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+        requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+        requestedAttachment: {
+          kind: "unix_socket",
+          sourcePath: "/approved/runtime/task-a/service.sock",
+        },
+      },
+    }).ok).toBe(true);
+
+    const missingAttachment = host.validateRequest({
+      jsonrpc: "2.0",
+      id: "operation_activate_missing_attachment",
+      method: "managedRuns.activate",
+      params: {
+        operationId: "operation_activate_missing_attachment",
+        managedRunId: "managed-run_attachment",
+        externalRunRef: "external-run_attachment",
+        registrationNonce: "registration-nonce_attachment",
+        workspaceLeaseId: "workspace-lease_attachment",
+      },
+    });
+    expect(missingAttachment.ok).toBe(false);
+    if (!missingAttachment.ok) expect(missingAttachment.error.kind).toBe("invalid_params");
+
+    expect(host.validateRequest({
+      jsonrpc: "2.0",
+      id: "operation_activate_attachment",
+      method: "managedRuns.activate",
+      params: {
+        operationId: "operation_activate_attachment",
+        managedRunId: "managed-run_attachment",
+        externalRunRef: "external-run_attachment",
+        registrationNonce: "registration-nonce_attachment",
+        workspaceLeaseId: "workspace-lease_attachment",
+        executionAttachmentId: "execution-attachment_attachment",
+        attachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+      },
+    }).ok).toBe(true);
+  });
+
   it("accepts a content-free terminal transition carrying only correlated handles", () => {
     const host = createCapabilityServiceProtocolFixtureHost({
       bundleDigest: manifest.bundleDigest,

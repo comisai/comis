@@ -53,6 +53,23 @@ function makeInstance(
 }
 
 describe("capability-service contribution planning", () => {
+  it("accepts every ratified capability-service scope together", () => {
+    const contribution = makeContribution({
+      serviceDefinitions: [{
+        ...makeContribution().serviceDefinitions[0]!,
+        requestedScopes: [
+          "health",
+          "report",
+          "workspace_lease",
+          "terminal_events",
+          "execution_attachment",
+        ],
+      }],
+    });
+
+    expect(buildCapabilityServiceActivationPlan([contribution], [makeInstance()]).ok).toBe(true);
+  });
+
   it("builds one deterministic inactive plan without granting runtime authority", () => {
     const contribution = makeContribution({
       configSections: [{
