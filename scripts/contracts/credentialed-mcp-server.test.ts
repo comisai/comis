@@ -33,8 +33,8 @@ async function callAccountSummary(credential: string | undefined): Promise<Recor
       if (newline >= 0) resolveOutput(stdout.slice(0, newline));
     });
     child.once("error", reject);
-    child.once("exit", (code) => {
-      if (stdout.length === 0) reject(new Error(`fixture exited before responding (${code})`));
+    child.once("close", (code) => {
+      if (stdout.length === 0) reject(new Error(`fixture closed before responding (${code})`));
     });
   });
 

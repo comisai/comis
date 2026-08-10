@@ -48,10 +48,12 @@ async function listTools(
       clearTimeout(timeout);
       rejectResponse(error);
     });
-    child.once("exit", (code) => {
+    // `exit` can precede the final stdout data event. `close` means every stdio
+    // stream has drained, so only then can an absent newline be called a failure.
+    child.once("close", (code) => {
       if (stdout.includes("\n")) return;
       clearTimeout(timeout);
-      rejectResponse(new Error(`fixture exited before responding with code ${String(code)}`));
+      rejectResponse(new Error(`fixture closed before responding with code ${String(code)}`));
     });
 
     child.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
