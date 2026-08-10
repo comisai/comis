@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: Apache-2.0
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const repoRoot = resolve(import.meta.dirname, "../..");
+const runnerRoot = resolve(repoRoot, "test/confinement-runner");
+const dockerfilePath = resolve(runnerRoot, "Dockerfile");
+const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
+const hostRunnerPath = resolve(repoRoot, "scripts/run-confinement-runner.sh");
+
+function source(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+
+describe("capability-service Linux confinement runner", () => {
+  it("pins every worker and jail dependency required by the live join", () => {
+    const dockerfile = source(dockerfilePath);
+
+    expect(dockerfile).toContain("node:22-bookworm@sha256:");
+    expect(dockerfile).toContain("GO_VERSION=1.26.5");
+    expect(dockerfile).toContain("go1.26.5.linux-amd64.tar.gz");
+    expect(dockerfile).toContain("go1.26.5.linux-arm64.tar.gz");
+    expect(dockerfile).toContain("pnpm@10.34.5");
+    expect(dockerfile).toContain("@openai/codex@0.147.0");
+    expect(dockerfile).toMatch(/apt-get install[\s\S]*bubblewrap/u);
+    expect(dockerfile).toMatch(/apt-get install[\s\S]*tmux/u);
+    expect(dockerfile).toContain("USER comis");
+  });
+
+  it("mounts both source authorities read-write and Codex authentication read-only", () => {
+    const runner = source(hostRunnerPath);
+
+    expect(runner).toContain("target=/workspace/comis-dev-crew");
+    expect(runner).toContain("target=/workspace/comis");
+    expect(runner).toContain("target=/home/comis/.codex/auth.json,readonly");
+    expect(runner).not.toMatch(/source=\/[^,]*,target=\/,(?:,|\s)/u);
+  });
+
+  it("uses the bounded Docker privilege proven necessary for nested bwrap", () => {
+    const runner = source(hostRunnerPath);
+    const gate = source(containerGatePath);
+
+    expect(runner).toContain("--privileged");
+    expect(runner).not.toContain("--user root");
+    expect(runner).not.toContain("unsafeDisableSandbox");
+    expect(gate).toContain('test "$(id -u)" -ne 0');
+    expect(gate).toContain("bwrap --unshare-all");
+    expect(gate).toContain("BWRAP_CONFINEMENT_OK");
+  });
+
+  it("runs every Linux suite and the wave-four separate-process proof", () => {
+    const gate = source(containerGatePath);
+
+    expect(gate).toContain("pnpm install --frozen-lockfile");
+    expect(gate).toContain("pnpm build");
+    expect(gate).toContain("*.linux.test.ts");
+    expect(gate).toContain(
+      "packages/skills/src/tools/builtin/terminal-driver/terminal-worker-fork.linux.test.ts",
+    );
+  });
+});
