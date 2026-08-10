@@ -93,6 +93,7 @@ function successRecord(): Parameters<typeof driveFailures>[0] {
     traceId: "trace-1",
     endReason: "success",
     degraded: false,
+    explainSeverity: "ok",
     grade: {
       outcome: "success",
       score: 1,
@@ -179,6 +180,18 @@ describe("artifact-to-action runtime-drive oracle", () => {
     const partial = { ...successRecord(), durableToolResults: 1 };
     expect(driveFailures(partial as never)).toEqual(
       expect.arrayContaining([expect.stringContaining("the trajectory recorded 1")]),
+    );
+  });
+
+  it("refuses to publish a drive whose incident explanation did not complete cleanly", () => {
+    const missing = { ...successRecord(), explainSeverity: undefined };
+    expect(driveFailures(missing as never)).toEqual(
+      expect.arrayContaining([expect.stringContaining("incident explanation")]),
+    );
+
+    const degraded = { ...successRecord(), explainSeverity: "warning" };
+    expect(driveFailures(degraded as never)).toEqual(
+      expect.arrayContaining([expect.stringContaining("incident explanation was warning")]),
     );
   });
 
