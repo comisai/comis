@@ -8,6 +8,7 @@ import {
   normalizeWireText,
   normalizeDriveStdinText,
   normalizedInboundTextError,
+  outboundVisibleContent,
   outboundVisibleText,
   reconcileAssistantSurfaces,
   selectTelegramConversationTrajectoryPath,
@@ -71,6 +72,19 @@ describe("drive outbound visibility", () => {
       messageId: 44,
       caption: "",
     })).toBe("");
+  });
+
+  it("classifies a captionless photo as a substantive wire delivery", () => {
+    const photo = {
+      method: "sendPhoto",
+      messageId: 45,
+      caption: "",
+      mediaKind: "photo",
+    };
+
+    expect(outboundVisibleText(photo)).toBe("");
+    expect(outboundVisibleContent(photo)).toBe("[photo delivered]");
+    expect(findTelegramConversationWireAnswer([photo])).toBe("[photo delivered]");
   });
 
   it("keeps the persisted assistant draft separate from the corrected wire reply", () => {
