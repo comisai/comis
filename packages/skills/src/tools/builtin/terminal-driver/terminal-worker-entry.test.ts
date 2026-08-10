@@ -392,6 +392,7 @@ describe("createTerminalWorker — backend selection", () => {
 
     expect(reply.ok).toBe(true);
     expect((reply.result as { backend: string }).backend).toBe("pty");
+    expect((reply.result as { rootPid?: number }).rootPid).toBe(4242);
     expect(fake.spawn).toHaveBeenCalledTimes(1);
   });
 

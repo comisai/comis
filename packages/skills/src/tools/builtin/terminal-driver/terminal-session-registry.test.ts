@@ -853,6 +853,56 @@ describe("createTerminalSessionRegistry — malformed-frame on stdout does NOT c
 });
 
 describe("createTerminalSessionRegistry — worker create failure is surfaced", () => {
+  it("awaits a managed create reply and persists the resolved terminal root-process identity", async () => {
+    const fake = makeFakeWorker((req) => {
+      if (req.method !== "create") return undefined;
+      return {
+        sessionId: req.sessionId,
+        requestId: req.requestId,
+        ok: true,
+        result: { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24, rootPid: 6200 },
+      };
+    });
+    const descriptorStore: SessionDescriptorStorePort = {
+      persist: vi.fn(),
+      recover: vi.fn(() => []),
+      remove: vi.fn(),
+    };
+    const resolveRootProcessIdentity = vi.fn(async (pid: number) => ({
+      pid,
+      startIdentity: "linux-proc-start-6200",
+    }));
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore },
+      resolveRootProcessIdentity,
+    } as unknown as Partial<TerminalSessionRegistryDeps>));
+
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    } as never, OWNER);
+
+    expect(resolveRootProcessIdentity).toHaveBeenCalledWith(6200);
+    expect(created).toMatchObject({
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux-proc-start-6200" },
+    });
+    expect(descriptorStore.persist).toHaveBeenLastCalledWith(expect.objectContaining({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux-proc-start-6200" },
+    }));
+  });
+
   it("an ok:false create reply flips the session to 'lost' (list/read agree alive:false) and fires onSpawnFailed", async () => {
     // The worker's handleCreate throws (bad bin ENOENT, forkpty failure, …) → the
     // worker replies { ok:false } to the create frame. Pre-patch the registry does

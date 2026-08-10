@@ -78,6 +78,7 @@ function makeFake(over: { hasSession?: boolean } = {}) {
     tmuxPath: "/usr/bin/tmux",
     socketPath: SOCK,
     hasSession: () => over.hasSession ?? false,
+    queryRootPid: () => 9191,
     runOneShot: (argv) => oneShot.push(argv),
     spawnAttachPty: (name) => {
       attachName = name;
@@ -236,6 +237,7 @@ describe("terminal-tmux-backend — createTmuxBackend create-vs-re-attach decisi
     const f = makeFake({ hasSession: false });
     const handle = createTmuxBackend(f.deps());
     expect(handle?.pid).toBe(4242); // the attach pty's pid
+    expect(handle?.rootPid).toBe(9191); // the detached pane's process, not the attach client
     // It created the detached session under the deterministic name, on the -S socket.
     const created = f.oneShot.find((a) => a.includes("new-session"));
     expect(created).toBeDefined();
