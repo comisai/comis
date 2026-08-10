@@ -7,6 +7,8 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const runnerRoot = resolve(repoRoot, "test/confinement-runner");
 const dockerfilePath = resolve(runnerRoot, "Dockerfile");
 const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
+const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
+const launcherPath = resolve(runnerRoot, "wave4-codex-launcher.sh");
 const hostRunnerPath = resolve(repoRoot, "scripts/run-confinement-runner.sh");
 
 function source(path: string): string {
@@ -58,5 +60,28 @@ describe("capability-service Linux confinement runner", () => {
     expect(gate).toContain(
       "packages/skills/src/tools/builtin/terminal-driver/terminal-worker-fork.linux.test.ts",
     );
+  });
+
+  it("runs the live join from an exact clean companion archive", () => {
+    const runner = source(hostRunnerPath);
+    const joinGate = source(joinGatePath);
+
+    expect(runner).toMatch(/spike \| join \| shell/u);
+    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="ba71a97daac11962527ca9642388556fe012211c"');
+    expect(joinGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
+    expect(joinGate).toContain("COMIS_LIVE=1");
+    expect(joinGate).toContain("wave4-join.test.ts");
+  });
+
+  it("installs a fixed real-Codex wrapper outside both source mounts", () => {
+    const dockerfile = source(dockerfilePath);
+    const launcher = source(launcherPath);
+
+    expect(dockerfile).toContain("COPY --chmod=0755 test/confinement-runner/wave4-codex-launcher.sh");
+    expect(dockerfile).toContain("/usr/local/bin/wave4-codex-launcher");
+    expect(launcher).toContain("/usr/local/bin/codex");
+    expect(launcher).toContain("DEV_CREW_ATTACHMENT");
+    expect(launcher).toContain("devcrew-report acknowledge");
+    expect(launcher).toContain("devcrew-report brief");
   });
 });
