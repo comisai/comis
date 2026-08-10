@@ -836,6 +836,44 @@ describe("createPiEventBridge", () => {
       expect(JSON.stringify(record)).not.toContain("Skip federal holidays");
     });
 
+    it("retains only closed observability evidence limits for self-report grounding", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "obs_query",
+        toolCallId: "tc-obs-limits",
+        args: { action: "system_health" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "obs_query",
+        "tc-obs-limits",
+        false,
+        {
+          content: [{ type: "text", text: "large diagnostic report" }],
+          details: {
+            evidenceLimits: {
+              cost: "runtime_estimate",
+              providerInvoice: "unverified",
+              crossExecutionDurationRanking: "unavailable",
+              ignored: "untrusted value",
+            },
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        observabilityEvidenceLimits?: Record<string, unknown>;
+      };
+      expect(record.observabilityEvidenceLimits).toEqual({
+        cost: "runtime_estimate",
+        providerInvoice: "unverified",
+        crossExecutionDurationRanking: "unavailable",
+      });
+      expect(JSON.stringify(record)).not.toContain("untrusted value");
+      expect(JSON.stringify(record)).not.toContain("large diagnostic report");
+    });
+
     it("keeps an auto-background handoff neutral in breaker and execution outcome accounting", () => {
       const recordResult = vi.fn();
       const depsWithBreaker = createMockDeps({
