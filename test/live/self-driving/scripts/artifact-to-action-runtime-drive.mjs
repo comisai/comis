@@ -14,15 +14,17 @@
 // NOT evidence of model reasoning or of learned transfer — the tool order is scripted.
 //
 // Exit 0 ONLY when this invocation's own agent turn succeeded in-band, its terminal
-// grade is success/1 with the variant's expected commit and readback, and the durable
-// trajectory carries one tool result per dispatched call under this run's trace id.
+// grade is success/1 with the variant's expected commit and readback, the durable
+// trajectory carries one tool result per dispatched call under this run's trace id, and
+// the session rollup and obs.explain both come back clean — an undegraded `success`
+// rollup and an `ok` incident severity.
 // Otherwise it prints the failure reasons and the daemon log tail and exits 1, so a rerun
 // can never read as green when the drive is dead. An invocation that cannot run at all — an
 // unbuilt checkout, a world this workload does not ship, or a --data path this drive may
 // not own — exits 2 before it acquires a port, a daemon or a data root. The data root
 // defaults to a fresh system-temp directory and never lands inside the checkout; a clean
-// drive removes it, while a FAILED drive keeps it and names the path, because that root
-// holds the only artifacts that explain the failure.
+// drive removes it unless --keep, while a FAILED drive keeps it and names the path, because
+// that root holds the only artifacts that explain the failure.
 //
 // Output is one JSON record on stdout: session key, trace/run ids, discovered tool
 // count, dispatched tool order, durable tool-result count, the session rollup, the
