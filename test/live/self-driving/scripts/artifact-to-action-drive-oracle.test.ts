@@ -173,6 +173,14 @@ describe("artifact-to-action runtime-drive oracle", () => {
     expect(driveFailures(successRecord())).toEqual([]);
   });
 
+  it("distinguishes a missing degraded flag from a reported degraded turn", () => {
+    const missing = { ...successRecord(), degraded: undefined };
+    const failures = driveFailures(missing as never);
+
+    expect(failures).toContain("the session rollup carried no degraded flag");
+    expect(failures).not.toContain("the session rollup reported a degraded turn");
+  });
+
   it("refuses to publish a drive whose terminal grade did not pass", () => {
     const failed = { ...successRecord(), grade: { ...successRecord().grade, outcome: "failure", score: 0 } };
     expect(driveFailures(failed as never)).toEqual(
