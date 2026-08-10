@@ -9,6 +9,7 @@ const dockerfilePath = resolve(runnerRoot, "Dockerfile");
 const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
 const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
 const launcherPath = resolve(runnerRoot, "wave4-codex-launcher.sh");
+const joinScenarioPath = resolve(repoRoot, "test/live/scenarios/capability-service/wave4-join.test.ts");
 const hostRunnerPath = resolve(repoRoot, "scripts/run-confinement-runner.sh");
 
 function source(path: string): string {
@@ -99,5 +100,13 @@ describe("capability-service Linux confinement runner", () => {
 
     expect(launcher).not.toMatch(/find \/run\/comis\/attachments[^\n]*-type s/u);
     expect(launcher).toContain('test -S "${attachments[0]}"');
+  });
+
+  it("uses one authenticated catalog model for the profile and real workers", () => {
+    const launcher = source(launcherPath);
+    const scenario = source(joinScenarioPath);
+
+    expect(launcher).toContain('--model "${COMIS_WAVE4_CODEX_MODEL:-gpt-5.5}"');
+    expect(scenario).toContain('COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5"');
   });
 });
