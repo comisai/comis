@@ -132,11 +132,12 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceOutboundAudioEvidence,
+  enforceOutboundImageEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
@@ -1987,6 +1988,50 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
       reason: "missing_outbound_audio_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const outboundImageEvidence = enforceOutboundImageEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    honestResponse: buildOutboundImageEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (outboundImageEvidence.corrected) {
+    result.response = outboundImageEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response claimed image creation or delivery without a successful image_generate "
+          + "or trusted completion receipt; inspect tool admission and delivery in comis explain.",
+      },
+      "Unverified outbound image completion claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.outbound_image_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "outbound_image",
+        reason: outboundImageEvidence.reason,
+        requiredTool: "image_generate",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_outbound_image_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),

@@ -766,6 +766,8 @@ export interface MessagingEvents {
    *  mutation and an overclaim was replaced with a neutral confirmation ask;
    *  `missing_outbound_audio_evidence` means an audio-delivery claim lacked a
    *  successful synthesis or trusted completion receipt.
+   *  `missing_outbound_image_evidence` applies the same rule to image
+   *  generation and delivery claims.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -786,6 +788,7 @@ export interface MessagingEvents {
       | "missing_scheduler_state_evidence"
       | "pending_scheduler_confirmation"
       | "missing_outbound_audio_evidence"
+      | "missing_outbound_image_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;

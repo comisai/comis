@@ -9,6 +9,8 @@ const OUTBOUND_COMPLETION_EVIDENCE_GUARD_ACTION =
   "response.outbound_completion_evidence_guard";
 const OUTBOUND_AUDIO_EVIDENCE_GUARD_ACTION =
   "response.outbound_audio_evidence_guard";
+const OUTBOUND_IMAGE_EVIDENCE_GUARD_ACTION =
+  "response.outbound_image_evidence_guard";
 
 /** Name the response correction while preserving failed-tool details in the report. */
 export function completionEvidenceGuardVerdict(
@@ -93,6 +95,35 @@ export function outboundAudioEvidenceGuardVerdict(
       "inspect tts_synthesize admission and tool results for this turn",
       "if work was delegated, verify the background completion relay delivered the audio",
       "retry only after the outbound audio capability can produce a delivery receipt",
+    ],
+  };
+}
+
+/** Name an image-creation claim rejected without generation or relay proof. */
+export function outboundImageEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === OUTBOUND_IMAGE_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return null;
+  }
+  return {
+    code: "outbound_image_evidence_missing",
+    detail:
+      "the response honesty guard replaced an image-creation claim because this "
+      + "execution had no successful current-turn generation or trusted completion receipt",
+    suggestedNextSteps: [
+      "inspect image_generate admission and tool results for this turn",
+      "if work was delegated, verify the background completion relay delivered the image",
+      "retry only after the image-generation capability can produce a delivery receipt",
     ],
   };
 }

@@ -33,6 +33,7 @@ import {
   selectDelegationEvidenceMissingReply,
   selectPersistentActionEvidenceMissingReply,
   selectOutboundAudioEvidenceMissingReply,
+  selectOutboundImageEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
@@ -228,6 +229,14 @@ export function buildOutboundAudioEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectOutboundAudioEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when requested image generation lacks current proof. */
+export function buildOutboundImageEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutboundImageEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when a destructive command had no observable effect. */

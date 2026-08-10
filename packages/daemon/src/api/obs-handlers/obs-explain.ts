@@ -60,6 +60,7 @@ import {
   completionEvidenceGuardVerdict,
   outboundAudioEvidenceGuardVerdict,
   outboundCompletionEvidenceGuardVerdict,
+  outboundImageEvidenceGuardVerdict,
 } from "./obs-explain-completion-evidence-verdict.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
@@ -771,13 +772,10 @@ export async function assembleIncidentReportFromSources(
   if (persistentActionEvidenceVerdict !== null && !hasStructuredMcpFailure) {
     report.likelyRootCause = persistentActionEvidenceVerdict;
   }
-  const outboundAudioEvidenceVerdict = outboundAudioEvidenceGuardVerdict(
-    auditRows,
-    report.traceId,
-  );
-  if (outboundAudioEvidenceVerdict !== null) {
-    report.likelyRootCause = outboundAudioEvidenceVerdict;
-  }
+  const outboundAudioEvidenceVerdict = outboundAudioEvidenceGuardVerdict(auditRows, report.traceId);
+  if (outboundAudioEvidenceVerdict !== null) report.likelyRootCause = outboundAudioEvidenceVerdict;
+  const outboundImageEvidenceVerdict = outboundImageEvidenceGuardVerdict(auditRows, report.traceId);
+  if (outboundImageEvidenceVerdict !== null) report.likelyRootCause = outboundImageEvidenceVerdict;
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
     auditRows,
     report.traceId,

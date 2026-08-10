@@ -438,6 +438,71 @@ export function enforceOutboundAudioEvidence(params: {
   };
 }
 
+export interface OutboundImageEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_image_evidence";
+}
+
+const OUTBOUND_IMAGE_REQUEST_PATTERNS = [
+  /^\s*(?:please\s+)?(?:make|create|generate|draw|design|render)\b[\s\S]{0,180}\b(?:image|picture|illustration|graphic|photo)\b/iu,
+  /\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?(?:make|create|generate|draw|design|render)\b[\s\S]{0,180}\b(?:image|picture|illustration|graphic|photo)\b/iu,
+  /^\s*(?:please\s+)?(?:turn|convert)\b[\s\S]{0,160}\b(?:into|to)\s+(?:an?\s+)?(?:image|picture|illustration|graphic|photo)\b/iu,
+] as const;
+
+const OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?\s+(?:made|created|generated|drew|designed|rendered|sent|delivered)\b/iu,
+  /\b(?:image|picture|illustration|graphic|photo)\s+(?:(?:was|is|has been)\s+)?(?:made|created|generated|drawn|designed|rendered|sent|delivered|attached|ready)\b/iu,
+] as const;
+
+const OUTBOUND_IMAGE_LIMITATION =
+  /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:make|create|generate|draw|design|render|send|deliver|image|picture|illustration|graphic|photo)\b/iu;
+
+/** Require generation or trusted completion proof for current image claims. */
+export function enforceOutboundImageEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}): OutboundImageEvidenceGuardResult {
+  const requested = OUTBOUND_IMAGE_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!requested) return { response: params.response, corrected: false };
+
+  const successfulGeneration = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "image_generate"
+      && result.success
+      && result.backgrounded !== true,
+  );
+  if (successfulGeneration || params.currentActionEvidence === true) {
+    return { response: params.response, corrected: false };
+  }
+
+  const completionClaim = isCompletionClaim(params.response);
+  const imageSuccessClaim = OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (
+    (!completionClaim && !imageSuccessClaim)
+    || (OUTBOUND_IMAGE_LIMITATION.test(params.response) && !completionClaim && !imageSuccessClaim)
+  ) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_outbound_image_evidence",
+  };
+}
+
 const ONGOING_WORK_CLAIM_PATTERNS = [
   /\b(?:i'm|i am|we're|we are) (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,
   /\b(?:i'm|i am|we're|we are) currently (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,
