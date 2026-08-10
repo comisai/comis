@@ -8,7 +8,7 @@ readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly JOIN_ROOT="${RUNNER_ROOT}/wave4-join"
 readonly DEV_CREW_COPY="${JOIN_ROOT}/go-source"
 readonly DEV_CREW_BIN="${JOIN_ROOT}/bin"
-readonly DEV_CREW_COMMIT="ba71a97daac11962527ca9642388556fe012211c"
+readonly DEV_CREW_COMMIT="eb499e6d3c8ee74cefd9a187a488ce49ebe4e645"
 readonly LIVE_TEST=test/live/scenarios/capability-service/wave4-join.test.ts
 
 if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
