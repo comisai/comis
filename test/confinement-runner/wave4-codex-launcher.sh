@@ -60,6 +60,7 @@ jq -n \
 
 export CODEX_HOME=/home/comis/.codex
 export DEV_CREW_ATTACHMENT="${own_attachment}"
+export DEV_CREW_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
 export PATH="${REPORTER_DIR}:${PATH}"
 jq -n \
   --arg workingDirectory "$(pwd -P)" \
