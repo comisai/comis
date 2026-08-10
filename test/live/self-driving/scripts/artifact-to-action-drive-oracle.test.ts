@@ -210,6 +210,33 @@ describe("artifact-to-action runtime-drive oracle", () => {
     expect(lifecycle.settled).toBe(true);
   });
 
+  it("expires its own budget while the daemon is alive but the attempt never settles", async () => {
+    const child = new EventEmitter();
+    const lifecycle = monitorChildLifecycle(child, "the Comis daemon");
+    let attempts = 0;
+    const started = Date.now();
+
+    await expect(
+      waitFor(
+        async () => {
+          attempts += 1;
+          await new Promise(() => undefined);
+          return false;
+        },
+        300,
+        "the workload's MCP tools",
+        50,
+        lifecycle,
+      ),
+    ).rejects.toThrow("timed out waiting for the workload's MCP tools");
+
+    // A wedged dependency answers no attempt at all, so the budget — not a later
+    // poll — has to be what ends the wait.
+    expect(attempts).toBe(1);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(lifecycle.settled).toBe(false);
+  });
+
   it("turns a daemon spawn error into an immediate readiness failure", async () => {
     const child = new EventEmitter();
     const lifecycle = monitorChildLifecycle(child, "the Comis daemon");

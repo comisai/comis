@@ -132,30 +132,57 @@ export function monitorChildLifecycle(child, label) {
   return lifecycle;
 }
 
-async function settleOrFail(operation, lifecycle) {
+/**
+ * Race one attempt against the two things that end a wait early: the child that would
+ * produce the value dying, and the caller's deadline passing. The deadline arm is what
+ * bounds an attempt that cannot end on its own — a gateway RPC has no per-request
+ * timeout, so a daemon that accepts and authenticates the socket and then stalls leaves
+ * `check` pending until that socket closes.
+ */
+async function settleOrFail(operation, lifecycle, deadline) {
   if (lifecycle?.failureReason !== undefined) {
     return { kind: "failure", reason: lifecycle.failureReason };
   }
-  const completed = Promise.resolve().then(operation).then((value) => ({ kind: "completed", value }));
-  if (!lifecycle) return completed;
-  return Promise.race([
-    completed,
-    lifecycle.failure.then((reason) => ({ kind: "failure", reason })),
-  ]);
+  const contenders = [
+    Promise.resolve().then(operation).then((value) => ({ kind: "completed", value })),
+  ];
+  if (lifecycle) contenders.push(lifecycle.failure.then((reason) => ({ kind: "failure", reason })));
+  let expiry;
+  if (deadline !== undefined) {
+    contenders.push(
+      new Promise((resolve) => {
+        expiry = setTimeout(() => resolve({ kind: "expired" }), Math.max(0, deadline - Date.now()));
+        expiry.unref?.();
+      }),
+    );
+  }
+  try {
+    return await Promise.race(contenders);
+  } finally {
+    if (expiry) clearTimeout(expiry);
+  }
 }
 
-/** Poll until a value is ready, but never outlive the child that can produce it. */
+/**
+ * Poll until a value is ready, outliving neither the caller's budget nor the child that
+ * can produce it. Every attempt is bounded by the same deadline, so a wedged dependency
+ * ends the wait with the documented timeout instead of hanging the drive.
+ */
 export async function waitFor(check, timeoutMs, label, intervalMs = 500, lifecycle) {
   const deadline = Date.now() + timeoutMs;
   let last;
   while (Date.now() < deadline) {
     let outcome;
     try {
-      outcome = await settleOrFail(check, lifecycle);
+      outcome = await settleOrFail(check, lifecycle, deadline);
     } catch (error) {
       last = error;
     }
     if (outcome?.kind === "failure") throw new Error(outcome.reason);
+    if (outcome?.kind === "expired") {
+      last = new Error(`the attempt still in flight after ${timeoutMs}ms never settled`);
+      break;
+    }
     if (outcome?.value) return outcome.value;
 
     const remainingMs = deadline - Date.now();
@@ -163,6 +190,7 @@ export async function waitFor(check, timeoutMs, label, intervalMs = 500, lifecyc
     const paused = await settleOrFail(
       () => new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, remainingMs))),
       lifecycle,
+      deadline,
     );
     if (paused.kind === "failure") throw new Error(paused.reason);
   }

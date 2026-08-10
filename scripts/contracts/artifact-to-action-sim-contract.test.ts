@@ -912,6 +912,61 @@ describe("artifact to action simulator", () => {
     });
   }
 
+  // A client that sends its request and closes stdin in the same turn — and a reader
+  // that falls behind the server's writes — must still receive the whole answer. The
+  // shared stdio loop serves every workload, so a truncated line here is a lost tool
+  // result for whichever drive is running.
+  it("answers in full when the request and the stdin close arrive together", async () => {
+    const child = spawn(
+      process.execPath,
+      [resolve(simRoot, "bin/mcp-server.mjs"), "artifact-to-action", "A"],
+      { cwd: repoRoot, stdio: ["pipe", "pipe", "ignore"] },
+    );
+    child.stdout.setEncoding("utf8");
+
+    try {
+      const answered = new Promise<{ lines: string[]; code: number | null }>((resolveRun, rejectRun) => {
+        let stdout = "";
+        const timer = setTimeout(() => rejectRun(new Error("the sim server never answered")), 20_000);
+        child.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+        });
+        child.once("error", (error) => {
+          clearTimeout(timer);
+          rejectRun(error);
+        });
+        // `close` — not `exit` — is the point at which every stdio stream has drained,
+        // so it is the only event that can tell a complete answer from a truncated one.
+        child.once("close", (code) => {
+          clearTimeout(timer);
+          resolveRun({ lines: stdout.split("\n").filter(Boolean), code });
+        });
+      });
+      // Attaching the `data` handler puts the stream back into flowing mode, so the
+      // pause that makes this client a LAGGING reader has to come after it.
+      child.stdout.pause();
+
+      const batch = Array.from({ length: 8 }, (_, index) =>
+        JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "tools/list" }));
+      child.stdin.end(`${batch.join("\n")}\n`);
+      // Nothing is consumed while the server decides whether it may leave. The delayed
+      // resume is the backstop for a server that stays: without it a client that never
+      // reads would wait out the whole budget behind a full pipe.
+      setTimeout(() => child.stdout.resume(), 250);
+
+      const { lines, code } = await answered;
+      expect(code).toBe(0);
+      expect(lines).toHaveLength(batch.length);
+      for (const [index, line] of lines.entries()) {
+        const message = JSON.parse(line) as { id?: number; result?: { tools?: Array<{ name?: string }> } };
+        expect(message.id, line).toBe(index + 1);
+        expect(message.result?.tools?.map((tool) => tool.name)).toContain("list_intakes");
+      }
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
   it("redrives the degraded no-commit path over the real MCP stdio transport", async () => {
     const session = await openMcpSession("A-degraded");
     try {

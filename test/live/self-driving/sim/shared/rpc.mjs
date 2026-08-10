@@ -72,6 +72,10 @@ export function serveStdio(wl) {
       }
     }
   });
-  process.stdin.on("end", () => process.exit(0));
+  // Setting the eventual code lets stdout drain. `process.exit(0)` can terminate
+  // before an already-written JSON-RPC line reaches a pipe reader that is behind.
+  process.stdin.on("end", () => {
+    process.exitCode = 0;
+  });
   process.stderr.write(`[sim:${wl.name}] MCP stdio server ready — ${wl.listTools().length} tools (variant ${wl.ctx.variant}, seed ${wl.ctx.seed})\n`);
 }

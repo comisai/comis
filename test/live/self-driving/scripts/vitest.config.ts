@@ -46,6 +46,14 @@ export default defineConfig({
     // validates and the gateway token really landed in the encrypted store.
     // Runs in the integration tier's aliased `live-scenarios` project instead.
     exclude: ["remote-root.test.ts"],
+    // Several cases here decide a helper's behaviour by RUNNING it — the driver's
+    // risk gate, the stdio fixtures, the redrive's argument handling — so a case
+    // costs one or more `bash`/`node` spawns. Those subprocesses carry their own
+    // 30s/60s budgets, which the runner's 5s default expires long before, and the
+    // root config's four coverage-instrumented workers are exactly the scheduling
+    // pressure that turns a correct-but-slow spawn into a red run. Give a case room
+    // for the subprocess budget it already declares.
+    testTimeout: 60_000,
     pool: "threads",
     passWithNoTests: true,
   },

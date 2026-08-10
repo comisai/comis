@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CYBER_ABUSE_AUTH_ENV,
   CYBER_ABUSE_AUTH_VALUE,
@@ -308,11 +308,29 @@ describe("sim workload driver provider-risk policy", () => {
     .map((entry) => entry.name)
     .sort();
 
+  // Every `--gate` run spawns bash plus a node gate process, so the whole-catalog
+  // fan-out is taken ONCE for the file and read from here. Recomputing it per case
+  // charged each of them a second serial pass over every shipped workload.
+  const gateRuns = new Map<string, { status: number | null; stderr: string }>();
+
+  beforeAll(() => {
+    for (const workload of workloads) {
+      const gate = runDriver(["--gate", workload]);
+      gateRuns.set(workload, { status: gate.status, stderr: gate.stderr ?? "" });
+    }
+  }, 180_000);
+
+  const gateVerdict = (workload: string): { status: number | null; stderr: string } => {
+    const verdict = gateRuns.get(workload);
+    if (!verdict) throw new Error(`no gate verdict was recorded for ${workload}`);
+    return verdict;
+  };
+
   it("decides every shipped workload's provider risk instead of defaulting", () => {
     expect(workloads.length).toBeGreaterThan(0);
 
     for (const workload of workloads) {
-      const gate = runDriver(["--gate", workload]);
+      const gate = gateVerdict(workload);
       expect([0, 4], `${workload}: ${String(gate.status)} ${gate.stderr}`).toContain(gate.status);
     }
 
@@ -322,7 +340,7 @@ describe("sim workload driver provider-risk policy", () => {
   });
 
   it("suspends exactly the workloads the suspension inventory lists", () => {
-    const suspended = workloads.filter((workload) => runDriver(["--gate", workload]).status === 4);
+    const suspended = workloads.filter((workload) => gateVerdict(workload).status === 4);
     const inventory = readFileSync(join(kitRoot, "CYBER-ABUSE-SUSPENSIONS.md"), "utf8");
     const listed = [...inventory.matchAll(/`scripts\/drive-sim-workload\.sh ([a-z-]+)`/gu)]
       .map((match) => match[1] as string);
