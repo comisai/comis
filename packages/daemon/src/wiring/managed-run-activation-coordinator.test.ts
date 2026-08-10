@@ -9,6 +9,7 @@ import {
   createConversationRef,
   type CapabilityServiceControlPort,
   type ComisLogger,
+  type ExecutionAttachmentPort,
   type ManagedRunContentPort,
   type ManagedRunOwnerScope,
   type ManagedRunPreparedStart,
@@ -16,6 +17,7 @@ import {
   type WorkspaceLeasePort,
 } from "@comis/core";
 import {
+  createSqliteExecutionAttachmentStore,
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
   createSqliteWorkspaceLeaseStore,
@@ -418,6 +420,85 @@ describe("managed-run two-phase activation", () => {
     });
     expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
       disposition: "reap_safe",
+    }));
+  });
+
+  it("terminates bound terminals and revokes attachments before releasing the workspace lease", async () => {
+    const order: string[] = [];
+    const durableAttachments = createSqliteExecutionAttachmentStore(db);
+    activate.mockImplementation(async (command) => {
+      const record = await store.get(OWNER_SCOPE, command.managedRunId);
+      if (!record.ok || record.value?.workspaceLeaseId === undefined) throw new Error("managed run was not workspace-bound");
+      const attachment = {
+        schemaVersion: 1 as const,
+        executionAttachmentId: "execution-attachment_release",
+        managedRunId: record.value.managedRunId,
+        workspaceLeaseId: record.value.workspaceLeaseId,
+        serviceInstanceId: record.value.serviceInstanceId,
+        tenantId: record.value.tenantId,
+        agentId: record.value.agentId,
+        kind: "unix_socket" as const,
+        sourcePath: "/srv/runtime/release.sock",
+        sourceFilesystemType: "socket" as const,
+        sourceFilesystemIdentity: { device: 10, inode: 20 },
+        targetName: `attachment-${"a".repeat(32)}.sock`,
+        access: "connect_only" as const,
+        state: "active" as const,
+        createdAtMs: NOW_MS,
+        updatedAtMs: NOW_MS,
+      };
+      expect(await durableAttachments.create(attachment)).toMatchObject({ ok: true, value: { kind: "created" } });
+      expect(await store.bindExecutionAttachment(OWNER_SCOPE, {
+        managedRunId: record.value.managedRunId,
+        workspaceLeaseId: record.value.workspaceLeaseId,
+        executionAttachmentId: attachment.executionAttachmentId,
+        attachmentServiceInstanceId: record.value.serviceInstanceId,
+        attachmentTenantId: record.value.tenantId,
+        attachmentAgentId: record.value.agentId,
+        boundAtMs: NOW_MS,
+      })).toMatchObject({ ok: true, value: { kind: "bound" } });
+      expect(await store.bindTerminal(OWNER_SCOPE, {
+        managedRunId: record.value.managedRunId,
+        terminalSessionId: "terminal-session_release",
+        terminalTenantId: record.value.tenantId,
+        terminalAgentId: record.value.agentId,
+        boundAtMs: NOW_MS,
+      })).toMatchObject({ ok: true, value: { kind: "bound" } });
+      return err({ kind: "rejected" as const, reasonCode: "precondition_failed" });
+    });
+    const attachments = {
+      ...durableAttachments,
+      revoke: vi.fn(async (...args: Parameters<ExecutionAttachmentPort["revoke"]>) => {
+        order.push("attachment");
+        return durableAttachments.revoke(...args);
+      }),
+    } as ExecutionAttachmentPort;
+    const releasingLeases = {
+      ...workspaceLeases,
+      release: vi.fn(async (...args: Parameters<WorkspaceLeasePort["release"]>) => {
+        order.push("lease");
+        return workspaceLeases.release(...args);
+      }),
+    } as WorkspaceLeasePort;
+    const revoker = vi.fn(async () => {
+      order.push("terminal");
+      return ok(undefined);
+    });
+
+    const result = await makeCoordinator({
+      attachments,
+      workspaceLeases: releasingLeases,
+      revokeManagedTerminals: revoker,
+    } as never).activatePrepared(makeInput({
+      operationId: "operation_release_order",
+      prepared: makePrepared({ requestedWorkspace: { rootHint: workspaceDirectory } }),
+    }));
+
+    expect(result).toMatchObject({ ok: true, value: { kind: "rejected" } });
+    expect(order).toEqual(["terminal", "attachment", "lease"]);
+    expect(revoker).toHaveBeenCalledWith(expect.objectContaining({
+      terminalSessionIds: ["terminal-session_release"],
+      executionAttachmentIds: ["execution-attachment_release"],
     }));
   });
 
