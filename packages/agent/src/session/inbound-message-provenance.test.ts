@@ -99,6 +99,49 @@ describe("persistInboundMessageProvenance", () => {
     );
   });
 
+  it("keeps preprocessing context separate and credential scrubbed", () => {
+    const appendCustomEntry = vi.fn()
+      .mockReturnValueOnce("provenance-entry")
+      .mockReturnValueOnce("conversation-entry");
+    const message = {
+      ...first,
+      text: "",
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+
+    const result = appendInboundMessageProvenance(
+      makeSessionManager(appendCustomEntry),
+      {
+        ...planned.value,
+        conversationText:
+          "[Voice message transcription]: SERVICE_PASSWORD='test-key' buy oats",
+      },
+    );
+
+    expect(result).toEqual({ ok: true, value: "conversation-entry" });
+    expect(appendCustomEntry).toHaveBeenCalledTimes(2);
+    expect(appendCustomEntry).toHaveBeenNthCalledWith(
+      1,
+      INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+      planned.value.payloads[0],
+    );
+    expect(appendCustomEntry).toHaveBeenNthCalledWith(
+      2,
+      "comis.inbound-conversation-text",
+      {
+        schemaVersion: 1,
+        batchId: first.id,
+        text:
+          "[Voice message transcription]: SERVICE_PASSWORD='[REDACTED]' buy oats",
+      },
+    );
+    expect(planned.value.ledgerContent).not.toContain("Voice message transcription");
+  });
+
   it("persists the content-free forwarded marker with the physical message", () => {
     const message = {
       ...first,

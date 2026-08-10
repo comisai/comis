@@ -1066,7 +1066,8 @@ async function runSessionLocked(
   } else {
     const diagnostics = historyProjection.value.diagnostics;
     const degraded = diagnostics.invalidProvenanceEntries > 0
-      || diagnostics.incompleteProvenanceBatches > 0;
+      || diagnostics.incompleteProvenanceBatches > 0
+      || diagnostics.invalidConversationTextEntries > 0;
     const fields = {
       agentId: deps.agentId,
       step: "inbound-history-projection",
@@ -1086,6 +1087,7 @@ async function runSessionLocked(
       );
     } else if (
       diagnostics.projectedUserMessages > 0
+      || diagnostics.projectedConversationTextMessages > 0
       || diagnostics.omittedLocaleRepairTurns > 0
       || diagnostics.strippedRecallMessages > 0
     ) {

@@ -21,6 +21,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import {
   getOriginalInboundMessages,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+  MAX_NORMALIZED_MESSAGE_TEXT_CHARS,
   parseInboundMessageProvenanceBatch,
   scrubSecretsFromText,
   systemDateFrom,
@@ -28,6 +29,7 @@ import {
   type OriginalInboundMessage,
 } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
+import { z } from "zod";
 import { stripInlineRecalledMemoryFromMessage } from "../rag/hybrid-memory-injector.js";
 
 /** Leave headroom for the SDK JSONL record envelope under the reader's 1 MiB cap. */
@@ -38,6 +40,17 @@ const MAX_PROVENANCE_LEDGER_APPEND_BYTES = 8 * 1024 * 1024;
 
 /** Closed by the core payload schema and the bounded predecessor runway. */
 const MAX_PROVENANCE_CHUNKS = 32;
+
+/** SDK-only record that keeps trusted preprocessing output out of raw provenance. */
+const INBOUND_CONVERSATION_TEXT_CUSTOM_TYPE = "comis.inbound-conversation-text";
+
+const InboundConversationTextSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  batchId: z.guid(),
+  text: z.string().max(MAX_NORMALIZED_MESSAGE_TEXT_CHARS),
+});
+
+type InboundConversationText = z.infer<typeof InboundConversationTextSchema>;
 
 export interface InboundMessageProvenancePayload {
   schemaVersion: 1;
@@ -51,6 +64,8 @@ export interface InboundMessageProvenancePayload {
 export interface InboundMessageProvenancePlan {
   readonly payloads: readonly InboundMessageProvenancePayload[];
   readonly ledgerContent: string;
+  /** Trusted model-facing text added after the immutable physical ledger commit. */
+  readonly conversationText?: string;
 }
 
 export interface InboundMessageProvenancePlanError {
@@ -64,6 +79,10 @@ export interface InboundConversationProjectionDiagnostics {
   readonly duplicateProvenanceEntries: number;
   readonly invalidProvenanceEntries: number;
   readonly incompleteProvenanceBatches: number;
+  /** User turns whose canonical history includes trusted preprocessing output. */
+  readonly projectedConversationTextMessages: number;
+  /** Malformed, conflicting, or unpaired SDK-only preprocessing records. */
+  readonly invalidConversationTextEntries: number;
   /** Unpaired user turns whose transient inline-recall prefix was carved out. */
   readonly strippedRecallMessages: number;
 }
@@ -84,6 +103,7 @@ interface PendingProvenanceBatch {
     readonly serialized: string;
     readonly messages: OriginalInboundMessage[];
   }>;
+  conversationText?: string;
   invalid: boolean;
 }
 
@@ -205,12 +225,36 @@ export function appendInboundMessageProvenance(
   sessionManager: SessionManager,
   plan: InboundMessageProvenancePlan,
 ): Result<string, Error> {
+  let conversationText: InboundConversationText | undefined;
+  if (plan.conversationText !== undefined) {
+    const batchId = plan.payloads[0]?.batchId;
+    if (batchId === undefined) {
+      return err(new Error("Inbound conversation text has no provenance batch identity"));
+    }
+    const scrubbed = scrubSecretsFromText(plan.conversationText);
+    const parsed = InboundConversationTextSchema.safeParse({
+      schemaVersion: 1,
+      batchId,
+      text: scrubbed.text,
+    });
+    if (!parsed.success) {
+      return err(new Error("Inbound conversation text failed validation"));
+    }
+    conversationText = parsed.data;
+  }
+
   return tryCatch(() => {
     let finalEntryId = "";
     for (const payload of plan.payloads) {
       finalEntryId = sessionManager.appendCustomEntry(
         INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
         payload,
+      );
+    }
+    if (conversationText !== undefined) {
+      finalEntryId = sessionManager.appendCustomEntry(
+        INBOUND_CONVERSATION_TEXT_CUSTOM_TYPE,
+        conversationText,
       );
     }
     return finalEntryId;
@@ -253,11 +297,21 @@ function replaceUserText(message: AgentMessage, text: string): AgentMessage {
   return { ...message, content } as AgentMessage;
 }
 
-function renderPhysicalMessages(messages: readonly OriginalInboundMessage[]): string {
+function renderPhysicalMessages(
+  messages: readonly OriginalInboundMessage[],
+  conversationText?: string,
+): string {
+  if (conversationText !== undefined && messages.length === 1) {
+    const message = messages[0]!;
+    return `[${message.channelType}] ${message.senderId} `
+      + `(${systemDateFrom(message.timestamp).toISOString()}):\n${conversationText}`;
+  }
   return messages.map((message) =>
     `[${message.channelType}] ${message.senderId} `
     + `(${systemDateFrom(message.timestamp).toISOString()}):\n${message.text}`,
-  ).join("\n\n");
+  ).join("\n\n") + (conversationText === undefined
+    ? ""
+    : `\n\n[Preprocessed context for the preceding inbound batch]:\n${conversationText}`);
 }
 
 function collectProjectedUserText(
@@ -267,6 +321,8 @@ function collectProjectedUserText(
     duplicateProvenanceEntries: number;
     invalidProvenanceEntries: number;
     incompleteProvenanceBatches: number;
+    projectedConversationTextMessages: number;
+    invalidConversationTextEntries: number;
   },
 ): Map<string, string> {
   const projectedByEntryId = new Map<string, string>();
@@ -274,6 +330,29 @@ function collectProjectedUserText(
   const pendingOrder: string[] = [];
 
   for (const entry of branch) {
+    if (
+      entry.type === "custom"
+      && entry.customType === INBOUND_CONVERSATION_TEXT_CUSTOM_TYPE
+    ) {
+      const parsed = InboundConversationTextSchema.safeParse(entry.data);
+      if (!parsed.success) {
+        diagnostics.invalidConversationTextEntries++;
+        continue;
+      }
+      const batch = pendingByBatchId.get(parsed.data.batchId);
+      if (batch === undefined) {
+        diagnostics.invalidConversationTextEntries++;
+        continue;
+      }
+      if (batch.conversationText === undefined) {
+        batch.conversationText = parsed.data.text;
+      } else if (batch.conversationText !== parsed.data.text) {
+        batch.invalid = true;
+        diagnostics.invalidConversationTextEntries++;
+      }
+      continue;
+    }
+
     if (
       entry.type === "custom"
       && entry.customType === INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE
@@ -324,7 +403,7 @@ function collectProjectedUserText(
     }
 
     if (entry.type !== "message" || entry.message.role !== "user") continue;
-    const physicalMessages: OriginalInboundMessage[] = [];
+    const renderedBatches: string[] = [];
     for (const batchId of pendingOrder) {
       const batch = pendingByBatchId.get(batchId);
       if (batch === undefined || batch.invalid) continue;
@@ -332,6 +411,7 @@ function collectProjectedUserText(
         diagnostics.incompleteProvenanceBatches++;
         continue;
       }
+      const physicalMessages: OriginalInboundMessage[] = [];
       for (let chunkIndex = 0; chunkIndex < batch.chunkCount; chunkIndex++) {
         const chunk = batch.chunks.get(chunkIndex);
         if (chunk === undefined) {
@@ -340,9 +420,18 @@ function collectProjectedUserText(
         }
         physicalMessages.push(...chunk.messages);
       }
+      if (physicalMessages.length > 0) {
+        renderedBatches.push(renderPhysicalMessages(
+          physicalMessages,
+          batch.conversationText,
+        ));
+        if (batch.conversationText !== undefined) {
+          diagnostics.projectedConversationTextMessages++;
+        }
+      }
     }
-    if (physicalMessages.length > 0) {
-      projectedByEntryId.set(entry.id, renderPhysicalMessages(physicalMessages));
+    if (renderedBatches.length > 0) {
+      projectedByEntryId.set(entry.id, renderedBatches.join("\n\n"));
       diagnostics.projectedUserMessages++;
     }
     pendingByBatchId.clear();
@@ -377,6 +466,8 @@ export function projectInboundConversation(
     duplicateProvenanceEntries: 0,
     invalidProvenanceEntries: 0,
     incompleteProvenanceBatches: 0,
+    projectedConversationTextMessages: 0,
+    invalidConversationTextEntries: 0,
     strippedRecallMessages: 0,
   };
   const projectedByEntryId = collectProjectedUserText(

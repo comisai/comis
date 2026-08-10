@@ -16,6 +16,8 @@ type ProjectionResult = {
       duplicateProvenanceEntries: number;
       invalidProvenanceEntries: number;
       incompleteProvenanceBatches: number;
+      projectedConversationTextMessages: number;
+      invalidConversationTextEntries: number;
       strippedRecallMessages: number;
     };
   };
@@ -141,6 +143,10 @@ describe("structured inbound conversation projection", () => {
       + planWithConversationText.conversationText,
     );
     expect(textOf(result.value.messages[0]!)).not.toContain("System context");
+    expect(result.value.diagnostics).toMatchObject({
+      projectedConversationTextMessages: 1,
+      invalidConversationTextEntries: 0,
+    });
   });
 
   it("replaces persisted prompt wrappers with compact physical-message history", () => {

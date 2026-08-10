@@ -524,6 +524,11 @@ export async function resolveAndPreprocess(
     processedMsg,
     groupHistoryContext: groupHistorySelection.entries,
     groupHistoryCharCount: groupHistorySelection.charCount,
-    inboundProvenancePlan: persisted.value,
+    inboundProvenancePlan: processedMsg.text === effectiveMsg.text
+      ? persisted.value
+      : {
+          ...persisted.value,
+          conversationText: processedMsg.text,
+        },
   };
 }
