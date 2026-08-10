@@ -26,6 +26,7 @@
 // count, dispatched tool order, durable tool-result count, the session rollup, the
 // obs.explain outcome, and the simulator's terminal grade.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { createServer as createSocketServer } from "node:net";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -125,13 +126,18 @@ function startScriptedProvider(port) {
       try {
         step = nextCall(observed);
       } catch (err) {
-        policyError = err.message;
+        policyError = `the scripted policy cannot classify this world: ${err.message}`;
         step = undefined;
       }
       const resolvedName = step
         ? tools.map((tool) => tool.function?.name).find((name) => bare(name) === step.tool)
         : undefined;
-      if (step && !resolvedName) policyError = `the runtime never offered a tool named ${step.tool}`;
+      if (step && !resolvedName) {
+        policyError =
+          `this completion request offered no tool named ${step.tool} ` +
+          `(${tools.length} offered) — check MCP discovery for artifact-action-sim and the ` +
+          `agents.default.deferredTools.neverDefer pinning`;
+      }
       counter += 1;
       const id = `chatcmpl-scripted-${counter}`;
       const choice =
@@ -307,11 +313,25 @@ async function finish(code) {
   process.exit(code);
 }
 
+// Cancelling a drive mid-wait is ordinary — the discovery wait alone runs up to 60s. Node's default signal
+// handling would exit before the funnel runs, orphaning the daemon on its gateway port and leaking the temp
+// root, so route both signals through it. `once` leaves a second signal on the default path, so an operator
+// who does not want to wait for the daemon's own shutdown can still force the exit.
+for (const [signal, code] of Object.entries({ SIGINT: 130, SIGTERM: 143 })) {
+  process.once(signal, () => {
+    console.error(`interrupted by ${signal}; shutting the drive down`);
+    void finish(code);
+  });
+}
+
 let record;
 try {
   const gatewayPort = await freePort();
   const providerPort = await freePort();
-  const token = `artifact-runtime-drive-${"x".repeat(24)}`;
+  // Fresh per run: the throwaway gateway grants this secret every scope, and a value derivable from
+  // committed source would let any other local process drive that gateway for the length of the drive.
+  // The session key is unaffected — it hashes the token's ID, not its secret.
+  const token = `artifact-runtime-drive-${randomBytes(24).toString("base64url")}`;
   provider = await startScriptedProvider(providerPort);
   writeConfig({ gatewayPort, providerPort, token });
 
@@ -405,7 +425,8 @@ try {
     durableToolResults: durable.count,
     toolStats: rollup.sessionEnd?.toolStats,
     finishReason: executed.finishReason,
-    executeError: executed.error ?? policyError,
+    executeError: executed.error ?? null,
+    policyError: policyError ?? null,
     expectCommit: !variant.endsWith("-degraded"),
     sessionKey: rollup.sessionKey,
     traceId: rollup.traceId,

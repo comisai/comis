@@ -70,7 +70,9 @@ in their test plan and use the risk declaration even if the current text classif
 explicit `cyber-abuse` or `none` declaration, a workload with no declaration refuses to drive, and the
 declared risk is gated before the daemon restart and every other side effect.
 `drive-sim-workload.sh --gate <workload>` prints that decision offline — exit `4` when the workload is
-suspended, `0` when it may reach a provider.
+suspended, `0` when it may reach a provider. `DRIVE_GATE_ONLY=1` runs the real drive path and stops it once
+the gate has decided, before the first side effect, so the gate's regression test can exercise that path
+without the suspended drive becoming its failure mode.
 
 ## Central gate and risk classes
 

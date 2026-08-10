@@ -302,6 +302,9 @@ export function traceBoundToolResults(trajectoryPath, traceId) {
 export function driveFailures(record) {
   const failures = [];
   if (record.executeError) failures.push(`agent.execute reported: ${record.executeError}`);
+  if (record.policyError) {
+    failures.push(`the scripted provider could not script the next call: ${record.policyError}`);
+  }
   if (!record.grade) failures.push("no terminal grade was produced");
   else {
     if (record.grade.outcome !== "success") {

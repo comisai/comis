@@ -172,6 +172,21 @@ describe("artifact-to-action runtime-drive oracle", () => {
     );
   });
 
+  it("attributes a harness-side scripting failure to the provider, not to agent.execute", () => {
+    const unmatched = {
+      ...successRecord(),
+      policyError: "this completion request offered no tool named commit_action (0 offered)",
+    };
+    const failures = driveFailures(unmatched as never);
+
+    expect(failures).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("the scripted provider could not script the next call"),
+      ]),
+    );
+    expect(failures.some((failure) => failure.includes("agent.execute reported"))).toBe(false);
+  });
+
   it("refuses to publish a drive in which the runtime accepted no tool call", () => {
     const silent = { ...successRecord(), dispatchedTools: [], durableToolResults: 0 };
     expect(driveFailures(silent as never)).toEqual(

@@ -12,6 +12,7 @@
 #   bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
 #   REUSE_ONLY=1 bash drive-sim-workload.sh <workload> B <fresh-sender>
 #   bash drive-sim-workload.sh --gate <workload>    # offline: the provider-risk decision alone (0 allowed, 4 suspended)
+#   DRIVE_GATE_ONLY=1 bash drive-sim-workload.sh <workload>   # the real path, stopped at the gate: no side effect
 #
 # Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect live sim
 # servers + connect THIS workload's server (one server at a time, no tool confusion) → reset the 2 feeder
@@ -179,6 +180,13 @@ if [ -z "$SRV" ] || [ -z "$P" ] || [ -z "$RISK" ]; then
 fi
 # Before the daemon restart and every other side effect, so a suspended workload never touches the box.
 run_risk_gate "$WL" "$RISK" "$P" || exit $?
+# DRIVE_GATE_ONLY=1: stop HERE, once the gate has decided and before the first side effect. The gate's own
+# regression test drives this real path, and its failure mode must be a failed assertion rather than a
+# daemon restart, a server reconnect and two live provider feeders on whatever box the suite runs on.
+if [ "${DRIVE_GATE_ONLY:-}" = "1" ]; then
+  echo "gate-only: $WL cleared the provider-risk gate; stopping before any side effect"
+  exit 0
+fi
 if [ "$REUSE_ONLY" = "1" ]; then
   echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT reuse=$F1) =="
 else
