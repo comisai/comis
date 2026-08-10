@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: Apache-2.0
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createConversationRef,
+  type ExecutionAttachmentRecord,
+  type ExecutionAttachmentScope,
+  type ManagedRunRecord,
+  type WorkspaceLeaseRecord,
+} from "@comis/core";
+import { createSqliteExecutionAttachmentStore } from "./execution-attachment-store.js";
+import { createSqliteManagedRunStore } from "./managed-run-store.js";
+import { initSchema } from "./schema.js";
+import { createSqliteWorkspaceLeaseStore } from "./workspace-lease-store.js";
+
+const NOW_MS = 1_800_000_000_000;
+const conversationScope = {
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  partition: {
+    kind: "endpoint-conversation-principal" as const,
+    endpoint: {
+      channelType: "telegram",
+      channelInstanceId: "channel-instance_a",
+      conversationId: "conversation_a",
+      conversationKind: "direct" as const,
+    },
+    principalId: "principal_a",
+  },
+};
+const conversationRef = createConversationRef(conversationScope);
+if (!conversationRef.ok) throw conversationRef.error;
+
+const ATTACHMENT_SCOPE: ExecutionAttachmentScope = {
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  serviceInstanceId: "service-instance_a",
+  managedRunId: "managed-run_a",
+  workspaceLeaseId: "workspace-lease_a",
+};
+
+function makeManagedRun(): ManagedRunRecord {
+  return {
+    schemaVersion: 1,
+    managedRunId: "managed-run_a",
+    serviceInstanceId: "service-instance_a",
+    externalRunRefDigest: "a".repeat(64),
+    activationDescriptorDigest: "b".repeat(64),
+    activationDescriptorRef: "activation-descriptor_a",
+    tenantId: "tenant_a",
+    agentId: "agent_a",
+    principalId: "principal_a",
+    conversationRef: conversationRef.value,
+    turnScope: {
+      conversation: conversationScope,
+      principal: { principalId: "principal_a" },
+      endpoint: conversationScope.partition.endpoint,
+    },
+    deliveryOrigin: {
+      channelType: "telegram",
+      channelId: "conversation_a",
+      userId: "principal_a",
+      tenantId: "tenant_a",
+    },
+    traceId: "10000000-0000-4000-8000-000000000001",
+    trustLevel: "user",
+    responseLocalePolicy: { locale: "en", source: "request", enforceLocale: true },
+    workspacePolicyHash: "c".repeat(64),
+    rootRunId: "root-run_a",
+    initiationSource: "user_request",
+    capturedAgentCapabilities: ["orch:read"],
+    capturedToolIds: ["mcp:service_a.inspect"],
+    capturedCapabilityViewHash: "d".repeat(64),
+    workspaceLeaseId: "workspace-lease_a",
+    executionAttachmentIds: ["execution-attachment_a"],
+    terminalSessionIds: [],
+    status: "preparing",
+    statusReason: "awaiting_activation",
+    lastAcceptedReportSequence: 0,
+    lastReducedReportSequence: 0,
+    pendingContinuation: false,
+    openAttentionCount: 0,
+    createdAtMs: NOW_MS,
+    updatedAtMs: NOW_MS,
+  };
+}
+
+function makeLease(): WorkspaceLeaseRecord {
+  return {
+    schemaVersion: 1,
+    workspaceLeaseId: "workspace-lease_a",
+    managedRunId: "managed-run_a",
+    serviceInstanceId: "service-instance_a",
+    tenantId: "tenant_a",
+    agentId: "agent_a",
+    canonicalPath: "/srv/comis-workspaces/task-a",
+    filesystemIdentity: { device: 10, inode: 20 },
+    state: "active",
+    createdAtMs: NOW_MS,
+    updatedAtMs: NOW_MS,
+  };
+}
+
+function makeAttachment(overrides: Partial<ExecutionAttachmentRecord> = {}): ExecutionAttachmentRecord {
+  return {
+    schemaVersion: 1,
+    executionAttachmentId: "execution-attachment_a",
+    managedRunId: "managed-run_a",
+    workspaceLeaseId: "workspace-lease_a",
+    serviceInstanceId: "service-instance_a",
+    tenantId: "tenant_a",
+    agentId: "agent_a",
+    kind: "unix_socket",
+    sourcePath: "/srv/capability-runtime/service-a/worker.sock",
+    sourceFilesystemType: "socket",
+    sourceFilesystemIdentity: { device: 30, inode: 40 },
+    targetName: `attachment-${"a".repeat(32)}.sock`,
+    access: "connect_only",
+    state: "active",
+    createdAtMs: NOW_MS,
+    updatedAtMs: NOW_MS,
+    ...overrides,
+  };
+}
+
+async function seed(db: Database.Database): Promise<void> {
+  expect((await createSqliteManagedRunStore(db).create(makeManagedRun())).ok).toBe(true);
+  expect((await createSqliteWorkspaceLeaseStore(db).create(makeLease())).ok).toBe(true);
+}
+
+describe("SQLite execution attachment persistence", () => {
+  const temporaryDirectories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of temporaryDirectories.splice(0)) {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("persists active socket authority across a database reopen", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "execution-attachment-store-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "memory.db");
+    const firstDb = new Database(databasePath);
+    initSchema(firstDb, 4);
+    await seed(firstDb);
+    const firstStore = createSqliteExecutionAttachmentStore(firstDb);
+    expect(await firstStore.create(makeAttachment())).toMatchObject({
+      ok: true,
+      value: { kind: "created", record: { state: "active" } },
+    });
+    firstDb.close();
+
+    const reopenedDb = new Database(databasePath);
+    initSchema(reopenedDb, 4);
+    const reopenedStore = createSqliteExecutionAttachmentStore(reopenedDb);
+    expect(await reopenedStore.get(ATTACHMENT_SCOPE, "execution-attachment_a")).toEqual({
+      ok: true,
+      value: makeAttachment(),
+    });
+    expect(await reopenedStore.listActiveForRun(ATTACHMENT_SCOPE)).toEqual({ ok: true, value: [makeAttachment()] });
+    expect(await reopenedStore.listRecoverable({ kind: "recovery", limit: 10 })).toEqual({ ok: true, value: [makeAttachment()] });
+    reopenedDb.close();
+  });
+
+  it("hides an attachment from every mismatched run and lease scope", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+    expect((await store.create(makeAttachment())).ok).toBe(true);
+    expect(await store.get(
+      { ...ATTACHMENT_SCOPE, managedRunId: "managed-run_b" },
+      "execution-attachment_a",
+    )).toEqual({ ok: true, value: undefined });
+    expect(await store.get(
+      { ...ATTACHMENT_SCOPE, workspaceLeaseId: "workspace-lease_b" },
+      "execution-attachment_a",
+    )).toEqual({ ok: true, value: undefined });
+    db.close();
+  });
+
+  it("reconciles exact filesystem identity and revokes idempotently before release", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+    expect((await store.create(makeAttachment())).ok).toBe(true);
+    expect(await store.reconcile(ATTACHMENT_SCOPE, {
+      operationId: "attachment-reconcile_a",
+      executionAttachmentId: "execution-attachment_a",
+      sourceFilesystemIdentity: { device: 30, inode: 41 },
+      recoveredAtMs: NOW_MS + 1,
+    })).toEqual({ ok: true, value: { kind: "identity_mismatch" } });
+    expect(await store.revoke(ATTACHMENT_SCOPE, {
+      operationId: "attachment-revoke_a",
+      executionAttachmentId: "execution-attachment_a",
+      reason: "lease_release",
+      revokedAtMs: NOW_MS + 2,
+    })).toMatchObject({ ok: true, value: { kind: "revoked" } });
+    expect(await store.revoke(ATTACHMENT_SCOPE, {
+      operationId: "attachment-revoke_a",
+      executionAttachmentId: "execution-attachment_a",
+      reason: "lease_release",
+      revokedAtMs: NOW_MS + 2,
+    })).toMatchObject({ ok: true, value: { kind: "identical_replay" } });
+    expect(await store.listActiveForRun(ATTACHMENT_SCOPE)).toEqual({ ok: true, value: [] });
+    db.close();
+  });
+});

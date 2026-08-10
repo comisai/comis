@@ -72,6 +72,30 @@ describe("capability-services application configuration", () => {
     }).success).toBe(false);
   });
 
+  it("requires narrow absolute unique runtime roots for execution attachments", () => {
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{
+        ...makeInstance(),
+        allowedRuntimeRoots: ["/srv/capability-runtime/service-a"],
+      }],
+    }).success).toBe(true);
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{ ...makeInstance(), allowedRuntimeRoots: ["/"] }],
+    }).success).toBe(false);
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{ ...makeInstance(), allowedRuntimeRoots: ["relative/runtime"] }],
+    }).success).toBe(false);
+    expect(CapabilityServicesConfigSchema.safeParse({
+      instances: [{
+        ...makeInstance(),
+        allowedRuntimeRoots: [
+          "/srv/capability-runtime/service-a",
+          "/srv/capability-runtime/service-a",
+        ],
+      }],
+    }).success).toBe(false);
+  });
+
   it("exposes the restart-only section while keeping every field immutable", () => {
     expect(getConfigSections()).toContain("capabilityServices");
     expect(isImmutableConfigPath("capabilityServices")).toBe(true);
