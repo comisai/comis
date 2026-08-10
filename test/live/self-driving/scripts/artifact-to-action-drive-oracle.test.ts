@@ -8,9 +8,11 @@
  *
  * @module
  */
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   bare,
@@ -140,6 +142,24 @@ describe("artifact-to-action runtime-drive oracle", () => {
 
     expect(replay.dispatched).not.toContain("stage_action");
     expect(replay.grade).toMatchObject({ outcome: "success", score: 1, committedActions: 0 });
+  });
+
+  it("rejects an unknown world on the command line before acquiring anything", () => {
+    const harness = fileURLToPath(new URL("./artifact-to-action-runtime-drive.mjs", import.meta.url));
+    const run = (args: string[]) => spawnSync(process.execPath, [harness, ...args], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    const mistyped = run(["--variant", "A-degrade"]);
+    expect(mistyped.status).toBe(2);
+    expect(mistyped.stderr).toContain('unknown --variant "A-degrade"');
+    expect(mistyped.stderr).toContain("A-degraded");
+    expect(mistyped.stdout).toBe("");
+
+    const valueless = run(["--variant"]);
+    expect(valueless.status).toBe(2);
+    expect(valueless.stderr).toContain("--variant with no value");
   });
 
   it("rejects a world it cannot classify instead of guessing provenance", () => {

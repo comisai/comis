@@ -15,9 +15,10 @@
 #   bash drive-sim-workload.sh --gate <workload>    # offline: the provider-risk decision alone (0 allowed, 4 suspended)
 #
 # The body that restarts the daemon, rewires MCP servers and drives live provider feeders requires an
-# affirmative DRIVE_CONFIRM=1. Everything before it — argument validation, the registry lookups and the
-# provider-risk decision — is side-effect free, so an invocation that does not opt in is a dry run rather than
-# a drive. Default-safe in that direction is the point: a test that shells out to this script, a mistyped
+# affirmative DRIVE_CONFIRM=1 ON THE INVOKING COMMAND LINE — it is snapshotted before the operator env files
+# are sourced, so a line in one of those cannot supply it. Everything before that point — argument validation,
+# the registry lookups and the provider-risk decision — is side-effect free, so an invocation that does not
+# opt in is a dry run rather than a drive. Default-safe in that direction is the point: a test that shells out to this script, a mistyped
 # command or a wrapper that forgets the flag cannot restart a production daemon by omission.
 #
 # Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect live sim
@@ -31,7 +32,13 @@ WL="${1:?usage: drive-sim-workload.sh <workload> [variant=A] [feeder1] [feeder2]
 VARIANT="${2:-A}"
 F1="${3:-678314279}"
 F2="${4:-678314280}"
-REUSE_ONLY="${REUSE_ONLY:-0}"
+# Snapshot the INVOCATION's own control flags under internal names before any environment file is sourced.
+# /root/comis-rig.env and $DATA/.env are operator files loaded for credentials and paths, and sourcing either
+# would otherwise overwrite these — so an operator convenience line in one of them could re-arm a
+# confirmation the caller deliberately withheld, or silently change the drive's shape. Only the command line
+# that invoked this script decides both.
+DRIVE_CONFIRMED="${DRIVE_CONFIRM:-}"
+REUSE_ONLY_REQUESTED="${REUSE_ONLY:-0}"
 [ -f /root/comis-rig.env ] && . /root/comis-rig.env
 DATA="${DATA:-/home/comis/.comis}"
 COMIS_HOME="${COMIS_HOME:-/home/${COMIS_USER:-comis}}"
@@ -189,11 +196,11 @@ run_risk_gate "$WL" "$RISK" "$P" || exit $?
 # The side-effecting body starts below, so it needs the operator's affirmative confirmation. Omitting it stops
 # here with the gate's verdict reported: an accidental invocation is a dry run, never a daemon restart, a
 # server rewire and two live provider feeders on whatever box the caller happens to be.
-if [ "${DRIVE_CONFIRM:-}" != "1" ]; then
+if [ "$DRIVE_CONFIRMED" != "1" ]; then
   echo "dry run: $WL cleared the provider-risk gate; re-run with DRIVE_CONFIRM=1 to restart the daemon, rewire $SRV and drive the feeders"
   exit 0
 fi
-if [ "$REUSE_ONLY" = "1" ]; then
+if [ "$REUSE_ONLY_REQUESTED" = "1" ]; then
   echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT reuse=$F1) =="
 else
   echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT feeders=$F1,$F2) =="
@@ -221,7 +228,7 @@ connect_workload_server
 
 # 3) reset the 2 feeder sessions (clear any prior workload's LCD — cross-task contamination trap).
 RESET_SENDERS=("$F1" "$F2")
-[ "$REUSE_ONLY" = "1" ] && RESET_SENDERS=("$F1")
+[ "$REUSE_ONLY_REQUESTED" = "1" ] && RESET_SENDERS=("$F1")
 for s in "${RESET_SENDERS[@]}"; do
   session_key="$(canonical_session_key "$s")" || { echo "failed to resolve canonical session for $s" >&2; exit 1; }
   conversation_ref="$(node /root/db.mjs pickw lcd_messages conversation_ref session_key "$session_key" 1 2>/dev/null \
@@ -244,7 +251,7 @@ MM0=$(node /root/db.mjs count mental_models 2>/dev/null | grep -oE '[0-9]+' | he
 
 # 4) two BYTE-IDENTICAL feeders (distinct (session,sender) → the card-2 corroboration bar).
 echo "-- feeder-1 ($F1) --"; node /root/drive.mjs "$F1" "$P" 2>&1 | tail -1
-if [ "$REUSE_ONLY" = "1" ]; then
+if [ "$REUSE_ONLY_REQUESTED" = "1" ]; then
   echo "-- latest simulator grade --"
   node /root/db.mjs sql "SELECT p.tool_name, substr(p.tool_output,instr(p.tool_output,'outcome'),220) AS grade FROM lcd_message_parts p JOIN lcd_messages m ON m.id=p.message_id WHERE m.session_key='$session_key' AND p.tool_name LIKE 'mcp__%-sim--%' AND p.tool_output LIKE '%graded%' ORDER BY m.created_at DESC,p.ordinal DESC LIMIT 1" 2>/dev/null
   echo "-- latest attributed outcome --"

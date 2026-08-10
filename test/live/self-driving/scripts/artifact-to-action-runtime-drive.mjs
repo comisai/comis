@@ -61,6 +61,23 @@ const variant = arg("variant", "A");
 const keep = process.argv.includes("--keep");
 const requestedData = arg("data", undefined);
 
+// Validate the requested world before anything is acquired. An unknown variant makes the stdio simulator
+// throw at startup, so it publishes no tools and the drive would otherwise burn the full discovery wait and
+// then blame MCP discovery for what is a mistyped argument.
+const seedPath = resolve(simRoot, "artifact-to-action/world.seed.json");
+let shippedVariants;
+try {
+  shippedVariants = Object.keys(JSON.parse(readFileSync(seedPath, "utf8")).variants ?? {}).sort();
+} catch (err) {
+  console.error(`cannot read the workload's worlds from ${seedPath}: ${err.message}`);
+  process.exit(2);
+}
+if (!shippedVariants.includes(variant)) {
+  const named = variant === undefined ? "--variant with no value" : `unknown --variant "${variant}"`;
+  console.error(`${named}; this workload ships ${shippedVariants.join(", ")}`);
+  process.exit(2);
+}
+
 const unbuilt = [daemonEntry, rpcClientEntry].filter((path) => !existsSync(path));
 if (unbuilt.length > 0) {
   console.error(`run pnpm build first — this drive needs ${unbuilt.join(" and ")}`);

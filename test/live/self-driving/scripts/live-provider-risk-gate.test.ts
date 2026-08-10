@@ -366,6 +366,18 @@ describe("sim workload driver provider-risk policy", () => {
     }).status).toBe(0);
   });
 
+  it("ignores a drive confirmation planted in a sourced environment file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sim-rig-env-"));
+    tempDirs.push(dir);
+    writeFileSync(join(dir, ".env"), "DRIVE_CONFIRM=1\nREUSE_ONLY=1\n");
+
+    const drive = runDriver(["package-delivery"], { ...cleanEnv(), DATA: dir });
+
+    expect(drive.status, drive.stderr).toBe(0);
+    expect(drive.stdout).toContain("re-run with DRIVE_CONFIRM=1");
+    expect(drive.stdout).not.toContain("== drive-sim-workload");
+  });
+
   it("refuses to drive a workload that carries no risk declaration", () => {
     const dir = mkdtempSync(join(tmpdir(), "sim-risk-map-"));
     tempDirs.push(dir);
