@@ -23,8 +23,9 @@ export function createManagedTerminalRevoker(
         || binding.workspaceLeaseId !== record.workspaceLeaseId
         || binding.serviceInstanceId !== record.serviceInstanceId
       ) return err(new Error("managed terminal release identity is unavailable or mismatched"));
-      const killed = await fromPromise(registry.kill(terminalSessionId, owner));
-      if (!killed.ok) return err(killed.error);
+      const terminated = await fromPromise(registry.terminateAndConfirm(terminalSessionId, owner));
+      if (!terminated.ok) return err(terminated.error);
+      if (!terminated.value.ok) return terminated.value;
     }
     return ok(undefined);
   };

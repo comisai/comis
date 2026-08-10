@@ -27,6 +27,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { err, ok, type Result } from "@comis/shared";
 
 import {
   systemNowMs,
@@ -290,6 +291,8 @@ export interface TerminalSessionRegistry {
   list(owner: SessionOwner): SessionListing[];
   /** Terminate a session — a no-op if it is absent OR not owned by `owner`. */
   kill(sessionId: string, owner: SessionOwner): Promise<void>;
+  /** Trusted teardown barrier: retain authority unless the worker confirms backend exit. */
+  terminateAndConfirm(sessionId: string, owner: SessionOwner): Promise<Result<void, Error>>;
   /** Evict with an audited reason — owner-checked, then the single drop + cleanup + onCapForget + onEvict + WARN site that the reaper sweep and the max_interactions path both drive. */
   evict(sessionId: string, owner: SessionOwner, reason: EvictReason): Promise<void>;
   getOwner?(sessionId: string): SessionOwner | undefined; // Recovery seam (daemon-trusted, owner-agnostic): stamped owner by id — recovers the (userId,sessionKey) the worker→event re-publish drops so a detached drive's woken turns resolve the LIVE session, not drop cross-owner. Identity only; undefined iff absent.
@@ -843,6 +846,21 @@ export function createTerminalSessionRegistry(
     logger.info({ sessionId }, "terminal session killed");
   }
 
+  async function terminateAndConfirm(sessionId: string, owner: SessionOwner): Promise<Result<void, Error>> {
+    const handle = ownedHandle(sessionId, owner);
+    if (handle === undefined) return err(new Error("terminal session authority is unavailable"));
+    if (handle.status === "running") {
+      if (worker === undefined) return err(new Error("terminal worker is unavailable"));
+      const reply = await request(sessionId, "kill", { sessionId });
+      if (!reply.ok) return err(new Error(reply.error ?? "terminal backend termination was not acknowledged"));
+    }
+    sessions.delete(sessionId);
+    if (handle.workspace !== undefined) cleanupWorkspace(handle.workspace);
+    if (handle.durable === true) deps.durability?.descriptorStore?.remove(sessionId);
+    logger.info({ sessionId }, "terminal session termination confirmed");
+    return ok(undefined);
+  }
+
   async function kill(sessionId: string, owner: SessionOwner): Promise<void> {
     // A no-op if absent OR not owned by the caller (a subagent cannot terminate a
     // sibling subagent's session). Owner mismatch == not-found.
@@ -893,5 +911,5 @@ export function createTerminalSessionRegistry(
       request(id, "reattach", { sessionId: id, cols, rows, allowId, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
     );
 
-  return { create, read, status, sendText, sendKey, resize, wait, get, getManagedBinding, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, getOriginEndpoint: (sessionId: string): ChannelEndpoint | undefined => sessions.get(sessionId)?.originEndpoint, size, cleanup };
+  return { create, read, status, sendText, sendKey, resize, wait, get, getManagedBinding, list, kill, terminateAndConfirm, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, getOriginEndpoint: (sessionId: string): ChannelEndpoint | undefined => sessions.get(sessionId)?.originEndpoint, size, cleanup };
 }

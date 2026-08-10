@@ -26,6 +26,7 @@
  * @module
  */
 
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import type {
   PipeChildLike,
   PtyModuleLike,
@@ -34,6 +35,49 @@ import type {
   WorkerBackend,
   WorkerLogger,
 } from "./terminal-worker-types.js";
+
+const TERMINATION_TIMEOUT_MS = 5_000;
+
+export interface WorkerTeardownDeps {
+  readonly setTimer: (callback: () => void, delayMs: number) => unknown;
+  readonly clearTimer: (handle: unknown) => void;
+}
+
+/** Signal the confined backend and resolve only after its exit callback fires. */
+export async function terminateWorkerSession(
+  state: SessionState,
+  deps: WorkerTeardownDeps,
+): Promise<Result<void, Error>> {
+  if (!state.alive) return ok(undefined);
+  const backend = state.pty ?? state.pipe;
+  if (backend === undefined) return err(new Error("terminal backend identity is unavailable"));
+
+  let settled = false;
+  let timer: unknown;
+  let resolveExit: (confirmed: boolean) => void = () => undefined;
+  const exited = new Promise<boolean>((resolve) => {
+    resolveExit = resolve;
+  });
+  const finish = (confirmed: boolean): void => {
+    if (settled) return;
+    settled = true;
+    state.exitListeners.delete(onExit);
+    deps.clearTimer(timer);
+    resolveExit(confirmed);
+  };
+  const onExit = (): void => finish(true);
+  state.exitListeners.add(onExit);
+  timer = deps.setTimer(() => finish(false), TERMINATION_TIMEOUT_MS);
+
+  const signalled = tryCatch(() => backend.kill("SIGTERM"));
+  if (!signalled.ok) {
+    finish(false);
+    return err(signalled.error);
+  }
+  return await exited
+    ? ok(undefined)
+    : err(new Error("terminal backend did not confirm process exit"));
+}
 
 /** The composed spawn plan a backend attaches to — the `{bin,argv,env}` ride VERBATIM after the bwrap composer's `--` (M-1). */
 interface BackendSpawnPlan {

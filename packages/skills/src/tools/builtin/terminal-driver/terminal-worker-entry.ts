@@ -47,7 +47,7 @@ import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js
 import type { ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
-import { attachBackend } from "./terminal-worker-backend-attach.js";
+import { attachBackend, terminateWorkerSession } from "./terminal-worker-backend-attach.js";
 import {
   SCROLLBACK_DEFAULT,
   STUCK_DEFAULT_MS,
@@ -705,6 +705,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         case "status":
           result = await handleStatus(frame); // awaits the pending emulator write-parse; classifies the current grid
           break;
+        case "kill": {
+          const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
+          const state = sessions.get(sessionId);
+          const terminated = state === undefined ? undefined : await terminateWorkerSession(state, { setTimer, clearTimer });
+          if (terminated !== undefined && !terminated.ok) throw terminated.error;
+          sessions.delete(sessionId);
+          result = { terminated: true };
+          break;
+        }
         default:
           return {
             sessionId: frame.sessionId,
