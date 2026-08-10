@@ -458,9 +458,11 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       bind: vi.fn(async () => ({ kind: "bound" })),
     };
     const eventBus = makeCapturingBus();
+    const managedTerminalEvents = { publish: vi.fn(async () => undefined) };
     const tool = createTerminalSessionCreateTool(baseDeps(registry, {
       eventBus,
       managedBinding,
+      managedTerminalEvents,
     } as unknown as Partial<TerminalToolDeps>));
 
     const result = await tool.execute("call-managed", {
@@ -503,6 +505,13 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         managedRunId: "managed-run_a",
         workspaceLeaseId: "workspace-lease_a",
       });
+    expect(managedTerminalEvents.publish).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      transition: "created",
+    });
   });
 
   it("rejects an unpaired managed handle before spawning a terminal", async () => {

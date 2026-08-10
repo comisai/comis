@@ -2514,6 +2514,24 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     expect(fake2.requestFrames.filter((f) => f.method === "reattach")).toHaveLength(0);
     expect(onUnrecoverable2).not.toHaveBeenCalled();
   });
+
+  it("preserves a stale managed descriptor when restart liveness cannot be confirmed", () => {
+    const fake = makeFakeWorker();
+    const managed = {
+      ...durableDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+    };
+    const store = fakeDescriptorStore([managed]);
+
+    createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: { descriptorStore: store, isTmuxAlive: () => false },
+    }));
+
+    expect(store.remove).not.toHaveBeenCalled();
+  });
 });
 
 // ===========================================================================
