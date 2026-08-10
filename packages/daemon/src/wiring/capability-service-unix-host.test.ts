@@ -247,6 +247,47 @@ describe("daemon-owned capability-service Unix host", () => {
     });
     expect(await activation).toMatchObject({ ok: true, value: { state: "active" } });
 
+    const terminalEvent = (host.created.value.control as unknown as {
+      terminalEvent(command: Record<string, unknown>): Promise<unknown>;
+    }).terminalEvent({
+      operationId: "operation_terminal_created",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      terminalSessionId: "terminal-session_a",
+      transition: "created",
+    });
+    const terminalRequest = await peer.next();
+    expect(terminalRequest).toMatchObject({
+      bearer: BEARER,
+      id: "operation_terminal_created",
+      method: "managedRuns.terminalEvent",
+      params: {
+        operationId: "operation_terminal_created",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        terminalSessionId: "terminal-session_a",
+        transition: "created",
+      },
+    });
+    peer.send({
+      jsonrpc: "2.0",
+      id: "operation_terminal_created",
+      result: {
+        managedRunId: "managed-run_a",
+        terminalSessionId: "terminal-session_a",
+        transition: "created",
+      },
+    });
+    expect(await terminalEvent).toMatchObject({
+      ok: true,
+      value: {
+        managedRunId: "managed-run_a",
+        terminalSessionId: "terminal-session_a",
+        transition: "created",
+      },
+    });
+
     peer.send({
       bearer: BEARER,
       jsonrpc: "2.0",

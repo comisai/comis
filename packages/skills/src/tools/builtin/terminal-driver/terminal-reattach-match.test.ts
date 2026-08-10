@@ -169,6 +169,21 @@ describe("terminal-reattach-match — reattachDecision (the re-attach decision, 
 });
 
 describe("terminal-reattach-match — serialize/deserialize round-trip (the durable recovery contract)", () => {
+  it("round-trips managed run lease service and root-process identity for restart recovery", () => {
+    const desc = {
+      ...makeDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      rootProcessIdentity: {
+        pid: 4123,
+        startIdentity: "linux-proc-start-991",
+      },
+    } as unknown as SessionDescriptor;
+
+    expect(deserializeDescriptor(serializeDescriptor(desc))).toEqual(desc);
+  });
+
   it("round-trips a fully-populated descriptor through serialize → deserialize unchanged", () => {
     const desc = makeDescriptor({
       sessionId: "sess-rt",

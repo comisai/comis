@@ -424,6 +424,129 @@ function makeCapsSpy(limits: SessionLimits | undefined, now: () => number): Sess
 // ---------------------------------------------------------------------------
 
 describe("terminal-tools — create gate + canonicalization + observability", () => {
+  it("exposes managed run and workspace lease handles as an optional paired create path", () => {
+    const tool = createTerminalSessionCreateTool(baseDeps(makeFakeRegistry()));
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+
+    expect(Object.keys(properties)).toEqual(expect.arrayContaining([
+      "managedRunId",
+      "workspaceLeaseId",
+    ]));
+  });
+
+  it("resolves paired managed handles to the leased root and durably binds the created terminal identity", async () => {
+    const rootProcessIdentity = { pid: 4123, startIdentity: "linux-proc-start-991" };
+    const registry = makeFakeRegistry({
+      createImpl: async (req) => ({
+        sessionId: "terminal-session_a",
+        allowId: req.allowId,
+        cols: req.cols,
+        rows: req.rows,
+        rootProcessIdentity,
+      } as unknown as CreateResult),
+    });
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved",
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+      })),
+      bind: vi.fn(async () => ({ kind: "bound" })),
+    };
+    const eventBus = makeCapturingBus();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      eventBus,
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    const result = await tool.execute("call-managed", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never);
+
+    expect(managedBinding.resolve).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      owner: { agentId: "agent-1", sessionKey: "" },
+    });
+    expect(registry.createCalls[0]).toMatchObject({
+      workspace: "/approved/workspaces/run-a",
+      cwd: "/approved/workspaces/run-a",
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    });
+    expect(managedBinding.bind).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      rootProcessIdentity,
+      owner: { agentId: "agent-1", sessionKey: "" },
+    });
+    expect(result.details).toMatchObject({
+      sessionId: "terminal-session_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    });
+    expect(eventBus.events.find((event) => event.event === "terminal:session_state")?.payload)
+      .toMatchObject({
+        sessionId: "terminal-session_a",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+      });
+  });
+
+  it("rejects an unpaired managed handle before spawning a terminal", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionCreateTool(baseDeps(registry));
+
+    await expect(tool.execute("call-unpaired", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+    } as never)).rejects.toThrow(/managedRunId.*workspaceLeaseId|workspaceLeaseId.*managedRunId/i);
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
+  it("kills a newly-created terminal when durable managed-run binding is refused without releasing its lease", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved",
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+      })),
+      bind: vi.fn(async () => ({ kind: "rejected", reason: "ownership_mismatch" })),
+      releaseLease: vi.fn(),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-bind-refused", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/managed terminal binding/i);
+
+    expect(registry.killCalls).toEqual(["sess-1"]);
+    expect(managedBinding.releaseLease).not.toHaveBeenCalled();
+  });
+
   it("rejects a non-allowlisted command with permission_denied and never spawns", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionCreateTool(baseDeps(registry));
