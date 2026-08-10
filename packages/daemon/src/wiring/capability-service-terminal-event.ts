@@ -73,7 +73,7 @@ export function createManagedTerminalEventBridge(deps: {
         .update(`${input.managedRunId}\0${input.terminalSessionId}\0${input.transition}\0${deps.nowMs()}\0${sequence}`, "utf8")
         .digest("hex").slice(0, 32);
       const called = await fromPromise(deps.control.terminalEvent({
-        operationId: `operation_terminal_${operationDigest}`,
+        operationId: `operation-terminal-${operationDigest}`,
         ...input,
       }));
       if (!called.ok || !called.value.ok) {
