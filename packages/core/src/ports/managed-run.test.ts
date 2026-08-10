@@ -19,6 +19,7 @@ describe("Managed-run store and private-content port contracts", () => {
       | "claimTransition"
       | "bindTerminal"
       | "setWorkspaceLease"
+      | "bindExecutionAttachment"
       | "appendReportAndAdvanceAcceptedCursor"
       | "claimContinuation"
       | "commitReducedState"

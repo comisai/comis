@@ -668,6 +668,33 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).value?.kind).toBe("bound");
   });
 
+  it("binds an execution attachment only under the exact run lease and owner", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord({ workspaceLeaseId: "workspace-lease_a" }))).ok).toBe(true);
+    const binding = {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      executionAttachmentId: "execution-attachment_a",
+      attachmentServiceInstanceId: "service-instance_a",
+      attachmentTenantId: "tenant_a",
+      attachmentAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_100,
+    };
+
+    expect((await store.bindExecutionAttachment(OWNER_SCOPE, binding)).value?.kind).toBe("bound");
+    expect((await store.bindExecutionAttachment(OWNER_SCOPE, binding)).value?.kind).toBe("identical_replay");
+    expect(await store.get(OWNER_SCOPE, "managed-run_a")).toMatchObject({
+      ok: true,
+      value: { executionAttachmentIds: ["execution-attachment_a"] },
+    });
+    expect((await store.bindExecutionAttachment(OWNER_SCOPE, {
+      ...binding,
+      executionAttachmentId: "execution-attachment_b",
+      workspaceLeaseId: "workspace-lease_b",
+      boundAtMs: 1_800_000_000_200,
+    })).value?.kind).toBe("ownership_mismatch");
+  });
+
   it("stores no private report body or service credential columns", () => {
     const runColumns = new Set(
       (db.prepare("PRAGMA table_info(managed_runs)").all() as Array<{ name: string }>).map((row) => row.name),

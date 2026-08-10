@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import type { EgressControlPort } from "@comis/core";
 
-import { buildSpawnPlan, JailUnavailableError, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -89,6 +89,38 @@ describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module 
       bwrapPath: "/usr/bin/bwrap",
     });
     expect(plan.argv).not.toContain(RELAY_INIT_PATH);
+  });
+});
+
+describe("buildSpawnPlan — execution attachment confinement", () => {
+  const attachment = {
+    executionAttachmentId: "execution-attachment_a",
+    sourcePath: "/srv/runtime/worker.sock",
+    targetName: `attachment-${"a".repeat(32)}.sock`,
+  };
+
+  it("fails closed when an attachment cannot be materialized by bubblewrap", async () => {
+    await expect(buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {}))
+      .rejects.toMatchObject({
+        name: AttachmentSandboxUnavailableError.name,
+        errorKind: "sandbox_unavailable",
+      });
+    await expect(buildSpawnPlan(
+      makeInput({ executionAttachments: [attachment] }),
+      { bwrapPath: "/usr/bin/bwrap", unsafeDisableSandbox: true },
+    )).rejects.toMatchObject({ errorKind: "sandbox_unavailable" });
+  });
+
+  it("threads only the approved attachment record into the bubblewrap composer", async () => {
+    const plan = await buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {
+      bwrapPath: "/usr/bin/bwrap",
+    });
+    expect(hasBind(
+      plan.argv,
+      "--ro-bind",
+      attachment.sourcePath,
+      `/run/comis/attachments/${attachment.targetName}`,
+    )).toBe(true);
   });
 });
 

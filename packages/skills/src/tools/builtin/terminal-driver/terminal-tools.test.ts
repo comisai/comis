@@ -454,6 +454,11 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
           serviceInstanceId: "service-instance_a",
           canonicalRoot: "/approved/workspaces/run-a",
         },
+        executionAttachments: [{
+          executionAttachmentId: "execution-attachment_a",
+          sourcePath: "/srv/runtime/run-a.sock",
+          targetName: `attachment-${"a".repeat(32)}.sock`,
+        }],
       })),
       bind: vi.fn(async () => ({ kind: "bound" })),
     };
@@ -485,6 +490,11 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         workspaceLeaseId: "workspace-lease_a",
         serviceInstanceId: "service-instance_a",
       },
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        sourcePath: "/srv/runtime/run-a.sock",
+        targetName: `attachment-${"a".repeat(32)}.sock`,
+      }],
     });
     expect(managedBinding.bind).toHaveBeenCalledWith({
       managedRunId: "managed-run_a",
@@ -498,7 +508,12 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       sessionId: "terminal-session_a",
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        targetPath: `/run/comis/attachments/attachment-${"a".repeat(32)}.sock`,
+      }],
     });
+    expect(JSON.stringify(result.details)).not.toContain("/srv/runtime/run-a.sock");
     expect(eventBus.events.find((event) => event.event === "terminal:session_state")?.payload)
       .toMatchObject({
         sessionId: "terminal-session_a",
@@ -512,6 +527,38 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       terminalSessionId: "terminal-session_a",
       transition: "created",
     });
+  });
+
+  it("returns sandbox_unavailable before launch when approved attachments cannot be confined", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [{
+          executionAttachmentId: "execution-attachment_a",
+          sourcePath: "/srv/runtime/run-a.sock",
+          targetName: `attachment-${"a".repeat(32)}.sock`,
+        }],
+      })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      managedBinding,
+      managedAttachmentSandboxAvailable: false,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-unavailable", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/\[sandbox_unavailable\]/u);
+    expect(registry.createCalls).toEqual([]);
   });
 
   it("rejects an unpaired managed handle before spawning a terminal", async () => {

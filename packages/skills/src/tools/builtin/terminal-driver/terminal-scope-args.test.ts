@@ -118,6 +118,26 @@ describe("buildScopeArgs — filesystem dimension", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "home" }) }));
     expect(hasBind(args, "--bind", "/home/u", "/home/u")).toBe(true);
   });
+
+  it("ro-binds approved sockets to the fixed host-chosen attachment namespace", () => {
+    const args = buildScopeArgs(makeInput({
+      executionAttachments: [{
+        executionAttachmentId: "execution-attachment_a",
+        sourcePath: "/srv/runtime/worker.sock",
+        targetName: `attachment-${"a".repeat(32)}.sock`,
+      }],
+    }));
+    expect(hasBind(
+      args,
+      "--ro-bind",
+      "/srv/runtime/worker.sock",
+      `/run/comis/attachments/attachment-${"a".repeat(32)}.sock`,
+    )).toBe(true);
+    expect(args).toEqual(expect.arrayContaining([
+      "--dir", "/run/comis",
+      "--dir", "/run/comis/attachments",
+    ]));
+  });
 });
 
 describe("buildScopeArgs — network dimension (the transport seam)", () => {
