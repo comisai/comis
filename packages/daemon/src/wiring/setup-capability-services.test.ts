@@ -254,6 +254,43 @@ describe("production capability-service setup", () => {
     };
   }
 
+  it("wires durable execution attachment authority and startup reconciliation", async () => {
+    const fixture = makeRuntime();
+    const setupPromise = setupCapabilityServices({
+      contributions: [CONTRIBUTION],
+      config: fixture.config,
+      db: fixture.db,
+      dataDir: fixture.dataDir,
+      secretManager: fixture.secretManager,
+      eventBus: new TypedEventBus(),
+      logger: fixture.logger,
+      clock: fixture.clock,
+      timers: createFakeTimers(NOW_MS),
+    });
+    const peer = await connectPeer(fixture.socketPath);
+    peers.push(peer);
+    sendHandshake(peer);
+    expect(await peer.next()).toHaveProperty("result");
+
+    const setup = await setupPromise;
+    expect(setup.ok).toBe(true);
+    if (!setup.ok) return;
+    expect(setup.value).toMatchObject({
+      attachments: {
+        create: expect.any(Function),
+        revoke: expect.any(Function),
+        reconcile: expect.any(Function),
+      },
+      attachmentAuthority: {
+        create: expect.any(Function),
+        validateActive: expect.any(Function),
+        reconcileAll: expect.any(Function),
+      },
+      attachmentRecoverySummary: { recovered: [], preserved: [] },
+    });
+    await expect(setup.value.shutdown()).resolves.toEqual({ ok: true, value: undefined });
+  });
+
   it("activates reports and recovers an expired uncertain preparation before purge", async () => {
     const fixture = makeRuntime();
     const firstTimers = createFakeTimers(NOW_MS);
