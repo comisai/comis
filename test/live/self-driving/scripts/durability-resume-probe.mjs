@@ -10,9 +10,10 @@
  * 2. the durable authority row points to a protected checkpoint with the same
  *    frontier.
  *
- * After boot recovery, it approves the waiting node and reconciles terminal
- * metadata, `graph.runDetail`, the offline `comis explain --graph` report, and
- * the emulator wire. A chat reply is never a success oracle.
+ * After boot recovery, it requires a new system-health durable-resume count,
+ * approves the waiting node, and reconciles terminal metadata,
+ * `graph.runDetail`, the offline `comis explain --graph` report, and the
+ * emulator wire. A chat reply is never a success oracle.
  */
 
 import {
@@ -210,40 +211,21 @@ function visibleOutboundText(event) {
   return "";
 }
 
-function resumeLogEvidence(dataDir, graphId, notBeforeMs) {
-  const logsDir = resolve(dataDir, "logs");
-  if (!existsSync(logsDir)) return undefined;
-  const files = readdirSync(logsDir)
-    .filter((name) => /^daemon.*\.log$/.test(name))
-    .sort();
-  for (const name of files) {
-    const lines = readFileSync(resolve(logsDir, name), "utf8").split("\n");
-    for (const line of lines) {
-      if (!line.includes("Graph durable resume: re-entering incomplete nodes")) {
-        continue;
-      }
-      try {
-        const record = JSON.parse(line);
-        const timestampMs = Date.parse(record.time ?? "");
-        if (
-          record.graphId === graphId
-          && Number.isFinite(timestampMs)
-          && timestampMs >= notBeforeMs
-        ) {
-          return {
-            graphId: record.graphId,
-            rootRunId: record.rootRunId,
-            resumedNodeCount: record.resumedNodeCount,
-            totalNodeCount: record.totalNodeCount,
-            time: record.time,
-          };
-        }
-      } catch {
-        // Ignore non-JSON and partially rotated lines; structured matches win.
-      }
-    }
+async function durableResumedCount() {
+  const health = await rpc("obs.system.health", { sinceHours: 168 });
+  const resumed = health?.autonomy?.resumed;
+  if (!Number.isInteger(resumed) || resumed < 0) {
+    throw new Error("system-health returned no durable resumed count");
   }
-  return undefined;
+  return resumed;
+}
+
+async function maybeDurableResumedCount() {
+  try {
+    return await durableResumedCount();
+  } catch {
+    return undefined;
+  }
 }
 
 function runOfflineExplain(dataDir, graphId) {
@@ -284,7 +266,6 @@ function runOfflineExplain(dataDir, graphId) {
 }
 
 function restartDaemon(dataDir) {
-  const startedAtMs = Date.now();
   const result = spawnSync("bash", [resolve(here, "restart-daemon.sh")], {
     encoding: "utf8",
     timeout: 180_000,
@@ -310,7 +291,6 @@ function restartDaemon(dataDir) {
   if (result.status !== 0) {
     throw new Error(`daemon restart failed with exit ${result.status ?? "unknown"}`);
   }
-  return startedAtMs;
 }
 
 async function waitForInterruptEvidence({
@@ -398,8 +378,7 @@ async function waitForInterruptEvidence({
 async function waitForRecoveredFrontier(
   graphId,
   beforeRestart,
-  dataDir,
-  restartStartedAtMs,
+  resumedBeforeRestart,
   waitMs,
 ) {
   const deadline = Date.now() + waitMs;
@@ -414,16 +393,22 @@ async function waitForRecoveredFrontier(
     const waitingRecovered = beforeRestart.runningNodeIds.every(
       (nodeId) => snapshot?.nodes?.[nodeId]?.status === "running",
     );
-    const log = resumeLogEvidence(dataDir, graphId, restartStartedAtMs);
+    const resumedTotal = await maybeDurableResumedCount();
     if (
       snapshot?.graphId === graphId
       && snapshot.status === "running"
       && snapshot.isTerminal === false
       && completedPreserved
       && waitingRecovered
-      && log !== undefined
+      && resumedTotal !== undefined
+      && resumedTotal > resumedBeforeRestart
     ) {
-      return { snapshot, log };
+      return {
+        snapshot,
+        resumedTotal,
+        resumedDelta: resumedTotal - resumedBeforeRestart,
+        observedAtMs: Date.now(),
+      };
     }
     await sleep(1_000);
   }
@@ -525,20 +510,20 @@ async function main() {
     durableRootRunId: interrupted.authority.rootRunId,
   }));
 
-  const restartStartedAtMs = restartDaemon(dataDir);
+  const resumedBeforeRestart = await durableResumedCount();
+  restartDaemon(dataDir);
   const recovered = await waitForRecoveredFrontier(
     interrupted.evidence.graphId,
     interrupted.evidence,
-    dataDir,
-    restartStartedAtMs,
+    resumedBeforeRestart,
     120_000,
   );
   console.log(JSON.stringify({
     phase: "recovered",
     graphId: interrupted.evidence.graphId,
-    resumedNodeCount: recovered.log.resumedNodeCount,
-    totalNodeCount: recovered.log.totalNodeCount,
-    resumeLogTime: recovered.log.time,
+    resumedDelta: recovered.resumedDelta,
+    resumedTotal: recovered.resumedTotal,
+    resumeObservedAtMs: recovered.observedAtMs,
   }));
 
   const beforeApprovalWire = await outbound(apiRoot, chatId);
