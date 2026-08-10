@@ -4024,10 +4024,10 @@ describe("PiExecutor", () => {
       );
 
       expect(mockPrompt).not.toHaveBeenCalled();
-      expect(result.finishReason).toBe("prompt_timeout");
+      expect(result.finishReason).toBe("cancelled");
       expect(deps.eventBus.emit).toHaveBeenCalledWith("execution:aborted", {
         sessionKey: testSessionKey,
-        reason: "pipeline_timeout",
+        reason: "caller_cancelled",
         agentId: "agent-1",
         timestamp: expect.any(Number),
       });
@@ -4058,7 +4058,8 @@ describe("PiExecutor", () => {
       await vi.waitFor(() => expect(mockAbort).toHaveBeenCalledTimes(1));
       expect(mockAbortCompaction).toHaveBeenCalledTimes(1);
       releasePrompt();
-      await executing;
+      const result = await executing;
+      expect(result.finishReason).toBe("cancelled");
 
       mockAbort.mockClear();
       controller.abort();

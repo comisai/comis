@@ -485,6 +485,12 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionHealthRollup({}, "timeout").degraded).toBe(true);
   });
 
+  it("records caller cancellation as a clean cancelled terminal instead of success or timeout", () => {
+    expect(END_REASON_MAP.cancelled).toBe("cancelled");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "cancelled" }).sessionEnd?.endReason).toBe("cancelled");
+    expect(buildSessionHealthRollup({}, "cancelled").degraded).toBe(false);
+  });
+
   it("un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
     // Collapsing BOTH context-exhaustion
     // finish reasons to the generic "error" bucket would make a context-exhausted
@@ -546,10 +552,11 @@ describe("buildSessionEndMetadata", () => {
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
       "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
       "completed_with_tool_errors", "prompt_timeout", "spend_exceeded", "tool_invocation_stall",
+      "cancelled",
     ];
     for (const reason of ALL_FINISH_REASONS) {
       const mappedEndReason = END_REASON_MAP[reason] ?? "error";
-      const expectedDegraded = mappedEndReason !== "success";
+      const expectedDegraded = mappedEndReason !== "success" && mappedEndReason !== "cancelled";
       // The chokepoint maps once, then passes the mapped endReason to the rollup.
       expect(buildSessionHealthRollup({}, mappedEndReason).degraded).toBe(expectedDegraded);
     }
