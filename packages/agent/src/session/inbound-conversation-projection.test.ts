@@ -101,6 +101,48 @@ function textOf(message: AgentMessage): string {
 }
 
 describe("structured inbound conversation projection", () => {
+  it("retains trusted voice preprocessing in canonical follow-up history", () => {
+    const sessionManager = SessionManager.inMemory("/workspace");
+    const voiceMessage = {
+      ...FIRST,
+      text: "",
+    } satisfies NormalizedMessage;
+    const planned = inboundProvenance.planInboundMessageProvenance(
+      voiceMessage,
+      voiceMessage.timestamp + 100,
+    );
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    const planWithConversationText = {
+      ...planned.value,
+      conversationText:
+        "[Voice message transcription]: Remind me to buy oats tomorrow.",
+    };
+    const appended = inboundProvenance.appendInboundMessageProvenance(
+      sessionManager,
+      planWithConversationText,
+    );
+    expect(appended.ok).toBe(true);
+    sessionManager.appendMessage({
+      role: "user",
+      content:
+        "[System context]\ntransient runtime context\n[End system context]\n\n"
+        + "[telegram] sender-a (5:00 PM):\n"
+        + planWithConversationText.conversationText,
+      timestamp: voiceMessage.timestamp,
+    } as never);
+    appendAssistant(sessionManager, "What time tomorrow?", voiceMessage.timestamp + 1);
+
+    const result = projectInboundConversation(sessionManager);
+
+    expect(result.ok).toBe(true);
+    expect(textOf(result.value.messages[0]!)).toBe(
+      "[telegram] sender-a (2026-09-10T00:26:40.001Z):\n"
+      + planWithConversationText.conversationText,
+    );
+    expect(textOf(result.value.messages[0]!)).not.toContain("System context");
+  });
+
   it("replaces persisted prompt wrappers with compact physical-message history", () => {
     const sessionManager = SessionManager.inMemory("/workspace");
     appendProvenance(sessionManager, FIRST);
