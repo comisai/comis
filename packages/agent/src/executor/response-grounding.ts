@@ -135,6 +135,7 @@ const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
   /\bwhy was (?:that|this|it) so slow\b/iu,
   /\bwhy was the slowest\b[^?\n]{0,80}\bslow\b/iu,
   /\b(?:resume|recover|continue)\b[^?\n]{0,120}\b(?:durable|background|pipeline|graph|job|task|work)\b[^?\n]{0,120}\b(?:after|across|through)\b[^?\n]{0,30}\b(?:the )?(?:daemon |service |system )?restart\b/iu,
+  /\b(?:did|have) (?:you|u) (?:receive|get|see|process)\b[^?\n]{0,120}\b(?:message|update|request)\b[^?\n]{0,120}\b(?:while|when) (?:you|u|the (?:daemon|service|system)) (?:were|was) (?:down|offline|restarting)\b/iu,
   /\bhow many\b[^?\n]{0,80}\b(?:did|have) (?:you|u)\b/iu,
   /\b(?:cost|total)\b[^?\n]{0,100}\bbecause\b[^?\n]{0,80}\b(?:was|were) down\b[^?\n]{0,30}\b(?:right|correct|yeah)\b/iu,
   /\b(?:you|u) only (?:did|used)\b[^?\n]{0,80}\b(?:turns?|calls?|tokens?|sessions?)\b[^?\n]{0,100}\b(?:confirm|right|correct|yeah)\b/iu,
