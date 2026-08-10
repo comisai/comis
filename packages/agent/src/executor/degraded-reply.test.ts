@@ -138,7 +138,8 @@ describe("outbound audio evidence reply", () => {
       },
     });
 
-    expect(build()).toContain("did not deliver the requested audio");
+    expect(build()).toContain("could not verify delivery of the requested audio");
+    expect(build()).not.toContain("did not deliver");
     expect(build("he", catalog)).toBe(
       "לא שלחתי את השמע המבוקש בתור הנוכחי.",
     );
