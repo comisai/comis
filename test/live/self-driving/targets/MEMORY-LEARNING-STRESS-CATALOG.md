@@ -7,10 +7,10 @@
 > agent drives real `mcp:<server>/<tool>` tools guided by a **mechanics-only** skill (the strategy is what the
 > engine must LEARN). **All 16 are built**; 14 are live-validated. `personal-operations` has deterministic
 > transfer coverage plus a bounded local-model attempt that failed before an episode, while
-> `artifact-to-action` is validated by its per-variant selftest, its contract suite and a deterministic
-> redrive over the real MCP stdio transport. Neither has a successful model-transfer result on record — a
-> driver-issued tool trace proves transport and orchestration, not model reasoning (see the
-> validation-status notes in
+> `artifact-to-action` is validated by its per-variant selftest, its contract suite, a deterministic redrive
+> over the real MCP stdio transport, and an isolated daemon drive under a scripted provider. Neither has a
+> successful model-transfer result on record — a driver-issued tool trace proves transport and
+> orchestration, not model reasoning (see the validation-status notes in
 > [`../sim/README.md`](../sim/README.md)): these 14 complex workloads, plus 2 foundational
 > exemplars — [**threat-hunting**](./adaptive-threat-hunting.md) (a full pinned spec) and **package-delivery**
 > (the reuse→promote demo, below). Each maps to `sim/<workload>/` — see [`../sim/README.md`](../sim/README.md) for
