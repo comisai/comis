@@ -230,6 +230,7 @@ describe("production capability-service setup", () => {
         },
         allowedAgents: ["agent_a"],
         allowedWorkspaceRoots: [],
+        allowedRuntimeRoots: [],
       }],
       privateContentDirectory: "managed-runs/private",
       reportRetentionMs: 60_000,

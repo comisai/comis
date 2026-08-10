@@ -139,6 +139,7 @@ function makeActiveView(allowedWorkspaceRoots: readonly string[] = []): ActiveCa
       mcpServerName: "example-service",
       allowedAgents: Object.freeze(["agent_a"]),
       allowedWorkspaceRoots: Object.freeze([...allowedWorkspaceRoots]),
+      allowedRuntimeRoots: Object.freeze([]),
       state: "active" as const,
       activeScopes: Object.freeze(["health"] as const),
     })]),

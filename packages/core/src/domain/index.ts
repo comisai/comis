@@ -109,6 +109,21 @@ export type {
   WorkspaceLeaseState,
   WorkspaceLeaseRecord,
 } from "./workspace-lease.js";
+export {
+  ExecutionAttachmentFilesystemIdentitySchema,
+  ExecutionAttachmentKindSchema,
+  ExecutionAttachmentStateSchema,
+  ExecutionAttachmentRevocationReasonSchema,
+  ExecutionAttachmentRecordSchema,
+  parseExecutionAttachmentRecord,
+} from "./execution-attachment.js";
+export type {
+  ExecutionAttachmentFilesystemIdentity,
+  ExecutionAttachmentKind,
+  ExecutionAttachmentState,
+  ExecutionAttachmentRevocationReason,
+  ExecutionAttachmentRecord,
+} from "./execution-attachment.js";
 
 export {
   PollInputSchema,

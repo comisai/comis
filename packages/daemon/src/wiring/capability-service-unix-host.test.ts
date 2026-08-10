@@ -60,6 +60,7 @@ function makeInstance(socketPath: string): PlannedCapabilityServiceInstance {
     },
     allowedAgents: ["agent_a"],
     allowedWorkspaceRoots: [],
+    allowedRuntimeRoots: [],
   };
 }
 

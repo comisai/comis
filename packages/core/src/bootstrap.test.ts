@@ -266,6 +266,7 @@ describe("bootstrap", () => {
       "        credentialRef: secret://capability-services/service-instance_a",
       "      allowedAgents: [agent_a]",
       "      allowedWorkspaceRoots: []",
+      "      allowedRuntimeRoots: []",
       "",
     ].join("\n"));
 

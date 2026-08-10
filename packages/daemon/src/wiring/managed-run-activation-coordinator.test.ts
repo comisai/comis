@@ -90,6 +90,7 @@ function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): A
       mcpServerName: "example-service",
       allowedAgents: Object.freeze(["agent_a"]),
       allowedWorkspaceRoots: Object.freeze([]),
+      allowedRuntimeRoots: Object.freeze([]),
       state: "active" as const,
       activeScopes: Object.freeze(["health", "report"] as const),
     })]),

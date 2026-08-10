@@ -242,6 +242,7 @@ function makeConfig(input: {
         },
         allowedAgents: ["default"],
         allowedWorkspaceRoots: [input.workspaceRoot],
+        allowedRuntimeRoots: [],
       }],
     },
   };

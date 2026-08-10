@@ -148,6 +148,8 @@ export {
   reduceManagedRunState,
   ManagedRunAttentionRecordSchema,
   parseWorkspaceLeaseRecord,
+  ExecutionAttachmentRecordSchema,
+  parseExecutionAttachmentRecord,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -269,4 +271,9 @@ export type {
   ManagedRunAttentionRecord,
   WorkspaceLeaseFilesystemIdentity,
   WorkspaceLeaseRecord,
+  ExecutionAttachmentFilesystemIdentity,
+  ExecutionAttachmentKind,
+  ExecutionAttachmentState,
+  ExecutionAttachmentRevocationReason,
+  ExecutionAttachmentRecord,
 } from "../domain/index.js";

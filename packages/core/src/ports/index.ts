@@ -76,6 +76,16 @@ export type {
   WorkspaceLeasePort,
 } from "./workspace-lease.js";
 export type {
+  ExecutionAttachmentScope,
+  ExecutionAttachmentCreateOutcome,
+  ExecutionAttachmentRevokeInput,
+  ExecutionAttachmentReconcileInput,
+  ExecutionAttachmentRevokeOutcome,
+  ExecutionAttachmentReconcileOutcome,
+  ExecutionAttachmentRecoveryScanInput,
+  ExecutionAttachmentPort,
+} from "./execution-attachment.js";
+export type {
   MemoryPort,
   MemoryWriteEntry,
   MemorySearchOptions,

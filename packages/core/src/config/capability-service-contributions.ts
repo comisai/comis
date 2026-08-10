@@ -147,12 +147,13 @@ export type PlannedCapabilityServiceDefinition = Omit<
 
 export type PlannedCapabilityServiceInstance = Omit<
   CapabilityServiceInstanceConfig,
-  "control" | "allowedAgents" | "allowedWorkspaceRoots"
+  "control" | "allowedAgents" | "allowedWorkspaceRoots" | "allowedRuntimeRoots"
 > & {
   readonly contributionId: string;
   readonly control: Readonly<CapabilityServiceInstanceConfig["control"]>;
   readonly allowedAgents: readonly string[];
   readonly allowedWorkspaceRoots: readonly string[];
+  readonly allowedRuntimeRoots: readonly string[];
 };
 
 export interface CapabilityServiceActivationPlan {
@@ -201,6 +202,7 @@ function freezeInstance(
     control: Object.freeze({ ...instance.control }),
     allowedAgents: Object.freeze([...instance.allowedAgents].sort()),
     allowedWorkspaceRoots: Object.freeze([...instance.allowedWorkspaceRoots].sort()),
+    allowedRuntimeRoots: Object.freeze([...instance.allowedRuntimeRoots].sort()),
   });
 }
 

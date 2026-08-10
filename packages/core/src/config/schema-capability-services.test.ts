@@ -19,6 +19,7 @@ function makeInstance() {
     },
     allowedAgents: ["agent_a"],
     allowedWorkspaceRoots: [],
+    allowedRuntimeRoots: [],
   };
 }
 

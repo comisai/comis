@@ -35,6 +35,15 @@ const WorkspaceRootSchema = z.string().min(1).max(4_096).superRefine((path, ctx)
   }
 });
 
+const RuntimeRootSchema = z.string().min(1).max(4_096).superRefine((path, ctx) => {
+  if (!isAbsolute(path) || normalize(path) !== path || parse(path).root === path) {
+    ctx.addIssue({
+      code: "custom",
+      message: "capability-service runtime roots must be absolute, normalized, and narrower than a filesystem root",
+    });
+  }
+});
+
 export const CapabilityServiceInstanceConfigSchema = z.strictObject({
   serviceInstanceId: z.string().regex(OPAQUE_ID_PATTERN),
   serviceDefinitionId: z.string().refine(isContributionId),
@@ -43,6 +52,7 @@ export const CapabilityServiceInstanceConfigSchema = z.strictObject({
   control: CapabilityServiceControlConfigSchema,
   allowedAgents: z.array(z.string().regex(OPAQUE_ID_PATTERN)).min(1).max(256),
   allowedWorkspaceRoots: z.array(WorkspaceRootSchema).max(64),
+  allowedRuntimeRoots: z.array(RuntimeRootSchema).max(64),
 }).superRefine((value, ctx) => {
   if (new Set(value.allowedAgents).size !== value.allowedAgents.length) {
     ctx.addIssue({
@@ -56,6 +66,13 @@ export const CapabilityServiceInstanceConfigSchema = z.strictObject({
       code: "custom",
       path: ["allowedWorkspaceRoots"],
       message: "capability-service allowedWorkspaceRoots must be unique",
+    });
+  }
+  if (new Set(value.allowedRuntimeRoots).size !== value.allowedRuntimeRoots.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["allowedRuntimeRoots"],
+      message: "capability-service allowedRuntimeRoots must be unique",
     });
   }
 });

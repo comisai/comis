@@ -105,6 +105,45 @@ export function ensureManagedRunTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_workspace_leases_recovery
       ON workspace_leases (state, updated_at_ms, workspace_lease_id);
 
+    CREATE TABLE IF NOT EXISTS execution_attachments (
+      schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+      execution_attachment_id TEXT PRIMARY KEY NOT NULL,
+      managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),
+      workspace_lease_id TEXT NOT NULL REFERENCES workspace_leases(workspace_lease_id),
+      service_instance_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind = 'unix_socket'),
+      source_path TEXT NOT NULL,
+      source_filesystem_type TEXT NOT NULL CHECK(source_filesystem_type = 'socket'),
+      source_filesystem_device INTEGER NOT NULL CHECK(source_filesystem_device >= 0),
+      source_filesystem_inode INTEGER NOT NULL CHECK(source_filesystem_inode >= 0),
+      target_name TEXT NOT NULL,
+      access TEXT NOT NULL CHECK(access = 'connect_only'),
+      state TEXT NOT NULL CHECK(state IN ('active','revoked')),
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      last_recovered_at_ms INTEGER,
+      revoked_at_ms INTEGER,
+      revocation_reason TEXT CHECK(revocation_reason IN ('lease_release','authority_revoked','recovery_mismatch'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_execution_attachments_run
+      ON execution_attachments (managed_run_id, workspace_lease_id, state, execution_attachment_id);
+    CREATE INDEX IF NOT EXISTS idx_execution_attachments_recovery
+      ON execution_attachments (state, updated_at_ms, execution_attachment_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_attachments_active_source
+      ON execution_attachments (source_path) WHERE state = 'active';
+
+    CREATE TABLE IF NOT EXISTS execution_attachment_operations (
+      execution_attachment_id TEXT NOT NULL REFERENCES execution_attachments(execution_attachment_id),
+      operation_id TEXT NOT NULL,
+      operation_kind TEXT NOT NULL CHECK(operation_kind IN ('revoke','reconcile')),
+      input_hash TEXT NOT NULL,
+      result_record TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (execution_attachment_id, operation_id, operation_kind)
+    );
+
     CREATE TABLE IF NOT EXISTS workspace_lease_operations (
       workspace_lease_id TEXT NOT NULL REFERENCES workspace_leases(workspace_lease_id),
       operation_id TEXT NOT NULL,

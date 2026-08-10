@@ -228,6 +228,14 @@ export type {
   WorkspaceLeaseReleaseOutcome,
   WorkspaceLeaseReconcileOutcome,
   WorkspaceLeasePort,
+  ExecutionAttachmentScope,
+  ExecutionAttachmentCreateOutcome,
+  ExecutionAttachmentRevokeInput,
+  ExecutionAttachmentReconcileInput,
+  ExecutionAttachmentRevokeOutcome,
+  ExecutionAttachmentReconcileOutcome,
+  ExecutionAttachmentRecoveryScanInput,
+  ExecutionAttachmentPort,
 } from "../ports/index.js";
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure
 // round-trip functions the memory adapter and context ingest consume. The port
