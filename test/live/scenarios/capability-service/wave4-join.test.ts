@@ -350,7 +350,7 @@ function cli<T>(binary: string, socket: string, args: readonly string[]): T {
 }
 
 function launcherHash(): string {
-  return `sha256:${createHash("sha256").update(readFileSync(REVIEWED_LAUNCHER)).digest("hex")}`;
+  return createHash("sha256").update(readFileSync(REVIEWED_LAUNCHER)).digest("hex");
 }
 
 function makeConfig(input: {
