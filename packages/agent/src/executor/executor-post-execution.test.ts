@@ -1254,6 +1254,7 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/enforceRuntimeSelfReportEvidence\(/);
     expect(stripped).toMatch(/buildRuntimeSelfReportEvidenceMissingReply\(/);
     expect(stripped).toMatch(/response\.runtime_self_report_evidence_guard/);
+    expect(stripped).toMatch(/unsupported_outage_receipt_evidence/);
     expect(stripped).toMatch(
       /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
     );

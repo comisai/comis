@@ -23,7 +23,10 @@ interface SchedulerStateEvidenceGuardResult {
 interface RuntimeSelfReportEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_runtime_self_report_evidence" | "unsupported_runtime_self_report_evidence";
+  reason?:
+    | "missing_runtime_self_report_evidence"
+    | "unsupported_runtime_self_report_evidence"
+    | "unsupported_outage_receipt_evidence";
 }
 
 function runtimeSelfReportEvidenceGuard(): (params: {
@@ -168,6 +171,22 @@ describe("response grounding module", () => {
       response: honestResponse,
       corrected: true,
       reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("rejects outage receipt timing that a generic observability result cannot prove", () => {
+    const honestResponse =
+      "I could not verify whether that message was accepted while the service was down.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "did you receive the message injected while you were down?",
+      response: "Yes — I received it after the restart.",
+      toolExecResults: [{ toolName: "obs_query", success: true }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "unsupported_outage_receipt_evidence",
     });
   });
 

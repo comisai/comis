@@ -29,6 +29,7 @@ describe("MessagingEvents payload structure", () => {
     const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
 
     expect(source).toContain('| "missing_runtime_self_report_evidence"');
+    expect(source).toContain('| "unsupported_outage_receipt_evidence"');
   });
 
   it("execution recovery can identify a sender-authority grounding correction", () => {
