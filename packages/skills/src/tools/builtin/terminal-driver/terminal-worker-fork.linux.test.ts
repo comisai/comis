@@ -269,6 +269,8 @@ describe.skipIf(!isLinux() || !distBuilt)(
           " probe.connect(source); print('SOURCE_EXPOSED', flush=True); probe.close()",
           "except OSError:",
           " print('SOURCE_BLOCKED', flush=True)",
+          "attachment_mode=pathlib.Path(target).parent.stat().st_mode & 0o777",
+          "print('ATTACHMENT_DIR_OWNER_ONLY' if attachment_mode == 0o700 else 'ATTACHMENT_DIR_MODE_' + oct(attachment_mode), flush=True)",
           "while True:",
           " call=socket.socket(socket.AF_UNIX); call.connect(target); call.sendall(b'PING')",
           " print(call.recv(64).decode().strip(), flush=True); call.close(); time.sleep(0.05)",
@@ -315,6 +317,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
               && screen.includes("SIBLING_WRITE_BLOCKED")
               && screen.includes("CONTROL_CREDENTIAL_BLOCKED")
               && screen.includes("SOURCE_BLOCKED")
+              && screen.includes("ATTACHMENT_DIR_OWNER_ONLY")
               && screen.includes("ATTACHMENT_OK")
               && calls >= 2
             ) break;
@@ -333,6 +336,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
           expect(screen).not.toContain("CONTROL_CREDENTIAL_EXPOSED");
           expect(screen).toContain("SOURCE_BLOCKED");
           expect(screen).not.toContain("SOURCE_EXPOSED");
+          expect(screen).toContain("ATTACHMENT_DIR_OWNER_ONLY");
           expect(screen).toContain("ATTACHMENT_OK");
           expect(calls).toBeGreaterThanOrEqual(2);
 
