@@ -40,3 +40,24 @@ export interface ManagedTerminalBindingResolver {
     readonly owner: SessionOwner;
   }): Promise<ManagedTerminalBindOutcome>;
 }
+
+export type ManagedTerminalTransition =
+  | "created"
+  | "running"
+  | "input_needed"
+  | "stuck"
+  | "exited"
+  | "lost"
+  | "recovered"
+  | "released";
+
+/** Content-free transition bridge; publishing failure never grants cleanup authority. */
+export interface ManagedTerminalEventSink {
+  publish(input: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+    readonly terminalSessionId: string;
+    readonly transition: ManagedTerminalTransition;
+  }): Promise<void>;
+}

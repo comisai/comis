@@ -59,7 +59,7 @@ import {
 } from "./terminal-session-registry.js";
 import { withCompleteNote } from "./terminal-wait-reply.js";
 import { narrowManagedTerminalScope, selectManagedHandles } from "./terminal-managed-create.js";
-import type { ManagedTerminalBindingResolver } from "./terminal-managed-binding.js";
+import type { ManagedTerminalBindingResolver, ManagedTerminalEventSink } from "./terminal-managed-binding.js";
 
 // Injected dependency contracts
 
@@ -191,6 +191,7 @@ export interface TerminalToolDeps {
   readonly approvalGate?: ApprovalGate;
   /** Daemon-owned authority resolver for the optional paired managed terminal path. */
   readonly managedBinding?: ManagedTerminalBindingResolver;
+  readonly managedTerminalEvents?: ManagedTerminalEventSink;
 }
 
 // Defaults
@@ -558,6 +559,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           await deps.registry.kill(result.sessionId, owner);
           throwToolError("conflict", `managed terminal binding failed: ${bound.reason}`);
         }
+        await deps.managedTerminalEvents?.publish({
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+          serviceInstanceId: managedResolved.serviceInstanceId,
+          terminalSessionId: result.sessionId,
+          transition: "created",
+        });
       }
 
       const doneAt = deps.nowMs();
@@ -693,6 +701,9 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
       const handle = deps.registry.get(sessionId, owner);
       const exitCode = handle?.exitCode;
       await deps.registry.kill(sessionId, owner);
+      if (handle?.managedRunId !== undefined && handle.workspaceLeaseId !== undefined && handle.serviceInstanceId !== undefined) {
+        await deps.managedTerminalEvents?.publish({ managedRunId: handle.managedRunId, workspaceLeaseId: handle.workspaceLeaseId, serviceInstanceId: handle.serviceInstanceId, terminalSessionId: sessionId, transition: "released" });
+      }
       // The EXPLICIT kill forgets the per-session cap state directly (KEEP this —
       // it complements the reap-path onCapForget so EVERY end-of-life forgets the cap
       // state; the kill tool is the agent's intentional terminate, not an evict).

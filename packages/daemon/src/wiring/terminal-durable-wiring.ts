@@ -53,8 +53,10 @@ import {
   type TerminalSessionRegistry,
   type DriveJournal,
   type BusySignal,
+  type ManagedTerminalEventSink,
 } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
+import { suppressError } from "@comis/shared";
 
 /**
  * The narrow event-bus surface the durability hooks emit onto (a `Pick`-style contract,
@@ -186,6 +188,7 @@ export interface AgentTerminalDurabilityInputs {
   /** The operator `worker.stuckMs` window the busy-vs-hung verdict compares against. */
   readonly workerStuckMs: number;
   readonly nowMs: () => number;
+  readonly managedTerminalEvents?: ManagedTerminalEventSink;
 }
 
 /**
@@ -212,12 +215,17 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
   const killTmuxSession = buildKillTmux(resolveDaemonTmuxPath(), tmuxSocketPath);
   const storeDeps: SessionDescriptorPersistenceDeps = { dataDir: i.dataDir, agentId: i.agentId };
   const descriptorStore = createSessionDescriptorStore(storeDeps);
+  const publishRecovery = (info: { sessionId: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }, transition: "recovered" | "lost"): void => {
+    if (info.managedRunId === undefined || info.workspaceLeaseId === undefined || info.serviceInstanceId === undefined || i.managedTerminalEvents === undefined) return;
+    suppressError(i.managedTerminalEvents.publish({ managedRunId: info.managedRunId, workspaceLeaseId: info.workspaceLeaseId, serviceInstanceId: info.serviceInstanceId, terminalSessionId: info.sessionId, transition }), "buildAgentTerminalDurability managed recovery transition", (message) => i.logger.debug({ sessionId: info.sessionId, step: "managed_terminal_recovery_suppressed" }, message));
+  };
 
   const durability: TerminalDurabilityDeps = {
     descriptorStore,
     isTmuxAlive,
     killTmuxSession,
-    onReattached: ({ sessionId, agentId }) => {
+    onReattached: (info) => {
+      const { sessionId, agentId } = info;
       // The re-attach ran under the SAME persisted allow-entry; the content-free record carries
       // ids only (the screen the drive resumed on rides the detached tmux, never the bus).
       //
@@ -230,8 +238,10 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
       // (it fires here regardless of any subscriber), NOT the bus event — by design.
       i.eventBus.emit("terminal:drive_reattached", { sessionId, agentId, reason: "tmux_alive", timestamp: i.nowMs() });
       i.logger.info({ sessionId, agentId, step: "drive_reattached" }, "terminal durable drive re-attached on recover-on-boot");
+      publishRecovery(info, "recovered");
     },
-    onUnrecoverable: ({ sessionId, agentId, reason }) => {
+    onUnrecoverable: (info) => {
+      const { sessionId, agentId, reason } = info;
       // A genuinely-gone durable session → the EXISTING lost state + a content-free unrecoverable
       // reason (the journal is PRESERVED by the holder; the wake notify layer adds `failed`).
       // errorKind is the literal "dependency" (a gone backend) — the closed-union invariant
@@ -248,6 +258,7 @@ export function buildAgentTerminalDurability(i: AgentTerminalDurabilityInputs): 
         { sessionId, agentId, reason, hint: `a durable terminal drive could not be re-attached (${reason}); flipped lost with the journal preserved for a fresh drive`, errorKind: "dependency" as const, step: "drive_unrecoverable" },
         "terminal durable drive unrecoverable on recover-on-boot",
       );
+      publishRecovery(info, "lost");
     },
   };
 

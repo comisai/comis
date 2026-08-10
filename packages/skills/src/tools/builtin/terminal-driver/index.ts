@@ -57,6 +57,8 @@ export type {
   ManagedTerminalResolveOutcome,
   ManagedTerminalBindOutcome,
   TerminalRootProcessIdentity,
+  ManagedTerminalTransition,
+  ManagedTerminalEventSink,
 } from "./terminal-managed-binding.js";
 
 // Deterministic unattended honest-fail backstop: reap a turn's LIVE never-tasked drives at an

@@ -88,6 +88,8 @@ import {
   type SandboxProvider,
   type SessionCaps,
   type ManagedTerminalBindingResolver,
+  type ManagedTerminalBinding,
+  type ManagedTerminalEventSink,
 } from "@comis/skills/tools";
 import {
   systemNowMs,
@@ -97,6 +99,7 @@ import {
   type EgressControlPort,
   type TimerPort,
 } from "@comis/core";
+import { suppressError } from "@comis/shared";
 import { buildAgentTerminalDurability, type DurabilityEventBus } from "./terminal-durable-wiring.js";
 import { createTerminalRootProcessIdentityResolver } from "./terminal-root-process-identity.js";
 
@@ -182,6 +185,7 @@ export interface TerminalWiringDeps {
    */
   readonly config?: TerminalDriverConfig;
   readonly managedBinding?: ManagedTerminalBindingResolver;
+  readonly managedTerminalEvents?: ManagedTerminalEventSink;
 }
 
 /**
@@ -283,7 +287,13 @@ export function buildTerminalReaperHooks(
 export function buildTerminalEventHook(
   agentId: string,
   deps: TerminalWiringDeps,
+  lookupManagedBinding?: (sessionId: string) => Omit<ManagedTerminalBinding, "canonicalRoot"> | undefined,
 ): { onTerminalEvent: (frame: TerminalEventFrame) => void } {
+  const publishManaged = (sessionId: string, transition: "input_needed" | "stuck" | "exited" | "lost"): void => {
+    const binding = lookupManagedBinding?.(sessionId);
+    if (binding === undefined || deps.managedTerminalEvents === undefined) return;
+    suppressError(deps.managedTerminalEvents.publish({ ...binding, terminalSessionId: sessionId, transition }), "buildTerminalEventHook managed terminal transition", (message) => deps.skillsLogger.debug({ sessionId, step: "managed_terminal_event_suppressed" }, message));
+  };
   return {
     onTerminalEvent: (frame: TerminalEventFrame) => {
       const timestamp = systemNowMs();
@@ -305,6 +315,7 @@ export function buildTerminalEventHook(
             { sessionId: frame.sessionId, agentId, state, reason, confidence, step: "terminal_input_needed" },
             "terminal session needs input (re-published from fd3)",
           );
+          publishManaged(frame.sessionId, "input_needed");
           break;
         }
         case "terminal:stuck": {
@@ -320,12 +331,14 @@ export function buildTerminalEventHook(
             { sessionId: frame.sessionId, agentId, noProgressMs, reason, confidence, step: "terminal_stuck" },
             "terminal session stuck (re-published from fd3)",
           );
+          publishManaged(frame.sessionId, "stuck");
           break;
         }
         case "terminal:session_state": {
           // A per-session PTY exit (the worker hosts other sessions — this is the signal).
           const state = p.state === "exited" ? "exited" : "lost";
           deps.eventBus.emit("terminal:session_state", { sessionId: frame.sessionId, agentId, state, durationMs: 0, timestamp });
+          publishManaged(frame.sessionId, state);
           break;
         }
         case "terminal:escalated": {
@@ -396,6 +409,7 @@ function getOrCreateTerminalRegistry(
       registries,
       workerStuckMs: deps.workerCaps?.stuckMs ?? 0,
       nowMs: systemNowMs,
+      managedTerminalEvents: deps.managedTerminalEvents,
     });
     // The agent's OWN workspace, captured for the allocator closure (const ⇒ TS narrows
     // it to string inside the arrow). Present ⇒ sessions are PERSISTENT + agent-scoped.
@@ -456,7 +470,7 @@ function getOrCreateTerminalRegistry(
       // stuck / session_state / escalated / auto_answered) onto the TypedEventBus —
       // the no-poll seam the wake-FSM (setup-terminal-wake.ts) subscribes. The frame-integrity
       // guard runs BEFORE this; a corrupt frame drops the worker and never reaches it.
-      onTerminalEvent: buildTerminalEventHook(agentId, deps).onTerminalEvent,
+      onTerminalEvent: buildTerminalEventHook(agentId, deps, (sessionId) => registry?.getManagedBinding?.(sessionId)).onTerminalEvent,
       // The reaper caps + TimerPort + the audited eviction hooks.
       // worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs (0 while the
       // allow-set is empty) bound the per-agent session footprint; onCapForget wires
@@ -558,6 +572,7 @@ export interface TerminalWiringBaseDeps {
    */
   readonly agentWorkspaceDir?: string;
   readonly managedBinding?: ManagedTerminalBindingResolver;
+  readonly managedTerminalEvents?: ManagedTerminalEventSink;
 }
 
 /**
@@ -597,6 +612,7 @@ export function buildTerminalWiringDeps(
     ...(base.timers ? { timers: base.timers } : {}),
     ...(base.agentWorkspaceDir ? { agentWorkspaceDir: base.agentWorkspaceDir } : {}),
     ...(base.managedBinding ? { managedBinding: base.managedBinding } : {}),
+    ...(base.managedTerminalEvents ? { managedTerminalEvents: base.managedTerminalEvents } : {}),
     ...(workerCaps ? { workerCaps } : {}),
     ...(config ? { config } : {}),
   };
@@ -682,6 +698,7 @@ export function buildTerminalSharedDeps(
     // gate fail-closes in the tool.
     approvalGate: deps.approvalGate,
     managedBinding: deps.managedBinding,
+    managedTerminalEvents: deps.managedTerminalEvents,
     // The net-new egress dimensions, threaded toward the worker.
     // The PORT impl (the no-secret allowlist proxy) + the resolved bwrap path; the
     // worker calls `egressControl.materialize(scope.hosts)` for

@@ -92,7 +92,7 @@ export interface SessionDescriptorStorePort {
  */
 export type RecoveredAction =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" };
+  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
 
 /** Dependencies for {@link recoverSessionDescriptors} — the injected store + liveness probe. */
 export interface RecoverSessionDescriptorsDeps {
@@ -143,7 +143,15 @@ export function recoverSessionDescriptors(deps: RecoverSessionDescriptorsDeps): 
     } else if (decision.action === "failed") {
       // Carry the descriptor's owner (the persisted identity) so the registry's
       // content-free unrecoverable hook gets the agentId without a second lookup.
-      out.push({ action: "failed", sessionId: decision.sessionId, owner: descriptor.owner, reason: decision.reason });
+      out.push({
+        action: "failed",
+        sessionId: decision.sessionId,
+        owner: descriptor.owner,
+        reason: decision.reason,
+        ...(descriptor.managedRunId === undefined || descriptor.workspaceLeaseId === undefined || descriptor.serviceInstanceId === undefined
+          ? {}
+          : { managedBinding: { managedRunId: descriptor.managedRunId, workspaceLeaseId: descriptor.workspaceLeaseId, serviceInstanceId: descriptor.serviceInstanceId } }),
+      });
     }
     // fallback_nondurable → skip (the registry's existing lost floor handles it).
   }
@@ -314,8 +322,14 @@ export interface TerminalDurabilityDeps {
    * Absent ⇒ no-op (the worker-IPC kill is the only teardown, today's behavior).
    */
   killTmuxSession?: (name: string, socket?: string) => void;
-  onReattached?: (info: { sessionId: string; agentId: string }) => void;
-  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string }) => void;
+  onReattached?: (info: { sessionId: string; agentId: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
+  onUnrecoverable?: (info: { sessionId: string; agentId: string; reason: string; errorKind: string; managedRunId?: string; workspaceLeaseId?: string; serviceInstanceId?: string }) => void;
+}
+
+function managedDescriptorIdentity(descriptor: SessionDescriptor): { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } | undefined {
+  return descriptor.managedRunId === undefined || descriptor.workspaceLeaseId === undefined || descriptor.serviceInstanceId === undefined
+    ? undefined
+    : { managedRunId: descriptor.managedRunId, workspaceLeaseId: descriptor.workspaceLeaseId, serviceInstanceId: descriptor.serviceInstanceId };
 }
 
 /**
@@ -349,7 +363,7 @@ async function driveWorkerReattach(
     .then((r) => r.ok)
     .catch(() => false);
   if (ok) {
-    deps.onReattached?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId });
+    deps.onReattached?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, ...(managedDescriptorIdentity(descriptor) ?? {}) });
     return;
   }
   // The worker could not re-attach — honest death. Flip lost + fire the unrecoverable
@@ -358,8 +372,8 @@ async function driveWorkerReattach(
   // holder (the descriptor store is distinct from the journal store).
   const handle = sessions.get(descriptor.sessionId);
   if (handle !== undefined && handle.status === "running") handle.status = "lost";
-  deps.onUnrecoverable?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, reason: "tmux_session_gone", errorKind: "dependency" });
-  deps.descriptorStore?.remove(descriptor.sessionId);
+  deps.onUnrecoverable?.({ sessionId: descriptor.sessionId, agentId: descriptor.owner.agentId, reason: "tmux_session_gone", errorKind: "dependency", ...(managedDescriptorIdentity(descriptor) ?? {}) });
+  if (descriptor.managedRunId === undefined) deps.descriptorStore?.remove(descriptor.sessionId);
 }
 
 /**
@@ -399,15 +413,15 @@ export function applyRecoveredSessions(
         void driveWorkerReattach(deps, sessions, r.descriptor, reattachWorker);
       } else {
         // Legacy (no worker round-trip injected): fire the re-attach signal synchronously.
-        deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId });
+        deps.onReattached?.({ sessionId: r.descriptor.sessionId, agentId: r.descriptor.owner.agentId, ...(managedDescriptorIdentity(r.descriptor) ?? {}) });
       }
     } else {
       // Genuinely gone at the boot probe: fire the unrecoverable hook + drop the dead
       // DESCRIPTOR (a stale descriptor with a dead tmuxName re-scans/re-probes/
       // re-emits lost every boot). The JOURNAL is preserved by the daemon holder
       // (the descriptor store is distinct from the journal store).
-      deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency" });
-      deps.descriptorStore.remove(r.sessionId);
+      deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency", ...(r.managedBinding ?? {}) });
+      if (r.managedBinding === undefined) deps.descriptorStore.remove(r.sessionId);
     }
   }
 }

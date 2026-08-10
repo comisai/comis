@@ -4,10 +4,13 @@ import {
   tryGetContext,
   type ManagedRunOwnerScope,
   type ManagedRunStorePort,
+  type CapabilityServiceControlPort,
+  type ComisLogger,
   type WorkspaceLeasePort,
 } from "@comis/core";
 import type { ManagedTerminalBindingResolver, SessionOwner } from "@comis/skills/tools";
 import { fromPromise, type Result } from "@comis/shared";
+import { createManagedTerminalEventBridge } from "./capability-service-terminal-event.js";
 
 export interface ManagedTerminalBindingDeps {
   readonly store: ManagedRunStorePort;
@@ -102,5 +105,16 @@ export function createManagedTerminalBindingResolver(
         ? { kind: "bound" }
         : { kind: "rejected", reason: bound.value.kind };
     },
+  };
+}
+
+/** Build the paired authority and lifecycle seams consumed by terminal tool wiring. */
+export function createManagedTerminalToolDeps(deps: ManagedTerminalBindingDeps & {
+  readonly control: CapabilityServiceControlPort;
+  readonly logger: ComisLogger;
+}) {
+  return {
+    managedBinding: createManagedTerminalBindingResolver(deps),
+    managedTerminalEvents: createManagedTerminalEventBridge({ control: deps.control, logger: deps.logger, nowMs: deps.nowMs }),
   };
 }

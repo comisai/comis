@@ -282,6 +282,8 @@ export interface TerminalSessionRegistry {
   ): Promise<WaitResult>;
   /** The handle iff it exists AND is owned by `owner`; else `undefined`. */
   get(sessionId: string, owner: SessionOwner): SessionHandle | undefined;
+  /** Trusted daemon-only content-free identity lookup for lifecycle routing. */
+  getManagedBinding?(sessionId: string): Omit<ManagedTerminalBinding, "canonicalRoot"> | undefined;
   /** Only the sessions owned by `owner` (owner-scoped visibility). */
   list(owner: SessionOwner): SessionListing[];
   /** Terminate a session — a no-op if it is absent OR not owned by `owner`. */
@@ -639,6 +641,13 @@ export function createTerminalSessionRegistry(
     return handle !== undefined && sameOwner(handle.owner, owner) ? handle : undefined;
   }
 
+  function getManagedBinding(sessionId: string): Omit<ManagedTerminalBinding, "canonicalRoot"> | undefined {
+    const handle = sessions.get(sessionId);
+    return handle?.managedRunId === undefined || handle.workspaceLeaseId === undefined || handle.serviceInstanceId === undefined
+      ? undefined
+      : { managedRunId: handle.managedRunId, workspaceLeaseId: handle.workspaceLeaseId, serviceInstanceId: handle.serviceInstanceId };
+  }
+
   async function read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView> {
     const handle = ownedHandle(sessionId, owner);
     if (handle === undefined || handle.status !== "running") {
@@ -881,5 +890,5 @@ export function createTerminalSessionRegistry(
       request(id, "reattach", { sessionId: id, cols, rows, allowId, ...(tmuxSocket !== undefined ? { tmuxSocket } : {}) }),
     );
 
-  return { create, read, status, sendText, sendKey, resize, wait, get, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, getOriginEndpoint: (sessionId: string): ChannelEndpoint | undefined => sessions.get(sessionId)?.originEndpoint, size, cleanup };
+  return { create, read, status, sendText, sendKey, resize, wait, get, getManagedBinding, list, kill, evict, getOwner: (sessionId: string): SessionOwner | undefined => sessions.get(sessionId)?.owner, getOriginEndpoint: (sessionId: string): ChannelEndpoint | undefined => sessions.get(sessionId)?.originEndpoint, size, cleanup };
 }

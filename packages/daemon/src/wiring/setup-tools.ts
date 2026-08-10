@@ -70,7 +70,7 @@ import {
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
 import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
-import { createManagedTerminalBindingResolver } from "./managed-terminal-binding.js";
+import { createManagedTerminalToolDeps } from "./managed-terminal-binding.js";
 import {
   buildTerminalWakeDurability,
   type WakeDurabilityConfig,
@@ -830,7 +830,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             ...terminalEgress,
             timers: deps.timers,
             agentWorkspaceDir,
-            managedBinding: createManagedTerminalBindingResolver({ store: deps.capabilityServices.store, workspaceLeases: deps.capabilityServices.workspaceLeases, nowMs: () => deps.clock.now() }),
+            ...createManagedTerminalToolDeps({ store: deps.capabilityServices.store, workspaceLeases: deps.capabilityServices.workspaceLeases, control: deps.capabilityServices.control, logger: skillsLogger, nowMs: () => deps.clock.now() }),
           },
           skillsConfig.terminal,
         );

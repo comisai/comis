@@ -165,7 +165,9 @@ export {
   type TerminalToolDeps,
   type TerminalEventBus,
   type ManagedTerminalBindingResolver,
+  type ManagedTerminalBinding,
   type TerminalRootProcessIdentity,
+  type ManagedTerminalEventSink,
   // The decoded fd3 push-channel frame the daemon's onTerminalEvent hook
   // re-publishes onto the TypedEventBus (the 3rd emit-hook site).
   type TerminalEventFrame,

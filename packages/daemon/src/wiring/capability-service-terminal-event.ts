@@ -4,14 +4,17 @@ import {
   CapabilityTerminalEventRequestSchema,
   CapabilityTerminalEventResponseSchema,
 } from "@comis/capability-service-sdk";
+import { createHash } from "node:crypto";
 import type {
   CapabilityServiceControlFailure,
+  CapabilityServiceControlPort,
   CapabilityServiceTerminalEventAcknowledgement,
   CapabilityServiceTerminalEventCommand,
   ClockPort,
   ComisLogger,
 } from "@comis/core";
-import { err, type Result } from "@comis/shared";
+import type { ManagedTerminalEventSink } from "@comis/skills/tools";
+import { err, fromPromise, type Result } from "@comis/shared";
 
 type SendControl = <T>(
   frame: unknown,
@@ -54,4 +57,35 @@ export async function forwardTerminalEvent(deps: {
   if (!result.ok) deps.onFailure(result.error);
   else deps.logger.info({ serviceInstanceId: deps.command.serviceInstanceId, managedRunId: deps.command.managedRunId, terminalSessionId: deps.command.terminalSessionId, transition: deps.command.transition, durationMs: Math.max(0, deps.clock.now() - startedAtMs) }, "Managed terminal transition call completed");
   return result;
+}
+
+/** Build the content-free lifecycle bridge. Failures are observed but never trigger cleanup. */
+export function createManagedTerminalEventBridge(deps: {
+  readonly control: CapabilityServiceControlPort;
+  readonly logger: ComisLogger;
+  readonly nowMs: () => number;
+}): ManagedTerminalEventSink {
+  let sequence = 0;
+  return {
+    publish: async (input) => {
+      sequence += 1;
+      const operationDigest = createHash("sha256")
+        .update(`${input.managedRunId}\0${input.terminalSessionId}\0${input.transition}\0${deps.nowMs()}\0${sequence}`, "utf8")
+        .digest("hex").slice(0, 32);
+      const called = await fromPromise(deps.control.terminalEvent({
+        operationId: `operation_terminal_${operationDigest}`,
+        ...input,
+      }));
+      if (!called.ok || !called.value.ok) {
+        deps.logger.warn({
+          serviceInstanceId: input.serviceInstanceId,
+          managedRunId: input.managedRunId,
+          terminalSessionId: input.terminalSessionId,
+          transition: input.transition,
+          errorKind: "dependency" as const,
+          hint: "Check the capabilityServices socket and owning service instance; terminal, lease, and content were preserved",
+        }, "Managed terminal transition delivery failed");
+      }
+    },
+  };
 }
