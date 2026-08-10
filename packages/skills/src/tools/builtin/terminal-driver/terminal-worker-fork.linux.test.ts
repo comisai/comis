@@ -17,16 +17,19 @@
  *     fork + frame-pump + IPC server half work end-to-end (no unjailed spawn).
  *   - Part B (`skipIf` no bwrap): real bwrapPath → create a jailed bash PTY, read
  *     its grid, kill it — the full jailed round-trip through the real fork.
+ *   - Part C: a managed terminal reaches a host Unix socket only at its fixed
+ *     attachment target, then confirmed termination stops every further call.
  *
  * @module
  */
 
 import { describe, it, expect } from "vitest";
-import { realpathSync, existsSync } from "node:fs";
+import { realpathSync, existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { resolve as pathResolve } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
+import { createServer } from "node:net";
 
 import {
   createTerminalSessionCreateTool,
@@ -39,6 +42,7 @@ import { createTerminalSessionRegistry } from "./terminal-session-registry.js";
 import { createSessionCaps } from "./terminal-caps.js";
 import { buildProductionSpawnWorker } from "./terminal-worker-launch.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
+import { managedTerminalAttachmentTargetPath } from "./terminal-managed-binding.js";
 
 function isLinux(): boolean {
   return process.platform === "linux";
@@ -191,6 +195,99 @@ describe.skipIf(!isLinux() || !distBuilt)(
         expect((killed.details as { ok: boolean }).ok).toBe(true);
 
         await registry.cleanup();
+      },
+      45000,
+    );
+
+    it.skipIf(!bwrapPathOrUndefined() || !existsSync("/usr/bin/python3"))(
+      "Part C: exposes one fixed Unix socket target and removes reachability before confirmed revocation returns",
+      async () => {
+        const scratch = realpathSync(mkdtempSync(join(tmpdir(), "terminal-attachment-")));
+        const dataDir = join(scratch, "data");
+        const workspace = join(scratch, "workspace");
+        const sourcePath = join(scratch, "worker.sock");
+        const targetName = `attachment-${"a".repeat(32)}.sock`;
+        const targetPath = managedTerminalAttachmentTargetPath(targetName);
+        mkdirSync(dataDir, { mode: 0o700 });
+        mkdirSync(workspace, { mode: 0o700 });
+        let calls = 0;
+        const server = createServer((socket) => {
+          socket.once("data", () => {
+            calls += 1;
+            socket.end("ATTACHMENT_OK\n");
+          });
+        });
+        await new Promise<void>((resolveListen, rejectListen) => {
+          server.once("error", rejectListen);
+          server.listen(sourcePath, () => resolveListen());
+        });
+        const registry = createTerminalSessionRegistry({
+          spawnWorker: buildProductionSpawnWorker(distWorkerMainPath(), dataDir),
+          logger: noopLogger,
+          nowMs: () => Date.now(),
+          bwrapPath: bwrapPathOrUndefined(),
+          resolveRootProcessIdentity: async (pid) => ({ pid, startIdentity: `test:${pid}` }),
+          cleanupWorkspace: () => undefined,
+        });
+        const owner = { agentId: "agent-attachment-linux", sessionKey: "session-attachment-linux" };
+        const python = [
+          "import socket,sys,time",
+          "source,target=sys.argv[1:3]",
+          "probe=socket.socket(socket.AF_UNIX)",
+          "try:",
+          " probe.connect(source); print('SOURCE_EXPOSED', flush=True); probe.close()",
+          "except OSError:",
+          " print('SOURCE_BLOCKED', flush=True)",
+          "while True:",
+          " call=socket.socket(socket.AF_UNIX); call.connect(target); call.sendall(b'PING')",
+          " print(call.recv(64).decode().strip(), flush=True); call.close(); time.sleep(0.05)",
+        ].join("\n");
+
+        try {
+          const created = await registry.create({
+            allowId: "python-attachment-probe",
+            bin: "/usr/bin/python3",
+            argv: ["-c", python, sourcePath, targetPath],
+            cols: 100,
+            rows: 30,
+            scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "daemon" },
+            workspace,
+            cwd: workspace,
+            managedBinding: {
+              managedRunId: "managed-run_attachment",
+              workspaceLeaseId: "workspace-lease_attachment",
+              serviceInstanceId: "service-instance_attachment",
+            },
+            executionAttachments: [{
+              executionAttachmentId: "execution-attachment_a",
+              sourcePath,
+              targetName,
+            }],
+          }, owner);
+          let screen = "";
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            screen = (await registry.read(created.sessionId, owner)).screen;
+            if (screen.includes("SOURCE_BLOCKED") && screen.includes("ATTACHMENT_OK") && calls >= 2) break;
+            await new Promise((resolvePoll) => setTimeout(resolvePoll, 25));
+          }
+          expect(screen).toContain("SOURCE_BLOCKED");
+          expect(screen).not.toContain("SOURCE_EXPOSED");
+          expect(screen).toContain("ATTACHMENT_OK");
+          expect(calls).toBeGreaterThanOrEqual(2);
+
+          await expect(registry.terminateAndConfirm(created.sessionId, owner)).resolves.toEqual({
+            ok: true,
+            value: undefined,
+          });
+          await new Promise((resolveDrain) => setTimeout(resolveDrain, 150));
+          const callsAfterRevocation = calls;
+          await new Promise((resolveProbe) => setTimeout(resolveProbe, 250));
+          expect(calls).toBe(callsAfterRevocation);
+        } finally {
+          await registry.cleanup();
+          await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+          rmSync(scratch, { recursive: true, force: true });
+        }
       },
       45000,
     );
