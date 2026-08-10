@@ -98,6 +98,7 @@ export async function executeLlm(
   tools: any[] | undefined,
   directives: Record<string, unknown> | undefined,
   inboundProvenancePlans: readonly InboundMessageProvenancePlan[],
+  executionSignal?: AbortSignal,
 ): Promise<ExecuteResult> {
   const executionTraceId = tryGetContext()?.traceId ?? randomUUID();
 
@@ -210,6 +211,7 @@ export async function executeLlm(
         undefined,
         {
           operationType: "interactive" as const,
+          ...(executionSignal === undefined ? {} : { signal: executionSignal }),
           inboundProvenancePlans,
           suppressFinalResponseAfterOutboundDelivery: {
             channelType: effectiveMsg.channelType,

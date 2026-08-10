@@ -50,6 +50,7 @@ interface ExecutionPolicyInput {
   tools?: any[];
   directives?: Record<string, unknown>;
   inboundProvenancePlans: readonly InboundMessageProvenancePlan[];
+  executionSignal?: AbortSignal;
   onExecutionStart(): void;
   onExecutionComplete(): void;
 }
@@ -172,6 +173,9 @@ export async function runExecutionPolicy(
           undefined,
           {
             operationType: "interactive" as const,
+            ...(input.executionSignal === undefined
+              ? {}
+              : { signal: input.executionSignal }),
             inboundProvenancePlans: input.inboundProvenancePlans,
             suppressFinalResponseAfterOutboundDelivery: {
               channelType: effectiveMsg.channelType,
