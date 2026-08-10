@@ -629,6 +629,8 @@ describe("resolveDescription", () => {
     expect(result).toMatch(/call explain.*system_health.*billing before answering/i);
     expect(result).toMatch(/never infer runtime cause from chat memory/i);
     expect(result).toMatch(/system_health for failure or degraded counts/i);
+    expect(result).toMatch(/system_health.*(?:does not|doesn't).*rank.*duration/i);
+    expect(result).toMatch(/cost.*estimate.*not.*provider invoice/i);
     expect(result).toMatch(/say unknown/i);
   });
 

@@ -62,6 +62,10 @@ describe("obs_query tool", () => {
     expect(tool.description).toMatch(
       /system_health for failure or degraded counts/i,
     );
+    expect(tool.description).toMatch(
+      /system_health.*(?:does not|doesn't).*rank.*duration/i,
+    );
+    expect(tool.description).toMatch(/cost.*estimate.*not.*provider invoice/i);
     expect(tool.description).toMatch(/say unknown/i);
     expect(tool.description).toMatch(/currentRoot.*spawned descendants/i);
     expect(tool.description).toMatch(/runtime cost.*external purchases/i);
