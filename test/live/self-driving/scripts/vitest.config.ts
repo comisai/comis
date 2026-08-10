@@ -19,9 +19,9 @@
  * into FALSE FAILURES on a live campaign (comis-moshe, 2026-08-06).
  *
  * Include is `*.test.ts` ONLY. The `*.test.mjs` neighbours (`media-file-meta`,
- * `generic-runtime-probe`, `durability-resume-probe-core`) are `node:test`
- * suites — vitest collects them and reports "No test suite found", so widening
- * this include turns a healthy helper test into a red gate.
+ * `generic-runtime-probe`) are `node:test` suites — vitest collects them and
+ * reports "No test suite found", so widening this include turns a healthy
+ * helper test into a red gate.
  *
  * CONTRACT for anything added here: no `@comis/*` import. This project
  * registers no dist aliases on purpose, so it runs in the unit tier without a

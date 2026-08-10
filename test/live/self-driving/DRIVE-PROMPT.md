@@ -376,10 +376,9 @@ surprising result.
 11. **Two lenses on the same number can double-count, and the same field name can mean different things on
     different lines.** Before reporting a discrepancy between two surfaces, confirm they define the field
     identically; reconcile the definitions first, then the values.
-12. **A kit unit test run with a bare `pnpm vitest run <path>` runs nothing.**
-    `test/live/self-driving/scripts/` is in no default vitest project, so the filter matches zero files and
-    the command exits looking clean. Pass the live config
-    (`npx vitest run --config test/live/vitest.config.ts <path>`) and always read the test COUNT.
+12. **A kit unit run that reports no test COUNT proved nothing.** A mistyped path, or a `*.test.mjs`
+    neighbour (a `node:test` suite the kit's vitest project does not collect), matches zero files and exits
+    looking clean. `scripts/README.md` owns how the kit's tests are run.
 13. **`drive.mjs` cannot drive concurrency.** It holds `/tmp/comis-drive-<conversation>.lock` and refuses
     two drives in one conversation, so N parallel drives serialize; the row then scores "no interleaving" as
     a pass on a test that never ran. Use `burst-inject.mjs` + `burst-verify.mjs`, and require the overlap

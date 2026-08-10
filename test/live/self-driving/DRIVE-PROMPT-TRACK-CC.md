@@ -159,10 +159,9 @@ has produced a wrong conclusion on a real drive:
 12. Two lenses on one number can double-count, and the same field name can mean different things on
     different lines. Before reporting a discrepancy between two surfaces, confirm they define the field
     identically — reconcile the definitions first, then the values.
-13. A kit unit test run with a bare `pnpm vitest run <path>` matches ZERO files and exits without running
-    anything — `test/live/self-driving/scripts/` is in no default vitest project. Always pass the live
-    config (`npx vitest run --config test/live/vitest.config.ts <path>`) and always read the test COUNT; a
-    run that reports no tests is a run that proved nothing.
+13. Always read the test COUNT of a kit unit run — a run that reports no tests proved nothing. A mistyped
+    path, or a `*.test.mjs` neighbour (a `node:test` suite the kit's vitest project does not collect),
+    matches zero files and exits looking clean. `scripts/README.md` owns how the kit's tests are run.
 
 If a helper or this prompt has drifted, fix the framework in place and verify the helper before continuing.
 A harness failure is not a product failure.
@@ -191,13 +190,11 @@ The tools exist; your job is to prove them HERE, not to rebuild them:
 
 Run its unit tests first and require green:
 
-  npx vitest run --config test/live/vitest.config.ts \
+  pnpm vitest run \
     test/live/self-driving/scripts/concurrency-oracle.test.ts \
     test/live/self-driving/scripts/drive-session-oracle.test.ts
 
-A bare `pnpm vitest run <path>` on a kit test matches ZERO files and exits without running anything —
-`test/live/self-driving/scripts/` is in no default vitest project. If you see no test count, you ran
-nothing.
+If you see no test count, you ran nothing.
 
 Verified in source. Do not re-diagnose these; design around them:
 
