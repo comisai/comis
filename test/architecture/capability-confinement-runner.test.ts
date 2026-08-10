@@ -133,4 +133,12 @@ describe("capability-service Linux confinement runner", () => {
     expect(scenario).toContain("const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;");
     expect(scenario).toContain("}, REAL_WORKER_JOIN_TIMEOUT_MS, `joined working state;");
   });
+
+  it("surfaces durable launch acknowledgement evidence on a failed join", () => {
+    const scenario = source(joinScenarioPath);
+
+    expect(scenario).toContain("failedJoinDurableDiagnostic");
+    expect(scenario).toContain("task_launch_acknowledgements");
+    expect(scenario).toContain("operation_replay_conflicts");
+  });
 });
