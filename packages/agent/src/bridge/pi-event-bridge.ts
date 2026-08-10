@@ -335,6 +335,26 @@ function extractSchedulerPolicyEvidence(
   return evidence;
 }
 
+function extractObservabilityEvidenceLimits(
+  toolName: string,
+  details: Record<string, unknown> | undefined,
+): ToolExecutionResultRecord["observabilityEvidenceLimits"] {
+  if (toolName !== "obs_query") return undefined;
+  const raw = details?.evidenceLimits;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const limits = raw as Record<string, unknown>;
+  const classified = {
+    ...(limits.cost === "runtime_estimate" ? { cost: "runtime_estimate" as const } : {}),
+    ...(limits.providerInvoice === "unverified"
+      ? { providerInvoice: "unverified" as const }
+      : {}),
+    ...(limits.crossExecutionDurationRanking === "unavailable"
+      ? { crossExecutionDurationRanking: "unavailable" as const }
+      : {}),
+  };
+  return Object.keys(classified).length === 0 ? undefined : classified;
+}
+
 /**
  * A CONTENT-FREE grounding summary of a web_search / web_fetch result for the
  * trajectory `tool.result` — result count, source HOSTS, and (for web_fetch)
@@ -1568,6 +1588,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const schedulerPolicyEvidence = toolSuccess
             ? extractSchedulerPolicyEvidence(endEvent.toolName, toolAction, resultDetails)
             : undefined;
+          const observabilityEvidenceLimits = toolSuccess
+            ? extractObservabilityEvidenceLimits(endEvent.toolName, resultDetails)
+            : undefined;
           const processSessionObservation = extractProcessSessionObservation({
             toolName: endEvent.toolName,
             resultBackgrounded,
@@ -1597,6 +1620,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               citationUrlDigest: webResultMeta.citationUrlDigest,
             }),
             ...(schedulerPolicyEvidence === undefined ? {} : { schedulerPolicyEvidence }),
+            ...(observabilityEvidenceLimits === undefined
+              ? {}
+              : { observabilityEvidenceLimits }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel

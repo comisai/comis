@@ -116,8 +116,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
   runtime_self_report_evidence_missing:
-    "I could not verify my runtime activity in this turn. Work counts, failure causes, and cost "
-      + "require a current observability report, so I cannot provide those claims yet.",
+    "I could not verify my runtime activity claim in this turn. Work counts, comparative latency, failure "
+      + "causes, and cost require a current observability result that supports the specific claim.",
   scheduler_state_evidence_missing:
     "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
       + "say that it is set. I need to check the scheduler before confirming it.",

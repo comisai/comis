@@ -123,7 +123,7 @@ export interface OngoingWorkEvidenceGuardResult {
 export interface RuntimeSelfReportEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_runtime_self_report_evidence";
+  reason?: "missing_runtime_self_report_evidence" | "unsupported_runtime_self_report_evidence";
 }
 
 const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
@@ -132,6 +132,7 @@ const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
   /\bhow much (?:(?:have|did) )?(?:you|u) cost(?: me| us)?\b/iu,
   /\bwhy (?:were|are) (?:you|u) (?:so )?(?:slow|expensive)\b/iu,
   /\bwhy was (?:that|this|it) so slow\b/iu,
+  /\bwhy was the slowest\b[^?\n]{0,80}\bslow\b/iu,
   /\bhow many\b[^?\n]{0,80}\b(?:did|have) (?:you|u)\b/iu,
   /\b(?:cost|total)\b[^?\n]{0,100}\bbecause\b[^?\n]{0,80}\b(?:was|were) down\b[^?\n]{0,30}\b(?:right|correct|yeah)\b/iu,
   /\b(?:you|u) only (?:did|used)\b[^?\n]{0,80}\b(?:turns?|calls?|tokens?|sessions?)\b[^?\n]{0,100}\b(?:confirm|right|correct|yeah)\b/iu,
@@ -154,23 +155,55 @@ export function enforceRuntimeSelfReportEvidence(params: {
   toolExecResults?: ReadonlyArray<{
     toolName: string;
     success: boolean;
+    observabilityEvidenceLimits?: {
+      cost?: "runtime_estimate";
+      providerInvoice?: "unverified";
+      crossExecutionDurationRanking?: "unavailable";
+    };
   }>;
   honestResponse: string;
 }): RuntimeSelfReportEvidenceGuardResult {
   if (!isRuntimeSelfReportRequest(params.request)) {
     return { response: params.response, corrected: false };
   }
-  const hasEvidence = (params.toolExecResults ?? []).some(
+  const evidence = (params.toolExecResults ?? []).findLast(
     (result) => result.toolName === "obs_query" && result.success,
   );
-  if (hasEvidence || params.response === params.honestResponse) {
+  if (params.response === params.honestResponse) {
     return { response: params.response, corrected: false };
   }
-  return {
-    response: params.honestResponse,
-    corrected: true,
-    reason: "missing_runtime_self_report_evidence",
-  };
+  if (evidence === undefined) {
+    return {
+      response: params.honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    };
+  }
+
+  const limits = evidence.observabilityEvidenceLimits;
+  const asksForSlowest = /\bslowest\b/iu.test(params.request);
+  const asksForCost = /\b(?:cost|spend|spent|expensive)\b/iu.test(params.request);
+  const normalizedResponse = normalizedEvidenceText(params.response);
+  const qualifiesEstimate = /\b(?:runtime )?estimate(?:d)?\b/iu.test(normalizedResponse);
+  const qualifiesProviderInvoice =
+    /\b(?:provider|actual) (?:invoice|bill(?:ing)?)\b/iu.test(normalizedResponse)
+    && /\b(?:unverified|cannot verify|can't verify|not verified|unavailable)\b/iu.test(normalizedResponse);
+  const unsupportedDuration =
+    asksForSlowest
+    && limits?.crossExecutionDurationRanking === "unavailable";
+  const unsupportedCost =
+    asksForCost
+    && limits?.cost === "runtime_estimate"
+    && limits.providerInvoice === "unverified"
+    && (!qualifiesEstimate || !qualifiesProviderInvoice);
+  if (unsupportedDuration || unsupportedCost) {
+    return {
+      response: params.honestResponse,
+      corrected: true,
+      reason: "unsupported_runtime_self_report_evidence",
+    };
+  }
+  return { response: params.response, corrected: false };
 }
 
 export interface SchedulerStateEvidenceGuardResult {

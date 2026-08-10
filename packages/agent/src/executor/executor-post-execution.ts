@@ -1712,13 +1712,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   });
   if (runtimeSelfReportGrounding.corrected) {
     result.response = runtimeSelfReportGrounding.response;
+    const unsupportedEvidence =
+      runtimeSelfReportGrounding.reason === "unsupported_runtime_self_report_evidence";
     deps.logger.warn(
       {
         step: "response-honesty",
         errorKind: "precondition" as const,
-        hint:
-          "The runtime self-report lacked a successful current-turn obs_query receipt; "
-          + "inspect request-tool relevance and obs_query availability in comis explain.",
+        hint: unsupportedEvidence
+          ? "The current obs_query receipt did not support the comparative latency or provider-billed "
+            + "cost claim; inspect its evidenceLimits in comis explain."
+          : "The runtime self-report lacked a successful current-turn obs_query receipt; "
+            + "inspect request-tool relevance and obs_query availability in comis explain.",
       },
       "Unsupported runtime self-report replaced with an evidence limitation",
     );

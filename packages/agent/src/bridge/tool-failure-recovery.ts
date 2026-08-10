@@ -46,6 +46,13 @@ export type ToolRecoveryIdentity = MessageRecoveryIdentity | ExecRecoveryIdentit
 
 export type SchedulerPolicyEvidence = "holiday" | "weekday" | "weekend";
 
+/** Closed, content-free limitations carried by a model-facing observability receipt. */
+export interface ObservabilityEvidenceLimits {
+  readonly cost?: "runtime_estimate";
+  readonly providerInvoice?: "unverified";
+  readonly crossExecutionDurationRanking?: "unavailable";
+}
+
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
   /** Bounded structured action discriminator from the tool arguments. */
@@ -70,6 +77,8 @@ export interface ToolExecutionResultRecord {
   readonly citationUrlDigest?: string;
   /** Closed, content-free policy classifications from a current cron-list receipt. */
   readonly schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
+  /** Closed qualifications that prevent a self-report from overstating the receipt. */
+  readonly observabilityEvidenceLimits?: ObservabilityEvidenceLimits;
 }
 
 export interface ToolFailureRecoveryClassification {
