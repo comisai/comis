@@ -244,7 +244,7 @@ describe("obs_query tool", () => {
 
       const tool = createObsQueryTool(mockRpcCall);
 
-      await runWithContext(makeContext("admin"), () =>
+      const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-root-cost", {
           action: "billing",
           sub_action: "currentRoot",
@@ -255,6 +255,12 @@ describe("obs_query tool", () => {
         scope: "currentRoot",
         _trustLevel: "admin",
       });
+      expect(result.details).toEqual(expect.objectContaining({
+        evidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+        },
+      }));
     });
 
     it("billing/byProvider calls rpcCall('obs.billing.byProvider')", async () => {
@@ -662,7 +668,7 @@ describe("obs_query tool", () => {
 
       const tool = createObsQueryTool(mockRpcCall);
 
-      await runWithContext(makeContext("admin"), () =>
+      const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-sr1", {
           action: "session_report",
           session_key: "tenant:user:ch:ts",
@@ -675,6 +681,13 @@ describe("obs_query tool", () => {
         depth: "summary",
         _trustLevel: "admin",
       });
+      expect(result.details).toEqual(expect.objectContaining({
+        evidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+          crossExecutionDurationRanking: "unavailable",
+        },
+      }));
     });
 
     it("defaults an unqualified session report to the current session", async () => {
@@ -718,7 +731,14 @@ describe("obs_query tool", () => {
         sinceHours: 12,
         _trustLevel: "admin",
       });
-      expect(result.details).toEqual(expect.objectContaining({ windowHours: 12 }));
+      expect(result.details).toEqual(expect.objectContaining({
+        windowHours: 12,
+        evidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+          crossExecutionDurationRanking: "unavailable",
+        },
+      }));
     });
 
     it("passes sinceHours undefined when since_hours omitted (the 24h default lives in the handler)", async () => {
