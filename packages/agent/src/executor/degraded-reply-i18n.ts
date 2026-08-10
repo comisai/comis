@@ -92,8 +92,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   persistent_action_evidence_missing:
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
   outbound_audio_evidence_missing:
-    "I did not deliver the requested audio in this turn because there is no successful "
-      + "current-turn synthesis or trusted completion receipt. Please retry the request.",
+    "I could not verify delivery of the requested audio in this turn because there is no "
+      + "successful current-turn synthesis or trusted completion receipt. I cannot confirm "
+      + "that it was delivered; please check for a voice message or retry.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
   provider_requires_model:
