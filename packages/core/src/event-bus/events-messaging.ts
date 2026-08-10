@@ -770,6 +770,8 @@ export interface MessagingEvents {
    *  generation and delivery claims.
    *  `missing_outbound_delivery_status_evidence` means an elliptical status
    *  answer lacked a current delivery or observability receipt.
+   *  `unsupported_outage_receipt_evidence` means a generic observability
+   *  receipt did not prove when an inbound message was accepted around an outage.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -787,6 +789,7 @@ export interface MessagingEvents {
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
       | "missing_runtime_self_report_evidence"
+      | "unsupported_outage_receipt_evidence"
       | "missing_scheduler_state_evidence"
       | "pending_scheduler_confirmation"
       | "missing_outbound_audio_evidence"

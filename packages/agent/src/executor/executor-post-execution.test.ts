@@ -1256,7 +1256,7 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/response\.runtime_self_report_evidence_guard/);
     expect(stripped).toMatch(/unsupported_outage_receipt_evidence/);
     expect(stripped).toMatch(
-      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
+      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:[\s\S]*?"unsupported_outage_receipt_evidence"[\s\S]*?"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
     );
     expect(stripped.indexOf("enforceRuntimeSelfReportEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));

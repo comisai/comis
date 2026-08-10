@@ -124,8 +124,14 @@ export interface OngoingWorkEvidenceGuardResult {
 export interface RuntimeSelfReportEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_runtime_self_report_evidence" | "unsupported_runtime_self_report_evidence";
+  reason?:
+    | "missing_runtime_self_report_evidence"
+    | "unsupported_runtime_self_report_evidence"
+    | "unsupported_outage_receipt_evidence";
 }
+
+const OUTAGE_RECEIPT_REQUEST_PATTERN =
+  /\b(?:did|have) (?:you|u) (?:receive|get|see|process)\b[^?\n]{0,120}\b(?:message|update|request)\b[^?\n]{0,120}\b(?:while|when) (?:you|u|the (?:daemon|service|system)) (?:were|was) (?:down|offline|restarting)\b/iu;
 
 const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
   /\bwhat (?:did|have) (?:you|u) (?:even )?(?:do|done)\b/iu,
@@ -135,7 +141,7 @@ const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
   /\bwhy was (?:that|this|it) so slow\b/iu,
   /\bwhy was the slowest\b[^?\n]{0,80}\bslow\b/iu,
   /\b(?:resume|recover|continue)\b[^?\n]{0,120}\b(?:durable|background|pipeline|graph|job|task|work)\b[^?\n]{0,120}\b(?:after|across|through)\b[^?\n]{0,30}\b(?:the )?(?:daemon |service |system )?restart\b/iu,
-  /\b(?:did|have) (?:you|u) (?:receive|get|see|process)\b[^?\n]{0,120}\b(?:message|update|request)\b[^?\n]{0,120}\b(?:while|when) (?:you|u|the (?:daemon|service|system)) (?:were|was) (?:down|offline|restarting)\b/iu,
+  OUTAGE_RECEIPT_REQUEST_PATTERN,
   /\bhow many\b[^?\n]{0,80}\b(?:did|have) (?:you|u)\b/iu,
   /\b(?:cost|total)\b[^?\n]{0,100}\bbecause\b[^?\n]{0,80}\b(?:was|were) down\b[^?\n]{0,30}\b(?:right|correct|yeah)\b/iu,
   /\b(?:you|u) only (?:did|used)\b[^?\n]{0,80}\b(?:turns?|calls?|tokens?|sessions?)\b[^?\n]{0,100}\b(?:confirm|right|correct|yeah)\b/iu,
@@ -184,10 +190,26 @@ export function enforceRuntimeSelfReportEvidence(params: {
     };
   }
 
+  const normalizedResponse = normalizedEvidenceText(params.response);
+  const admitsOutageReceiptUncertainty =
+    /\b(?:cannot|can't|could not|couldn't|did not|didn't|unable|unverified|not verified|does not prove|no (?:current )?(?:evidence|receipt))\b/iu.test(normalizedResponse);
+  const claimsOutageReceipt =
+    /\b(?:i|we) (?:received|got|saw|processed|accepted)\b|\b(?:message|update|request|it) (?:was )?(?:received|processed|accepted)\b/iu.test(normalizedResponse);
+  if (
+    OUTAGE_RECEIPT_REQUEST_PATTERN.test(params.request)
+    && claimsOutageReceipt
+    && !admitsOutageReceiptUncertainty
+  ) {
+    return {
+      response: params.honestResponse,
+      corrected: true,
+      reason: "unsupported_outage_receipt_evidence",
+    };
+  }
+
   const limits = evidence.observabilityEvidenceLimits;
   const asksForSlowest = /\bslowest\b/iu.test(params.request);
   const asksForCost = /\b(?:cost|spend|spent|expensive)\b/iu.test(params.request);
-  const normalizedResponse = normalizedEvidenceText(params.response);
   const qualifiesEstimate = /\b(?:runtime )?estimate(?:d)?\b/iu.test(normalizedResponse);
   const qualifiesProviderInvoice =
     /\b(?:provider|actual) (?:invoice|bill(?:ing)?)\b/iu.test(normalizedResponse)

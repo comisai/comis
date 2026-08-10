@@ -1718,15 +1718,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response = runtimeSelfReportGrounding.response;
     const unsupportedEvidence =
       runtimeSelfReportGrounding.reason === "unsupported_runtime_self_report_evidence";
+    const unsupportedOutageReceipt =
+      runtimeSelfReportGrounding.reason === "unsupported_outage_receipt_evidence";
     deps.logger.warn(
       {
         step: "response-honesty",
         errorKind: "precondition" as const,
-        hint: unsupportedEvidence
-          ? "The current obs_query receipt did not support the comparative latency or provider-billed "
-            + "cost claim; inspect its evidenceLimits in comis explain."
-          : "The runtime self-report lacked a successful current-turn obs_query receipt; "
-            + "inspect request-tool relevance and obs_query availability in comis explain.",
+        hint: unsupportedOutageReceipt
+          ? "The current obs_query receipt did not prove when the inbound message was accepted; inspect "
+            + "the inbound lifecycle and runtime self-report guard in comis explain."
+          : unsupportedEvidence
+            ? "The current obs_query receipt did not support the comparative latency or provider-billed "
+              + "cost claim; inspect its evidenceLimits in comis explain."
+            : "The runtime self-report lacked a successful current-turn obs_query receipt; "
+              + "inspect request-tool relevance and obs_query availability in comis explain.",
       },
       "Unsupported runtime self-report replaced with an evidence limitation",
     );
@@ -1740,13 +1745,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       metadata: {
         claimKind: "runtime_self_report",
         reason: runtimeSelfReportGrounding.reason,
-        requiredTool: "obs_query",
+        requiredEvidence: unsupportedOutageReceipt
+          ? "inbound_acceptance_timeline"
+          : "obs_query",
       },
     });
     deps.eventBus.emit("execution:recovery_attempted", {
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
-      reason: "missing_runtime_self_report_evidence",
+      reason: unsupportedOutageReceipt
+        ? "unsupported_outage_receipt_evidence"
+        : "missing_runtime_self_report_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),
