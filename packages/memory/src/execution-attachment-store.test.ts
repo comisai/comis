@@ -183,6 +183,161 @@ describe("SQLite execution attachment persistence", () => {
     db.close();
   });
 
+  it("rejects unauthorized creation and conflicting attachment replays", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+
+    expect(await store.create(makeAttachment({
+      state: "revoked",
+      revokedAtMs: NOW_MS,
+      revocationReason: "lease_release",
+    }))).toMatchObject({ ok: false, error: { message: "execution attachment creation requires active state" } });
+    expect(await store.create(makeAttachment({
+      executionAttachmentId: "execution-attachment_unauthorized",
+      managedRunId: "managed-run_missing",
+    }))).toEqual({ ok: true, value: { kind: "authority_mismatch" } });
+
+    const attachment = makeAttachment();
+    expect(await store.create(attachment)).toMatchObject({ ok: true, value: { kind: "created" } });
+    expect(await store.create(attachment)).toMatchObject({ ok: true, value: { kind: "identical_replay" } });
+    expect(await store.create(makeAttachment({ targetName: `attachment-${"b".repeat(32)}.sock` }))).toEqual({
+      ok: true,
+      value: { kind: "replay_conflict" },
+    });
+    expect(await store.create(makeAttachment({
+      executionAttachmentId: "execution-attachment_b",
+      targetName: `attachment-${"c".repeat(32)}.sock`,
+    }))).toEqual({ ok: true, value: { kind: "replay_conflict" } });
+    db.close();
+  });
+
+  it("reports every scoped revocation conflict without broadening authority", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+
+    expect(await store.revoke(ATTACHMENT_SCOPE, {
+      operationId: "attachment-revoke_missing",
+      executionAttachmentId: "execution-attachment_missing",
+      reason: "lease_release",
+      revokedAtMs: NOW_MS,
+    })).toEqual({ ok: true, value: { kind: "not_found" } });
+    expect((await store.create(makeAttachment())).ok).toBe(true);
+    expect(await store.revoke({ ...ATTACHMENT_SCOPE, managedRunId: "managed-run_b" }, {
+      operationId: "attachment-revoke_scope",
+      executionAttachmentId: "execution-attachment_a",
+      reason: "lease_release",
+      revokedAtMs: NOW_MS,
+    })).toEqual({ ok: true, value: { kind: "scope_mismatch" } });
+    expect(await store.revoke(ATTACHMENT_SCOPE, {
+      operationId: "attachment-revoke_early",
+      executionAttachmentId: "execution-attachment_a",
+      reason: "lease_release",
+      revokedAtMs: NOW_MS - 1,
+    })).toMatchObject({ ok: false, error: { message: "execution attachment revocation time cannot move backward" } });
+
+    const revokeInput = {
+      operationId: "attachment-revoke_success",
+      executionAttachmentId: "execution-attachment_a",
+      reason: "lease_release" as const,
+      revokedAtMs: NOW_MS + 1,
+    };
+    expect(await store.revoke(ATTACHMENT_SCOPE, revokeInput)).toMatchObject({ ok: true, value: { kind: "revoked" } });
+    expect(await store.revoke(ATTACHMENT_SCOPE, { ...revokeInput, revokedAtMs: NOW_MS + 2 })).toEqual({
+      ok: true,
+      value: { kind: "replay_conflict" },
+    });
+    expect(await store.revoke(ATTACHMENT_SCOPE, {
+      ...revokeInput,
+      operationId: "attachment-revoke_after_terminal_state",
+    })).toEqual({ ok: true, value: { kind: "state_mismatch" } });
+    db.close();
+  });
+
+  it("recovers exact attachment identity idempotently and rejects stale recovery", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+    const reconcileInput = {
+      operationId: "attachment-reconcile_success",
+      executionAttachmentId: "execution-attachment_a",
+      sourceFilesystemIdentity: { device: 30, inode: 40 },
+      recoveredAtMs: NOW_MS + 1,
+    };
+
+    expect(await store.reconcile(ATTACHMENT_SCOPE, reconcileInput)).toEqual({ ok: true, value: { kind: "not_found" } });
+    expect((await store.create(makeAttachment())).ok).toBe(true);
+    expect(await store.reconcile({ ...ATTACHMENT_SCOPE, workspaceLeaseId: "workspace-lease_b" }, reconcileInput)).toEqual({
+      ok: true,
+      value: { kind: "scope_mismatch" },
+    });
+    expect(await store.reconcile(ATTACHMENT_SCOPE, { ...reconcileInput, recoveredAtMs: NOW_MS - 1 })).toMatchObject({
+      ok: false,
+      error: { message: "execution attachment recovery time cannot move backward" },
+    });
+    expect(await store.reconcile(ATTACHMENT_SCOPE, reconcileInput)).toMatchObject({
+      ok: true,
+      value: { kind: "recovered", record: { lastRecoveredAtMs: NOW_MS + 1 } },
+    });
+    expect(await store.reconcile(ATTACHMENT_SCOPE, reconcileInput)).toMatchObject({
+      ok: true,
+      value: { kind: "identical_replay" },
+    });
+    expect(await store.reconcile(ATTACHMENT_SCOPE, { ...reconcileInput, recoveredAtMs: NOW_MS + 2 })).toEqual({
+      ok: true,
+      value: { kind: "replay_conflict" },
+    });
+    expect(await store.revoke(ATTACHMENT_SCOPE, {
+      operationId: "attachment-revoke_after_recovery",
+      executionAttachmentId: "execution-attachment_a",
+      reason: "lease_release",
+      revokedAtMs: NOW_MS + 2,
+    })).toMatchObject({ ok: true, value: { kind: "revoked" } });
+    expect(await store.reconcile(ATTACHMENT_SCOPE, {
+      ...reconcileInput,
+      operationId: "attachment-reconcile_after_terminal_state",
+      recoveredAtMs: NOW_MS + 3,
+    })).toEqual({ ok: true, value: { kind: "state_mismatch" } });
+    db.close();
+  });
+
+  it("rejects invalid recovery scan limits at the persistence boundary", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    const store = createSqliteExecutionAttachmentStore(db);
+    expect(await store.listRecoverable({ kind: "recovery", limit: 0 })).toMatchObject({
+      ok: false,
+      error: { message: "execution attachment recovery scan limit is invalid" },
+    });
+    db.close();
+  });
+
+  it("fails closed for malformed rows and a closed database boundary", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 4);
+    await seed(db);
+    const store = createSqliteExecutionAttachmentStore(db);
+    expect((await store.create(makeAttachment())).ok).toBe(true);
+
+    db.pragma("ignore_check_constraints = ON");
+    db.prepare("UPDATE execution_attachments SET schema_version = 2").run();
+    expect(await store.get(ATTACHMENT_SCOPE, "execution-attachment_a")).toMatchObject({
+      ok: false,
+      error: { message: "Row validation failed at schema_version" },
+    });
+    expect(await store.listActiveForRun(ATTACHMENT_SCOPE)).toMatchObject({
+      ok: false,
+      error: { message: "Row validation failed at row[0].schema_version" },
+    });
+
+    db.close();
+    expect((await store.get(ATTACHMENT_SCOPE, "execution-attachment_a")).ok).toBe(false);
+  });
+
   it("reconciles exact filesystem identity and revokes idempotently before release", async () => {
     const db = new Database(":memory:");
     initSchema(db, 4);
