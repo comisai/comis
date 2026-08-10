@@ -289,5 +289,9 @@ process.stdin.on("data", (chunk) => {
     }
   }
 });
-process.stdin.on("end", () => process.exit(0));
+// Setting the eventual code lets stdout drain. `process.exit(0)` can terminate
+// before the JSON-RPC line reaches a pipe reader when the parent is under load.
+process.stdin.on("end", () => {
+  process.exitCode = 0;
+});
 process.stderr.write(`credentialed MCP fixture ready (${variant})\n`);

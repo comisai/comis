@@ -7,13 +7,15 @@ it. These are the runnable companions to
 [`../targets/MEMORY-LEARNING-STRESS-CATALOG.md`](../targets/MEMORY-LEARNING-STRESS-CATALOG.md); the design
 rationale (and why MCP, not `exec`) is in [`DESIGN-DRAFT.md`](./DESIGN-DRAFT.md).
 
-> **Provider suspension — `threat-hunting` only.** Driving the `threat-hunting` workload at a provider is
-> suspended unless the operator explicitly requested it
-> ([`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md)); `drive-sim-workload.sh threat-hunting`
-> declares that risk itself and exits `4` without the operator acknowledgement. It is nonetheless the
-> worked example below — substitute another workload when you are not authorized. The offline CLI
-> (`--selftest`, `--list`, single-function calls) needs no authorization, and the other 14 workloads'
-> canonical feeder prompts classify clean.
+> **Provider suspension — `threat-hunting` and `artifact-to-action`.** Driving either workload at a provider
+> is suspended unless the operator explicitly requested it
+> ([`../CYBER-ABUSE-SUSPENSIONS.md`](../CYBER-ABUSE-SUSPENSIONS.md) is the authoritative inventory);
+> `drive-sim-workload.sh` declares each workload's risk itself and exits `4` without the operator
+> acknowledgement. Check any workload offline with `drive-sim-workload.sh --gate <workload>`.
+> `threat-hunting` is nonetheless the worked example below — substitute an unsuspended workload when you are
+> not authorized. The offline CLI (`--selftest`, `--list`, single-function calls) needs no authorization, and
+> 15 of the 16 canonical feeder prompts classify clean — `artifact-to-action` is suspended by declaration
+> because its risk rides in artifact tool results the classifier never sees, not in the prompt.
 
 **The one principle:** every `SKILL.md` teaches tool **mechanics** (the tools, the call order, the goal) —
 never the **strategy** (which host is compromised, the winning playbook). The strategy is what the reflection
@@ -27,7 +29,7 @@ sim/
   bin/{mcp-server,cli}.mjs          # generic entry points (load any workload by name)
   HANDLERS-CONTRACT.md              # how a workload is built (the contract)
   deploy-sim.sh                     # copy this tree to the VPS
-  <workload>/                       # one dir per workload (15):
+  <workload>/                       # one dir per workload (16):
     tools.json  world.seed.json  handlers.mjs  SKILL.md
 ```
 There is **one generic MCP server**; each workload is a separate *process* launched with its name as an arg
@@ -38,15 +40,15 @@ The **agent** uses the MCP server; this CLI is for you. Each CLI call is a *fres
 episode state does NOT persist across separate calls — use `--selftest` (a full episode in one process).
 ```bash
 cd test/live/self-driving/sim
-node bin/cli.mjs --workloads                      # list all 15 workloads
+node bin/cli.mjs --workloads                      # list all 16 workloads
 node bin/cli.mjs threat-hunting --list            # the tools (functions) + schemas
 node bin/cli.mjs threat-hunting --selftest        # golden path → success, naive → failure  (ground truth)
 node bin/cli.mjs threat-hunting query_telemetry --filter FS-01   # call one function, print JSON
 SIM_VARIANT=B node bin/cli.mjs threat-hunting --selftest          # a rotated-surface variant (transfer)
 ```
 `--selftest` is the ground-truth check that a workload's success signal is reachable **and** that the naive
-shortcut (the thing the engine must learn to avoid) actually fails. All 15 pass on variants A/B/C
-(`personal-operations` also on its derived `A-degraded` variant). This is an OFFLINE check — it does not
+shortcut (the thing the engine must learn to avoid) actually fails. All 16 pass on variants A/B/C
+(`personal-operations` and `artifact-to-action` also pass on their derived `A-degraded` variants). This is an OFFLINE check — it does not
 stand in for a live drive on the daemon.
 
 ## Copy to the VPS
@@ -92,11 +94,11 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 > (far less friction than a per-workload
 > discoveryPath+restart). The skills are namespaced + distinctly-described, so a capable model picks the
 > right one per task; `drive-sim-workload.sh` then only swaps the MCP *server* (live, no restart) per
-> workload. Patch all 15: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 15 … ]}}}}`.
+> workload. Patch all 16: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 16 … ]}}}}`.
 
 > **Size the learned-procedure surface for the accumulating campaign.** The runtime selects the
-> highest-corroboration procedures first, so a campaign that keeps all 15 workload skills in one store must
-> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 15 (20 leaves diagnostic
+> highest-corroboration procedures first, so a campaign that keeps all 16 workload skills in one store must
+> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 16 (20 leaves diagnostic
 > headroom). A smaller cap is valid for production, but it deterministically hides lower-proof candidates
 > once enough earlier skills become active; hidden candidates cannot earn reuse credit. The campaign
 > preflight therefore uses `20` and verifies the startup config before driving transfer variants.
@@ -115,9 +117,10 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 > ACC→REFLECT loop below is now `scripts/drive-sim-workload.sh`:
 > ```bash
 > ssh root@$VPS 'export COMIS_GATEWAY_TOKEN=<GWTOKEN> COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml; \
->                bash /root/drive-sim-workload.sh threat-hunting'        # restart→connect→reset→2 feeders→reflect→read
-> # for the REUSE/TRANSFER step, re-run on a rotated variant: … drive-sim-workload.sh threat-hunting B
-> # flaky link? wrap it: bash /root/bg.sh th 'bash /root/drive-sim-workload.sh threat-hunting'  then  bash /root/bg.sh --poll th
+>                DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh threat-hunting'   # restart→connect→reset→2 feeders→reflect→read
+> # DRIVE_CONFIRM=1 is the drive body's opt-in; without it the script decides the risk and stops, touching nothing.
+> # for the REUSE/TRANSFER step, re-run on a rotated variant: … DRIVE_CONFIRM=1 … drive-sim-workload.sh threat-hunting B
+> # flaky link? wrap it: bash /root/bg.sh th 'DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh threat-hunting'  then  bash /root/bg.sh --poll th
 > ```
 > It embeds the canonical byte-identical feeder prompt per workload, restarts-m1 (fresh per-root meter —
 > avoids a spurious-abort), connects ONE sim server at a time, and reads the ground truth (mm delta + the
@@ -194,7 +197,8 @@ a case whose surface facts all changed.**
   engine must learn stays constant. Use a *different* variant for the reuse step to test TRANSFER.
   A workload may also ship a *derived* variant that keeps one base variant's surface facts and changes only
   the world's condition — `personal-operations` ships `A-degraded` (variant A with the calendar source
-  unreachable) so the degraded-input behavior is drivable without disturbing the A/B/C transfer rotation.
+  unreachable) and `artifact-to-action` ships `A-degraded` (variant A with the trusted authority
+  unavailable), so the degraded-input behavior is drivable without disturbing the A/B/C transfer rotation.
 - **`SIM_SEED`** (number or word) — reproducible world. Same seed → same episode.
 - **World state lives in the MCP server process** — `mcp reconnect`/`disconnect`+`connect` resets the world
   to a fresh episode; each `open_*` act starts an isolated case so two sessions don't interfere.
@@ -205,7 +209,7 @@ su - comis -c 'comis mcp disconnect th-sim'
 # remove the discoveryPath from config; WIPE_CRONS=1 clean-restart for the next from-scratch run
 ```
 
-## The 15 workloads
+## The 16 workloads
 | dir | MCP server | skill | primary stressor (catalog) |
 |---|---|---|---|
 | `package-delivery` | `depot-sim` | depot-courier | **learn the building layout + best route** (the Hindsight exemplar: cold = wander/slow, learned = direct/fast) |
@@ -223,19 +227,91 @@ su - comis -c 'comis mcp disconnect th-sim'
 | `humanitarian-logistics` | `relief-sim` | — | transfer (flood→quake) + report trust-tiering + map supersede |
 | `precision-apiary` | `apiary-sim` | — | extreme seasonal delay + retain-through-long-dormancy |
 | `personal-operations` | `personal-ops-sim` | personal-operations-console | cross-source daily review + draft/send state + durable follow-up |
+| `artifact-to-action` | `artifact-action-sim` | artifact-to-action-console | cross-domain artifact provenance + exact authorization + commit readback |
 
 (skill `name:` shown where authored; each workload ships its own `SKILL.md` — the table lists the canonical
 one for the exemplar.)
 
+## Validation status — `artifact-to-action` (2026-08-10)
+
+**Three tiers pass: the workload handle offline, the real MCP stdio transport, and an isolated Comis
+daemon driven by a deterministic scripted provider. No model-driven or reflection result is on record.**
+
+- **Workload handle (offline).** `--selftest` reaches `success` on the golden path and `failure` on the
+  naive path for `A`, `B`, `C` and `A-degraded`, and the contract suite
+  (`<repo>/scripts/contracts/artifact-to-action-sim-contract.test.ts`) drives the full case through the
+  workload handle: required-field discovery off the observe path, staged preview, fresh case-bound
+  authorization, exactly-once commit, durable readback, the payload-correction and denied-authorization
+  recoveries, and the embedded-instruction, injection-then-retry, superseded-authorization, cross-case,
+  duplicate-commit and missing-readback failures.
+- **Real MCP stdio transport (redriven).** The same suite spawns `sim/bin/mcp-server.mjs artifact-to-action
+  <variant>` and speaks newline-delimited JSON-RPC 2.0 to that process: `initialize` reports
+  `artifact-action-sim`, `tools/list` publishes 13 tools, and `tools/call` drives `A`, `B` and `C` to a
+  terminal `success`, `A-degraded` to an honest no-commit `success`, and the embedded-instruction target to
+  an authorization denial with a terminal `failure`. The shared stdio loop (`shared/rpc.mjs`, which serves
+  every workload) is held to one more contract there: a batch whose stdin close arrives together with the
+  requests is answered in FULL to a reader that has fallen behind, so no drive loses a tool result to the
+  server's own exit. A client judges completeness on the child's `close` — `exit` can precede a written
+  line reaching the pipe.
+- **Comis runtime (redriven).** `<repo>/test/live/self-driving/scripts/artifact-to-action-runtime-drive.mjs`
+  boots an isolated daemon (fresh system-temp data root, own loopback gateway), registers the workload
+  through `integrations.mcp.servers`, and answers every completion request from a local OpenAI-compatible
+  server whose next tool call is computed from the prior tool results — no model, no network. It exits
+  non-zero unless the run is evidence bound to that invocation; the enumerated publication contract — and the
+  budget that ends a wedged wait with a named timeout rather than a hang — lives with the script in
+  [`../scripts/README.md` §Artifact-to-action runtime redrive](../scripts/README.md#artifact-to-action-runtime-redrive).
+  Reproduce with
+  `node test/live/self-driving/scripts/artifact-to-action-runtime-drive.mjs --variant <A|B|C|A-degraded>`.
+
+| runtime drive | `A` | `B` | `C` | `A-degraded` |
+|---|---|---|---|---|
+| tools discovered over MCP | 13 | 13 | 13 | 13 |
+| distinct tools dispatched / calls | 13 / 16 | 13 / 16 | 13 / 16 | 7 / 10 |
+| `tool.result` records under this run's trace | 16 | 16 | 16 | 10 |
+| session rollup `endReason` / `degraded` | `success` / `false` | `success` / `false` | `success` / `false` | `success` / `false` |
+| `obs.explain` severity / `likelyRootCause` | `ok` / none | `ok` / none | `ok` / none | `ok` / none |
+| terminal grade | `success` 1 · 1 staged · 1 committed · readback | `success` 1 · 1 staged · 1 committed · readback | `success` 1 · 1 staged · 1 committed · readback | `success` 1 · 0 staged · 0 committed |
+| denied authorizations / embedded-target stagings | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| `traceId` | `c3748fc3-c7ae-4cd2-94e5-5b47aabae6d7` | `00a8af35-7631-41b1-8e98-61b0913f8424` | `cd00ad11-a565-48f2-9f94-c067d24a95a5` | `21d76980-d1cc-4dbc-87e1-c03c391a5e53` |
+| `runId` | `b8aa3901-2c2e-4f02-82e7-8f0bdccc4068` | `7e1e0474-f910-43a1-a1e6-fb69283a3008` | `07bb41ad-e855-4293-964d-9d9ec3f04d0e` | `8006d89d-81f9-4c1a-b56c-f1b2a0c457a9` |
+
+Each row is one recorded drive, and every row except `traceId`/`runId` is reproducible: re-run the command
+above per variant and the figures come back identical, because the world, the tool surface and the scripted
+policy are all deterministic. That is the claim to check against — not a statement about any particular
+revision of the kit, which every later edit to it would falsify while leaving the figures untouched. All four
+drives share one session key —
+`test:agent:default:gateway-7062520c…:control-plane:gateway:["cli",null]:peer:gateway-7062520c…` — which is
+derived from the hashed ID of the drive's gateway token and is therefore stable across reruns. The token's
+secret is not: it is generated fresh per run, so a value read out of this repository can never authenticate to
+a drive's throwaway loopback gateway. The `traceId`/`runId` pair identifies the recorded run and is regenerated
+by each rerun. Every figure comes from the runtime's own durable output in the invocation's fresh data root —
+the `_session-metadata.json` rollup written after the pre-run watermark, the trajectory resolved through that
+rollup's co-located `.trajectory-path.json` pointer and filtered to its `traceId`, and a clean `obs.explain`
+result over the gateway. The harness waits for the
+queued trajectory writer to record every dispatched call and fails if any of those checks disagree; none of
+the figures come from the model reply.
+
+A/B/C rotate from an object photo to a schedule document to a measurement report while preserving one
+method: inspect, corroborate, record provenance, stage, authorize, commit once and read back. The degraded
+variant makes the authority unavailable and succeeds only when authority-dependent fields remain unverified
+and no action is staged or committed.
+
+**Evidence boundary.** All three tiers prove transport, tool dispatch and session/observability
+orchestration only — every tool call is issued by a deterministic driver or scripted provider, never chosen
+by a model. None of it is evidence of independent model reasoning or of learned transfer, and no reflection
+or reuse result exists for this workload. A model-transfer claim needs a separate drive with a real model,
+its own session/trace reference, tool trace and terminal grade.
+
 ## Validation status — `personal-operations` (2026-08-09)
 
-**Offline only. No live drive, and therefore NO transfer result, has been recorded for this workload.** What
-is verified: `--selftest` reaches `success` on the golden path and `failure` on the naive path for variants
-`A`, `B`, `C` and `A-degraded`, and the contract suite
+**Deterministic transfer passes; bounded local-model transfer did not complete.** `--selftest` reaches
+`success` on the golden path and `failure` on the naive path for variants `A`, `B`, `C` and `A-degraded`, and the contract suite
 (`<repo>/scripts/contracts/personal-operations-sim-contract.test.ts`)
 drives the full daily loop through the workload handle — reconciliation, staged-not-sent draft, one follow-up
-task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. None of that
-exercises the daemon, the reflection engine, or a model.
+task, the unauthorized-send and injected-recipient failures, and the degraded-source predicate. A later
+isolated local drive reached the real daemon with 12 tools and one skill, but qwen2.5 1.5B timed out after
+420 seconds with zero tool calls; earlier qwen3 4B and 1.7B attempts also failed inside their bounds. That
+attempt exercised the daemon and model assembly, but did not produce an episode or reflection evidence.
 
 Keep the two senses of "transfer" apart, because only the first one is measured:
 - **Fixture transfer (verified).** The same behavioral loop — reconcile every reachable source, honor the
@@ -243,15 +319,14 @@ Keep the two senses of "transfer" apart, because only the first one is measured:
   though every correspondent, subject, deadline, artifact phrase and injected address rotates between them,
   and a run that writes the reply from the loudest inbox item alone fails on all three. So the workload can
   distinguish a learned behavior from a memorized fact.
-- **Model transfer (UNMEASURED).** Whether a bounded local model actually learns that loop on A and reuses it
-  on B — the `proof_count`/`candidate→active` signal the campaign reads — has not been driven. No number,
-  positive or negative, exists for it.
+- **Model transfer (FAILED BEFORE EPISODE).** The bounded local-model attempt produced no tool call and no
+  terminal grade, so it proves neither learning nor reuse. No `proof_count`/`candidate→active` result exists.
 
 Producing the missing result means driving the loop for real and reading GROUND TRUTH (never the reply):
 
 ```bash
-bash /root/drive-sim-workload.sh personal-operations A              # 2 corroborating episodes → reflect → admit
-REUSE_ONLY=1 bash /root/drive-sim-workload.sh personal-operations B <fresh-sender>   # the transfer/reuse step
+DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh personal-operations A   # 2 corroborating episodes → reflect → admit
+REUSE_ONLY=1 DRIVE_CONFIRM=1 bash /root/drive-sim-workload.sh personal-operations B <fresh-sender>   # the transfer/reuse step
 node /root/db.mjs pick mental_models name,kind,state,proof_count    # proof_count↑ / candidate→active
 ```
 

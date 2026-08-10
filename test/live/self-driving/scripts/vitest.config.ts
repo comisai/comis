@@ -19,9 +19,9 @@
  * into FALSE FAILURES on a live campaign (comis-moshe, 2026-08-06).
  *
  * Include is `*.test.ts` ONLY. The `*.test.mjs` neighbours (`media-file-meta`,
- * `generic-runtime-probe`, `durability-resume-probe-core`) are `node:test`
- * suites — vitest collects them and reports "No test suite found", so widening
- * this include turns a healthy helper test into a red gate.
+ * `generic-runtime-probe`) are `node:test` suites — vitest collects them and
+ * reports "No test suite found", so widening this include turns a healthy
+ * helper test into a red gate.
  *
  * CONTRACT for anything added here: no `@comis/*` import. This project
  * registers no dist aliases on purpose, so it runs in the unit tier without a
@@ -46,6 +46,14 @@ export default defineConfig({
     // validates and the gateway token really landed in the encrypted store.
     // Runs in the integration tier's aliased `live-scenarios` project instead.
     exclude: ["remote-root.test.ts"],
+    // Several cases here decide a helper's behaviour by RUNNING it — the driver's
+    // risk gate, the stdio fixtures, the redrive's argument handling — so a case
+    // costs one or more `bash`/`node` spawns. Those subprocesses carry their own
+    // 30s/60s budgets, which the runner's 5s default expires long before, and the
+    // root config's four coverage-instrumented workers are exactly the scheduling
+    // pressure that turns a correct-but-slow spawn into a red run. Give a case room
+    // for the subprocess budget it already declares.
+    testTimeout: 60_000,
     pool: "threads",
     passWithNoTests: true,
   },

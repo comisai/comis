@@ -98,7 +98,7 @@ The moment a diagnosis required **any** of these, the diagnosability surface has
 
 ## The EMULATOR-improvement loop (mandatory — the mirror of the obs loop)
 
-The emulator is the **primary instrument**; leave it better than you found it. The moment a test required any of these, the drive/observe surface has a defect — close it test-first (the emulator has its own unit+contract tests, `pnpm vitest run -c test/live/vitest.config.ts <file>` — the bare root config **excludes** `test/live`, a false green):
+The emulator is the **primary instrument**; leave it better than you found it. The moment a test required any of these, the drive/observe surface has a defect — close it test-first (the emulator has its own unit+contract tests, `pnpm vitest run -c test/live/vitest.config.ts <file>` — the bare root config does **not** collect `test/live/emulators/**`, a false green):
 - you drove a channel-shaped capability through `/rpc` or `/v1/*` because the channel path couldn't reach it (a missing Bot API method / inbound update type / `tg` verb);
 - the channel oracle didn't expose a wire signal the bot emitted; an adapter resilience fallback was unreachable because the emulator can't return the triggering error; a verb silently no-op'd instead of an honest `not_implemented_in_phase`; a group/forum/multi-user/reaction/edit/callback shape couldn't be produced; a third+ channel was needed.
 

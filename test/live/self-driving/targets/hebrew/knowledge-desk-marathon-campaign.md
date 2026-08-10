@@ -200,7 +200,7 @@ Build a real-world use-case backlog from four sources, then plan from it:
    code, tests, docs, comments, runtime strings. Everything under `runs/` is gitignored
    (local-only), so backlog/source notes there may cite them freely.
 3. **The kit's own catalog.** `../../05-CATALOG.md` (capability domains, the 30 UCs, Track K/L/M, the
-   HARD security oracles) + `../MEMORY-LEARNING-STRESS-CATALOG.md` (the 13 complex memory/learning
+   HARD security oracles) + `../MEMORY-LEARNING-STRESS-CATALOG.md` (the complex memory/learning
    workloads — this campaign's richest reusable source; plan BEYOND them, don't rerun) + prior runs
    under `runs/` and `runs/FINDINGS-LEDGER.md` (local-only, if present) + the worked
    `../EXAMPLE-verified-learning.md` (inherit its offline/DB/event oracles wholesale) — plan BEYOND

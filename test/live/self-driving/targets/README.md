@@ -9,7 +9,7 @@ unless the operator explicitly requests them; target inclusion is never authoriz
 
 Runtime-contract and worked-example targets:
 
-- `real-user-everyday-assistant.md` — the authoritative A/B/C arc, D-journey, oracle, polarity, trap, and capability-coverage spec for the local real-user Telegram drive launched by `DRIVE-PROMPT.md`.
+- `real-user-everyday-assistant.md` — the authoritative A/B/C arc, D- and E-journey, oracle, polarity, trap, and capability-coverage spec for the local real-user Telegram drive launched by `DRIVE-PROMPT.md`.
 - `generic-runtime-campaign.md` — end-to-end generic-agent boundary, security, locale, policy-snapshot, prompt-compiler, MCP-trust, health-surface, and restart-provenance acceptance.
 - `EXAMPLE-cron-wake-gate.md` — scheduler and wake-gate mechanics.
 - `EXAMPLE-verified-learning.md` — content-free learning and outcome evidence.

@@ -374,7 +374,7 @@ Build a real-world use-case backlog from four sources, then plan from it:
    extend them rather than re-mining.
 3. **The kit's own catalog.** `../../05-CATALOG.md` (capability domains, the 30 UCs, Track K/L/M,
    the HARD security oracles — H4 memory-poisoning and the injection gauntlet are this campaign's
-   worksheet-borne home turf) + `../MEMORY-LEARNING-STRESS-CATALOG.md` (the 13 complex
+   worksheet-borne home turf) + `../MEMORY-LEARNING-STRESS-CATALOG.md` (the complex
    memory/learning workloads — a rich seam for the learner-model flagship; plan BEYOND them) +
    prior runs under `runs/` and `runs/FINDINGS-LEDGER.md` (local-only, if present) + the worked
    `../EXAMPLE-verified-learning.md` (inherit its offline/DB/event oracles) — plan BEYOND what is
