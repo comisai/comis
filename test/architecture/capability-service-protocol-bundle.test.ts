@@ -27,6 +27,7 @@ const EXPECTED_METHODS = [
   "managedRuns.abandon",
   "managedRuns.activate",
   "managedRuns.report",
+  "managedRuns.terminalEvent",
 ] as const;
 
 const EXPECTED_FIXTURE_CLASSES = [
@@ -182,6 +183,51 @@ describe("capability-service protocol bundle contract", () => {
       manifest.methodCatalog.find((entry) => entry.method === "managedRuns.report")
         ?.semanticInvariants,
     ).toContain("utf8-report-content-bytes-at-most-max-report-bytes");
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.terminalEvent"),
+    ).toMatchObject({
+      direction: "comis-to-service",
+      callerClass: "comis-daemon",
+      classification: "mutation",
+      requiredServiceScope: null,
+      semanticInvariants: expect.arrayContaining([
+        "terminal-run-workspace-lease-must-match",
+        "transition-carries-identifiers-only",
+      ]),
+    });
+  });
+
+  it("pins content-free terminal transitions to the owning managed run and lease", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const terminalEvent = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.terminalEvent",
+    );
+    const terminalEventResponse = valid.steps.find(
+      (step) => step.target === "terminal-event-response",
+    );
+    const params = terminalEvent?.payload["params"] as Record<string, unknown> | undefined;
+    const result = terminalEventResponse?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(Object.keys(params ?? {}).sort()).toEqual([
+      "managedRunId",
+      "operationId",
+      "terminalSessionId",
+      "transition",
+      "workspaceLeaseId",
+    ]);
+    expect(params).toMatchObject({
+      managedRunId: expect.any(String),
+      terminalSessionId: expect.any(String),
+      transition: "created",
+      workspaceLeaseId: expect.any(String),
+    });
+    expect(result).toEqual({
+      managedRunId: params?.["managedRunId"],
+      terminalSessionId: params?.["terminalSessionId"],
+      transition: params?.["transition"],
+    });
   });
 
   it("pins activation workspace atomicity and closed abandonment disposition", () => {
@@ -318,6 +364,7 @@ describe("capability-service protocol bundle contract", () => {
       "mcp-call-context": "schemas/mcp-call-context.schema.json",
       "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
       "report-response": "schemas/report.response.schema.json",
+      "terminal-event-response": "schemas/terminalEvent.response.schema.json",
     };
 
     for (const artifact of manifest.artifacts) {

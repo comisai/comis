@@ -184,4 +184,23 @@ describe("daemon capability-service fixture host", () => {
     expect(unexpectedLease.ok).toBe(false);
     if (!unexpectedLease.ok) expect(unexpectedLease.error.kind).toBe("invalid_params");
   });
+
+  it("accepts a content-free terminal transition carrying only correlated handles", () => {
+    const host = createCapabilityServiceProtocolFixtureHost({
+      bundleDigest: manifest.bundleDigest,
+    });
+
+    expect(host.validateRequest({
+      jsonrpc: "2.0",
+      id: "operation_terminal_created",
+      method: "managedRuns.terminalEvent",
+      params: {
+        operationId: "operation_terminal_created",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        terminalSessionId: "terminal-session_a",
+        transition: "created",
+      },
+    }).ok).toBe(true);
+  });
 });

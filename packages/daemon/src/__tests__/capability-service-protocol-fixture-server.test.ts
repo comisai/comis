@@ -107,7 +107,7 @@ function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
 }
 
 describe("standalone capability-service protocol fixture server", () => {
-  it("binds a 0600 Unix socket and strictly dispatches all five pinned methods", async () => {
+  it("binds a 0600 Unix socket and strictly dispatches all six pinned methods", async () => {
     const directory = temporaryDirectory();
     const server = makeServer(directory);
     const started = await server.start();
@@ -182,6 +182,27 @@ describe("standalone capability-service protocol fixture server", () => {
           serviceReportId: "service-report_a",
           acceptedSequence: 1,
           retainedUntilMs: NOW_MS + CAPABILITY_SERVICE_LIMITS.reportRetentionDays * 86_400_000,
+        },
+      });
+
+      const terminalEvent = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_terminal_created",
+        "managedRuns.terminalEvent",
+        {
+          operationId: "operation_terminal_created",
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          terminalSessionId: "terminal-session_a",
+          transition: "created",
+        },
+      )));
+      expect(terminalEvent).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_terminal_created",
+        result: {
+          managedRunId: "managed-run_a",
+          terminalSessionId: "terminal-session_a",
+          transition: "created",
         },
       });
 
