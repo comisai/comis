@@ -185,6 +185,41 @@ describe("live provider cyber-abuse risk classification", () => {
     });
   });
 
+  it("lets the operator's declaration escalate a caller that declares no risk", () => {
+    const risky = ["Investigate the SOC alert and identify lateral movement."];
+
+    // The remedy the suspension message names has to work for this caller, whose own
+    // declaration is `none` because its risk was expected to ride in tool results.
+    expect(liveProviderRiskError({
+      source: "drive-sim-workload.sh package-delivery",
+      texts: risky,
+      declaredRisk: "none",
+      env: {
+        [LIVE_TEST_RISK_ENV]: "cyber-abuse",
+        [CYBER_ABUSE_AUTH_ENV]: CYBER_ABUSE_AUTH_VALUE,
+      },
+    })).toBeUndefined();
+
+    expect(liveProviderRiskError({
+      source: "drive-sim-workload.sh package-delivery",
+      texts: risky,
+      declaredRisk: "none",
+      env: { [LIVE_TEST_RISK_ENV]: "cyber-abuse" },
+    })).toContain("Only the operator may authorize");
+  });
+
+  it("never lets the environment soften a caller's own cyber-abuse declaration", () => {
+    for (const envRisk of [undefined, "none", ""]) {
+      const env = envRisk === undefined ? {} : { [LIVE_TEST_RISK_ENV]: envRisk };
+      expect(liveProviderRiskError({
+        source: "drive-sim-workload.sh artifact-to-action",
+        texts: ["Summarize the test results."],
+        declaredRisk: "cyber-abuse",
+        env,
+      }), String(envRisk)).toContain("declared-cyber-abuse");
+    }
+  });
+
   it("returns an actionable suspension message without exposing prompt text", () => {
     const error = liveProviderRiskError({
       source: "drive.mjs",

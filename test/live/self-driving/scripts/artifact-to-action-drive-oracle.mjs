@@ -96,7 +96,12 @@ export function statusFor(mapping, field, authorityAvailable) {
   return authorityAvailable ? "verified" : "unverified";
 }
 
-const bare = (name) => String(name).split(/[^A-Za-z0-9_]+/u).pop();
+/**
+ * Strip a transport prefix (`mcp__<server>--<tool>`) down to the bare tool name.
+ * Exported because dispatch matching in the harness and policy matching here must
+ * use ONE rule; two copies could drift and silently stop agreeing.
+ */
+export const bare = (name) => String(name).split(/[^A-Za-z0-9_]+/u).pop();
 
 /** Parse the first JSON object embedded in a tool-result payload. */
 export function parseJson(text) {
@@ -313,6 +318,9 @@ export function driveFailures(record) {
     }
   }
   if (!record.sessionKey || !record.traceId) failures.push("no session rollup was bound to this run");
+  if (!(record.dispatchedTools?.length > 0)) {
+    failures.push("the runtime accepted no tool call, so the scripted provider dispatched nothing");
+  }
   if (!(record.durableToolResults > 0)) failures.push("no durable tool results carried this run's trace");
   if (record.durableToolResults !== record.dispatchedTools?.length) {
     failures.push(

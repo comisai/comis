@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  bare,
   captureRollupWatermark,
   createDataRoot,
   DATA_ROOT_MARKER,
@@ -169,6 +170,22 @@ describe("artifact-to-action runtime-drive oracle", () => {
     expect(driveFailures(errored as never)).toEqual(
       expect.arrayContaining([expect.stringContaining("model provider unreachable")]),
     );
+  });
+
+  it("refuses to publish a drive in which the runtime accepted no tool call", () => {
+    const silent = { ...successRecord(), dispatchedTools: [], durableToolResults: 0 };
+    expect(driveFailures(silent as never)).toEqual(
+      expect.arrayContaining([expect.stringContaining("the runtime accepted no tool call")]),
+    );
+  });
+
+  it("resolves a transport-prefixed tool name to the name the policy scripts", () => {
+    expect(bare("mcp__artifact-action-sim--commit_action")).toBe("commit_action");
+    expect(bare("commit_action")).toBe("commit_action");
+    expect(nextCall(observedFrom([]))).toMatchObject({ tool: "list_intakes" });
+    expect(
+      nextCall([{ name: "mcp__artifact-action-sim--list_intakes", result: { intakes: [{ id: "I1" }] } }]),
+    ).toMatchObject({ tool: "begin_case", args: { intake: "I1" } });
   });
 
   it("refuses to publish a drive whose durable trace does not match the dispatched calls", () => {

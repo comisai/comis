@@ -21,6 +21,12 @@ Risk declaration and authorization are separate:
 - `COMIS_LIVE_CYBER_ABUSE_TESTS=operator-authorized` is the exact acknowledgement that unlocks the
   suspended test. Only the operator may direct the driver to set it.
 
+A script that passes its own declaration and this environment declaration are combined by taking the
+**stronger** of the two. A caller declaring `none` therefore never shadows `COMIS_LIVE_TEST_RISK=cyber-abuse`,
+so the remedy the suspension message names works for every caller — including one whose own declaration is
+`none` but whose prompt classifies risky. The reverse cannot soften anything: an environment value that is not
+`cyber-abuse` never clears a script's own `cyber-abuse` declaration.
+
 When the operator explicitly requests one of these tests, scope both variables to that one command and
 unset them immediately afterward:
 

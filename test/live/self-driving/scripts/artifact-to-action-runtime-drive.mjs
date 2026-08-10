@@ -17,7 +17,9 @@
 // grade is success/1 with the variant's expected commit and readback, and the durable
 // trajectory carries one tool result per dispatched call under this run's trace id.
 // Otherwise it prints the failure reasons and exits 1, so a rerun can never read as
-// green when the drive is dead. The data root defaults to a fresh system-temp
+// green when the drive is dead. An invocation that cannot run at all — an unbuilt
+// checkout, or a --data path this drive may not own — exits 2 before it acquires a
+// port, a daemon or a data root. The data root defaults to a fresh system-temp
 // directory and is removed unless --keep; it never lands inside the checkout.
 //
 // Output is one JSON record on stdout: session key, trace/run ids, discovered tool
@@ -26,10 +28,11 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createSocketServer } from "node:net";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  bare,
   captureRollupWatermark,
   createDataRoot,
   disposeDataRoot,
@@ -45,6 +48,8 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
 const simRoot = resolve(here, "../sim");
+const daemonEntry = resolve(repo, "packages/daemon/dist/daemon.js");
+const rpcClientEntry = resolve(repo, "packages/cli/dist/client/rpc-client.js");
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
@@ -54,6 +59,12 @@ function arg(name, fallback) {
 const variant = arg("variant", "A");
 const keep = process.argv.includes("--keep");
 const requestedData = arg("data", undefined);
+
+const unbuilt = [daemonEntry, rpcClientEntry].filter((path) => !existsSync(path));
+if (unbuilt.length > 0) {
+  console.error(`run pnpm build first — this drive needs ${unbuilt.join(" and ")}`);
+  process.exit(2);
+}
 
 const home = process.env.HOME ?? "";
 let root;
@@ -75,8 +86,6 @@ async function freePort() {
     });
   });
 }
-
-const bare = (name) => String(name).split(/[^A-Za-z0-9_]+/u).pop();
 
 function completion(model, choice, id) {
   return {
@@ -269,39 +278,16 @@ async function waitFor(check, timeoutMs, label, intervalMs = 500) {
   throw new Error(`timed out waiting for ${described}${last ? `: ${last.message}` : ""}`);
 }
 
-const gatewayPort = await freePort();
-const providerPort = await freePort();
-const token = `artifact-runtime-drive-${"x".repeat(24)}`;
-const provider = await startScriptedProvider(providerPort);
-writeConfig({ gatewayPort, providerPort, token });
-
-const daemon = spawn(process.execPath, [resolve(repo, "packages/daemon/dist/daemon.js")], {
-  cwd: repo,
-  env: {
-    ...process.env,
-    COMIS_DATA_DIR: dataDir,
-    COMIS_CONFIG_PATHS: resolve(dataDir, "config.yaml"),
-    COMIS_GATEWAY_TOKEN: token,
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-});
+// Every disposable resource this drive acquires — the scripted provider socket, the
+// daemon child and the data root — is acquired INSIDE the cleanup funnel below, so a
+// setup failure can never orphan a live daemon on its port or leave the temp root behind.
+let provider;
+let daemon;
 let daemonLog = "";
-daemon.stdout.on("data", (chunk) => (daemonLog += chunk));
-daemon.stderr.on("data", (chunk) => (daemonLog += chunk));
-
-process.env.COMIS_DATA_DIR = dataDir;
-process.env.COMIS_CONFIG_PATHS = resolve(dataDir, "config.yaml");
-process.env.COMIS_GATEWAY_URL = `ws://127.0.0.1:${gatewayPort}/ws`;
-process.env.COMIS_GATEWAY_TOKEN = token;
-
-const { withClient } = await import(
-  pathToFileURL(resolve(repo, "packages/cli/dist/client/rpc-client.js")).href
-);
-const call = (method, params) => withClient((client) => client.call(method, params));
 
 async function shutdown() {
-  provider.close();
-  if (daemon.exitCode !== null || daemon.signalCode !== null) return;
+  provider?.close();
+  if (!daemon || daemon.exitCode !== null || daemon.signalCode !== null) return;
   await new Promise((ok) => {
     const kill = setTimeout(() => daemon.kill("SIGKILL"), 10_000);
     daemon.once("exit", () => {
@@ -323,6 +309,33 @@ async function finish(code) {
 
 let record;
 try {
+  const gatewayPort = await freePort();
+  const providerPort = await freePort();
+  const token = `artifact-runtime-drive-${"x".repeat(24)}`;
+  provider = await startScriptedProvider(providerPort);
+  writeConfig({ gatewayPort, providerPort, token });
+
+  process.env.COMIS_DATA_DIR = dataDir;
+  process.env.COMIS_CONFIG_PATHS = resolve(dataDir, "config.yaml");
+  process.env.COMIS_GATEWAY_URL = `ws://127.0.0.1:${gatewayPort}/ws`;
+  process.env.COMIS_GATEWAY_TOKEN = token;
+
+  const { withClient } = await import(pathToFileURL(rpcClientEntry).href);
+  const call = (method, params) => withClient((client) => client.call(method, params));
+
+  daemon = spawn(process.execPath, [daemonEntry], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      COMIS_DATA_DIR: dataDir,
+      COMIS_CONFIG_PATHS: resolve(dataDir, "config.yaml"),
+      COMIS_GATEWAY_TOKEN: token,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  daemon.stdout.on("data", (chunk) => (daemonLog += chunk));
+  daemon.stderr.on("data", (chunk) => (daemonLog += chunk));
+
   await waitFor(
     async () => {
       const res = await fetch(`http://127.0.0.1:${gatewayPort}/health`);
@@ -372,10 +385,13 @@ try {
   }).catch((err) => ({ error: err.message }));
   const trajectoryPath = resolveTrajectoryPath(bound.path);
   let lastDurableToolResults = 0;
-  const durableToolResults = await waitFor(
+  // Wrapped in a sentinel so a settled count of 0 resolves the wait instead of reading
+  // as "not ready yet": a drive where the runtime accepted no tool call must report that
+  // failure, not burn the timeout and then blame the trajectory.
+  const durable = await waitFor(
     () => {
       lastDurableToolResults = traceBoundToolResults(trajectoryPath, rollup.traceId);
-      return lastDurableToolResults === dispatched.length ? lastDurableToolResults : undefined;
+      return lastDurableToolResults === dispatched.length ? { count: lastDurableToolResults } : undefined;
     },
     30_000,
     () =>
@@ -386,7 +402,7 @@ try {
     variant,
     discoveredTools: servers.toolCount ?? servers.tools?.length,
     dispatchedTools: dispatched,
-    durableToolResults,
+    durableToolResults: durable.count,
     toolStats: rollup.sessionEnd?.toolStats,
     finishReason: executed.finishReason,
     executeError: executed.error ?? policyError,

@@ -85,28 +85,76 @@ describe("real-user target source claims", () => {
     expect(daemonToolSetup).toContain("SSOT for the 46 platform tools");
   });
 
-  it("keeps every evidence-derived interesting journey structurally complete", () => {
-    expect(target).toContain("## 4d. The E-journeys — evidence-derived interesting workflows");
-
+  // The target spec is this kit's owned acceptance contract: a journey is only drivable when
+  // it declares its drive, its pass predicate, the artifacts that decide it, and its hard
+  // failures, and the coverage matrix in §5 is the anti-silent-skip gate that must name every
+  // journey the spec defines. A journey missing a label, or a journey absent from the matrix,
+  // is a journey that can be skipped in a run and still read as covered.
+  it("keeps every evidence-derived interesting journey structurally complete and covered", () => {
     const section = target.match(
       /## 4d\. The E-journeys — evidence-derived interesting workflows([\s\S]*?)\n## 5\./u,
     )?.[1];
     expect(section).toBeDefined();
 
-    const journeys = [...(section ?? "").matchAll(/^### E([1-6]) — .+$/gmu)];
-    expect(journeys.map((match) => match[1])).toEqual(["1", "2", "3", "4", "5", "6"]);
+    const journeys = [...(section ?? "").matchAll(/^### (E\d+) — .+$/gmu)];
+    expect(journeys.length).toBeGreaterThan(0);
 
     for (let index = 0; index < journeys.length; index += 1) {
       const start = journeys[index]?.index ?? 0;
       const end = journeys[index + 1]?.index ?? section?.length ?? 0;
       const journey = section?.slice(start, end) ?? "";
-      expect(journey).toContain("**Drive.**");
-      expect(journey).toContain("**Predicate.**");
-      expect(journey).toContain("**Oracle.**");
-      expect(journey).toContain("**HARD.**");
+      for (const label of ["**Drive.**", "**Predicate.**", "**Oracle.**", "**HARD.**"]) {
+        expect(journey, journeys[index]?.[1]).toContain(label);
+      }
     }
 
-    expect(target).toContain("| Evidence-derived interesting journeys |");
-    expect(target).toContain("| E1–E6 |");
+    const ids = journeys.map((match) => match[1] as string);
+    expect(ids).toEqual(ids.map((_, index) => `E${index + 1}`));
+
+    const matrixRow = target
+      .split("\n")
+      .find((line) => line.startsWith("| Evidence-derived interesting journeys |"));
+    expect(matrixRow).toBeDefined();
+    expect(matrixRow).toContain(`| ${ids[0]}–${ids.at(-1)} |`);
+  });
+
+  // E2's drive is the only journey backed by a shipped deterministic world, so its promises are
+  // checkable against that world instead of only against the prose that makes them: three
+  // rotated artifact domains, an embedded instruction that conflicts with the trusted intake in
+  // each, and one world whose authority is unavailable.
+  it("binds the E2 journey's declared world rotation to the shipped simulator seed", () => {
+    const seed = JSON.parse(
+      readFileSync(
+        resolve(repoRoot, "test/live/self-driving/sim/artifact-to-action/world.seed.json"),
+        "utf8",
+      ),
+    ) as {
+      variants: Record<
+        string,
+        {
+          basedOn?: string;
+          artifact?: { kind?: string; embeddedInstruction?: { target?: string } };
+          authority?: { target?: string; actionKind?: string };
+          availability?: { authority?: boolean };
+        }
+      >;
+    };
+    const variants = Object.entries(seed.variants);
+    const primary = variants.filter(([, world]) => world.basedOn === undefined);
+
+    expect(primary).toHaveLength(3);
+    expect(new Set(primary.map(([, world]) => world.artifact?.kind)).size).toBe(3);
+    expect(new Set(primary.map(([, world]) => world.authority?.actionKind)).size).toBe(3);
+
+    for (const [name, world] of primary) {
+      const decoy = world.artifact?.embeddedInstruction?.target;
+      expect(decoy, name).toBeTruthy();
+      expect(decoy, name).not.toBe(world.authority?.target);
+      expect(world.availability?.authority, name).toBe(true);
+    }
+
+    expect(
+      variants.filter(([, world]) => world.availability?.authority === false).length,
+    ).toBeGreaterThan(0);
   });
 });

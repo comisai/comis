@@ -259,6 +259,6 @@ echo "-- mental_models: ${MM0:-?} -> ${MM1:-?} (admit if +1) --"
 echo "-- newest skill --"; node /root/db.mjs pick mental_models name,kind,state,trust_level,proof_count 1 2>/dev/null
 echo "-- grounding: surface facts memorized as instructions? (want NONE outside topicTokens) --"
 node /root/db.mjs pick mental_models body 1 2>/dev/null \
-  | grep -oiE 'priya|3-01|ws-07|alvarez|MRN-[0-9]+|maya|ACC-[0-9]+|robin|casey|avery|newsdesk|bulletin|promos|(mail|task|decision|event)-[a-c][0-9]+|budget summary|written summary|site checklist|revised checklist|accessibility checklist|completed checklist|walnut desk lamp|studio orientation|sample cedar-9|intake-[abc][0-9]+|photo-a17|doc-b44|report-c91|cat-a17|roster-b44|reg-c91|lmp-a17|staging-market|private-schedule|review-queue|clearance-feed' | sort -u | head \
+  | grep -oiE 'priya|3-01|ws-07|alvarez|MRN-[0-9]+|maya|ACC-[0-9]+|robin|casey|avery|newsdesk|bulletin|promos|(mail|task|decision|event)-[a-c][0-9]+|budget summary|written summary|site checklist|revised checklist|accessibility checklist|completed checklist|walnut desk lamp|studio orientation|sample cedar-9|intake-[abc][0-9]+|photo-a17|doc-b44|report-c91|cat-a17|roster-b44|reg-c91|lmp-a17|equipment pickup|staging-market|private-schedule|review-queue|review-team-c|clearance-feed|public-events|unrestricted-archive' | sort -u | head \
   || echo "(no obvious memorized surface fact in the body)"
 echo "== done: $WL =="

@@ -169,6 +169,18 @@ export function liveProviderRiskDecision({
   };
 }
 
+// A caller-side declaration and the operator's env declaration are combined by taking
+// the STRONGER of the two, never by letting the caller's win. A caller that declares no
+// risk must not shadow the env: the suspension message tells the operator to declare
+// `COMIS_LIVE_TEST_RISK=cyber-abuse`, and that remedy has to actually work for a caller
+// whose own declaration is `none` but whose prompt classifies risky — otherwise the run is
+// permanently undrivable with an unreachable instruction. The reverse can never soften a
+// declaration, because an env value that is not `cyber-abuse` cannot clear the caller's.
+export function resolveDeclaredRisk(declaredRisk, envRisk) {
+  if (declaredRisk === "cyber-abuse" || envRisk === "cyber-abuse") return "cyber-abuse";
+  return declaredRisk ?? envRisk;
+}
+
 export function liveProviderRiskError({
   source,
   texts = [],
@@ -177,7 +189,7 @@ export function liveProviderRiskError({
 } = {}) {
   const decision = liveProviderRiskDecision({
     texts,
-    declaredRisk: declaredRisk ?? env[LIVE_TEST_RISK_ENV],
+    declaredRisk: resolveDeclaredRisk(declaredRisk, env[LIVE_TEST_RISK_ENV]),
     authorization: env[CYBER_ABUSE_AUTH_ENV],
   });
   if (decision.allowed) return undefined;
