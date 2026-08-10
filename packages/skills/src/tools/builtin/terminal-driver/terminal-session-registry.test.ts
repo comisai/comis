@@ -297,6 +297,60 @@ describe("createTerminalSessionRegistry — durable evict kill-sessions the deta
   });
 });
 
+describe("createTerminalSessionRegistry — confirmed process termination", () => {
+  type ConfirmingRegistry = ReturnType<typeof createTerminalSessionRegistry> & {
+    terminateAndConfirm(
+      sessionId: string,
+      owner: typeof OWNER,
+    ): Promise<{ ok: true; value: undefined } | { ok: false; error: Error }>;
+  };
+
+  it("preserves the managed handle when the worker refuses termination", async () => {
+    const fake = makeFakeWorker((req) => req.method === "kill" ? {
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: false,
+      error: "backend still alive",
+    } : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child)) as ConfirmingRegistry;
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    expect(typeof registry.terminateAndConfirm).toBe("function");
+    await expect(registry.terminateAndConfirm(created.sessionId, OWNER)).resolves.toMatchObject({ ok: false });
+    expect(registry.get(created.sessionId, OWNER)).toBeDefined();
+  });
+
+  it("drops the managed handle only after the worker acknowledges termination", async () => {
+    const fake = makeFakeWorker((req) => req.method === "kill" ? {
+      sessionId: req.sessionId,
+      requestId: req.requestId,
+      ok: true,
+      result: { terminated: true },
+    } : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child)) as ConfirmingRegistry;
+    const created = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    await expect(registry.terminateAndConfirm(created.sessionId, OWNER)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(fake.requestFrames.map((frame) => frame.method)).toEqual(["create", "kill"]);
+    expect(registry.get(created.sessionId, OWNER)).toBeUndefined();
+  });
+});
+
 describe("createTerminalSessionRegistry — lazy re-spawn", () => {
   it("spawns the worker once for the first create (single live worker per registry)", async () => {
     const spawnWorker = vi.fn(() => makeFakeWorker().child);

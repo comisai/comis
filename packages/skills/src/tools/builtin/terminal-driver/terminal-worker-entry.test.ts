@@ -67,6 +67,7 @@ function makeLogger() {
  */
 function makeFakeBackend(): {
   spawn: ReturnType<typeof vi.fn>;
+  kill: ReturnType<typeof vi.fn>;
   emit: (chunk: string) => void;
   emitExit: (e?: { exitCode: number; signal?: number }) => void;
   lastSpawn: () => { bin: string; argv: string[] } | undefined;
@@ -75,6 +76,7 @@ function makeFakeBackend(): {
   let onExit: ((e: { exitCode: number; signal?: number }) => void) | undefined;
   let lastBin: string | undefined;
   let lastArgv: string[] | undefined;
+  const kill = vi.fn(() => onExit?.({ exitCode: 143, signal: 15 }));
   const spawn = vi.fn((bin: string, argv: string[]) => {
     lastBin = bin;
     lastArgv = argv;
@@ -88,12 +90,13 @@ function makeFakeBackend(): {
       },
       write: vi.fn(),
       resize: vi.fn(),
-      kill: vi.fn(),
+      kill,
     };
     return handle;
   });
   return {
     spawn,
+    kill,
     emit: (chunk: string) => onData?.(chunk),
     emitExit: (e: { exitCode: number; signal?: number } = { exitCode: 0 }) => onExit?.(e),
     lastSpawn: () =>
@@ -394,6 +397,31 @@ describe("createTerminalWorker — backend selection", () => {
     expect((reply.result as { backend: string }).backend).toBe("pty");
     expect((reply.result as { rootPid?: number }).rootPid).toBe(4242);
     expect(fake.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms the confined backend exited before acknowledging a kill frame", async () => {
+    const fake = makeFakeBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const killed = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-kill-1",
+      traceId: TRACE_ID,
+      method: "kill",
+      params: { sessionId: "s1" },
+    });
+    const read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-after-kill",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+
+    expect(killed.ok).toBe(true);
+    expect(fake.kill).toHaveBeenCalledWith("SIGTERM");
+    expect((read.result as { alive: boolean }).alive).toBe(false);
   });
 
   // The THIRD backend selection — a create frame requesting
