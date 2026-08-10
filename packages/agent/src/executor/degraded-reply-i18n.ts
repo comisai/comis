@@ -118,7 +118,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + "is no background task running or result still pending. Please retry the request.",
   runtime_self_report_evidence_missing:
     "I could not verify my runtime activity claim in this turn. Work counts, comparative latency, failure "
-      + "causes, and cost require a current observability result that supports the specific claim.",
+      + "causes, cost, and durable job restart chronology require a current observability result that "
+      + "supports the specific claim.",
   runtime_self_report_evidence_unsupported:
     "The current observability result does not compare execution durations, and its cost figures are runtime "
       + "estimates rather than a provider invoice. The provider invoice is unverified, so I cannot identify "
