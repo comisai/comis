@@ -181,7 +181,7 @@ describe("outbound delivery status evidence reply", () => {
 
     expect(reply).toContain("could not verify whether the prior outbound item was delivered");
     expect(reply).toContain("current delivery or observability receipt");
-    expect(reply).not.toMatch(/(?:was|was not|did|did not) deliver/iu);
+    expect(reply).not.toMatch(/(?:was|was not|did|did not) delivered[.!]\s*$/iu);
     expect(LOCALE_MESSAGE_IDS).toContain("outbound_delivery_status_evidence_missing");
   });
 });

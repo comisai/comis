@@ -132,12 +132,13 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildOutboundDeliveryStatusEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
   enforceOutboundAudioEvidence,
   enforceOutboundImageEvidence,
+  enforceOutboundDeliveryStatusEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
@@ -2032,6 +2033,47 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
       reason: "missing_outbound_image_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const outboundDeliveryStatusEvidence = enforceOutboundDeliveryStatusEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    honestResponse: buildOutboundDeliveryStatusEvidenceMissingReply(replyLanguage, localeCatalog),
+  });
+  if (outboundDeliveryStatusEvidence.corrected) {
+    result.response = outboundDeliveryStatusEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response affirmed an elliptical delivery status without a current obs_query "
+          + "or self-delivering media receipt; inspect this turn in comis explain.",
+      },
+      "Unverified outbound delivery-status answer replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.outbound_delivery_status_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "outbound_delivery_status",
+        reason: outboundDeliveryStatusEvidence.reason,
+        requiredTool: "obs_query",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_outbound_delivery_status_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),

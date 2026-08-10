@@ -34,6 +34,7 @@ import {
   selectPersistentActionEvidenceMissingReply,
   selectOutboundAudioEvidenceMissingReply,
   selectOutboundImageEvidenceMissingReply,
+  selectOutboundDeliveryStatusEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
@@ -237,6 +238,14 @@ export function buildOutboundImageEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectOutboundImageEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when delivery status lacks current receipt evidence. */
+export function buildOutboundDeliveryStatusEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutboundDeliveryStatusEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when a destructive command had no observable effect. */

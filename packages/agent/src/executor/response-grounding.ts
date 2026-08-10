@@ -503,6 +503,71 @@ export function enforceOutboundImageEvidence(params: {
   };
 }
 
+export interface OutboundDeliveryStatusEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_delivery_status_evidence";
+}
+
+const OUTBOUND_DELIVERY_STATUS_REQUEST_PATTERNS = [
+  /^\s*did\s+(?:it|that|this)\s+(?:send|go\s+through)\s*\??\s*$/iu,
+  /^\s*(?:was|has)\s+(?:it|that|this)\s+(?:sent|delivered|uploaded|posted)\s*\??\s*$/iu,
+] as const;
+
+const OUTBOUND_DELIVERY_STATUS_SUCCESS_PATTERNS = [
+  /\b(?:yes|it\s+did)\b[\s\S]{0,180}\b(?:sent|delivered|went\s+through|uploaded|posted)\b/iu,
+  /\b(?:was|is|has\s+been)\s+(?:sent|delivered|uploaded|posted)\s+successfully\b/iu,
+] as const;
+
+const OUTBOUND_DELIVERY_STATUS_LIMITATION =
+  /\b(?:no|not|never|could\s+not|couldn't|did\s+not|didn't|was\s+not|wasn't|failed)\b[\s\S]{0,100}\b(?:send|sent|deliver|delivered|upload|uploaded|post|posted|go\s+through)\b/iu;
+
+const OUTBOUND_DELIVERY_RECEIPT_TOOLS = new Set([
+  "obs_query",
+  "image_generate",
+  "tts_synthesize",
+  "video_generate",
+]);
+
+/** Require current evidence before preserving an elliptical delivery-status affirmation. */
+export function enforceOutboundDeliveryStatusEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}): OutboundDeliveryStatusEvidenceGuardResult {
+  const statusRequested = OUTBOUND_DELIVERY_STATUS_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!statusRequested || OUTBOUND_DELIVERY_STATUS_LIMITATION.test(params.response)) {
+    return { response: params.response, corrected: false };
+  }
+  const affirmative = OUTBOUND_DELIVERY_STATUS_SUCCESS_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (!affirmative) return { response: params.response, corrected: false };
+
+  const hasCurrentReceipt = (params.toolExecResults ?? []).some(
+    (result) =>
+      OUTBOUND_DELIVERY_RECEIPT_TOOLS.has(result.toolName)
+      && result.success
+      && result.backgrounded !== true,
+  );
+  if (hasCurrentReceipt || params.currentActionEvidence === true) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_outbound_delivery_status_evidence",
+  };
+}
+
 const ONGOING_WORK_CLAIM_PATTERNS = [
   /\b(?:i'm|i am|we're|we are) (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,
   /\b(?:i'm|i am|we're|we are) currently (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,

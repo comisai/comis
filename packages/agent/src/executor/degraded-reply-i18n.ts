@@ -29,6 +29,7 @@ export type LocaleMessageId =
   | "persistent_action_evidence_missing"
   | "outbound_audio_evidence_missing"
   | "outbound_image_evidence_missing"
+  | "outbound_delivery_status_evidence_missing"
   | "destructive_action_not_verified"
   | "provider_requires_model"
   | "agent_update_noop"
@@ -100,6 +101,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I could not verify creation or delivery of the requested image in this turn because "
       + "there is no successful current-turn generation or trusted completion receipt. "
       + "I cannot confirm that it was created or delivered; please retry.",
+  outbound_delivery_status_evidence_missing:
+    "I could not verify whether the prior outbound item was delivered in this turn because "
+      + "there is no current delivery or observability receipt. I cannot confirm delivery yet.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
   provider_requires_model:
@@ -397,6 +401,14 @@ export function selectOutboundImageEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "outbound_image_evidence_missing");
+}
+
+/** Honest replacement when an elliptical delivery answer lacks current proof. */
+export function selectOutboundDeliveryStatusEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "outbound_delivery_status_evidence_missing");
 }
 
 /** Honest replacement when a destructive command reports no observable effect. */

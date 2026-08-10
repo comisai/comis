@@ -11,6 +11,8 @@ const OUTBOUND_AUDIO_EVIDENCE_GUARD_ACTION =
   "response.outbound_audio_evidence_guard";
 const OUTBOUND_IMAGE_EVIDENCE_GUARD_ACTION =
   "response.outbound_image_evidence_guard";
+const OUTBOUND_DELIVERY_STATUS_EVIDENCE_GUARD_ACTION =
+  "response.outbound_delivery_status_evidence_guard";
 
 /** Name the response correction while preserving failed-tool details in the report. */
 export function completionEvidenceGuardVerdict(
@@ -124,6 +126,33 @@ export function outboundImageEvidenceGuardVerdict(
       "inspect image_generate admission and tool results for this turn",
       "if work was delegated, verify the background completion relay delivered the image",
       "retry only after the image-generation capability can produce a delivery receipt",
+    ],
+  };
+}
+
+/** Name an affirmative elliptical status answer rejected without current proof. */
+export function outboundDeliveryStatusEvidenceGuardVerdict(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length === 0
+    || !rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === OUTBOUND_DELIVERY_STATUS_EVIDENCE_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) return null;
+  return {
+    code: "outbound_delivery_status_evidence_missing",
+    detail:
+      "the response honesty guard replaced an affirmative delivery-status answer because "
+      + "the elliptical follow-up had no current delivery or observability receipt",
+    suggestedNextSteps: [
+      "inspect current obs_query and self-delivering media tool results for this turn",
+      "resolve which prior outbound item the follow-up refers to before confirming delivery",
+      "retry status verification instead of relying on historical assistant prose",
     ],
   };
 }

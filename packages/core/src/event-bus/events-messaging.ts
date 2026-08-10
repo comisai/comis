@@ -768,6 +768,8 @@ export interface MessagingEvents {
    *  successful synthesis or trusted completion receipt.
    *  `missing_outbound_image_evidence` applies the same rule to image
    *  generation and delivery claims.
+   *  `missing_outbound_delivery_status_evidence` means an elliptical status
+   *  answer lacked a current delivery or observability receipt.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -789,6 +791,7 @@ export interface MessagingEvents {
       | "pending_scheduler_confirmation"
       | "missing_outbound_audio_evidence"
       | "missing_outbound_image_evidence"
+      | "missing_outbound_delivery_status_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;

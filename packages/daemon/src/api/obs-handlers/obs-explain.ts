@@ -61,6 +61,7 @@ import {
   outboundAudioEvidenceGuardVerdict,
   outboundCompletionEvidenceGuardVerdict,
   outboundImageEvidenceGuardVerdict,
+  outboundDeliveryStatusEvidenceGuardVerdict,
 } from "./obs-explain-completion-evidence-verdict.js";
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
@@ -776,6 +777,8 @@ export async function assembleIncidentReportFromSources(
   if (outboundAudioEvidenceVerdict !== null) report.likelyRootCause = outboundAudioEvidenceVerdict;
   const outboundImageEvidenceVerdict = outboundImageEvidenceGuardVerdict(auditRows, report.traceId);
   if (outboundImageEvidenceVerdict !== null) report.likelyRootCause = outboundImageEvidenceVerdict;
+  const outboundDeliveryVerdict = outboundDeliveryStatusEvidenceGuardVerdict(auditRows, report.traceId);
+  if (outboundDeliveryVerdict !== null) report.likelyRootCause = outboundDeliveryVerdict;
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
     auditRows,
     report.traceId,
