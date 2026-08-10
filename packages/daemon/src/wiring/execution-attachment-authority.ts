@@ -40,13 +40,14 @@ export interface ExecutionAttachmentCreateInput {
   readonly operationId: string;
   readonly managedRunId: string;
   readonly workspaceLeaseId: string;
+  readonly kind: "unix_socket" | "inherited_descriptor";
   readonly sourcePath: string;
   readonly owner: ManagedRunOwnerScope;
 }
 
 export type ExecutionAttachmentAuthorityCreateOutcome =
   | { readonly kind: "created" | "identical_replay"; readonly record: ExecutionAttachmentRecord }
-  | { readonly kind: "rejected"; readonly reason: "authority_mismatch" | "source_rejected" | "replay_conflict" | "binding_refused" };
+  | { readonly kind: "rejected"; readonly reason: "authority_mismatch" | "source_rejected" | "replay_conflict" | "binding_refused" | "unsupported_kind" };
 
 export interface ExecutionAttachmentRecoverySummary {
   readonly recovered: readonly string[];
@@ -112,6 +113,9 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
 
   async function create(input: ExecutionAttachmentCreateInput): Promise<Result<ExecutionAttachmentAuthorityCreateOutcome, Error>> {
     const startedAtMs = deps.nowMs();
+    if (input.kind !== "unix_socket") {
+      return ok({ kind: "rejected", reason: "unsupported_kind" });
+    }
     const run = await invoke(deps.runs.get(input.owner, input.managedRunId));
     if (!run.ok) return run;
     if (run.value === undefined || run.value.workspaceLeaseId !== input.workspaceLeaseId) {
@@ -137,9 +141,23 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
     const existing = await invoke(deps.attachments.get(scope, executionAttachmentId));
     if (!existing.ok) return existing;
     if (existing.value !== undefined) {
-      return existing.value.sourcePath === input.sourcePath
-        ? ok({ kind: "identical_replay", record: existing.value })
-        : ok({ kind: "rejected", reason: "replay_conflict" });
+      if (existing.value.sourcePath !== input.sourcePath) {
+        return ok({ kind: "rejected", reason: "replay_conflict" });
+      }
+      const active = validateActive(existing.value);
+      if (!active.ok) {
+        deps.logger.warn({
+          managedRunId: input.managedRunId,
+          serviceInstanceId: instance.serviceInstanceId,
+          errorKind: "validation" as const,
+          hint: "Restore the original canonical Unix socket under allowedRuntimeRoots or abandon the preparation",
+        }, "Replayed execution attachment source was rejected");
+        return ok({ kind: "rejected", reason: "source_rejected" });
+      }
+      if (!run.value.executionAttachmentIds.includes(executionAttachmentId)) {
+        return ok({ kind: "rejected", reason: "binding_refused" });
+      }
+      return ok({ kind: "identical_replay", record: existing.value });
     }
 
     const source = validateSource({

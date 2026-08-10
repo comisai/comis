@@ -6,6 +6,7 @@ import {
   parseFormattedSessionKey,
   tryGetContext,
   type AgentCapability,
+  type CapabilityServiceScope,
   type ComisLogger,
   type ManagedRunOwnerScope,
   type ManagedRunPreparedStart,
@@ -42,6 +43,7 @@ export interface ManagedMcpActiveInstance {
   readonly mcpServerName: string;
   readonly allowedAgents: readonly string[];
   readonly allowedWorkspaceRoots: readonly string[];
+  readonly activeScopes: readonly CapabilityServiceScope[];
   readonly state: "active" | "failed";
 }
 
@@ -107,12 +109,14 @@ export interface ManagedMcpPrivateMetadataDeps {
 interface BoundTool {
   readonly binding: Readonly<PlannedManagedToolBinding>;
   readonly serviceInstanceId: string;
+  readonly activeScopes: readonly CapabilityServiceScope[];
 }
 
 interface CapturedCall {
   readonly requestContext: RequestContext;
   readonly callContext: McpCapabilityCallContext;
   readonly binding: Readonly<PlannedManagedToolBinding>;
+  readonly activeScopes: readonly CapabilityServiceScope[];
   readonly authority: ManagedMcpActivationAuthority;
 }
 
@@ -153,7 +157,11 @@ function exactBinding(
   if (instances.length !== 1 || instances[0] === undefined) {
     return err(new Error("managed MCP tool has no unique active authorized service instance"));
   }
-  return ok({ binding, serviceInstanceId: instances[0].serviceInstanceId });
+  return ok({
+    binding,
+    serviceInstanceId: instances[0].serviceInstanceId,
+    activeScopes: instances[0].activeScopes,
+  });
 }
 
 function rejectCall(
@@ -352,6 +360,7 @@ export function createManagedMcpPrivateMetadataBridge(
       requestContext: context,
       callContext: parsedCallContext.data,
       binding: bound.value.binding,
+      activeScopes: bound.value.activeScopes,
       authority: Object.freeze({
         ...contextAuthority.value.authority,
         rootRunId,
@@ -401,6 +410,18 @@ export function createManagedMcpPrivateMetadataBridge(
     if (!parsed.success) {
       return rejectCall(deps, input, "managed-run prepared result failed strict validation");
     }
+    if (
+      parsed.data.requestedWorkspace !== undefined
+      && !captured.activeScopes.includes("workspace_lease")
+    ) {
+      return rejectCall(deps, input, "managed-run workspace request lacks workspace lease scope");
+    }
+    if (
+      parsed.data.requestedAttachment !== undefined
+      && !captured.activeScopes.includes("execution_attachment")
+    ) {
+      return rejectCall(deps, input, "managed-run attachment request lacks execution attachment scope");
+    }
     const expiresAtMs = Date.parse(parsed.data.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= deps.nowMs()) {
       return rejectCall(deps, input, "managed-run preparation is expired");
@@ -419,6 +440,9 @@ export function createManagedMcpPrivateMetadataBridge(
         ...(parsed.data.requestedWorkspace === undefined
           ? {}
           : { requestedWorkspace: parsed.data.requestedWorkspace }),
+        ...(parsed.data.requestedAttachment === undefined
+          ? {}
+          : { requestedAttachment: parsed.data.requestedAttachment }),
       },
       authority: captured.authority,
     }));

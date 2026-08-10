@@ -116,6 +116,7 @@ describe("execution attachment authority coordinator", () => {
       operationId: "operation_attachment_a",
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
       owner: OWNER,
     });
@@ -142,12 +143,49 @@ describe("execution attachment authority coordinator", () => {
       operationId: "operation_attachment_wrong_lease",
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_b",
+      kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
       owner: OWNER,
     });
     expect(result).toEqual({ ok: true, value: { kind: "rejected", reason: "authority_mismatch" } });
     expect(deps.validateSource).not.toHaveBeenCalled();
     expect(deps.attachments.create).not.toHaveBeenCalled();
+  });
+
+  it("revalidates a replayed attachment before returning its durable handles", async () => {
+    const deps = makeDeps({
+      runs: {
+        ...(makeDeps().runs as unknown as object),
+        get: vi.fn(async () => ok({
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          tenantId: "tenant_a",
+          agentId: "agent_a",
+          executionAttachmentIds: ["execution-attachment_a"],
+        })),
+      } as unknown as ManagedRunStorePort,
+      attachments: {
+        ...(makeDeps().attachments as unknown as object),
+        get: vi.fn(async () => ok(ATTACHMENT)),
+      } as unknown as ExecutionAttachmentPort,
+      validateSource: vi.fn(() => err(new Error("socket identity changed"))),
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    const replayed = await authority.create({
+      operationId: "operation_attachment_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
+      sourcePath: ATTACHMENT.sourcePath,
+      owner: OWNER,
+    });
+
+    expect(replayed).toEqual({
+      ok: true,
+      value: { kind: "rejected", reason: "source_rejected" },
+    });
   });
 
   it("revokes a created attachment if durable run binding is refused", async () => {
@@ -170,6 +208,7 @@ describe("execution attachment authority coordinator", () => {
       operationId: "operation_attachment_bind_refused",
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
       owner: OWNER,
     });
@@ -191,6 +230,7 @@ describe("execution attachment authority coordinator", () => {
       operationId: "operation_attachment_bind_failure",
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
       sourcePath: "/srv/runtime/service-a/run-a.sock",
       owner: OWNER,
     });

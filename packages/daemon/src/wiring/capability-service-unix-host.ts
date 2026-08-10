@@ -858,15 +858,9 @@ function createEndpoint(
             managedRunId: command.managedRunId,
             externalRunRef: command.externalRunRef,
             registrationNonce: command.registrationNonce,
-            ...(command.workspaceLeaseId === undefined
-              ? {}
-              : { workspaceLeaseId: command.workspaceLeaseId }),
-            ...(command.executionAttachmentId === undefined
-              ? {}
-              : { executionAttachmentId: command.executionAttachmentId }),
-            ...(command.attachmentTargetName === undefined
-              ? {}
-              : { attachmentTargetName: command.attachmentTargetName }),
+            ...(command.workspaceLeaseId === undefined ? {} : { workspaceLeaseId: command.workspaceLeaseId }),
+            ...(command.executionAttachmentId === undefined ? {} : { executionAttachmentId: command.executionAttachmentId }),
+            ...(command.attachmentTargetName === undefined ? {} : { attachmentTargetName: command.attachmentTargetName }),
           },
         }, CapabilityActivateRequestSchema, CapabilityActivateResponseSchema);
         return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });

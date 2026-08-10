@@ -87,7 +87,13 @@ function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): A
       serviceDefinitionId: "example.service-definition",
       mcpServerName: "example-service",
       managedToolBindings: Object.freeze([]),
-      requestedScopes: Object.freeze(["health", "report"] as const),
+      requestedScopes: Object.freeze([
+        "health",
+        "report",
+        "workspace_lease",
+        "terminal_events",
+        "execution_attachment",
+      ] as const),
     })]),
     instances: Object.freeze([Object.freeze({
       contributionId: "example.service",
@@ -98,7 +104,13 @@ function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): A
       allowedWorkspaceRoots: Object.freeze([]),
       allowedRuntimeRoots: Object.freeze([]),
       state: "active" as const,
-      activeScopes: Object.freeze(["health", "report"] as const),
+      activeScopes: Object.freeze([
+        "health",
+        "report",
+        "workspace_lease",
+        "terminal_events",
+        "execution_attachment",
+      ] as const),
     })]),
     ...overrides,
   });
@@ -214,11 +226,11 @@ describe("managed-run two-phase activation", () => {
     chmodSync(root, 0o700);
     dataDirectory = join(root, "data");
     workspaceRoot = join(root, "workspaces");
-    runtimeRoot = join(root, "runtime");
+    runtimeRoot = realpathSync(mkdtempSync("/tmp/comis-attachment-runtime-"));
+    temporaryDirectories.push(runtimeRoot);
     workspaceDirectory = join(workspaceRoot, "task-a");
     mkdirSync(dataDirectory, { mode: 0o700 });
     mkdirSync(workspaceDirectory, { recursive: true, mode: 0o700 });
-    mkdirSync(runtimeRoot, { mode: 0o700 });
     const directory = join(dataDirectory, "private");
     mkdirSync(directory, { mode: 0o700 });
     const content = createSqliteManagedRunContentStore(db, {
@@ -262,6 +274,7 @@ describe("managed-run two-phase activation", () => {
       contentStore,
       workspaceLeases,
       attachments,
+      attachmentAuthority: makeAttachmentAuthority(),
       revokeManagedTerminals: async () => ok(undefined),
       control,
       activeView: {
@@ -463,8 +476,8 @@ describe("managed-run two-phase activation", () => {
   });
 
   it("rejects an attachment source outside the configured runtime roots", async () => {
-    const outsideRoot = join(workspaceRoot, "runtime-outside");
-    mkdirSync(outsideRoot);
+    const outsideRoot = realpathSync(mkdtempSync("/tmp/comis-attachment-outside-"));
+    temporaryDirectories.push(outsideRoot);
     const sourcePath = join(outsideRoot, "reporter.sock");
     await listenUnixSocket(sourcePath);
 
@@ -587,6 +600,49 @@ describe("managed-run two-phase activation", () => {
     expect(abandon).toHaveBeenCalledWith(expect.objectContaining({
       disposition: "reap_safe",
     }));
+  });
+
+  it("revokes an automatically bound attachment before releasing its lease", async () => {
+    const sourcePath = join(runtimeRoot, "rejected-reporter.sock");
+    await listenUnixSocket(sourcePath);
+    const order: string[] = [];
+    const attachmentStore = {
+      ...attachments,
+      revoke: vi.fn(async (...args: Parameters<ExecutionAttachmentPort["revoke"]>) => {
+        order.push("attachment");
+        return attachments.revoke(...args);
+      }),
+    } as ExecutionAttachmentPort;
+    const leaseStore = {
+      ...workspaceLeases,
+      release: vi.fn(async (...args: Parameters<WorkspaceLeasePort["release"]>) => {
+        order.push("lease");
+        return workspaceLeases.release(...args);
+      }),
+    } as WorkspaceLeasePort;
+    activate.mockResolvedValue(err({
+      kind: "rejected" as const,
+      reasonCode: "precondition_failed",
+    }));
+
+    const result = await makeCoordinator({
+      attachments: attachmentStore,
+      workspaceLeases: leaseStore,
+      attachmentAuthority: makeAttachmentAuthority(attachmentStore, leaseStore),
+    }).activatePrepared(makeInput({
+      operationId: "operation_rejected_attachment",
+      prepared: makePrepared({
+        requestedWorkspace: { rootHint: workspaceDirectory },
+        requestedAttachment: { kind: "unix_socket", sourcePath },
+      }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "activation_rejected" },
+    });
+    expect(order).toEqual(["attachment", "lease"]);
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({ disposition: "reap_safe" }));
   });
 
   it("terminates bound terminals and revokes attachments before releasing the workspace lease", async () => {

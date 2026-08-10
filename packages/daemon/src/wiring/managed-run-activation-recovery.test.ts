@@ -131,7 +131,7 @@ function makeActiveView(allowedWorkspaceRoots: readonly string[] = []): ActiveCa
       serviceDefinitionId: "example.service-definition",
       mcpServerName: "example-service",
       managedToolBindings: Object.freeze([]),
-      requestedScopes: Object.freeze(["health"] as const),
+      requestedScopes: Object.freeze(["health", "workspace_lease"] as const),
     })]),
     instances: Object.freeze([Object.freeze({
       contributionId: "example.service",
@@ -142,7 +142,7 @@ function makeActiveView(allowedWorkspaceRoots: readonly string[] = []): ActiveCa
       allowedWorkspaceRoots: Object.freeze([...allowedWorkspaceRoots]),
       allowedRuntimeRoots: Object.freeze([]),
       state: "active" as const,
-      activeScopes: Object.freeze(["health"] as const),
+      activeScopes: Object.freeze(["health", "workspace_lease"] as const),
     })]),
   });
 }
@@ -152,6 +152,7 @@ function controlIds(managedRunId: string) {
     activationOperationId: `activate-${managedRunId}`,
     abandonOperationId: `abandon-${managedRunId}`,
     workspaceLeaseId: `workspace-${managedRunId}`,
+    attachmentOperationId: `attachment-${managedRunId}`,
     leaseReleaseOperationId: `lease-release-${managedRunId}`,
     leaseRecoveryOperationId: `lease-recover-${managedRunId}`,
     rejectionOperationId: `reject-${managedRunId}`,
@@ -281,6 +282,7 @@ describe("managed-run activation restart recovery", () => {
       contentStore,
       workspaceLeases,
       attachments: createSqliteExecutionAttachmentStore(reopenedDb),
+      attachmentAuthority: { create: vi.fn() },
       revokeManagedTerminals: async () => ok(undefined),
       control,
       activeView: { getActiveView: () => makeActiveView([workspaceRoot]) },

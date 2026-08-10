@@ -23,6 +23,12 @@ import {
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import type { CapabilityServiceRuntime } from "./capability-service-runtime.js";
+import type { ExecutionAttachmentAuthority } from "./execution-attachment-authority.js";
+import {
+  ensurePreparedExecutionAttachment,
+  ensurePreparedWorkspaceLease,
+  validatePreparedBindingRequests,
+} from "./managed-run-activation-bindings.js";
 import type { ValidatedWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
 import { createManagedRunResourceRevoker } from "./managed-run-resource-revoker.js";
 
@@ -55,6 +61,7 @@ export interface ManagedRunActivationIds {
   readonly managedRunId: string;
   readonly activationDescriptorRef: string;
   readonly workspaceLeaseId: string;
+  readonly attachmentOperationId: string;
   readonly activationOperationId: string;
   readonly abandonOperationId: string;
   readonly leaseReleaseOperationId: string;
@@ -67,6 +74,7 @@ export interface ManagedRunActivationIds {
 
 export interface ManagedRunActivationControlIds {
   readonly workspaceLeaseId: string;
+  readonly attachmentOperationId: string;
   readonly activationOperationId: string;
   readonly abandonOperationId: string;
   readonly leaseReleaseOperationId: string;
@@ -80,6 +88,7 @@ export interface ManagedRunActivationControlIds {
 export type ManagedRunActivationRejectionReason =
   | "activation_rejected"
   | "agent_not_allowed"
+  | "attachment_not_allowed"
   | "invalid_preparation"
   | "preparation_expired"
   | "replay_conflict"
@@ -129,6 +138,7 @@ export interface ManagedRunActivationCoordinatorDeps {
   readonly contentStore: ManagedRunContentPort;
   readonly workspaceLeases: WorkspaceLeasePort;
   readonly attachments: ExecutionAttachmentPort;
+  readonly attachmentAuthority: Pick<ExecutionAttachmentAuthority, "create">;
   readonly revokeManagedTerminals: (record: ManagedRunRecord) => Promise<Result<void, Error>>;
   readonly control: CapabilityServiceControlPort;
   readonly activeView: Pick<CapabilityServiceRuntime, "getActiveView">;
@@ -156,16 +166,6 @@ function ownerScope(input: ManagedRunActivationInput): ManagedRunOwnerScope {
     agentId: input.authority.agentId,
     principalId: input.authority.principalId,
     conversationRef: input.authority.conversationRef,
-  };
-}
-
-function recordOwnerScope(record: ManagedRunRecord): ManagedRunOwnerScope {
-  return {
-    kind: "owner",
-    tenantId: record.tenantId,
-    agentId: record.agentId,
-    principalId: record.principalId,
-    conversationRef: record.conversationRef,
   };
 }
 
@@ -216,6 +216,14 @@ export function createManagedRunActivationCoordinator(
   deps: ManagedRunActivationCoordinatorDeps,
 ): ManagedRunActivationCoordinator {
   const revokeBoundResources = createManagedRunResourceRevoker({ store: deps.store, attachments: deps.attachments, revokeManagedTerminals: deps.revokeManagedTerminals, nowMs: deps.nowMs, logger: deps.logger });
+  const bindingDeps = {
+    store: deps.store,
+    workspaceLeases: deps.workspaceLeases,
+    attachmentAuthority: deps.attachmentAuthority,
+    activeView: deps.activeView,
+    validateWorkspacePath: deps.validateWorkspacePath,
+    nowMs: deps.nowMs,
+  };
 
   async function abandonPrepared(
     input: ManagedRunActivationInput,
@@ -357,109 +365,37 @@ export function createManagedRunActivationCoordinator(
     }
   }
 
-  function validateRequestedWorkspace(
-    input: ManagedRunActivationInput,
-  ): Result<ValidatedWorkspaceLeasePath | undefined, Error> {
-    const requested = input.prepared.requestedWorkspace;
-    if (requested === undefined) return ok(undefined);
-    const instance = deps.activeView.getActiveView().instances.find(
-      (candidate) => candidate.serviceInstanceId === input.serviceInstanceId
-        && candidate.state === "active",
-    );
-    if (instance === undefined || !instance.allowedAgents.includes(input.authority.agentId)) {
-      return err(new Error("workspace lease service instance is not active for the captured agent"));
-    }
-    return deps.validateWorkspacePath(requested.rootHint, instance.allowedWorkspaceRoots);
-  }
-
-  async function ensureWorkspaceLease(
+  async function cancelDurableActivation(
     input: ManagedRunActivationInput,
     ids: ManagedRunActivationIds,
+    descriptorRef: string,
     record: ManagedRunRecord,
-    prevalidated?: ValidatedWorkspaceLeasePath,
-  ): Promise<Result<ManagedRunRecord, Error>> {
-    if (input.prepared.requestedWorkspace === undefined) {
-      return record.workspaceLeaseId === undefined
-        ? ok(record)
-        : err(new Error("workspace-less preparation retained a workspace lease"));
+    reasonCode: "activation_rejected" | "attachment_not_allowed",
+  ): Promise<Result<ManagedRunActivationOutcome, Error>> {
+    await abandonPrepared(input, ids, "activation_rejected", "reap_safe", record);
+    const rejected = await invokeStore(() => deps.store.claimTransition(
+      { kind: "service", serviceInstanceId: input.serviceInstanceId },
+      {
+        operationId: ids.rejectionOperationId,
+        managedRunId: ids.managedRunId,
+        expectedStatuses: ["preparing", "unknown"],
+        nextStatus: "cancelled",
+        nextStatusReason: "activation_rejected",
+        transitionedAtMs: deps.nowMs(),
+        terminalOutcome: { kind: "cancelled", recordedAtMs: deps.nowMs() },
+      },
+    ));
+    if (!rejected.ok) return rejected;
+    if (rejected.value.kind !== "claimed" && rejected.value.kind !== "identical_replay") {
+      return err(new Error(`managed-run rejection transition failed: ${rejected.value.kind}`));
     }
-    const validated = prevalidated === undefined
-      ? validateRequestedWorkspace(input)
-      : ok(prevalidated);
-    if (!validated.ok || validated.value === undefined) {
-      return validated.ok
-        ? err(new Error("workspace-requesting preparation lacks validated authority"))
-        : validated;
-    }
-    const authority = validated.value;
-    const scope = workspaceScope(record);
-    if (record.workspaceLeaseId !== undefined) {
-      const existing = await invokeStore(() => deps.workspaceLeases.get(
-        scope,
-        record.workspaceLeaseId as string,
-      ));
-      if (!existing.ok) return existing;
-      if (
-        existing.value === undefined
-        || existing.value.state !== "active"
-        || existing.value.canonicalPath !== authority.canonicalPath
-        || existing.value.filesystemIdentity.device
-          !== authority.filesystemIdentity.device
-        || existing.value.filesystemIdentity.inode
-          !== authority.filesystemIdentity.inode
-      ) {
-        return err(new Error("durable workspace lease no longer matches filesystem authority"));
-      }
-      const recoveredAtMs = deps.nowMs();
-      const reconciled = await invokeStore(() => deps.workspaceLeases.reconcile(scope, {
-        operationId: `${ids.leaseRecoveryOperationId}-${recoveredAtMs}`,
-        workspaceLeaseId: record.workspaceLeaseId as string,
-        filesystemIdentity: authority.filesystemIdentity,
-        recoveredAtMs,
-      }));
-      if (!reconciled.ok) return reconciled;
-      if (reconciled.value.kind !== "recovered" && reconciled.value.kind !== "identical_replay") {
-        return err(new Error(`workspace lease recovery failed: ${reconciled.value.kind}`));
-      }
-      return ok(record);
-    }
-
-    const boundAtMs = Math.max(deps.nowMs(), record.updatedAtMs);
-    const created = await invokeStore(() => deps.workspaceLeases.create({
-      schemaVersion: 1,
-      workspaceLeaseId: ids.workspaceLeaseId,
-      managedRunId: record.managedRunId,
-      serviceInstanceId: record.serviceInstanceId,
-      tenantId: record.tenantId,
-      agentId: record.agentId,
-      canonicalPath: authority.canonicalPath,
-      filesystemIdentity: authority.filesystemIdentity,
-      state: "active",
-      createdAtMs: boundAtMs,
-      updatedAtMs: boundAtMs,
-    }));
-    if (!created.ok) return created;
-    if (created.value.kind === "replay_conflict") {
-      return err(new Error("workspace lease mint replay conflicted"));
-    }
-    const bound = await invokeStore(() => deps.store.setWorkspaceLease(recordOwnerScope(record), {
-      managedRunId: record.managedRunId,
-      workspaceLeaseId: ids.workspaceLeaseId,
-      leaseTenantId: record.tenantId,
-      leaseAgentId: record.agentId,
-      boundAtMs,
-    }));
-    if (!bound.ok) return bound;
-    if (bound.value.kind !== "bound" && bound.value.kind !== "identical_replay") {
-      await invokeStore(() => deps.workspaceLeases.release(scope, {
-        operationId: `${ids.leaseReleaseOperationId}-bind-failed`,
-        workspaceLeaseId: ids.workspaceLeaseId,
-        disposition: "preserve",
-        releasedAtMs: boundAtMs,
-      }));
-      return err(new Error(`managed-run workspace binding failed: ${bound.value.kind}`));
-    }
-    return ok(bound.value.record);
+    await removeDescriptor(rejected.value.record, descriptorRef);
+    emitRejected(input, reasonCode, ids.managedRunId);
+    return ok({
+      kind: "rejected",
+      reasonCode,
+      record: rejected.value.record,
+    });
   }
 
   async function activateDurable(
@@ -491,6 +427,8 @@ export function createManagedRunActivationCoordinator(
       || descriptor.value.expiresAtMs !== input.prepared.expiresAtMs
       || JSON.stringify(descriptor.value.requestedWorkspace)
         !== JSON.stringify(input.prepared.requestedWorkspace)
+      || JSON.stringify(descriptor.value.requestedAttachment)
+        !== JSON.stringify(input.prepared.requestedAttachment)
     ) {
       const unknown = await markUnknown({
         serviceInstanceId: input.serviceInstanceId,
@@ -498,14 +436,33 @@ export function createManagedRunActivationCoordinator(
       }, ids, "recovery_join_missing");
       return unknown.ok ? ok({ kind: "activation_unknown", record: unknown.value }) : unknown;
     }
-    const workspaceBound = await ensureWorkspaceLease(
+    const workspaceBound = await ensurePreparedWorkspaceLease(
+      bindingDeps,
       input,
       ids,
       preparedRecord,
       prevalidatedWorkspace,
     );
     if (!workspaceBound.ok) return workspaceBound;
-    const durableRecord = workspaceBound.value;
+    const attachmentBound = await ensurePreparedExecutionAttachment(
+      bindingDeps,
+      input,
+      ids,
+      workspaceBound.value,
+    );
+    if (!attachmentBound.ok) return attachmentBound;
+    const attachmentBinding = attachmentBound.value;
+    if (attachmentBinding.kind === "rejected") {
+      return cancelDurableActivation(
+        input,
+        ids,
+        descriptorRef,
+        workspaceBound.value,
+        "attachment_not_allowed",
+      );
+    }
+    const durableRecord = attachmentBinding.record;
+    const attachment = attachmentBinding.attachment;
     deps.logger.debug({
       step: "managed-run-service-activate",
       managedRunId: ids.managedRunId,
@@ -520,33 +477,22 @@ export function createManagedRunActivationCoordinator(
       ...(durableRecord.workspaceLeaseId === undefined
         ? {}
         : { workspaceLeaseId: durableRecord.workspaceLeaseId }),
+      ...(attachment === undefined
+        ? {}
+        : {
+            executionAttachmentId: attachment.executionAttachmentId,
+            attachmentTargetName: attachment.targetName,
+          }),
     }));
     if (!activation.ok) {
       if (activation.error.kind === "rejected") {
-        await abandonPrepared(input, ids, "activation_rejected", "reap_safe", durableRecord);
-        const rejected = await invokeStore(() => deps.store.claimTransition(
-          { kind: "service", serviceInstanceId: input.serviceInstanceId },
-          {
-            operationId: ids.rejectionOperationId,
-            managedRunId: ids.managedRunId,
-            expectedStatuses: ["preparing", "unknown"],
-            nextStatus: "cancelled",
-            nextStatusReason: "activation_rejected",
-            transitionedAtMs: deps.nowMs(),
-            terminalOutcome: { kind: "cancelled", recordedAtMs: deps.nowMs() },
-          },
-        ));
-        if (!rejected.ok) return rejected;
-        if (rejected.value.kind !== "claimed" && rejected.value.kind !== "identical_replay") {
-          return err(new Error(`managed-run rejection transition failed: ${rejected.value.kind}`));
-        }
-        await removeDescriptor(rejected.value.record, descriptorRef);
-        emitRejected(input, "activation_rejected", ids.managedRunId);
-        return ok({
-          kind: "rejected",
-          reasonCode: "activation_rejected",
-          record: rejected.value.record,
-        });
+        return cancelDurableActivation(
+          input,
+          ids,
+          descriptorRef,
+          durableRecord,
+          "activation_rejected",
+        );
       }
       const reason = activation.error.kind === "unavailable"
         ? "service_state_unavailable"
@@ -678,11 +624,11 @@ export function createManagedRunActivationCoordinator(
       emitRejected(input, "agent_not_allowed");
       return ok({ kind: "rejected", reasonCode: "agent_not_allowed" });
     }
-    const validatedWorkspace = validateRequestedWorkspace(input);
-    if (!validatedWorkspace.ok) {
+    const validatedBindings = validatePreparedBindingRequests(bindingDeps, input);
+    if (!validatedBindings.ok) {
       await abandonPrepared(input, ids, "activation_rejected", "reap_safe");
-      emitRejected(input, "workspace_not_allowed");
-      return ok({ kind: "rejected", reasonCode: "workspace_not_allowed" });
+      emitRejected(input, validatedBindings.error.reasonCode);
+      return ok({ kind: "rejected", reasonCode: validatedBindings.error.reasonCode });
     }
 
     const recordCandidate = ManagedRunRecordSchema.safeParse({
@@ -735,6 +681,9 @@ export function createManagedRunActivationCoordinator(
         ...(prepared.data.requestedWorkspace === undefined
           ? {}
           : { requestedWorkspace: prepared.data.requestedWorkspace }),
+        ...(prepared.data.requestedAttachment === undefined
+          ? {}
+          : { requestedAttachment: prepared.data.requestedAttachment }),
       },
     ));
     if (!body.ok) {
@@ -770,7 +719,7 @@ export function createManagedRunActivationCoordinator(
       durableRecord,
       created.value.kind === "identical_replay",
       startedAtMs,
-      validatedWorkspace.value,
+      validatedBindings.value.workspace,
     );
   }
 
@@ -796,6 +745,9 @@ export function createManagedRunActivationCoordinator(
       ...(descriptor.requestedWorkspace === undefined
         ? {}
         : { requestedWorkspace: descriptor.requestedWorkspace }),
+      ...(descriptor.requestedAttachment === undefined
+        ? {}
+        : { requestedAttachment: descriptor.requestedAttachment }),
     });
     if (!prepared.success) return err(new Error("managed-run recovery descriptor is invalid"));
     if (

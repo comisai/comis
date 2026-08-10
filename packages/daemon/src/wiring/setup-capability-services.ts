@@ -92,6 +92,7 @@ function controlIds(managedRunId: string): ManagedRunActivationControlIds {
   const id = (kind: string): string => `${kind}-${digest(kind, managedRunId).slice(0, 48)}`;
   return Object.freeze({
     workspaceLeaseId: id("workspace-lease"),
+    attachmentOperationId: id("execution-attachment"),
     activationOperationId: id("activate"),
     abandonOperationId: id("abandon"),
     leaseReleaseOperationId: id("lease-release"),
@@ -304,6 +305,7 @@ export async function setupCapabilityServices(
     contentStore,
     workspaceLeases,
     attachments,
+    attachmentAuthority,
     revokeManagedTerminals,
     control: host.value.control,
     activeView: runtime,

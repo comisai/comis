@@ -63,6 +63,17 @@ describe("Managed-run store and private-content port contracts", () => {
       externalRunRef: "external-run_a",
       registrationNonce: "registration-nonce_a",
       expiresAtMs: 1_800_000_060_000,
+      requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
+      requestedAttachment: {
+        kind: "unix_socket",
+        sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+      },
+    }).success).toBe(true);
+    expect(ManagedRunActivationDescriptorSchema.safeParse({
+      schemaVersion: 1,
+      externalRunRef: "external-run_a",
+      registrationNonce: "registration-nonce_a",
+      expiresAtMs: 1_800_000_060_000,
       tenantId: "tenant_from_service",
     }).success).toBe(false);
   });
