@@ -133,7 +133,7 @@ export interface SessionDescriptor {
  */
 export type ReattachDecision =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" }
+  | { action: "failed"; sessionId: string; reason: "tmux_session_gone" | "managed_root_identity_unavailable" }
   | { action: "fallback_nondurable"; sessionId: string };
 
 /** The content-free sessionId to carry on the failed/fallback branches (never throws). */
@@ -172,6 +172,17 @@ export function reattachDecision(
   // short-circuit. The probe is irrelevant for a session that is not re-attachable.
   if (d?.durable !== true) {
     return { action: "fallback_nondurable", sessionId };
+  }
+
+  // A managed descriptor is written before the create acknowledgement so a host
+  // crash cannot orphan a surviving tmux pane. Until the acknowledgement supplies
+  // and persists the root PID/start identity, that descriptor is intentionally
+  // incomplete: preserve it for reconciliation, but never claim a safe re-attach.
+  const hasManagedBinding = d.managedRunId !== undefined
+    || d.workspaceLeaseId !== undefined
+    || d.serviceInstanceId !== undefined;
+  if (hasManagedBinding && d.rootProcessIdentity === undefined) {
+    return { action: "failed", sessionId, reason: "managed_root_identity_unavailable" };
   }
 
   // (2) Durable but no usable re-attach key → unrecoverable identity. Never probe a falsy

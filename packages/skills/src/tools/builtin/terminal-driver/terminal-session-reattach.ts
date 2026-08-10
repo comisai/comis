@@ -92,7 +92,7 @@ export interface SessionDescriptorStorePort {
  */
 export type RecoveredAction =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
+  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" | "managed_root_identity_unavailable"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
 
 /** Dependencies for {@link recoverSessionDescriptors} — the injected store + liveness probe. */
 export interface RecoverSessionDescriptorsDeps {
