@@ -36,6 +36,7 @@ const REVIEWED_LAUNCHER = "/usr/local/bin/wave4-codex-launcher";
 const REVIEWED_ALLOW_ID = "codex-confined";
 const REVIEWED_TOKEN = "wave4-reviewed";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
+const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
 
 const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
   contributionId: "devcrew.wave4.join",
@@ -737,7 +738,7 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
       await pollUntil(() => {
         status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
         return status.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
-      }, 30_000, `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
+      }, REAL_WORKER_JOIN_TIMEOUT_MS, `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
       await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");
 
       const evidenceA = JSON.parse(readFileSync(join(bindingA.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
