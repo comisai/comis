@@ -259,7 +259,8 @@ daemon driven by a deterministic scripted provider. No model-driven or reflectio
   server whose next tool call is computed from the prior tool results — no model, no network. It exits
   non-zero unless the run is evidence bound to that invocation; the enumerated publication contract — and the
   budget that ends a wedged wait with a named timeout rather than a hang — lives with the script in
-  [`../scripts/README.md`](../scripts/README.md). Reproduce with
+  [`../scripts/README.md` §Artifact-to-action runtime redrive](../scripts/README.md#artifact-to-action-runtime-redrive).
+  Reproduce with
   `node test/live/self-driving/scripts/artifact-to-action-runtime-drive.mjs --variant <A|B|C|A-degraded>`.
 
 | runtime drive | `A` | `B` | `C` | `A-degraded` |
