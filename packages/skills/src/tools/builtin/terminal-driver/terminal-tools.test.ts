@@ -556,6 +556,36 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(managedBinding.releaseLease).not.toHaveBeenCalled();
   });
 
+  it("publishes released after explicitly killing a managed terminal without releasing its lease", async () => {
+    const handles = new Map<string, SessionHandle>([["terminal-session_a", {
+      sessionId: "terminal-session_a",
+      allowId: "bash",
+      command: "/bin/bash",
+      status: "running",
+      cols: 80,
+      rows: 24,
+      lastActivity: 1,
+      startedAt: 1,
+      owner: { agentId: "agent-1", sessionKey: "" },
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    }]]);
+    const registry = makeFakeRegistry({ handles });
+    const managedTerminalEvents = { publish: vi.fn(async () => undefined) };
+    const tool = createTerminalSessionKillTool(baseDeps(registry, { managedTerminalEvents } as unknown as Partial<TerminalToolDeps>));
+
+    await tool.execute("kill-managed", { sessionId: "terminal-session_a" });
+
+    expect(managedTerminalEvents.publish).toHaveBeenCalledWith({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      transition: "released",
+    });
+  });
+
   it("rejects a non-allowlisted command with permission_denied and never spawns", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionCreateTool(baseDeps(registry));
