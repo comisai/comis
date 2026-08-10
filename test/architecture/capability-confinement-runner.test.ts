@@ -100,6 +100,7 @@ describe("capability-service Linux confinement runner", () => {
 
     expect(launcher).not.toMatch(/find \/run\/comis\/attachments[^\n]*-type s/u);
     expect(launcher).toContain('test -S "${attachments[0]}"');
+    expect(launcher).toContain('export DEV_CREW_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"');
   });
 
   it("uses one authenticated catalog model for the profile and real workers", () => {
