@@ -248,7 +248,11 @@ daemon driven by a deterministic scripted provider. No model-driven or reflectio
   <variant>` and speaks newline-delimited JSON-RPC 2.0 to that process: `initialize` reports
   `artifact-action-sim`, `tools/list` publishes 13 tools, and `tools/call` drives `A`, `B` and `C` to a
   terminal `success`, `A-degraded` to an honest no-commit `success`, and the embedded-instruction target to
-  an authorization denial with a terminal `failure`.
+  an authorization denial with a terminal `failure`. The shared stdio loop (`shared/rpc.mjs`, which serves
+  every workload) is held to one more contract there: a batch whose stdin close arrives together with the
+  requests is answered in FULL to a reader that has fallen behind, so no drive loses a tool result to the
+  server's own exit. A client judges completeness on the child's `close` — `exit` can precede a written
+  line reaching the pipe.
 - **Comis runtime (redriven).** `<repo>/test/live/self-driving/scripts/artifact-to-action-runtime-drive.mjs`
   boots an isolated daemon (fresh system-temp data root, own loopback gateway), registers the workload
   through `integrations.mcp.servers`, and answers every completion request from a local OpenAI-compatible

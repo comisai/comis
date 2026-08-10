@@ -95,4 +95,57 @@ describe("credentialed MCP live fixture", () => {
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("credential_invalid");
   });
+
+  // The reader above proves the ORDERING half — a complete line is not lost to an
+  // `exit` that precedes it. This proves the fixture's own half: it may not leave on
+  // EOF while written answers are still in the pipe. The batch has to out-size what
+  // the pipe plus this lagging reader can absorb or every write completes before EOF
+  // and nothing about the exit is under test: 256 answers are ~365KB against the
+  // ~150KB a reader that consumes nothing swallows on Linux.
+  it("answers a whole batch that a lagging reader has not drained", async () => {
+    const child = spawn(process.execPath, [fixturePath, "first"], {
+      env: { PATH: process.env["PATH"], MCP_TEST_TOKEN: "test-key" },
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    children.add(child);
+    child.stdout.setEncoding("utf8");
+
+    const answered = new Promise<{ lines: string[]; code: number | null }>((resolveRun, rejectRun) => {
+      let stdout = "";
+      const timeout = setTimeout(() => rejectRun(new Error("the fixture never finished answering")), 20_000);
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+      child.once("error", (error) => {
+        clearTimeout(timeout);
+        rejectRun(error);
+      });
+      // `close`, not `exit`: only a drained stdio stream can tell a complete answer
+      // set from a truncated one.
+      child.once("close", (code) => {
+        clearTimeout(timeout);
+        resolveRun({ lines: stdout.split("\n").filter(Boolean), code });
+      });
+    });
+    // Attaching the `data` handler resumes the stream, so the pause that makes this
+    // client a lagging reader has to come after it.
+    child.stdout.pause();
+
+    const batch = Array.from({ length: 256 }, (_, index) =>
+      JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "tools/list" }));
+    child.stdin.end(`${batch.join("\n")}\n`);
+    // Nothing is consumed while the fixture decides whether it may leave. The delayed
+    // resume is the backstop for a fixture that stays: without it a client that never
+    // reads would wait out the whole budget behind a full pipe.
+    setTimeout(() => child.stdout.resume(), 250);
+
+    const { lines, code } = await answered;
+    expect(code).toBe(0);
+    expect(lines).toHaveLength(batch.length);
+    for (const [index, line] of lines.entries()) {
+      const message = JSON.parse(line) as ToolListResponse & { id?: number };
+      expect(message.id, line).toBe(index + 1);
+      expect(message.result?.tools?.map((tool) => tool.name)).toContain("account_summary");
+    }
+  });
 });
