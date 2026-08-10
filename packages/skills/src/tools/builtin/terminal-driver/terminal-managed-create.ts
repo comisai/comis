@@ -20,12 +20,15 @@ export function selectManagedHandles(params: Readonly<Record<string, unknown>>):
   return { kind: "managed", managedRunId, workspaceLeaseId };
 }
 
-/** A managed run inherits network/uid policy but can see only its leased filesystem root. */
+/**
+ * A managed run sees only its leased filesystem root while retaining the
+ * operator-reviewed network, read-only credential-bind, and uid policy.
+ */
 export function narrowManagedTerminalScope(scope: TerminalScope): TerminalScope {
   return {
     filesystem: "workspace",
     network: scope.network,
-    credentialPaths: [],
+    credentialPaths: [...scope.credentialPaths],
     uid: scope.uid,
     ...(scope.hosts === undefined ? {} : { hosts: scope.hosts }),
   };
