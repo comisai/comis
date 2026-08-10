@@ -591,14 +591,22 @@ export function createTerminalSessionRegistry(
       markSpawnFailure(reply);
       const result = reply.result as { rootPid?: unknown } | undefined;
       const rootPid = result?.rootPid;
-      if (!reply.ok || !Number.isSafeInteger(rootPid) || (rootPid as number) <= 0 || deps.resolveRootProcessIdentity === undefined) {
+      if (!reply.ok) {
         await kill(sessionId, owner);
-        return Promise.reject(new Error("managed terminal root process identity is unavailable"));
+        return Promise.reject(new Error("managed terminal backend create failed before root process identity was available"));
+      }
+      if (!Number.isSafeInteger(rootPid) || (rootPid as number) <= 0) {
+        await kill(sessionId, owner);
+        return Promise.reject(new Error("managed terminal create reply omitted a positive root PID"));
+      }
+      if (deps.resolveRootProcessIdentity === undefined) {
+        await kill(sessionId, owner);
+        return Promise.reject(new Error("managed terminal root process identity resolver is unavailable"));
       }
       rootProcessIdentity = await deps.resolveRootProcessIdentity(rootPid as number);
       if (rootProcessIdentity === undefined) {
         await kill(sessionId, owner);
-        return Promise.reject(new Error("managed terminal root process identity is unavailable"));
+        return Promise.reject(new Error(`managed terminal process ${String(rootPid)} start identity is unreadable`));
       }
       handle.rootProcessIdentity = rootProcessIdentity;
       deps.durability?.descriptorStore?.persist(buildSessionDescriptor({
