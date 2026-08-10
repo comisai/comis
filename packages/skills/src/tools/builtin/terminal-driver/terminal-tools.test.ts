@@ -521,13 +521,22 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
         managedRunId: "managed-run_a",
         workspaceLeaseId: "workspace-lease_a",
       });
-    expect(managedTerminalEvents.publish).toHaveBeenCalledWith({
-      managedRunId: "managed-run_a",
-      workspaceLeaseId: "workspace-lease_a",
-      serviceInstanceId: "service-instance_a",
-      terminalSessionId: "terminal-session_a",
-      transition: "created",
-    });
+    expect(managedTerminalEvents.publish.mock.calls.map(([event]) => event)).toEqual([
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        terminalSessionId: "terminal-session_a",
+        transition: "created",
+      },
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        terminalSessionId: "terminal-session_a",
+        transition: "running",
+      },
+    ]);
   });
 
   it("returns sandbox_unavailable before launch when approved attachments cannot be confined", async () => {
