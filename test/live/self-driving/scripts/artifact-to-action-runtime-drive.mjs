@@ -344,14 +344,16 @@ async function shutdown() {
 async function finish(code, retainForDiagnosis = false, diagnosisRef) {
   await shutdown();
   if (keep || retainForDiagnosis) {
-    // --offline is not optional in this hint: without it the CLI opens the gateway first, so on any box that
-    // already runs a daemon the report comes back from THAT daemon — answering for a session it never saw —
-    // and the operator is steered away from the root this drive just preserved.
+    // Every part of this hint is load-bearing. Without --offline the CLI opens the gateway first, so on a box
+    // already running a daemon the report comes back from THAT daemon, answering for a session it never saw.
+    // And --offline resolves its root through the CONFIG it is pointed at, so an ambient COMIS_CONFIG_PATHS —
+    // which pm2, the production start line and the rig env all export — would outrank COMIS_DATA_DIR and read
+    // the operator's own root instead. Pinning both steers the command at the root this drive preserved.
     console.error(
       `kept ${dataDir} for diagnosis — trajectory, session rollup, logs/daemon.*.log and memory.db are in it. ` +
         `Read it without a daemon:\n` +
-        `  COMIS_DATA_DIR=${dataDir} node packages/cli/dist/cli.js explain --offline ` +
-        `"${diagnosisRef ?? "<sessionKey|traceId>"}"`,
+        `  COMIS_CONFIG_PATHS=${dataDir}/config.yaml COMIS_DATA_DIR=${dataDir} ` +
+        `node packages/cli/dist/cli.js explain --offline "${diagnosisRef ?? "<sessionKey|traceId>"}"`,
     );
     process.exit(code);
   }

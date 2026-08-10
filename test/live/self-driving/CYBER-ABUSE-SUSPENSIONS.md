@@ -38,7 +38,9 @@ node test/live/self-driving/scripts/drive.mjs <chat-id> @/absolute/path/to/promp
 
 Never put the authorization acknowledgement in `.live-env`, a rendered rig environment, campaign state,
 configuration, a helper script, or a committed file. Values such as `1`, `true`, and `yes` do not authorize
-the test. A suspended injector exits `4` before network activity and names only the detected risk categories;
+the test. `drive-sim-workload.sh` enforces that placement rule rather than only stating it: it pins both
+variables to what the invoking environment carried, so an acknowledgement left in a rig or data-dir `.env` is
+discarded instead of silently authorizing the run. A suspended injector exits `4` before network activity and names only the detected risk categories;
 it never echoes the prompt.
 
 Opaque media, reflected stored content, generated corpora, and simulator or MCP tool results cannot be
@@ -70,11 +72,15 @@ in their test plan and use the risk declaration even if the current text classif
 explicit `cyber-abuse` or `none` declaration, a workload with no declaration refuses to drive, and the
 declared risk is gated before the daemon restart and every other side effect.
 `drive-sim-workload.sh --gate <workload>` prints that decision offline — exit `4` when the workload is
-suspended, `0` when it may reach a provider. The drive body itself requires an affirmative `DRIVE_CONFIRM=1`
-on the invoking command line — snapshotted before any operator environment file is sourced, so a line in one
-of those cannot supply it, and `drive-sim-workload.sh --confirm-source <workload>` reports which source this
-invocation's confirmation came from — and an invocation that does not opt in reports the gate's verdict and
-stops before the first side effect; the
+suspended, `0` when it may reach a provider. Both authorization variables are snapshotted from the invoking
+environment before `/root/comis-rig.env` and the data-dir `.env` are sourced and re-exported over whatever
+those files set, so a line in an operator file cannot pre-authorize a suspended workload for the gate or for
+the provider-backed feeders. The drive body itself requires an affirmative `DRIVE_CONFIRM=1` from the invoking
+environment, snapshotted the same way — a standing `export` in a shell profile does opt in, since bash cannot
+tell it from a command-line prefix, but a sourced operator file cannot — and
+`drive-sim-workload.sh --confirm-source <workload>` reports which of `invocation-environment` /
+`sourced-file (ignored)` / `absent` this invocation carried. An invocation that does not opt in reports the
+gate's verdict and stops before the first side effect; the
 gate's regression test can therefore exercise the real path without a suspended drive becoming its failure
 mode.
 

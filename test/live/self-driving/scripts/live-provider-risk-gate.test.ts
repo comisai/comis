@@ -379,16 +379,39 @@ describe("sim workload driver provider-risk policy", () => {
     const planted = runDriver(["--confirm-source", "package-delivery"], { ...cleanEnv(), DATA: dir });
 
     expect(planted.status, planted.stderr).toBe(0);
-    expect(planted.stdout, "the planted environment file was never sourced").toContain(
-      "ignored a confirmation supplied by a sourced environment file",
+    expect(planted.stdout.trim(), "the planted environment file was never sourced").toBe(
+      "confirm-source: sourced-file (ignored)",
     );
-    expect(planted.stdout).toContain("confirm-source: absent");
 
-    // Without the fixture the verdict is the plain form, so the reported provenance tracks real state rather
-    // than being a constant. A regressed snapshot would report `command-line` for the planted case above and
-    // fail there — which is why no case in this suite has to supply a real confirmation to prove the guard.
+    // Without the fixture the verdict is `absent`, so the reported provenance tracks real state rather than
+    // being a constant. A regressed snapshot would report `invocation-environment` for the planted case above
+    // and fail there — which is why no case in this suite has to supply a real confirmation to prove the guard.
     const bare = runDriver(["--confirm-source", "package-delivery"]);
     expect(bare.stdout.trim()).toBe("confirm-source: absent");
+  });
+
+  // The gate and every provider-backed feeder read the declaration and the acknowledgement from their own
+  // process environment, so a sourced operator file must not be able to pre-authorize a suspended workload.
+  it("ignores provider authorization planted in a sourced environment file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sim-rig-auth-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, ".env"),
+      `export ${LIVE_TEST_RISK_ENV}=cyber-abuse\nexport ${CYBER_ABUSE_AUTH_ENV}=${CYBER_ABUSE_AUTH_VALUE}\n`,
+    );
+
+    const planted = runDriver(["--gate", "artifact-to-action"], { ...cleanEnv(), DATA: dir });
+    expect(planted.status, planted.stdout).toBe(4);
+    expect(planted.stderr).toContain("declared-cyber-abuse");
+
+    // The same values from the invoking environment DO authorize it, so the suspension is not simply stuck.
+    const authorized = runDriver(["--gate", "artifact-to-action"], {
+      ...cleanEnv(),
+      DATA: dir,
+      [LIVE_TEST_RISK_ENV]: "cyber-abuse",
+      [CYBER_ABUSE_AUTH_ENV]: CYBER_ABUSE_AUTH_VALUE,
+    });
+    expect(authorized.status, authorized.stderr).toBe(0);
   });
 
   it("refuses to drive a workload that carries no risk declaration", () => {

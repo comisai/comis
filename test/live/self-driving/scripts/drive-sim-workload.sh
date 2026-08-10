@@ -16,8 +16,11 @@
 #   bash drive-sim-workload.sh --confirm-source <workload>   # offline: where this invocation's confirmation came from
 #
 # The body that restarts the daemon, rewires MCP servers and drives live provider feeders requires an
-# affirmative DRIVE_CONFIRM=1 ON THE INVOKING COMMAND LINE — it is snapshotted before the operator env files
-# are sourced, so a line in one of those cannot supply it. Everything before that point — argument validation,
+# affirmative DRIVE_CONFIRM=1 FROM THE INVOKING ENVIRONMENT — snapshotted before the operator env files are
+# sourced, so a line in one of those cannot supply it. That is the whole of the guarantee: bash cannot tell a
+# `DRIVE_CONFIRM=1 bash …` prefix from a value a shell profile exported, so a standing `export DRIVE_CONFIRM=1`
+# does opt every invocation in. What is enforced is that a SOURCED operator file cannot. The provider-risk
+# declaration and acknowledgement are pinned the same way. Everything before that point — argument validation,
 # the registry lookups and the provider-risk decision — is side-effect free, so an invocation that does not
 # opt in is a dry run rather than a drive. Default-safe in that direction is the point: a test that shells out to this script, a mistyped
 # command or a wrapper that forgets the flag cannot restart a production daemon by omission.
@@ -40,6 +43,13 @@ F2="${4:-678314280}"
 # that invoked this script decides both.
 DRIVE_CONFIRMED="${DRIVE_CONFIRM:-}"
 REUSE_ONLY_REQUESTED="${REUSE_ONLY:-0}"
+# The provider-risk declaration and its operator acknowledgement need the same treatment, and for a stronger
+# reason: the gate and every provider-backed feeder read them from their own PROCESS environment, so a line in
+# either sourced file would silently pre-authorize a suspended workload — the exact placement the suspension
+# policy forbids. Snapshot them here and re-assert them below, once, so the invoking environment is the only
+# thing that can authorize a provider-backed run.
+RISK_DECLARED="${COMIS_LIVE_TEST_RISK:-}"
+RISK_AUTHORIZED="${COMIS_LIVE_CYBER_ABUSE_TESTS:-}"
 [ -f /root/comis-rig.env ] && . /root/comis-rig.env
 DATA="${DATA:-/home/comis/.comis}"
 COMIS_HOME="${COMIS_HOME:-/home/${COMIS_USER:-comis}}"
@@ -50,6 +60,10 @@ AGENT_ID="${AGENT_ID:-default}"
 # The installed CLI dist (COMIS_SRC overrides to a source checkout's packages/cli/dist/cli.js).
 if [ -n "${COMIS_SRC:-}" ]; then CLI="node $COMIS_SRC/packages/cli/dist/cli.js"; else CLI="node $PKG/node_modules/@comis/cli/dist/cli.js"; fi
 [ -f "$DATA/.env" ] && . "$DATA/.env" 2>/dev/null || true
+# Both operator files have now been sourced, so restore the authorization posture the invocation actually
+# carried. Unset rather than empty when it carried none, so a child sees the same absence it would have seen.
+if [ -n "$RISK_DECLARED" ]; then export COMIS_LIVE_TEST_RISK="$RISK_DECLARED"; else unset COMIS_LIVE_TEST_RISK; fi
+if [ -n "$RISK_AUTHORIZED" ]; then export COMIS_LIVE_CYBER_ABUSE_TESTS="$RISK_AUTHORIZED"; else unset COMIS_LIVE_CYBER_ABUSE_TESTS; fi
 export COMIS_CONFIG_PATHS="${COMIS_CONFIG_PATHS:-$DATA/config.yaml}"
 export COMIS_GATEWAY_TOKEN="${COMIS_GATEWAY_TOKEN:-${GWTOKEN:-}}"
 
@@ -156,7 +170,7 @@ NODE
 
 # --confirm-source <workload>: report WHERE this invocation's drive confirmation came from, then exit. It
 # reads the same snapshot the body's guard reads, and it grants nothing — the body still requires
-# DRIVE_CONFIRM=1 from the command line — so removing this mode weakens the observation, never the guard.
+# DRIVE_CONFIRM=1 from the invoking environment — so removing this mode weakens the observation, never the guard.
 # It exists because proving that a sourced operator env file cannot re-arm a withheld confirmation otherwise
 # means planting a real confirmation and letting the drive body be what refuses it; here the invocation ends
 # before the body either way, so the proof cannot become a live drive.
@@ -164,10 +178,13 @@ if [ "$WL" = "--confirm-source" ]; then
   CONFIRM_WL="${2:-}"
   [ -n "$CONFIRM_WL" ] || { echo "usage: drive-sim-workload.sh --confirm-source <workload>" >&2; exit 2; }
   risk_for "$CONFIRM_WL" >/dev/null 2>&1 || { echo "unknown workload '$CONFIRM_WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2; }
+  # `invocation-environment`, not `command-line`: bash cannot distinguish a `DRIVE_CONFIRM=1 bash …` prefix
+  # from a value exported by a shell profile, so claiming the narrower source would misreport a standing
+  # opt-in as something typed for this run. What the snapshot does enforce is the third branch.
   if [ "$DRIVE_CONFIRMED" = "1" ]; then
-    echo "confirm-source: command-line"
+    echo "confirm-source: invocation-environment"
   elif [ "${DRIVE_CONFIRM:-}" = "1" ]; then
-    echo "confirm-source: absent (ignored a confirmation supplied by a sourced environment file)"
+    echo "confirm-source: sourced-file (ignored)"
   else
     echo "confirm-source: absent"
   fi
