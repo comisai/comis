@@ -42,12 +42,14 @@ import {
   createDataRoot,
   disposeDataRoot,
   driveFailures,
+  monitorChildLifecycle,
   nextCall,
   observedFrom,
   parseJson,
   resolveTrajectoryPath,
   selectRunRollup,
   traceBoundToolResults,
+  waitFor,
 } from "./artifact-to-action-drive-oracle.mjs";
 import { setup as setupArtifactWorld } from "../sim/artifact-to-action/handlers.mjs";
 
@@ -303,32 +305,22 @@ ${pinned}
   writeFileSync(resolve(dataDir, "config.yaml"), config, { mode: 0o600 });
 }
 
-async function waitFor(check, timeoutMs, label, intervalMs = 500) {
-  const deadline = Date.now() + timeoutMs;
-  let last;
-  while (Date.now() < deadline) {
-    try {
-      const value = await check();
-      if (value) return value;
-    } catch (err) {
-      last = err;
-    }
-    await new Promise((ok) => setTimeout(ok, intervalMs));
-  }
-  const described = typeof label === "function" ? label() : label;
-  throw new Error(`timed out waiting for ${described}${last ? `: ${last.message}` : ""}`);
-}
-
 // Every disposable resource this drive acquires — the scripted provider socket, the
 // daemon child and the data root — is acquired INSIDE the cleanup funnel below, so a
 // setup failure can never orphan a live daemon on its port or leave the temp root behind.
 let provider;
 let daemon;
+let daemonLifecycle;
 let daemonLog = "";
 
 async function shutdown() {
   provider?.close();
-  if (!daemon || daemon.exitCode !== null || daemon.signalCode !== null) return;
+  if (
+    !daemon ||
+    daemonLifecycle?.settled ||
+    daemon.exitCode !== null ||
+    daemon.signalCode !== null
+  ) return;
   await new Promise((ok) => {
     const kill = setTimeout(() => daemon.kill("SIGKILL"), 10_000);
     daemon.once("exit", () => {
@@ -404,6 +396,7 @@ try {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  daemonLifecycle = monitorChildLifecycle(daemon, "the Comis daemon");
   daemon.stdout.on("data", (chunk) => (daemonLog += chunk));
   daemon.stderr.on("data", (chunk) => (daemonLog += chunk));
 
@@ -414,6 +407,8 @@ try {
     },
     60_000,
     "the gateway health endpoint",
+    500,
+    daemonLifecycle,
   );
 
   let lastSeenTools;
@@ -430,6 +425,7 @@ try {
     () =>
       `the workload's MCP tools (the server ${lastSeenTools === undefined ? "never appeared in mcp.list" : `published ${lastSeenTools} tools`})`,
     2_000,
+    daemonLifecycle,
   );
 
   const sessionsRoot = resolve(dataDir, "workspace/sessions");
@@ -448,6 +444,8 @@ try {
     () => selectRunRollup(sessionsRoot, watermark),
     30_000,
     "this run's durable session rollup",
+    500,
+    daemonLifecycle,
   );
   const rollup = bound.rollup;
   const trajectoryPath = resolveTrajectoryPath(bound.path);
@@ -463,6 +461,8 @@ try {
     30_000,
     () =>
       `the trajectory to record all ${dispatched.length} dispatched tool results (last saw ${lastDurableToolResults})`,
+    500,
+    daemonLifecycle,
   );
 
   // Only now, with the queued trajectory drained, so the explanation is assembled over the records this drive

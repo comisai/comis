@@ -103,6 +103,73 @@ export function statusFor(mapping, field, authorityAvailable) {
  */
 export const bare = (name) => String(name).split(/[^A-Za-z0-9_]+/u).pop();
 
+/**
+ * Observe a child for its whole useful lifetime. The resolved failure promise lets
+ * readiness and durability waits wake immediately when the child can no longer
+ * make progress, while `settled` keeps cleanup from waiting on an already-dead
+ * process after a spawn error.
+ */
+export function monitorChildLifecycle(child, label) {
+  let resolveFailure;
+  const failure = new Promise((resolve) => {
+    resolveFailure = resolve;
+  });
+  const lifecycle = { settled: false, failureReason: undefined, failure };
+  const recordFailure = (reason) => {
+    lifecycle.settled = true;
+    if (lifecycle.failureReason !== undefined) return;
+    lifecycle.failureReason = reason;
+    resolveFailure(reason);
+  };
+
+  child.once("error", (error) => {
+    recordFailure(`${label} failed to start: ${error?.message ?? String(error)}`);
+  });
+  child.once("exit", (code, signal) => {
+    const outcome = signal ? `after signal ${signal}` : `with code ${code ?? "unknown"}`;
+    recordFailure(`${label} exited before the drive finished ${outcome}`);
+  });
+  return lifecycle;
+}
+
+async function settleOrFail(operation, lifecycle) {
+  if (lifecycle?.failureReason !== undefined) {
+    return { kind: "failure", reason: lifecycle.failureReason };
+  }
+  const completed = Promise.resolve().then(operation).then((value) => ({ kind: "completed", value }));
+  if (!lifecycle) return completed;
+  return Promise.race([
+    completed,
+    lifecycle.failure.then((reason) => ({ kind: "failure", reason })),
+  ]);
+}
+
+/** Poll until a value is ready, but never outlive the child that can produce it. */
+export async function waitFor(check, timeoutMs, label, intervalMs = 500, lifecycle) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    let outcome;
+    try {
+      outcome = await settleOrFail(check, lifecycle);
+    } catch (error) {
+      last = error;
+    }
+    if (outcome?.kind === "failure") throw new Error(outcome.reason);
+    if (outcome?.value) return outcome.value;
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const paused = await settleOrFail(
+      () => new Promise((resolve) => setTimeout(resolve, Math.min(intervalMs, remainingMs))),
+      lifecycle,
+    );
+    if (paused.kind === "failure") throw new Error(paused.reason);
+  }
+  const described = typeof label === "function" ? label() : label;
+  throw new Error(`timed out waiting for ${described}${last ? `: ${last.message}` : ""}`);
+}
+
 /** Parse the first JSON object embedded in a tool-result payload. */
 export function parseJson(text) {
   const source = String(text ?? "");
