@@ -16,7 +16,10 @@ interface ToolListResponse {
   error?: { message?: string };
 }
 
-async function listTools(credential: string): Promise<ToolListResponse> {
+async function listTools(
+  credential: string,
+  options: { pauseOutputUntilExit?: boolean } = {},
+): Promise<ToolListResponse> {
   const child = spawn(process.execPath, [fixturePath, "first"], {
     env: {
       PATH: process.env["PATH"],
@@ -25,6 +28,10 @@ async function listTools(credential: string): Promise<ToolListResponse> {
     stdio: ["pipe", "pipe", "pipe"],
   });
   children.add(child);
+  if (options.pauseOutputUntilExit) {
+    child.stdout.pause();
+    child.once("exit", () => child.stdout.resume());
+  }
 
   const response = await new Promise<ToolListResponse>((resolveResponse, rejectResponse) => {
     let stdout = "";
@@ -73,6 +80,15 @@ describe("credentialed MCP live fixture", () => {
 
   it("rejects an arbitrary credential before advertising tools", async () => {
     const response = await listTools("not-a-campaign-test-key");
+
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("credential_invalid");
+  });
+
+  it("drains a complete response after the child exit event", async () => {
+    const response = await listTools("not-a-campaign-test-key", {
+      pauseOutputUntilExit: true,
+    });
 
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("credential_invalid");
