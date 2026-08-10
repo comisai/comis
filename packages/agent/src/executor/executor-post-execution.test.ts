@@ -542,7 +542,7 @@ describe("buildSessionEndMetadata", () => {
   it("degraded is coupled to END_REASON_MAP over the WHOLE finishReason union (no dual-set drift)", () => {
     // The enforced single-source invariant: for EVERY ExecutionResult.finishReason
     // (plus the synthetic completed_with_tool_errors / end_turn that reach the
-    // chokepoint), the rollup's degraded MUST equal `mappedEndReason !== "success"`.
+    // chokepoint), the rollup's degraded MUST match the mapped terminal class.
     // This converts the prose "mirrors END_REASON_MAP" comment into a test —
     // adding a new finish reason to the union without an END_REASON_MAP entry
     // cannot silently reopen a degraded/endReason divergence (it falls to

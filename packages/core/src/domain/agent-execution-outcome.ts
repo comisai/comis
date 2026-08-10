@@ -21,6 +21,7 @@ export const AgentExecutionFinishReasonSchema = z.enum([
   "narration_stall",
   "tool_invocation_stall",
   "background_pending",
+  "cancelled",
   "error",
 ]);
 export type AgentExecutionFinishReason = z.infer<typeof AgentExecutionFinishReasonSchema>;
@@ -35,6 +36,7 @@ export const AgentExecutionAbortReasonSchema = z.enum([
   "loop_detected",
   "spend_exceeded",
   "denial_breaker",
+  "caller_cancelled",
 ]);
 export type AgentExecutionAbortReason = z.infer<typeof AgentExecutionAbortReasonSchema>;
 
@@ -56,24 +58,27 @@ export const ExecutionSideEffectSummarySchema = z.strictObject({
 export type ExecutionSideEffectSummary = z.infer<typeof ExecutionSideEffectSummarySchema>;
 
 const ErrorKindSchema = z.enum(ERROR_KINDS);
-const NonStopFinishReasonSchema = AgentExecutionFinishReasonSchema.exclude(["stop"]);
-const NonUserAbortReasonSchema = AgentExecutionAbortReasonSchema.exclude(["user_stop"]);
+const FailureFinishReasonSchema = AgentExecutionFinishReasonSchema.exclude(["stop", "cancelled"]);
+const FailureAbortReasonSchema = AgentExecutionAbortReasonSchema.exclude([
+  "user_stop",
+  "caller_cancelled",
+]);
 
 export const AgentTurnExecutionOutcomeSchema = z.union([
   z.strictObject({ status: z.literal("completed"), finishReason: z.literal("stop") }),
   z.strictObject({
     status: z.literal("failed"),
-    finishReason: NonStopFinishReasonSchema,
+    finishReason: FailureFinishReasonSchema,
     errorKind: ErrorKindSchema,
   }),
   z.strictObject({
     status: z.literal("aborted"),
-    abortReason: z.literal("user_stop"),
+    abortReason: z.enum(["user_stop", "caller_cancelled"]),
     finishReason: AgentExecutionFinishReasonSchema.optional(),
   }),
   z.strictObject({
     status: z.literal("aborted"),
-    abortReason: NonUserAbortReasonSchema,
+    abortReason: FailureAbortReasonSchema,
     finishReason: AgentExecutionFinishReasonSchema.optional(),
     errorKind: ErrorKindSchema,
   }),
@@ -87,6 +92,7 @@ export function classifyAgentFinishErrorKind(
 ): ErrorKind | undefined {
   switch (reason) {
     case "stop":
+    case "cancelled":
     case "error":
     case "completed_with_tool_errors":
       return undefined;
@@ -123,7 +129,9 @@ export function classifyAgentAbortErrorKind(
   reason: AgentExecutionAbortReason,
 ): ErrorKind | undefined {
   switch (reason) {
-    case "user_stop": return undefined;
+    case "user_stop":
+    case "caller_cancelled":
+      return undefined;
     case "circuit_breaker": return "dependency";
     case "pipeline_timeout": return "timeout";
     case "denial_breaker": return "precondition";
@@ -147,10 +155,10 @@ export function classifyAgentTurnExecutionOutcome(input: {
   errorKind?: ErrorKind;
 }): AgentTurnExecutionOutcome {
   if (input.abortReason !== undefined) {
-    if (input.abortReason === "user_stop") {
+    if (input.abortReason === "user_stop" || input.abortReason === "caller_cancelled") {
       return {
         status: "aborted",
-        abortReason: "user_stop",
+        abortReason: input.abortReason,
         finishReason: input.finishReason,
       };
     }
@@ -159,6 +167,13 @@ export function classifyAgentTurnExecutionOutcome(input: {
       abortReason: input.abortReason,
       finishReason: input.finishReason,
       errorKind: classifyAgentAbortErrorKind(input.abortReason) ?? input.errorKind ?? "internal",
+    };
+  }
+  if (input.finishReason === "cancelled") {
+    return {
+      status: "aborted",
+      abortReason: "caller_cancelled",
+      finishReason: "cancelled",
     };
   }
   if (input.finishReason === "stop") {

@@ -21,6 +21,8 @@ export function classifyExecutionFinishReason(
   switch (result.finishReason) {
     case "stop":
       return { status: "success" };
+    case "cancelled":
+      return { status: "aborted" };
     case "prompt_timeout":
       return { status: "timeout", failureStage: "execution", errorKind: "timeout" };
     case "max_steps":
@@ -89,6 +91,7 @@ export function classifyExecutionAbortReason(
 ): LifecycleOutcome {
   switch (reason) {
     case "user_stop":
+    case "caller_cancelled":
       return { status: "aborted" };
     case "pipeline_timeout":
       return { status: "timeout", failureStage: "execution", errorKind: "timeout" };

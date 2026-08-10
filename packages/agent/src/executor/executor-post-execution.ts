@@ -732,7 +732,7 @@ export function shouldRunContextStorePasses(config: {
  *
  * SINGLE SOURCE OF TRUTH for the run's terminal classification: the rollup's
  * `degraded` flag (session-health-rollup.ts) is derived from the value this map
- * yields (degraded := mapped endReason !== "success"), so `endReason` and
+ * yields (degraded := mapped endReason is not a clean terminal), so `endReason` and
  * `degraded` are computed from the SAME table and cannot diverge.
  * Exported so the chokepoint maps once and the unit tests can
  * enumerate the finishReason union against it.
@@ -756,7 +756,7 @@ export function shouldRunContextStorePasses(config: {
  * bridge-safety-controls.ts) and `context_loop` (the loop-on-exhaustion abort) —
  * FOLD into ONE named cause `"context_exhausted"`. `output_starved` (the
  * chokepoint promotes a terminal output-cap truncation) is its own named
- * cause `"output_starved"`. Both are degraded by construction (≠ "success", so
+ * cause `"output_starved"`. Both are degraded by construction (neither maps to a clean terminal, so
  * session-health-rollup's CLEAN_END_REASONS derives degraded:true unchanged).
  */
 export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
@@ -769,6 +769,7 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // The terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
   background_pending: "background_pending",
+  cancelled: "cancelled",
   // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
   // and the system degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
@@ -2654,13 +2655,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // authoritative table (END_REASON_MAP). This SAME mapped value drives BOTH the
   // persisted sessionEnd.endReason (in buildSessionEndMetadata, which re-maps
   // the identical effectiveFinishReason through the identical table) AND the
-  // rollup's `degraded` flag below — so a reason that maps to a non-success
+  // rollup's `degraded` flag below — so a reason that maps to a degraded
   // endReason (e.g. loop_detected / session_reset → "error") can never record
   // degraded:false alongside it. No second closed reason set.
   const endReason = END_REASON_MAP[effectiveFinishReason] ?? "error";
 
   // Compute the per-session health rollup ONCE at the chokepoint.
-  // degraded is derived from the mapped endReason (≠ "success"); the same record
+  // degraded is derived from the mapped endReason's clean/degraded class; the same record
   // feeds BOTH sinks below — the sessionEnd metadata and the session:summary
   // event — so persist and emit never diverge.
   const sessionHealthRollup = buildSessionHealthRollup(
