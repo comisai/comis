@@ -164,6 +164,21 @@ async function settleOrFail(operation, lifecycle, deadline) {
 }
 
 /**
+ * Await ONE attempt at an operation that must not be repeated — an agent turn, an
+ * incident explanation — under the same two bounds the polled waits carry. Retrying is
+ * not an option for these: a second `agent.execute` would open a second turn, so an
+ * expired budget is the verdict rather than the next attempt.
+ */
+export async function awaitBounded(operation, timeoutMs, label, lifecycle) {
+  const outcome = await settleOrFail(operation, lifecycle, Date.now() + timeoutMs);
+  if (outcome.kind === "failure") throw new Error(outcome.reason);
+  if (outcome.kind === "expired") {
+    throw new Error(`timed out waiting for ${label} after ${timeoutMs}ms; it never answered`);
+  }
+  return outcome.value;
+}
+
+/**
  * Poll until a value is ready, outliving neither the caller's budget nor the child that
  * can produce it. Every attempt is bounded by the same deadline, so a wedged dependency
  * ends the wait with the documented timeout instead of hanging the drive.

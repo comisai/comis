@@ -946,7 +946,11 @@ describe("artifact to action simulator", () => {
       // pause that makes this client a LAGGING reader has to come after it.
       child.stdout.pause();
 
-      const batch = Array.from({ length: 8 }, (_, index) =>
+      // The batch has to out-size what the kernel pipe plus this reader's own buffer can
+      // absorb, or the server's writes all complete before it sees EOF and nothing about
+      // its exit is under test: 64 answers are ~312KB against the ~146KB that a lagging
+      // reader on Linux swallows, so a server that leaves on EOF truncates the tail.
+      const batch = Array.from({ length: 64 }, (_, index) =>
         JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "tools/list" }));
       child.stdin.end(`${batch.join("\n")}\n`);
       // Nothing is consumed while the server decides whether it may leave. The delayed

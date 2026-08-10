@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  awaitBounded,
   bare,
   captureRollupWatermark,
   createDataRoot,
@@ -235,6 +236,49 @@ describe("artifact-to-action runtime-drive oracle", () => {
     expect(attempts).toBe(1);
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(lifecycle.settled).toBe(false);
+  });
+
+  it("bounds a single-shot RPC against a daemon that is alive but answers nothing", async () => {
+    const child = new EventEmitter();
+    const lifecycle = monitorChildLifecycle(child, "the Comis daemon");
+    let dispatches = 0;
+
+    await expect(
+      awaitBounded(
+        async () => {
+          dispatches += 1;
+          await new Promise(() => undefined);
+        },
+        200,
+        "the agent turn (agent.execute)",
+        lifecycle,
+      ),
+    ).rejects.toThrow("timed out waiting for the agent turn (agent.execute) after 200ms");
+
+    // An agent turn is not repeatable: a second dispatch would open a second turn, so the
+    // budget has to end this wait rather than start another attempt.
+    expect(dispatches).toBe(1);
+    expect(lifecycle.settled).toBe(false);
+  });
+
+  it("aborts a single-shot RPC the moment the daemon dies, and returns its answer otherwise", async () => {
+    const child = new EventEmitter();
+    const lifecycle = monitorChildLifecycle(child, "the Comis daemon");
+    const pending = awaitBounded(
+      () => new Promise(() => undefined),
+      60_000,
+      "the incident explanation (obs.explain)",
+      lifecycle,
+    );
+    child.emit("exit", 3, null);
+
+    await expect(pending).rejects.toThrow(
+      "the Comis daemon exited before the drive finished with code 3",
+    );
+
+    await expect(
+      awaitBounded(async () => ({ outcome: { severity: "ok" } }), 60_000, "the incident explanation"),
+    ).resolves.toEqual({ outcome: { severity: "ok" } });
   });
 
   it("turns a daemon spawn error into an immediate readiness failure", async () => {
