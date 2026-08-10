@@ -58,6 +58,7 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
 import {
   completionEvidenceGuardVerdict,
+  outboundAudioEvidenceGuardVerdict,
   outboundCompletionEvidenceGuardVerdict,
 } from "./obs-explain-completion-evidence-verdict.js";
 
@@ -769,6 +770,13 @@ export async function assembleIncidentReportFromSources(
   );
   if (persistentActionEvidenceVerdict !== null && !hasStructuredMcpFailure) {
     report.likelyRootCause = persistentActionEvidenceVerdict;
+  }
+  const outboundAudioEvidenceVerdict = outboundAudioEvidenceGuardVerdict(
+    auditRows,
+    report.traceId,
+  );
+  if (outboundAudioEvidenceVerdict !== null) {
+    report.likelyRootCause = outboundAudioEvidenceVerdict;
   }
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
     auditRows,

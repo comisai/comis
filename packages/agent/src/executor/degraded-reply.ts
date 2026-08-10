@@ -32,6 +32,7 @@ import {
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
   selectPersistentActionEvidenceMissingReply,
+  selectOutboundAudioEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
@@ -219,6 +220,14 @@ export function buildPersistentActionEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectPersistentActionEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when requested audio lacks current-turn delivery proof. */
+export function buildOutboundAudioEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutboundAudioEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when a destructive command had no observable effect. */

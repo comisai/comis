@@ -367,6 +367,77 @@ export function enforceCompletionEvidence(params: {
   };
 }
 
+export interface OutboundAudioEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_audio_evidence";
+}
+
+const OUTBOUND_AUDIO_REQUEST_PATTERNS = [
+  /^\s*(?:please\s+)?(?:say|read|speak)\b[\s\S]{0,160}\b(?:out\s+loud|aloud)\b/iu,
+  /\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?(?:say|read|speak)\b[\s\S]{0,160}\b(?:out\s+loud|aloud)\b/iu,
+  /^\s*(?:please\s+)?(?:send|reply|respond)\b[\s\S]{0,100}\b(?:voice|audio)(?:\s+(?:message|note|reply))?\b/iu,
+  /\b(?:can|could|would|will)\s+(?:you|u)\b[\s\S]{0,100}\b(?:send|reply|respond)\b[\s\S]{0,100}\b(?:voice|audio)\b/iu,
+  /^\s*(?:please\s+)?(?:turn|convert)\b[\s\S]{0,160}\b(?:into|to)\s+(?:an?\s+)?(?:audio|voice|speech)\b/iu,
+] as const;
+
+const OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?\s+(?:said|spoke|read|sent|delivered|synthesi[sz]ed|recorded)\b/iu,
+  /\b(?:voice|audio)(?:\s+(?:message|note|reply))?\s+(?:(?:was|is|has been)\s+)?(?:sent|delivered|synthesi[sz]ed|recorded|attached|ready)\b/iu,
+] as const;
+
+const OUTBOUND_AUDIO_LIMITATION =
+  /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:say|speak|read|send|deliver|synthesi[sz]e|record|voice|audio)\b/iu;
+
+/**
+ * Require an authoritative delivery receipt before preserving prose that says
+ * a current request was spoken or delivered as audio. A background spawn is
+ * only a handoff; the trusted completion relay is the receipt for that path.
+ */
+export function enforceOutboundAudioEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}): OutboundAudioEvidenceGuardResult {
+  const requested = OUTBOUND_AUDIO_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!requested) return { response: params.response, corrected: false };
+
+  const successfulSynthesis = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "tts_synthesize"
+      && result.success
+      && result.backgrounded !== true,
+  );
+  if (successfulSynthesis || params.currentActionEvidence === true) {
+    return { response: params.response, corrected: false };
+  }
+
+  const completionClaim = isCompletionClaim(params.response);
+  const audioSuccessClaim = OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (
+    (!completionClaim && !audioSuccessClaim)
+    || (OUTBOUND_AUDIO_LIMITATION.test(params.response) && !completionClaim && !audioSuccessClaim)
+  ) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_outbound_audio_evidence",
+  };
+}
+
 const ONGOING_WORK_CLAIM_PATTERNS = [
   /\b(?:i'm|i am|we're|we are) (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,
   /\b(?:i'm|i am|we're|we are) currently (?:attempting|checking|connecting|continuing|processing|running|working)\b/iu,

@@ -132,10 +132,11 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
+  enforceOutboundAudioEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
@@ -1945,6 +1946,50 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "persistent_action",
         reason: persistentActionEvidence.reason,
       },
+    });
+  }
+  const outboundAudioEvidence = enforceOutboundAudioEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    honestResponse: buildOutboundAudioEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (outboundAudioEvidence.corrected) {
+    result.response = outboundAudioEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response claimed outbound audio delivery without a successful tts_synthesize "
+          + "or trusted completion receipt; inspect tool admission and delivery in comis explain.",
+      },
+      "Unverified outbound audio delivery claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.outbound_audio_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "outbound_audio",
+        reason: outboundAudioEvidence.reason,
+        requiredTool: "tts_synthesize",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_outbound_audio_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
     });
   }
   const destructiveEffectEvidence = enforceDestructiveEffectEvidence({

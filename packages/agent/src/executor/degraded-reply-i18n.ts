@@ -27,6 +27,7 @@ export type LocaleMessageId =
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
   | "persistent_action_evidence_missing"
+  | "outbound_audio_evidence_missing"
   | "destructive_action_not_verified"
   | "provider_requires_model"
   | "agent_update_noop"
@@ -90,6 +91,9 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
   persistent_action_evidence_missing:
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
+  outbound_audio_evidence_missing:
+    "I did not deliver the requested audio in this turn because there is no successful "
+      + "current-turn synthesis or trusted completion receipt. Please retry the request.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
   provider_requires_model:
@@ -371,6 +375,14 @@ export function selectPersistentActionEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "persistent_action_evidence_missing");
+}
+
+/** Honest replacement when an audio-delivery claim has no current-turn receipt. */
+export function selectOutboundAudioEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "outbound_audio_evidence_missing");
 }
 
 /** Honest replacement when a destructive command reports no observable effect. */

@@ -763,7 +763,9 @@ export interface MessagingEvents {
    *  `missing_scheduler_state_evidence` means affirmative reminder state was
    *  replaced because no current-turn scheduler receipt supported it;
    *  `pending_scheduler_confirmation` means a gated removal stopped before
-   *  mutation and an overclaim was replaced with a neutral confirmation ask.
+   *  mutation and an overclaim was replaced with a neutral confirmation ask;
+   *  `missing_outbound_audio_evidence` means an audio-delivery claim lacked a
+   *  successful synthesis or trusted completion receipt.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -783,6 +785,7 @@ export interface MessagingEvents {
       | "missing_runtime_self_report_evidence"
       | "missing_scheduler_state_evidence"
       | "pending_scheduler_confirmation"
+      | "missing_outbound_audio_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;
