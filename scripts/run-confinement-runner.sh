@@ -12,7 +12,7 @@ readonly codex_auth_file="${COMIS_CODEX_AUTH_FILE:-${CODEX_HOME:-${HOME}/.codex}
 readonly runner_image="${COMIS_CONFINEMENT_IMAGE:-comis-stage4-confinement:node22-go1.26.5-codex0.147.0}"
 readonly mode="${1:-spike}"
 
-if [[ ! -f "${runner_root}/Dockerfile" || ! -x "${runner_root}/run-spike-gate.sh" ]]; then
+if [[ ! -f "${runner_root}/Dockerfile" || ! -x "${runner_root}/run-spike-gate.sh" || ! -x "${runner_root}/run-join-gate.sh" ]]; then
   echo "confinement runner files are incomplete or not executable" >&2
   exit 1
 fi
@@ -25,9 +25,9 @@ if [[ ! -f "${codex_auth_file}" ]]; then
   exit 1
 fi
 case "${mode}" in
-  spike | shell) ;;
+  spike | join | shell) ;;
   *)
-    echo "usage: $0 [spike|shell]" >&2
+    echo "usage: $0 [spike|join|shell]" >&2
     exit 2
     ;;
 esac
@@ -64,5 +64,8 @@ docker_args=(
 
 if [[ "${mode}" == "shell" ]]; then
   exec docker "${docker_args[@]}" /bin/bash
+fi
+if [[ "${mode}" == "join" ]]; then
+  exec docker "${docker_args[@]}" /bin/bash /workspace/comis/test/confinement-runner/run-join-gate.sh
 fi
 exec docker "${docker_args[@]}" /bin/bash /workspace/comis/test/confinement-runner/run-spike-gate.sh

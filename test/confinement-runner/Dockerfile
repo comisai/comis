@@ -49,6 +49,11 @@ RUN npm install --global pnpm@10.34.5 @openai/codex@0.147.0 \
     && test "$(codex --version)" = "codex-cli 0.147.0" \
     && test "$(go version | awk '{print $3}')" = "go${GO_VERSION}"
 
+# The launch translator is part of the reviewed runner image, not either
+# mutable source mount. Its exact path is the Go profile's probed executable and
+# the Comis operator allow entry's hash-pinned command.
+COPY --chmod=0755 test/confinement-runner/wave4-codex-launcher.sh /usr/local/bin/wave4-codex-launcher
+
 # The upstream Node image already owns uid/gid 1000. Rename that account so
 # every spike, including bwrap itself, runs as an unprivileged service user.
 RUN groupmod --new-name comis node \

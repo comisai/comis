@@ -1,0 +1,761 @@
+// SPDX-License-Identifier: Apache-2.0
+/** Live, Linux-only JOIN of Comis managed terminals and the committed Go service. */
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
+import { stringify } from "yaml";
+import { describe, expect, it } from "vitest";
+import { EchoChannelAdapter } from "@comis/channels";
+import type { CapabilityServiceContributionRegistration, NormalizedMessage } from "@comis/core";
+import { startTestDaemon, type TestDaemonHandle } from "../../../support/daemon-harness.js";
+import { createFixtureRepository, waitForUnixSocket } from "../../../support/capability-service-vertical-harness.js";
+import { getFreePort } from "../../../support/free-port.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPOSITORY_ROOT = resolve(HERE, "../../../..");
+const REVIEWED_GO_COMMIT = "ba71a97daac11962527ca9642388556fe012211c";
+const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
+const MCP_SERVER_NAME = "devcrew";
+const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
+const PROVIDER_SECRET_NAME = "WAVE4_FIXTURE_PROVIDER_KEY";
+const CONTROL_SECRET = "wave4-control-bearer-0123456789abcdef";
+const REVIEWED_LAUNCHER = "/usr/local/bin/wave4-codex-launcher";
+const REVIEWED_ALLOW_ID = "codex-confined";
+const REVIEWED_TOKEN = "wave4-reviewed";
+const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
+
+const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
+  contributionId: "devcrew.wave4.join",
+  configSections: Object.freeze([]),
+  serviceDefinitions: Object.freeze([{
+    serviceDefinitionId: "devcrew.wave4.join",
+    protocolId: "comis.capability-service/1",
+    mcpServerName: MCP_SERVER_NAME,
+    managedToolBindings: Object.freeze([
+      {
+        toolName: "prepare_task",
+        behavior: "prepare_run",
+        actionClassification: "mutate",
+        invocationSideEffects: Object.freeze(["task.prepare"]),
+      },
+      ...["list_tasks", "get_task", "explain_task", "get_launch_plan"].map((toolName) => Object.freeze({
+        toolName,
+        behavior: "read_only" as const,
+        actionClassification: "read" as const,
+        invocationSideEffects: Object.freeze([]),
+      })),
+    ]),
+    requestedScopes: Object.freeze([
+      "health",
+      "report",
+      "workspace_lease",
+      "terminal_events",
+      "execution_attachment",
+    ]),
+    dependsOn: Object.freeze([]),
+  }]),
+});
+
+interface ToolStep {
+  readonly tool: string;
+  readonly arguments: Record<string, unknown>;
+  readonly capture?: (text: string) => void;
+}
+
+interface PendingCall {
+  readonly kind: "target" | "discovery";
+  readonly step: ToolStep;
+  readonly name: string;
+}
+
+function messageText(message: unknown): string {
+  if (typeof message !== "object" || message === null) return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (typeof part === "string") return part;
+    if (typeof part === "object" && part !== null && typeof (part as { text?: unknown }).text === "string") {
+      return (part as { text: string }).text;
+    }
+    return "";
+  }).join("\n");
+}
+
+function responseChunk(model: string, delta: Record<string, unknown>, finishReason: string | null): string {
+  return `data: ${JSON.stringify({
+    id: "chatcmpl-wave4-join",
+    object: "chat.completion.chunk",
+    created: 1_786_300_000,
+    model,
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+  })}\n\n`;
+}
+
+class LiaisonModelServer {
+  private server: Server | undefined;
+  private baseUrlValue = "";
+  private steps: ToolStep[] = [];
+  private pending: PendingCall | undefined;
+  private discovered = new Map<string, string>();
+
+  get baseUrl(): string {
+    return this.baseUrlValue;
+  }
+
+  get idle(): boolean {
+    return this.steps.length === 0 && this.pending === undefined;
+  }
+
+  setScript(steps: readonly ToolStep[]): void {
+    if (!this.idle) {
+      throw new Error(`liaison script is already active: pending=${this.pending?.name ?? "none"} steps=${this.steps.map((step) => step.tool).join(",")}`);
+    }
+    this.steps = [...steps];
+  }
+
+  async start(): Promise<void> {
+    this.server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => this.respond(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>, response));
+    });
+    await new Promise<void>((resolveListen, rejectListen) => {
+      this.server!.once("error", rejectListen);
+      this.server!.listen(0, "127.0.0.1", resolveListen);
+    });
+    const address = this.server.address();
+    if (address === null || typeof address === "string") throw new Error("liaison fixture did not bind TCP");
+    this.baseUrlValue = `http://127.0.0.1:${address.port}/v1`;
+  }
+
+  async close(): Promise<void> {
+    if (this.server === undefined) return;
+    await new Promise<void>((resolveClose) => this.server!.close(() => resolveClose()));
+    this.server = undefined;
+  }
+
+  private respond(body: Record<string, unknown>, response: ServerResponse): void {
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const last = messages.at(-1) as { role?: unknown } | undefined;
+    if (last?.role === "tool" && this.pending !== undefined) {
+      const text = messageText(last);
+      if (this.pending.kind === "target") {
+        this.pending.step.capture?.(text);
+        this.steps.shift();
+      } else {
+        const discovered = /"name"\s*:\s*"([^"]+)"/u.exec(text)?.[1];
+        if (discovered !== undefined) this.discovered.set(this.pending.step.tool, discovered);
+      }
+      this.pending = undefined;
+    }
+
+    const tools = Array.isArray(body.tools) ? body.tools : [];
+    const toolNames = tools.flatMap((tool) => {
+      const name = (tool as { function?: { name?: unknown } }).function?.name;
+      return typeof name === "string" ? [name] : [];
+    });
+    const step = this.steps[0];
+    let toolCall: { name: string; arguments: Record<string, unknown> } | undefined;
+    let text = "LIAISON_TURN_DONE";
+    if (step !== undefined) {
+      const selected = toolNames.find((candidate) => candidate === step.tool || candidate.includes(step.tool))
+        ?? this.discovered.get(step.tool);
+      if (selected !== undefined) {
+        toolCall = { name: selected, arguments: step.arguments };
+        this.pending = { kind: "target", step, name: selected };
+      } else {
+        const discover = toolNames.find((candidate) => candidate === "discover_tools");
+        if (discover === undefined) {
+          response.statusCode = 500;
+          response.end(`tool is unavailable: ${step.tool}`);
+          return;
+        }
+        toolCall = {
+          name: discover,
+          arguments: { query: `select:mcp__${MCP_SERVER_NAME}--${step.tool}` },
+        };
+        this.pending = { kind: "discovery", step, name: discover };
+      }
+      text = "";
+    }
+
+    response.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    const model = typeof body.model === "string" ? body.model : "fixture-model";
+    if (toolCall !== undefined) {
+      response.write(responseChunk(model, {
+        role: "assistant",
+        tool_calls: [{
+          index: 0,
+          id: `call-${randomUUID()}`,
+          type: "function",
+          function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) },
+        }],
+      }, null));
+      response.write(responseChunk(model, {}, "tool_calls"));
+    } else {
+      response.write(responseChunk(model, { role: "assistant", content: text }, null));
+      response.write(responseChunk(model, {}, "stop"));
+    }
+    response.end("data: [DONE]\n\n");
+  }
+}
+
+interface RunningService {
+  readonly child: ChildProcess;
+  readonly stderr: () => string;
+  stop(): Promise<void>;
+}
+
+interface TaskSummary {
+  readonly taskHandle: string;
+  readonly state: string;
+}
+
+interface FleetSnapshot {
+  readonly completeness: string;
+  readonly tasks: TaskSummary[];
+}
+
+interface LaunchPlan {
+  readonly schemaVersion: number;
+  readonly completeness: string;
+  readonly taskHandle: string;
+  readonly state: string;
+  readonly stateSource: string;
+  readonly stateConfidence: string;
+  readonly freshness: string;
+  readonly workerProfileId: string;
+  readonly terminalAllowEntryId: string;
+  readonly briefRevisionHash: string;
+  readonly attachmentTargetName: string;
+}
+
+interface RunBinding {
+  readonly managed_run_id: string;
+  readonly workspace_lease_id: string;
+  readonly canonical_path: string;
+}
+
+function normalizedMessage(text: string): NormalizedMessage {
+  return {
+    id: randomUUID(),
+    channelId: "wave4-conversation",
+    channelType: "echo",
+    senderId: "user_a",
+    text,
+    timestamp: Date.now(),
+    attachments: [],
+    metadata: {},
+  };
+}
+
+async function pollUntil(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await predicate())) {
+    if (Date.now() >= deadline) throw new Error(`${label} timed out`);
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 50));
+  }
+}
+
+async function stopDaemon(handle: TestDaemonHandle | undefined): Promise<void> {
+  if (handle === undefined) return;
+  try {
+    await handle.cleanup();
+  } catch (cause) {
+    if (!(cause instanceof Error) || !cause.message.includes("Daemon exit with code")) throw cause;
+  }
+}
+
+function startInstalledService(input: {
+  readonly binary: string;
+  readonly database: string;
+  readonly operatorSocket: string;
+  readonly mcpSocket: string;
+  readonly runtimeRoot: string;
+  readonly repository: ReturnType<typeof createFixtureRepository>;
+  readonly controlSocket: string;
+  readonly credentialFile: string;
+}): RunningService {
+  mkdirSync(dirname(input.database), { recursive: true, mode: 0o700 });
+  mkdirSync(input.runtimeRoot, { recursive: true, mode: 0o700 });
+  const child = spawn(input.binary, [
+    "--database", input.database,
+    "--socket", input.operatorSocket,
+    "--mcp-socket", input.mcpSocket,
+    "--runtime-root", input.runtimeRoot,
+    "--service-instance", SERVICE_INSTANCE_ID,
+    "--git-executable", input.repository.gitExecutable,
+    "--approved-root", input.repository.approvedRoot,
+    "--repository-id", "fixture-repository",
+    "--repository-primary", input.repository.primary,
+    "--worktree-root", input.repository.worktreeRoot,
+    "--repository-default-branch", "master",
+    "--comis-socket", input.controlSocket,
+    "--comis-credential-file", input.credentialFile,
+    "--comis-handshake-operation", "wave4-handshake-operation",
+    "--preparation-ttl", "10m",
+    "--codex-profile", "codex-reviewed",
+    "--codex-executable", REVIEWED_LAUNCHER,
+    "--codex-version", "codex-cli 0.147.0",
+    "--codex-model", process.env["COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5-codex",
+    "--codex-effort", "high",
+    "--codex-terminal-allow-entry", REVIEWED_ALLOW_ID,
+    "--codex-network", "host",
+    "--codex-concurrency", "2",
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  const stderr: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  return {
+    child,
+    stderr: () => Buffer.concat(stderr).toString("utf8"),
+    stop: async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill("SIGTERM");
+      await Promise.race([
+        new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())),
+        new Promise<void>((resolveTimeout) => setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          resolveTimeout();
+        }, 3_000)),
+      ]);
+    },
+  };
+}
+
+function cli<T>(binary: string, socket: string, args: readonly string[]): T {
+  const output = execFileSync(binary, ["--socket", socket, ...args], { encoding: "utf8" });
+  return JSON.parse(output) as T;
+}
+
+function launcherHash(): string {
+  return `sha256:${createHash("sha256").update(readFileSync(REVIEWED_LAUNCHER)).digest("hex")}`;
+}
+
+function makeConfig(input: {
+  readonly dataDir: string;
+  readonly gatewayPort: number;
+  readonly modelBaseUrl: string;
+  readonly mcpBinary: string;
+  readonly mcpSocket: string;
+  readonly controlSocket: string;
+  readonly workspaceRoot: string;
+  readonly runtimeRoot: string;
+}): Record<string, unknown> {
+  return {
+    tenantId: "test",
+    logLevel: "warn",
+    dataDir: input.dataDir,
+    providers: { entries: { fixture: {
+      type: "fixture-openai-compatible",
+      baseUrl: input.modelBaseUrl,
+      apiKeyName: PROVIDER_SECRET_NAME,
+      maxRetries: 0,
+      capabilities: { providerFamily: "openai" },
+      models: [{
+        id: "fixture-model",
+        reasoning: false,
+        contextWindow: 32_768,
+        maxTokens: 2_048,
+        input: ["text"],
+      }],
+    } } },
+    models: { defaultModel: "fixture:fixture-model" },
+    agents: { default: {
+      name: "WaveFourLiaison",
+      provider: "fixture",
+      model: "fixture-model",
+      thinkingLevel: "off",
+      maxSteps: 16,
+      budgets: { perExecution: 500_000, perHour: 5_000_000, perDay: 50_000_000 },
+      circuitBreaker: { failureThreshold: 100, resetTimeoutMs: 1_000 },
+      rag: { enabled: false },
+      skills: { terminal: {
+        enabled: true,
+        worker: { maxSessions: 2, idleTtlMs: 900_000, ringBytes: 262_144, stuckMs: 30_000, maxConcurrentAttentionTurns: 2 },
+        allow: [{
+          id: REVIEWED_ALLOW_ID,
+          match: { path: REVIEWED_LAUNCHER, argsPrefix: [REVIEWED_TOKEN], hash: launcherHash() },
+          scope: {
+            filesystem: "workspace",
+            network: "full",
+            credentialPaths: ["~/.codex", "/home/comis/.wave4-tools"],
+            uid: "daemon",
+          },
+          autoAnswer: "none",
+          consent: { acknowledgedRisk: true, acknowledgedAt: "2026-08-10T00:00:00Z" },
+          backend: "tmux",
+          hardening: "none",
+        }],
+      } },
+      autonomy: {
+        profile: "standard",
+        durability: { enabled: true, staleHeartbeatMs: 120_000, keepAliveMs: 30_000, recoveryBudgetMs: 30_000 },
+        mcp: { enabled: true, allow: { [MCP_SERVER_NAME]: {
+          tools: ["prepare_task", "list_tasks", "get_task", "explain_task", "get_launch_plan"],
+          classification: "safe",
+        } } },
+      },
+    } },
+    gateway: {
+      enabled: true,
+      host: "127.0.0.1",
+      port: input.gatewayPort,
+      tokens: [{ id: "wave4-token", secret: "wave4-gateway-secret-for-integration-tests", scopes: ["rpc", "ws", "admin"] }],
+      rateLimit: { windowMs: 60_000, maxRequests: 10_000 },
+      maxBatchSize: 50,
+      wsHeartbeatMs: 30_000,
+    },
+    embedding: { enabled: false },
+    memory: { enabled: false, dbPath: "memory.db" },
+    scheduler: {
+      cron: { enabled: false },
+      heartbeat: { intervalMs: 300_000, showOk: false, showAlerts: true },
+      quietHours: { enabled: false, criticalBypass: true },
+    },
+    security: { agentToAgent: { enabled: true } },
+    monitoring: {
+      disk: { enabled: false }, resources: { enabled: false }, systemd: { enabled: false },
+      securityUpdates: { enabled: false }, git: { enabled: false },
+    },
+    integrations: { mcp: {
+      osvCheckEnabled: false,
+      callToolTimeoutMs: 30_000,
+      servers: [{
+        name: MCP_SERVER_NAME,
+        transport: "stdio",
+        command: input.mcpBinary,
+        args: ["--socket", input.mcpSocket, "--service-instance", SERVICE_INSTANCE_ID],
+        toolAllowlist: ["prepare_task", "list_tasks", "get_task", "explain_task", "get_launch_plan"],
+        keepaliveIntervalMs: 0,
+      }],
+    } },
+    capabilityServices: { instances: [{
+      serviceInstanceId: SERVICE_INSTANCE_ID,
+      serviceDefinitionId: "devcrew.wave4.join",
+      enabled: true,
+      mcpServerName: MCP_SERVER_NAME,
+      control: { transport: "unix", socketPath: input.controlSocket, credentialRef: `secret://${CONTROL_SECRET_NAME}` },
+      allowedAgents: ["default"],
+      allowedWorkspaceRoots: [input.workspaceRoot],
+      allowedRuntimeRoots: [input.runtimeRoot],
+    }] },
+  };
+}
+
+function runBinding(dataDir: string, taskHandle: string): RunBinding {
+  const digest = createHash("sha256").update(taskHandle).digest("hex");
+  const db = new Database(join(dataDir, "memory.db"), { readonly: true });
+  try {
+    const row = db.prepare(`
+      SELECT mr.managed_run_id, mr.workspace_lease_id, wl.canonical_path
+      FROM managed_runs mr JOIN workspace_leases wl ON wl.managed_run_id = mr.managed_run_id
+      WHERE mr.external_run_ref_digest = ?
+    `).get(digest) as RunBinding | undefined;
+    if (row === undefined) throw new Error(`managed binding is absent for ${taskHandle}`);
+    return row;
+  } finally {
+    db.close();
+  }
+}
+
+function reportCounts(dataDir: string, taskHandles: readonly string[]): number[] {
+  const db = new Database(join(dataDir, "memory.db"), { readonly: true });
+  try {
+    return taskHandles.map((taskHandle) => {
+      const digest = createHash("sha256").update(taskHandle).digest("hex");
+      const row = db.prepare(`
+        SELECT COUNT(*) AS count FROM managed_run_reports reports
+        JOIN managed_runs runs ON runs.managed_run_id = reports.managed_run_id
+        WHERE runs.external_run_ref_digest = ?
+      `).get(digest) as { count: number };
+      return row.count;
+    });
+  } finally {
+    db.close();
+  }
+}
+
+describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", () => {
+  it("confines two task-bound workers and preserves candidate custody across one terminal exit", async () => {
+    expect(process.env["COMIS_DEV_CREW_COMMIT"]).toBe(REVIEWED_GO_COMMIT);
+    const binaryRoot = process.env["COMIS_DEV_CREW_BIN_DIR"];
+    if (binaryRoot === undefined) throw new Error("COMIS_DEV_CREW_BIN_DIR is required");
+    const serviceBinary = join(binaryRoot, "devcrew-service");
+    const mcpBinary = join(binaryRoot, "devcrew-mcp");
+    const cliBinary = join(binaryRoot, "devcrew");
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), "wave4-join-")));
+    const dataDir = join(scratch, "data");
+    const runtimeRoot = join(scratch, "runtime");
+    const runDir = join(scratch, "run");
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    mkdirSync(runtimeRoot, { recursive: true, mode: 0o700 });
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    const canonicalDataDir = realpathSync(dataDir);
+    const repository = createFixtureRepository(scratch);
+    const controlSocket = join(canonicalDataDir, "control.sock");
+    const mcpSocket = join(runDir, "mcp.sock");
+    const operatorSocket = join(runDir, "operator.sock");
+    const credentialFile = join(runDir, "control.credential");
+    const configPath = join(scratch, "config.yaml");
+    writeFileSync(credentialFile, CONTROL_SECRET, { mode: 0o600 });
+    chmodSync(credentialFile, 0o600);
+
+    const previousControl = process.env[CONTROL_SECRET_NAME];
+    const previousProvider = process.env[PROVIDER_SECRET_NAME];
+    process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
+    process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
+    const model = new LiaisonModelServer();
+    let service: RunningService | undefined;
+    let daemon: TestDaemonHandle | undefined;
+
+    try {
+      await model.start();
+      service = startInstalledService({
+        binary: serviceBinary,
+        database: join(scratch, "go-state", "devcrew.db"),
+        operatorSocket,
+        mcpSocket,
+        runtimeRoot,
+        repository,
+        controlSocket,
+        credentialFile,
+      });
+      await waitForUnixSocket(operatorSocket);
+      await waitForUnixSocket(mcpSocket);
+      const gatewayPort = await getFreePort();
+      writeFileSync(configPath, stringify(makeConfig({
+        dataDir: canonicalDataDir,
+        gatewayPort,
+        modelBaseUrl: model.baseUrl,
+        mcpBinary,
+        mcpSocket,
+        controlSocket,
+        workspaceRoot: repository.worktreeRoot,
+        runtimeRoot,
+      })), { mode: 0o600 });
+      daemon = await startTestDaemon({
+        configPath,
+        gatewayPort,
+        overrides: { capabilityServiceContributions: [CONTRIBUTION] },
+      });
+      const echo = new EchoChannelAdapter({ channelId: "echo-main", channelType: "echo" });
+      daemon.daemon.adapterRegistry.set("echo", echo);
+      daemon.daemon.deliveryAdapters.set("echo", echo);
+      const channelManager = daemon.daemon.channelManager;
+      if (channelManager === undefined) throw new Error("channel manager is unavailable");
+      expect(daemon.daemon.capabilityServices.runtime.getActiveView().instances).toContainEqual(
+        expect.objectContaining({ serviceInstanceId: SERVICE_INSTANCE_ID, state: "active" }),
+      );
+      expect(service.child.exitCode).toBeNull();
+
+      const taskHandles: string[] = [];
+      for (const identity of ["A", "B"] as const) {
+        await pollUntil(() => model.idle, 10_000, `liaison idle before prepare ${identity}`);
+        const deliveredBefore = echo.getSentMessages().filter(
+          (message) => message.text.includes("LIAISON_TURN_DONE"),
+        ).length;
+        let taskHandle = "";
+        model.setScript([{
+          tool: "prepare_task",
+          arguments: {
+            shape: "scout",
+            repositoryId: "fixture-repository",
+            baseRevision: repository.baseRevision,
+            acceptanceCriteria: [`Worker ${identity} reports only its protected task identity.`],
+            constraints: ["Stop in validation custody; do not deliver."],
+            validationProfile: "wave4-live",
+            deliveryMode: "report",
+            workerProfileId: "codex-reviewed",
+          },
+          capture: (text) => {
+            taskHandle = /task-[a-f0-9]{24}/u.exec(text)?.[0] ?? "";
+          },
+        }]);
+        await channelManager.injectMessage("echo", normalizedMessage(`PREPARE_WORKER_${identity}`));
+        await pollUntil(
+          () => model.idle && echo.getSentMessages().filter(
+            (message) => message.text.includes("LIAISON_TURN_DONE"),
+          ).length > deliveredBefore,
+          30_000,
+          `prepare ${identity} response`,
+        );
+        expect(taskHandle, `prepare ${identity} omitted its safe task handle; service stderr: ${service.stderr()}`)
+          .toMatch(/^task-[a-f0-9]{24}$/u);
+        taskHandles.push(taskHandle);
+      }
+      expect(new Set(taskHandles).size).toBe(2);
+      const [taskA, taskB] = taskHandles as [string, string];
+      const bindingA = runBinding(canonicalDataDir, taskA);
+      const bindingB = runBinding(canonicalDataDir, taskB);
+      expect(bindingA.managed_run_id).not.toBe(bindingB.managed_run_id);
+      expect(bindingA.workspace_lease_id).not.toBe(bindingB.workspace_lease_id);
+      expect(bindingA.canonical_path).not.toBe(bindingB.canonical_path);
+
+      const planA = cli<LaunchPlan>(cliBinary, operatorSocket, ["task", "launch-plan", taskA, "--format", "json"]);
+      const planB = cli<LaunchPlan>(cliBinary, operatorSocket, ["task", "launch-plan", taskB, "--format", "json"]);
+      for (const [plan, handle] of [[planA, taskA], [planB, taskB]] as const) {
+        expect(plan).toMatchObject({
+          schemaVersion: 1,
+          completeness: "complete",
+          taskHandle: handle,
+          state: "ready",
+          stateSource: "durable_store",
+          stateConfidence: "verified",
+          freshness: "current",
+          workerProfileId: "codex-reviewed",
+          terminalAllowEntryId: REVIEWED_ALLOW_ID,
+        });
+        expect(JSON.stringify(plan)).not.toMatch(/executable|arguments|environment|workingDirectory|sourcePath/iu);
+      }
+      expect(planA.attachmentTargetName).not.toBe(planB.attachmentTargetName);
+
+      writeFileSync(join(bindingA.canonical_path, ".wave4-identity"), taskA, { mode: 0o600 });
+      writeFileSync(join(bindingB.canonical_path, ".wave4-identity"), taskB, { mode: 0o600 });
+      writeFileSync(join(bindingA.canonical_path, ".wave4-sibling.json"), JSON.stringify({
+        siblingPath: bindingB.canonical_path,
+        siblingAttachment: planB.attachmentTargetName,
+      }), { mode: 0o600 });
+      writeFileSync(join(bindingB.canonical_path, ".wave4-sibling.json"), JSON.stringify({
+        siblingPath: bindingA.canonical_path,
+        siblingAttachment: planA.attachmentTargetName,
+      }), { mode: 0o600 });
+
+      let sessionA = "";
+      let sessionB = "";
+      let launchPlanAResult = "";
+      let launchPlanBResult = "";
+      let initialSessionList = "";
+      await pollUntil(() => model.idle, 10_000, "liaison idle before launch");
+      const deliveredBeforeLaunch = echo.getSentMessages().filter(
+        (message) => message.text.includes("LIAISON_TURN_DONE"),
+      ).length;
+      model.setScript([
+        { tool: "get_launch_plan", arguments: { taskHandle: taskA }, capture: (text) => { launchPlanAResult = text; } },
+        { tool: "get_launch_plan", arguments: { taskHandle: taskB }, capture: (text) => { launchPlanBResult = text; } },
+        {
+          tool: "terminal_session_create",
+          arguments: {
+            allowId: planA.terminalAllowEntryId,
+            command: REVIEWED_LAUNCHER,
+            args: [],
+            managedRunId: bindingA.managed_run_id,
+            workspaceLeaseId: bindingA.workspace_lease_id,
+          },
+          capture: (text) => { sessionA = /"sessionId"\s*:\s*"([^"]+)"/u.exec(text)?.[1] ?? ""; },
+        },
+        {
+          tool: "terminal_session_create",
+          arguments: {
+            allowId: planB.terminalAllowEntryId,
+            command: REVIEWED_LAUNCHER,
+            args: [],
+            managedRunId: bindingB.managed_run_id,
+            workspaceLeaseId: bindingB.workspace_lease_id,
+          },
+          capture: (text) => { sessionB = /"sessionId"\s*:\s*"([^"]+)"/u.exec(text)?.[1] ?? ""; },
+        },
+        { tool: "terminal_session_list", arguments: {}, capture: (text) => { initialSessionList = text; } },
+      ]);
+      await channelManager.injectMessage("echo", normalizedMessage("LAUNCH_BOTH_FROM_REVIEWED_PLANS"));
+      await pollUntil(
+        () => model.idle && echo.getSentMessages().filter(
+          (message) => message.text.includes("LIAISON_TURN_DONE"),
+        ).length > deliveredBeforeLaunch,
+        60_000,
+        "two terminal launch handles",
+      );
+      expect(sessionA, `worker A terminal launch failed; service stderr: ${service.stderr()}`).not.toBe("");
+      expect(sessionB, `worker B terminal launch failed; service stderr: ${service.stderr()}`).not.toBe("");
+      expect(launchPlanAResult).toContain(taskA);
+      expect(launchPlanBResult).toContain(taskB);
+      expect(launchPlanAResult).not.toMatch(/executable|workingDirectory|sourcePath/iu);
+      expect(launchPlanBResult).not.toMatch(/executable|workingDirectory|sourcePath/iu);
+      expect(sessionA).not.toBe(sessionB);
+      expect(initialSessionList).toContain(sessionA);
+      expect(initialSessionList).toContain(sessionB);
+
+      writeFileSync(join(bindingA.canonical_path, ".wave4-start"), "go\n", { mode: 0o600 });
+      writeFileSync(join(bindingB.canonical_path, ".wave4-start"), "go\n", { mode: 0o600 });
+      await pollUntil(
+        () => {
+          try {
+            return readFileSync(join(bindingA.canonical_path, ".wave4-real-codex-started"), "utf8") === ""
+              && readFileSync(join(bindingB.canonical_path, ".wave4-real-codex-started"), "utf8") === "";
+          } catch {
+            return false;
+          }
+        },
+        30_000,
+        "two real Codex process starts",
+      );
+
+      let fleet = cli<FleetSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+      expect(fleet.completeness).toBe("partial");
+      expect(new Set(fleet.tasks.map((task) => task.taskHandle))).toEqual(new Set([taskA, taskB]));
+      await pollUntil(() => {
+        fleet = cli<FleetSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+        return fleet.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
+      }, 30_000, `joined working state; observed ${JSON.stringify(fleet.tasks)}; service stderr: ${service.stderr()}`);
+      await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");
+
+      const evidenceA = JSON.parse(readFileSync(join(bindingA.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
+      const evidenceB = JSON.parse(readFileSync(join(bindingB.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
+      expect(evidenceA).toEqual({ siblingReadBlocked: true, siblingWriteBlocked: true, siblingAttachmentAbsent: true });
+      expect(evidenceB).toEqual({ siblingReadBlocked: true, siblingWriteBlocked: true, siblingAttachmentAbsent: true });
+      expect(readFileSync(join(bindingA.canonical_path, "wave4-artifact.txt"), "utf8")).toContain(taskA);
+      expect(readFileSync(join(bindingA.canonical_path, "wave4-artifact.txt"), "utf8")).not.toContain(taskB);
+      expect(readFileSync(join(bindingB.canonical_path, "wave4-artifact.txt"), "utf8")).toContain(taskB);
+      expect(readFileSync(join(bindingB.canonical_path, "wave4-artifact.txt"), "utf8")).not.toContain(taskA);
+
+      let postKillList = "";
+      await pollUntil(() => model.idle, 10_000, "liaison idle before selective stop");
+      model.setScript([
+        { tool: "terminal_session_kill", arguments: { sessionId: sessionA } },
+        { tool: "terminal_session_list", arguments: {}, capture: (text) => { postKillList = text; } },
+      ]);
+      await channelManager.injectMessage("echo", normalizedMessage("STOP_ONLY_WORKER_A"));
+      await pollUntil(() => postKillList !== "", 30_000, "single-worker stop and fleet read");
+      expect(postKillList).not.toContain(sessionA);
+      expect(postKillList).toContain(sessionB);
+      fleet = cli<FleetSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+      expect(fleet.tasks.find((task) => task.taskHandle === taskA)?.state).toBe("validating");
+      expect(fleet.tasks.find((task) => task.taskHandle === taskB)?.state).toBe("validating");
+
+      await pollUntil(() => model.idle, 10_000, "liaison idle before final stop");
+      model.setScript([{ tool: "terminal_session_kill", arguments: { sessionId: sessionB } }]);
+      await channelManager.injectMessage("echo", normalizedMessage("STOP_REMAINING_WORKER_B"));
+      console.log("WAVE4_CONFINEMENT_POSTURE=outer Docker bridge network shared; inner bwrap filesystem, PID, IPC, UTS, cgroup, and user namespaces isolated; task workspace and one protected attachment mounted per worker");
+    } finally {
+      await stopDaemon(daemon);
+      await service?.stop();
+      await model.close();
+      if (previousControl === undefined) delete process.env[CONTROL_SECRET_NAME];
+      else process.env[CONTROL_SECRET_NAME] = previousControl;
+      if (previousProvider === undefined) delete process.env[PROVIDER_SECRET_NAME];
+      else process.env[PROVIDER_SECRET_NAME] = previousProvider;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }, 420_000);
+});
