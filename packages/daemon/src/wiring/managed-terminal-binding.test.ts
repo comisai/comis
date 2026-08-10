@@ -48,7 +48,7 @@ describe("managed terminal binding authority", () => {
       nowMs: () => 1700,
       validateLease: () => ok(undefined),
       resolveOwnerScope: () => SCOPE,
-    } as never);
+    });
 
     await expect(resolver.resolve({
       managedRunId: "managed-run_a",

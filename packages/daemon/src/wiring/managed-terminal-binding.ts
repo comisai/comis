@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { lstatSync, realpathSync } from "node:fs";
 import {
   createConversationRef,
   tryGetContext,
@@ -9,9 +10,10 @@ import {
   type CapabilityServiceControlPort,
   type ComisLogger,
   type WorkspaceLeasePort,
+  type WorkspaceLeaseRecord,
 } from "@comis/core";
 import type { ManagedTerminalBindingResolver, SessionOwner } from "@comis/skills/tools";
-import { fromPromise, type Result } from "@comis/shared";
+import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { createManagedTerminalEventBridge } from "./capability-service-terminal-event.js";
 export { createManagedTerminalRevoker } from "./managed-terminal-revoker.js";
 export type { ManagedTerminalRevoker } from "./managed-terminal-revoker.js";
@@ -22,12 +24,31 @@ export interface ManagedTerminalBindingDeps {
   readonly nowMs: () => number;
   readonly attachments?: ExecutionAttachmentPort;
   readonly validateAttachment?: (record: ExecutionAttachmentRecord) => Result<void, Error>;
+  readonly validateLease?: (record: WorkspaceLeaseRecord) => Result<void, Error>;
   readonly resolveOwnerScope?: (owner: SessionOwner) => ManagedRunOwnerScope | undefined;
 }
 
 async function invoke<T>(operation: () => Promise<Result<T, Error>>): Promise<Result<T, Error>> {
   const called = await fromPromise(operation());
   return called.ok ? called.value : called;
+}
+
+function validateCurrentWorkspaceLease(record: WorkspaceLeaseRecord): Result<void, Error> {
+  const inspected = tryCatch(() => {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the stored canonical lease path is re-proven without following its final component before terminal binding
+    const stat = lstatSync(record.canonicalPath);
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- equality with the stored canonical lease path rejects any newly symlinked component
+    const canonicalPath = realpathSync(record.canonicalPath);
+    return { stat, canonicalPath };
+  });
+  if (!inspected.ok) return err(inspected.error);
+  return !inspected.value.stat.isSymbolicLink()
+    && inspected.value.stat.isDirectory()
+    && inspected.value.canonicalPath === record.canonicalPath
+    && inspected.value.stat.dev === record.filesystemIdentity.device
+    && inspected.value.stat.ino === record.filesystemIdentity.inode
+    ? ok(undefined)
+    : err(new Error("workspace lease filesystem identity changed"));
 }
 
 /** Resolve the complete ALS authority and cross-check it against the registry owner key. */
@@ -56,6 +77,7 @@ export function createManagedTerminalBindingResolver(
   deps: ManagedTerminalBindingDeps,
 ): ManagedTerminalBindingResolver {
   const resolveScope = deps.resolveOwnerScope ?? resolveManagedTerminalOwnerScope;
+  const validateLease = deps.validateLease ?? validateCurrentWorkspaceLease;
   const resolve: ManagedTerminalBindingResolver["resolve"] = async (input) => {
     const scope = resolveScope(input.owner);
     if (scope === undefined) return { kind: "rejected", reason: "owner_scope_unresolved" };
@@ -78,6 +100,7 @@ export function createManagedTerminalBindingResolver(
     if (!lease.ok) return { kind: "unavailable", reason: "workspace_lease_store_unavailable" };
     if (lease.value === undefined) return { kind: "rejected", reason: "workspace_lease_not_found" };
     if (lease.value.state !== "active") return { kind: "rejected", reason: "workspace_lease_inactive" };
+    if (!validateLease(lease.value).ok) return { kind: "rejected", reason: "workspace_lease_stale" };
     const attachmentScope = {
       tenantId: scope.tenantId,
       agentId: scope.agentId,
