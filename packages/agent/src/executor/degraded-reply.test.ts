@@ -147,6 +147,31 @@ describe("outbound audio evidence reply", () => {
   });
 });
 
+describe("outbound image evidence reply", () => {
+  it("stays neutral and supports an operator locale pack", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildOutboundImageEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        outbound_image_evidence_missing:
+          "לא ניתן לאמת יצירה או מסירה של התמונה המבוקשת.",
+      },
+    });
+
+    expect(build()).toContain("could not verify creation or delivery");
+    expect(build()).not.toContain("did not create");
+    expect(build("he", catalog)).toBe(
+      "לא ניתן לאמת יצירה או מסירה של התמונה המבוקשת.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("outbound_image_evidence_missing");
+  });
+});
+
 describe("buildOutputStarvedAnnotation — vocabulary + content invariants", () => {
   it("returns a non-empty annotation string", () => {
     const annotation = buildOutputStarvedAnnotation();

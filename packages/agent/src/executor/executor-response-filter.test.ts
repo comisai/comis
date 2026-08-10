@@ -1337,6 +1337,102 @@ describe("outbound audio evidence guard", () => {
   });
 });
 
+type OutboundImageEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_image_evidence";
+};
+
+function outboundImageEvidenceGuard(): OutboundImageEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceOutboundImageEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as OutboundImageEvidenceGuard;
+}
+
+describe("outbound image evidence guard", () => {
+  const honestResponse =
+    "I could not verify creation or delivery of the requested image in this turn.";
+
+  it("replaces a generated-image completion claim when the turn used no tool", () => {
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response: "Done — I created a simple, predominantly blue calendar image.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_image_evidence",
+    });
+  });
+
+  it("preserves image completion backed by successful generation", () => {
+    const response = "Done — I created and delivered the calendar image.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "please generate a blue calendar picture",
+      response,
+      toolExecResults: [{ toolName: "image_generate", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not count failed generation or a background placeholder as image proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "image_generate", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      expect(outboundImageEvidenceGuard()({
+        request: "could you create a small calendar image?",
+        response: "The requested image is ready.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("accepts a trusted background completion receipt for a delivered image", () => {
+    const response = "Done — the requested image was delivered.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response,
+      toolExecResults: [],
+      currentActionEvidence: true,
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("leaves image explanations and honest generation limitations unchanged", () => {
+    const limitation = "I couldn't generate or deliver the requested image in this turn.";
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response: limitation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: limitation, corrected: false });
+
+    const explanation = "Use a blue palette and a seven-column grid.";
+    expect(outboundImageEvidenceGuard()({
+      request: "how do I make a simple blue calendar image?",
+      response: explanation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: explanation, corrected: false });
+  });
+});
+
 type RuntimeActionEvidenceDetector = (message: {
   channelType: string;
   senderId: string;

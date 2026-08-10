@@ -1200,6 +1200,19 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — outbound image completion requires current generation evidence", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceOutboundImageEvidence\(/);
+    expect(stripped).toMatch(/buildOutboundImageEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.outbound_image_evidence_guard/);
+    expect(stripped).toMatch(
+      /outboundImageEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_image_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceOutboundImageEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
     const stripped = readPostExecStripped();
 
