@@ -605,8 +605,16 @@ export interface DeliveryMirrorResult {
  * Uses session key + text hash + 1-second time bucket to deduplicate
  * repeated deliveries of the same text within the same second.
  */
-function computeIdempotencyKey(sessionKey: string, text: string, timestamp: number): string {
-  const textHash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+function computeIdempotencyKey(
+  sessionKey: string,
+  text: string,
+  timestamp: number,
+  mediaUrls: readonly string[] = [],
+): string {
+  const textHash = createHash("sha256")
+    .update(JSON.stringify({ text, mediaUrls }))
+    .digest("hex")
+    .slice(0, 16);
   const bucket = Math.floor(timestamp / 1000);
   return `${sessionKey}:${textHash}:${bucket}`;
 }
@@ -665,6 +673,7 @@ export async function setupDeliveryMirror(deps: {
           ctx.deliveryAuthority.conversationRef,
           event.text,
           now,
+          event.mediaUrls,
         );
         const result = await deliveryMirror.record({
           tenantId: ctx.deliveryAuthority.tenantId,
@@ -672,7 +681,7 @@ export async function setupDeliveryMirror(deps: {
           conversationRef: ctx.deliveryAuthority.conversationRef,
           destinationEndpoint: ctx.destinationEndpoint,
           text: event.text,
-          mediaUrls: [],  // HookAfterDeliveryEvent has no mediaUrls field; media URL mirroring deferred
+          mediaUrls: [...(event.mediaUrls ?? [])],
           channelType: event.channelType,
           channelId: event.channelId,
           origin: event.origin,

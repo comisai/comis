@@ -162,6 +162,9 @@ function createMockDeps(workspaceDir: string): MessageHandlerDeps {
       error: vi.fn(),
     } as unknown as MessageHandlerDeps["logger"],
     deliveryService: makeFakeDeliveryService(),
+    hookRunner: {
+      runAfterDelivery: vi.fn(async () => undefined),
+    },
   };
 }
 
