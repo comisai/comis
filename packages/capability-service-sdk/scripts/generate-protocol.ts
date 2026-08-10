@@ -30,6 +30,8 @@ import {
   CapabilityHealthResponseSchema,
   CapabilityReportRequestSchema,
   CapabilityReportResponseSchema,
+  CapabilityTerminalEventRequestSchema,
+  CapabilityTerminalEventResponseSchema,
   CapabilityServiceErrorResponseSchema,
   ExternalRunRefSchema,
   MCP_CAPABILITY_CALL_CONTEXT_KEY,
@@ -140,6 +142,26 @@ const METHOD_CATALOG = [
     requestSchema: "schemas/report.request.schema.json",
     responseSchema: "schemas/report.response.schema.json",
   },
+  {
+    method: "managedRuns.terminalEvent",
+    direction: "comis-to-service",
+    callerClass: "comis-daemon",
+    requiredServiceScope: null,
+    classification: "mutation",
+    operationIdRequired: true,
+    maxRequestBytes: CAPABILITY_SERVICE_LIMITS.maxRequestBytes,
+    maxResponseBytes: CAPABILITY_SERVICE_LIMITS.maxResponseBytes,
+    semanticInvariants: [
+      "operation-id-must-match-envelope-id",
+      "identical-replay-returns-original-result",
+      "altered-replay-is-rejected",
+      "terminal-run-workspace-lease-must-match",
+      "owning-service-instance-only",
+      "transition-carries-identifiers-only",
+    ],
+    requestSchema: "schemas/terminalEvent.request.schema.json",
+    responseSchema: "schemas/terminalEvent.response.schema.json",
+  },
 ] as const;
 
 const SCHEMAS: ReadonlyArray<{ readonly path: string; readonly schema: ZodType }> = [
@@ -157,6 +179,8 @@ const SCHEMAS: ReadonlyArray<{ readonly path: string; readonly schema: ZodType }
   { path: "schemas/mcp-managed-run-result.schema.json", schema: McpManagedRunResultSchema },
   { path: "schemas/report.request.schema.json", schema: CapabilityReportRequestSchema },
   { path: "schemas/report.response.schema.json", schema: CapabilityReportResponseSchema },
+  { path: "schemas/terminalEvent.request.schema.json", schema: CapabilityTerminalEventRequestSchema },
+  { path: "schemas/terminalEvent.response.schema.json", schema: CapabilityTerminalEventResponseSchema },
   { path: "schemas/service-instance-id.schema.json", schema: ServiceInstanceIdSchema },
 ];
 

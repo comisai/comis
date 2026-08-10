@@ -14,7 +14,7 @@
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "d3f8f43b855f2f58bee370738869ba555dd45bd76a3f48e13a3fc2e9e474657d"
+      "sha256": "4ba6e5d4473e89aa315aae0fa707ac0d9b285371cba5fc9fd730314a3f260bd8"
     },
     {
       "path": "fixtures/unknown-field.json",
@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "14cae3ae9a53fdb2822017a757a5060f0093bed0c0b67f4f618c8175fedd3f4b"
+      "sha256": "9e991a76bd39ddcf6d82bd44c724df7e5744d502981d95a06e6355ce379a9f69"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -87,9 +87,17 @@
     {
       "path": "schemas/service-instance-id.schema.json",
       "sha256": "7d204815e2afb9119ff08ea392d0989867b083b83625c755e429343c0994cc58"
+    },
+    {
+      "path": "schemas/terminalEvent.request.schema.json",
+      "sha256": "22658b31e86c157cd58e47870112e72aa0396520a0b9ba8ef0c0b1401faea911"
+    },
+    {
+      "path": "schemas/terminalEvent.response.schema.json",
+      "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "5c97aa4773b2a5a3d2f790d8bf1556542bb271ec7773bf4d29b6da808b252725",
+  "bundleDigest": "ffbe9fe2b15f0dfdda280705d5a3d5cf5787f4be74a2fe4341b3839d0f12d5b1",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -274,6 +282,26 @@
         "service-report-id-identical-replay-returns-original-sequence",
         "service-report-id-altered-replay-is-rejected"
       ]
+    },
+    {
+      "callerClass": "comis-daemon",
+      "classification": "mutation",
+      "direction": "comis-to-service",
+      "maxRequestBytes": 65536,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.terminalEvent",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/terminalEvent.request.schema.json",
+      "requiredServiceScope": null,
+      "responseSchema": "schemas/terminalEvent.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "terminal-run-workspace-lease-must-match",
+        "owning-service-instance-only",
+        "transition-carries-identifiers-only"
+      ]
     }
   ],
   "methods": [
@@ -281,7 +309,8 @@
     "capabilityServices.health",
     "managedRuns.abandon",
     "managedRuns.activate",
-    "managedRuns.report"
+    "managedRuns.report",
+    "managedRuns.terminalEvent"
   ],
   "protocolId": "comis.capability-service/1"
 }

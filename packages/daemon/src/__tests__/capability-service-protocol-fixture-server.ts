@@ -13,6 +13,7 @@ import {
   CapabilityHandshakeResponseSchema,
   CapabilityHealthResponseSchema,
   CapabilityReportResponseSchema,
+  CapabilityTerminalEventResponseSchema,
   CapabilityServiceRequestSchema,
   OperationIdSchema,
   type CapabilityServiceErrorKind,
@@ -124,6 +125,8 @@ function validateResponse(method: CapabilityServiceRequest["method"], response: 
       return CapabilityActivateResponseSchema.safeParse(response).success;
     case "managedRuns.report":
       return CapabilityReportResponseSchema.safeParse(response).success;
+    case "managedRuns.terminalEvent":
+      return CapabilityTerminalEventResponseSchema.safeParse(response).success;
     default: {
       const _exhaustive: never = method;
       return _exhaustive;
@@ -201,6 +204,16 @@ export function createCapabilityServiceProtocolFixtureServer(
         reports.set(request.params.serviceReportId, { canonical: reportCanonical(request), result });
         return { jsonrpc: "2.0", id: request.id, result };
       }
+      case "managedRuns.terminalEvent":
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            managedRunId: request.params.managedRunId,
+            terminalSessionId: request.params.terminalSessionId,
+            transition: request.params.transition,
+          },
+        };
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

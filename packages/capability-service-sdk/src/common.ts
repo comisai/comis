@@ -24,6 +24,9 @@ export const ManagedRunIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PA
 /** Comis-minted exclusive workspace authority. */
 export const WorkspaceLeaseIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
+/** Comis-minted terminal session identity. */
+export const TerminalSessionIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
+
 /** Stable idempotency identity for a single protocol operation. */
 export const OperationIdSchema = z.string().min(1).max(128).regex(OPAQUE_REF_PATTERN);
 export const ServiceReportIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
@@ -82,6 +85,7 @@ export type ServiceInstanceId = z.infer<typeof ServiceInstanceIdSchema>;
 export type ExternalRunRef = z.infer<typeof ExternalRunRefSchema>;
 export type ManagedRunId = z.infer<typeof ManagedRunIdSchema>;
 export type WorkspaceLeaseId = z.infer<typeof WorkspaceLeaseIdSchema>;
+export type TerminalSessionId = z.infer<typeof TerminalSessionIdSchema>;
 export type OperationId = z.infer<typeof OperationIdSchema>;
 export type ServiceReportId = z.infer<typeof ServiceReportIdSchema>;
 export type CapabilityServiceError = z.infer<typeof CapabilityServiceErrorSchema>;

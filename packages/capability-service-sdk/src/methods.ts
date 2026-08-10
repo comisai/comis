@@ -12,6 +12,7 @@ import {
   RegistrationNonceSchema,
   ServiceInstanceIdSchema,
   ServiceReportIdSchema,
+  TerminalSessionIdSchema,
   TimestampMsSchema,
   WorkspaceLeaseIdSchema,
 } from "./common.js";
@@ -134,6 +135,40 @@ export const CapabilityReportResponseSchema = z.strictObject({
   }),
 });
 
+export const CapabilityTerminalTransitionSchema = z.enum([
+  "created",
+  "running",
+  "input_needed",
+  "stuck",
+  "exited",
+  "lost",
+  "recovered",
+  "released",
+]);
+
+export const CapabilityTerminalEventRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.terminalEvent"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    workspaceLeaseId: WorkspaceLeaseIdSchema,
+    terminalSessionId: TerminalSessionIdSchema,
+    transition: CapabilityTerminalTransitionSchema,
+  }),
+});
+
+export const CapabilityTerminalEventResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunId: ManagedRunIdSchema,
+    terminalSessionId: TerminalSessionIdSchema,
+    transition: CapabilityTerminalTransitionSchema,
+  }),
+});
+
 export const CapabilityHealthRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
@@ -165,6 +200,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityReportRequestSchema,
+  CapabilityTerminalEventRequestSchema,
 ]);
 
 export type CapabilityServiceRequest = z.infer<typeof CapabilityServiceRequestSchema>;
@@ -172,4 +208,5 @@ export type CapabilityHandshakeRequest = z.infer<typeof CapabilityHandshakeReque
 export type CapabilityActivateRequest = z.infer<typeof CapabilityActivateRequestSchema>;
 export type CapabilityAbandonRequest = z.infer<typeof CapabilityAbandonRequestSchema>;
 export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSchema>;
+export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;

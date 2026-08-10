@@ -9,6 +9,7 @@ import {
   CapabilityHandshakeResponseSchema,
   CapabilityHealthResponseSchema,
   CapabilityReportResponseSchema,
+  CapabilityTerminalEventResponseSchema,
   CapabilityServiceErrorResponseSchema,
   CapabilityServiceRequestSchema,
   McpCapabilityCallContextSchema,
@@ -43,6 +44,7 @@ const RESPONSE_SCHEMAS = {
   "handshake-response": CapabilityHandshakeResponseSchema,
   "health-response": CapabilityHealthResponseSchema,
   "report-response": CapabilityReportResponseSchema,
+  "terminal-event-response": CapabilityTerminalEventResponseSchema,
   "mcp-call-context": McpCapabilityCallContextSchema,
   "mcp-managed-run-result": McpManagedRunResultSchema,
 } as const satisfies Readonly<Record<Exclude<ProtocolFixtureStep["target"], "request">, ZodType>>;

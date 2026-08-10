@@ -78,6 +78,25 @@
       },
       "schemaExpectation": "accept",
       "target": "request"
+    },
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_terminal_content",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.terminalEvent",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_terminal_content",
+          "reason": "screen content must never cross the control bridge",
+          "terminalSessionId": "terminal-session_a",
+          "transition": "stuck",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "reject",
+      "target": "request"
     }
   ]
 }

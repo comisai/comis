@@ -160,6 +160,37 @@
     {
       "expectation": "accept",
       "payload": {
+        "id": "operation_terminal_created",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.terminalEvent",
+        "params": {
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_terminal_created",
+          "terminalSessionId": "terminal-session_a",
+          "transition": "created",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_terminal_created",
+        "jsonrpc": "2.0",
+        "result": {
+          "managedRunId": "managed-run_a",
+          "terminalSessionId": "terminal-session_a",
+          "transition": "created"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "terminal-event-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
         "id": "operation_report",
         "jsonrpc": "2.0",
         "result": {

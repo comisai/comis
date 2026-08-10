@@ -26,6 +26,7 @@ export const ProtocolFixtureTargetSchema = z.enum([
   "handshake-response",
   "health-response",
   "report-response",
+  "terminal-event-response",
   "mcp-call-context",
   "mcp-managed-run-result",
 ]);
@@ -52,6 +53,7 @@ const externalRunRef = "external-run_a";
 const managedRunId = "managed-run_a";
 const registrationNonce = "registration-nonce_a";
 const serviceReportId = "service-report_a";
+const terminalSessionId = "terminal-session_a";
 const emptyDigest = "0".repeat(64);
 const workspacePolicyHash = "c".repeat(64);
 
@@ -186,6 +188,32 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           artifactRefs: ["evidence_a"],
           observedAtMs: 1_800_000_000_000,
         }),
+      },
+      {
+        target: "request",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: request("operation_terminal_created", "managedRuns.terminalEvent", {
+          operationId: "operation_terminal_created",
+          managedRunId,
+          workspaceLeaseId: "workspace-lease_a",
+          terminalSessionId,
+          transition: "created",
+        }),
+      },
+      {
+        target: "terminal-event-response",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          jsonrpc: "2.0",
+          id: "operation_terminal_created",
+          result: {
+            managedRunId,
+            terminalSessionId,
+            transition: "created",
+          },
+        },
       },
       {
         target: "report-response",
@@ -337,6 +365,20 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           externalRunRef: "external-run_workspace_unexpected_lease",
           registrationNonce: "registration-nonce_workspace_unexpected_lease",
           workspaceLeaseId: "workspace-lease_unexpected",
+        }),
+      },
+      {
+        target: "request",
+        expectation: "reject",
+        schemaExpectation: "reject",
+        expectedErrorKind: "invalid_params",
+        payload: request("operation_terminal_content", "managedRuns.terminalEvent", {
+          operationId: "operation_terminal_content",
+          managedRunId,
+          workspaceLeaseId: "workspace-lease_a",
+          terminalSessionId,
+          transition: "stuck",
+          reason: "screen content must never cross the control bridge",
         }),
       },
     ],
