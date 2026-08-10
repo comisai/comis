@@ -35,7 +35,6 @@ export const ExecutionAttachmentAuthorityDbRowSchema = z.strictObject({
   tenant_id: z.string(),
   agent_id: z.string(),
   workspace_lease_id: z.string().nullable(),
-  execution_attachment_ids: z.string(),
   lease_managed_run_id: z.string(),
   lease_service_instance_id: z.string(),
   lease_tenant_id: z.string(),

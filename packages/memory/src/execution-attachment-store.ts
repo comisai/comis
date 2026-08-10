@@ -84,7 +84,7 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
   const selectActiveSource = db.prepare("SELECT execution_attachment_id FROM execution_attachments WHERE source_path = ? AND state = 'active'");
   const selectAuthority = db.prepare(`
     SELECT mr.managed_run_id, mr.service_instance_id, mr.tenant_id, mr.agent_id,
-      mr.workspace_lease_id, mr.execution_attachment_ids,
+      mr.workspace_lease_id,
       wl.managed_run_id AS lease_managed_run_id,
       wl.service_instance_id AS lease_service_instance_id,
       wl.tenant_id AS lease_tenant_id, wl.agent_id AS lease_agent_id,
@@ -166,12 +166,6 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
     const row = authorityMapper.parseOptionalRow(selectAuthority.get(record.managedRunId));
     if (!row.ok) return err(new Error(row.error.message));
     if (row.value === undefined) return ok(false);
-    let attachmentIds: unknown;
-    try {
-      attachmentIds = JSON.parse(row.value.execution_attachment_ids);
-    } catch (cause) {
-      return err(asError(cause));
-    }
     return ok(
       row.value.service_instance_id === record.serviceInstanceId
       && row.value.tenant_id === record.tenantId
@@ -182,8 +176,6 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
       && row.value.lease_tenant_id === record.tenantId
       && row.value.lease_agent_id === record.agentId
       && row.value.lease_state === "active"
-      && Array.isArray(attachmentIds)
-      && attachmentIds.includes(record.executionAttachmentId),
     );
   }
 

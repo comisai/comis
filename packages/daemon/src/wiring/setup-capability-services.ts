@@ -13,6 +13,7 @@ import {
   type CapabilityServiceControlPort,
   type ClockPort,
   type ComisLogger,
+  type ExecutionAttachmentPort,
   type ManagedRunContentPort,
   type ManagedRunStorePort,
   type SecretManager,
@@ -21,6 +22,7 @@ import {
   type WorkspaceLeasePort,
 } from "@comis/core";
 import {
+  createSqliteExecutionAttachmentStore,
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
   createSqliteWorkspaceLeaseStore,
@@ -43,6 +45,11 @@ import {
 } from "./managed-run-report-bridge.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 import { validateWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
+import {
+  createExecutionAttachmentAuthority,
+  type ExecutionAttachmentAuthority,
+  type ExecutionAttachmentRecoverySummary,
+} from "./execution-attachment-authority.js";
 
 const SECRET_REFERENCE_PREFIX = "secret://";
 
@@ -52,10 +59,13 @@ export interface CapabilityServicePlatform {
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
   readonly workspaceLeases: WorkspaceLeasePort;
+  readonly attachments: ExecutionAttachmentPort;
+  readonly attachmentAuthority: ExecutionAttachmentAuthority;
   readonly control: CapabilityServiceControlPort;
   readonly activationCoordinator: ManagedRunActivationCoordinator;
   readonly reportBridge: ManagedRunReportBridge;
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
+  readonly attachmentRecoverySummary: ExecutionAttachmentRecoverySummary;
   readonly purgedContentCount: number;
   shutdown(): Promise<Result<void, Error>>;
 }
@@ -199,11 +209,12 @@ export async function setupCapabilityServices(
   const stores = tryCatch(() => {
     const store = createSqliteManagedRunStore(deps.db);
     const workspaceLeases = createSqliteWorkspaceLeaseStore(deps.db);
+    const attachments = createSqliteExecutionAttachmentStore(deps.db);
     const contentStore = createSqliteManagedRunContentStore(deps.db, {
       directoryPath: directories.value,
       nowMs: () => deps.clock.now(),
     });
-    return { store, workspaceLeases, contentStore };
+    return { store, workspaceLeases, attachments, contentStore };
   });
   if (!stores.ok) {
     logSetupFailure(deps, "capability-service-stores", "internal");
@@ -215,6 +226,7 @@ export async function setupCapabilityServices(
   }
   const store = stores.value.store;
   const workspaceLeases = stores.value.workspaceLeases;
+  const attachments = stores.value.attachments;
   const contentStore = stores.value.contentStore.value;
   const reportBridge = createManagedRunReportBridge({
     store,
@@ -265,6 +277,19 @@ export async function setupCapabilityServices(
     return err(new Error(`capability-service runtime activation failed: ${activated.error.kind}`));
   }
 
+  const attachmentAuthority = createExecutionAttachmentAuthority({
+    runs: store,
+    leases: workspaceLeases,
+    attachments,
+    instances: plan.value.orderedInstances,
+    dataDir: deps.dataDir,
+    nowMs: () => deps.clock.now(),
+    isServiceActive: (serviceInstanceId) => runtime.getActiveView().instances.some(
+      (instance) => instance.serviceInstanceId === serviceInstanceId && instance.state === "active",
+    ),
+    logger: deps.logger,
+  });
+
   const activationCoordinator = createManagedRunActivationCoordinator({
     store,
     contentStore,
@@ -287,6 +312,14 @@ export async function setupCapabilityServices(
     logSetupFailure(deps, "managed-run-recovery", "internal");
     return recovered;
   }
+  const attachmentRecovered = await attachmentAuthority.reconcileAll({
+    limit: deps.config.recoveryBatchSize,
+  });
+  if (!attachmentRecovered.ok) {
+    await runtime.shutdown();
+    logSetupFailure(deps, "execution-attachment-recovery", "internal");
+    return attachmentRecovered;
+  }
   const purged = await invoke(contentStore.purgeExpired({
     kind: "recovery",
     expiredBeforeMs: deps.clock.now(),
@@ -304,6 +337,8 @@ export async function setupCapabilityServices(
     recoveredCount: recovered.value.activated.length,
     cancelledCount: recovered.value.cancelled.length,
     unknownCount: recovered.value.unknown.length,
+    recoveredAttachmentCount: attachmentRecovered.value.recovered.length,
+    preservedAttachmentCount: attachmentRecovered.value.preserved.length,
     purgedContentCount: purged.value,
     durationMs: Math.max(0, deps.clock.now() - startedAtMs),
   }, "Capability-service platform setup completed");
@@ -315,10 +350,13 @@ export async function setupCapabilityServices(
     store,
     contentStore,
     workspaceLeases,
+    attachments,
+    attachmentAuthority,
     control: host.value.control,
     activationCoordinator,
     reportBridge,
     recoverySummary: recovered.value,
+    attachmentRecoverySummary: attachmentRecovered.value,
     purgedContentCount: purged.value,
     shutdown: async () => {
       if (stopped) return ok(undefined);

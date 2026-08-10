@@ -30,6 +30,7 @@ import { SYSTEM_RO_PATHS } from "../sandbox/bwrap-provider.js";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { JAIL_UNSET_ENV_VARS } from "./terminal-env-scrub.js";
+import { MANAGED_TERMINAL_ATTACHMENT_DIRECTORY, managedTerminalAttachmentTargetPath, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
 // Re-export so consumers can `import { SYSTEM_RO_PATHS } from "./terminal-scope-args.js"`
 // alongside the composer — but the composer itself uses it as the RO base by default.
@@ -81,6 +82,8 @@ export interface ScopeArgsInput {
    * duplicate-insensitive (deduped against the fixed list before emit).
    */
   extraUnsetEnvKeys?: readonly string[];
+  /** Exact host-resolved sockets to expose at fixed in-jail target names. */
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 /** Push a `--proc /proc`, `--dev /dev`, `--dev-bind /dev/pts`, `--tmpfs /tmp` block. */
@@ -128,6 +131,19 @@ function pushFilesystemBinds(args: string[], input: ScopeArgsInput): void {
       const _exhaustive: never = scope.filesystem;
       throw new Error(`Unhandled filesystem scope: ${String(_exhaustive)}`);
     }
+  }
+}
+
+function pushExecutionAttachmentBinds(args: string[], input: ScopeArgsInput): void {
+  const attachments = input.executionAttachments ?? [];
+  if (attachments.length === 0) return;
+  args.push("--dir", "/run/comis");
+  args.push("--dir", MANAGED_TERMINAL_ATTACHMENT_DIRECTORY);
+  for (const attachment of attachments) {
+    if (!/^attachment-[a-f0-9]{32}\.sock$/u.test(attachment.targetName) || !attachment.sourcePath.startsWith("/")) {
+      throw new Error("invalid execution attachment mount");
+    }
+    args.push("--ro-bind", attachment.sourcePath, managedTerminalAttachmentTargetPath(attachment.targetName));
   }
 }
 
@@ -209,6 +225,7 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
 
   // -- Filesystem binds (the scope.filesystem dimension; workspace always bound) --
   pushFilesystemBinds(args, input);
+  pushExecutionAttachmentBinds(args, input);
 
   // -- credentialPaths: RO-bind each operator-listed credential path so the driven CLI sees
   //    its own creds/config. TOOL-AGNOSTIC (no hardcoded ~/.claude): the operator lists what

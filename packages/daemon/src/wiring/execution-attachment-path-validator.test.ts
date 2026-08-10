@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,12 +17,12 @@ interface Layout {
 const layouts: Layout[] = [];
 
 async function makeLayout(): Promise<Layout> {
-  const root = mkdtempSync(join(tmpdir(), "execution-attachment-path-"));
-  const runtimeRoot = join(root, "service-runtime");
-  const dataDir = join(root, "comis-data");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ea-")));
+  const runtimeRoot = join(root, "r");
+  const dataDir = join(root, "d");
   mkdirSync(runtimeRoot, { mode: 0o700 });
   mkdirSync(dataDir, { mode: 0o700 });
-  const socketPath = join(runtimeRoot, "worker.sock");
+  const socketPath = join(runtimeRoot, "w.sock");
   const server = createServer();
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

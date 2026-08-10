@@ -186,6 +186,7 @@ export interface TerminalWiringDeps {
   readonly config?: TerminalDriverConfig;
   readonly managedBinding?: ManagedTerminalBindingResolver;
   readonly managedTerminalEvents?: ManagedTerminalEventSink;
+  readonly managedAttachmentSandboxAvailable?: boolean;
 }
 
 /**
@@ -573,6 +574,7 @@ export interface TerminalWiringBaseDeps {
   readonly agentWorkspaceDir?: string;
   readonly managedBinding?: ManagedTerminalBindingResolver;
   readonly managedTerminalEvents?: ManagedTerminalEventSink;
+  readonly managedAttachmentSandboxAvailable?: boolean;
 }
 
 /**
@@ -613,6 +615,9 @@ export function buildTerminalWiringDeps(
     ...(base.agentWorkspaceDir ? { agentWorkspaceDir: base.agentWorkspaceDir } : {}),
     ...(base.managedBinding ? { managedBinding: base.managedBinding } : {}),
     ...(base.managedTerminalEvents ? { managedTerminalEvents: base.managedTerminalEvents } : {}),
+    ...(base.managedAttachmentSandboxAvailable === undefined
+      ? {}
+      : { managedAttachmentSandboxAvailable: base.managedAttachmentSandboxAvailable }),
     ...(workerCaps ? { workerCaps } : {}),
     ...(config ? { config } : {}),
   };
@@ -699,6 +704,7 @@ export function buildTerminalSharedDeps(
     approvalGate: deps.approvalGate,
     managedBinding: deps.managedBinding,
     managedTerminalEvents: deps.managedTerminalEvents,
+    managedAttachmentSandboxAvailable: deps.managedAttachmentSandboxAvailable,
     // The net-new egress dimensions, threaded toward the worker.
     // The PORT impl (the no-secret allowlist proxy) + the resolved bwrap path; the
     // worker calls `egressControl.materialize(scope.hosts)` for

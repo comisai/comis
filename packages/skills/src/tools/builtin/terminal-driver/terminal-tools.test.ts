@@ -468,6 +468,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
       eventBus,
       managedBinding,
       managedTerminalEvents,
+      managedAttachmentSandboxAvailable: true,
     } as unknown as Partial<TerminalToolDeps>));
 
     const result = await tool.execute("call-managed", {
@@ -584,6 +585,7 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
           serviceInstanceId: "service-instance_a",
           canonicalRoot: "/approved/workspaces/run-a",
         },
+        executionAttachments: [],
       })),
       bind: vi.fn(async () => ({ kind: "rejected", reason: "ownership_mismatch" })),
       releaseLease: vi.fn(),

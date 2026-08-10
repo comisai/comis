@@ -44,6 +44,7 @@ import { buildScopeArgs as defaultBuildScopeArgs } from "./terminal-scope-args.j
 import { scrubChildEnv as defaultScrubChildEnv } from "./terminal-env-scrub.js";
 import { buildEgressRelayLaunch as defaultBuildEgressRelayLaunch } from "./terminal-egress-relay.js";
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
+import type { ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
 import { attachBackend } from "./terminal-worker-backend-attach.js";
@@ -352,6 +353,9 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const scope = (p["scope"] as TerminalScope | undefined) ?? LEAST_PRIVILEGE_SCOPE;
     const workspace = typeof p["workspace"] === "string" ? p["workspace"] : undefined;
     const cwd = typeof p["cwd"] === "string" ? p["cwd"] : undefined;
+    const executionAttachments = Array.isArray(p["executionAttachments"])
+      ? p["executionAttachments"] as ManagedTerminalExecutionAttachment[]
+      : undefined;
     // The operator-declared allowId (registry-threaded from the create request). It selects the
     // read-side platform profile — by allowId ONLY, never content-sniffed,
     // so the driven program cannot choose its own profile. `undefined` ⇒ the agnostic default.
@@ -425,7 +429,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     let plan;
     try {
       plan = await planSpawnFromCreateFrame(
-        { bin, argv, scope, workspace, cwd },
+        { bin, argv, scope, workspace, cwd, executionAttachments },
         envSnapshot(),
         { ...spawnComposers, bwrapPath: frameBwrapPath, unsafeDisableSandbox: frameUnsafeDisableSandbox },
       );

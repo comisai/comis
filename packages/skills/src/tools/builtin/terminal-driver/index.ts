@@ -53,6 +53,7 @@ export {
 } from "./terminal-session-registry.js";
 export type {
   ManagedTerminalBinding,
+  ManagedTerminalExecutionAttachment,
   ManagedTerminalBindingResolver,
   ManagedTerminalResolveOutcome,
   ManagedTerminalBindOutcome,
@@ -60,6 +61,7 @@ export type {
   ManagedTerminalTransition,
   ManagedTerminalEventSink,
 } from "./terminal-managed-binding.js";
+export { MANAGED_TERMINAL_ATTACHMENT_DIRECTORY, managedTerminalAttachmentTargetPath } from "./terminal-managed-binding.js";
 
 // Deterministic unattended honest-fail backstop: reap a turn's LIVE never-tasked drives at an
 // unattended (webhook/cron) turn-end so the origin records an honest failure instead of a silent

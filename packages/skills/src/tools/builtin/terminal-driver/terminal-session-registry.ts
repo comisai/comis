@@ -51,7 +51,7 @@ import {
   type WorkerStatusPerception,
 } from "./terminal-status-view.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
-import type { ManagedTerminalBinding, TerminalRootProcessIdentity } from "./terminal-managed-binding.js";
+import type { ManagedTerminalBinding, ManagedTerminalExecutionAttachment, TerminalRootProcessIdentity } from "./terminal-managed-binding.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
@@ -240,6 +240,8 @@ export interface CreateRequest {
   originEndpoint?: ChannelEndpoint;
   /** Server-resolved managed authority. Never sourced directly from model parameters. */
   managedBinding?: Omit<ManagedTerminalBinding, "canonicalRoot">;
+  /** Server-resolved exact socket mounts for this managed terminal's jail. */
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 // The `status` view + its pure composition live in the leaf `terminal-status-view.ts`
@@ -560,6 +562,7 @@ export function createTerminalSessionRegistry(
       // per-session `new-session -e` — see terminal-worker-backend-attach).
       ...(deps.unsafeDisableSandbox ? { unsafeDisableSandbox: true } : {}),
       ...(req.durable ? { backend: "tmux" } : {}), // A durable drive selects the tmux backend (terminal-worker-entry.ts reads p["backend"]).
+      ...(req.executionAttachments === undefined ? {} : { executionAttachments: req.executionAttachments }),
     };
     const markSpawnFailure = (reply: TerminalReplyFrame): void => {
       if (reply.ok) return; // backend spawned — leave the session running.

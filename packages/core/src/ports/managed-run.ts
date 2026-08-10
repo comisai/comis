@@ -79,6 +79,16 @@ export interface ManagedRunWorkspaceBindingInput {
   readonly boundAtMs: number;
 }
 
+export interface ManagedRunExecutionAttachmentBindingInput {
+  readonly managedRunId: string;
+  readonly workspaceLeaseId: string;
+  readonly executionAttachmentId: string;
+  readonly attachmentServiceInstanceId: string;
+  readonly attachmentTenantId: string;
+  readonly attachmentAgentId: string;
+  readonly boundAtMs: number;
+}
+
 export type ManagedRunBindingOutcome =
   | { readonly kind: "bound"; readonly record: ManagedRunRecord }
   | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
@@ -250,6 +260,7 @@ export interface ManagedRunStorePort {
   claimTransition(scope: ManagedRunLookupScope, input: ManagedRunTransitionClaimInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;
   bindTerminal(scope: ManagedRunOwnerScope, input: ManagedRunTerminalBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
+  bindExecutionAttachment(scope: ManagedRunOwnerScope, input: ManagedRunExecutionAttachmentBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;
   listReportRange(scope: ManagedRunOwnerScope, input: ManagedRunReportRangeInput): Promise<Result<ManagedRunReportIndex[], Error>>;
   getAttention(scope: ManagedRunOwnerScope, attentionId: string): Promise<Result<ManagedRunAttentionRecord | undefined, Error>>;

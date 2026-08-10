@@ -9,6 +9,7 @@ import {
   type ManagedRunContinuationClaimOutcome,
   type ManagedRunContinuationOutcomeInput,
   type ManagedRunCreateOutcome,
+  type ManagedRunExecutionAttachmentBindingInput,
   type ManagedRunLookupScope,
   type ManagedRunMutationOutcome,
   type ManagedRunOwnerScope,
@@ -364,25 +365,40 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
 
   const bindingTransaction = db.transaction((
     scope: ManagedRunOwnerScope,
-    input: ManagedRunTerminalBindingInput | ManagedRunWorkspaceBindingInput,
+    input: ManagedRunTerminalBindingInput | ManagedRunWorkspaceBindingInput | ManagedRunExecutionAttachmentBindingInput,
   ): Result<ManagedRunBindingOutcome, Error> => {
     const current = readRecord(input.managedRunId);
     if (!current.ok) return current;
     if (current.value === undefined) return ok({ kind: "not_found" });
     if (!scopeMatches(current.value, scope)) return ok({ kind: "scope_mismatch" });
     const isTerminal = "terminalSessionId" in input;
-    const tenantId = isTerminal ? input.terminalTenantId : input.leaseTenantId;
-    const agentId = isTerminal ? input.terminalAgentId : input.leaseAgentId;
+    const isAttachment = "executionAttachmentId" in input;
+    const tenantId = isTerminal
+      ? input.terminalTenantId
+      : isAttachment ? input.attachmentTenantId : input.leaseTenantId;
+    const agentId = isTerminal
+      ? input.terminalAgentId
+      : isAttachment ? input.attachmentAgentId : input.leaseAgentId;
     if (tenantId !== current.value.tenantId || agentId !== current.value.agentId) {
       return ok({ kind: "ownership_mismatch" });
     }
+    if (
+      isAttachment
+      && (
+        input.attachmentServiceInstanceId !== current.value.serviceInstanceId
+        || input.workspaceLeaseId !== current.value.workspaceLeaseId
+      )
+    ) return ok({ kind: "ownership_mismatch" });
     if (isTerminal && current.value.terminalSessionIds.includes(input.terminalSessionId)) {
       return ok(resultRecord("identical_replay", current.value));
     }
-    if (!isTerminal && current.value.workspaceLeaseId === input.workspaceLeaseId) {
+    if (isAttachment && current.value.executionAttachmentIds.includes(input.executionAttachmentId)) {
       return ok(resultRecord("identical_replay", current.value));
     }
-    if (!isTerminal && current.value.workspaceLeaseId !== undefined) {
+    if (!isTerminal && !isAttachment && current.value.workspaceLeaseId === input.workspaceLeaseId) {
+      return ok(resultRecord("identical_replay", current.value));
+    }
+    if (!isTerminal && !isAttachment && current.value.workspaceLeaseId !== undefined) {
       return ok({ kind: "ownership_mismatch" });
     }
     if (input.boundAtMs < current.value.updatedAtMs) {
@@ -392,7 +408,9 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       ...current.value,
       ...(isTerminal
         ? { terminalSessionIds: [...current.value.terminalSessionIds, input.terminalSessionId].sort() }
-        : { workspaceLeaseId: input.workspaceLeaseId }),
+        : isAttachment
+          ? { executionAttachmentIds: [...current.value.executionAttachmentIds, input.executionAttachmentId].sort() }
+          : { workspaceLeaseId: input.workspaceLeaseId }),
       updatedAtMs: input.boundAtMs,
     };
     const persisted = persistMutable(next);
@@ -566,6 +584,7 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     ),
     bindTerminal: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
     setWorkspaceLease: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
+    bindExecutionAttachment: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
     appendReportAndAdvanceAcceptedCursor: (scope, input) => boundary(
       () => reportTransaction.immediate(scope, input),
     ),

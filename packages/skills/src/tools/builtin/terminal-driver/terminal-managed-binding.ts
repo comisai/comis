@@ -2,6 +2,12 @@
 
 import type { SessionOwner } from "./terminal-session-owner.js";
 
+export const MANAGED_TERMINAL_ATTACHMENT_DIRECTORY = "/run/comis/attachments";
+
+export function managedTerminalAttachmentTargetPath(targetName: string): string {
+  return `${MANAGED_TERMINAL_ATTACHMENT_DIRECTORY}/${targetName}`;
+}
+
 /** Opaque host identity that distinguishes a PID from a later PID reuse. */
 export interface TerminalRootProcessIdentity {
   readonly pid: number;
@@ -16,8 +22,15 @@ export interface ManagedTerminalBinding {
   readonly canonicalRoot: string;
 }
 
+/** Host-resolved socket mount. Source paths never enter model-facing parameters or output. */
+export interface ManagedTerminalExecutionAttachment {
+  readonly executionAttachmentId: string;
+  readonly sourcePath: string;
+  readonly targetName: string;
+}
+
 export type ManagedTerminalResolveOutcome =
-  | { readonly kind: "resolved"; readonly binding: ManagedTerminalBinding }
+  | { readonly kind: "resolved"; readonly binding: ManagedTerminalBinding; readonly executionAttachments: readonly ManagedTerminalExecutionAttachment[] }
   | { readonly kind: "rejected" | "unavailable"; readonly reason: string };
 
 export type ManagedTerminalBindOutcome =

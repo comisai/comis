@@ -148,7 +148,6 @@ export {
   reduceManagedRunState,
   ManagedRunAttentionRecordSchema,
   parseWorkspaceLeaseRecord,
-  ExecutionAttachmentRecordSchema,
   parseExecutionAttachmentRecord,
 } from "../domain/index.js";
 
@@ -272,8 +271,5 @@ export type {
   WorkspaceLeaseFilesystemIdentity,
   WorkspaceLeaseRecord,
   ExecutionAttachmentFilesystemIdentity,
-  ExecutionAttachmentKind,
-  ExecutionAttachmentState,
-  ExecutionAttachmentRevocationReason,
   ExecutionAttachmentRecord,
 } from "../domain/index.js";

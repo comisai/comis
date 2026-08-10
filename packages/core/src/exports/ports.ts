@@ -200,6 +200,7 @@ export type {
   ManagedRunTransitionClaimOutcome,
   ManagedRunTerminalBindingInput,
   ManagedRunWorkspaceBindingInput,
+  ManagedRunExecutionAttachmentBindingInput,
   ManagedRunBindingOutcome,
   ManagedRunReportAppendInput,
   ManagedRunReportAppendOutcome,
@@ -234,7 +235,6 @@ export type {
   ExecutionAttachmentReconcileInput,
   ExecutionAttachmentRevokeOutcome,
   ExecutionAttachmentReconcileOutcome,
-  ExecutionAttachmentRecoveryScanInput,
   ExecutionAttachmentPort,
 } from "../ports/index.js";
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure

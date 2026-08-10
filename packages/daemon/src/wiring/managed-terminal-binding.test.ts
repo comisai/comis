@@ -22,6 +22,7 @@ describe("managed terminal binding authority", () => {
       serviceInstanceId: "service-instance_a",
       tenantId: "tenant_a",
       agentId: "agent_a",
+      executionAttachmentIds: [],
     };
     const store = {
       get: vi.fn(async () => ok(record)),
@@ -57,6 +58,7 @@ describe("managed terminal binding authority", () => {
         serviceInstanceId: "service-instance_a",
         canonicalRoot: "/srv/comis/workspaces/run-a",
       },
+      executionAttachments: [],
     });
 
     await expect(resolver.bind({

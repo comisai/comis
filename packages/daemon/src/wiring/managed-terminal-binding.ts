@@ -4,6 +4,8 @@ import {
   tryGetContext,
   type ManagedRunOwnerScope,
   type ManagedRunStorePort,
+  type ExecutionAttachmentPort,
+  type ExecutionAttachmentRecord,
   type CapabilityServiceControlPort,
   type ComisLogger,
   type WorkspaceLeasePort,
@@ -16,6 +18,8 @@ export interface ManagedTerminalBindingDeps {
   readonly store: ManagedRunStorePort;
   readonly workspaceLeases: WorkspaceLeasePort;
   readonly nowMs: () => number;
+  readonly attachments?: ExecutionAttachmentPort;
+  readonly validateAttachment?: (record: ExecutionAttachmentRecord) => Result<void, Error>;
   readonly resolveOwnerScope?: (owner: SessionOwner) => ManagedRunOwnerScope | undefined;
 }
 
@@ -72,6 +76,28 @@ export function createManagedTerminalBindingResolver(
     if (!lease.ok) return { kind: "unavailable", reason: "workspace_lease_store_unavailable" };
     if (lease.value === undefined) return { kind: "rejected", reason: "workspace_lease_not_found" };
     if (lease.value.state !== "active") return { kind: "rejected", reason: "workspace_lease_inactive" };
+    const attachmentScope = {
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      serviceInstanceId: record.serviceInstanceId,
+      managedRunId: record.managedRunId,
+      workspaceLeaseId: lease.value.workspaceLeaseId,
+    };
+    const executionAttachments: ExecutionAttachmentRecord[] = [];
+    const attachments = deps.attachments;
+    const validateAttachment = deps.validateAttachment;
+    if (record.executionAttachmentIds.length > 0 && (attachments === undefined || validateAttachment === undefined)) {
+      return { kind: "unavailable", reason: "execution_attachment_authority_unavailable" };
+    }
+    for (const executionAttachmentId of record.executionAttachmentIds) {
+      if (attachments === undefined || validateAttachment === undefined) return { kind: "unavailable", reason: "execution_attachment_authority_unavailable" };
+      const attachment = await invoke(() => attachments.get(attachmentScope, executionAttachmentId));
+      if (!attachment.ok) return { kind: "unavailable", reason: "execution_attachment_store_unavailable" };
+      if (attachment.value === undefined) return { kind: "rejected", reason: "execution_attachment_not_found" };
+      if (attachment.value.state === "revoked") continue;
+      if (!validateAttachment(attachment.value).ok) return { kind: "rejected", reason: "execution_attachment_stale" };
+      executionAttachments.push(attachment.value);
+    }
     return {
       kind: "resolved",
       binding: {
@@ -80,6 +106,11 @@ export function createManagedTerminalBindingResolver(
         serviceInstanceId: record.serviceInstanceId,
         canonicalRoot: lease.value.canonicalPath,
       },
+      executionAttachments: executionAttachments.map((attachment) => ({
+        executionAttachmentId: attachment.executionAttachmentId,
+        sourcePath: attachment.sourcePath,
+        targetName: attachment.targetName,
+      })),
     };
   };
 

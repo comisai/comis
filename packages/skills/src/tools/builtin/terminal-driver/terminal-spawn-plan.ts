@@ -51,6 +51,7 @@ import {
   buildEgressRelayLaunch as defaultBuildEgressRelayLaunch,
   type EgressRelayLaunch,
 } from "./terminal-egress-relay.js";
+import type { ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
 /**
  * The net-new uid/gid the dedicated-uid posture drops to inside the jail
@@ -133,6 +134,8 @@ export interface SpawnPlanInput {
    * env. Passed in (not read here) so the plan stays a pure transform.
    */
   env: NodeJS.ProcessEnv;
+  /** Server-resolved Unix sockets; never sourced from terminal tool parameters. */
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 /** The composed spawn arguments + the egress handle to dispose on teardown. */
@@ -172,6 +175,15 @@ export class JailUnavailableError extends Error {
   constructor() {
     super("no sandbox provider: cannot materialize the terminal scope jail");
     this.name = "JailUnavailableError";
+  }
+}
+
+/** Raised when attachment confinement is required but cannot be materialized. */
+export class AttachmentSandboxUnavailableError extends Error {
+  readonly errorKind = "sandbox_unavailable" as const;
+  constructor() {
+    super("sandbox_unavailable: execution attachments require an enforceable bubblewrap jail");
+    this.name = "AttachmentSandboxUnavailableError";
   }
 }
 
@@ -265,6 +277,9 @@ export async function buildSpawnPlan(
   composers: SpawnPlanComposers,
 ): Promise<SpawnPlan> {
   const scrubChildEnv = composers.scrubChildEnv ?? defaultScrubChildEnv;
+  if ((input.executionAttachments?.length ?? 0) > 0 && (composers.unsafeDisableSandbox === true || composers.bwrapPath === undefined)) {
+    throw new AttachmentSandboxUnavailableError();
+  }
 
   // Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`). For constrained hosts
   // that cannot run bwrap: run the driven CLI DIRECTLY. NO filesystem/network/uid confinement (the
@@ -346,6 +361,7 @@ export async function buildSpawnPlan(
     // also strips them. The PTY backend is covered by the scrubChildEnv(input.env) below;
     // this is the backend-independent half (TERM-ENV-GATEWAY-TOKEN-LEAK).
     extraUnsetEnvKeys: secretEnvKeysIn(input.env),
+    executionAttachments: input.executionAttachments,
   });
 
   // scopeArgs = [bwrapPath, ...args, "--"]. The child (and, for listed-hosts, the
@@ -393,6 +409,7 @@ export interface CreateFrameSpawnParams {
   workspace?: string;
   /** The --chdir target. */
   cwd?: string;
+  executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
 /**
@@ -424,6 +441,7 @@ export async function planSpawnFromCreateFrame(
       dataDir: safePath(home, ".comis"),
       systemRoPaths: SYSTEM_RO_PATHS.filter((sp) => existsSync(sp)),
       env,
+      executionAttachments: params.executionAttachments,
     },
     composers,
   );

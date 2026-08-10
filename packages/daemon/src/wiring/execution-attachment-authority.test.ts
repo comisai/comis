@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import type {
   ExecutionAttachmentPort,
   ManagedRunOwnerScope,
@@ -15,6 +15,25 @@ const OWNER: ManagedRunOwnerScope = {
   agentId: "agent_a",
   principalId: "principal_a",
   conversationRef: `cv_${"a".repeat(43)}` as ManagedRunOwnerScope["conversationRef"],
+};
+
+const ATTACHMENT = {
+  schemaVersion: 1 as const,
+  executionAttachmentId: "execution-attachment_a",
+  managedRunId: "managed-run_a",
+  workspaceLeaseId: "workspace-lease_a",
+  serviceInstanceId: "service-instance_a",
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  kind: "unix_socket" as const,
+  sourcePath: "/srv/runtime/service-a/run-a.sock",
+  sourceFilesystemType: "socket" as const,
+  sourceFilesystemIdentity: { device: 10, inode: 20 },
+  targetName: `attachment-${"a".repeat(32)}.sock`,
+  access: "connect_only" as const,
+  state: "active" as const,
+  createdAtMs: 1_800_000_000_000,
+  updatedAtMs: 1_800_000_000_000,
 };
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
@@ -57,6 +76,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     }],
     dataDir: "/srv/comis",
     nowMs: () => 1_800_000_000_000,
+    isServiceActive: vi.fn(() => true),
+    logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), audit: vi.fn(), child: vi.fn() },
     validateSource: vi.fn(() => ok({
       canonicalPath: "/srv/runtime/service-a/run-a.sock",
       filesystemType: "socket" as const,
@@ -135,5 +156,64 @@ describe("execution attachment authority coordinator", () => {
     expect(deps.attachments.revoke).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
       reason: "authority_revoked",
     }));
+  });
+
+  it("revokes a created attachment if the durable run binding store fails", async () => {
+    const deps = makeDeps({
+      runs: {
+        ...(makeDeps().runs as unknown as object),
+        bindExecutionAttachment: vi.fn(async () => err(new Error("binding store unavailable"))),
+      } as unknown as ManagedRunStorePort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+    const result = await authority.create({
+      operationId: "operation_attachment_bind_failure",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      sourcePath: "/srv/runtime/service-a/run-a.sock",
+      owner: OWNER,
+    });
+
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ message: "binding store unavailable" }) });
+    expect(deps.attachments.revoke).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      reason: "authority_revoked",
+    }));
+  });
+
+  it("preserves restart attachments while their service is not active", async () => {
+    const deps = makeDeps({
+      isServiceActive: vi.fn(() => false),
+      attachments: {
+        listRecoverable: vi.fn(async () => ok([ATTACHMENT])),
+        reconcile: vi.fn(),
+      } as unknown as ExecutionAttachmentPort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    await expect(authority.reconcileAll({ limit: 10 })).resolves.toEqual({
+      ok: true,
+      value: { recovered: [], preserved: ["execution-attachment_a"] },
+    });
+    expect(deps.attachments.reconcile).not.toHaveBeenCalled();
+  });
+
+  it("preserves restart attachments whose exact run authority is missing", async () => {
+    const deps = makeDeps({
+      isServiceActive: vi.fn(() => true),
+      runs: {
+        get: vi.fn(async () => ok(undefined)),
+      } as unknown as ManagedRunStorePort,
+      attachments: {
+        listRecoverable: vi.fn(async () => ok([ATTACHMENT])),
+        reconcile: vi.fn(),
+      } as unknown as ExecutionAttachmentPort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    await expect(authority.reconcileAll({ limit: 10 })).resolves.toEqual({
+      ok: true,
+      value: { recovered: [], preserved: ["execution-attachment_a"] },
+    });
+    expect(deps.attachments.reconcile).not.toHaveBeenCalled();
   });
 });

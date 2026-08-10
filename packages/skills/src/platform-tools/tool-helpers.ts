@@ -29,6 +29,7 @@ export type ToolErrorCode =
   | "permission_denied"
   | "not_found"
   | "conflict"
+  | "sandbox_unavailable"
   /** Tool surface is registered but its implementation is not available yet
    *  (stub tools reject with this — e.g. terminal_session_* tools landing across phases). */
   | "not_implemented";

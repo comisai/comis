@@ -129,7 +129,7 @@ export interface ToolsDeps {
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
-  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "control" | "activationCoordinator">;
+  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "attachments" | "attachmentAuthority" | "control" | "activationCoordinator">;
   clock: ClockPort;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
@@ -814,8 +814,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Orchestrate tool — built by buildAutonomyToolWiring above.
       if (orchestrateTool && securityBoundary === undefined) tools.push(orchestrateTool);
 
-      // Terminal driver: per-agent registry + nine never-export tools (durability
-      // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.
+      // Terminal driver: per-agent registry + nine never-export tools; wiring folds in durability and operator config.
       if (securityBoundary === undefined) {
         wireAgentTerminalTools(
           tools,
@@ -830,7 +829,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             ...terminalEgress,
             timers: deps.timers,
             agentWorkspaceDir,
-            ...createManagedTerminalToolDeps({ store: deps.capabilityServices.store, workspaceLeases: deps.capabilityServices.workspaceLeases, control: deps.capabilityServices.control, logger: skillsLogger, nowMs: () => deps.clock.now() }),
+            ...createManagedTerminalToolDeps({ ...deps.capabilityServices, validateAttachment: deps.capabilityServices.attachmentAuthority.validateActive, logger: skillsLogger, nowMs: () => deps.clock.now() }),
+            managedAttachmentSandboxAvailable: Boolean(terminalEgress.bwrapPath) && !skillsConfig.terminal?.unsafeDisableSandbox,
           },
           skillsConfig.terminal,
         );

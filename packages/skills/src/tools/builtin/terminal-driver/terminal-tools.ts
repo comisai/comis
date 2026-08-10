@@ -59,7 +59,7 @@ import {
 } from "./terminal-session-registry.js";
 import { withCompleteNote } from "./terminal-wait-reply.js";
 import { narrowManagedTerminalScope, selectManagedHandles } from "./terminal-managed-create.js";
-import type { ManagedTerminalBindingResolver, ManagedTerminalEventSink } from "./terminal-managed-binding.js";
+import { managedTerminalAttachmentTargetPath, type ManagedTerminalBindingResolver, type ManagedTerminalEventSink, type ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
 
 // Injected dependency contracts
 
@@ -192,6 +192,8 @@ export interface TerminalToolDeps {
   /** Daemon-owned authority resolver for the optional paired managed terminal path. */
   readonly managedBinding?: ManagedTerminalBindingResolver;
   readonly managedTerminalEvents?: ManagedTerminalEventSink;
+  /** True only when the production worker can enforce attachment mounts with bubblewrap. */
+  readonly managedAttachmentSandboxAvailable?: boolean;
 }
 
 // Defaults
@@ -415,6 +417,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const originEndpoint = resolveOriginEndpoint();
       const owner = resolveOwner(deps);
       let managedResolved;
+      let managedAttachments: readonly ManagedTerminalExecutionAttachment[] = [];
       if (managed.kind === "managed") {
         if (deps.managedBinding === undefined) {
           throwToolError("permission_denied", "managed terminal binding is unavailable");
@@ -428,6 +431,14 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           throwToolError("permission_denied", `managed terminal binding rejected: ${resolution.reason}`);
         }
         managedResolved = resolution.binding;
+        managedAttachments = resolution.executionAttachments;
+        if (managedAttachments.length > 0 && deps.managedAttachmentSandboxAvailable !== true) {
+          throwToolError(
+            "sandbox_unavailable",
+            "execution attachments require an enforceable bubblewrap terminal jail",
+            { hint: "enable bubblewrap confinement; the terminal was not launched with broader access" },
+          );
+        }
       }
       const createRequest = {
         allowId,
@@ -450,6 +461,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
                 workspaceLeaseId: managedResolved.workspaceLeaseId,
                 serviceInstanceId: managedResolved.serviceInstanceId,
               },
+              ...(managedAttachments.length === 0 ? {} : { executionAttachments: managedAttachments }),
             }),
         // The origin conversation, from the RESOLVED CONTEXT — never a create param (the
         // same sourcing rule as `scope`). It follows the session onto the handle + the
@@ -600,6 +612,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         ...(managedResolved === undefined ? {} : {
           managedRunId: managedResolved.managedRunId,
           workspaceLeaseId: managedResolved.workspaceLeaseId,
+          ...(managedAttachments.length === 0 ? {} : {
+            executionAttachments: managedAttachments.map((attachment) => ({
+              executionAttachmentId: attachment.executionAttachmentId,
+              targetPath: managedTerminalAttachmentTargetPath(attachment.targetName),
+            })),
+          }),
         }),
       });
     },
