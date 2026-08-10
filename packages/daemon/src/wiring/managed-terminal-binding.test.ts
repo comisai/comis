@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it, vi } from "vitest";
+import { ok } from "@comis/shared";
+import type { ManagedRunStorePort, WorkspaceLeasePort } from "@comis/core";
+
+import { createManagedTerminalBindingResolver } from "./managed-terminal-binding.js";
+
+const OWNER = { agentId: "agent_a", sessionKey: "session_a" };
+const SCOPE = {
+  kind: "owner" as const,
+  tenantId: "tenant_a",
+  agentId: "agent_a",
+  principalId: "principal_a",
+  conversationRef: "cv_owner" as never,
+};
+
+describe("managed terminal binding authority", () => {
+  it("resolves the exact run and active lease then binds the terminal in the same owner scope", async () => {
+    const record = {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+    };
+    const store = {
+      get: vi.fn(async () => ok(record)),
+      bindTerminal: vi.fn(async () => ok({ kind: "bound", record })),
+    } as unknown as ManagedRunStorePort;
+    const workspaceLeases = {
+      get: vi.fn(async () => ok({
+        workspaceLeaseId: "workspace-lease_a",
+        managedRunId: "managed-run_a",
+        serviceInstanceId: "service-instance_a",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        canonicalPath: "/srv/comis/workspaces/run-a",
+        state: "active",
+      })),
+    } as unknown as WorkspaceLeasePort;
+    const resolver = createManagedTerminalBindingResolver({
+      store,
+      workspaceLeases,
+      nowMs: () => 1700,
+      resolveOwnerScope: () => SCOPE,
+    });
+
+    await expect(resolver.resolve({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      owner: OWNER,
+    })).resolves.toEqual({
+      kind: "resolved",
+      binding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        canonicalRoot: "/srv/comis/workspaces/run-a",
+      },
+    });
+
+    await expect(resolver.bind({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      rootProcessIdentity: { pid: 6200, startIdentity: "linux:991" },
+      owner: OWNER,
+    })).resolves.toEqual({ kind: "bound" });
+    expect(store.bindTerminal).toHaveBeenCalledWith(SCOPE, {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal-session_a",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1700,
+    });
+  });
+
+  it("rejects a lease that is not the run's exact active lease", async () => {
+    const store = {
+      get: vi.fn(async () => ok({
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_other",
+        serviceInstanceId: "service-instance_a",
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+      })),
+    } as unknown as ManagedRunStorePort;
+    const workspaceLeases = { get: vi.fn() } as unknown as WorkspaceLeasePort;
+    const resolver = createManagedTerminalBindingResolver({
+      store,
+      workspaceLeases,
+      nowMs: () => 1700,
+      resolveOwnerScope: () => SCOPE,
+    });
+
+    await expect(resolver.resolve({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      owner: OWNER,
+    })).resolves.toEqual({ kind: "rejected", reason: "workspace_lease_mismatch" });
+    expect(workspaceLeases.get).not.toHaveBeenCalled();
+  });
+});
