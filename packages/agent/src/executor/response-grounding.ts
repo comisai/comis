@@ -42,6 +42,7 @@ export function enforceProviderModelFailureGrounding(params: {
     failureCode?: string;
   }>;
   honestResponse: string;
+  unsupportedResponse?: string;
 }): ProviderModelFailureGroundingGuardResult {
   const results = params.toolExecResults ?? [];
   const failedIndex = results.findIndex(
@@ -162,6 +163,7 @@ export function enforceRuntimeSelfReportEvidence(params: {
     };
   }>;
   honestResponse: string;
+  unsupportedResponse?: string;
 }): RuntimeSelfReportEvidenceGuardResult {
   if (!isRuntimeSelfReportRequest(params.request)) {
     return { response: params.response, corrected: false };
@@ -198,7 +200,7 @@ export function enforceRuntimeSelfReportEvidence(params: {
     && (!qualifiesEstimate || !qualifiesProviderInvoice);
   if (unsupportedDuration || unsupportedCost) {
     return {
-      response: params.honestResponse,
+      response: params.unsupportedResponse ?? params.honestResponse,
       corrected: true,
       reason: "unsupported_runtime_self_report_evidence",
     };

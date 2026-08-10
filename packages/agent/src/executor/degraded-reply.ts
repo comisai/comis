@@ -40,6 +40,7 @@ import {
   selectAgentUpdateNoOpReply,
   selectOngoingWorkEvidenceMissingReply,
   selectRuntimeSelfReportEvidenceMissingReply,
+  selectRuntimeSelfReportEvidenceUnsupportedReply,
   selectSchedulerStateEvidenceMissingReply,
   selectPendingSchedulerConfirmationReply,
   selectCompletionEvidenceMissingReply,
@@ -288,6 +289,14 @@ export function buildRuntimeSelfReportEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectRuntimeSelfReportEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when the current runtime receipt cannot support the claim. */
+export function buildRuntimeSelfReportEvidenceUnsupportedReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectRuntimeSelfReportEvidenceUnsupportedReply(language, localeCatalog);
 }
 
 /** Honest replacement when no current scheduler receipt supports a state claim. */

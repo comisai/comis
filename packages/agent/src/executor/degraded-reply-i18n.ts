@@ -35,6 +35,7 @@ export type LocaleMessageId =
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
   | "runtime_self_report_evidence_missing"
+  | "runtime_self_report_evidence_unsupported"
   | "scheduler_state_evidence_missing"
   | "pending_scheduler_confirmation"
   | "completion_evidence_missing"
@@ -118,6 +119,10 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
   runtime_self_report_evidence_missing:
     "I could not verify my runtime activity claim in this turn. Work counts, comparative latency, failure "
       + "causes, and cost require a current observability result that supports the specific claim.",
+  runtime_self_report_evidence_unsupported:
+    "The current observability result does not compare execution durations, and its cost figures are runtime "
+      + "estimates rather than a provider invoice. The provider invoice is unverified, so I cannot identify "
+      + "the slowest execution or claim provider-billed cost from this result.",
   scheduler_state_evidence_missing:
     "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
       + "say that it is set. I need to check the scheduler before confirming it.",
@@ -451,6 +456,14 @@ export function selectRuntimeSelfReportEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "runtime_self_report_evidence_missing");
+}
+
+/** Honest replacement when a current observability receipt cannot support the claim. */
+export function selectRuntimeSelfReportEvidenceUnsupportedReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "runtime_self_report_evidence_unsupported");
 }
 
 /** Honest replacement when current scheduler state lacks a current-turn receipt. */
