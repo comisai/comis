@@ -448,10 +448,6 @@ try {
     "this run's durable session rollup",
   );
   const rollup = bound.rollup;
-  const explained = await call("obs.explain", {
-    sessionKey: rollup.sessionKey,
-    depth: "summary",
-  }).catch((err) => ({ error: err.message }));
   const trajectoryPath = resolveTrajectoryPath(bound.path);
   let lastDurableToolResults = 0;
   // Wrapped in a sentinel so a settled count of 0 resolves the wait instead of reading
@@ -466,6 +462,15 @@ try {
     () =>
       `the trajectory to record all ${dispatched.length} dispatched tool results (last saw ${lastDurableToolResults})`,
   );
+
+  // Only now, with the queued trajectory drained. The rollup lands before that queue catches up, and the
+  // incident severity this drive gates on is partly trajectory-derived — a per-tool failure raises `degraded`
+  // whatever the rollup says — so explaining any earlier could read `ok` off records that had not arrived and
+  // publish a clean verdict the complete trajectory would have refused.
+  const explained = await call("obs.explain", {
+    sessionKey: rollup.sessionKey,
+    depth: "summary",
+  }).catch((err) => ({ error: err.message }));
 
   record = {
     variant,

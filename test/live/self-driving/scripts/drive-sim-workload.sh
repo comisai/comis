@@ -39,8 +39,8 @@ F2="${4:-678314280}"
 # Snapshot the INVOCATION's own control flags under internal names before any environment file is sourced.
 # /root/comis-rig.env and $DATA/.env are operator files loaded for credentials and paths, and sourcing either
 # would otherwise overwrite these — so an operator convenience line in one of them could re-arm a
-# confirmation the caller deliberately withheld, or silently change the drive's shape. Only the command line
-# that invoked this script decides both.
+# confirmation the caller deliberately withheld, or silently change the drive's shape. Only the invoking
+# environment decides both; see the header for what that does and does not rule out.
 DRIVE_CONFIRMED="${DRIVE_CONFIRM:-}"
 REUSE_ONLY_REQUESTED="${REUSE_ONLY:-0}"
 # The provider-risk declaration and its operator acknowledgement need the same treatment, and for a stronger

@@ -395,12 +395,18 @@ describe("sim workload driver provider-risk policy", () => {
   it("ignores provider authorization planted in a sourced environment file", () => {
     const dir = mkdtempSync(join(tmpdir(), "sim-rig-auth-"));
     tempDirs.push(dir);
+    // Exit 4 alone would also be the verdict for a fixture that was never read — the driver resolves DATA
+    // only after sourcing /root/comis-rig.env, so a host whose rig env sets DATA redirects this fixture away.
+    // The marker makes that case a loud failure; stdout carries it because the driver sources the file with
+    // its stderr suppressed.
+    const marker = "sim-rig-auth-fixture-sourced";
     writeFileSync(
       join(dir, ".env"),
-      `export ${LIVE_TEST_RISK_ENV}=cyber-abuse\nexport ${CYBER_ABUSE_AUTH_ENV}=${CYBER_ABUSE_AUTH_VALUE}\n`,
+      `echo "${marker}"\nexport ${LIVE_TEST_RISK_ENV}=cyber-abuse\nexport ${CYBER_ABUSE_AUTH_ENV}=${CYBER_ABUSE_AUTH_VALUE}\n`,
     );
 
     const planted = runDriver(["--gate", "artifact-to-action"], { ...cleanEnv(), DATA: dir });
+    expect(planted.stdout, "the planted environment file was never sourced").toContain(marker);
     expect(planted.status, planted.stdout).toBe(4);
     expect(planted.stderr).toContain("declared-cyber-abuse");
 
@@ -411,6 +417,7 @@ describe("sim workload driver provider-risk policy", () => {
       [LIVE_TEST_RISK_ENV]: "cyber-abuse",
       [CYBER_ABUSE_AUTH_ENV]: CYBER_ABUSE_AUTH_VALUE,
     });
+    expect(authorized.stdout, "the planted environment file was never sourced").toContain(marker);
     expect(authorized.status, authorized.stderr).toBe(0);
   });
 
