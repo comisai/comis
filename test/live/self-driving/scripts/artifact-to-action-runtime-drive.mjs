@@ -16,11 +16,13 @@
 // Exit 0 ONLY when this invocation's own agent turn succeeded in-band, its terminal
 // grade is success/1 with the variant's expected commit and readback, and the durable
 // trajectory carries one tool result per dispatched call under this run's trace id.
-// Otherwise it prints the failure reasons and exits 1, so a rerun can never read as
-// green when the drive is dead. An invocation that cannot run at all — an unbuilt
-// checkout, or a --data path this drive may not own — exits 2 before it acquires a
-// port, a daemon or a data root. The data root defaults to a fresh system-temp
-// directory and is removed unless --keep; it never lands inside the checkout.
+// Otherwise it prints the failure reasons and the daemon log tail and exits 1, so a rerun
+// can never read as green when the drive is dead. An invocation that cannot run at all — an
+// unbuilt checkout, a world this workload does not ship, or a --data path this drive may
+// not own — exits 2 before it acquires a port, a daemon or a data root. The data root
+// defaults to a fresh system-temp directory and never lands inside the checkout; a clean
+// drive removes it, while a FAILED drive keeps it and names the path, because that root
+// holds the only artifacts that explain the failure.
 //
 // Output is one JSON record on stdout: session key, trace/run ids, discovered tool
 // count, dispatched tool order, durable tool-result count, the session rollup, the
@@ -321,12 +323,21 @@ async function shutdown() {
   });
 }
 
-async function finish(code) {
+// A failed drive's data root IS its diagnosis — the trajectory, the rollup, the daemon's structured log, the
+// memory db and the request log the scripted provider wrote. Removing it on the failure path would delete the
+// only artifacts that answer WHY a rollup ended degraded, and would take `obs.explain` against that root with
+// it. So the root survives every failure exit and its path is named; a clean drive still disposes of it.
+async function finish(code, retainForDiagnosis = false) {
   await shutdown();
-  if (!keep) {
-    const disposal = disposeDataRoot(root);
-    if (!disposal.removed) console.error(`left ${dataDir} in place: ${disposal.reason}`);
+  if (keep || retainForDiagnosis) {
+    console.error(
+      `kept ${dataDir} for diagnosis — trajectory, session rollup, logs/daemon.*.log and memory.db are in it; ` +
+        `re-read it with: node packages/cli/dist/cli.js explain "<sessionKey|traceId>" (COMIS_DATA_DIR=${dataDir})`,
+    );
+    process.exit(code);
   }
+  const disposal = disposeDataRoot(root);
+  if (!disposal.removed) console.error(`left ${dataDir} in place: ${disposal.reason}`);
   process.exit(code);
 }
 
@@ -459,13 +470,14 @@ try {
   console.error(`runtime drive failed: ${err.message}`);
   if (policyError) console.error(`scripted policy: ${policyError}`);
   console.error(daemonLog.slice(-4000));
-  await finish(1);
+  await finish(1, true);
 }
 
 const failures = driveFailures(record);
 console.log(JSON.stringify({ ...record, failures }, null, 2));
 if (failures.length > 0) {
   console.error(`runtime drive is NOT evidence:\n- ${failures.join("\n- ")}`);
-  await finish(1);
+  console.error(daemonLog.slice(-4000));
+  await finish(1, true);
 }
 await finish(0);

@@ -369,10 +369,17 @@ describe("sim workload driver provider-risk policy", () => {
   it("ignores a drive confirmation planted in a sourced environment file", () => {
     const dir = mkdtempSync(join(tmpdir(), "sim-rig-env-"));
     tempDirs.push(dir);
-    writeFileSync(join(dir, ".env"), "DRIVE_CONFIRM=1\nREUSE_ONLY=1\n");
+    // The fixture announces itself on stdout — the driver suppresses only the sourced file's stderr. Without
+    // that announcement this case could pass for the wrong reason: the driver sources /root/comis-rig.env
+    // BEFORE it resolves DATA, so on a host where that file sets DATA the planted .env is never read and a
+    // deleted snapshot guard would still look green. Asserting the marker turns "the fixture never reached
+    // the code path" into a loud failure instead of a silent pass.
+    const marker = "planted-rig-env-was-sourced";
+    writeFileSync(join(dir, ".env"), `echo "${marker}"\nDRIVE_CONFIRM=1\nREUSE_ONLY=1\n`);
 
     const drive = runDriver(["package-delivery"], { ...cleanEnv(), DATA: dir });
 
+    expect(drive.stdout, "the planted environment file was never sourced").toContain(marker);
     expect(drive.status, drive.stderr).toBe(0);
     expect(drive.stdout).toContain("re-run with DRIVE_CONFIRM=1");
     expect(drive.stdout).not.toContain("== drive-sim-workload");
