@@ -2262,6 +2262,31 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("names an unverified outbound-delivery status answer as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_delivery_status_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_delivery_status_evidence_missing",
+      detail:
+        "the response honesty guard replaced an affirmative delivery-status answer because "
+        + "the elliptical follow-up had no current delivery or observability receipt",
+      suggestedNextSteps: [
+        "inspect current obs_query and self-delivering media tool results for this turn",
+        "resolve which prior outbound item the follow-up refers to before confirming delivery",
+        "retry status verification instead of relying on historical assistant prose",
+      ],
+    });
+  });
+
   it("keeps a concrete MCP credential failure above the response-honesty symptom", async () => {
     const reader = makeAuditReader(
       [

@@ -172,6 +172,20 @@ describe("outbound image evidence reply", () => {
   });
 });
 
+describe("outbound delivery status evidence reply", () => {
+  it("withholds both positive and negative status without a current receipt", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildOutboundDeliveryStatusEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toContain("could not verify whether the prior outbound item was delivered");
+    expect(reply).toContain("current delivery or observability receipt");
+    expect(reply).not.toMatch(/(?:was|was not|did|did not) deliver/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("outbound_delivery_status_evidence_missing");
+  });
+});
+
 describe("buildOutputStarvedAnnotation — vocabulary + content invariants", () => {
   it("returns a non-empty annotation string", () => {
     const annotation = buildOutputStarvedAnnotation();

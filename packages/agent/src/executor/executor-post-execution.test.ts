@@ -1213,6 +1213,19 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
   });
 
+  it("source-grep — elliptical delivery status requires current receipt evidence", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceOutboundDeliveryStatusEvidence\(/);
+    expect(stripped).toMatch(/buildOutboundDeliveryStatusEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/response\.outbound_delivery_status_evidence_guard/);
+    expect(stripped).toMatch(
+      /outboundDeliveryStatusEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_delivery_status_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceOutboundDeliveryStatusEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
     const stripped = readPostExecStripped();
 

@@ -1433,6 +1433,105 @@ describe("outbound image evidence guard", () => {
   });
 });
 
+type OutboundDeliveryStatusEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_delivery_status_evidence";
+};
+
+function outboundDeliveryStatusEvidenceGuard(): OutboundDeliveryStatusEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceOutboundDeliveryStatusEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as OutboundDeliveryStatusEvidenceGuard;
+}
+
+describe("outbound delivery status evidence guard", () => {
+  const honestResponse =
+    "I could not verify whether the prior outbound item was delivered in this turn.";
+
+  it("rejects an affirmative elliptical delivery answer with no current receipt", () => {
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "did it send?",
+      response: "Yes — the audio was created and delivered to this conversation.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_delivery_status_evidence",
+    });
+  });
+
+  it("preserves delivery status backed by current observability evidence", () => {
+    const response = "Yes — the image was delivered successfully.";
+
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "did it send?",
+      response,
+      toolExecResults: [{ toolName: "obs_query", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("accepts a current self-delivering media receipt or trusted completion", () => {
+    const response = "It did — the file was delivered.";
+    for (const params of [
+      { toolExecResults: [{ toolName: "image_generate", success: true }] },
+      { toolExecResults: [], currentActionEvidence: true },
+    ]) {
+      expect(outboundDeliveryStatusEvidenceGuard()({
+        request: "did that go through?",
+        response,
+        honestResponse,
+        ...params,
+      })).toEqual({ response, corrected: false });
+    }
+  });
+
+  it("does not treat failed lookups or background placeholders as status proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "obs_query", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      expect(outboundDeliveryStatusEvidenceGuard()({
+        request: "was that delivered?",
+        response: "Yes, it was delivered.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("leaves honest negative answers and unrelated questions unchanged", () => {
+    const negative = "No — the image was not delivered.";
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "did it send?",
+      response: negative,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: negative, corrected: false });
+
+    const unrelated = "The send button is in the lower-right corner.";
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "where is the send button?",
+      response: unrelated,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: unrelated, corrected: false });
+  });
+});
+
 type RuntimeActionEvidenceDetector = (message: {
   channelType: string;
   senderId: string;
