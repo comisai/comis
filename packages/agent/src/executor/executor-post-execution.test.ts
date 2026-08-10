@@ -1186,6 +1186,20 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/preservePartialResponse:/);
   });
 
+  it("source-grep — outbound audio completion requires current delivery evidence", () => {
+    const stripped = readPostExecStripped();
+
+    expect(stripped).toMatch(/enforceOutboundAudioEvidence\(/);
+    expect(stripped).toMatch(/buildOutboundAudioEvidenceMissingReply\(/);
+    expect(stripped).toMatch(/hasTrustedRuntimeActionEvidence\(msg\)/);
+    expect(stripped).toMatch(/response\.outbound_audio_evidence_guard/);
+    expect(stripped).toMatch(
+      /outboundAudioEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_audio_evidence"[\s\S]*?succeeded:\s*true/,
+    );
+    expect(stripped.indexOf("enforceOutboundAudioEvidence("))
+      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
+  });
+
   it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
     const stripped = readPostExecStripped();
 

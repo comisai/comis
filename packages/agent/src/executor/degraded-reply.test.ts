@@ -122,6 +122,30 @@ describe("persistent action evidence reply", () => {
   });
 });
 
+describe("outbound audio evidence reply", () => {
+  it("is deterministic and can be replaced by an operator locale pack", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildOutboundAudioEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        outbound_audio_evidence_missing:
+          "לא שלחתי את השמע המבוקש בתור הנוכחי.",
+      },
+    });
+
+    expect(build()).toContain("did not deliver the requested audio");
+    expect(build("he", catalog)).toBe(
+      "לא שלחתי את השמע המבוקש בתור הנוכחי.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("outbound_audio_evidence_missing");
+  });
+});
+
 describe("buildOutputStarvedAnnotation — vocabulary + content invariants", () => {
   it("returns a non-empty annotation string", () => {
     const annotation = buildOutputStarvedAnnotation();

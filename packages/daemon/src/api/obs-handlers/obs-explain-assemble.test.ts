@@ -2212,6 +2212,31 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("names a missing outbound-audio receipt as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_audio_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_audio_evidence_missing",
+      detail:
+        "the response honesty guard replaced an audio-delivery claim because this "
+        + "execution had no successful current-turn synthesis or trusted completion receipt",
+      suggestedNextSteps: [
+        "inspect tts_synthesize admission and tool results for this turn",
+        "if work was delegated, verify the background completion relay delivered the audio",
+        "retry only after the outbound audio capability can produce a delivery receipt",
+      ],
+    });
+  });
+
   it("keeps a concrete MCP credential failure above the response-honesty symptom", async () => {
     const reader = makeAuditReader(
       [

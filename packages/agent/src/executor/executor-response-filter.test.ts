@@ -1241,6 +1241,102 @@ describe("persistent action evidence guard", () => {
   });
 });
 
+type OutboundAudioEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_audio_evidence";
+};
+
+function outboundAudioEvidenceGuard(): OutboundAudioEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceOutboundAudioEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as OutboundAudioEvidenceGuard;
+}
+
+describe("outbound audio evidence guard", () => {
+  const honestResponse =
+    "I did not deliver the requested audio in this turn because there is no successful synthesis receipt.";
+
+  it("replaces a spoken-summary completion claim when the turn used no tool", () => {
+    expect(outboundAudioEvidenceGuard()({
+      request: "say the summary out loud",
+      response: "Done — I said: “The total of the two items is £5.75.”",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_audio_evidence",
+    });
+  });
+
+  it("preserves spoken completion backed by successful synthesis", () => {
+    const response = "Done — I said the summary out loud.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please read the total aloud",
+      response,
+      toolExecResults: [{ toolName: "tts_synthesize", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not count a failed synthesis or background placeholder as delivery proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "tts_synthesize", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      expect(outboundAudioEvidenceGuard()({
+        request: "could you send that as a voice message?",
+        response: "The voice message is sent.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("accepts a trusted background completion receipt for delivered audio", () => {
+    const response = "The requested voice reply was delivered.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "say the summary out loud",
+      response,
+      toolExecResults: [],
+      currentActionEvidence: true,
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("leaves honest limitations and unrelated explanatory questions unchanged", () => {
+    const limitation = "I couldn't synthesize or send the audio in this turn.";
+    expect(outboundAudioEvidenceGuard()({
+      request: "say the summary out loud",
+      response: limitation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: limitation, corrected: false });
+
+    const explanation = "It means to speak audibly rather than silently.";
+    expect(outboundAudioEvidenceGuard()({
+      request: "what does 'say it out loud' mean?",
+      response: explanation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: explanation, corrected: false });
+  });
+});
+
 type RuntimeActionEvidenceDetector = (message: {
   channelType: string;
   senderId: string;
