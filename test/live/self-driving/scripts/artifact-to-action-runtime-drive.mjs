@@ -47,6 +47,7 @@ import {
   selectRunRollup,
   traceBoundToolResults,
 } from "./artifact-to-action-drive-oracle.mjs";
+import { setup as setupArtifactWorld } from "../sim/artifact-to-action/handlers.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../../../..");
@@ -63,22 +64,35 @@ const variant = arg("variant", "A");
 const keep = process.argv.includes("--keep");
 const requestedData = arg("data", undefined);
 
-// Validate the requested world before anything is acquired. An unknown variant makes the stdio simulator
-// throw at startup, so it publishes no tools and the drive would otherwise burn the full discovery wait and
-// then blame MCP discovery for what is a mistyped argument.
+// Resolve the requested world before anything is acquired. An unknown variant makes the stdio simulator throw
+// at startup, so it publishes no tools and the drive would otherwise burn the full discovery wait and then
+// blame MCP discovery for what is a mistyped argument. Resolution goes through the simulator's own `setup`, so
+// the world this harness grades against is the one the simulator will serve — `basedOn` merge included.
 const seedPath = resolve(simRoot, "artifact-to-action/world.seed.json");
-let shippedVariants;
+let seedWorld;
 try {
-  shippedVariants = Object.keys(JSON.parse(readFileSync(seedPath, "utf8")).variants ?? {}).sort();
+  seedWorld = JSON.parse(readFileSync(seedPath, "utf8"));
 } catch (err) {
   console.error(`cannot read the workload's worlds from ${seedPath}: ${err.message}`);
   process.exit(2);
 }
+const shippedVariants = Object.keys(seedWorld.variants ?? {}).sort();
 if (!shippedVariants.includes(variant)) {
   const named = variant === undefined ? "--variant with no value" : `unknown --variant "${variant}"`;
   console.error(`${named}; this workload ships ${shippedVariants.join(", ")}`);
   process.exit(2);
 }
+let world;
+try {
+  world = setupArtifactWorld({ seedWorld, variant });
+} catch (err) {
+  console.error(`cannot resolve the "${variant}" world: ${err.message}`);
+  process.exit(2);
+}
+// The world declares its own commit semantics; inferring them from a `-degraded` suffix would make the
+// harness demand a commit from any future no-commit world that is named differently, and then fail a
+// correct drive with a verdict that contradicts the world it drove.
+const expectCommit = world.truth?.honestNoCommit !== true;
 
 const unbuilt = [daemonEntry, rpcClientEntry].filter((path) => !existsSync(path));
 if (unbuilt.length > 0) {
@@ -327,12 +341,17 @@ async function shutdown() {
 // memory db and the request log the scripted provider wrote. Removing it on the failure path would delete the
 // only artifacts that answer WHY a rollup ended degraded, and would take `obs.explain` against that root with
 // it. So the root survives every failure exit and its path is named; a clean drive still disposes of it.
-async function finish(code, retainForDiagnosis = false) {
+async function finish(code, retainForDiagnosis = false, diagnosisRef) {
   await shutdown();
   if (keep || retainForDiagnosis) {
+    // --offline is not optional in this hint: without it the CLI opens the gateway first, so on any box that
+    // already runs a daemon the report comes back from THAT daemon — answering for a session it never saw —
+    // and the operator is steered away from the root this drive just preserved.
     console.error(
-      `kept ${dataDir} for diagnosis — trajectory, session rollup, logs/daemon.*.log and memory.db are in it; ` +
-        `re-read it with: node packages/cli/dist/cli.js explain "<sessionKey|traceId>" (COMIS_DATA_DIR=${dataDir})`,
+      `kept ${dataDir} for diagnosis — trajectory, session rollup, logs/daemon.*.log and memory.db are in it. ` +
+        `Read it without a daemon:\n` +
+        `  COMIS_DATA_DIR=${dataDir} node packages/cli/dist/cli.js explain --offline ` +
+        `"${diagnosisRef ?? "<sessionKey|traceId>"}"`,
     );
     process.exit(code);
   }
@@ -455,7 +474,7 @@ try {
     finishReason: executed.finishReason,
     executeError: executed.error ?? null,
     policyError: policyError ?? null,
-    expectCommit: !variant.endsWith("-degraded"),
+    expectCommit,
     sessionKey: rollup.sessionKey,
     traceId: rollup.traceId,
     runId: rollup.runId,
@@ -478,6 +497,6 @@ console.log(JSON.stringify({ ...record, failures }, null, 2));
 if (failures.length > 0) {
   console.error(`runtime drive is NOT evidence:\n- ${failures.join("\n- ")}`);
   console.error(daemonLog.slice(-4000));
-  await finish(1, true);
+  await finish(1, true, record.traceId ?? record.sessionKey);
 }
 await finish(0);

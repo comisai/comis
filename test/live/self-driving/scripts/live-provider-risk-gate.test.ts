@@ -366,23 +366,29 @@ describe("sim workload driver provider-risk policy", () => {
     }).status).toBe(0);
   });
 
+  // Asked through `--confirm-source`, which ends the invocation before the drive body: planting a real
+  // confirmation into a file the driver sources would otherwise make the body itself the thing that has to
+  // refuse it, so a regressed snapshot would drive a live box instead of failing an assertion. The reported
+  // verdict distinguishes "no confirmation anywhere" from "one arrived in a sourced file and was ignored", so
+  // this case also cannot pass vacuously on a host whose rig env redirects DATA away from the fixture.
   it("ignores a drive confirmation planted in a sourced environment file", () => {
     const dir = mkdtempSync(join(tmpdir(), "sim-rig-env-"));
     tempDirs.push(dir);
-    // The fixture announces itself on stdout — the driver suppresses only the sourced file's stderr. Without
-    // that announcement this case could pass for the wrong reason: the driver sources /root/comis-rig.env
-    // BEFORE it resolves DATA, so on a host where that file sets DATA the planted .env is never read and a
-    // deleted snapshot guard would still look green. Asserting the marker turns "the fixture never reached
-    // the code path" into a loud failure instead of a silent pass.
-    const marker = "planted-rig-env-was-sourced";
-    writeFileSync(join(dir, ".env"), `echo "${marker}"\nDRIVE_CONFIRM=1\nREUSE_ONLY=1\n`);
+    writeFileSync(join(dir, ".env"), "DRIVE_CONFIRM=1\nREUSE_ONLY=1\n");
 
-    const drive = runDriver(["package-delivery"], { ...cleanEnv(), DATA: dir });
+    const planted = runDriver(["--confirm-source", "package-delivery"], { ...cleanEnv(), DATA: dir });
 
-    expect(drive.stdout, "the planted environment file was never sourced").toContain(marker);
-    expect(drive.status, drive.stderr).toBe(0);
-    expect(drive.stdout).toContain("re-run with DRIVE_CONFIRM=1");
-    expect(drive.stdout).not.toContain("== drive-sim-workload");
+    expect(planted.status, planted.stderr).toBe(0);
+    expect(planted.stdout, "the planted environment file was never sourced").toContain(
+      "ignored a confirmation supplied by a sourced environment file",
+    );
+    expect(planted.stdout).toContain("confirm-source: absent");
+
+    // Without the fixture the verdict is the plain form, so the reported provenance tracks real state rather
+    // than being a constant. A regressed snapshot would report `command-line` for the planted case above and
+    // fail there — which is why no case in this suite has to supply a real confirmation to prove the guard.
+    const bare = runDriver(["--confirm-source", "package-delivery"]);
+    expect(bare.stdout.trim()).toBe("confirm-source: absent");
   });
 
   it("refuses to drive a workload that carries no risk declaration", () => {

@@ -13,6 +13,7 @@
 #   DRIVE_CONFIRM=1 bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
 #   REUSE_ONLY=1 DRIVE_CONFIRM=1 bash drive-sim-workload.sh <workload> B <fresh-sender>
 #   bash drive-sim-workload.sh --gate <workload>    # offline: the provider-risk decision alone (0 allowed, 4 suspended)
+#   bash drive-sim-workload.sh --confirm-source <workload>   # offline: where this invocation's confirmation came from
 #
 # The body that restarts the daemon, rewires MCP servers and drives live provider feeders requires an
 # affirmative DRIVE_CONFIRM=1 ON THE INVOKING COMMAND LINE — it is snapshotted before the operator env files
@@ -152,6 +153,26 @@ const { readFileSync } = require('node:fs');
 });
 NODE
 }
+
+# --confirm-source <workload>: report WHERE this invocation's drive confirmation came from, then exit. It
+# reads the same snapshot the body's guard reads, and it grants nothing — the body still requires
+# DRIVE_CONFIRM=1 from the command line — so removing this mode weakens the observation, never the guard.
+# It exists because proving that a sourced operator env file cannot re-arm a withheld confirmation otherwise
+# means planting a real confirmation and letting the drive body be what refuses it; here the invocation ends
+# before the body either way, so the proof cannot become a live drive.
+if [ "$WL" = "--confirm-source" ]; then
+  CONFIRM_WL="${2:-}"
+  [ -n "$CONFIRM_WL" ] || { echo "usage: drive-sim-workload.sh --confirm-source <workload>" >&2; exit 2; }
+  risk_for "$CONFIRM_WL" >/dev/null 2>&1 || { echo "unknown workload '$CONFIRM_WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2; }
+  if [ "$DRIVE_CONFIRMED" = "1" ]; then
+    echo "confirm-source: command-line"
+  elif [ "${DRIVE_CONFIRM:-}" = "1" ]; then
+    echo "confirm-source: absent (ignored a confirmation supplied by a sourced environment file)"
+  else
+    echo "confirm-source: absent"
+  fi
+  exit 0
+fi
 
 # --gate <workload>: the provider-risk decision ALONE — no daemon, no drive, no side effect. Exits 0 when the
 # workload may reach a provider and 4 when it is suspended, so the authorization posture is inspectable

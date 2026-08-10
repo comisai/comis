@@ -72,8 +72,9 @@ declared risk is gated before the daemon restart and every other side effect.
 `drive-sim-workload.sh --gate <workload>` prints that decision offline — exit `4` when the workload is
 suspended, `0` when it may reach a provider. The drive body itself requires an affirmative `DRIVE_CONFIRM=1`
 on the invoking command line — snapshotted before any operator environment file is sourced, so a line in one
-of those cannot supply it — and an invocation that does not opt in reports the gate's verdict and stops
-before the first side effect; the
+of those cannot supply it, and `drive-sim-workload.sh --confirm-source <workload>` reports which source this
+invocation's confirmation came from — and an invocation that does not opt in reports the gate's verdict and
+stops before the first side effect; the
 gate's regression test can therefore exercise the real path without a suspended drive becoming its failure
 mode.
 
