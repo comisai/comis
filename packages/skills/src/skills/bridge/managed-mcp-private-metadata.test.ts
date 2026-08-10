@@ -212,6 +212,46 @@ describe("managed MCP private metadata boundary", () => {
   });
 
   it("passes a validated workspace request into managed-run activation", async () => {
+    const activeView = makeView();
+    const deps = makeDeps({
+      activeView: {
+        ...activeView,
+        instances: [{
+          ...activeView.instances[0]!,
+          activeScopes: ["health", "report", "workspace_lease", "execution_attachment"],
+        }],
+      },
+    });
+    const bridge = createManagedMcpPrivateMetadataBridge(deps);
+    const call = makeCall();
+
+    const accepted = await runWithContext(makeContext(), async () => {
+      expect((await bridge.createRequestMeta(call)).ok).toBe(true);
+      return bridge.acceptResultMeta({
+        ...call,
+        meta: makePreparedMeta({
+          requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
+          requestedAttachment: {
+            kind: "unix_socket",
+            sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+          },
+        }),
+      });
+    });
+
+    expect(accepted.ok).toBe(true);
+    expect(deps.activatePrepared).toHaveBeenCalledWith(expect.objectContaining({
+      prepared: expect.objectContaining({
+        requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
+        requestedAttachment: {
+          kind: "unix_socket",
+          sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+        },
+      }),
+    }));
+  });
+
+  it("rejects an attachment request without execution attachment scope", async () => {
     const deps = makeDeps();
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
     const call = makeCall();
@@ -222,16 +262,16 @@ describe("managed MCP private metadata boundary", () => {
         ...call,
         meta: makePreparedMeta({
           requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
+          requestedAttachment: {
+            kind: "unix_socket",
+            sourcePath: "/srv/comis-runtime/task-a/reporter.sock",
+          },
         }),
       });
     });
 
-    expect(accepted.ok).toBe(true);
-    expect(deps.activatePrepared).toHaveBeenCalledWith(expect.objectContaining({
-      prepared: expect.objectContaining({
-        requestedWorkspace: { rootHint: "/srv/comis-workspaces/task-a" },
-      }),
-    }));
+    expect(accepted.ok).toBe(false);
+    expect(deps.activatePrepared).not.toHaveBeenCalled();
   });
 
   it("rejects prepared metadata after active-turn policy ownership changes", async () => {

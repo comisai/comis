@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createExecutionAttachmentAuthority,
+} from "./execution-attachment-authority.js";
 import {
   TypedEventBus,
   createConversationRef,
@@ -152,6 +156,7 @@ function makeIds(operationId: string) {
     managedRunId: `managed-${operationId}`,
     activationDescriptorRef: `descriptor-${operationId}`,
     workspaceLeaseId: `workspace-${operationId}`,
+    attachmentOperationId: `attachment-${operationId}`,
     activationOperationId: `activate-${operationId}`,
     abandonOperationId: `abandon-${operationId}`,
     leaseReleaseOperationId: `lease-release-${operationId}`,
@@ -172,6 +177,7 @@ function makeControlIds(managedRunId: string) {
     activationOperationId: ids.activationOperationId,
     abandonOperationId: ids.abandonOperationId,
     workspaceLeaseId: ids.workspaceLeaseId,
+    attachmentOperationId: ids.attachmentOperationId,
     leaseReleaseOperationId: ids.leaseReleaseOperationId,
     leaseRecoveryOperationId: ids.leaseRecoveryOperationId,
     rejectionOperationId: ids.rejectionOperationId,
@@ -183,6 +189,7 @@ function makeControlIds(managedRunId: string) {
 
 describe("managed-run two-phase activation", () => {
   const temporaryDirectories: string[] = [];
+  const socketServers: Server[] = [];
   let db: Database.Database;
   let store: ManagedRunStorePort;
   let contentStore: ManagedRunContentPort;
@@ -196,6 +203,7 @@ describe("managed-run two-phase activation", () => {
   let dataDirectory: string;
   let workspaceRoot: string;
   let workspaceDirectory: string;
+  let runtimeRoot: string;
 
   beforeEach(() => {
     db = new Database(":memory:");
@@ -206,9 +214,11 @@ describe("managed-run two-phase activation", () => {
     chmodSync(root, 0o700);
     dataDirectory = join(root, "data");
     workspaceRoot = join(root, "workspaces");
+    runtimeRoot = join(root, "runtime");
     workspaceDirectory = join(workspaceRoot, "task-a");
     mkdirSync(dataDirectory, { mode: 0o700 });
     mkdirSync(workspaceDirectory, { recursive: true, mode: 0o700 });
+    mkdirSync(runtimeRoot, { mode: 0o700 });
     const directory = join(dataDirectory, "private");
     mkdirSync(directory, { mode: 0o700 });
     const content = createSqliteManagedRunContentStore(db, {
@@ -236,7 +246,10 @@ describe("managed-run two-phase activation", () => {
     eventBus = new TypedEventBus();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const server of socketServers.splice(0)) {
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
     db.close();
     for (const directory of temporaryDirectories.splice(0)) {
       rmSync(directory, { recursive: true, force: true });
@@ -256,6 +269,14 @@ describe("managed-run two-phase activation", () => {
           instances: Object.freeze([Object.freeze({
             ...makeActiveView().instances[0]!,
             allowedWorkspaceRoots: Object.freeze([workspaceRoot]),
+            allowedRuntimeRoots: Object.freeze([runtimeRoot]),
+            activeScopes: Object.freeze([
+              "health",
+              "report",
+              "workspace_lease",
+              "terminal_events",
+              "execution_attachment",
+            ] as const),
           })]),
         }),
       },
@@ -266,6 +287,37 @@ describe("managed-run two-phase activation", () => {
       eventBus,
       logger,
       ...overrides,
+    });
+  }
+
+  async function listenUnixSocket(socketPath: string): Promise<void> {
+    const server = createServer();
+    socketServers.push(server);
+    await new Promise<void>((resolveListen, rejectListen) => {
+      server.once("error", rejectListen);
+      server.listen(socketPath, resolveListen);
+    });
+  }
+
+  function makeAttachmentAuthority(
+    attachmentStore: ExecutionAttachmentPort = attachments,
+    leaseStore: WorkspaceLeasePort = workspaceLeases,
+  ) {
+    return createExecutionAttachmentAuthority({
+      runs: store,
+      leases: leaseStore,
+      attachments: attachmentStore,
+      instances: [{
+        serviceInstanceId: "service-instance_a",
+        enabled: true,
+        allowedAgents: ["agent_a"],
+        allowedRuntimeRoots: [runtimeRoot],
+        control: { socketPath: join(dataDirectory, "capability-service.sock") },
+      }],
+      dataDir: dataDirectory,
+      nowMs: () => NOW_MS,
+      isServiceActive: () => true,
+      logger,
     });
   }
 
@@ -377,6 +429,116 @@ describe("managed-run two-phase activation", () => {
         record: { workspaceLeaseId: "workspace-operation_prepare_workspace" },
       },
     });
+  });
+
+  it("binds an allowed socket attachment before carrying host handles into activation", async () => {
+    const sourcePath = join(runtimeRoot, "reporter.sock");
+    await listenUnixSocket(sourcePath);
+
+    const result = await makeCoordinator({
+      attachmentAuthority: makeAttachmentAuthority(),
+    } as never).activatePrepared(makeInput({
+      operationId: "operation_prepare_attachment",
+      prepared: makePrepared({
+        requestedWorkspace: { rootHint: workspaceDirectory },
+        requestedAttachment: { kind: "unix_socket", sourcePath },
+      }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        kind: "activated",
+        record: {
+          workspaceLeaseId: "workspace-operation_prepare_attachment",
+          executionAttachmentIds: [expect.stringMatching(/^execution-attachment-/u)],
+        },
+      },
+    });
+    expect(activate).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceLeaseId: "workspace-operation_prepare_attachment",
+      executionAttachmentId: expect.stringMatching(/^execution-attachment-/u),
+      attachmentTargetName: expect.stringMatching(/^attachment-[a-f0-9]{32}\.sock$/u),
+    }));
+  });
+
+  it("rejects an attachment source outside the configured runtime roots", async () => {
+    const outsideRoot = join(workspaceRoot, "runtime-outside");
+    mkdirSync(outsideRoot);
+    const sourcePath = join(outsideRoot, "reporter.sock");
+    await listenUnixSocket(sourcePath);
+
+    const result = await makeCoordinator({
+      attachmentAuthority: makeAttachmentAuthority(),
+    } as never).activatePrepared(makeInput({
+      operationId: "operation_attachment_outside",
+      prepared: makePrepared({
+        requestedWorkspace: { rootHint: workspaceDirectory },
+        requestedAttachment: { kind: "unix_socket", sourcePath },
+      }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "attachment_not_allowed" },
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(abandon).toHaveBeenCalledWith(expect.objectContaining({ disposition: "reap_safe" }));
+  });
+
+  it("rejects a symlinked attachment source inside an allowed runtime root", async () => {
+    const canonicalSource = join(runtimeRoot, "canonical.sock");
+    const linkedSource = join(runtimeRoot, "linked.sock");
+    await listenUnixSocket(canonicalSource);
+    symlinkSync(canonicalSource, linkedSource);
+
+    const result = await makeCoordinator({
+      attachmentAuthority: makeAttachmentAuthority(),
+    } as never).activatePrepared(makeInput({
+      operationId: "operation_attachment_symlink",
+      prepared: makePrepared({
+        requestedWorkspace: { rootHint: workspaceDirectory },
+        requestedAttachment: { kind: "unix_socket", sourcePath: linkedSource },
+      }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "attachment_not_allowed" },
+    });
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("rejects an attachment request from an instance without attachment scope", async () => {
+    const sourcePath = join(runtimeRoot, "unscoped.sock");
+    await listenUnixSocket(sourcePath);
+    const activeView = makeActiveView();
+
+    const result = await makeCoordinator({
+      activeView: {
+        getActiveView: () => makeActiveView({
+          instances: Object.freeze([Object.freeze({
+            ...activeView.instances[0]!,
+            allowedWorkspaceRoots: Object.freeze([workspaceRoot]),
+            allowedRuntimeRoots: Object.freeze([runtimeRoot]),
+            activeScopes: Object.freeze(["health", "report", "workspace_lease"] as const),
+          })]),
+        }),
+      },
+      attachmentAuthority: makeAttachmentAuthority(),
+    } as never).activatePrepared(makeInput({
+      operationId: "operation_attachment_unscoped",
+      prepared: makePrepared({
+        requestedWorkspace: { rootHint: workspaceDirectory },
+        requestedAttachment: { kind: "unix_socket", sourcePath },
+      }),
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "attachment_not_allowed" },
+    });
+    expect(activate).not.toHaveBeenCalled();
   });
 
   it("rejects a workspace request outside instance authority before activation", async () => {

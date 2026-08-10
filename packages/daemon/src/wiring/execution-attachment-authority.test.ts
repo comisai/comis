@@ -88,6 +88,27 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 }
 
 describe("execution attachment authority coordinator", () => {
+  it("rejects an unsupported declared attachment kind before source validation", async () => {
+    const deps = makeDeps();
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    const result = await authority.create({
+      operationId: "operation_attachment_descriptor",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      kind: "inherited_descriptor",
+      sourcePath: "/srv/runtime/service-a/run-a.sock",
+      owner: OWNER,
+    } as never);
+
+    expect(result).toEqual({
+      ok: true,
+      value: { kind: "rejected", reason: "unsupported_kind" },
+    });
+    expect(deps.validateSource).not.toHaveBeenCalled();
+    expect(deps.attachments.create).not.toHaveBeenCalled();
+  });
+
   it("mints host identities after exact run lease and filesystem validation", async () => {
     const deps = makeDeps();
     const authority = createExecutionAttachmentAuthority(deps as never);
