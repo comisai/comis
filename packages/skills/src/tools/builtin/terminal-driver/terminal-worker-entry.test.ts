@@ -65,7 +65,7 @@ function makeLogger() {
  * the backend exit by calling `emitExit()` (the live node-pty `onExit` analog —
  * mirrors the pipe stub's `close()`).
  */
-function makeFakeBackend(): {
+function makeFakeBackend(autoExitOnKill = true): {
   spawn: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
   emit: (chunk: string) => void;
@@ -76,7 +76,9 @@ function makeFakeBackend(): {
   let onExit: ((e: { exitCode: number; signal?: number }) => void) | undefined;
   let lastBin: string | undefined;
   let lastArgv: string[] | undefined;
-  const kill = vi.fn(() => onExit?.({ exitCode: 143, signal: 15 }));
+  const kill = vi.fn(() => {
+    if (autoExitOnKill) onExit?.({ exitCode: 143, signal: 15 });
+  });
   const spawn = vi.fn((bin: string, argv: string[]) => {
     lastBin = bin;
     lastArgv = argv;
@@ -422,6 +424,29 @@ describe("createTerminalWorker — backend selection", () => {
     expect(killed.ok).toBe(true);
     expect(fake.kill).toHaveBeenCalledWith("SIGTERM");
     expect((read.result as { alive: boolean }).alive).toBe(false);
+  });
+
+  it("keeps the kill acknowledgement pending until the backend emits its exit", async () => {
+    const fake = makeFakeBackend(false);
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    let settled = false;
+
+    const killing = worker.handle({
+      sessionId: "s1",
+      requestId: "rq-kill-pending",
+      traceId: TRACE_ID,
+      method: "kill",
+      params: { sessionId: "s1" },
+    }).then((reply) => {
+      settled = true;
+      return reply;
+    });
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    fake.emitExit({ exitCode: 143, signal: 15 });
+    await expect(killing).resolves.toMatchObject({ ok: true });
   });
 
   // The THIRD backend selection — a create frame requesting
