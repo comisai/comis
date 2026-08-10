@@ -51,6 +51,7 @@ import {
   type WorkerStatusPerception,
 } from "./terminal-status-view.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
+import type { ManagedTerminalBinding, TerminalRootProcessIdentity } from "./terminal-managed-binding.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
@@ -191,6 +192,8 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
    * ⇒ today's wiring (no recover/persist — byte-identical). See {@link TerminalDurabilityDeps}.
    */
   durability?: TerminalDurabilityDeps;
+  /** Daemon trust-boundary resolver for a host PID plus non-reusable start identity. */
+  resolveRootProcessIdentity?: (pid: number) => Promise<TerminalRootProcessIdentity | undefined>;
 }
 
 // Public types
@@ -235,6 +238,8 @@ export interface CreateRequest {
    * through the shipped primaryChannel→recent-session chain, unchanged.
    */
   originEndpoint?: ChannelEndpoint;
+  /** Server-resolved managed authority. Never sourced directly from model parameters. */
+  managedBinding?: Omit<ManagedTerminalBinding, "canonicalRoot">;
 }
 
 // The `status` view + its pure composition live in the leaf `terminal-status-view.ts`
@@ -492,6 +497,11 @@ export function createTerminalSessionRegistry(
       // Stamp the origin (owner-scoped list/read/get/kill/send*). The owner rides
       // the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
+      ...(req.managedBinding === undefined ? {} : {
+        managedRunId: req.managedBinding.managedRunId,
+        workspaceLeaseId: req.managedBinding.workspaceLeaseId,
+        serviceInstanceId: req.managedBinding.serviceInstanceId,
+      }),
       // Stamp the origin CONVERSATION beside the owner — same handle-only rule, same
       // verbatim re-stamp on re-attach. It is what makes a backgrounded drive's outcome
       // reach the thread that started it instead of the most recent one. Delivery only:
@@ -515,7 +525,7 @@ export function createTerminalSessionRegistry(
     // Persist the durable descriptor at CREATE-time, BEFORE the create frame (no orphan window); non-durable persists nothing.
     if (req.durable && deps.durability?.descriptorStore !== undefined) {
       deps.durability.descriptorStore.persist(
-        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.tmuxSocketForSession?.(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope, originEndpoint: req.originEndpoint }),
+        buildSessionDescriptor({ sessionId, tmuxName: req.tmuxName ?? tmuxSessionName(sessionId), tmuxSocket: deps.tmuxSocketForSession?.(sessionId), allowId: req.allowId, owner, cols: req.cols, rows: req.rows, createdAt, scope: req.scope, originEndpoint: req.originEndpoint, managedBinding: req.managedBinding }),
       );
     }
 
@@ -523,7 +533,7 @@ export function createTerminalSessionRegistry(
     // blocking the turn, but we register an ASYNC create-reply waiter: a failed
     // backend spawn replies `ok:false` → flip the session to `lost` (list/read agree
     // alive:false) + fire the `onSpawnFailed` hook. The waiter resolves out-of-band.
-    const createFrame = buildRequestFrame(sessionId, "create", {
+    const createParams = {
       sessionId,
       bin: req.bin,
       argv: req.argv,
@@ -548,8 +558,8 @@ export function createTerminalSessionRegistry(
       // per-session `new-session -e` — see terminal-worker-backend-attach).
       ...(deps.unsafeDisableSandbox ? { unsafeDisableSandbox: true } : {}),
       ...(req.durable ? { backend: "tmux" } : {}), // A durable drive selects the tmux backend (terminal-worker-entry.ts reads p["backend"]).
-    });
-    pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
+    };
+    const markSpawnFailure = (reply: TerminalReplyFrame): void => {
       if (reply.ok) return; // backend spawned — leave the session running.
       const h = sessions.get(sessionId);
       // A worker CRASH flushes this waiter with a synthetic `ok:false`; a durable session
@@ -565,8 +575,43 @@ export function createTerminalSessionRegistry(
         "terminal worker backend spawn failed",
       );
       deps.onSpawnFailed?.({ sessionId, error: reply.error });
-    });
-    child.stdin?.write(encodeFrame(createFrame));
+    };
+
+    let rootProcessIdentity: TerminalRootProcessIdentity | undefined;
+    if (req.managedBinding !== undefined) {
+      const reply = await request(sessionId, "create", createParams);
+      markSpawnFailure(reply);
+      const result = reply.result as { rootPid?: unknown } | undefined;
+      const rootPid = result?.rootPid;
+      if (!reply.ok || !Number.isSafeInteger(rootPid) || (rootPid as number) <= 0 || deps.resolveRootProcessIdentity === undefined) {
+        await kill(sessionId, owner);
+        return Promise.reject(new Error("managed terminal root process identity is unavailable"));
+      }
+      rootProcessIdentity = await deps.resolveRootProcessIdentity(rootPid as number);
+      if (rootProcessIdentity === undefined) {
+        await kill(sessionId, owner);
+        return Promise.reject(new Error("managed terminal root process identity is unavailable"));
+      }
+      handle.rootProcessIdentity = rootProcessIdentity;
+      deps.durability?.descriptorStore?.persist(buildSessionDescriptor({
+        sessionId,
+        tmuxName: req.tmuxName ?? tmuxSessionName(sessionId),
+        tmuxSocket: deps.tmuxSocketForSession?.(sessionId),
+        allowId: req.allowId,
+        owner,
+        cols: req.cols,
+        rows: req.rows,
+        createdAt,
+        scope: req.scope,
+        originEndpoint: req.originEndpoint,
+        managedBinding: req.managedBinding,
+        rootProcessIdentity,
+      }));
+    } else {
+      const createFrame = buildRequestFrame(sessionId, "create", createParams);
+      pending.set(`${sessionId}:${createFrame.requestId}`, markSpawnFailure);
+      child.stdin?.write(encodeFrame(createFrame));
+    }
 
     logger.info(
       { sessionId, allowId: req.allowId, command: req.bin },
@@ -575,7 +620,13 @@ export function createTerminalSessionRegistry(
     // An over-cap create evicts the idlest down to maxSessions (reason
     // max_sessions). Runs AFTER sessions.set so the new session is in the snapshot.
     reaper?.checkOverflow();
-    return { sessionId, allowId: req.allowId, cols: req.cols, rows: req.rows };
+    return {
+      sessionId,
+      allowId: req.allowId,
+      cols: req.cols,
+      rows: req.rows,
+      ...(rootProcessIdentity === undefined ? {} : { rootProcessIdentity }),
+    };
   }
 
   /**

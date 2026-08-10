@@ -69,8 +69,8 @@ import {
   type MediaPersistenceService,
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
-// Terminal-driver wiring extracted to setup-terminal-tools.ts (file-size cap).
 import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
+import { createManagedTerminalBindingResolver } from "./managed-terminal-binding.js";
 import {
   buildTerminalWakeDurability,
   type WakeDurabilityConfig,
@@ -129,7 +129,7 @@ export interface ToolsDeps {
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
-  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "activationCoordinator">;
+  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "control" | "activationCoordinator">;
   clock: ClockPort;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
@@ -830,6 +830,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             ...terminalEgress,
             timers: deps.timers,
             agentWorkspaceDir,
+            managedBinding: createManagedTerminalBindingResolver({ store: deps.capabilityServices.store, workspaceLeases: deps.capabilityServices.workspaceLeases, nowMs: () => deps.clock.now() }),
           },
           skillsConfig.terminal,
         );
@@ -993,7 +994,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     // Per-agent terminal attention config (allow-entry autoAnswer/hintPatterns + caps); read per-wake.
     getTerminalAttentionConfig: (agentId: string) =>
       deriveTerminalAttentionConfig((agents[agentId] ?? agents[defaultAgentId])?.skills?.terminal),
-    // The durable wake deps the composition root spreads into setupTerminalWake.
     terminalDurability,
   };
 }

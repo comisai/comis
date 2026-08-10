@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { createStdioPump } from "./terminal-worker-stdio-pump.js";
 import { createTerminalEgressProxy } from "./terminal-egress-proxy.js";
-import { createTmuxBackend, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
+import { buildTmuxPanePidArgv, createTmuxBackend, tmuxSocketPathForSession } from "./terminal-tmux-backend.js";
 import type { TmuxBackendLike, FakePtyLike, PtyModuleLike } from "./terminal-worker-types.js";
 
 /**
@@ -199,6 +199,18 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
     (argv: string[]): void => {
       execFileSync(argv[0]!, argv.slice(1), { env, stdio: "ignore" });
     };
+  const queryRootPidOn =
+    (socket: string, env: NodeJS.ProcessEnv) =>
+    (name: string): number | undefined => {
+      try {
+        const argv = buildTmuxPanePidArgv({ tmuxPath, socketPath: socket, name });
+        const raw = execFileSync(argv[0]!, argv.slice(1), { env, encoding: "utf8" }).trim();
+        const pid = Number(raw);
+        return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+      } catch {
+        return undefined;
+      }
+    };
   // The DRIVING attach pty: node-pty `tmux attach -t <name>` — streams the pane (onData),
   // forwards keystrokes (write), resizes via the pty, exits on session death. TERM is forced
   // so the tmux client renders (the worker's scrubbed env may omit it). Bound to the call's socket.
@@ -231,6 +243,7 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         tmuxPath,
         socketPath: socket,
         hasSession: hasSessionOn(socket, a.env),
+        queryRootPid: queryRootPidOn(socket, a.env),
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(socket, a),
       })!;
@@ -255,6 +268,7 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         tmuxPath,
         socketPath: socket,
         hasSession: hasSessionOn(socket, a.env),
+        queryRootPid: queryRootPidOn(socket, a.env),
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(socket, a),
         forceAttachOnly: true,

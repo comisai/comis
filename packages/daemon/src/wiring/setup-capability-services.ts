@@ -10,6 +10,7 @@ import {
   type CapabilityServiceActivationPlan,
   type CapabilityServiceContributionRegistration,
   type CapabilityServicesConfig,
+  type CapabilityServiceControlPort,
   type ClockPort,
   type ComisLogger,
   type ManagedRunContentPort,
@@ -51,6 +52,7 @@ export interface CapabilityServicePlatform {
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
   readonly workspaceLeases: WorkspaceLeasePort;
+  readonly control: CapabilityServiceControlPort;
   readonly activationCoordinator: ManagedRunActivationCoordinator;
   readonly reportBridge: ManagedRunReportBridge;
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
@@ -313,6 +315,7 @@ export async function setupCapabilityServices(
     store,
     contentStore,
     workspaceLeases,
+    control: host.value.control,
     activationCoordinator,
     reportBridge,
     recoverySummary: recovered.value,

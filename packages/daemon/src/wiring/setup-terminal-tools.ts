@@ -87,6 +87,7 @@ import {
   type TerminalScope,
   type SandboxProvider,
   type SessionCaps,
+  type ManagedTerminalBindingResolver,
 } from "@comis/skills/tools";
 import {
   systemNowMs,
@@ -97,6 +98,7 @@ import {
   type TimerPort,
 } from "@comis/core";
 import { buildAgentTerminalDurability, type DurabilityEventBus } from "./terminal-durable-wiring.js";
+import { createTerminalRootProcessIdentityResolver } from "./terminal-root-process-identity.js";
 
 /** Dependencies the terminal-driver wiring needs from the composition root. */
 export interface TerminalWiringDeps {
@@ -179,6 +181,7 @@ export interface TerminalWiringDeps {
    * fail-closes) — the fail-closed posture for an unconfigured agent.
    */
   readonly config?: TerminalDriverConfig;
+  readonly managedBinding?: ManagedTerminalBindingResolver;
 }
 
 /**
@@ -408,6 +411,7 @@ function getOrCreateTerminalRegistry(
         tmuxSocketPathForSession(terminalWorkerDir(deps.dataDir), sessionId),
       logger: deps.skillsLogger,
       nowMs: systemNowMs,
+      resolveRootProcessIdentity: createTerminalRootProcessIdentityResolver(),
       // The daemon-resolved bwrap path rides the create
       // frame to the worker's fail-closed branch; the live egress port is the
       // daemon->worker-main seam for `listed-hosts`. Both undefined on a no-sandbox
@@ -553,6 +557,7 @@ export interface TerminalWiringBaseDeps {
    * session and the agent can see it. Absent ⇒ the ephemeral default (test paths).
    */
   readonly agentWorkspaceDir?: string;
+  readonly managedBinding?: ManagedTerminalBindingResolver;
 }
 
 /**
@@ -591,6 +596,7 @@ export function buildTerminalWiringDeps(
     ...(base.bwrapPath ? { bwrapPath: base.bwrapPath } : {}),
     ...(base.timers ? { timers: base.timers } : {}),
     ...(base.agentWorkspaceDir ? { agentWorkspaceDir: base.agentWorkspaceDir } : {}),
+    ...(base.managedBinding ? { managedBinding: base.managedBinding } : {}),
     ...(workerCaps ? { workerCaps } : {}),
     ...(config ? { config } : {}),
   };
@@ -675,6 +681,7 @@ export function buildTerminalSharedDeps(
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.
     approvalGate: deps.approvalGate,
+    managedBinding: deps.managedBinding,
     // The net-new egress dimensions, threaded toward the worker.
     // The PORT impl (the no-secret allowlist proxy) + the resolved bwrap path; the
     // worker calls `egressControl.materialize(scope.hosts)` for

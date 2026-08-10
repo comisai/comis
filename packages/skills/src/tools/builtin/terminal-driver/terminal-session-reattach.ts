@@ -197,6 +197,10 @@ export function rehydrateHandleFromDescriptor(d: SessionDescriptor, nowMs: numbe
     // Rehydrate the per-boot socket so the daemon probe / reaper target the session's
     // OWN (prior-boot) server, and the worker re-attaches there (not this boot's fresh server).
     tmuxSocket: d.tmuxSocket,
+    ...(d.managedRunId === undefined ? {} : { managedRunId: d.managedRunId }),
+    ...(d.workspaceLeaseId === undefined ? {} : { workspaceLeaseId: d.workspaceLeaseId }),
+    ...(d.serviceInstanceId === undefined ? {} : { serviceInstanceId: d.serviceInstanceId }),
+    ...(d.rootProcessIdentity === undefined ? {} : { rootProcessIdentity: d.rootProcessIdentity }),
   };
 }
 
@@ -249,6 +253,12 @@ export interface DurableCreateInputs {
   /** The conversation the drive was created from — persisted so a re-attached durable drive
    *  still reports its outcome to that thread. Absent for a non-channel (API/cron) drive. */
   originEndpoint?: SessionDescriptor["originEndpoint"];
+  managedBinding?: {
+    readonly managedRunId: string;
+    readonly workspaceLeaseId: string;
+    readonly serviceInstanceId: string;
+  };
+  rootProcessIdentity?: SessionDescriptor["rootProcessIdentity"];
 }
 
 /**
@@ -271,6 +281,12 @@ export function buildSessionDescriptor(i: DurableCreateInputs): SessionDescripto
   if (i.scope !== undefined) descriptor.scope = i.scope;
   if (i.tmuxSocket !== undefined) descriptor.tmuxSocket = i.tmuxSocket;
   if (i.originEndpoint !== undefined) descriptor.originEndpoint = i.originEndpoint;
+  if (i.managedBinding !== undefined) {
+    descriptor.managedRunId = i.managedBinding.managedRunId;
+    descriptor.workspaceLeaseId = i.managedBinding.workspaceLeaseId;
+    descriptor.serviceInstanceId = i.managedBinding.serviceInstanceId;
+  }
+  if (i.rootProcessIdentity !== undefined) descriptor.rootProcessIdentity = i.rootProcessIdentity;
   return descriptor;
 }
 

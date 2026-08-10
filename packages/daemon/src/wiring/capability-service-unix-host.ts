@@ -26,6 +26,8 @@ import {
   type CapabilityServiceActivateCommand,
   type CapabilityServiceControlFailure,
   type CapabilityServiceControlPort,
+  type CapabilityServiceTerminalEventAcknowledgement,
+  type CapabilityServiceTerminalEventCommand,
   type ClockPort,
   type ComisLogger,
   type PlannedCapabilityServiceDefinition,
@@ -40,6 +42,7 @@ import {
 } from "./capability-service-runtime.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import { parseStrictJson } from "./capability-service-strict-json.js";
+import { forwardTerminalEvent, sendEndpointTerminalEvent } from "./capability-service-terminal-event.js";
 
 const MAXIMUM_UNIX_SOCKET_PATH_BYTES = 103;
 const MAX_REPLAY_ENTRIES = 4_096;
@@ -116,6 +119,10 @@ interface Endpoint {
   >>;
   abandon(command: CapabilityServiceAbandonCommand): Promise<Result<
     CapabilityServiceAbandonAcknowledgement,
+    CapabilityServiceControlFailure
+  >>;
+  terminalEvent(command: CapabilityServiceTerminalEventCommand): Promise<Result<
+    CapabilityServiceTerminalEventAcknowledgement,
     CapabilityServiceControlFailure
   >>;
 }
@@ -872,6 +879,9 @@ function createEndpoint(
         }, CapabilityAbandonRequestSchema, CapabilityAbandonResponseSchema);
         return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });
       },
+      terminalEvent: async (command: CapabilityServiceTerminalEventCommand) => {
+        return sendEndpointTerminalEvent(command, sendControl);
+      },
     }));
   })();
 }
@@ -927,7 +937,7 @@ export function createUnixCapabilityServiceHostRuntime(
 
   function reportControlFailure(
     serviceInstanceId: string,
-    operation: "abandon" | "activate",
+    operation: "abandon" | "activate" | "terminal_event",
     failure: CapabilityServiceControlFailure,
   ): void {
     deps.logger.warn({
@@ -977,6 +987,9 @@ export function createUnixCapabilityServiceHostRuntime(
         durationMs: Math.max(0, deps.clock.now() - startedAtMs),
       }, "Capability-service abandon call completed");
       return result;
+    },
+    terminalEvent: async (command) => {
+      return forwardTerminalEvent({ command, endpoint: endpoints.get(command.serviceInstanceId), clock: deps.clock, logger: deps.logger, onFailure: (failure) => reportControlFailure(command.serviceInstanceId, "terminal_event", failure) });
     },
   };
 

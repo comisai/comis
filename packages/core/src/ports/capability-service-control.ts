@@ -38,6 +38,31 @@ export interface CapabilityServiceAbandonAcknowledgement {
   readonly terminalTransition: "unbound_preparation_abandoned";
 }
 
+export type CapabilityServiceTerminalTransition =
+  | "created"
+  | "running"
+  | "input_needed"
+  | "stuck"
+  | "exited"
+  | "lost"
+  | "recovered"
+  | "released";
+
+export interface CapabilityServiceTerminalEventCommand {
+  readonly operationId: string;
+  readonly serviceInstanceId: string;
+  readonly managedRunId: string;
+  readonly workspaceLeaseId: string;
+  readonly terminalSessionId: string;
+  readonly transition: CapabilityServiceTerminalTransition;
+}
+
+export interface CapabilityServiceTerminalEventAcknowledgement {
+  readonly managedRunId: string;
+  readonly terminalSessionId: string;
+  readonly transition: CapabilityServiceTerminalTransition;
+}
+
 /** Authenticated instance-scoped control boundary; implementations never select authority. */
 export interface CapabilityServiceControlPort {
   activate(
@@ -46,4 +71,7 @@ export interface CapabilityServiceControlPort {
   abandon(
     command: CapabilityServiceAbandonCommand,
   ): Promise<Result<CapabilityServiceAbandonAcknowledgement, CapabilityServiceControlFailure>>;
+  terminalEvent(
+    command: CapabilityServiceTerminalEventCommand,
+  ): Promise<Result<CapabilityServiceTerminalEventAcknowledgement, CapabilityServiceControlFailure>>;
 }

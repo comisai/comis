@@ -51,6 +51,8 @@ export interface WorkerFsPort {
 /** Structural node-pty session handle (subset of `IPty`): `onData`→ring, `onExit`→markExited (payload ignored — only the exit signal matters), write/resize/kill forwarded. */
 export interface FakePtyLike {
   pid: number;
+  /** Host PID of the confined terminal root. For tmux this is the detached pane PID, not the attach client PID. */
+  rootPid?: number;
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number; signal?: number }) => void): void;
   write(data: string): void;
@@ -203,6 +205,8 @@ export interface CreateResult {
   backend: WorkerBackend;
   cols: number;
   rows: number;
+  /** Host PID used only by the daemon to resolve an opaque start identity. */
+  rootPid?: number;
 }
 
 /** Post-action snapshot a mutating handler (send_text/send_key) returns: the SETTLED `{screen,cursor}` subset; `cursor` stays `{0,0}` until the real cursor lands. */

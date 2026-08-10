@@ -58,6 +58,7 @@ import type { ChannelEndpoint } from "@comis/core";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import type { SessionOwner } from "./terminal-session-owner.js";
+import type { TerminalRootProcessIdentity } from "./terminal-managed-binding.js";
 
 // ---------------------------------------------------------------------------
 // The durable session descriptor — the persisted IDENTITY that survives a
@@ -119,6 +120,10 @@ export interface SessionDescriptor {
   durable: boolean;
   /** Creation wall-clock (ms) — for the resumed session's wall-clock cap. */
   createdAt: number;
+  managedRunId?: string;
+  workspaceLeaseId?: string;
+  serviceInstanceId?: string;
+  rootProcessIdentity?: TerminalRootProcessIdentity;
 }
 
 /**
@@ -313,6 +318,25 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
     return undefined;
   }
 
+  const hasManagedIdentity = r.managedRunId !== undefined
+    || r.workspaceLeaseId !== undefined
+    || r.serviceInstanceId !== undefined
+    || r.rootProcessIdentity !== undefined;
+  if (hasManagedIdentity) {
+    if (
+      !isNonEmptyString(r.managedRunId)
+      || !isNonEmptyString(r.workspaceLeaseId)
+      || !isNonEmptyString(r.serviceInstanceId)
+    ) return undefined;
+    if (r.rootProcessIdentity !== undefined) {
+      if (r.rootProcessIdentity === null || typeof r.rootProcessIdentity !== "object") return undefined;
+      const identity = r.rootProcessIdentity as Record<string, unknown>;
+      if (!Number.isSafeInteger(identity.pid) || (identity.pid as number) <= 0 || !isNonEmptyString(identity.startIdentity)) {
+        return undefined;
+      }
+    }
+  }
+
   const descriptor: SessionDescriptor = {
     sessionId: r.sessionId,
     tmuxName: r.tmuxName,
@@ -328,6 +352,15 @@ export function deserializeDescriptor(raw: unknown): SessionDescriptor | undefin
   }
   if (r.tmuxSocket !== undefined) {
     descriptor.tmuxSocket = r.tmuxSocket;
+  }
+  if (hasManagedIdentity) {
+    descriptor.managedRunId = r.managedRunId as string;
+    descriptor.workspaceLeaseId = r.workspaceLeaseId as string;
+    descriptor.serviceInstanceId = r.serviceInstanceId as string;
+    if (r.rootProcessIdentity !== undefined) {
+      const identity = r.rootProcessIdentity as { pid: number; startIdentity: string };
+      descriptor.rootProcessIdentity = { pid: identity.pid, startIdentity: identity.startIdentity };
+    }
   }
   // `originEndpoint` is optional AND drop-on-malformed — a deliberate DIVERGENCE from the
   // reject-the-descriptor posture above. `scope`/`tmuxSocket` reject because dropping them

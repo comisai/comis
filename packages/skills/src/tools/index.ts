@@ -164,6 +164,8 @@ export {
   type LoopGuardDeps,
   type TerminalToolDeps,
   type TerminalEventBus,
+  type ManagedTerminalBindingResolver,
+  type TerminalRootProcessIdentity,
   // The decoded fd3 push-channel frame the daemon's onTerminalEvent hook
   // re-publishes onto the TypedEventBus (the 3rd emit-hook site).
   type TerminalEventFrame,

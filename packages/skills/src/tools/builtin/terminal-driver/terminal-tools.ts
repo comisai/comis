@@ -58,6 +58,8 @@ import {
   type SessionOwner,
 } from "./terminal-session-registry.js";
 import { withCompleteNote } from "./terminal-wait-reply.js";
+import { narrowManagedTerminalScope, selectManagedHandles } from "./terminal-managed-create.js";
+import type { ManagedTerminalBindingResolver } from "./terminal-managed-binding.js";
 
 // Injected dependency contracts
 
@@ -76,6 +78,8 @@ export interface TerminalStateEvent {
   state: "created" | "running" | "exited" | "lost";
   durationMs: number;
   timestamp: number;
+  managedRunId?: string;
+  workspaceLeaseId?: string;
 }
 
 /** The spawn-failure payload (mirrors core `TerminalEvents["terminal:spawn_failed"]`). */
@@ -185,6 +189,8 @@ export interface TerminalToolDeps {
    * read/list/kill tools need not supply it).
    */
   readonly approvalGate?: ApprovalGate;
+  /** Daemon-owned authority resolver for the optional paired managed terminal path. */
+  readonly managedBinding?: ManagedTerminalBindingResolver;
 }
 
 // Defaults
@@ -209,6 +215,8 @@ const CreateParams = Type.Object({
   rows: Type.Optional(Type.Integer({ description: "Terminal rows (default 40)" })),
   name: Type.Optional(Type.String({ description: "Human-readable display label for the session (shown in listings) — this is NOT the project folder. To name a coding project's folder, use `project`." })),
   hintPatterns: Type.Optional(Type.Array(Type.String(), { description: "Safe-interaction hint patterns" })),
+  managedRunId: Type.Optional(Type.String({ description: "Managed-run handle to bind; requires workspaceLeaseId" })),
+  workspaceLeaseId: Type.Optional(Type.String({ description: "Workspace-lease handle to bind; requires managedRunId" })),
 });
 
 const ReadParams = Type.Object({
@@ -365,6 +373,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // <agent-workspace>/projects/<slug> folder (auto-created). Both resolve in resolveCreateWorkspace.
       const cwd = readString(params, "cwd");
       const project = readString(params, "project");
+      const managed = selectManagedHandles(params);
+      if (managed.kind === "invalid") {
+        throwToolError("invalid_value", "managedRunId and workspaceLeaseId must be provided together");
+      }
+      if (managed.kind === "managed" && (cwd !== undefined || project !== undefined)) {
+        throwToolError("permission_denied", "managed terminals use the server-resolved leased root; cwd and project are not accepted");
+      }
 
       // abort ends the call, NOT the session — never registry.kill here. The
       // turn already aborted, so do NOT spawn a new session (create is the one
@@ -397,6 +412,22 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
 
       const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
       const originEndpoint = resolveOriginEndpoint();
+      const owner = resolveOwner(deps);
+      let managedResolved;
+      if (managed.kind === "managed") {
+        if (deps.managedBinding === undefined) {
+          throwToolError("permission_denied", "managed terminal binding is unavailable");
+        }
+        const resolution = await deps.managedBinding.resolve({
+          managedRunId: managed.managedRunId,
+          workspaceLeaseId: managed.workspaceLeaseId,
+          owner,
+        });
+        if (resolution.kind !== "resolved") {
+          throwToolError("permission_denied", `managed terminal binding rejected: ${resolution.reason}`);
+        }
+        managedResolved = resolution.binding;
+      }
       const createRequest = {
         allowId,
         bin,
@@ -404,10 +435,21 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         cols,
         rows,
         scrollback: DEFAULT_SCROLLBACK,
-        scope: matched.entry.scope,
-        ...(cwd !== undefined ? { cwd } : {}),
-        ...(project !== undefined ? { project } : {}),
-        ...(deps.durable ? { durable: true } : {}),
+        scope: managedResolved === undefined ? matched.entry.scope : narrowManagedTerminalScope(matched.entry.scope),
+        ...(managedResolved === undefined && cwd !== undefined ? { cwd } : {}),
+        ...(managedResolved === undefined && project !== undefined ? { project } : {}),
+        ...(managedResolved === undefined
+          ? (deps.durable ? { durable: true } : {})
+          : {
+              durable: true,
+              workspace: managedResolved.canonicalRoot,
+              cwd: managedResolved.canonicalRoot,
+              managedBinding: {
+                managedRunId: managedResolved.managedRunId,
+                workspaceLeaseId: managedResolved.workspaceLeaseId,
+                serviceInstanceId: managedResolved.serviceInstanceId,
+              },
+            }),
         // The origin conversation, from the RESOLVED CONTEXT — never a create param (the
         // same sourcing rule as `scope`). It follows the session onto the handle + the
         // durable descriptor so this drive's notifications come back to this thread.
@@ -470,7 +512,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         result = await deps.registry.create(
           createRequest,
           // Stamp the origin so this session is visible ONLY to its owner.
-          resolveOwner(deps),
+          owner,
         );
       } catch (err) {
         const failedAt = deps.nowMs();
@@ -499,6 +541,25 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         throw err;
       }
 
+      if (managedResolved !== undefined) {
+        if (result.rootProcessIdentity === undefined || deps.managedBinding === undefined) {
+          await deps.registry.kill(result.sessionId, owner);
+          throwToolError("conflict", "managed terminal binding failed: terminal root identity is unavailable");
+        }
+        const bound = await deps.managedBinding.bind({
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+          serviceInstanceId: managedResolved.serviceInstanceId,
+          terminalSessionId: result.sessionId,
+          rootProcessIdentity: result.rootProcessIdentity,
+          owner,
+        });
+        if (bound.kind !== "bound") {
+          await deps.registry.kill(result.sessionId, owner);
+          throwToolError("conflict", `managed terminal binding failed: ${bound.reason}`);
+        }
+      }
+
       const doneAt = deps.nowMs();
       deps.logger.info(
         {
@@ -516,13 +577,23 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         state: "created",
         durationMs: doneAt - start,
         timestamp: doneAt,
+        ...(managedResolved === undefined ? {} : {
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+        }),
       });
       // Anchor the session's wall-clock start + request/interaction counters so
       // the per-send caps (consumeRequest/consumeInteraction/checkWallClock) measure
       // from create. Idempotent — a re-call never re-anchors the wall clock.
       deps.caps.startSession(result.sessionId);
 
-      return jsonResult(result);
+      return jsonResult({
+        ...result,
+        ...(managedResolved === undefined ? {} : {
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+        }),
+      });
     },
   };
 }

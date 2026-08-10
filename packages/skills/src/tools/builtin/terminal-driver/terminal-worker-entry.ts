@@ -461,7 +461,16 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       { sessionId, backend: state.backend, durationMs: nowMs() - startedAt },
       "terminal session created",
     );
-    return { sessionId, backend: state.backend, cols, rows };
+    const rootPid = state.backend === "tmux"
+      ? state.pty?.rootPid
+      : state.pty?.pid ?? state.pipe?.pid;
+    return {
+      sessionId,
+      backend: state.backend,
+      cols,
+      rows,
+      ...(rootPid === undefined ? {} : { rootPid }),
+    };
   }
 
   /**

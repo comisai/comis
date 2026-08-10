@@ -51,6 +51,13 @@ export {
   type SessionStatus,
   type SessionOwner,
 } from "./terminal-session-registry.js";
+export type {
+  ManagedTerminalBinding,
+  ManagedTerminalBindingResolver,
+  ManagedTerminalResolveOutcome,
+  ManagedTerminalBindOutcome,
+  TerminalRootProcessIdentity,
+} from "./terminal-managed-binding.js";
 
 // Deterministic unattended honest-fail backstop: reap a turn's LIVE never-tasked drives at an
 // unattended (webhook/cron) turn-end so the origin records an honest failure instead of a silent
@@ -161,6 +168,7 @@ export {
   buildTmuxHasSessionArgv,
   buildTmuxKillArgv,
   buildTmuxAttachArgv,
+  buildTmuxPanePidArgv,
   buildTmuxSetOptionArgv,
   type TmuxBackendDeps,
 } from "./terminal-tmux-backend.js";

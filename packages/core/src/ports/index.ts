@@ -23,6 +23,8 @@ export type {
   CapabilityServiceControlFailure,
   CapabilityServiceAbandonCommand,
   CapabilityServiceAbandonAcknowledgement,
+  CapabilityServiceTerminalEventCommand,
+  CapabilityServiceTerminalEventAcknowledgement,
   CapabilityServiceControlPort,
 } from "./capability-service-control.js";
 export type {

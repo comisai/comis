@@ -188,6 +188,8 @@ export type {
   CapabilityServiceControlFailure,
   CapabilityServiceAbandonCommand,
   CapabilityServiceAbandonAcknowledgement,
+  CapabilityServiceTerminalEventCommand,
+  CapabilityServiceTerminalEventAcknowledgement,
   CapabilityServiceControlPort,
   ManagedRunOwnerScope,
   ManagedRunServiceScope,
