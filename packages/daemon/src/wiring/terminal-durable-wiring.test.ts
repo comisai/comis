@@ -16,9 +16,41 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   buildWakeDurabilityDeps,
+  buildAgentTerminalDurability,
   buildIsTmuxAlive,
   buildKillTmux,
 } from "./terminal-durable-wiring.js";
+
+describe("managed terminal recovery transitions", () => {
+  it("publishes recovered and lost with the persisted managed identity", () => {
+    const publish = vi.fn(async () => undefined);
+    const built = buildAgentTerminalDurability({
+      dataDir: "/tmp/nonexistent-comis-managed-recovery",
+      agentId: "agent_a",
+      eventBus: { emit: vi.fn() },
+      logger: makeLogger(),
+      registries: new Map(),
+      workerStuckMs: 1_000,
+      nowMs: () => 1700,
+      managedTerminalEvents: { publish },
+    } as never);
+    const identity = {
+      sessionId: "terminal-session_a",
+      agentId: "agent_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    };
+
+    built.durability.onReattached?.(identity);
+    built.durability.onUnrecoverable?.({ ...identity, reason: "tmux_session_gone", errorKind: "dependency" });
+
+    expect(publish.mock.calls.map(([event]) => event)).toEqual([
+      expect.objectContaining({ terminalSessionId: "terminal-session_a", transition: "recovered" }),
+      expect.objectContaining({ terminalSessionId: "terminal-session_a", transition: "lost" }),
+    ]);
+  });
+});
 
 // Recorded execFileSync invocations from the module's DEFAULT probes (every
 // other test injects its exec seam; only the default-probe tests reach this).
