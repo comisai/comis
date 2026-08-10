@@ -116,4 +116,11 @@ describe("capability-service Linux confinement runner", () => {
     expect(scenario).toContain('credentialPaths: ["~/.codex/auth.json", "/home/comis/.wave4-tools"]');
     expect(scenario).not.toContain('credentialPaths: ["~/.codex",');
   });
+
+  it("gives real workers the bounded report-grade join budget", () => {
+    const scenario = source(joinScenarioPath);
+
+    expect(scenario).toContain("const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;");
+    expect(scenario).toContain("}, REAL_WORKER_JOIN_TIMEOUT_MS, `joined working state;");
+  });
 });
