@@ -3,13 +3,17 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveChatApprovalAuthority } from "./session-artifact-ref.mjs";
+import {
+  resolveChatApprovalAuthority,
+  resolveChatSessionArtifacts,
+} from "./session-artifact-ref.mjs";
 
 const temporaryDirectories: string[] = [];
 
@@ -91,5 +95,52 @@ describe("live Telegram approval authority", () => {
       conversation_ref: "cv_current",
     });
     db.close();
+  });
+});
+
+describe("live Telegram forum artifact resolution", () => {
+  it("selects the requested forum topic instead of the newest sibling topic", () => {
+    const dataDir = mkdtempSync(resolve(tmpdir(), "comis-forum-artifacts-"));
+    temporaryDirectories.push(dataDir);
+    const sessionDirectory = resolve(dataDir, "workspace", "sessions", "default", "telegram");
+    mkdirSync(sessionDirectory, { recursive: true });
+
+    const writeTopic = (threadId: number, mtimeMs: number) => {
+      const sessionFile = resolve(sessionDirectory, `conversation~thread~${threadId}.jsonl`);
+      const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+      writeFileSync(sessionFile, "", { mode: 0o600 });
+      writeFileSync(trajectoryFile, "{}\n", { mode: 0o600 });
+      writeFileSync(
+        `${sessionFile}.trajectory-path.json`,
+        `${JSON.stringify({
+          traceSchema: "comis-trajectory-pointer",
+          schemaVersion: 1,
+          sessionId: `default:agent:default:conversation:telegram:bot:-1001234567890:thread:${threadId}`,
+          runtimeFile: trajectoryFile,
+        })}\n`,
+        { mode: 0o600 },
+      );
+      writeFileSync(
+        sessionFile.replace(/\.jsonl$/, "~ledger~inbound.jsonl"),
+        `${JSON.stringify({
+          customType: "comis.inbound-message-provenance",
+          data: {
+            messages: [{
+              channelId: "-1001234567890",
+              channelType: "telegram",
+            }],
+          },
+        })}\n`,
+        { mode: 0o600 },
+      );
+      const modifiedAt = new Date(mtimeMs);
+      utimesSync(trajectoryFile, modifiedAt, modifiedAt);
+      return { sessionFile, trajectoryFile };
+    };
+
+    const topic7 = writeTopic(7, 1_000);
+    writeTopic(8, 2_000);
+
+    expect(resolveChatSessionArtifacts(dataDir, "-1001234567890", 7)).toEqual(topic7);
   });
 });
