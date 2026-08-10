@@ -7,6 +7,7 @@ readonly REPORTER_DIR=/home/comis/.wave4-tools
 readonly START_FILE=.wave4-start
 readonly SIBLING_FILE=.wave4-sibling.json
 readonly EVIDENCE_FILE=.wave4-confinement.json
+readonly RUNTIME_CONTEXT_FILE=.wave4-runtime-context.json
 readonly LAUNCH_ERROR_FILE=.wave4-launch-error
 
 fail_launch() {
@@ -60,6 +61,12 @@ jq -n \
 export CODEX_HOME=/home/comis/.codex
 export DEV_CREW_ATTACHMENT="${own_attachment}"
 export PATH="${REPORTER_DIR}:${PATH}"
+jq -n \
+  --arg workingDirectory "$(pwd -P)" \
+  --arg attachmentTargetName "${DEV_CREW_ATTACHMENT_TARGET_NAME:-}" \
+  --arg mountedAttachmentName "$(basename "${own_attachment}")" \
+  '{workingDirectory:$workingDirectory,attachmentTargetName:$attachmentTargetName,mountedAttachmentName:$mountedAttachmentName}' \
+  > "${RUNTIME_CONTEXT_FILE}"
 touch .wave4-real-codex-started
 
 readonly bootstrap='This is a live integration worker. Before any task work, run exactly: devcrew-report acknowledge. Then run exactly: devcrew-report brief. Read that pinned brief. Create wave4-artifact.txt containing your task identity from the brief. Report progress with: devcrew-report progress --summary "protected worker active". Report the validation candidate with: devcrew-report candidate-complete --summary "live join candidate" --artifact "worktree:wave4-artifact.txt". Finally run: sleep 300. Do not finish or exit before that sleep is interrupted.'

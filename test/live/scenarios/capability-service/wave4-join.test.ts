@@ -509,6 +509,82 @@ function launcherDiagnostic(worktree: string): string {
   }
 }
 
+function runtimeContextDiagnostic(worktree: string): string {
+  try {
+    return readFileSync(join(worktree, ".wave4-runtime-context.json"), "utf8").trim();
+  } catch {
+    return "launcher did not write runtime context";
+  }
+}
+
+function failedJoinDurableDiagnostic(databasePath: string, taskHandles: readonly string[]): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const placeholders = taskHandles.map(() => "?").join(", ");
+    const tasks = db.prepare(`
+      SELECT
+        tasks.handle AS taskHandle,
+        tasks.state,
+        tasks.state_version AS stateVersion,
+        tasks.managed_run_id AS managedRunId,
+        tasks.workspace_lease_id AS workspaceLeaseId,
+        tasks.brief_revision AS briefRevision,
+        tasks.brief_revision_hash AS briefRevisionHash,
+        tasks.updated_at AS taskUpdatedAt,
+        preparations.requested_workspace_root AS requestedWorkspaceRoot,
+        bindings.terminal_session_id AS terminalSessionId,
+        bindings.latest_transition AS latestTerminalTransition,
+        bindings.running_observed AS terminalRunningObserved,
+        bindings.updated_at AS terminalUpdatedAt
+      FROM tasks
+      LEFT JOIN task_preparations preparations ON preparations.task_handle = tasks.handle
+      LEFT JOIN task_terminal_bindings bindings ON bindings.task_handle = tasks.handle
+      WHERE tasks.handle IN (${placeholders})
+      ORDER BY tasks.handle
+    `).all(...taskHandles);
+    const terminalEvents = db.prepare(`
+      SELECT task_handle AS taskHandle, terminal_session_id AS terminalSessionId,
+        transition, observed_at AS observedAt, operation_id AS operationId
+      FROM task_terminal_events
+      WHERE task_handle IN (${placeholders})
+      ORDER BY observed_at, operation_id
+    `).all(...taskHandles);
+    const launchAcknowledgements = db.prepare(`
+      SELECT operation_id AS operationId, task_handle AS taskHandle,
+        managed_run_id AS managedRunId, workspace_lease_id AS workspaceLeaseId,
+        working_directory AS workingDirectory, brief_revision AS briefRevision,
+        brief_revision_hash AS briefRevisionHash, acknowledged_at AS acknowledgedAt
+      FROM task_launch_acknowledgements
+      WHERE task_handle IN (${placeholders})
+      ORDER BY acknowledged_at, operation_id
+    `).all(...taskHandles);
+    const operations = db.prepare(`
+      SELECT id, command, status, error_code AS errorCode,
+        state_version AS stateVersion, created_at AS createdAt, updated_at AS updatedAt
+      FROM operations
+      WHERE command IN ('RecordTerminalEvent', 'AcknowledgeWorkerLaunch')
+      ORDER BY state_version, id
+    `).all();
+    const operationReplayConflicts = db.prepare(`
+      SELECT operation_id AS operationId, original_command AS originalCommand,
+        presented_command AS presentedCommand
+      FROM operation_replay_conflicts
+      ORDER BY conflict_id
+    `).all();
+    return JSON.stringify({
+      tasks,
+      terminalEvents,
+      task_launch_acknowledgements: launchAcknowledgements,
+      operations,
+      operation_replay_conflicts: operationReplayConflicts,
+    });
+  } catch (cause) {
+    return `durable diagnostic failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+  } finally {
+    db.close();
+  }
+}
+
 describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", () => {
   it("confines two task-bound workers and preserves candidate custody across one terminal exit", async () => {
     expect(process.env["COMIS_DEV_CREW_COMMIT"]).toBe(REVIEWED_GO_COMMIT);
@@ -531,6 +607,7 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
     const operatorSocket = join(runDir, "operator.sock");
     const credentialFile = join(runDir, "control.credential");
     const configPath = join(scratch, "config.yaml");
+    const goDatabase = join(scratch, "go-state", "devcrew.db");
     writeFileSync(credentialFile, CONTROL_SECRET, { mode: 0o600 });
     chmodSync(credentialFile, 0o600);
 
@@ -546,7 +623,7 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
       await model.start();
       service = startInstalledService({
         binary: serviceBinary,
-        database: join(scratch, "go-state", "devcrew.db"),
+        database: goDatabase,
         operatorSocket,
         mcpSocket,
         runtimeRoot,
@@ -768,7 +845,10 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
           "failed-join terminal diagnostics",
         );
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`${message}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`);
+        const durableDiagnostic = failedJoinDurableDiagnostic(goDatabase, taskHandles);
+        throw new Error(
+          `${message}; durable: ${durableDiagnostic}; worker A context: ${runtimeContextDiagnostic(bindingA.canonical_path)}; worker B context: ${runtimeContextDiagnostic(bindingB.canonical_path)}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`,
+        );
       }
       await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");
 
