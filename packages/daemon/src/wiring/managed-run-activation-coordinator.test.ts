@@ -187,6 +187,7 @@ describe("managed-run two-phase activation", () => {
   let store: ManagedRunStorePort;
   let contentStore: ManagedRunContentPort;
   let workspaceLeases: WorkspaceLeasePort;
+  let attachments: ExecutionAttachmentPort;
   let control: CapabilityServiceControlPort;
   let logger: ComisLogger;
   let eventBus: TypedEventBus;
@@ -217,6 +218,7 @@ describe("managed-run two-phase activation", () => {
     if (!content.ok) throw content.error;
     contentStore = content.value;
     workspaceLeases = createSqliteWorkspaceLeaseStore(db);
+    attachments = createSqliteExecutionAttachmentStore(db);
     activate = vi.fn(async (command) => ok({
       managedRunId: command.managedRunId,
       externalRunRef: command.externalRunRef,
@@ -246,6 +248,8 @@ describe("managed-run two-phase activation", () => {
       store,
       contentStore,
       workspaceLeases,
+      attachments,
+      revokeManagedTerminals: async () => ok(undefined),
       control,
       activeView: {
         getActiveView: () => makeActiveView({

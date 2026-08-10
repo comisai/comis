@@ -70,7 +70,7 @@ import {
   type TerminalSessionRegistry,
 } from "@comis/skills/tools";
 import { wireAgentTerminalTools, buildTerminalEgressDeps, deriveTerminalAttentionConfig } from "./setup-terminal-tools.js";
-import { createManagedTerminalToolDeps } from "./managed-terminal-binding.js";
+import { createManagedTerminalRevoker, createManagedTerminalToolDeps } from "./managed-terminal-binding.js";
 import {
   buildTerminalWakeDurability,
   type WakeDurabilityConfig,
@@ -129,7 +129,7 @@ export interface ToolsDeps {
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
   resolveRootRunId?: import("@comis/core").RootRunIdResolver;
-  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "attachments" | "attachmentAuthority" | "control" | "activationCoordinator">;
+  capabilityServices: Pick<CapabilityServicePlatform, "runtime" | "store" | "workspaceLeases" | "attachments" | "attachmentAuthority" | "control" | "activationCoordinator" | "bindTerminalRevoker">;
   clock: ClockPort;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
@@ -331,9 +331,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   /** Per-agent ProcessRegistry instances for background process lifecycle management. */
   const processRegistries = new Map<string, ProcessRegistry>();
 
-  /** Per-agent TerminalSessionRegistry instances; closure-local, lazily built. */
+  /** Per-agent registries; closure-local and lazily built. */
   const terminalRegistries = new Map<string, TerminalSessionRegistry>();
-
+  deps.capabilityServices.bindTerminalRevoker?.(createManagedTerminalRevoker(terminalRegistries));
   const terminalEgress = buildTerminalEgressDeps(skillsLogger, sandboxProvider); // built ONCE, injected per-agent
 
   /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly

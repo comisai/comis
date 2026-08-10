@@ -8,6 +8,7 @@ import {
   type CapabilityServiceControlFailure,
   type CapabilityServiceControlPort,
   type ComisLogger,
+  type ExecutionAttachmentPort,
   type ManagedRunContentPort,
   type ManagedRunActivationDescriptor,
   type ManagedRunInitiationSource,
@@ -23,6 +24,7 @@ import {
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import type { CapabilityServiceRuntime } from "./capability-service-runtime.js";
 import type { ValidatedWorkspaceLeasePath } from "./workspace-lease-path-validator.js";
+import { createManagedRunResourceRevoker } from "./managed-run-resource-revoker.js";
 
 export interface ManagedRunActivationAuthority {
   readonly tenantId: string;
@@ -126,6 +128,8 @@ export interface ManagedRunActivationCoordinatorDeps {
   readonly store: ManagedRunStorePort;
   readonly contentStore: ManagedRunContentPort;
   readonly workspaceLeases: WorkspaceLeasePort;
+  readonly attachments: ExecutionAttachmentPort;
+  readonly revokeManagedTerminals: (record: ManagedRunRecord) => Promise<Result<void, Error>>;
   readonly control: CapabilityServiceControlPort;
   readonly activeView: Pick<CapabilityServiceRuntime, "getActiveView">;
   readonly validateWorkspacePath: (
@@ -211,6 +215,8 @@ function matchesExisting(
 export function createManagedRunActivationCoordinator(
   deps: ManagedRunActivationCoordinatorDeps,
 ): ManagedRunActivationCoordinator {
+  const revokeBoundResources = createManagedRunResourceRevoker({ store: deps.store, attachments: deps.attachments, revokeManagedTerminals: deps.revokeManagedTerminals, nowMs: deps.nowMs, logger: deps.logger });
+
   async function abandonPrepared(
     input: ManagedRunActivationInput,
     ids: ManagedRunActivationIds,
@@ -220,15 +226,18 @@ export function createManagedRunActivationCoordinator(
   ): Promise<void> {
     let effectiveDisposition = disposition;
     if (record?.workspaceLeaseId !== undefined) {
-      const released = await invokeStore(() => deps.workspaceLeases.release(
-        workspaceScope(record),
-        {
-          operationId: ids.leaseReleaseOperationId,
-          workspaceLeaseId: record.workspaceLeaseId as string,
-          disposition,
-          releasedAtMs: deps.nowMs(),
-        },
-      ));
+      const resourcesRevoked = await revokeBoundResources(record, ids.leaseReleaseOperationId);
+      const released = resourcesRevoked
+        ? await invokeStore(() => deps.workspaceLeases.release(
+            workspaceScope(record),
+            {
+              operationId: ids.leaseReleaseOperationId,
+              workspaceLeaseId: record.workspaceLeaseId as string,
+              disposition,
+              releasedAtMs: deps.nowMs(),
+            },
+          ))
+        : err(new Error("managed-run resources remain active"));
       if (
         !released.ok
         || (released.value.kind !== "released" && released.value.kind !== "identical_replay")

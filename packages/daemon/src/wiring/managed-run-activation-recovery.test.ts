@@ -13,6 +13,7 @@ import {
   type ManagedRunRecord,
 } from "@comis/core";
 import {
+  createSqliteExecutionAttachmentStore,
   createSqliteManagedRunContentStore,
   createSqliteManagedRunStore,
   createSqliteWorkspaceLeaseStore,
@@ -279,6 +280,8 @@ describe("managed-run activation restart recovery", () => {
       store,
       contentStore,
       workspaceLeases,
+      attachments: createSqliteExecutionAttachmentStore(reopenedDb),
+      revokeManagedTerminals: async () => ok(undefined),
       control,
       activeView: { getActiveView: () => makeActiveView([workspaceRoot]) },
       validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>

@@ -13,6 +13,8 @@ import {
 import type { ManagedTerminalBindingResolver, SessionOwner } from "@comis/skills/tools";
 import { fromPromise, type Result } from "@comis/shared";
 import { createManagedTerminalEventBridge } from "./capability-service-terminal-event.js";
+export { createManagedTerminalRevoker } from "./managed-terminal-revoker.js";
+export type { ManagedTerminalRevoker } from "./managed-terminal-revoker.js";
 
 export interface ManagedTerminalBindingDeps {
   readonly store: ManagedRunStorePort;

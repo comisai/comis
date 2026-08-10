@@ -50,6 +50,7 @@ import {
   type ExecutionAttachmentAuthority,
   type ExecutionAttachmentRecoverySummary,
 } from "./execution-attachment-authority.js";
+import type { ManagedTerminalRevoker } from "./managed-terminal-revoker.js";
 
 const SECRET_REFERENCE_PREFIX = "secret://";
 
@@ -67,6 +68,7 @@ export interface CapabilityServicePlatform {
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
   readonly attachmentRecoverySummary: ExecutionAttachmentRecoverySummary;
   readonly purgedContentCount: number;
+  bindTerminalRevoker(revoker: ManagedTerminalRevoker): void;
   shutdown(): Promise<Result<void, Error>>;
 }
 
@@ -289,11 +291,20 @@ export async function setupCapabilityServices(
     ),
     logger: deps.logger,
   });
+  let terminalRevoker: ManagedTerminalRevoker | undefined;
+  const revokeManagedTerminals: ManagedTerminalRevoker = async (record) => {
+    if (record.terminalSessionIds.length === 0) return ok(undefined);
+    return terminalRevoker === undefined
+      ? err(new Error("managed terminal revoker is unavailable"))
+      : terminalRevoker(record);
+  };
 
   const activationCoordinator = createManagedRunActivationCoordinator({
     store,
     contentStore,
     workspaceLeases,
+    attachments,
+    revokeManagedTerminals,
     control: host.value.control,
     activeView: runtime,
     validateWorkspacePath: (requestedPath, allowedWorkspaceRoots) =>
@@ -358,6 +369,7 @@ export async function setupCapabilityServices(
     recoverySummary: recovered.value,
     attachmentRecoverySummary: attachmentRecovered.value,
     purgedContentCount: purged.value,
+    bindTerminalRevoker: (revoker: ManagedTerminalRevoker) => { terminalRevoker = revoker; },
     shutdown: async () => {
       if (stopped) return ok(undefined);
       stopped = true;
