@@ -139,6 +139,7 @@ function pushExecutionAttachmentBinds(args: string[], input: ScopeArgsInput): vo
   if (attachments.length === 0) return;
   args.push("--dir", "/run/comis");
   args.push("--dir", MANAGED_TERMINAL_ATTACHMENT_DIRECTORY);
+  args.push("--chmod", "0700", MANAGED_TERMINAL_ATTACHMENT_DIRECTORY);
   for (const attachment of attachments) {
     if (!/^attachment-[a-f0-9]{32}\.sock$/u.test(attachment.targetName) || !attachment.sourcePath.startsWith("/")) {
       throw new Error("invalid execution attachment mount");
