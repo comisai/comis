@@ -53,7 +53,6 @@ export async function terminateWorkerSession(
   if (backend === undefined) return err(new Error("terminal backend identity is unavailable"));
 
   let settled = false;
-  let timer: unknown;
   let resolveExit: (confirmed: boolean) => void = () => undefined;
   const exited = new Promise<boolean>((resolve) => {
     resolveExit = resolve;
@@ -67,7 +66,7 @@ export async function terminateWorkerSession(
   };
   const onExit = (): void => finish(true);
   state.exitListeners.add(onExit);
-  timer = deps.setTimer(() => finish(false), TERMINATION_TIMEOUT_MS);
+  const timer = deps.setTimer(() => finish(false), TERMINATION_TIMEOUT_MS);
 
   const signalled = tryCatch(() => backend.kill("SIGTERM"));
   if (!signalled.ok) {
