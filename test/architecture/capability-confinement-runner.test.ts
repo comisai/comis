@@ -109,4 +109,11 @@ describe("capability-service Linux confinement runner", () => {
     expect(launcher).toContain('--model "${COMIS_WAVE4_CODEX_MODEL:-gpt-5.5}"');
     expect(scenario).toContain('COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5"');
   });
+
+  it("exposes only the read-only Codex auth file to each jail", () => {
+    const scenario = source(joinScenarioPath);
+
+    expect(scenario).toContain('credentialPaths: ["~/.codex/auth.json", "/home/comis/.wave4-tools"]');
+    expect(scenario).not.toContain('credentialPaths: ["~/.codex",');
+  });
 });
