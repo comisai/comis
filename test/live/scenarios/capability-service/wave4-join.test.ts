@@ -270,11 +270,14 @@ function normalizedMessage(text: string): NormalizedMessage {
 async function pollUntil(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
-  label: string,
+  label: string | (() => string),
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await predicate())) {
-    if (Date.now() >= deadline) throw new Error(`${label} timed out`);
+    if (Date.now() >= deadline) {
+      const timeoutLabel = typeof label === "function" ? label() : label;
+      throw new Error(`${timeoutLabel} timed out`);
+    }
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 50));
   }
 }
@@ -722,7 +725,7 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
           }
         },
         30_000,
-        "two real Codex process starts",
+        () => `two real Codex process starts; worker A: ${launcherDiagnostic(bindingA.canonical_path)}; worker B: ${launcherDiagnostic(bindingB.canonical_path)}; service stderr: ${service.stderr()}`,
       );
 
       let status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
