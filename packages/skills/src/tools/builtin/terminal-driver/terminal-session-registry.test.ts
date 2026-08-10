@@ -907,6 +907,62 @@ describe("createTerminalSessionRegistry — malformed-frame on stdout does NOT c
 });
 
 describe("createTerminalSessionRegistry — worker create failure is surfaced", () => {
+  it("identifies a managed create reply that omits the terminal root PID", async () => {
+    const fake = makeFakeWorker((req) => req.method === "create"
+      ? {
+          sessionId: req.sessionId,
+          requestId: req.requestId,
+          ok: true,
+          result: { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24 },
+        }
+      : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      resolveRootProcessIdentity: vi.fn(async () => ({ pid: 6200, startIdentity: "linux:991" })),
+    } as unknown as Partial<TerminalSessionRegistryDeps>));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    } as never, OWNER)).rejects.toThrow("managed terminal create reply omitted a positive root PID");
+  });
+
+  it("identifies a managed root PID whose process start identity is unreadable", async () => {
+    const fake = makeFakeWorker((req) => req.method === "create"
+      ? {
+          sessionId: req.sessionId,
+          requestId: req.requestId,
+          ok: true,
+          result: { sessionId: req.sessionId, backend: "tmux", cols: 80, rows: 24, rootPid: 6200 },
+        }
+      : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      resolveRootProcessIdentity: vi.fn(async () => undefined),
+    } as unknown as Partial<TerminalSessionRegistryDeps>));
+
+    await expect(registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+      managedBinding: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+      },
+    } as never, OWNER)).rejects.toThrow("managed terminal process 6200 start identity is unreadable");
+  });
+
   it("awaits a managed create reply and persists the resolved terminal root-process identity", async () => {
     const fake = makeFakeWorker((req) => {
       if (req.method !== "create") return undefined;
