@@ -64,6 +64,8 @@ touch .wave4-real-codex-started
 
 readonly bootstrap='This is a live integration worker. Before any task work, run exactly: devcrew-report acknowledge. Then run exactly: devcrew-report brief. Read that pinned brief. Create wave4-artifact.txt containing your task identity from the brief. Report progress with: devcrew-report progress --summary "protected worker active". Report the validation candidate with: devcrew-report candidate-complete --summary "live join candidate" --artifact "worktree:wave4-artifact.txt". Finally run: sleep 300. Do not finish or exit before that sleep is interrupted.'
 
+# The enclosing bwrap jail owns confinement and exposes exactly one protected
+# attachment. A nested Codex sandbox would deny that authorized Unix socket.
 exec "${REAL_CODEX}" exec --json \
   --strict-config \
   --ignore-user-config \
@@ -71,7 +73,7 @@ exec "${REAL_CODEX}" exec --json \
   --ephemeral \
   --color never \
   --model "${COMIS_WAVE4_CODEX_MODEL:-gpt-5.5}" \
-  --sandbox workspace-write \
+  --sandbox danger-full-access \
   -c 'model_reasoning_effort="high"' \
   --cd "${PWD}" \
   - <<<"${bootstrap}"
