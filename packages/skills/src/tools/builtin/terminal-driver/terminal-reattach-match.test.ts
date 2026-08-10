@@ -156,6 +156,23 @@ describe("terminal-reattach-match — reattachDecision (the re-attach decision, 
     expect(isTmuxAlive).not.toHaveBeenCalledWith(""); // never probe a falsy name
   });
 
+  it("preserves but never re-attaches a managed descriptor whose root process identity was not persisted", () => {
+    const descriptor = {
+      ...makeDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    };
+    const isTmuxAlive = vi.fn(() => true);
+
+    expect(reattachDecision(descriptor, isTmuxAlive)).toEqual({
+      action: "failed",
+      sessionId: "abc",
+      reason: "managed_root_identity_unavailable",
+    });
+    expect(isTmuxAlive).not.toHaveBeenCalled();
+  });
+
   it("never throws on a wholly-degenerate descriptor (undefined-ish) — yields the SAFE failed shape", () => {
     // The registry's recover loop must survive a corrupt-after-crash descriptor; the
     // decision is TOTAL even for an input that is not a well-formed descriptor.

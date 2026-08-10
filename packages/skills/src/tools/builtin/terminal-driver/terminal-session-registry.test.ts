@@ -2586,6 +2586,39 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
 
     expect(store.remove).not.toHaveBeenCalled();
   });
+
+  it("preserves an incomplete managed descriptor without re-attaching or claiming recovery", async () => {
+    const fake = makeReattachWorker(true);
+    const managed = {
+      ...durableDescriptor(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    };
+    const store = fakeDescriptorStore([managed]);
+    const onReattached = vi.fn();
+    const onUnrecoverable = vi.fn();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
+      durability: {
+        descriptorStore: store,
+        isTmuxAlive: () => true,
+        onReattached,
+        onUnrecoverable,
+      },
+    }));
+
+    await vi.waitFor(() => expect(onUnrecoverable).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "old-sess",
+      reason: "managed_root_identity_unavailable",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    })));
+    expect(registry.get("old-sess", DURABLE_OWNER)).toBeUndefined();
+    expect(fake.requestFrames.filter((frame) => frame.method === "reattach")).toHaveLength(0);
+    expect(onReattached).not.toHaveBeenCalled();
+    expect(store.remove).not.toHaveBeenCalled();
+  });
 });
 
 // ===========================================================================
