@@ -735,10 +735,41 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
       let status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
       expect(status.completeness).toBe("partial");
       expect(new Set(status.tasks.map((task) => task.taskHandle))).toEqual(new Set([taskA, taskB]));
-      await pollUntil(() => {
-        status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
-        return status.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
-      }, REAL_WORKER_JOIN_TIMEOUT_MS, `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
+      try {
+        await pollUntil(() => {
+          status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
+          return status.tasks.filter((task) => taskHandles.includes(task.taskHandle)).every((task) => task.state === "working");
+        }, REAL_WORKER_JOIN_TIMEOUT_MS, `joined working state; observed ${JSON.stringify(status.tasks)}; service stderr: ${service.stderr()}`);
+      } catch (error) {
+        let workerAView = "terminal read was not attempted";
+        let workerBView = "terminal read was not attempted";
+        await pollUntil(() => model.idle, 10_000, "liaison idle before failed-join diagnostics");
+        const deliveredBeforeDiagnostics = echo.getSentMessages().filter(
+          (message) => message.text.includes("LIAISON_TURN_DONE"),
+        ).length;
+        model.setScript([
+          {
+            tool: "terminal_session_read",
+            arguments: { sessionId: sessionA, scrollback: 100 },
+            capture: (text) => { workerAView = text; },
+          },
+          {
+            tool: "terminal_session_read",
+            arguments: { sessionId: sessionB, scrollback: 100 },
+            capture: (text) => { workerBView = text; },
+          },
+        ]);
+        await channelManager.injectMessage("echo", normalizedMessage("READ_FAILED_JOIN_TERMINALS"));
+        await pollUntil(
+          () => model.idle && echo.getSentMessages().filter(
+            (message) => message.text.includes("LIAISON_TURN_DONE"),
+          ).length > deliveredBeforeDiagnostics,
+          30_000,
+          "failed-join terminal diagnostics",
+        );
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`${message}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`);
+      }
       await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");
 
       const evidenceA = JSON.parse(readFileSync(join(bindingA.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
