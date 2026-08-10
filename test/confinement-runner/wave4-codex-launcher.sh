@@ -25,6 +25,14 @@ if [[ ! -x "${REPORTER_DIR}/devcrew-report" || ! -r "${SIBLING_FILE}" ]]; then
   fail_launch "wave-four protected launch inputs are incomplete"
 fi
 
+for _ in $(seq 1 1200); do
+  [[ -f "${START_FILE}" ]] && break
+  sleep 0.05
+done
+if [[ ! -f "${START_FILE}" ]]; then
+  fail_launch "wave-four concurrent-start barrier timed out"
+fi
+
 mapfile -t attachments < <(find /run/comis/attachments -maxdepth 1 -type s -name 'attachment-*.sock' -print)
 if [[ "${#attachments[@]}" -ne 1 ]]; then
   fail_launch "wave-four launch requires exactly one protected attachment"
@@ -45,14 +53,6 @@ jq -n \
   --argjson siblingAttachmentAbsent "${sibling_attachment_absent}" \
   '{siblingReadBlocked:$siblingReadBlocked,siblingWriteBlocked:$siblingWriteBlocked,siblingAttachmentAbsent:$siblingAttachmentAbsent}' \
   > "${EVIDENCE_FILE}"
-
-for _ in $(seq 1 1200); do
-  [[ -f "${START_FILE}" ]] && break
-  sleep 0.05
-done
-if [[ ! -f "${START_FILE}" ]]; then
-  fail_launch "wave-four concurrent-start barrier timed out"
-fi
 
 export CODEX_HOME=/home/comis/.codex
 export DEV_CREW_ATTACHMENT="${own_attachment}"
