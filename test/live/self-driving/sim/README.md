@@ -257,9 +257,9 @@ daemon driven by a deterministic scripted provider. No model-driven or reflectio
   boots an isolated daemon (fresh system-temp data root, own loopback gateway), registers the workload
   through `integrations.mcp.servers`, and answers every completion request from a local OpenAI-compatible
   server whose next tool call is computed from the prior tool results — no model, no network. It exits
-  non-zero unless that invocation's own agent turn succeeded in band, its terminal grade is `success`/1 with
-  the variant's expected commit and readback, and the durable trajectory carries one `tool.result` per
-  dispatched call under that run's trace. Reproduce with
+  non-zero unless the run is evidence bound to that invocation; the enumerated publication contract — and the
+  budget that ends a wedged wait with a named timeout rather than a hang — lives with the script in
+  [`../scripts/README.md`](../scripts/README.md). Reproduce with
   `node test/live/self-driving/scripts/artifact-to-action-runtime-drive.mjs --variant <A|B|C|A-degraded>`.
 
 | runtime drive | `A` | `B` | `C` | `A-degraded` |
@@ -274,11 +274,11 @@ daemon driven by a deterministic scripted provider. No model-driven or reflectio
 | `traceId` | `c3748fc3-c7ae-4cd2-94e5-5b47aabae6d7` | `00a8af35-7631-41b1-8e98-61b0913f8424` | `cd00ad11-a565-48f2-9f94-c067d24a95a5` | `21d76980-d1cc-4dbc-87e1-c03c391a5e53` |
 | `runId` | `b8aa3901-2c2e-4f02-82e7-8f0bdccc4068` | `7e1e0474-f910-43a1-a1e6-fb69283a3008` | `07bb41ad-e855-4293-964d-9d9ec3f04d0e` | `8006d89d-81f9-4c1a-b56c-f1b2a0c457a9` |
 
-Each row is one recorded drive of the harness in this checkout, and every row except `traceId`/`runId` is
-reproducible: re-run the command above per variant and the figures come back identical, because the world, the
-tool surface and the scripted policy are all deterministic. That is the claim to check against — not a
-statement about any particular revision, which every later edit to the kit would falsify while leaving the
-figures untouched. All four drives share one session key —
+Each row is one recorded drive, and every row except `traceId`/`runId` is reproducible: re-run the command
+above per variant and the figures come back identical, because the world, the tool surface and the scripted
+policy are all deterministic. That is the claim to check against — not a statement about any particular
+revision of the kit, which every later edit to it would falsify while leaving the figures untouched. All four
+drives share one session key —
 `test:agent:default:gateway-7062520c…:control-plane:gateway:["cli",null]:peer:gateway-7062520c…` — which is
 derived from the hashed ID of the drive's gateway token and is therefore stable across reruns. The token's
 secret is not: it is generated fresh per run, so a value read out of this repository can never authenticate to
