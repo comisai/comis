@@ -544,6 +544,7 @@ describe("runtime self-report evidence missing reply", () => {
 
     expect(reply).toMatch(/could not verify.*runtime activity/iu);
     expect(reply).toMatch(/work counts?.*cause.*cost/iu);
+    expect(reply).toMatch(/durable job.*restart chronology/iu);
     expect(LOCALE_MESSAGE_IDS).toContain("runtime_self_report_evidence_missing");
   });
 });

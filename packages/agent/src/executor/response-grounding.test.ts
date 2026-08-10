@@ -137,6 +137,23 @@ describe("response grounding module", () => {
     });
   });
 
+  it("requires observability for durable-job restart chronology", () => {
+    const honestResponse =
+      "I could not verify whether the durable job resumed across the restart.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "resume the durable synthetic job after the restart",
+      response:
+        "The durable job completed before the restart, so there is nothing to resume.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
   it("requires duration-ranking evidence for a slowest-execution claim", () => {
     const honestResponse = "I could not verify which execution was slowest.";
     const unsupportedResponse = "The current report does not rank execution duration.";

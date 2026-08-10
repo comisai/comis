@@ -111,6 +111,36 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("recovers a durable-job restart report that omitted obs_query", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "resume the durable synthetic job after the restart",
+      requestRelevantToolNames: ["obs_query"],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () =>
+        "The current observability report shows that the durable run resumed.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/runtime self-report.*obs_query/isu),
+      expect.anything(),
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["obs_query"],
+      outcome: "recovered",
+    });
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 
