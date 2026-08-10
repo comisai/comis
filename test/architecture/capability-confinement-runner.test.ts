@@ -110,6 +110,16 @@ describe("capability-service Linux confinement runner", () => {
     expect(scenario).toContain('COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5"');
   });
 
+  it("leaves protected attachment access to the enclosing bubblewrap jail", () => {
+    const launcher = source(launcherPath);
+    const scenario = source(joinScenarioPath);
+
+    expect(launcher).toContain("--sandbox danger-full-access");
+    expect(launcher).not.toContain("--sandbox workspace-write");
+    expect(scenario).toContain('filesystem: "workspace"');
+    expect(scenario).toContain("siblingReadBlocked: true, siblingWriteBlocked: true, siblingAttachmentAbsent: true");
+  });
+
   it("exposes only the read-only Codex auth file to each jail", () => {
     const scenario = source(joinScenarioPath);
 
