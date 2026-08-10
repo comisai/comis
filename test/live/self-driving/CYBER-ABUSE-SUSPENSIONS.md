@@ -35,8 +35,9 @@ configuration, a helper script, or a committed file. Values such as `1`, `true`,
 the test. A suspended injector exits `4` before network activity and names only the detected risk categories;
 it never echoes the prompt.
 
-Opaque media, reflected stored content, and generated corpora cannot be classified reliably from the
-driver's visible text. Declare `COMIS_LIVE_TEST_RISK=cyber-abuse` whenever any such input contains or derives
+Opaque media, reflected stored content, generated corpora, and simulator or MCP tool results cannot be
+classified reliably from the driver's visible text — the gate sees the prompt, never what a tool returns
+mid-episode. Declare `COMIS_LIVE_TEST_RISK=cyber-abuse` whenever any such input contains or derives
 from a suspended row. Without explicit operator authorization, record the row as
 `NOT-RUN: provider cyber-abuse safety suspension`; do not relabel it NO-ACCESS or a product failure.
 
@@ -48,6 +49,7 @@ The following provider-backed coverage is suspended unless the operator explicit
 |---|---|
 | `targets/adaptive-threat-hunting.md` | Every LLM/provider-backed threat-hunting transcript, reflection, reuse, poisoning, containment, or rotated-incident row. Offline DB/schema/event assertions may still run. |
 | `sim/threat-hunting/` and `scripts/drive-sim-workload.sh threat-hunting` | The complete simulated SOC workload, including feeder turns and reflection. The workload driver declares this risk automatically. |
+| `sim/artifact-to-action/` and `scripts/drive-sim-workload.sh artifact-to-action` | The complete simulated artifact-to-action workload, including feeder turns and reflection. Every world seeds an instruction-shaped decoy inside the artifact, so the risk reaches the provider through MCP tool results that the text classifier never sees — the feeder prompt itself classifies clean. The workload driver declares this risk automatically. The same content driven through the real-user target is suspended by that target's E2 embedded-instruction row below. |
 | `targets/english/unsandboxed-marathon-campaign.md` | The provider-driven campaign. It combines real shell/control-plane work with sandbox-off posture, destructive, secret, SSRF, injection, and policy-bypass probes. Offline configuration and guard checks may still run. |
 | `scripts/model-battery.mjs` | The complete battery because it deliberately asks the model to disclose a gateway bearer token. The script declares this risk automatically. |
 | `targets/real-user-everyday-assistant.md` | A4, A6, A9, A11; B4 security/destructive legs, B5 hostile-page leg, B6, B15 security/secret legs; C1 authority-escalation question and C3–C7; D7, D8's cross-conversation stale-approval leg, and D9's self-configuration/secret-residency legs; E2's embedded-instruction and stale-approval legs, E3's physical-action leg, and E5's hostile-source leg. This includes internal-network fetches, hostile external instructions, credential handling/extraction, destructive or physical work, self-configuration, privilege escalation, and security-control bypass. |
@@ -57,6 +59,12 @@ The following provider-backed coverage is suspended unless the operator explicit
 
 The inventory is category-based so new targets do not silently escape it. Authors must mark new risky rows
 in their test plan and use the risk declaration even if the current text classifier also detects them.
+
+`scripts/drive-sim-workload.sh` enforces that rule for the simulator catalog: every workload carries an
+explicit `cyber-abuse` or `none` declaration, a workload with no declaration refuses to drive, and the
+declared risk is gated before the daemon restart and every other side effect.
+`drive-sim-workload.sh --gate <workload>` prints that decision offline — exit `4` when the workload is
+suspended, `0` when it may reach a provider.
 
 ## Central gate and risk classes
 

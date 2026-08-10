@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -213,13 +222,6 @@ describe("live provider injector risk-gate coverage", () => {
     }
   });
 
-  it("declares the threat-hunting workload as cyber-abuse risk", () => {
-    const source = loadScript("drive-sim-workload.sh");
-
-    expect(source).toContain("live-provider-risk-gate.mjs");
-    expect(source).toContain("--declared-risk cyber-abuse");
-  });
-
   it("gates the generic RPC caller on its resolved params before the socket opens", () => {
     const source = loadScript("revoke.mjs");
 
@@ -229,6 +231,104 @@ describe("live provider injector risk-gate coverage", () => {
     expect(source).toContain("isGatedRpcMethod(method)");
     expect(source).toContain("collectRpcRiskTexts(params)");
     expect(source.indexOf("isGatedRpcMethod(method)")).toBeLessThan(source.indexOf("await withClient("));
+  });
+});
+
+// The classifier only ever sees the driver's own prompt, so a simulator whose risk rides in MCP tool
+// results has to be suspended by declaration. These run the driver's real decision rather than reading its
+// text: a prose assertion would still pass if the gate stopped being wired into the drive path.
+describe("sim workload driver provider-risk policy", () => {
+  const kitRoot = fileURLToPath(new URL("..", import.meta.url));
+  const driverScript = fileURLToPath(new URL("./drive-sim-workload.sh", import.meta.url));
+  const simRoot = join(kitRoot, "sim");
+  const tempDirs: string[] = [];
+
+  afterAll(() => {
+    for (const dir of tempDirs) rmSync(dir, { force: true, recursive: true });
+  });
+
+  const cleanEnv = (): NodeJS.ProcessEnv => {
+    const env = { ...process.env };
+    delete env[CYBER_ABUSE_AUTH_ENV];
+    delete env[LIVE_TEST_RISK_ENV];
+    return env;
+  };
+
+  const runDriver = (
+    args: string[],
+    env: NodeJS.ProcessEnv = cleanEnv(),
+  ): ReturnType<typeof spawnSync> => spawnSync(
+    "bash",
+    [driverScript, ...args],
+    { encoding: "utf8", env, timeout: 60_000 },
+  );
+
+  const workloads = readdirSync(simRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(simRoot, entry.name, "tools.json")))
+    .map((entry) => entry.name)
+    .sort();
+
+  it("decides every shipped workload's provider risk instead of defaulting", () => {
+    expect(workloads.length).toBeGreaterThan(0);
+
+    for (const workload of workloads) {
+      const gate = runDriver(["--gate", workload]);
+      expect([0, 4], `${workload}: ${String(gate.status)} ${gate.stderr}`).toContain(gate.status);
+    }
+
+    const check = runDriver(["--check"], { ...cleanEnv(), SIM_DIR: simRoot });
+    expect(check.status, check.stdout).toBe(0);
+    expect(check.stdout).toContain("SERVER+PROMPT+RISK maps");
+  });
+
+  it("suspends exactly the workloads the suspension inventory lists", () => {
+    const suspended = workloads.filter((workload) => runDriver(["--gate", workload]).status === 4);
+    const inventory = readFileSync(join(kitRoot, "CYBER-ABUSE-SUSPENSIONS.md"), "utf8");
+    const listed = [...inventory.matchAll(/`scripts\/drive-sim-workload\.sh ([a-z-]+)`/gu)]
+      .map((match) => match[1] as string);
+
+    expect(suspended).toEqual([...new Set(listed)].sort());
+    expect(suspended).toContain("artifact-to-action");
+  });
+
+  it("blocks a suspended workload on the real drive path before any side effect", () => {
+    const drive = runDriver(["artifact-to-action"]);
+
+    expect(drive.status).toBe(4);
+    expect(drive.stderr).toContain("artifact-to-action");
+    expect(drive.stderr).toContain("declared-cyber-abuse");
+    // The banner is printed immediately after the gate, so an empty stdout proves nothing ran.
+    expect(drive.stdout).toBe("");
+  });
+
+  it("unblocks a suspended workload only on the exact operator acknowledgement", () => {
+    const base = cleanEnv();
+
+    expect(runDriver(["--gate", "artifact-to-action"], {
+      ...base,
+      [CYBER_ABUSE_AUTH_ENV]: "true",
+    }).status).toBe(4);
+
+    expect(runDriver(["--gate", "artifact-to-action"], {
+      ...base,
+      [LIVE_TEST_RISK_ENV]: "cyber-abuse",
+      [CYBER_ABUSE_AUTH_ENV]: CYBER_ABUSE_AUTH_VALUE,
+    }).status).toBe(0);
+  });
+
+  it("refuses to drive a workload that carries no risk declaration", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sim-risk-map-"));
+    tempDirs.push(dir);
+    mkdirSync(join(dir, "unregistered-workload"));
+    writeFileSync(join(dir, "unregistered-workload", "tools.json"), "[]");
+
+    const check = runDriver(["--check"], { ...cleanEnv(), SIM_DIR: dir });
+    expect(check.status).toBe(1);
+    expect(check.stdout).toContain("MISSING RISK entry: unregistered-workload");
+
+    const drive = runDriver(["unregistered-workload"]);
+    expect(drive.status).toBe(2);
+    expect(drive.stderr).toContain("unknown or unmapped workload");
   });
 });
 

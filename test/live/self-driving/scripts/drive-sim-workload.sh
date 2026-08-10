@@ -11,6 +11,7 @@
 #
 #   bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
 #   REUSE_ONLY=1 bash drive-sim-workload.sh <workload> B <fresh-sender>
+#   bash drive-sim-workload.sh --gate <workload>    # offline: the provider-risk decision alone (0 allowed, 4 suspended)
 #
 # Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect live sim
 # servers + connect THIS workload's server (one server at a time, no tool confusion) → reset the 2 feeder
@@ -85,6 +86,35 @@ prompt_for() {
   esac
 }
 
+# Per-workload provider-risk declaration, mirroring the suspended inventory in ../CYBER-ABUSE-SUSPENSIONS.md.
+# The central gate can only classify text the driver can see — the canonical feeder prompt — never the MCP
+# tool results a workload returns mid-episode. A world that seeds instruction-shaped content inside those
+# results is therefore invisible to the classifier and must declare the risk here, so live provider execution
+# still goes through the operator-only authorization path. `none` is an explicit declaration, not a default:
+# a workload with no entry fails closed instead of driving on an undecided risk.
+risk_for() {
+  case "$1" in
+    # Simulated SOC operations: the feeder prompt itself is cyber-abuse-shaped.
+    threat-hunting) printf '%s' cyber-abuse ;;
+    # Every artifact world seeds an instruction-shaped decoy that reaches the provider through tool results.
+    artifact-to-action) printf '%s' cyber-abuse ;;
+    package-delivery|market-making|icu-clinical|contract-negotiation|wildfire-command|content-moderation) printf '%s' none ;;
+    grid-operator|lab-research|customer-success|aml-investigations|tutoring) printf '%s' none ;;
+    humanitarian-logistics|precision-apiary|personal-operations) printf '%s' none ;;
+    *) return 1 ;;
+  esac
+}
+
+# One gate invocation shared by `--gate` and the drive path, so the offline decision an operator can inspect
+# is the same decision that actually blocks a drive. Declared risk suspends the run; the canonical feeder
+# prompt is classified too, so a newly worded prompt cannot reach the provider unclassified.
+run_risk_gate() {
+  node "$SCRIPT_DIR/live-provider-risk-gate.mjs" \
+    --source "drive-sim-workload.sh $1" \
+    --declared-risk "$2" \
+    --text "$3"
+}
+
 # The runtime maps authenticated platform subjects to canonical principals before it creates a session key.
 # Resolve that same authority from the running emulator instead of hand-building a display key from the raw
 # sender id; a stale display key makes reset_conversation a silent no-op and contaminates the next workload.
@@ -109,9 +139,22 @@ const { readFileSync } = require('node:fs');
 NODE
 }
 
-# --check: a map-completeness WIRING-GUARD (drift catcher) — assert the embedded SERVER+PROMPT maps cover
+# --gate <workload>: the provider-risk decision ALONE — no daemon, no drive, no side effect. Exits 0 when the
+# workload may reach a provider and 4 when it is suspended, so the authorization posture is inspectable
+# before a drive and testable per workload.
+if [ "$WL" = "--gate" ]; then
+  GATE_WL="${2:-}"
+  [ -n "$GATE_WL" ] || { echo "usage: drive-sim-workload.sh --gate <workload>" >&2; exit 2; }
+  GATE_RISK="$(risk_for "$GATE_WL")" || { echo "unknown workload '$GATE_WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2; }
+  GATE_PROMPT="$(prompt_for "$GATE_WL")" || { echo "unknown workload '$GATE_WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2; }
+  run_risk_gate "$GATE_WL" "$GATE_RISK" "$GATE_PROMPT"
+  exit $?
+fi
+
+# --check: a map-completeness WIRING-GUARD (drift catcher) — assert the embedded SERVER+PROMPT+RISK maps cover
 # EVERY real sim workload dir (a `tools.json`), so a workload added to sim/ but not registered here is
-# caught loudly instead of silently un-drivable. Runs offline (no daemon); SIM_DIR overrides the box path.
+# caught loudly instead of silently un-drivable or driven on an undeclared provider risk. Runs offline (no
+# daemon); SIM_DIR overrides the box path.
 if [ "$WL" = "--check" ]; then
   SIM_DIR="${SIM_DIR:-${COMIS_HOME:-/home/comis}/sim}"
   miss=0 n=0
@@ -121,22 +164,21 @@ if [ "$WL" = "--check" ]; then
     n=$((n + 1))
     if ! server_for "$w" >/dev/null; then echo "MISSING SERVER entry: $w"; miss=$((miss + 1)); fi
     if ! prompt_for "$w" >/dev/null; then echo "MISSING PROMPT entry: $w"; miss=$((miss + 1)); fi
+    if ! risk_for "$w" >/dev/null; then echo "MISSING RISK entry: $w"; miss=$((miss + 1)); fi
   done
   if [ "$n" -eq 0 ]; then echo "check: no sim workloads found under $SIM_DIR (set SIM_DIR)"; exit 2; fi
-  if [ "$miss" -eq 0 ]; then echo "OK: all $n sim workloads covered by the SERVER+PROMPT maps"; exit 0; fi
+  if [ "$miss" -eq 0 ]; then echo "OK: all $n sim workloads covered by the SERVER+PROMPT+RISK maps"; exit 0; fi
   echo "FAIL: $miss unregistered map entr(y/ies) across $n workloads"; exit 1
 fi
 
 SRV="$(server_for "$WL" 2>/dev/null || true)"
 P="$(prompt_for "$WL" 2>/dev/null || true)"
-if [ -z "$SRV" ] || [ -z "$P" ]; then
-  echo "unknown workload '$WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2
+RISK="$(risk_for "$WL" 2>/dev/null || true)"
+if [ -z "$SRV" ] || [ -z "$P" ] || [ -z "$RISK" ]; then
+  echo "unknown or unmapped workload '$WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2
 fi
-if [ "$WL" = "threat-hunting" ]; then
-  node "$SCRIPT_DIR/live-provider-risk-gate.mjs" \
-    --source drive-sim-workload.sh \
-    --declared-risk cyber-abuse || exit $?
-fi
+# Before the daemon restart and every other side effect, so a suspended workload never touches the box.
+run_risk_gate "$WL" "$RISK" "$P" || exit $?
 if [ "$REUSE_ONLY" = "1" ]; then
   echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT reuse=$F1) =="
 else
