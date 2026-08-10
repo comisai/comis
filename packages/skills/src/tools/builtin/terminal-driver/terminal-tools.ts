@@ -585,6 +585,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           terminalSessionId: result.sessionId,
           transition: "created",
         });
+        await deps.managedTerminalEvents?.publish({
+          managedRunId: managedResolved.managedRunId,
+          workspaceLeaseId: managedResolved.workspaceLeaseId,
+          serviceInstanceId: managedResolved.serviceInstanceId,
+          terminalSessionId: result.sessionId,
+          transition: "running",
+        });
       }
 
       const doneAt = deps.nowMs();
