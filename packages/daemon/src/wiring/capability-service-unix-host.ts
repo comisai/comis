@@ -26,6 +26,7 @@ import {
   type CapabilityServiceActivateCommand,
   type CapabilityServiceControlFailure,
   type CapabilityServiceControlPort,
+  type CapabilityServiceScope,
   type CapabilityServiceTerminalEventAcknowledgement,
   type CapabilityServiceTerminalEventCommand,
   type ClockPort,
@@ -88,7 +89,7 @@ interface HandshakeWaiter {
   readonly resolve: (result: Result<{
     readonly protocolId: typeof CAPABILITY_SERVICE_PROTOCOL_ID;
     readonly serviceInstanceId: string;
-    readonly activeScopes: readonly ("health" | "report")[];
+    readonly activeScopes: readonly CapabilityServiceScope[];
   }, Error>) => void;
   readonly timer: TimerHandle;
 }
@@ -332,7 +333,7 @@ function createEndpoint(
     let handshakeValue: {
       readonly protocolId: typeof CAPABILITY_SERVICE_PROTOCOL_ID;
       readonly serviceInstanceId: string;
-      readonly activeScopes: readonly ("health" | "report")[];
+      readonly activeScopes: readonly CapabilityServiceScope[];
     } | undefined;
     let handshakeWaiter: HandshakeWaiter | undefined;
     let closed = false;
@@ -860,6 +861,12 @@ function createEndpoint(
             ...(command.workspaceLeaseId === undefined
               ? {}
               : { workspaceLeaseId: command.workspaceLeaseId }),
+            ...(command.executionAttachmentId === undefined
+              ? {}
+              : { executionAttachmentId: command.executionAttachmentId }),
+            ...(command.attachmentTargetName === undefined
+              ? {}
+              : { attachmentTargetName: command.attachmentTargetName }),
           },
         }, CapabilityActivateRequestSchema, CapabilityActivateResponseSchema);
         return result.ok ? result : err({ kind: result.error.kind, reasonCode: result.error.reasonCode });

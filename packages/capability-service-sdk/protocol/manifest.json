@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "path": "fixtures/altered-replay.json",
-      "sha256": "36b876228910b55e0b6677a371b3ae3a2c219a98e4b032430213b55723d0221c"
+      "sha256": "7228d702e545a6b1e7f53e37604746eaa765166e846a31a5fd6171daf67e0ca1"
     },
     {
       "path": "fixtures/boundary-size.json",
@@ -10,23 +10,23 @@
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "99603e6a17bfc29bc35a8d37633b6b98d0e7be52629e60204e7489f2b28cd409"
+      "sha256": "700e753645a59586251278cc1a0f9c9b1ea67e853127d6ae064e53b9b58b1e6d"
     },
     {
       "path": "fixtures/invalid.json",
-      "sha256": "4ba6e5d4473e89aa315aae0fa707ac0d9b285371cba5fc9fd730314a3f260bd8"
+      "sha256": "69d2c9b10fb77aa47d6eeac65d78ca30fdbabe037cc24de6536879c70937eb88"
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "167bdcaef56398ed60eefadec676c120e21f4f94f60a483c52a91d725b93bd59"
+      "sha256": "e5a937daafe723f8affcff7d5eb2b35e1174eea304a3be2d92f3121366efadf2"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "9e991a76bd39ddcf6d82bd44c724df7e5744d502981d95a06e6355ce379a9f69"
+      "sha256": "ecd11458a2af57901f629c24185f80aba627fe9d89df6f7cb77a8d9fef1ee9db"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "81c5d62a85e78f67f584df3fc5a220724f62bb271b9518183b6637004432be14"
+      "sha256": "71672a6b92f7f58e8abfb7ee5098ee14074a0589720dc9e3466e855b9104f7fd"
     },
     {
       "path": "schemas/abandon.request.schema.json",
@@ -38,7 +38,7 @@
     },
     {
       "path": "schemas/activate.request.schema.json",
-      "sha256": "8a9af9ed3a1196bce04b4619c2735d20100f60ab6e120f55f9df8b09e7d75516"
+      "sha256": "e4327e61071bb22161b878280a35ed0ed8b64426eb1b1e7e7cf0dd8b12fd34b3"
     },
     {
       "path": "schemas/activate.response.schema.json",
@@ -54,11 +54,11 @@
     },
     {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "885ddabb75bcc98012f9667d2044a8df90d5c79885c41aa96e1c763c407fa2d9"
+      "sha256": "1ff55ac920b9aba3b88abd719eca56059b1283b2d9de0ad361a9722ca186e01e"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "19d7b13111d3cc188fcf3e20da3e961268e069494a78c82b8fe6e62849a60419"
+      "sha256": "6138ef431b9a873a53ce57e217fa86e9ae402ec92da2172da2aef857d277281e"
     },
     {
       "path": "schemas/health.request.schema.json",
@@ -74,7 +74,7 @@
     },
     {
       "path": "schemas/mcp-managed-run-result.schema.json",
-      "sha256": "cf4d8223ebf23be62c0f583bdeb409b4f8d45f82ce6b6226603e85ed89551274"
+      "sha256": "ffa905757bb1662480b80d8a2b7d7c569a6468a45d2aca9caae350cdcb109088"
     },
     {
       "path": "schemas/report.request.schema.json",
@@ -97,7 +97,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "ffbe9fe2b15f0dfdda280705d5a3d5cf5787f4be74a2fe4341b3839d0f12d5b1",
+  "bundleDigest": "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -179,7 +179,7 @@
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
-    "version": "1.0.59"
+    "version": "1.0.60"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
@@ -262,7 +262,8 @@
         "operation-id-must-match-envelope-id",
         "identical-replay-returns-original-result",
         "altered-replay-is-rejected",
-        "present-iff-the-preparation-requested-a-workspace"
+        "present-iff-the-preparation-requested-a-workspace",
+        "attachment-fields-present-iff-the-preparation-requested-an-attachment"
       ]
     },
     {

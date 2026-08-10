@@ -8,6 +8,8 @@ export interface CapabilityServiceActivateCommand {
   readonly externalRunRef: string;
   readonly registrationNonce: string;
   readonly workspaceLeaseId?: string;
+  readonly executionAttachmentId?: string;
+  readonly attachmentTargetName?: string;
 }
 
 export interface CapabilityServiceActivateAcknowledgement {

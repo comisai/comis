@@ -18,6 +18,7 @@ import {
   OperationIdSchema,
   type CapabilityServiceErrorKind,
   type CapabilityServiceRequest,
+  type CapabilityServiceScope,
 } from "@comis/capability-service-sdk";
 import { safePath, type ClockPort } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -44,13 +45,14 @@ const ERROR_TEXT = {
 } as const satisfies Readonly<Record<CapabilityServiceErrorKind, readonly [string, string]>>;
 
 export interface CapabilityServiceProtocolFixtureServerOptions {
-  readonly activeScopes: readonly ("health" | "report")[];
+  readonly activeScopes: readonly CapabilityServiceScope[];
   readonly bundleDigest: string;
   readonly clock: ClockPort;
   readonly directoryPath: string;
   readonly expectedBearer: string;
   readonly requestDeadlineMs: number;
   readonly serviceInstanceId: string;
+  readonly attachmentPreparationRefs?: readonly string[];
   readonly workspacePreparationRefs?: readonly string[];
 }
 
@@ -139,10 +141,14 @@ export function createCapabilityServiceProtocolFixtureServer(
   options: CapabilityServiceProtocolFixtureServerOptions,
 ): CapabilityServiceProtocolFixtureServer {
   const expectedBearerDigest = createHash("sha256").update(options.expectedBearer, "utf8").digest();
-  const validator = createCapabilityServiceProtocolFixtureHost({ bundleDigest: options.bundleDigest });
+  const validator = createCapabilityServiceProtocolFixtureHost({
+    activeScopes: options.activeScopes,
+    bundleDigest: options.bundleDigest,
+  });
   const operations = new Map<string, OperationReplay>();
   const reports = new Map<string, ReportReplay>();
   const workspacePreparationRefs = new Set(options.workspacePreparationRefs ?? []);
+  const attachmentPreparationRefs = new Set(options.attachmentPreparationRefs ?? []);
   const openSockets = new Set<net.Socket>();
   let acceptedSequence = 0;
   let server: net.Server | undefined;
@@ -275,6 +281,13 @@ export function createCapabilityServiceProtocolFixtureServer(
         !== (parsed.data.params.workspaceLeaseId !== undefined)
     ) {
       return errorResponse("invalid_params", id);
+    }
+    if (parsed.data.method === "managedRuns.activate") {
+      const hasAttachment = parsed.data.params.executionAttachmentId !== undefined
+        && parsed.data.params.attachmentTargetName !== undefined;
+      if (attachmentPreparationRefs.has(parsed.data.params.externalRunRef) !== hasAttachment) {
+        return errorResponse("invalid_params", id);
+      }
     }
     if (
       (parsed.data.method === "capabilityServices.handshake" || parsed.data.method === "capabilityServices.health") &&

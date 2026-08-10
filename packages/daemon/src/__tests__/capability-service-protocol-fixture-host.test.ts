@@ -64,13 +64,17 @@ describe("daemon capability-service fixture host", () => {
     const scenarios = loadScenarios();
     const scenario = scenarios.find((candidate) => candidate.class === "altered-replay");
     if (!scenario) throw new Error("Missing altered-replay protocol fixture");
-    const original = scenario.steps[0];
-    const altered = scenario.steps[1];
-    if (!original || !altered) throw new Error("Incomplete altered-replay protocol fixture");
+    const preparation = scenario.steps[0];
+    const original = scenario.steps[1];
+    const altered = scenario.steps[2];
+    if (!preparation || !original || !altered) {
+      throw new Error("Incomplete altered-replay protocol fixture");
+    }
     const host = createCapabilityServiceProtocolFixtureHost({
       bundleDigest: manifest.bundleDigest,
     });
 
+    expect(host.validate(preparation).ok).toBe(true);
     expect(host.validate(original).ok).toBe(true);
     expect(host.validate(original).ok).toBe(true);
     const replay = host.validate(altered);
@@ -235,6 +239,34 @@ describe("daemon capability-service fixture host", () => {
         attachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
       },
     }).ok).toBe(true);
+  });
+
+  it("rejects attachment preparation without the execution attachment scope", () => {
+    const host = createCapabilityServiceProtocolFixtureHost({
+      activeScopes: ["health", "report", "workspace_lease"],
+      bundleDigest: manifest.bundleDigest,
+    });
+
+    const result = host.validate({
+      target: "mcp-managed-run-result",
+      expectation: "reject",
+      schemaExpectation: "accept",
+      expectedErrorKind: "precondition_failed",
+      payload: {
+        state: "prepared",
+        externalRunRef: "external-run_attachment_without_scope",
+        registrationNonce: "registration-nonce_attachment_without_scope",
+        expiresAt: "2030-01-01T00:00:00.000Z",
+        requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+        requestedAttachment: {
+          kind: "unix_socket",
+          sourcePath: "/approved/runtime/task-a/service.sock",
+        },
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("precondition_failed");
   });
 
   it("accepts a content-free terminal transition carrying only correlated handles", () => {

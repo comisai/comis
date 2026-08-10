@@ -2,10 +2,12 @@
 import { z } from "zod";
 import { CAPABILITY_SERVICE_LIMITS, CAPABILITY_SERVICE_PROTOCOL_ID } from "./constants.js";
 import {
+  AttachmentTargetNameSchema,
   BundleDigestSchema,
   CapabilityServiceLimitsSchema,
   CapabilityServiceScopeSchema,
   EvidenceRefSchema,
+  ExecutionAttachmentIdSchema,
   ExternalRunRefSchema,
   ManagedRunIdSchema,
   OperationIdSchema,
@@ -24,7 +26,7 @@ const HandshakeParamsSchema = z.strictObject({
   bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
   serviceInstanceId: ServiceInstanceIdSchema,
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(2),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(5),
 });
 
 export const CapabilityHandshakeRequestSchema = z.strictObject({
@@ -41,22 +43,33 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
     serviceInstanceId: ServiceInstanceIdSchema,
-    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(2),
+    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(5),
     limits: CapabilityServiceLimitsSchema,
   }),
 });
+
+const activateParamsShape = {
+  operationId: OperationIdSchema,
+  managedRunId: ManagedRunIdSchema,
+  externalRunRef: ExternalRunRefSchema,
+  registrationNonce: RegistrationNonceSchema,
+  workspaceLeaseId: WorkspaceLeaseIdSchema.optional(),
+};
+
+const ActivateParamsSchema = z.union([
+  z.strictObject({
+    ...activateParamsShape,
+    executionAttachmentId: ExecutionAttachmentIdSchema,
+    attachmentTargetName: AttachmentTargetNameSchema,
+  }),
+  z.strictObject(activateParamsShape),
+]);
 
 export const CapabilityActivateRequestSchema = z.strictObject({
   jsonrpc: z.literal("2.0"),
   id: OperationIdSchema,
   method: z.literal("managedRuns.activate"),
-  params: z.strictObject({
-    operationId: OperationIdSchema,
-    managedRunId: ManagedRunIdSchema,
-    externalRunRef: ExternalRunRefSchema,
-    registrationNonce: RegistrationNonceSchema,
-    workspaceLeaseId: WorkspaceLeaseIdSchema.optional(),
-  }),
+  params: ActivateParamsSchema,
 });
 
 export const CapabilityActivateResponseSchema = z.strictObject({

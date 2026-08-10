@@ -21,6 +21,7 @@ import {
 import type { ZodType } from "zod";
 
 export interface CapabilityServiceProtocolFixtureHostOptions {
+  readonly activeScopes?: readonly string[];
   readonly bundleDigest: string;
 }
 
@@ -119,6 +120,7 @@ function validateRequest(
   bundleDigest: string,
   operations: Map<string, string>,
   preparationWorkspaceRequests: ReadonlyMap<string, boolean>,
+  preparationAttachmentRequests: ReadonlyMap<string, boolean>,
 ): Result<void, CapabilityServiceProtocolFixtureRejection> {
   const envelope = asRecord(payload);
   const params = asRecord(envelope?.["params"]);
@@ -149,6 +151,14 @@ function validateRequest(
     ) {
       return reject("invalid_params");
     }
+    const requestedAttachment = preparationAttachmentRequests.get(
+      parsed.data.params.externalRunRef,
+    );
+    const hasAttachment = parsed.data.params.executionAttachmentId !== undefined
+      && parsed.data.params.attachmentTargetName !== undefined;
+    if (requestedAttachment !== undefined && requestedAttachment !== hasAttachment) {
+      return reject("invalid_params");
+    }
   }
 
   const canonical = JSON.stringify(parsed.data);
@@ -163,6 +173,7 @@ export function createCapabilityServiceProtocolFixtureHost(
 ): CapabilityServiceProtocolFixtureHost {
   const operations = new Map<string, string>();
   const preparationWorkspaceRequests = new Map<string, boolean>();
+  const preparationAttachmentRequests = new Map<string, boolean>();
   const validatePayload = (
     payload: unknown,
   ): Result<void, CapabilityServiceProtocolFixtureRejection> => {
@@ -173,6 +184,7 @@ export function createCapabilityServiceProtocolFixtureHost(
       options.bundleDigest,
       operations,
       preparationWorkspaceRequests,
+      preparationAttachmentRequests,
     );
   };
   return {
@@ -193,6 +205,16 @@ export function createCapabilityServiceProtocolFixtureHost(
         preparationWorkspaceRequests.set(
           preparation.data.externalRunRef,
           preparation.data.requestedWorkspace !== undefined,
+        );
+        if (
+          preparation.data.requestedAttachment !== undefined
+          && !(options.activeScopes ?? ["execution_attachment"]).includes("execution_attachment")
+        ) {
+          return reject("precondition_failed");
+        }
+        preparationAttachmentRequests.set(
+          preparation.data.externalRunRef,
+          preparation.data.requestedAttachment !== undefined,
         );
       }
       return ok(undefined);

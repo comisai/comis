@@ -15,7 +15,10 @@
           "protocolId": "comis.capability-service/1",
           "requestedScopes": [
             "health",
-            "report"
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment"
           ],
           "serviceInstanceId": "service-instance_a"
         }

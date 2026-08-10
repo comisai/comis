@@ -22,6 +22,10 @@
         "expiresAt": "2030-01-01T00:00:00.000Z",
         "externalRunRef": "external-run_a",
         "registrationNonce": "registration-nonce_a",
+        "requestedAttachment": {
+          "kind": "unix_socket",
+          "sourcePath": "/approved/runtime/task-a/service.sock"
+        },
         "requestedWorkspace": {
           "rootHint": "/approved/workspaces/task-a"
         },
@@ -42,7 +46,10 @@
           "protocolId": "comis.capability-service/1",
           "requestedScopes": [
             "health",
-            "report"
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment"
           ],
           "serviceInstanceId": "service-instance_a"
         }
@@ -58,7 +65,10 @@
         "result": {
           "activeScopes": [
             "health",
-            "report"
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment"
           ],
           "bundleDigest": "__BUNDLE_DIGEST__",
           "limits": {
@@ -84,6 +94,8 @@
         "jsonrpc": "2.0",
         "method": "managedRuns.activate",
         "params": {
+          "attachmentTargetName": "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+          "executionAttachmentId": "execution-attachment_a",
           "externalRunRef": "external-run_a",
           "managedRunId": "managed-run_a",
           "operationId": "operation_activate",

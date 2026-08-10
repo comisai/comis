@@ -25,6 +25,28 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
       "type": "string"
     },
+    "requestedAttachment": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "unix_socket",
+            "inherited_descriptor"
+          ],
+          "type": "string"
+        },
+        "sourcePath": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "sourcePath"
+      ],
+      "type": "object"
+    },
     "requestedWorkspace": {
       "additionalProperties": false,
       "properties": {

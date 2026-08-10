@@ -120,6 +120,7 @@ const METHOD_CATALOG = [
       "identical-replay-returns-original-result",
       "altered-replay-is-rejected",
       "present-iff-the-preparation-requested-a-workspace",
+      "attachment-fields-present-iff-the-preparation-requested-an-attachment",
     ],
     requestSchema: "schemas/activate.request.schema.json",
     responseSchema: "schemas/activate.response.schema.json",

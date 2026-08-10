@@ -78,7 +78,14 @@ async function run(): Promise<Result<void>> {
   if (!credentialPathResult.ok) return credentialPathResult;
   const bearer = randomBytes(32).toString("base64url");
   const server = createCapabilityServiceProtocolFixtureServer({
-    activeScopes: ["health", "report"],
+    activeScopes: [
+      "health",
+      "report",
+      "workspace_lease",
+      "terminal_events",
+      "execution_attachment",
+    ],
+    attachmentPreparationRefs: ["external-run_a"],
     bundleDigest: digest.value,
     clock: createSystemClock(),
     directoryPath: options.value.directoryPath,

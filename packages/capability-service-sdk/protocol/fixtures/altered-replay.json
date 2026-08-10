@@ -1,19 +1,39 @@
 {
   "class": "altered-replay",
-  "name": "operation identity rejects altered replay",
+  "name": "attachment activation identity rejects altered replay",
   "steps": [
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "externalRunRef": "external-run_a",
+        "registrationNonce": "registration-nonce_a",
+        "requestedAttachment": {
+          "kind": "unix_socket",
+          "sourcePath": "/approved/runtime/task-a/service.sock"
+        },
+        "requestedWorkspace": {
+          "rootHint": "/approved/workspaces/task-a"
+        },
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-result"
+    },
     {
       "expectation": "accept",
       "payload": {
         "id": "operation_replay",
         "jsonrpc": "2.0",
-        "method": "managedRuns.report",
+        "method": "managedRuns.activate",
         "params": {
-          "kind": "progress",
+          "attachmentTargetName": "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
+          "executionAttachmentId": "execution-attachment_a",
+          "externalRunRef": "external-run_a",
           "managedRunId": "managed-run_a",
           "operationId": "operation_replay",
-          "serviceReportId": "report_replay",
-          "summary": "First payload"
+          "registrationNonce": "registration-nonce_a",
+          "workspaceLeaseId": "workspace-lease_a"
         }
       },
       "schemaExpectation": "accept",
@@ -25,13 +45,15 @@
       "payload": {
         "id": "operation_replay",
         "jsonrpc": "2.0",
-        "method": "managedRuns.report",
+        "method": "managedRuns.activate",
         "params": {
-          "kind": "progress",
+          "attachmentTargetName": "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock",
+          "executionAttachmentId": "execution-attachment_a",
+          "externalRunRef": "external-run_a",
           "managedRunId": "managed-run_a",
           "operationId": "operation_replay",
-          "serviceReportId": "report_replay",
-          "summary": "Altered payload"
+          "registrationNonce": "registration-nonce_a",
+          "workspaceLeaseId": "workspace-lease_a"
         }
       },
       "schemaExpectation": "accept",

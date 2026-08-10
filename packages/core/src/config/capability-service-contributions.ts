@@ -26,7 +26,13 @@ function isContributionId(value: string): boolean {
   return segments.length >= 2 && segments.every((segment) => CONTRIBUTION_ID_SEGMENT_PATTERN.test(segment));
 }
 
-export const CapabilityServiceScopeSchema = z.enum(["health", "report"]);
+export const CapabilityServiceScopeSchema = z.enum([
+  "health",
+  "report",
+  "workspace_lease",
+  "terminal_events",
+  "execution_attachment",
+]);
 
 export const ManagedToolBehaviorSchema = z.enum([
   "prepare_run",
@@ -76,7 +82,7 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
   protocolId: z.literal(CAPABILITY_SERVICE_CONTROL_PROTOCOL),
   mcpServerName: z.string().regex(OPAQUE_ID_PATTERN),
   managedToolBindings: z.array(ManagedToolBindingSchema).max(128),
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(2),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(5),
   dependsOn: z.array(z.string().refine(isContributionId)).max(32),
 }).superRefine((value, ctx) => {
   if (new Set(value.requestedScopes).size !== value.requestedScopes.length) {

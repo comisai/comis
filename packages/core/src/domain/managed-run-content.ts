@@ -52,6 +52,10 @@ export const ManagedRunActivationDescriptorSchema = z.strictObject({
   requestedWorkspace: z.strictObject({
     rootHint: z.string().min(1).max(512),
   }).optional(),
+  requestedAttachment: z.strictObject({
+    kind: z.enum(["unix_socket", "inherited_descriptor"]),
+    sourcePath: z.string().min(1).max(4_096),
+  }).optional(),
 });
 
 /** Strict private MCP result extension supplied by a prepared service command. */

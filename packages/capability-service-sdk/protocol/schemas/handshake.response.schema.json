@@ -20,11 +20,14 @@
           "items": {
             "enum": [
               "health",
-              "report"
+              "report",
+              "workspace_lease",
+              "terminal_events",
+              "execution_attachment"
             ],
             "type": "string"
           },
-          "maxItems": 2,
+          "maxItems": 5,
           "minItems": 1,
           "type": "array"
         },

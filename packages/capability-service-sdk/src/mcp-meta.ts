@@ -33,6 +33,12 @@ export const McpManagedRunResultSchema = z.strictObject({
       rootHint: z.string().min(1).max(512),
     })
     .optional(),
+  requestedAttachment: z
+    .strictObject({
+      kind: z.enum(["unix_socket", "inherited_descriptor"]),
+      sourcePath: z.string().min(1).max(4_096),
+    })
+    .optional(),
 });
 
 export type McpCapabilityCallContext = z.infer<typeof McpCapabilityCallContextSchema>;

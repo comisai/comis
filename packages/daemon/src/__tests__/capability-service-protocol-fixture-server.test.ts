@@ -28,7 +28,7 @@ import { createCapabilityServiceProtocolFixtureServer } from "./capability-servi
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(here, "../../../..");
-const BUNDLE_DIGEST = "ffbe9fe2b15f0dfdda280705d5a3d5cf5787f4be74a2fe4341b3839d0f12d5b1";
+const BUNDLE_DIGEST = "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8";
 const EXPECTED_BEARER = "fixture-bearer-0000000000000000000000000001";
 const SERVICE_INSTANCE_ID = "service-instance_a";
 const NOW_MS = 1_800_000_000_000;
@@ -95,7 +95,14 @@ function expectWireError(response: unknown, kind: CapabilityServiceErrorKind): W
 
 function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
   return createCapabilityServiceProtocolFixtureServer({
-    activeScopes: ["health", "report"],
+    activeScopes: [
+      "health",
+      "report",
+      "workspace_lease",
+      "terminal_events",
+      "execution_attachment",
+    ],
+    attachmentPreparationRefs: ["external-run_a"],
     bundleDigest: BUNDLE_DIGEST,
     clock: createFakeClock(NOW_MS),
     directoryPath,
@@ -136,7 +143,13 @@ describe("standalone capability-service protocol fixture server", () => {
           protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
           bundleDigest: BUNDLE_DIGEST,
           serviceInstanceId: SERVICE_INSTANCE_ID,
-          activeScopes: ["health", "report"],
+          activeScopes: [
+            "health",
+            "report",
+            "workspace_lease",
+            "terminal_events",
+            "execution_attachment",
+          ],
           limits: CAPABILITY_SERVICE_LIMITS,
         },
       });
@@ -150,6 +163,8 @@ describe("standalone capability-service protocol fixture server", () => {
           externalRunRef: "external-run_a",
           registrationNonce: "registration-nonce_a",
           workspaceLeaseId: "workspace-lease_a",
+          executionAttachmentId: "execution-attachment_a",
+          attachmentTargetName: `attachment-${"a".repeat(32)}.sock`,
         },
       )));
       expect(activate).toEqual({

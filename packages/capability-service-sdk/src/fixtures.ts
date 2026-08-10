@@ -70,7 +70,13 @@ const handshakeParams = {
   bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
   operationId: "operation_handshake",
   serviceInstanceId,
-  requestedScopes: ["health", "report"],
+  requestedScopes: [
+    "health",
+    "report",
+    "workspace_lease",
+    "terminal_events",
+    "execution_attachment",
+  ],
 };
 
 export const PROTOCOL_FIXTURE_SCENARIOS = [
@@ -102,6 +108,10 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           registrationNonce,
           expiresAt: "2030-01-01T00:00:00.000Z",
           requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+          requestedAttachment: {
+            kind: "unix_socket",
+            sourcePath: "/approved/runtime/task-a/service.sock",
+          },
         },
       },
       {
@@ -121,7 +131,13 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
             protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
             bundleDigest: BUNDLE_DIGEST_FIXTURE_TOKEN,
             serviceInstanceId,
-            activeScopes: ["health", "report"],
+            activeScopes: [
+              "health",
+              "report",
+              "workspace_lease",
+              "terminal_events",
+              "execution_attachment",
+            ],
             limits: CAPABILITY_SERVICE_LIMITS,
           },
         },
@@ -136,6 +152,8 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           externalRunRef,
           registrationNonce,
           workspaceLeaseId: "workspace-lease_a",
+          executionAttachmentId: "execution-attachment_a",
+          attachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
         }),
       },
       {
@@ -305,8 +323,37 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
   },
   {
     class: "invalid",
-    name: "invalid opaque reference and activation workspace correlation",
+    name: "invalid opaque reference and activation authority correlation",
     steps: [
+      {
+        target: "mcp-managed-run-result",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          state: "prepared",
+          externalRunRef: "external-run_attachment_missing_handles",
+          registrationNonce: "registration-nonce_attachment_missing_handles",
+          expiresAt: "2030-01-01T00:00:00.000Z",
+          requestedWorkspace: { rootHint: "/approved/workspaces/task-attachment" },
+          requestedAttachment: {
+            kind: "unix_socket",
+            sourcePath: "/approved/runtime/task-attachment/service.sock",
+          },
+        },
+      },
+      {
+        target: "request",
+        expectation: "reject",
+        schemaExpectation: "accept",
+        expectedErrorKind: "invalid_params",
+        payload: request("operation_attachment_missing_handles", "managedRuns.activate", {
+          operationId: "operation_attachment_missing_handles",
+          managedRunId: "managed-run_attachment_missing_handles",
+          externalRunRef: "external-run_attachment_missing_handles",
+          registrationNonce: "registration-nonce_attachment_missing_handles",
+          workspaceLeaseId: "workspace-lease_attachment_missing_handles",
+        }),
+      },
       {
         target: "request",
         expectation: "reject",
@@ -447,18 +494,36 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
   },
   {
     class: "altered-replay",
-    name: "operation identity rejects altered replay",
+    name: "attachment activation identity rejects altered replay",
     steps: [
+      {
+        target: "mcp-managed-run-result",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          state: "prepared",
+          externalRunRef,
+          registrationNonce,
+          expiresAt: "2030-01-01T00:00:00.000Z",
+          requestedWorkspace: { rootHint: "/approved/workspaces/task-a" },
+          requestedAttachment: {
+            kind: "unix_socket",
+            sourcePath: "/approved/runtime/task-a/service.sock",
+          },
+        },
+      },
       {
         target: "request",
         expectation: "accept",
         schemaExpectation: "accept",
-        payload: request("operation_replay", "managedRuns.report", {
+        payload: request("operation_replay", "managedRuns.activate", {
           operationId: "operation_replay",
           managedRunId,
-          serviceReportId: "report_replay",
-          kind: "progress",
-          summary: "First payload",
+          externalRunRef,
+          registrationNonce,
+          workspaceLeaseId: "workspace-lease_a",
+          executionAttachmentId: "execution-attachment_a",
+          attachmentTargetName: "attachment-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sock",
         }),
       },
       {
@@ -466,12 +531,14 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
         expectation: "reject",
         schemaExpectation: "accept",
         expectedErrorKind: "replay_conflict",
-        payload: request("operation_replay", "managedRuns.report", {
+        payload: request("operation_replay", "managedRuns.activate", {
           operationId: "operation_replay",
           managedRunId,
-          serviceReportId: "report_replay",
-          kind: "progress",
-          summary: "Altered payload",
+          externalRunRef,
+          registrationNonce,
+          workspaceLeaseId: "workspace-lease_a",
+          executionAttachmentId: "execution-attachment_a",
+          attachmentTargetName: "attachment-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.sock",
         }),
       },
     ],

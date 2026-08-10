@@ -17,7 +17,7 @@ import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 
 const NOW_MS = 1_800_000_000_000;
-const BUNDLE_DIGEST = "ffbe9fe2b15f0dfdda280705d5a3d5cf5787f4be74a2fe4341b3839d0f12d5b1";
+const BUNDLE_DIGEST = "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8";
 const BEARER = "synthetic-capability-service-bearer";
 
 function makeLogger(): ComisLogger {
@@ -229,12 +229,20 @@ describe("daemon-owned capability-service Unix host", () => {
       managedRunId: "managed-run_a",
       externalRunRef: "external-run_a",
       registrationNonce: "registration-nonce_a",
+      workspaceLeaseId: "workspace-lease_a",
+      executionAttachmentId: "execution-attachment_a",
+      attachmentTargetName: `attachment-${"a".repeat(32)}.sock`,
     });
     const activationRequest = await peer.next();
     expect(activationRequest).toMatchObject({
       bearer: BEARER,
       id: "operation_activate_a",
       method: "managedRuns.activate",
+      params: {
+        workspaceLeaseId: "workspace-lease_a",
+        executionAttachmentId: "execution-attachment_a",
+        attachmentTargetName: `attachment-${"a".repeat(32)}.sock`,
+      },
     });
     peer.send({
       jsonrpc: "2.0",

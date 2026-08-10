@@ -18,46 +18,104 @@
       "type": "string"
     },
     "params": {
-      "additionalProperties": false,
-      "properties": {
-        "externalRunRef": {
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "attachmentTargetName": {
+              "pattern": "^attachment-[a-f0-9]{32}\\.sock$",
+              "type": "string"
+            },
+            "executionAttachmentId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "externalRunRef": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "managedRunId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "registrationNonce": {
+              "maxLength": 256,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "workspaceLeaseId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operationId",
+            "managedRunId",
+            "externalRunRef",
+            "registrationNonce",
+            "executionAttachmentId",
+            "attachmentTargetName"
+          ],
+          "type": "object"
         },
-        "managedRunId": {
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
-        },
-        "operationId": {
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
-        },
-        "registrationNonce": {
-          "maxLength": 256,
-          "minLength": 16,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
-        },
-        "workspaceLeaseId": {
-          "maxLength": 256,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
-          "type": "string"
+        {
+          "additionalProperties": false,
+          "properties": {
+            "externalRunRef": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "managedRunId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "operationId": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "registrationNonce": {
+              "maxLength": 256,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            },
+            "workspaceLeaseId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "operationId",
+            "managedRunId",
+            "externalRunRef",
+            "registrationNonce"
+          ],
+          "type": "object"
         }
-      },
-      "required": [
-        "operationId",
-        "managedRunId",
-        "externalRunRef",
-        "registrationNonce"
-      ],
-      "type": "object"
+      ]
     }
   },
   "required": [

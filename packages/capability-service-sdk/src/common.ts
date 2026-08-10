@@ -24,6 +24,14 @@ export const ManagedRunIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PA
 /** Comis-minted exclusive workspace authority. */
 export const WorkspaceLeaseIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
+/** Comis-minted run-scoped execution attachment authority. */
+export const ExecutionAttachmentIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
+
+/** Fixed host-chosen attachment target exposed inside the terminal sandbox. */
+export const AttachmentTargetNameSchema = z
+  .string()
+  .regex(/^attachment-[a-f0-9]{32}\.sock$/);
+
 /** Comis-minted terminal session identity. */
 export const TerminalSessionIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
@@ -38,7 +46,13 @@ export const RegistrationNonceSchema = z.string().min(16).max(256).regex(OPAQUE_
 export const BundleDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const TimestampMsSchema = z.number().int().nonnegative();
 export const CapabilityServiceMethodSchema = z.enum(CAPABILITY_SERVICE_METHODS);
-export const CapabilityServiceScopeSchema = z.enum(["health", "report"]);
+export const CapabilityServiceScopeSchema = z.enum([
+  "health",
+  "report",
+  "workspace_lease",
+  "terminal_events",
+  "execution_attachment",
+]);
 
 export const CapabilityServiceLimitsSchema = z.strictObject({
   maxEvidenceBytes: z.literal(CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes),
@@ -85,6 +99,8 @@ export type ServiceInstanceId = z.infer<typeof ServiceInstanceIdSchema>;
 export type ExternalRunRef = z.infer<typeof ExternalRunRefSchema>;
 export type ManagedRunId = z.infer<typeof ManagedRunIdSchema>;
 export type WorkspaceLeaseId = z.infer<typeof WorkspaceLeaseIdSchema>;
+export type ExecutionAttachmentId = z.infer<typeof ExecutionAttachmentIdSchema>;
+export type AttachmentTargetName = z.infer<typeof AttachmentTargetNameSchema>;
 export type TerminalSessionId = z.infer<typeof TerminalSessionIdSchema>;
 export type OperationId = z.infer<typeof OperationIdSchema>;
 export type ServiceReportId = z.infer<typeof ServiceReportIdSchema>;

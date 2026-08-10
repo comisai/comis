@@ -1,7 +1,43 @@
 {
   "class": "invalid",
-  "name": "invalid opaque reference and activation workspace correlation",
+  "name": "invalid opaque reference and activation authority correlation",
   "steps": [
+    {
+      "expectation": "accept",
+      "payload": {
+        "expiresAt": "2030-01-01T00:00:00.000Z",
+        "externalRunRef": "external-run_attachment_missing_handles",
+        "registrationNonce": "registration-nonce_attachment_missing_handles",
+        "requestedAttachment": {
+          "kind": "unix_socket",
+          "sourcePath": "/approved/runtime/task-attachment/service.sock"
+        },
+        "requestedWorkspace": {
+          "rootHint": "/approved/workspaces/task-attachment"
+        },
+        "state": "prepared"
+      },
+      "schemaExpectation": "accept",
+      "target": "mcp-managed-run-result"
+    },
+    {
+      "expectation": "reject",
+      "expectedErrorKind": "invalid_params",
+      "payload": {
+        "id": "operation_attachment_missing_handles",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.activate",
+        "params": {
+          "externalRunRef": "external-run_attachment_missing_handles",
+          "managedRunId": "managed-run_attachment_missing_handles",
+          "operationId": "operation_attachment_missing_handles",
+          "registrationNonce": "registration-nonce_attachment_missing_handles",
+          "workspaceLeaseId": "workspace-lease_attachment_missing_handles"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
     {
       "expectation": "reject",
       "expectedErrorKind": "invalid_params",
