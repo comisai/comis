@@ -548,6 +548,19 @@ describe("runtime self-report evidence missing reply", () => {
   });
 });
 
+describe("runtime self-report evidence unsupported reply", () => {
+  it("names the missing duration ranking and provider invoice", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildRuntimeSelfReportEvidenceUnsupportedReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/does not compare execution durations/iu);
+    expect(reply).toMatch(/provider invoice.*unverified/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("runtime_self_report_evidence_unsupported");
+  });
+});
+
 describe("pending scheduler confirmation reply", () => {
   it("asks for removal confirmation without asserting that the job exists", () => {
     const candidate = (degradedReply as Record<string, unknown>)

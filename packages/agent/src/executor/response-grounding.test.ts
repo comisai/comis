@@ -39,6 +39,7 @@ function runtimeSelfReportEvidenceGuard(): (params: {
     };
   }[];
   honestResponse: string;
+  unsupportedResponse?: string;
 }) => RuntimeSelfReportEvidenceGuardResult {
   const candidate = (responseGrounding as Record<string, unknown>)
     .enforceRuntimeSelfReportEvidence;
@@ -138,6 +139,7 @@ describe("response grounding module", () => {
 
   it("requires duration-ranking evidence for a slowest-execution claim", () => {
     const honestResponse = "I could not verify which execution was slowest.";
+    const unsupportedResponse = "The current report does not rank execution duration.";
 
     expect(runtimeSelfReportEvidenceGuard()({
       request: "why was the slowest bit slow?",
@@ -150,8 +152,9 @@ describe("response grounding module", () => {
         },
       }],
       honestResponse,
+      unsupportedResponse,
     })).toEqual({
-      response: honestResponse,
+      response: unsupportedResponse,
       corrected: true,
       reason: "unsupported_runtime_self_report_evidence",
     });
@@ -174,6 +177,7 @@ describe("response grounding module", () => {
 
   it("requires runtime-estimate and provider-invoice qualification for cost claims", () => {
     const honestResponse = "I could not verify provider-billed cost.";
+    const unsupportedResponse = "The runtime estimate is not a verified provider invoice.";
 
     expect(runtimeSelfReportEvidenceGuard()({
       request: "how much have you cost me?",
@@ -187,8 +191,9 @@ describe("response grounding module", () => {
         },
       }],
       honestResponse,
+      unsupportedResponse,
     })).toEqual({
-      response: honestResponse,
+      response: unsupportedResponse,
       corrected: true,
       reason: "unsupported_runtime_self_report_evidence",
     });
