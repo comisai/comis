@@ -30,7 +30,7 @@ import {
   isDriveProgressText,
   normalizeDriveStdinText,
   normalizedInboundTextError,
-  outboundVisibleText,
+  outboundVisibleContent,
   reconcileDriveOutbound,
   selectMainTrajectoryPath,
   selectTelegramConversationTrajectoryPath,
@@ -265,8 +265,8 @@ const inject = async (t) =>
 // v2: a message is PROGRESS (not the final answer) if it's a tool/announce/checklist/plan line.
 const isProgress = isDriveProgressText;
 const isConversationAnswer = (outbound) => {
-  const visibleText = outboundVisibleText(outbound);
-  if (!visibleText || isProgress(visibleText)) return false;
+  const visibleContent = outboundVisibleContent(outbound);
+  if (!visibleContent || isProgress(visibleContent)) return false;
   return !sharedConversation
     || findTelegramConversationWireAnswer(
       [outbound],
@@ -583,7 +583,7 @@ const reason = correlatedWireAnswer
         ? 'BLOCKED(allowFrom)'
         : 'TIMEOUT';
 console.log(`=== ALL OUTBOUND (${seen.length}) in ${Math.round((Date.now() - start) / 1000)}s [${reason}]${hasSubstantiveAnswer ? '' : ' — NO SUBSTANTIVE ANSWER'} ===`);
-for (const o of seen) console.log(`[${o.method} ${o.messageId}] ${JSON.stringify(outboundVisibleText(o).slice(0, 600))}`);
+for (const o of seen) console.log(`[${o.method} ${o.messageId}] ${JSON.stringify(outboundVisibleContent(o).slice(0, 600))}`);
 console.log('=== SUBSTANTIVE ANSWER ===');
 let any = false;
 if (correlatedWireAnswer) {
@@ -594,9 +594,9 @@ if (correlatedWireAnswer) {
   any = true;
 } else if (!sharedConversation) {
   for (const o of seen) {
-    const visibleText = outboundVisibleText(o);
-    if (visibleText && !isProgress(visibleText)) {
-      console.log(visibleText);
+    const visibleContent = outboundVisibleContent(o);
+    if (visibleContent && !isProgress(visibleContent)) {
+      console.log(visibleContent);
       any = true;
     }
   }

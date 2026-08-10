@@ -27,6 +27,23 @@ export function outboundVisibleText(outbound) {
   return typeof outbound?.caption === "string" ? outbound.caption : "";
 }
 
+const MEDIA_DELIVERY_LABELS = new Map([
+  ["sendPhoto", "photo"],
+  ["sendDocument", "document"],
+  ["sendAudio", "audio"],
+  ["sendVoice", "voice"],
+  ["sendVideo", "video"],
+  ["sendAnimation", "animation"],
+]);
+
+/** Return comparable visible content, including captionless media deliveries. */
+export function outboundVisibleContent(outbound) {
+  const text = outboundVisibleText(outbound);
+  if (text) return text;
+  const mediaLabel = MEDIA_DELIVERY_LABELS.get(outbound?.method);
+  return mediaLabel === undefined ? "" : `[${mediaLabel} delivered]`;
+}
+
 /**
  * Whether a `✓`/`❌`-led line is a progress FRAME rather than an answer that
  * merely opens with the marker.
@@ -141,8 +158,8 @@ export function findTelegramConversationWireAnswer(outbound, threadId, inboundMe
   for (let index = outbound.length - 1; index >= 0; index -= 1) {
     const item = outbound[index];
     if (!telegramOutboundMatchesThread(item, threadId, inboundMessageId)) continue;
-    const visibleText = outboundVisibleText(item);
-    if (visibleText && !isDriveProgressText(visibleText)) return visibleText;
+    const visibleContent = outboundVisibleContent(item);
+    if (visibleContent && !isDriveProgressText(visibleContent)) return visibleContent;
   }
   return null;
 }
