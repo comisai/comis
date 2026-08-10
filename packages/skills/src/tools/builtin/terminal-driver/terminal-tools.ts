@@ -406,6 +406,13 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // unsandboxed child. The bare-metal (bwrap removed) confirmation is VPS-gated.
       const provider = deps.detectProvider();
       if (!provider) {
+        if (managed.kind === "managed") {
+          throwToolError(
+            "sandbox_unavailable",
+            "managed terminal confinement cannot be materialized without a sandbox provider",
+            { hint: "enable bubblewrap confinement; the managed terminal was not launched with broader access" },
+          );
+        }
         throwToolError(
           "permission_denied",
           "no sandbox provider available; refusing unsandboxed terminal (fail-closed)",
