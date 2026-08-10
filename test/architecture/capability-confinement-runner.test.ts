@@ -84,4 +84,13 @@ describe("capability-service Linux confinement runner", () => {
     expect(launcher).toContain("devcrew-report acknowledge");
     expect(launcher).toContain("devcrew-report brief");
   });
+
+  it("keeps the launcher alive until managed binding activation completes", () => {
+    const launcher = source(launcherPath);
+    const barrierOffset = launcher.indexOf('[[ -f "${START_FILE}" ]] && break');
+    const attachmentOffset = launcher.indexOf("find /run/comis/attachments");
+
+    expect(barrierOffset).toBeGreaterThan(-1);
+    expect(attachmentOffset).toBeGreaterThan(barrierOffset);
+  });
 });
