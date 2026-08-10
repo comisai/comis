@@ -70,7 +70,7 @@ exec "${REAL_CODEX}" exec --json \
   --ignore-rules \
   --ephemeral \
   --color never \
-  --model "${COMIS_WAVE4_CODEX_MODEL:-gpt-5.5-codex}" \
+  --model "${COMIS_WAVE4_CODEX_MODEL:-gpt-5.5}" \
   --sandbox workspace-write \
   -c 'model_reasoning_effort="high"' \
   --cd "${PWD}" \

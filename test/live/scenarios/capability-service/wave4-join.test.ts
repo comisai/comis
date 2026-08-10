@@ -322,7 +322,7 @@ function startInstalledService(input: {
     "--codex-profile", "codex-reviewed",
     "--codex-executable", REVIEWED_LAUNCHER,
     "--codex-version", "codex-cli 0.147.0",
-    "--codex-model", process.env["COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5-codex",
+    "--codex-model", process.env["COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5",
     "--codex-effort", "high",
     "--codex-terminal-allow-entry", REVIEWED_ALLOW_ID,
     "--codex-network", "host",
