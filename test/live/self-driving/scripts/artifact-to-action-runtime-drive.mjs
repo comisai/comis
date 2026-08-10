@@ -463,10 +463,13 @@ try {
       `the trajectory to record all ${dispatched.length} dispatched tool results (last saw ${lastDurableToolResults})`,
   );
 
-  // Only now, with the queued trajectory drained. The rollup lands before that queue catches up, and the
-  // incident severity this drive gates on is partly trajectory-derived — a per-tool failure raises `degraded`
-  // whatever the rollup says — so explaining any earlier could read `ok` off records that had not arrived and
-  // publish a clean verdict the complete trajectory would have refused.
+  // Only now, with the queued trajectory drained, so the explanation is assembled over the records this drive
+  // has already verified. Ordering hygiene rather than a reachable false-green for this session shape: the
+  // rollup's own `degraded` boolean shadows the trajectory-derived per-tool signal, and the signals it does
+  // NOT shadow are channel and sub-agent delivery paths that a gateway turn with neither never emits. What an
+  // early read would genuinely thin out is the rest of the report — `likelyRootCause` and the failure digests
+  // come straight off the trajectory — so explaining here keeps the published record and the durable evidence
+  // in agreement instead of describing a half-written one.
   const explained = await call("obs.explain", {
     sessionKey: rollup.sessionKey,
     depth: "summary",
@@ -506,4 +509,4 @@ if (failures.length > 0) {
   console.error(daemonLog.slice(-4000));
   await finish(1, true, record.traceId ?? record.sessionKey);
 }
-await finish(0);
+await finish(0, false, record.traceId ?? record.sessionKey);
