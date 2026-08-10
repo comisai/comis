@@ -562,6 +562,35 @@ describe("terminal-tools — create gate + canonicalization + observability", ()
     expect(registry.createCalls).toEqual([]);
   });
 
+  it("returns sandbox_unavailable for a managed terminal when no sandbox provider exists", async () => {
+    const registry = makeFakeRegistry();
+    const managedBinding = {
+      resolve: vi.fn(async () => ({
+        kind: "resolved" as const,
+        binding: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          canonicalRoot: "/approved/workspaces/run-a",
+        },
+        executionAttachments: [],
+      })),
+    };
+    const tool = createTerminalSessionCreateTool(baseDeps(registry, {
+      detectProvider: () => undefined,
+      managedBinding,
+    } as unknown as Partial<TerminalToolDeps>));
+
+    await expect(tool.execute("call-managed-no-provider", {
+      allowId: "bash",
+      command: realBashPath(),
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+    } as never)).rejects.toThrow(/\[sandbox_unavailable\]/u);
+    expect(managedBinding.resolve).not.toHaveBeenCalled();
+    expect(registry.createCalls).toEqual([]);
+  });
+
   it("rejects an unpaired managed handle before spawning a terminal", async () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionCreateTool(baseDeps(registry));
