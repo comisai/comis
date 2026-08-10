@@ -403,7 +403,7 @@ function makeConfig(input: {
           scope: {
             filesystem: "workspace",
             network: "full",
-            credentialPaths: ["~/.codex", "/home/comis/.wave4-tools"],
+        credentialPaths: ["~/.codex/auth.json", "/home/comis/.wave4-tools"],
             uid: "daemon",
           },
           autoAnswer: "none",
