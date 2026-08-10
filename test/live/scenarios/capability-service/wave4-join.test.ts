@@ -576,7 +576,10 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
       daemon.daemon.deliveryAdapters.set("echo", echo);
       const channelManager = daemon.daemon.channelManager;
       if (channelManager === undefined) throw new Error("channel manager is unavailable");
-      expect(daemon.daemon.capabilityServices.runtime.getActiveView().instances).toContainEqual(
+      expect(
+        daemon.daemon.capabilityServices.runtime.getActiveView().instances,
+        `capability service did not become active; service stderr: ${service.stderr()}`,
+      ).toContainEqual(
         expect.objectContaining({ serviceInstanceId: SERVICE_INSTANCE_ID, state: "active" }),
       );
       expect(service.child.exitCode).toBeNull();
