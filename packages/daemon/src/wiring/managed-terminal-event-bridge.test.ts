@@ -28,7 +28,7 @@ describe("managed terminal event bridge", () => {
     });
 
     expect(terminalEvent).toHaveBeenCalledWith({
-      operationId: expect.stringMatching(/^operation_terminal_/u),
+      operationId: expect.stringMatching(/^operation-terminal-[a-f0-9]{32}$/u),
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
       serviceInstanceId: "service-instance_a",
