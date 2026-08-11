@@ -280,7 +280,7 @@ The identifier that determines how conversations are grouped. Different scoping 
 
 ## Shared Data Folder
 
-A per-graph temporary directory (`~/.comis/graph-runs/{graphId}/`) where execution graph nodes can exchange files during execution. All nodes in a graph share the same folder, making it useful for large payloads (reports, data files, images) that do not fit in text-based input passing. The folder is automatically cleaned up after the graph completes. See [Execution Graphs](/agents/execution-graphs).
+A per-graph directory (`~/.comis/graph-runs/{graphId}/`) where execution graph nodes can exchange files during execution. All nodes in a graph share the same folder, making it useful for large payloads (reports, data files, images) that do not fit in text-based input passing. The folder persists after the graph completes -- it holds the node outputs and the run's terminal `_run-metadata.json`, which is what `comis explain --graph` reads -- until you remove it with `graph.deleteRun`. See [Execution Graphs](/agents/execution-graphs).
 
 ## Spawn Packet
 

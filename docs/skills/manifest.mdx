@@ -129,6 +129,13 @@ for both. A gate is enforced only when the tool that mints its receipts is
 available to the agent for that turn: with `web_fetch` unavailable the
 fetch gate is dropped, with `web_search` unavailable the search gate is
 dropped, and a floor no reachable tool can satisfy never discards the reply.
+
+The floors describe how a **research-shaped** request is answered, so routing
+the skill is not by itself enough to arm them. When the same turn is a
+mutation request -- the user asked the agent to send, post, or schedule
+something a mutating tool performs -- completion is proven by that tool's own
+receipt and the research floors are not applied, because a floor the requested
+action can never satisfy would otherwise discard a correct answer.
 </Info>
 
 <Info>
