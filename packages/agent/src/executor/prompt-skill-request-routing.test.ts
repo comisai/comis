@@ -52,14 +52,14 @@ const skills: TestPromptSkillCapability[] = [
   {
     name: "deep-research",
     description:
-      "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer.",
+      "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer. Continue for context-dependent follow-ups requesting source attribution, claim tracing, unavailable-source handling, or compression into essentials.",
     replacesPackages: [],
     minDistinctWebFetchUrls: 3,
   },
   {
     name: "claude-code",
     description:
-      "Use Claude Code to build, debug, refactor, and test a software project.",
+      "Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a named project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to use Claude Code — even if they do not name the tool. This is for interactive sessions only; never the headless one-shot mode.",
     replacesPackages: [],
   },
 ];
@@ -153,6 +153,50 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/deep-research/SKILL.md",
     ]);
+  });
+
+  it("keeps research attribution follow-ups on the relevant prompt skill", () => {
+    const deferral = result();
+    const currentRequestText =
+      "one source is down — where is each claim from, then give me the three essentials";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: [
+        "i need to understand heat pumps properly, not just a paragraph",
+        currentRequestText,
+      ].join("\n"),
+      priorUserRequest:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+  });
+
+  it("does not route common prose overlap to an unrelated prompt skill", () => {
+    const deferral = result();
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      requestRelevanceText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
   });
 
   it("leaves unrelated requests unchanged", () => {
