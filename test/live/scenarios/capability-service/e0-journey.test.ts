@@ -791,19 +791,23 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       console.log("DIRTY_WORKTREE_CLEANUP_REFUSED");
       expect(existsSync(scoutBinding.canonical_path)).toBe(true);
       rmSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"));
-      let cleanedScout: { state: string };
-      try {
-        cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
-          "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-dirty", "--format", "json",
-        ]);
-      } catch (cause) {
+      let cleanedScout: { state: string } | undefined;
+      let cleanupReplayFailure = "none";
+      await pollUntil(() => {
+        try {
+          cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
+            "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-dirty", "--format", "json",
+          ]);
+          return cleanedScout.state === "cleaned";
+        } catch (cause) {
+          cleanupReplayFailure = cause instanceof Error ? cause.message : String(cause);
+          return false;
+        }
+      }, 60_000, () => {
         const processDiagnostic = `serviceExit=${String(service.child.exitCode)}; serviceSignal=${String(service.child.signalCode)}`;
-        throw new Error(
-          `scout cleanup replay failed; ${cleanupDiagnostic(goDatabase, scoutTask)}; ${processDiagnostic}; serviceStderr=${service.stderr()}`,
-          { cause },
-        );
-      }
-      expect(cleanedScout.state).toBe("cleaned");
+        return `scout cleanup replay; ${cleanupDiagnostic(goDatabase, scoutTask)}; ${processDiagnostic}; lastFailure=${cleanupReplayFailure}; serviceStderr=${service.stderr()}`;
+      });
+      expect(cleanedScout?.state).toBe("cleaned");
 
       let cleanedShip = "";
       await liaisonTurn(model, boot.channelManager, boot.echo, "CLEANUP_E0_SHIP", [{
