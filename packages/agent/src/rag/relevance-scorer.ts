@@ -58,6 +58,13 @@ const RELEVANCE_TURN_WINDOW = 3;
 const MIN_CONTENT_TERMS = 2;
 
 /**
+ * Retrieval terms are identifiers, words, and short values, not unbounded
+ * payload bodies. Keeping one term below this ceiling prevents a pasted opaque
+ * blob from becoming the semantic authority for memory search.
+ */
+const MAX_CONTENT_TERM_CHARS = 128;
+
+/**
  * A small, BOUNDED English stopword set — the common deictic / filler / function words that
  * carry no retrieval signal ("yes do that", "is it the …"). Kept deliberately compact (the
  * KISS/YAGNI "bounded static map" discipline, mirroring query-understanding.ts's static
@@ -104,6 +111,11 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 0);
 }
 
+/** Whether the current request contains a token too large to be retrieval text. */
+export function hasOversizedLexicalToken(text: string): boolean {
+  return tokenize(text).some((token) => token.length > MAX_CONTENT_TERM_CHARS);
+}
+
 /** The shape {@link buildRelevanceQuery} returns and {@link scoreRelevance} consumes. */
 export interface RelevanceQuery {
   /** The de-duplicated content terms (stopwords removed), newest-turn terms first. */
@@ -137,6 +149,7 @@ export function buildRelevanceQuery(userTurns: string[], goalAnchorText?: string
   const seen = new Set<string>();
   const terms: string[] = [];
   const pushTerm = (raw: string): void => {
+    if (raw.length > MAX_CONTENT_TERM_CHARS) return;
     if (STOPWORDS.has(raw)) return; // drop function words — content-only
     if (seen.has(raw)) return; // de-dup (keeps the first = newest occurrence)
     seen.add(raw);
