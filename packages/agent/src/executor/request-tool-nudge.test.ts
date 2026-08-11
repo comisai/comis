@@ -316,6 +316,43 @@ describe("runRequestToolNudge", () => {
       requestRelevantPromptSkillLocations: ["/skills/deep-research/SKILL.md"],
       requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
       requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      messages: [
+        { role: "user", content: "an older request" },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{ type: "text", text: "https://example.com/older-source" }],
+        },
+        {
+          role: "user",
+          content:
+            "name the unavailable source, then give me the three essentials",
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          isError: true,
+          content: [{
+            type: "text",
+            text: "https://example.com/comis-unreachable-source-404 returned HTTP 404",
+          }],
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{ type: "text", text: "https://example.com/source-a fetched" }],
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{ type: "text", text: "https://example.com/source-b fetched" }],
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{ type: "text", text: "https://example.com/source-c fetched" }],
+        },
+      ],
       session: { prompt },
       currentSuccessfulToolCount: (toolNames) =>
         toolNames?.includes("web_fetch") === true ? 3 : 0,
@@ -330,6 +367,15 @@ describe("runRequestToolNudge", () => {
     expect(prompt.mock.calls[2]?.[0]).toMatch(/narrate the completed/iu);
     expect(prompt.mock.calls[2]?.[0]).toMatch(
       /current-turn workflow receipts[\s\S]*earlier failure or unavailable/iu,
+    );
+    expect(prompt.mock.calls[2]?.[0]).toContain(
+      "https://example.com/comis-unreachable-source-404",
+    );
+    expect(prompt.mock.calls[2]?.[0]).toContain("https://example.com/source-a");
+    expect(prompt.mock.calls[2]?.[0]).toContain("https://example.com/source-b");
+    expect(prompt.mock.calls[2]?.[0]).toContain("https://example.com/source-c");
+    expect(prompt.mock.calls[2]?.[0]).not.toContain(
+      "https://example.com/older-source",
     );
     expect(outcome).toMatchObject({
       fired: true,
