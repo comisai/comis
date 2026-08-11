@@ -165,6 +165,7 @@ const METHOD_CATALOG = [
       "owning-service-instance-only",
       "managed-run-workspace-lease-must-match",
       "terminal-and-attachment-revocation-precedes-lease-release",
+      "release-time-is-idempotency-bound",
     ],
     requestSchema: "schemas/release.request.schema.json",
     responseSchema: "schemas/release.response.schema.json",

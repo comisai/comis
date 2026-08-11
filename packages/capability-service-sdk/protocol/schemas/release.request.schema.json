@@ -39,6 +39,11 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
           "type": "string"
         },
+        "releasedAtMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
         "workspaceLeaseId": {
           "maxLength": 256,
           "minLength": 1,
@@ -50,7 +55,8 @@
         "operationId",
         "managedRunId",
         "workspaceLeaseId",
-        "disposition"
+        "disposition",
+        "releasedAtMs"
       ],
       "type": "object"
     }

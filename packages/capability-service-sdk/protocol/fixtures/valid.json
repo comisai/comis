@@ -201,6 +201,7 @@
           "disposition": "reap_safe",
           "managedRunId": "managed-run_a",
           "operationId": "operation_release",
+          "releasedAtMs": 1800000000000,
           "workspaceLeaseId": "workspace-lease_a"
         }
       },

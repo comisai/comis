@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "920f2162e0f1b5e6fe907445aa62c110bebbebc0b54e2b16423ab301ae63df72"
+      "sha256": "91616a2b4eae642a394fb99fe4dad5ce446f84c3a14c860c35771b51f1e21ab1"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -86,7 +86,7 @@
     },
     {
       "path": "schemas/release.request.schema.json",
-      "sha256": "22cb81a5eaefaa8344d2dc6028f7cbc5905debd3987978af453cae8d506604b6"
+      "sha256": "cbaaea81b7d3b536c71e2ce595fc550eaa1e3c511621ee5a3c8ed099e12a6633"
     },
     {
       "path": "schemas/release.response.schema.json",
@@ -113,7 +113,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "9eac0c78c932d4abae63bdfe422ec96a5463d1fcf037e5599bc2564f79e7a660",
+  "bundleDigest": "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -195,7 +195,7 @@
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
-    "version": "1.0.62"
+    "version": "1.0.63"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
@@ -319,7 +319,8 @@
         "altered-replay-is-rejected",
         "owning-service-instance-only",
         "managed-run-workspace-lease-must-match",
-        "terminal-and-attachment-revocation-precedes-lease-release"
+        "terminal-and-attachment-revocation-precedes-lease-release",
+        "release-time-is-idempotency-bound"
       ]
     },
     {

@@ -201,6 +201,7 @@ export const CapabilityReleaseRequestSchema = z.strictObject({
     managedRunId: ManagedRunIdSchema,
     workspaceLeaseId: WorkspaceLeaseIdSchema,
     disposition: z.enum(["reap_safe", "preserve"]),
+    releasedAtMs: TimestampMsSchema,
   }),
 });
 

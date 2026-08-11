@@ -240,6 +240,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
           managedRunId,
           workspaceLeaseId: "workspace-lease_a",
           disposition: "reap_safe",
+          releasedAtMs: 1_800_000_000_000,
         }),
       },
       {
