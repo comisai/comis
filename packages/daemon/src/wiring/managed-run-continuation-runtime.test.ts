@@ -6,7 +6,7 @@ import {
   type ManagedRunRecord,
   type ManagedRunStorePort,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import type {
   ManagedRunContinuationCoordinator,
@@ -206,6 +206,50 @@ describe("managed-run continuation event runtime", () => {
     await runtime.waitUntilIdle();
 
     expect(process).toHaveBeenCalledTimes(2);
+    await runtime.shutdown();
+  });
+
+  it("logs a bounded safe cause when continuation processing fails", async () => {
+    const eventBus = new TypedEventBus();
+    const record = makeRecord();
+    const store = {
+      get: vi.fn(async () => ok(record)),
+      listRecoverable: vi.fn(async () => ok({ records: [], invalid: [] })),
+    } as unknown as ManagedRunStorePort;
+    const error = vi.fn();
+    const child = { info: vi.fn(), warn: vi.fn(), error, debug: vi.fn() };
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn(() => child),
+    } as unknown as import("@comis/core").ComisLogger;
+    const timers = createFakeTimers();
+    const runtime = createManagedRunContinuationRuntime({
+      eventBus,
+      store,
+      coordinator: {
+        process: vi.fn(async () => err(new Error("candidate claim failed with token=fixture-secret-value"))),
+      },
+      nowMs: () => 100,
+      timers,
+      recoveryBatchSize: 10,
+      logger,
+    });
+
+    eventBus.emit("managed_run:report_accepted", {
+      managedRunId: "managed-run-a",
+      serviceInstanceId: "service-a",
+      sequence: 1,
+      kind: "candidate_complete",
+      durationMs: 1,
+      timestamp: 10,
+    });
+    timers.advance(50);
+    await runtime.waitUntilIdle();
+
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.stringContaining("candidate claim failed") }),
+      "Managed-run continuation processing failed",
+    );
+    expect(JSON.stringify(error.mock.calls)).not.toContain("fixture-secret-value");
     await runtime.shutdown();
   });
 });
