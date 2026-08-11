@@ -1002,6 +1002,53 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).value?.kind).toBe("claim_mismatch");
   });
 
+  it("atomically completes a paused run after verified handback evidence", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.claimTransition(SERVICE_SCOPE, {
+      operationId: "operation_pause_for_handback",
+      managedRunId: "managed-run_a",
+      expectedStatuses: ["active"],
+      nextStatus: "paused",
+      nextStatusReason: "service_paused",
+      transitionedAtMs: 1_800_000_000_100,
+    })).value?.kind).toBe("claimed");
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      kind: "candidate_complete",
+      receivedAtMs: 1_800_000_000_150,
+    }))).value?.kind).toBe("accepted");
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_handback",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_200,
+      expiresAtMs: 1_800_000_060_200,
+    })).value?.kind).toBe("claimed");
+
+    const completed = await store.commitReducedState(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_handback",
+      throughReportSequence: 1,
+      status: "succeeded",
+      statusReason: "outcome_verified",
+      terminalOutcome: { kind: "succeeded", recordedAtMs: 1_800_000_000_300 },
+      committedAtMs: 1_800_000_000_300,
+    });
+
+    expect(completed).toMatchObject({
+      ok: true,
+      value: {
+        kind: "updated",
+        record: {
+          status: "succeeded",
+          statusReason: "outcome_verified",
+          lastReducedReportSequence: 1,
+        },
+      },
+    });
+  });
+
   it("supports revocation replay while preserving exact owner scope", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
