@@ -299,6 +299,21 @@ function reportKinds(databasePath: string, taskHandle: string): string[] {
   }
 }
 
+function workerJoinDiagnostic(worktree: string): Record<string, string> {
+  const read = (file: string): string => {
+    try {
+      return readFileSync(join(worktree, file), "utf8").trim();
+    } catch {
+      return "missing";
+    }
+  };
+  return {
+    launcher: read(".wave4-launcher.log"),
+    reporter: read(".wave4-reporter.log"),
+    client: read(".wave4-client-diagnostic.log"),
+  };
+}
+
 function evidenceDelivered(databasePath: string, taskHandles: readonly string[]): boolean {
   const db = new Database(databasePath, { readonly: true });
   try {
@@ -623,7 +638,13 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       await pollUntil(() => {
         const status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
         return [shipTask, scoutTask].every((task) => status.tasks.some((entry) => entry.taskHandle === task && entry.state === "working"));
-      }, 180_000, "two E0 workers joined in fleet views");
+      }, 180_000, () => `two E0 workers joined in fleet views; ${JSON.stringify({
+        shipState: taskState(goDatabase, shipTask),
+        scoutState: taskState(goDatabase, scoutTask),
+        ship: workerJoinDiagnostic(shipBinding.canonical_path),
+        scout: workerJoinDiagnostic(scoutBinding.canonical_path),
+        service: service.stderr(),
+      })}`);
       await pollUntil(
         () => reportKinds(goDatabase, shipTask).includes("decision") && reportKinds(goDatabase, scoutTask).includes("candidate_complete"),
         180_000,
