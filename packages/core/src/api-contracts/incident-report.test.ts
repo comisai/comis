@@ -739,4 +739,22 @@ describe("ObsExplainContract.request graphId arm", () => {
     });
     expect(JSON.stringify(parsed.graph)).not.toContain("PRIVATE");
   });
+
+  it("rejects an unknown graph announcement disposition", () => {
+    expect(() => IncidentReportSchema.parse({
+      ...baseReport(),
+      graph: {
+        graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+        status: "completed",
+        announcementDelivery: "unknown",
+        durationMs: 1,
+        nodesTotal: 0,
+        nodesSucceeded: 0,
+        nodesFailed: 0,
+        nodesSkipped: 0,
+        nodesRetried: 0,
+        nodes: [],
+      },
+    })).toThrow();
+  });
 });

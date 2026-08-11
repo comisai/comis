@@ -88,22 +88,14 @@ describe("readIncidentGraphRun", () => {
     expect(result.value.cancelReason).toBe("manual");
   });
 
-  // The disposition field was added after graph runs were already being
-  // persisted, so every record from an earlier build lacks it. Failing
-  // validation dropped `comis explain <graphId> --graph` entirely for those
-  // runs — the report claimed an unresolvable graph id for a graph sitting on
-  // disk, with no honest degradation anywhere in it.
-  it("projects a record persisted without an announcement disposition as unknown", async () => {
+  it("rejects metadata without the required announcement disposition", async () => {
     const { dataDir, graphId } = await createGraphMetadata({
       announcementDelivery: undefined,
     });
 
     const result = await readIncidentGraphRun(dataDir, graphId);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.announcementDelivery).toBe("unknown");
-    expect(result.value.nodesTotal).toBe(1);
+    expect(result.ok).toBe(false);
   });
 
   it("rejects metadata whose announcement disposition is not a known value", async () => {
