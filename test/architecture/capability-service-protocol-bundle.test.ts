@@ -26,6 +26,7 @@ const EXPECTED_METHODS = [
   "capabilityServices.health",
   "managedRuns.abandon",
   "managedRuns.activate",
+  "managedRuns.putEvidence",
   "managedRuns.report",
   "managedRuns.terminalEvent",
 ] as const;
@@ -180,6 +181,20 @@ describe("capability-service protocol bundle contract", () => {
       expect(entry.semanticInvariants.length).toBeGreaterThan(0);
     }
     expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.putEvidence"),
+    ).toMatchObject({
+      direction: "service-to-comis",
+      callerClass: "capability-service",
+      classification: "mutation",
+      requiredServiceScope: "evidence",
+      semanticInvariants: expect.arrayContaining([
+        "evidence-ref-identical-replay-returns-original-result",
+        "content-hash-must-match-decoded-private-body",
+        "adapter-verification-requires-configured-kind",
+        "host-verification-is-reserved",
+      ]),
+    });
+    expect(
       manifest.methodCatalog.find((entry) => entry.method === "managedRuns.report")
         ?.semanticInvariants,
     ).toContain("utf8-report-content-bytes-at-most-max-report-bytes");
@@ -194,6 +209,48 @@ describe("capability-service protocol bundle contract", () => {
         "terminal-run-workspace-lease-must-match",
         "transition-carries-identifiers-only",
       ]),
+    });
+  });
+
+  it("pins immutable verifier evidence and its host-owned delivery presentation", () => {
+    const valid = readJson<{
+      steps: Array<{ target: string; payload: Record<string, unknown> }>;
+    }>(resolve(PROTOCOL_ROOT, "fixtures/valid.json"));
+    const evidence = valid.steps.find(
+      (step) => step.target === "request" && step.payload["method"] === "managedRuns.putEvidence",
+    );
+    const response = valid.steps.find((step) => step.target === "put-evidence-response");
+    const params = evidence?.payload["params"] as Record<string, unknown> | undefined;
+    const result = response?.payload["result"] as Record<string, unknown> | undefined;
+
+    expect(Object.keys(params ?? {}).sort()).toEqual([
+      "bodyBase64",
+      "contentHash",
+      "delivery",
+      "evidenceRef",
+      "expiresAtMs",
+      "kind",
+      "managedRunId",
+      "observedAtMs",
+      "operationId",
+      "subjectDigest",
+      "verificationLevel",
+    ]);
+    expect(params).toMatchObject({
+      managedRunId: expect.any(String),
+      evidenceRef: expect.any(String),
+      kind: "candidate_bundle",
+      subjectDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      verificationLevel: "adapter_verified",
+      delivery: { kind: "reference" },
+    });
+    expect(result).toEqual({
+      managedRunId: params?.["managedRunId"],
+      evidenceRef: params?.["evidenceRef"],
+      contentHash: params?.["contentHash"],
+      verificationLevel: params?.["verificationLevel"],
+      retainedUntilMs: params?.["expiresAtMs"],
     });
   });
 
@@ -364,6 +421,7 @@ describe("capability-service protocol bundle contract", () => {
       "health-response": "schemas/health.response.schema.json",
       "mcp-call-context": "schemas/mcp-call-context.schema.json",
       "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
+      "put-evidence-response": "schemas/putEvidence.response.schema.json",
       "report-response": "schemas/report.response.schema.json",
       "terminal-event-response": "schemas/terminalEvent.response.schema.json",
     };
