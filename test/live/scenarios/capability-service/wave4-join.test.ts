@@ -106,6 +106,7 @@ interface PendingCall {
   readonly kind: "target" | "discovery";
   readonly step: ToolStep;
   readonly name: string;
+  readonly callId: string;
 }
 
 function messageText(message: unknown): string {
@@ -177,9 +178,18 @@ export class LiaisonModelServer {
 
   private respond(body: Record<string, unknown>, response: ServerResponse): void {
     const messages = Array.isArray(body.messages) ? body.messages : [];
-    const last = messages.at(-1) as { role?: unknown } | undefined;
-    if (last?.role === "tool" && this.pending !== undefined) {
-      const text = messageText(last);
+    if (this.pending !== undefined) {
+      const completed = messages.findLast((message) => {
+        if (typeof message !== "object" || message === null) return false;
+        const candidate = message as { role?: unknown; tool_call_id?: unknown };
+        return candidate.role === "tool" && candidate.tool_call_id === this.pending?.callId;
+      });
+      if (completed === undefined) {
+        response.statusCode = 409;
+        response.end(`pending tool result is unavailable: ${this.pending.name}`);
+        return;
+      }
+      const text = messageText(completed);
       if (this.pending.kind === "target") {
         this.pending.step.capture?.(text);
         this.steps.shift();
@@ -196,14 +206,15 @@ export class LiaisonModelServer {
       return typeof name === "string" ? [name] : [];
     });
     const step = this.steps[0];
-    let toolCall: { name: string; arguments: Record<string, unknown> } | undefined;
+    let toolCall: { id: string; name: string; arguments: Record<string, unknown> } | undefined;
     let text = "LIAISON_TURN_DONE";
     if (step !== undefined) {
+      const callId = `call-${randomUUID()}`;
       const selected = toolNames.find((candidate) => candidate === step.tool || candidate.includes(step.tool))
         ?? this.discovered.get(step.tool);
       if (selected !== undefined) {
-        toolCall = { name: selected, arguments: step.arguments };
-        this.pending = { kind: "target", step, name: selected };
+        toolCall = { id: callId, name: selected, arguments: step.arguments };
+        this.pending = { kind: "target", step, name: selected, callId };
       } else {
         const discover = toolNames.find((candidate) => candidate === "discover_tools");
         if (discover === undefined) {
@@ -212,10 +223,11 @@ export class LiaisonModelServer {
           return;
         }
         toolCall = {
+          id: callId,
           name: discover,
           arguments: { query: `select:mcp__${MCP_SERVER_NAME}--${step.tool}` },
         };
-        this.pending = { kind: "discovery", step, name: discover };
+        this.pending = { kind: "discovery", step, name: discover, callId };
       }
       text = "";
     }
@@ -231,7 +243,7 @@ export class LiaisonModelServer {
         role: "assistant",
         tool_calls: [{
           index: 0,
-          id: `call-${randomUUID()}`,
+          id: toolCall.id,
           type: "function",
           function: { name: toolCall.name, arguments: JSON.stringify(toolCall.arguments) },
         }],
