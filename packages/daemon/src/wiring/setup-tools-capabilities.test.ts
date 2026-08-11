@@ -373,6 +373,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._callerSessionKey).toBe("tenant-x:agent:agent-1:user-z:telegram:peer:user-z");
     expect(forwarded._callerConversationScope).toEqual(currentCtx.turnScope?.conversation);
+    expect(forwarded._callerTurnScope).toEqual(currentCtx.turnScope);
     expect(forwarded._deliveryTarget).toEqual({
       conversation: {
         conversationScope: TURN_SCOPE.conversation,

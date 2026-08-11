@@ -375,6 +375,42 @@ describe("graph-handlers", () => {
       );
     });
 
+    it("uses the injected turn scope when ambient request context is unavailable", async () => {
+      const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
+      mockCoord.run.mockResolvedValue(ok("graph-uuid-injected-scope"));
+      const turnScope = makeTelegramTurnContext().turnScope;
+
+      await handlers["graph.execute"]!({
+        nodes: VALID_NODES,
+        _callerSessionKey: "session-1",
+        _agentId: "agent-1",
+        _callerTurnScope: turnScope,
+      });
+
+      expect(mockCoord.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          callerTurnScope: turnScope,
+          announceChannelType: "telegram",
+          announceChannelId: "chat-42",
+        }),
+      );
+    });
+
+    it("rejects a malformed injected turn scope before graph execution starts", async () => {
+      const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
+      mockCoord.run.mockResolvedValue(ok("graph-uuid-invalid-scope"));
+
+      await expect(
+        handlers["graph.execute"]!({
+          nodes: VALID_NODES,
+          _callerSessionKey: "session-1",
+          _agentId: "agent-1",
+          _callerTurnScope: { endpoint: { channelType: "telegram" } },
+        }),
+      ).rejects.toThrow("Graph caller turn scope is invalid");
+      expect(mockCoord.run).not.toHaveBeenCalled();
+    });
+
     it("rejects a raw completion route that conflicts with trusted turn scope", async () => {
       const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
       mockCoord.run.mockResolvedValue(ok("graph-uuid-conflict"));
