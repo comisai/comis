@@ -166,6 +166,7 @@ describe("scrubSecretsFromText", () => {
     "ok try this one 12345678901234567890",
     "use commit b76e6141ed853dd08f280908db35cc37df85457e",
     "try https://example.com/a/very/long/non-secret/resource?mode=active",
+    "const name = document.getElementById('runName').value.trim();",
     "replace the token budget with 256000",
     "put the token budget in the report: 256000",
     "replace the service token with ${SERVICE_TOKEN}",
