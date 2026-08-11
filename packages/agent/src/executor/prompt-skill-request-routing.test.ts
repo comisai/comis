@@ -162,6 +162,31 @@ describe("prompt skill request routing", () => {
     ]);
   });
 
+  it("keeps the current request authoritative in workflow context", () => {
+    const deferral = result();
+    const currentRequestText =
+      "i need to understand heat pumps properly, not just a paragraph";
+    const priorUserRequest =
+      "use exactly four old URLs and report an unavailable fixture source";
+
+    applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: [priorUserRequest, currentRequestText].join("\n"),
+      priorUserRequest,
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(deferral.requestRelevantPromptSkillWorkflowContext)
+      .toContain(currentRequestText);
+    expect(deferral.requestRelevantPromptSkillWorkflowContext?.lastIndexOf(currentRequestText))
+      .toBeGreaterThan(
+        deferral.requestRelevantPromptSkillWorkflowContext?.indexOf(priorUserRequest) ?? -1,
+      );
+  });
+
   it("keeps research attribution follow-ups on the relevant prompt skill", () => {
     const deferral = result();
     const currentRequestText =
