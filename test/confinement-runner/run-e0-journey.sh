@@ -8,7 +8,7 @@ readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly JOURNEY_ROOT="${RUNNER_ROOT}/e0-journey"
 readonly DEV_CREW_COPY="${JOURNEY_ROOT}/go-source"
 readonly DEV_CREW_BIN="${JOURNEY_ROOT}/bin"
-readonly DEV_CREW_COMMIT="ddb889f1b3039cc50d9c1f049c65ff0746cd6ce8"
+readonly DEV_CREW_COMMIT="2e64930c79832af43cad3d590b28b8cad86c67bc"
 readonly LIVE_TEST=test/live/scenarios/capability-service/e0-journey.test.ts
 
 if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
