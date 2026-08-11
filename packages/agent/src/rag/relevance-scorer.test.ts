@@ -143,11 +143,12 @@ describe("opaque-payload classification — admission vs recall are separate que
   // A long request in a space-free writing system tokenizes to ONE oversized
   // token, so the length test alone refused a genuine request before the model
   // ever saw it — answered by an untranslated input-guard string at that.
-  it("admits a long request written in a script without word spaces", () => {
+  it("admits space-free prose without a closed script allowlist", () => {
     for (const request of [
       "请".repeat(200),
       "ก".repeat(200),
       "私".repeat(60) + "の".repeat(80),
+      "ᬓ".repeat(200),
     ]) {
       expect(isOpaquePayloadWithoutInstruction(request), request.slice(0, 8))
         .toBe(false);
