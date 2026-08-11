@@ -56,11 +56,11 @@ function freshMirrorDb(): string {
   const db = new Database(dbPath);
   try {
     // Run the PRODUCT's boot DDL rather than a hand-copied CREATE TABLE. The
-    // copy had drifted: it declared a `conversation_ref` column the real schema does
+    // copy had drifted: it declared a `session_key` column the real schema does
     // not have (delivery rows are keyed on the durable
     // tenant_id/agent_id/conversation_ref identity), so this oracle's own tests
     // passed against a fiction while the oracle failed `no such column:
-    // conversation_ref` on any db a real daemon wrote.
+    // session_key` on any db a real daemon wrote.
     initSchema(db, 768);
   } finally {
     db.close();
