@@ -16,8 +16,9 @@
 //   - INJECT_OPTS: optional JSON object carrying Telegram mention/reply/thread metadata, for example
 //     `{"mention":true,"replyTo":42,"thread":7,"forwarded":true}`. The control route validates the closed shape.
 //   - Use `-` or `@/absolute/file` for credential-bearing prompts so values never enter argv/process listings.
-//   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
-//     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
+//   - A `pipeline`/`graph.execute` turn ends at the launch acknowledgement while the graph continues.
+//     Set `WAIT_FOR_FOLLOWUP_MS` to keep a direct-message drive open for a second substantive delivery;
+//     always confirm the terminal graph with `graph.status` or `comis explain <graphId> --graph`.
 import { readFileSync, readdirSync, statSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { comisDist, rig } from './_rig.mjs';
@@ -27,6 +28,7 @@ import {
   driveTextFilePath,
   findAssistantReplyAfterInbound,
   findTelegramConversationWireAnswer,
+  followupWaitFinished,
   isDriveProgressText,
   normalizeDriveStdinText,
   normalizedInboundTextError,
@@ -83,12 +85,19 @@ if (providerRiskError) {
 const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
+const followupWaitMs = Number(process.env.WAIT_FOR_FOLLOWUP_MS ?? 0);
 // Guard the #1 mis-invocation: passing DATA in the maxMs slot
 // (arg order is chatId,text,quiesceMs,maxMs,DATA) makes maxMs=NaN → `while (… < NaN)` is false →
 // the loop NEVER runs → an instant, SILENT false "0s [TIMEOUT] — NO SUBSTANTIVE ANSWER" on a reply
 // that actually landed. Fail LOUD instead of fabricating a no-reply.
-if (Number.isNaN(quiesceMs) || Number.isNaN(maxMs)) {
+if (
+  Number.isNaN(quiesceMs)
+  || Number.isNaN(maxMs)
+  || !Number.isFinite(followupWaitMs)
+  || followupWaitMs < 0
+) {
   console.error(`drive.mjs: non-numeric quiesceMs/maxMs (quiesceMs="${quiesceMsArg}", maxMs="${maxMsArg}"). ` +
+    `WAIT_FOR_FOLLOWUP_MS must also be a non-negative number. ` +
     `Usage: drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]`);
   process.exit(2);
 }
@@ -457,6 +466,20 @@ const detectCorrectSilence = () => {
   return null;
 };
 let allowFromBlock = null;
+let firstAnswerAtMs;
+
+const substantiveAnswerCount = () => new Set(
+  seen
+    .filter(isConversationAnswer)
+    .map((outbound, index) => outbound.messageId ?? `missing-${index}`),
+).size;
+
+const asyncFollowupFinished = (nowMs) => followupWaitMs === 0 || followupWaitFinished({
+  substantiveAnswerCount: substantiveAnswerCount(),
+  firstAnswerAtMs,
+  nowMs,
+  waitMs: followupWaitMs,
+});
 
 while (Date.now() - start < maxMs) {
   // An ingress-blocked sender can NEVER reply, so waiting out maxMs only delays a verdict the
@@ -473,7 +496,10 @@ while (Date.now() - start < maxMs) {
   if (batch.length) {
     for (const o of batch) {
       seen.push(o); after = Math.max(after, o.messageId || after);
-      if (isConversationAnswer(o)) sawAnswer = true;
+      if (isConversationAnswer(o)) {
+        sawAnswer = true;
+        firstAnswerAtMs ??= Date.now();
+      }
     }
     lastNew = Date.now();
   }
@@ -510,11 +536,12 @@ while (Date.now() - start < maxMs) {
     }
     continue;
   }
+  const nowMs = Date.now();
   if (directConversationFinished({
     sawAnswer,
     turnEnded,
     turnEndedAtMs,
-    nowMs: Date.now(),
+    nowMs,
     deliveryGraceMs: POST_TURN_DELIVERY_GRACE_MS,
     // `lastNew` is stamped whenever a batch arrives, so the grace measures SILENCE rather than an
     // absolute span from turn-end. A background completion's delivery can trail its terminal record
@@ -522,14 +549,17 @@ while (Date.now() - start < maxMs) {
     // by the real answer now holds the window open instead of closing mid-delivery. An outbound that
     // predates turn-end does not extend it.
     lastOutboundAtMs: lastNew,
-  })) {
+  }) && asyncFollowupFinished(nowMs)) {
     // Drain any just-delivered final message, then stop. A turn with no answer
     // reaches this branch only after the bounded post-turn delivery grace.
     const tail = await getOutbound(after, 2500);
     for (const o of tail) {
       seen.push(o);
       after = Math.max(after, o.messageId || after);
-      if (isConversationAnswer(o)) sawAnswer = true;
+      if (isConversationAnswer(o)) {
+        sawAnswer = true;
+        firstAnswerAtMs ??= Date.now();
+      }
     }
     break;
   }
@@ -539,7 +569,7 @@ while (Date.now() - start < maxMs) {
     lastNewMs: lastNew,
     nowMs: Date.now(),
     quiesceMs,
-  })) break;
+  }) && asyncFollowupFinished(Date.now())) break;
 }
 // Telegram edits keep the original message id, so the id-cursor long poll
 // cannot return an edit once that message id has already advanced the cursor.
@@ -571,7 +601,15 @@ const correctedWireAnswer = sharedConversation && turnEnded
 const hasSubstantiveAnswer = sharedConversation
   ? correlatedWireAnswer || correctedWireAnswer !== null
   : sawAnswer;
-const reason = correlatedWireAnswer
+const followupDelivered = followupWaitMs > 0 && substantiveAnswerCount() >= 2;
+const followupWindowExpired = followupWaitMs > 0
+  && typeof firstAnswerAtMs === 'number'
+  && Date.now() - firstAnswerAtMs >= followupWaitMs;
+const reason = followupDelivered
+  ? 'followup-delivered'
+  : followupWindowExpired
+    ? 'followup-window-expired'
+    : correlatedWireAnswer
   ? 'correlated-session-answer'
   : correctedWireAnswer !== null
     ? 'turn-ended-visible-answer'

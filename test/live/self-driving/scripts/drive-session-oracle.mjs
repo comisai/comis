@@ -435,6 +435,21 @@ export function directConversationFinished({
 }
 
 /**
+ * Stop an opt-in async follow-up wait after a second substantive delivery or
+ * after the bounded window measured from the launch acknowledgement.
+ */
+export function followupWaitFinished({
+  substantiveAnswerCount,
+  firstAnswerAtMs,
+  nowMs,
+  waitMs,
+}) {
+  if (substantiveAnswerCount >= 2) return true;
+  if (typeof firstAnswerAtMs !== "number") return false;
+  return nowMs - firstAnswerAtMs >= waitMs;
+}
+
+/**
  * Has the driven turn actually ENDED, given the trajectory lines appended since the drive began?
  *
  * A terminal record alone is not turn-end: a turn can hand work OFF and finish, and both hand-off
