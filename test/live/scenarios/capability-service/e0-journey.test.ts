@@ -277,7 +277,13 @@ function handbackDiagnostic(databasePath: string, taskHandle: string): string {
       FROM task_terminal_bindings WHERE task_handle = ?`).get(taskHandle);
     const validation = db.prepare(`SELECT COUNT(*) AS active
       FROM validation_processes WHERE task_handle = ? AND state <> 'exited'`).get(taskHandle);
-    return JSON.stringify({ observedAt: new Date().toISOString(), task, terminal, validation });
+    const handbacks = db.prepare(`SELECT operation_id AS operationId, observed_at AS observedAt,
+      state_version AS stateVersion FROM task_handbacks WHERE task_handle = ? ORDER BY observed_at, operation_id`)
+      .all(taskHandle);
+    const candidateReports = db.prepare(`SELECT local_report_id AS localReportId,
+      state_version AS stateVersion, accepted_at AS acceptedAt FROM reports
+      WHERE task_handle = ? AND kind = 'candidate_complete' ORDER BY accepted_at, local_report_id`).all(taskHandle);
+    return JSON.stringify({ observedAt: new Date().toISOString(), task, terminal, validation, handbacks, candidateReports });
   } finally {
     db.close();
   }
