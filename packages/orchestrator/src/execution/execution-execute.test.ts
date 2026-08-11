@@ -573,7 +573,9 @@ describe("executeLlm — configured voice delivery signal", () => {
       undefined, undefined,
     ));
 
-    expect(getOverrides()?.outboundAudioAutoDelivery).toBe(true);
+    const deliveryDecision = getOverrides()?.outboundAudioAutoDelivery;
+    expect(deliveryDecision).toBeTypeOf("function");
+    expect((deliveryDecision as (responseText: string) => boolean)("ready")).toBe(true);
   });
 
   it("defers tagged voice delivery evidence until the reply text exists", async () => {
@@ -607,11 +609,10 @@ describe("executeLlm — configured voice delivery signal", () => {
     )).toBe(false);
   });
 
-  it("claims no runtime voice delivery without a pipeline, an attachment-capable adapter, or an unconditional mode", async () => {
+  it("omits the voice predicate without a pipeline or attachment-capable adapter", async () => {
     const cases: Array<[ExecuteDeps, ChannelPort]> = [
       [makeDeps(), voiceAdapter()],
       [makeDeps({ voiceResponsePipeline: makeVoicePipeline(true) }), makeAdapter()],
-      [makeDeps({ voiceResponsePipeline: makeVoicePipeline(false) }), voiceAdapter()],
     ];
 
     for (const [deps, adapter] of cases) {

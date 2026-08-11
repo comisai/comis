@@ -827,7 +827,7 @@ describe("autoVoiceDeliveryActive", () => {
 
     const active = autoVoiceDeliveryActive(deps, {
       attachments: [{ type: "audio", isVoiceNote: true }],
-    });
+    }, "reply text");
 
     expect(active).toBe(true);
     expect(shouldAutoTts).toHaveBeenCalledWith(
@@ -835,7 +835,7 @@ describe("autoVoiceDeliveryActive", () => {
         autoMode: deps.ttsConfig.autoMode,
         tagPattern: deps.ttsConfig.tagPattern,
       },
-      { responseText: "", hasInboundAudio: true, hasMediaUrl: false },
+      { responseText: "reply text", hasInboundAudio: true, hasMediaUrl: false },
     );
   });
 
@@ -843,11 +843,15 @@ describe("autoVoiceDeliveryActive", () => {
     const shouldAutoTts = vi.fn().mockReturnValue({ shouldSynthesize: false });
     const deps = createMockDeps({ shouldAutoTts });
 
-    expect(autoVoiceDeliveryActive(deps, { attachments: [{ type: "image" }] })).toBe(false);
-    expect(autoVoiceDeliveryActive(deps, {})).toBe(false);
+    expect(autoVoiceDeliveryActive(
+      deps,
+      { attachments: [{ type: "image" }] },
+      "reply text",
+    )).toBe(false);
+    expect(autoVoiceDeliveryActive(deps, {}, "reply text")).toBe(false);
     for (const call of shouldAutoTts.mock.calls) {
       expect(call[1]).toEqual({
-        responseText: "",
+        responseText: "reply text",
         hasInboundAudio: false,
         hasMediaUrl: false,
       });

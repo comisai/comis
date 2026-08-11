@@ -203,27 +203,23 @@ function skippedVoiceResult(cleanedText?: string): Result<VoiceResponseResult, E
 }
 
 /**
- * Decide whether the configured voice route speaks this turn's reply whatever
- * the agent writes.
+ * Decide whether the configured voice route speaks this turn's reply.
  *
  * The pipeline runs at delivery time, so an execution that produced no
- * synthesis tool call can still reach the user as audio. Callers that must
- * know this BEFORE the reply exists ask the same auto-TTS decision with an
- * empty response text: modes that depend on the reply's own opt-in directive
- * answer false, and only the unconditional routes answer true. The reply-time
- * decision still governs delivery — a reply that carries media diverts to the
- * attachment path — so treat this as the route's standing posture, not a
- * promise about one particular response.
+ * synthesis tool call can still reach the user as audio. Reusing the exact
+ * reply-time decision here keeps unconditional, inbound-audio, and tagged
+ * routes aligned without duplicating their configuration rules upstream.
  */
 export function autoVoiceDeliveryActive(
   deps: Pick<VoiceResponsePipelineDeps, "shouldAutoTts" | "ttsConfig">,
   originalMessage: VoiceResponseContext["originalMessage"],
+  responseText: string,
 ): boolean {
   const hasInboundAudio =
     originalMessage.attachments?.some((a) => a.isVoiceNote === true) ?? false;
   return deps.shouldAutoTts(
     { autoMode: deps.ttsConfig.autoMode, tagPattern: deps.ttsConfig.tagPattern },
-    { responseText: "", hasInboundAudio, hasMediaUrl: false },
+    { responseText, hasInboundAudio, hasMediaUrl: false },
   ).shouldSynthesize;
 }
 

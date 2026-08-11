@@ -243,10 +243,9 @@ export interface ExecutionOverrides {
     channelType: string;
     channelId: string;
   };
-  /** The configured outbound voice route speaks this turn's reply after the
-   *  execution completes, so audio delivery leaves no current-turn tool
-   *  receipt for the response-grounding guards to read. */
-  outboundAudioAutoDelivery?: boolean;
+  /** Decide whether the configured outbound voice route speaks the finalized
+   *  reply after execution, where no current-turn tool receipt can exist. */
+  outboundAudioAutoDelivery?: (responseText: string) => boolean;
   /** Awaited after the exact terminal result is finalized and before execute resolves. */
   onFinalizedResult?: (
     result: ExecutionResult,

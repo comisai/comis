@@ -1979,7 +1979,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     toolExecResults: bridgeResult.toolExecResults,
     currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
     runtimeAudioDelivery:
-      params.executionOverrides?.outboundAudioAutoDelivery === true,
+      params.executionOverrides?.outboundAudioAutoDelivery?.(
+        result.response ?? "",
+      ) === true,
     honestResponse: buildOutboundAudioEvidenceMissingReply(
       replyLanguage,
       localeCatalog,
@@ -2009,7 +2011,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       metadata: {
         claimKind: "outbound_audio",
         reason: outboundAudioEvidence.reason,
-        requiredTool: "tts_synthesize",
+        acceptedEvidence: [
+          "tts_synthesize",
+          "trusted_completion",
+          "configured_voice_route",
+        ],
       },
     });
     deps.eventBus.emit("execution:recovery_attempted", {
@@ -2054,7 +2060,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       metadata: {
         claimKind: "outbound_image",
         reason: outboundImageEvidence.reason,
-        requiredTool: "image_generate",
+        acceptedEvidence: [
+          "image_generate",
+          "message.attach",
+          "trusted_completion",
+        ],
       },
     });
     deps.eventBus.emit("execution:recovery_attempted", {

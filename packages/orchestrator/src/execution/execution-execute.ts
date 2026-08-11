@@ -203,10 +203,16 @@ export async function executeLlm(
   // the executor's honesty guards would otherwise see an audio request with no
   // possible synthesis receipt and replace a truthful reply with a denial the
   // voice route then speaks.
+  const voiceResponsePipeline = deps.voiceResponsePipeline;
   const outboundAudioAutoDelivery =
-    deps.voiceResponsePipeline !== undefined
+    voiceResponsePipeline !== undefined
     && typeof adapter.sendAttachment === "function"
-    && autoVoiceDeliveryActive(deps.voiceResponsePipeline, effectiveMsg);
+      ? (responseText: string): boolean => autoVoiceDeliveryActive(
+          voiceResponsePipeline,
+          effectiveMsg,
+          responseText,
+        )
+      : undefined;
 
   let result: ExecutionResult;
   try {
@@ -227,8 +233,8 @@ export async function executeLlm(
             channelType: effectiveMsg.channelType,
             channelId: effectiveMsg.channelId,
           },
-          ...(outboundAudioAutoDelivery
-            ? { outboundAudioAutoDelivery: true }
+          ...(outboundAudioAutoDelivery !== undefined
+            ? { outboundAudioAutoDelivery }
             : {}),
         },
       ),
