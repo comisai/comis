@@ -42,6 +42,7 @@ const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
   " get someone",
   " get somebody",
   " get a few people",
+  " get a few separate agents",
   " have another agent",
   " use another agent",
   " consult another",
