@@ -9,6 +9,7 @@ const dockerfilePath = resolve(runnerRoot, "Dockerfile");
 const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
 const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
 const launcherPath = resolve(runnerRoot, "wave4-codex-launcher.sh");
+const reporterCapturePath = resolve(runnerRoot, "wave4-report-capture.sh");
 const joinScenarioPath = resolve(repoRoot, "test/live/scenarios/capability-service/wave4-join.test.ts");
 const hostRunnerPath = resolve(repoRoot, "scripts/run-confinement-runner.sh");
 
@@ -136,8 +137,15 @@ describe("capability-service Linux confinement runner", () => {
   });
 
   it("surfaces durable launch acknowledgement evidence on a failed join", () => {
+    const dockerfile = source(dockerfilePath);
+    const launcher = source(launcherPath);
+    const reporterCapture = source(reporterCapturePath);
     const scenario = source(joinScenarioPath);
 
+    expect(dockerfile).toContain("wave4-report-capture.sh");
+    expect(launcher).toContain("/usr/local/lib/wave4");
+    expect(reporterCapture).toContain(".wave4-reporter.log");
+    expect(scenario).toContain("reporterDiagnostic");
     expect(scenario).toContain("failedJoinDurableDiagnostic");
     expect(scenario).toContain("task_launch_acknowledgements");
     expect(scenario).toContain("operation_replay_conflicts");
