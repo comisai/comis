@@ -138,6 +138,31 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(manifest).not.toMatch(/copies it to ~\/\.comis\/skills/iu);
   });
 
+  it("routes thorough understanding requests through receipt-backed deep research", () => {
+    const repositoryRoot = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../..",
+    );
+    const manifest = readFileSync(
+      resolve(repositoryRoot, "skills/deep-research/SKILL.md"),
+      "utf8",
+    );
+    const description = (
+      manifest.match(/^description:\s*(.+)$/mu)?.[1] ?? ""
+    ).replace(/^["']|["']$/gu, "");
+
+    expect(description).toMatch(/^MANDATORY:/u);
+    expect(description).toMatch(/understand|explain/iu);
+    expect(description).toMatch(/properly|deeply|thoroughly/iu);
+    expect(description).toMatch(/general knowledge/iu);
+    expect(manifest).toMatch(
+      /at least three distinct[^\n]*successful[^\n]*web_fetch/iu,
+    );
+    expect(manifest).toMatch(
+      /fewer than three[^\n]*(?:partial|incomplete|abstain)/iu,
+    );
+  });
+
   it("downloads a generated chart into an ESM workspace without host renderers", () => {
     const repositoryRoot = resolve(
       dirname(fileURLToPath(import.meta.url)),
