@@ -150,7 +150,7 @@ const ALLOWED_TRANSITIONS: Readonly<Record<ManagedRunStatus, ReadonlySet<Managed
   preparing: new Set(["active", "cancelled", "unknown"]),
   active: new Set(["active", "waiting", "paused", "candidate_complete", "succeeded", "failed", "cancelled", "unknown"]),
   waiting: new Set(["active", "waiting", "paused", "candidate_complete", "succeeded", "failed", "cancelled", "unknown"]),
-  paused: new Set(["active", "waiting", "paused", "candidate_complete", "failed", "cancelled", "unknown"]),
+  paused: new Set(["active", "waiting", "paused", "candidate_complete", "succeeded", "failed", "cancelled", "unknown"]),
   candidate_complete: new Set(["active", "waiting", "candidate_complete", "succeeded", "failed", "cancelled", "unknown"]),
   succeeded: new Set(),
   failed: new Set(),
