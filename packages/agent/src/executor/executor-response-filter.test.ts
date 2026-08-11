@@ -1425,6 +1425,22 @@ describe("outbound audio evidence guard", () => {
       honestResponse,
     })).toEqual({ response, corrected: false });
   });
+
+  it("rejects a limitation followed by an unsupported audio success claim", () => {
+    const response =
+      "I couldn't send a voice note initially, but I have now sent the audio message.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please send that as a voice message",
+      response,
+      toolExecResults: [{ toolName: "tts_synthesize", success: false }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_audio_evidence",
+    });
+  });
 });
 
 type OutboundImageEvidenceGuard = (params: {
@@ -1533,6 +1549,22 @@ describe("outbound image evidence guard", () => {
       toolExecResults: [{ toolName: "image_generate", success: false }],
       honestResponse,
     })).toEqual({ response, corrected: false });
+  });
+
+  it("rejects a limitation followed by an unsupported image success claim", () => {
+    const response =
+      "I could not generate the picture initially, but I have now created the image.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response,
+      toolExecResults: [{ toolName: "image_generate", success: false }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_image_evidence",
+    });
   });
 });
 
