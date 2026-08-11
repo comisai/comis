@@ -7,6 +7,7 @@ const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const TimestampMsSchema = z.number().int().nonnegative();
 
 export const MAX_MANAGED_RUN_REPORT_BYTES = 16_384;
+export const MAX_MANAGED_EVIDENCE_BYTES = 1_048_576;
 
 export const ManagedRunReportKindSchema = z.enum([
   "attention",
@@ -98,9 +99,65 @@ export const ManagedRunReportIndexSchema = z.strictObject({
   }
 });
 
+export const ManagedEvidenceVerificationLevelSchema = z.enum([
+  "reported",
+  "adapter_verified",
+  "host_verified",
+]);
+
+export const ManagedEvidenceDeliverySchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("reference") }),
+  z.strictObject({
+    kind: z.literal("attachment"),
+    fileName: z.string().min(1).max(256).regex(/^[^/\\\u0000\r\n]+$/u),
+    mediaType: z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,63}\/[a-z0-9][a-z0-9.+-]{0,63}$/u),
+  }),
+]);
+
+/** Contentful evidence body and optional presentation stored only in the private content store. */
+export const ManagedEvidencePrivateBodySchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  bodyBase64: z.string()
+    .max(Math.ceil(MAX_MANAGED_EVIDENCE_BYTES / 3) * 4)
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
+  delivery: ManagedEvidenceDeliverySchema.optional(),
+});
+
+/** Content-free immutable evidence descriptor used for reduction and replay. */
+export const ManagedEvidenceIndexSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  serviceInstanceId: OpaqueRefSchema,
+  managedRunId: OpaqueRefSchema,
+  evidenceRef: OpaqueRefSchema,
+  kind: OpaqueRefSchema,
+  subjectDigest: DigestSchema,
+  observedAtMs: TimestampMsSchema,
+  expiresAtMs: TimestampMsSchema.optional(),
+  contentRef: OpaqueRefSchema,
+  contentHash: DigestSchema,
+  privateContentHash: DigestSchema,
+  verificationLevel: ManagedEvidenceVerificationLevelSchema,
+  deliveryKind: z.enum(["none", "reference", "attachment"]),
+  receivedAtMs: TimestampMsSchema,
+}).superRefine((evidence, context) => {
+  if (evidence.expiresAtMs !== undefined && evidence.expiresAtMs <= evidence.observedAtMs) {
+    context.addIssue({
+      code: "custom",
+      path: ["expiresAtMs"],
+      message: "evidence expiry must be later than its observation",
+    });
+  }
+});
+
 export type ManagedRunReportKind = z.infer<typeof ManagedRunReportKindSchema>;
 export type ManagedRunActivationDescriptor = z.infer<typeof ManagedRunActivationDescriptorSchema>;
 export type ManagedRunPreparedStart = z.infer<typeof ManagedRunPreparedStartSchema>;
 export type ManagedRunReportInput = z.infer<typeof ManagedRunReportInputSchema>;
 export type ManagedRunReportBody = z.infer<typeof ManagedRunReportBodySchema>;
 export type ManagedRunReportIndex = z.infer<typeof ManagedRunReportIndexSchema>;
+export type ManagedEvidenceVerificationLevel = z.infer<
+  typeof ManagedEvidenceVerificationLevelSchema
+>;
+export type ManagedEvidenceDelivery = z.infer<typeof ManagedEvidenceDeliverySchema>;
+export type ManagedEvidencePrivateBody = z.infer<typeof ManagedEvidencePrivateBodySchema>;
+export type ManagedEvidenceIndex = z.infer<typeof ManagedEvidenceIndexSchema>;

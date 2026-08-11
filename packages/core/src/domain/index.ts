@@ -321,12 +321,17 @@ export type {
 } from "./managed-run.js";
 export {
   MAX_MANAGED_RUN_REPORT_BYTES,
+  MAX_MANAGED_EVIDENCE_BYTES,
   ManagedRunReportKindSchema,
   ManagedRunActivationDescriptorSchema,
   ManagedRunPreparedStartSchema,
   ManagedRunReportInputSchema,
   ManagedRunReportBodySchema,
   ManagedRunReportIndexSchema,
+  ManagedEvidenceVerificationLevelSchema,
+  ManagedEvidenceDeliverySchema,
+  ManagedEvidencePrivateBodySchema,
+  ManagedEvidenceIndexSchema,
 } from "./managed-run-content.js";
 export type {
   ManagedRunReportKind,
@@ -335,6 +340,10 @@ export type {
   ManagedRunReportInput,
   ManagedRunReportBody,
   ManagedRunReportIndex,
+  ManagedEvidenceVerificationLevel,
+  ManagedEvidenceDelivery,
+  ManagedEvidencePrivateBody,
+  ManagedEvidenceIndex,
 } from "./managed-run-content.js";
 export { reduceManagedRunState } from "./managed-run-reducer.js";
 export type {
