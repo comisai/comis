@@ -151,6 +151,27 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     expect(guard.scan).toHaveBeenCalledOnce();
   });
 
+  it("asks for an instruction before processing a large opaque payload", () => {
+    const { bus } = makeCaptureBus();
+    const guard = makeGuard({});
+    const result = validateInput({
+      msg: makeMessage({ text: "x".repeat(43_000) }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      inputGuard: guard,
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      earlyFinishReason: "stop",
+    });
+    expect(result.earlyResponse).toMatch(/does not include an instruction/i);
+    expect(guard.scan).not.toHaveBeenCalled();
+  });
+
   it("GIANT-INPUT-WEDGE: an UNDEFINED-text message (media-only / internal path) does NOT NPE the size cap", () => {
     // The size guard reads msg.text.length; msg.text is optional, so a text-less
     // message must short-circuit to a no-op (chars 0), not throw a TypeError.

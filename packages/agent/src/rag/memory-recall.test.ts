@@ -3014,6 +3014,41 @@ describe("createMemoryRecall — query understanding", () => {
     expect(searchCalls).toBe(0);
   });
 
+  it("keeps recall available when an instruction accompanies an oversized token", async () => {
+    let searchCalls = 0;
+    const recordingPort = {
+      async search() {
+        searchCalls += 1;
+        return ok([]);
+      },
+      async searchLanes() {
+        searchCalls += 1;
+        return ok({ fts: [], vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: QU_OFF,
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall(
+      `analyze ${"x".repeat(43_000)}`,
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+    );
+
+    expect(got.ok).toBe(true);
+    expect(searchCalls).toBe(1);
+  });
+
   it("keeps prior-turn recall for a terse lexical follow-up", async () => {
     let seenQuery: string | undefined;
     const recordingPort = {
