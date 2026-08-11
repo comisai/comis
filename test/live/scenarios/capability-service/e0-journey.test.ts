@@ -252,6 +252,17 @@ function taskState(databasePath: string, taskHandle: string): string {
   }
 }
 
+function terminalTransition(databasePath: string, taskHandle: string): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const row = db.prepare("SELECT latest_transition FROM task_terminal_bindings WHERE task_handle = ?")
+      .get(taskHandle) as { latest_transition: string } | undefined;
+    return row?.latest_transition ?? "missing";
+  } finally {
+    db.close();
+  }
+}
+
 function reportKinds(databasePath: string, taskHandle: string): string[] {
   const db = new Database(databasePath, { readonly: true });
   try {
@@ -636,6 +647,12 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       ]);
       expect(selectiveList).not.toContain(shipSession);
       expect(selectiveList).toContain(scoutSession);
+      await pollUntil(
+        () => taskState(goDatabase, shipTask) === "paused"
+          && ["exited", "released"].includes(terminalTransition(goDatabase, shipTask)),
+        30_000,
+        () => `ship terminal settlement; task=${taskState(goDatabase, shipTask)} terminal=${terminalTransition(goDatabase, shipTask)}`,
+      );
 
       commitFile(repository, shipBinding.canonical_path, "ship.txt", `Delivered ship task ${shipTask}\n`, "complete ship task");
       let handback = "";
