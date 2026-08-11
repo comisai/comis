@@ -124,7 +124,7 @@ describe("opaque-payload classification — admission vs recall are separate que
   // STOPWORDS drops words with no CORPUS signal; it is not an instruction
   // detector. Reusing it as one refused a plain question about a pasted key
   // before the model ever saw the turn.
-  it("admits a stopword-only question asked about the payload", () => {
+  it("returns false for a stopword-only question about the payload", () => {
     expect(isOpaquePayloadWithoutInstruction(`what is this? ${blob}`)).toBe(false);
     expect(isOpaquePayloadWithoutInstruction(`can you tell me what this is ${blob}`)).toBe(false);
   });

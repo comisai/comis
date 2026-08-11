@@ -188,7 +188,7 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
   // Pasting a key or hash and asking "what is this?" is an ordinary request.
   // Every word of it is a retrieval stopword, so the recall-signal predicate
   // reported zero terms and the turn was refused before the model saw it.
-  it("admits a question asked about a pasted payload", () => {
+  it("returns a passing result for a question about a pasted payload", () => {
     const { bus, events } = makeCaptureBus();
     const guard = makeGuard({});
     const result = validateInput({
