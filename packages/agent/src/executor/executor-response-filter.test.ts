@@ -1125,7 +1125,7 @@ function trustedBackgroundCompletionDetector(): TrustedBackgroundCompletionDetec
 }
 
 describe("trusted background completion envelope", () => {
-  it("requires both the internal channel and completion-runner identity", () => {
+  it("requires an authenticated internal completion channel and relay identity", () => {
     const detect = trustedBackgroundCompletionDetector();
 
     expect(detect({
@@ -1138,6 +1138,14 @@ describe("trusted background completion envelope", () => {
     })).toBe(false);
     expect(detect({
       channelType: "background_task",
+      senderId: "user_a",
+    })).toBe(false);
+    expect(detect({
+      channelType: "cross-session",
+      senderId: "cross-session-relay",
+    })).toBe(true);
+    expect(detect({
+      channelType: "cross-session",
       senderId: "user_a",
     })).toBe(false);
   });
