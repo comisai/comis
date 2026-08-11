@@ -40,6 +40,39 @@ describe("managed terminal event bridge", () => {
     ]);
   });
 
+  it("durably releases the exact terminal binding only after service acknowledgement", async () => {
+    const terminalEvent = vi.fn(async (command) => ok({
+      managedRunId: command.managedRunId,
+      terminalSessionId: command.terminalSessionId,
+      transition: command.transition,
+    }));
+    const releaseTerminal = vi.fn(async () => ok({ kind: "released" as const }));
+    const bridge = createManagedTerminalEventBridge({
+      control: { terminalEvent } as unknown as CapabilityServiceControlPort,
+      store: { releaseTerminal },
+      logger: logger() as never,
+      nowMs: () => 1700,
+    } as never);
+
+    await bridge.publish({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+      terminalSessionId: "terminal-session_a",
+      transition: "released",
+    });
+
+    expect(releaseTerminal).toHaveBeenCalledWith(
+      { kind: "service", serviceInstanceId: "service-instance_a" },
+      {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        terminalSessionId: "terminal-session_a",
+        releasedAtMs: 1700,
+      },
+    );
+  });
+
   it("reports service loss without acquiring terminal or lease cleanup authority", async () => {
     const terminalEvent = vi.fn(async () => err({ kind: "unavailable" as const, reasonCode: "instance_not_connected" }));
     const log = logger();
@@ -56,6 +89,7 @@ describe("managed terminal event bridge", () => {
       terminalSessionId: "terminal-session_a",
       transition: "lost",
     })).resolves.toBeUndefined();
+    expect(terminalEvent).toHaveBeenCalledOnce();
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({
       errorKind: "dependency",
       hint: expect.stringContaining("capabilityServices"),
