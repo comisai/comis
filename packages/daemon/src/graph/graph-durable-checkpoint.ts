@@ -131,6 +131,7 @@ export function createDurableGraphCheckpoint(
   const snapshot = gs.stateMachine.snapshot();
   return {
     turnScope,
+    ...(gs.callerTraceId === undefined ? {} : { callerTraceId: gs.callerTraceId }),
     graph: gs.graph.graph,
     executionOrder: [...snapshot.executionOrder],
     nodes: [...snapshot.nodes.values()].map((state) => ({ ...state })),

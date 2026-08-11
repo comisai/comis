@@ -208,7 +208,17 @@ export const IncidentGraphRunSchema = z.object({
   graphId: z.string().min(1),
   status: z.enum(["completed", "failed", "cancelled"]),
   cancelReason: z.enum(["manual", "budget", "timeout", "killed"]).optional(),
+  /** Authenticated parent session when the graph originated from a user turn. */
+  sessionKey: z.string().min(1).optional(),
   traceId: z.string().min(1).optional(),
+  /** Terminal governed-notification disposition, recorded after delivery settles. */
+  announcementDelivery: z.enum([
+    "not-requested",
+    "unavailable",
+    "committed",
+    "retained",
+    "failed",
+  ]),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
   durationMs: z.number().nonnegative(),

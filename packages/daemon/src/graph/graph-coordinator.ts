@@ -508,6 +508,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       startedAt: systemNowMs(),
       runningCount: 0,
       callerSessionKey: params.callerSessionKey,
+      ...(callerAuthorityValid && callerContext !== undefined
+        ? { callerTraceId: callerContext.traceId }
+        : {}),
       callerAgentId: params.callerAgentId,
       ...(callerConversationRef?.ok === true && callerTurnScope !== undefined
         ? {
@@ -886,6 +889,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         : { workspacePolicyHash: validRecord.workspacePolicyHash }),
       callerAgentId: validRecord.agentId,
       callerSessionKey: formatSessionKey(callerSession.value),
+      ...(loaded.value.callerTraceId === undefined
+        ? {}
+        : { callerTraceId: loaded.value.callerTraceId }),
       callerConversationLocator: {
         conversationScope: resumedTurnScope.value.conversation,
         conversationRef: validRecord.conversationRef,

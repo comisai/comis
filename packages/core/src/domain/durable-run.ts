@@ -104,6 +104,8 @@ const DurableNodeCostSchema = z.strictObject({
 const DurableGraphCheckpointSchema = z.strictObject({
   /** Exact resolved turn authority, including the endpoint omitted by broader conversation partitions. */
   turnScope: ResolvedTurnScopeSchema,
+  /** Parent turn trace used to join graph diagnostics back to the submitting session. */
+  callerTraceId: z.string().min(1).optional(),
   graph: ExecutionGraphSchema,
   executionOrder: z.array(z.string().min(1)).min(1),
   nodes: z.array(NodeExecutionStateSchema).min(1),

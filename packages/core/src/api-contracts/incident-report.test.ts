@@ -670,6 +670,7 @@ describe("ObsExplainContract.request graphId arm", () => {
         graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
         status: "completed",
         traceId: "trace-graph-a",
+        announcementDelivery: "committed",
         startedAt: "2026-07-30T06:20:44.795Z",
         completedAt: "2026-07-30T06:22:27.305Z",
         durationMs: 102_510,

@@ -563,6 +563,7 @@ function writeGraphRunMetadata(
       durationMs: 102_510,
       status: "completed",
       traceId: GRAPH_TRACE_ID,
+      announcementDelivery: "committed",
       nodesTotal: 2,
       nodesSucceeded: 2,
       nodesFailed: 0,

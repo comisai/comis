@@ -417,9 +417,10 @@ export async function assembleIncidentReportFromSources(
     ? await reader.readTaskCheckLifecycle(params.rootRunId)
     : null;
   const indexedSessionKey = params.graphId !== undefined
-    ? graphTraceId === undefined
-      ? ""
-      : await resolveTraceToSession(dataDir, graphTraceId, params.includeSynthetic)
+    ? graph?.sessionKey
+      ?? (graphTraceId === undefined
+        ? ""
+        : await resolveTraceToSession(dataDir, graphTraceId, params.includeSynthetic))
     : params.rootRunId
     ? await resolveRootRunToSession(dataDir, params.rootRunId, taskCheck)
     : params.traceId
