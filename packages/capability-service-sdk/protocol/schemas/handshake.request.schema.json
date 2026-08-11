@@ -38,6 +38,7 @@
           "items": {
             "enum": [
               "health",
+              "evidence",
               "report",
               "workspace_lease",
               "terminal_events",
@@ -45,7 +46,7 @@
             ],
             "type": "string"
           },
-          "maxItems": 5,
+          "maxItems": 6,
           "minItems": 1,
           "type": "array"
         },

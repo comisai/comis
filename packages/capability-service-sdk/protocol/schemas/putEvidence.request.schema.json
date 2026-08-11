@@ -1,0 +1,142 @@
+{
+  "$id": "https://schemas.comis.ai/capability-service/putEvidence.request.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+      "type": "string"
+    },
+    "jsonrpc": {
+      "const": "2.0",
+      "type": "string"
+    },
+    "method": {
+      "const": "managedRuns.putEvidence",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "bodyBase64": {
+          "maxLength": 1398104,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+          "type": "string"
+        },
+        "contentHash": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "delivery": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "reference",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "fileName": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[^/\\\\\\u0000\\r\\n]+$",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "attachment",
+                  "type": "string"
+                },
+                "mediaType": {
+                  "pattern": "^[a-z0-9][a-z0-9.+-]{0,63}\\/[a-z0-9][a-z0-9.+-]{0,63}$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "fileName",
+                "mediaType"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "evidenceRef": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "expiresAtMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "managedRunId": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "observedAtMs": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]*$",
+          "type": "string"
+        },
+        "subjectDigest": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "verificationLevel": {
+          "enum": [
+            "reported",
+            "adapter_verified",
+            "host_verified"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "managedRunId",
+        "evidenceRef",
+        "kind",
+        "subjectDigest",
+        "observedAtMs",
+        "contentHash",
+        "verificationLevel",
+        "bodyBase64"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "jsonrpc",
+    "id",
+    "method",
+    "params"
+  ],
+  "type": "object"
+}

@@ -10,7 +10,7 @@
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "700e753645a59586251278cc1a0f9c9b1ea67e853127d6ae064e53b9b58b1e6d"
+      "sha256": "ca1380a47d9106b8f5dd20fecfb6c2456d74b09988769884b9a370b49879f581"
     },
     {
       "path": "fixtures/invalid.json",
@@ -18,15 +18,15 @@
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "e5a937daafe723f8affcff7d5eb2b35e1174eea304a3be2d92f3121366efadf2"
+      "sha256": "0e5ef4eaebe0b3c51a042f654a0c5a595a3f3e8700d2a46939f2d1018ca8cd08"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "ecd11458a2af57901f629c24185f80aba627fe9d89df6f7cb77a8d9fef1ee9db"
+      "sha256": "01f5b17d992f291ce8201b682566e804fedc87ea4f6f3da17848e4e7b08a87bb"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "71672a6b92f7f58e8abfb7ee5098ee14074a0589720dc9e3466e855b9104f7fd"
+      "sha256": "15a66b6992aa104abb97501929995dec9d0ea56a3fcc4d6d5fc5f42392eb2c2d"
     },
     {
       "path": "schemas/abandon.request.schema.json",
@@ -54,11 +54,11 @@
     },
     {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "1ff55ac920b9aba3b88abd719eca56059b1283b2d9de0ad361a9722ca186e01e"
+      "sha256": "58e85cf54e455a1eb1de884fe023fcf2378112683677089018c1f9be8ac864d0"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "6138ef431b9a873a53ce57e217fa86e9ae402ec92da2172da2aef857d277281e"
+      "sha256": "9165f476d03ea40a281a54e07aff28ecde794b133c7db51fa6e5e042c00639f2"
     },
     {
       "path": "schemas/health.request.schema.json",
@@ -75,6 +75,14 @@
     {
       "path": "schemas/mcp-managed-run-result.schema.json",
       "sha256": "ffa905757bb1662480b80d8a2b7d7c569a6468a45d2aca9caae350cdcb109088"
+    },
+    {
+      "path": "schemas/putEvidence.request.schema.json",
+      "sha256": "3cf77e302b8d7672cbc91bb22bf72d6e0ae9aa3da2efe392b21ba125f9111124"
+    },
+    {
+      "path": "schemas/putEvidence.response.schema.json",
+      "sha256": "fdfa7cc260ceb54bc087c68df1de4dbc1b3ddcf6bcc929467783d61c793a9f82"
     },
     {
       "path": "schemas/report.request.schema.json",
@@ -97,7 +105,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8",
+  "bundleDigest": "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -179,14 +187,14 @@
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
-    "version": "1.0.60"
+    "version": "1.0.61"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
     "maxInFlightRequests": 32,
-    "maxLineBytes": 65536,
+    "maxLineBytes": 1441792,
     "maxReportBytes": 16384,
-    "maxRequestBytes": 65536,
+    "maxRequestBytes": 1441792,
     "maxResponseBytes": 65536,
     "reportRetentionDays": 30
   },
@@ -199,7 +207,7 @@
       "callerClass": "capability-service",
       "classification": "mutation",
       "direction": "service-to-comis",
-      "maxRequestBytes": 65536,
+      "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
       "method": "capabilityServices.handshake",
       "operationIdRequired": true,
@@ -216,7 +224,7 @@
       "callerClass": "both",
       "classification": "read",
       "direction": "bidirectional",
-      "maxRequestBytes": 65536,
+      "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
       "method": "capabilityServices.health",
       "operationIdRequired": true,
@@ -232,7 +240,7 @@
       "callerClass": "comis-daemon",
       "classification": "mutation",
       "direction": "comis-to-service",
-      "maxRequestBytes": 65536,
+      "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
       "method": "managedRuns.abandon",
       "operationIdRequired": true,
@@ -251,7 +259,7 @@
       "callerClass": "comis-daemon",
       "classification": "mutation",
       "direction": "comis-to-service",
-      "maxRequestBytes": 65536,
+      "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
       "method": "managedRuns.activate",
       "operationIdRequired": true,
@@ -270,7 +278,27 @@
       "callerClass": "capability-service",
       "classification": "mutation",
       "direction": "service-to-comis",
-      "maxRequestBytes": 65536,
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
+      "method": "managedRuns.putEvidence",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/putEvidence.request.schema.json",
+      "requiredServiceScope": "evidence",
+      "responseSchema": "schemas/putEvidence.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "evidence-ref-identical-replay-returns-original-result",
+        "evidence-ref-altered-replay-is-rejected",
+        "content-hash-must-match-decoded-private-body",
+        "adapter-verification-requires-configured-kind",
+        "host-verification-is-reserved"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
       "method": "managedRuns.report",
       "operationIdRequired": true,
@@ -288,7 +316,7 @@
       "callerClass": "comis-daemon",
       "classification": "mutation",
       "direction": "comis-to-service",
-      "maxRequestBytes": 65536,
+      "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
       "method": "managedRuns.terminalEvent",
       "operationIdRequired": true,
@@ -310,6 +338,7 @@
     "capabilityServices.health",
     "managedRuns.abandon",
     "managedRuns.activate",
+    "managedRuns.putEvidence",
     "managedRuns.report",
     "managedRuns.terminalEvent"
   ],

@@ -20,6 +20,7 @@
           "items": {
             "enum": [
               "health",
+              "evidence",
               "report",
               "workspace_lease",
               "terminal_events",
@@ -27,7 +28,7 @@
             ],
             "type": "string"
           },
-          "maxItems": 5,
+          "maxItems": 6,
           "minItems": 1,
           "type": "array"
         },
@@ -47,7 +48,7 @@
               "type": "number"
             },
             "maxLineBytes": {
-              "const": 65536,
+              "const": 1441792,
               "type": "number"
             },
             "maxReportBytes": {
@@ -55,7 +56,7 @@
               "type": "number"
             },
             "maxRequestBytes": {
-              "const": 65536,
+              "const": 1441792,
               "type": "number"
             },
             "maxResponseBytes": {

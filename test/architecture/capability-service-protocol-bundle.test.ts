@@ -157,9 +157,9 @@ describe("capability-service protocol bundle contract", () => {
     expect(manifest.limits).toEqual({
       maxEvidenceBytes: 1_048_576,
       maxInFlightRequests: 32,
-      maxLineBytes: 65_536,
+      maxLineBytes: 1_441_792,
       maxReportBytes: 16_384,
-      maxRequestBytes: 65_536,
+      maxRequestBytes: 1_441_792,
       maxResponseBytes: 65_536,
       reportRetentionDays: 30,
     });
@@ -239,7 +239,7 @@ describe("capability-service protocol bundle contract", () => {
     expect(params).toMatchObject({
       managedRunId: expect.any(String),
       evidenceRef: expect.any(String),
-      kind: "candidate_bundle",
+      kind: "delivery_reference",
       subjectDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
       contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       verificationLevel: "adapter_verified",

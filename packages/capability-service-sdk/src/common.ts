@@ -39,15 +39,18 @@ export const TerminalSessionIdSchema = z.string().min(1).max(256).regex(OPAQUE_R
 export const OperationIdSchema = z.string().min(1).max(128).regex(OPAQUE_REF_PATTERN);
 export const ServiceReportIdSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 export const EvidenceRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
+export const EvidenceKindSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 
 /** One-time proof used to bind a prepared external run. */
 export const RegistrationNonceSchema = z.string().min(16).max(256).regex(OPAQUE_REF_PATTERN);
 
 export const BundleDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+export const ContentDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const TimestampMsSchema = z.number().int().nonnegative();
 export const CapabilityServiceMethodSchema = z.enum(CAPABILITY_SERVICE_METHODS);
 export const CapabilityServiceScopeSchema = z.enum([
   "health",
+  "evidence",
   "report",
   "workspace_lease",
   "terminal_events",

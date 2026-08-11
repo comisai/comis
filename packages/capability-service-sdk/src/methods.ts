@@ -6,6 +6,8 @@ import {
   BundleDigestSchema,
   CapabilityServiceLimitsSchema,
   CapabilityServiceScopeSchema,
+  ContentDigestSchema,
+  EvidenceKindSchema,
   EvidenceRefSchema,
   ExecutionAttachmentIdSchema,
   ExternalRunRefSchema,
@@ -26,7 +28,7 @@ const HandshakeParamsSchema = z.strictObject({
   bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
   serviceInstanceId: ServiceInstanceIdSchema,
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(5),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(6),
 });
 
 export const CapabilityHandshakeRequestSchema = z.strictObject({
@@ -43,7 +45,7 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
     serviceInstanceId: ServiceInstanceIdSchema,
-    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(5),
+    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(6),
     limits: CapabilityServiceLimitsSchema,
   }),
 });
@@ -148,6 +150,48 @@ export const CapabilityReportResponseSchema = z.strictObject({
   }),
 });
 
+const EvidenceDeliverySchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("reference") }),
+  z.strictObject({
+    kind: z.literal("attachment"),
+    fileName: z.string().min(1).max(256).regex(/^[^/\\\u0000\r\n]+$/u),
+    mediaType: z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,63}\/[a-z0-9][a-z0-9.+-]{0,63}$/u),
+  }),
+]);
+
+export const CapabilityPutEvidenceRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.putEvidence"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    evidenceRef: EvidenceRefSchema,
+    kind: EvidenceKindSchema,
+    subjectDigest: ContentDigestSchema,
+    observedAtMs: TimestampMsSchema,
+    expiresAtMs: TimestampMsSchema.optional(),
+    contentHash: ContentDigestSchema,
+    verificationLevel: z.enum(["reported", "adapter_verified", "host_verified"]),
+    bodyBase64: z.string()
+      .max(Math.ceil(CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes / 3) * 4)
+      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
+    delivery: EvidenceDeliverySchema.optional(),
+  }),
+});
+
+export const CapabilityPutEvidenceResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunId: ManagedRunIdSchema,
+    evidenceRef: EvidenceRefSchema,
+    contentHash: ContentDigestSchema,
+    verificationLevel: z.enum(["reported", "adapter_verified"]),
+    retainedUntilMs: TimestampMsSchema.optional(),
+  }),
+});
+
 export const CapabilityTerminalTransitionSchema = z.enum([
   "created",
   "running",
@@ -212,6 +256,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityActivateRequestSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
+  CapabilityPutEvidenceRequestSchema,
   CapabilityReportRequestSchema,
   CapabilityTerminalEventRequestSchema,
 ]);
@@ -223,3 +268,4 @@ export type CapabilityAbandonRequest = z.infer<typeof CapabilityAbandonRequestSc
 export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSchema>;
 export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;
+export type CapabilityPutEvidenceRequest = z.infer<typeof CapabilityPutEvidenceRequestSchema>;

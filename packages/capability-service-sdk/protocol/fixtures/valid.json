@@ -46,6 +46,7 @@
           "protocolId": "comis.capability-service/1",
           "requestedScopes": [
             "health",
+            "evidence",
             "report",
             "workspace_lease",
             "terminal_events",
@@ -65,6 +66,7 @@
         "result": {
           "activeScopes": [
             "health",
+            "evidence",
             "report",
             "workspace_lease",
             "terminal_events",
@@ -74,9 +76,9 @@
           "limits": {
             "maxEvidenceBytes": 1048576,
             "maxInFlightRequests": 32,
-            "maxLineBytes": 65536,
+            "maxLineBytes": 1441792,
             "maxReportBytes": 16384,
-            "maxRequestBytes": 65536,
+            "maxRequestBytes": 1441792,
             "maxResponseBytes": 65536,
             "reportRetentionDays": 30
           },
@@ -86,6 +88,47 @@
       },
       "schemaExpectation": "accept",
       "target": "handshake-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_evidence",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.putEvidence",
+        "params": {
+          "bodyBase64": "aHR0cHM6Ly9leGFtcGxlLmNvbS9wdWxsLzE3",
+          "contentHash": "ce58b0fb87ca71053fac0559671447e5e506386bcb705e535b33a92b2d928c0d",
+          "delivery": {
+            "kind": "reference"
+          },
+          "evidenceRef": "evidence_a",
+          "expiresAtMs": 1900000000000,
+          "kind": "delivery_reference",
+          "managedRunId": "managed-run_a",
+          "observedAtMs": 1800000000000,
+          "operationId": "operation_evidence",
+          "subjectDigest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "verificationLevel": "adapter_verified"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_evidence",
+        "jsonrpc": "2.0",
+        "result": {
+          "contentHash": "ce58b0fb87ca71053fac0559671447e5e506386bcb705e535b33a92b2d928c0d",
+          "evidenceRef": "evidence_a",
+          "managedRunId": "managed-run_a",
+          "retainedUntilMs": 1900000000000,
+          "verificationLevel": "adapter_verified"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "put-evidence-response"
     },
     {
       "expectation": "accept",
