@@ -89,7 +89,9 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["read", "exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual(["exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowContext)
-      .toBe("u dont really know how to make flash cards properly");
+      .toContain("u dont really know how to make flash cards properly");
+    expect(deferral.requestRelevantPromptSkillWorkflowContext)
+      .toContain("find something that does");
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/find-skills/SKILL.md",
     ]);

@@ -254,7 +254,7 @@ function buildDirective(
             ]),
         ...(promptSkillWorkflowContext
           ? [
-              "Derive context-dependent workflow arguments from this immediately preceding user request; do not pass the current elliptical wording literally:",
+              "Use this bounded request context for workflow arguments. The Current request section outranks Earlier request context:",
               wrapExternalContent(promptSkillWorkflowContext, {
                 source: "channel_history",
                 includeWarning: true,
@@ -327,9 +327,9 @@ function buildPromptSkillWorkflowDirective(
       ? [`Complete the requested action with: ${requestedActionToolNames.join(", ")}.`]
       : []),
     priorRequest
-      ? `The immediately preceding user request was:\n${priorRequest}`
+      ? `The bounded request context is:\n${priorRequest}`
       : "Resolve context-dependent arguments from the recent user requests already in context.",
-    "Derive concrete workflow arguments from that prior request; do not pass the current elliptical wording literally.",
+    "Derive concrete workflow arguments from that request context; the current request is authoritative.",
     "After a successful workflow result, follow the loaded procedure's response contract and preserve its canonical identifiers.",
     "Do not repeat the skill read or a previously attempted tool path, and do not claim completion without a successful workflow-tool receipt.",
   ].join("\n");

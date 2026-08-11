@@ -33,6 +33,32 @@ function terms(text: string): Set<string> {
   );
 }
 
+/** Keep the current request intact while retaining as much preceding context as fits. */
+function workflowContext(
+  currentRequestText: string,
+  priorUserRequest: string | undefined,
+): string | undefined {
+  const current = scrubSecretsFromText(currentRequestText.trim()).text;
+  const prior = scrubSecretsFromText(priorUserRequest?.trim() ?? "").text;
+  if (current.length === 0) {
+    return prior.length === 0 ? undefined : prior.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  }
+  if (prior.length === 0 || prior === current) {
+    return current.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  }
+  const currentLabel = "Current request:\n";
+  const priorLabel = "Earlier request:\n";
+  const currentSection = currentLabel
+    + current.slice(0, MAX_WORKFLOW_CONTEXT_CHARS - currentLabel.length);
+  const priorBudget = MAX_WORKFLOW_CONTEXT_CHARS
+    - currentSection.length
+    - priorLabel.length
+    - 1;
+  return priorBudget <= 0
+    ? currentSection
+    : `${priorLabel}${prior.slice(0, priorBudget)}\n${currentSection}`;
+}
+
 function scoreSkill(
   queryTerms: ReadonlySet<string>,
   queryText: string,
@@ -135,11 +161,9 @@ export function applyPromptSkillRequestRouting(
   deferral.requestRelevantPromptSkillMinDistinctWebFetchUrls = minDistinctWebFetchUrls;
   deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries =
     minDistinctWebSearchQueries;
-  const priorUserRequest = input.priorUserRequest?.trim();
-  if (workflowToolNames.length > 0 && priorUserRequest) {
-    deferral.requestRelevantPromptSkillWorkflowContext = scrubSecretsFromText(
-      priorUserRequest,
-    ).text.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  const context = workflowContext(input.currentRequestText, input.priorUserRequest);
+  if (workflowToolNames.length > 0 && context !== undefined) {
+    deferral.requestRelevantPromptSkillWorkflowContext = context;
   }
   const mutationToolNames = workflowToolNames.length > 0
     ? deferral.requestRelevantToolNames.filter(
