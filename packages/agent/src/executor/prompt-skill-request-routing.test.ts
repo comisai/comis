@@ -234,6 +234,27 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
   });
 
+  it("does not treat generic background task and tool terms as a coding request", () => {
+    const deferral = result();
+    const currentRequestText = [
+      "[Background Task Failed: mcp fixture-hang--hang forever]",
+      "MCP tool error: the hanging fixture tool exceeded the configured call deadline.",
+      "Inform the user about this completed background task.",
+    ].join("\n");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+  });
+
   it("leaves unrelated requests unchanged", () => {
     const unrelated = result();
 
