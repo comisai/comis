@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createConversationRef,
+  type ManagedEvidenceAppendInput,
   type ManagedRunOwnerScope,
   type ManagedRunRecord,
   type ManagedRunReportAppendInput,
@@ -118,6 +119,24 @@ function reportInput(overrides: Partial<ManagedRunReportAppendInput> = {}): Mana
   };
 }
 
+function evidenceInput(overrides: Partial<ManagedEvidenceAppendInput> = {}): ManagedEvidenceAppendInput {
+  return {
+    managedRunId: "managed-run_a",
+    evidenceRef: "evidence_a",
+    kind: "candidate_bundle",
+    subjectDigest: "a".repeat(64),
+    observedAtMs: 1_800_000_000_100,
+    expiresAtMs: 1_800_000_060_100,
+    contentRef: "evidence-content_a",
+    contentHash: "b".repeat(64),
+    privateContentHash: "c".repeat(64),
+    verificationLevel: "adapter_verified",
+    deliveryKind: "none",
+    receivedAtMs: 1_800_000_000_200,
+    ...overrides,
+  };
+}
+
 async function activate(store: ReturnType<typeof createSqliteManagedRunStore>): Promise<void> {
   const activated = await store.claimTransition(SERVICE_SCOPE, {
     operationId: "operation_activate",
@@ -140,6 +159,40 @@ describe("createSqliteManagedRunStore durable state machine", () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it("appends immutable evidence and resolves only exact owner-scoped references", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    const input = evidenceInput();
+
+    const accepted = await store.appendEvidence(SERVICE_SCOPE, input);
+    expect(accepted).toMatchObject({
+      ok: true,
+      value: { kind: "accepted", evidence: { ...input, schemaVersion: 1 } },
+    });
+    expect(await store.appendEvidence(SERVICE_SCOPE, input)).toEqual({
+      ok: true,
+      value: { kind: "identical_replay", evidence: { ...input, schemaVersion: 1 } },
+    });
+    expect((await store.appendEvidence(SERVICE_SCOPE, {
+      ...input,
+      contentHash: "d".repeat(64),
+    })).value).toMatchObject({ kind: "replay_conflict" });
+    expect((await store.appendEvidence(OTHER_SERVICE_SCOPE, {
+      ...input,
+      evidenceRef: "evidence_other",
+    })).value).toMatchObject({ kind: "scope_mismatch" });
+
+    expect(await store.listEvidenceByRefs(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      evidenceRefs: ["evidence_a"],
+    })).toEqual({ ok: true, value: [{ ...input, schemaVersion: 1 }] });
+    expect(await store.listEvidenceByRefs(OTHER_OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      evidenceRefs: ["evidence_a"],
+    })).toEqual({ ok: true, value: [] });
   });
 
   it("creates reads and lists records only through exact explicit scopes", async () => {
