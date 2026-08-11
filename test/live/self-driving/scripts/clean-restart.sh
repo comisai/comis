@@ -96,6 +96,10 @@ as_service_user "
   # prior turns and tools even when the LCD and session JSONL are empty.
   rm -rf '$DATA'/trajectories/*
   rm -rf '$DATA'/graph-runs/* '$DATA'/subagent-results/*
+  # Completed background tasks carry failure and dispatch state outside the
+  # session tree. Retaining them can reopen a tool breaker at the first turn
+  # and makes a supposedly fresh run inherit an earlier task outcome.
+  rm -rf '$DATA'/background-tasks/*
   # Clear the DURABLE TERMINAL DRIVE + WAKE-STATE stores. A backgrounded coding-CLI drive persists its
   # descriptor/journal in <DATA>/terminal-drive/ AND its wake-dispatch FSM state in <DATA>/terminal-wake/
   # {sessionId}.json. On boot, recoverWakeStates RE-HYDRATES the wake-state + re-fires the wake →
