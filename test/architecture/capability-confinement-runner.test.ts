@@ -111,7 +111,8 @@ describe("capability-service Linux confinement runner", () => {
     expect(launcher).toContain("devcrew-report paused");
     expect(scenario).toContain('["ship", "pull_request"]');
     expect(scenario).toContain('["scout", "report"]');
-    expect(scenario).toContain("RESTART_DAEMON_AND_SERVICE_AFTER_DELIVERY");
+    expect(scenario).toContain("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
+    expect(scenario).not.toContain("RESTART_DAEMON_AND_SERVICE_AFTER_DELIVERY");
     expect(scenario).toContain("process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET");
     expect(scenario).toContain('process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key"');
     expect(scenario).toContain('normalizedMessage(`/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`)');
