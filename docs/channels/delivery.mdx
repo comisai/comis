@@ -479,10 +479,10 @@ When the agent sends a message, the mirror records it in four steps:
 2. The `after_delivery` hook fires (void, fire-and-forget)
 3. The built-in `comis:delivery-mirror` plugin handler records the entry to the
    `delivery_mirror` table
-4. An idempotency key (session + a hash of the text **and** media references +
-   1-second time bucket) prevents duplicates via `INSERT OR IGNORE` -- hashing
-   the media references keeps two different attachments sent in the same second
-   with the same caption as two entries
+4. An idempotency key (the durable `conversation_ref` + a hash of the text
+   **and** media references + 1-second time bucket) prevents duplicates via
+   `INSERT OR IGNORE` -- hashing the media references keeps two different
+   attachments sent in the same second with the same caption as two entries
 
 Recording never blocks or delays message delivery. If recording fails for any
 reason, the message is still delivered normally -- only the mirror entry is lost.
@@ -493,8 +493,9 @@ When the user sends their next message, mirror entries are injected into the
 agent prompt:
 
 1. User sends a message, agent execution starts
-2. `assembleExecutionPrompt()` calls `deliveryMirror.pending(sessionKey)` to
-   fetch unacknowledged entries
+2. `assembleExecutionPrompt()` calls `deliveryMirror.pending(authority)` -- the
+   exact tenant, agent, and opaque `conversationRef` triple, never a formatted
+   session key -- to fetch that conversation's unacknowledged entries
 3. Pending entries are formatted as "Your Recent Outbound Messages" in the
    dynamic preamble section of the prompt
 4. Budget caps are applied (max entries, then max characters)

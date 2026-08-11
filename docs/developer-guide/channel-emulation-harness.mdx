@@ -77,13 +77,20 @@ Every scenario splits on `const isLive = !!process.env["COMIS_LIVE"]`:
   fault injection, error classification, Tier-3 platform actions, the forum-service negative.
   CI-able, offline, needs no provider keys.
 - **Stage-C** (`describe.skipIf(!isLive)`, operator-gated) — the agent-content legs against a
-  **real keyless model** on `localhost:11434` (ollama). A full-daemon reply, the
+  **real keyless model** served by ollama. A full-daemon reply, the
   Verified-Learning A-then-B reaction loop, a DAG pipeline, the injection-gauntlet sweep. An
   operator runs these with `COMIS_LIVE=1`; offline they **skip, never fail**.
 
+`model: "keyless"` is not pinned to one tag: the rig boots the **first**
+`COMIS_LIVE_LOCAL_MODELS` entry at `COMIS_LIVE_OLLAMA_URL` — the same two knobs the local-model
+tier reads, documented in `test/live/live.env.example` — and falls back to that file's stated
+defaults when neither is set. Point it at a tag your box can actually hold: a model too large to
+load boots the daemon fine but never authors a reply, so every Stage-C round-trip burns its
+`waitForReply` budget instead of failing loudly.
+
 ```bash
-# Stage-C — operator only (needs a keyless model on localhost:11434):
-COMIS_LIVE=1 pnpm vitest run -c test/live/vitest.config.ts \
+# Stage-C — operator only (needs the keyless tag pulled and `ollama serve` up):
+COMIS_LIVE=1 COMIS_LIVE_LOCAL_MODELS=llama3.2:3b pnpm vitest run -c test/live/vitest.config.ts \
   test/live/scenarios/channels/telegram-acceptance.test.ts
 ```
 

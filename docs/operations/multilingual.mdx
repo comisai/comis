@@ -233,6 +233,14 @@ explicit `agents.<id>.language` key, or let the channel-supplied request locale 
 client setting) carry it. Clear current-request prose enforces the script-only expectation; the
 device-locale fallback guides the reply without policing it.
 
+**A script-only tag still reaches your `localePacks`.** Selecting the string table is a separate
+step from naming the reply language, so a script-only locale resolves the pack for the base
+language its script most likely implies (`und-Hebr` → your `he` pack), so a reply whose locale came
+from the message's script does not arrive as non-English prose with an English platform notice
+appended. That step runs only after an exact-tag and a plain-language match both miss, and it can
+only ever select a pack you supplied: with no pack the notice is English, and no language is ever
+guessed for the model to answer in.
+
 **A script-only tag never licenses transliteration.** The instruction carrying the tag states that
 if the reply language is not normally written in that script, the model must write it in its own
 script. Without that clause, "Latin writing system" plus "keep speaking the user's language" is
