@@ -34,6 +34,7 @@ import { assertsUnbackedRunIdentifier } from "./fabricated-run-identifier.js";
 // ---------------------------------------------------------------------------
 
 const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
+  " background helper",
   " delegate ",
   " delegation ",
   " ask someone",
@@ -44,6 +45,8 @@ const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
   " get a few people",
   " get a few separate agents",
   " have another agent",
+  " nested child",
+  " sessions_spawn",
   " use another agent",
   " consult another",
   " bring in another",
@@ -113,6 +116,12 @@ const DELEGATION_SUBJECT_PHRASES = [
   " independent check",
 ];
 
+const GROUNDED_DELEGATION_RESPONSE_PHRASES = [
+  ...DELEGATION_SUBJECT_PHRASES,
+  " launched ",
+  " started ",
+];
+
 function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }
@@ -149,7 +158,7 @@ function containsUnnegatedEvidencePhrase(
 export interface DelegationEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn";
+  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
 }
 
 /** Recognize the runtime-owned envelope that reports a settled background tool result. */
@@ -179,6 +188,7 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
+  verifiedSpawnResponse: string;
 }): DelegationEvidenceGuardResult {
   if (params.runtimeCompletion === true) {
     return { response: params.response, corrected: false };
@@ -214,9 +224,18 @@ export function enforceCurrentTurnDelegationEvidence(params: {
       && toolResult.success
       && toolResult.backgrounded !== true,
   );
-  if (successfulSpawn) return { response: params.response, corrected: false };
-
   const response = normalizedEvidenceText(params.response);
+  if (successfulSpawn) {
+    if (containsEvidencePhrase(response, GROUNDED_DELEGATION_RESPONSE_PHRASES)) {
+      return { response: params.response, corrected: false };
+    }
+    return {
+      response: params.verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    };
+  }
+
   const claimsDelegation = containsEvidencePhrase(
     response,
     DELEGATION_SUCCESS_CLAIM_PHRASES,

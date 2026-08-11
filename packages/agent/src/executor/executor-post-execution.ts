@@ -132,7 +132,7 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildOutboundDeliveryStatusEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildRuntimeSelfReportEvidenceUnsupportedReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDelegationEvidenceStartedReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildOutboundDeliveryStatusEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildRuntimeSelfReportEvidenceUnsupportedReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
@@ -1908,6 +1908,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     toolExecResults: bridgeResult.toolExecResults,
     runtimeCompletion: isTrustedBackgroundCompletionEnvelope(msg),
     honestResponse: buildDelegationEvidenceMissingReply(replyLanguage, localeCatalog),
+    verifiedSpawnResponse: buildDelegationEvidenceStartedReply(replyLanguage, localeCatalog),
   });
   if (delegationEvidence.corrected) {
     result.response = delegationEvidence.response;
@@ -1915,9 +1916,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       {
         step: "delegation-evidence",
         errorKind: "precondition" as const,
-        hint:
-          "The response was replaced because this execution had no successful sessions_spawn "
-          + "receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
+        hint: delegationEvidence.reason === "successful_spawn_response_ungrounded"
+          ? "The response did not describe the successful sessions_spawn receipt; inspect the current request and response correction in comis explain."
+          : "The response was replaced because this execution had no successful sessions_spawn receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
       },
       "Unverified current-turn delegation claim replaced",
     );

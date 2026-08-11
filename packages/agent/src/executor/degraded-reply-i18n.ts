@@ -26,6 +26,7 @@ export type LocaleMessageId =
   | "execution_failed"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
+  | "delegation_evidence_started"
   | "persistent_action_evidence_missing"
   | "outbound_audio_evidence_missing"
   | "outbound_image_evidence_missing"
@@ -92,6 +93,8 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
+  delegation_evidence_started:
+    "I successfully started the requested sub-agent. Its result has not been verified in this turn yet.",
   persistent_action_evidence_missing:
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
   outbound_audio_evidence_missing:
@@ -383,6 +386,14 @@ export function selectDelegationEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "delegation_evidence_missing");
+}
+
+/** Receipt-backed replacement when a successful spawn response is unrelated. */
+export function selectDelegationEvidenceStartedReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "delegation_evidence_started");
 }
 
 /** Honest replacement when a persistent action has no current-turn tool proof. */

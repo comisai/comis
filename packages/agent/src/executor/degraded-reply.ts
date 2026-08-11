@@ -31,6 +31,7 @@ import {
   selectExecutionFailureReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
+  selectDelegationEvidenceStartedReply,
   selectPersistentActionEvidenceMissingReply,
   selectOutboundAudioEvidenceMissingReply,
   selectOutboundImageEvidenceMissingReply,
@@ -215,6 +216,14 @@ export function buildDelegationEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectDelegationEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Receipt-backed replacement when a successful spawn response is unrelated. */
+export function buildDelegationEvidenceStartedReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectDelegationEvidenceStartedReply(language, localeCatalog);
 }
 
 /** Honest replacement when a persistent action lacks current-turn tool proof. */
