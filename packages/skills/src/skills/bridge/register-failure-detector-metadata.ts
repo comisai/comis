@@ -82,14 +82,15 @@ export function registerFailureDetectorMetadata(): void {
       const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
       const missingConfigKey = WEB_SEARCH_PROVIDER_KEY.exec(text)?.[1];
       if (missingConfigKey !== undefined && /requires the [A-Z_]+ secret/.test(text)) {
+        const recoveryConfigKey = `secrets.${missingConfigKey}`;
         return {
           errorKind: "config" satisfies ErrorKind,
           classifiedField: "message",
           matchedRule: "missing_provider_configuration",
-          matchedToken: missingConfigKey,
+          matchedToken: recoveryConfigKey,
           failureDisclosure: {
             kind: "missing_configuration",
-            configKey: `secrets.${missingConfigKey}`,
+            configKey: recoveryConfigKey,
           },
         };
       }
