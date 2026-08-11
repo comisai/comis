@@ -72,14 +72,14 @@ describe("capability-service Linux confinement runner", () => {
     const runner = source(hostRunnerPath);
     const joinGate = source(joinGatePath);
 
-    expect(runner).toMatch(/spike \| join \| shell/u);
+    expect(runner).toMatch(/spike \| join \| journey \| shell/u);
     expect(joinGate).toContain('readonly DEV_CREW_COMMIT="1521c4445dca6eb6e26548dc5f8f6646796b2d01"');
     expect(joinGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(joinGate).toContain("COMIS_LIVE=1");
     expect(joinGate).toContain("wave4-join.test.ts");
   });
 
-  it("runs the full E0 journey from a separate exact clean companion archive", () => {
+  it("runs the current E0 composition join from a separate exact clean companion archive", () => {
     const runner = source(hostRunnerPath);
     const journeyGate = source(journeyGatePath);
     const scenario = source(journeyScenarioPath);
@@ -89,10 +89,9 @@ describe("capability-service Linux confinement runner", () => {
     expect(journeyGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(journeyGate).toContain("COMIS_LIVE=1");
     expect(journeyGate).toContain("e0-journey.test.ts");
-    expect(scenario).toContain('"--candidate-config", input.candidateConfig');
-    expect(scenario).toContain("cleanup_task");
-    expect(scenario).toContain("handback_task");
-    expect(scenario).toContain("NETWORK_CONFINEMENT_NOT_PROVEN");
+    expect(scenario).toContain("wave4-join.test.js");
+    expect(source(joinScenarioPath)).toContain('arguments_.push("--candidate-config", input.candidateConfig)');
+    expect(source(joinScenarioPath)).toContain('...(isE0Journey ? ["evidence" as const] : [])');
   });
 
   it("installs a fixed real-Codex wrapper outside both source mounts", () => {

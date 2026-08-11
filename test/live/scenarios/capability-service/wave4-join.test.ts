@@ -26,7 +26,8 @@ import { getFreePort } from "../../../support/free-port.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
-const REVIEWED_GO_COMMIT = "1521c4445dca6eb6e26548dc5f8f6646796b2d01";
+const REVIEWED_GO_COMMIT = process.env["COMIS_DEV_CREW_COMMIT"]
+  ?? "1521c4445dca6eb6e26548dc5f8f6646796b2d01";
 const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
 const MCP_SERVER_NAME = "devcrew";
 const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
@@ -37,6 +38,24 @@ const REVIEWED_ALLOW_ID = "codex-confined";
 const REVIEWED_TOKEN = "wave4-reviewed";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
+const isE0Journey = process.env["COMIS_E0_JOURNEY"] === "1";
+
+const E0_MUTATION_BINDINGS = isE0Journey ? [
+  Object.freeze({
+    toolName: "handback_task",
+    behavior: "run_command" as const,
+    runHandleArgument: "taskHandle",
+    actionClassification: "mutate" as const,
+    invocationSideEffects: Object.freeze(["task.handback"]),
+  }),
+  Object.freeze({
+    toolName: "cleanup_task",
+    behavior: "run_command" as const,
+    runHandleArgument: "taskHandle",
+    actionClassification: "destructive" as const,
+    invocationSideEffects: Object.freeze(["task.cleanup"]),
+  }),
+] : [];
 
 const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
   contributionId: "devcrew.wave4.join",
@@ -52,6 +71,7 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
         actionClassification: "mutate",
         invocationSideEffects: Object.freeze(["task.prepare"]),
       },
+      ...E0_MUTATION_BINDINGS,
       ...["list_tasks", "get_task", "explain_task", "get_launch_plan"].map((toolName) => Object.freeze({
         toolName,
         behavior: "read_only" as const,
@@ -62,11 +82,16 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
     requestedScopes: Object.freeze([
       "health",
       "report",
+      ...(isE0Journey ? ["evidence" as const] : []),
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
     ]),
-    evidencePolicies: Object.freeze([]),
+    evidencePolicies: Object.freeze(isE0Journey ? [
+      { kind: "candidate_bundle", verificationLevel: "adapter_verified" as const, use: "outcome" as const },
+      { kind: "delivery_reference", verificationLevel: "adapter_verified" as const, use: "delivery_reference" as const },
+      { kind: "report_artifact", verificationLevel: "adapter_verified" as const, use: "delivery_attachment" as const },
+    ] : []),
     dependsOn: Object.freeze([]),
   }]),
 });
@@ -302,10 +327,11 @@ function startInstalledService(input: {
   readonly repository: ReturnType<typeof createFixtureRepository>;
   readonly controlSocket: string;
   readonly credentialFile: string;
+  readonly candidateConfig?: string;
 }): RunningService {
   mkdirSync(dirname(input.database), { recursive: true, mode: 0o700 });
   mkdirSync(input.runtimeRoot, { recursive: true, mode: 0o700 });
-  const child = spawn(input.binary, [
+  const arguments_ = [
     "--database", input.database,
     "--socket", input.operatorSocket,
     "--mcp-socket", input.mcpSocket,
@@ -329,7 +355,11 @@ function startInstalledService(input: {
     "--codex-terminal-allow-entry", REVIEWED_ALLOW_ID,
     "--codex-network", "host",
     "--codex-concurrency", "2",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ];
+  if (input.candidateConfig !== undefined) {
+    arguments_.push("--candidate-config", input.candidateConfig);
+  }
+  const child = spawn(input.binary, arguments_, { stdio: ["ignore", "ignore", "pipe"] });
   const stderr: Buffer[] = [];
   child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
   return {
@@ -356,6 +386,53 @@ function cli<T>(binary: string, socket: string, args: readonly string[]): T {
 
 function launcherHash(): string {
   return createHash("sha256").update(readFileSync(REVIEWED_LAUNCHER)).digest("hex");
+}
+
+function createCandidateConfig(scratch: string): string {
+  const forgeRoot = join(scratch, "forge");
+  const remote = join(forgeRoot, "fixture.git");
+  const credentialDirectory = join(forgeRoot, "credentials");
+  const readCredentialFile = join(forgeRoot, "read.credential");
+  const pushCredentialFile = join(forgeRoot, "push.credential");
+  const candidateConfig = join(forgeRoot, "candidate.json");
+  mkdirSync(credentialDirectory, { recursive: true, mode: 0o700 });
+  execFileSync("git", ["init", "--bare", remote], { stdio: "pipe" });
+  writeFileSync(readCredentialFile, "e0_read_identity", { mode: 0o600 });
+  writeFileSync(pushCredentialFile, "e0_push_identity", { mode: 0o600 });
+  writeFileSync(candidateConfig, JSON.stringify({
+    programs: [{ id: "repository-check", executable: "/usr/bin/true" }],
+    profiles: [{
+      id: "wave4-live",
+      localChecks: [{
+        id: "repository-unit",
+        programId: "repository-check",
+        arguments: [{ kind: "literal", value: "--version" }],
+        timeout: "30s",
+        required: true,
+      }],
+      forgeChecks: [{ name: "ci/join", required: true }],
+      artifactRules: [{
+        kind: "regular_file",
+        relativePath: "wave4-artifact.txt",
+        mediaType: "text/plain",
+        maxBytes: 16_384,
+      }],
+      evidenceTtl: "24h",
+    }],
+    maxOutputBytes: 65_536,
+    pollInterval: "1m",
+    forge: {
+      apiBaseUrl: "http://127.0.0.1:1",
+      owner: "fixture-owner",
+      repository: "fixture-repository",
+      remoteUrl: `file://${remote}`,
+      readCredentialFile,
+      pushCredentialFile,
+      credentialDirectory,
+      localFixtureRemoteRoot: forgeRoot,
+    },
+  }), { mode: 0o600 });
+  return candidateConfig;
 }
 
 function makeConfig(input: {
@@ -418,7 +495,11 @@ function makeConfig(input: {
         profile: "standard",
         durability: { enabled: true, staleHeartbeatMs: 120_000, keepAliveMs: 30_000, recoveryBudgetMs: 30_000 },
         mcp: { enabled: true, allow: { [MCP_SERVER_NAME]: {
-          tools: ["prepare_task", "list_tasks", "get_task", "explain_task", "get_launch_plan"],
+          tools: [
+            "prepare_task",
+            ...(isE0Journey ? ["handback_task", "cleanup_task"] : []),
+            "list_tasks", "get_task", "explain_task", "get_launch_plan",
+          ],
           classification: "safe",
         } } },
       },
@@ -452,7 +533,11 @@ function makeConfig(input: {
         transport: "stdio",
         command: input.mcpBinary,
         args: ["--socket", input.mcpSocket, "--service-instance", SERVICE_INSTANCE_ID],
-        toolAllowlist: ["prepare_task", "list_tasks", "get_task", "explain_task", "get_launch_plan"],
+        toolAllowlist: [
+          "prepare_task",
+          ...(isE0Journey ? ["handback_task", "cleanup_task"] : []),
+          "list_tasks", "get_task", "explain_task", "get_launch_plan",
+        ],
         keepaliveIntervalMs: 0,
       }],
     } },
@@ -602,6 +687,34 @@ function failedJoinDurableDiagnostic(databasePath: string, taskHandles: readonly
   }
 }
 
+function acceptedReportDiagnostic(databasePath: string, taskHandles: readonly string[]): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const placeholders = taskHandles.map(() => "?").join(", ");
+    return JSON.stringify(db.prepare(`
+      SELECT task_handle AS taskHandle, kind, external_key AS externalKey
+      FROM reports
+      WHERE task_handle IN (${placeholders})
+      ORDER BY task_handle, accepted_at, local_report_id
+    `).all(...taskHandles));
+  } finally {
+    db.close();
+  }
+}
+
+function acceptedReportCounts(databasePath: string, taskHandles: readonly string[]): number[] {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    return taskHandles.map((taskHandle) => {
+      const row = db.prepare("SELECT COUNT(*) AS count FROM reports WHERE task_handle = ?")
+        .get(taskHandle) as { count: number };
+      return row.count;
+    });
+  } finally {
+    db.close();
+  }
+}
+
 describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", () => {
   it("confines two task-bound workers and preserves candidate custody across one terminal exit", async () => {
     expect(process.env["COMIS_DEV_CREW_COMMIT"]).toBe(REVIEWED_GO_COMMIT);
@@ -625,6 +738,9 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
     const credentialFile = join(runDir, "control.credential");
     const configPath = join(scratch, "config.yaml");
     const goDatabase = join(scratch, "go-state", "devcrew.db");
+    const candidateConfig = isE0Journey
+      ? createCandidateConfig(scratch)
+      : undefined;
     writeFileSync(credentialFile, CONTROL_SECRET, { mode: 0o600 });
     chmodSync(credentialFile, 0o600);
 
@@ -647,6 +763,7 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
         repository,
         controlSocket,
         credentialFile,
+        candidateConfig,
       });
       await waitForUnixSocket(operatorSocket);
       await waitForUnixSocket(mcpSocket);
@@ -867,7 +984,8 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
           `${message}; durable: ${durableDiagnostic}; worker A context: ${runtimeContextDiagnostic(bindingA.canonical_path)}; worker B context: ${runtimeContextDiagnostic(bindingB.canonical_path)}; worker A client: ${clientDiagnostic(bindingA.canonical_path)}; worker B client: ${clientDiagnostic(bindingB.canonical_path)}; worker A reporter: ${reporterDiagnostic(bindingA.canonical_path)}; worker B reporter: ${reporterDiagnostic(bindingB.canonical_path)}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`,
         );
       }
-      await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");
+      await pollUntil(() => acceptedReportCounts(goDatabase, taskHandles).every((count) => count >= 2), 180_000, () =>
+        `task-local progress and candidate reports; Go counts ${JSON.stringify(acceptedReportCounts(goDatabase, taskHandles))}; Comis counts ${JSON.stringify(reportCounts(canonicalDataDir, taskHandles))}; Go reports ${acceptedReportDiagnostic(goDatabase, taskHandles)}; worker A ${reporterDiagnostic(bindingA.canonical_path)}; worker B ${reporterDiagnostic(bindingB.canonical_path)}; service stderr ${service.stderr()}`);
 
       const evidenceA = JSON.parse(readFileSync(join(bindingA.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
       const evidenceB = JSON.parse(readFileSync(join(bindingB.canonical_path, ".wave4-confinement.json"), "utf8")) as Record<string, boolean>;
