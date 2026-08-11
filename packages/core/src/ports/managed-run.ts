@@ -336,6 +336,7 @@ export interface ManagedRunContentPort {
   deleteReportBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<boolean, Error>>;
   putEvidence(scope: ManagedRunContentScope, evidenceRef: string, input: ManagedRunRawPrivateContentInput): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
   getEvidence(scope: ManagedRunContentScope, contentRef: string): Promise<Result<Uint8Array | undefined, Error>>;
+  deleteEvidence(scope: ManagedRunContentScope, contentRef: string): Promise<Result<boolean, Error>>;
   putAttentionBody(scope: ManagedRunContentScope, attentionRef: string, input: ManagedRunRawPrivateContentInput): Promise<Result<ManagedRunPrivateContentReceipt, Error>>;
   getAttentionBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<Uint8Array | undefined, Error>>;
   deleteAttentionBody(scope: ManagedRunContentScope, contentRef: string): Promise<Result<boolean, Error>>;
