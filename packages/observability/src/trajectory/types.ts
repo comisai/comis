@@ -262,6 +262,9 @@ export const TRAJECTORY_EVENT_TYPES = [
   "queue.steer_rejected",
   "queue.followup_queued",
 
+  // Request preparation
+  "request.clarification_required",
+
   // Execution control
   "execution.aborted",
   "execution.budget_warning",

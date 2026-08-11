@@ -11473,6 +11473,25 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "requestClarification": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "opaque_payload_missing_instruction"
+            },
+            "inputChars": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "required": [
+            "reason",
+            "inputChars"
+          ],
+          "additionalProperties": false
+        },
         "operatorPolicyToolProjections": {
           "maxItems": 16,
           "type": "array",

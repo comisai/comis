@@ -136,6 +136,8 @@ export interface Acc {
   requestRelevanceHistory?: NonNullable<
     IncidentSignals["requestRelevanceHistory"]
   >;
+  /** The LAST pre-model clarification stop in the selected records. */
+  requestClarification?: NonNullable<IncidentSignals["requestClarification"]>;
   /** The LAST prompt's content-free operator-policy tool projections. */
   operatorPolicyToolProjections?: NonNullable<
     IncidentSignals["operatorPolicyToolProjections"]

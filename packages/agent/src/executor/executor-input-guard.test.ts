@@ -177,7 +177,7 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
       name: "request:clarification_required",
       payload: {
         agentId: "agent-1",
-        sessionKey: "tenant-a:user_a@example.com:test-channel",
+        sessionKey: "tenant-a:agent:undefined:user_a@example.com:test-channel",
         reason: "opaque_payload_missing_instruction",
         inputChars: 43_000,
         timestamp: 1_700_000_000_000,

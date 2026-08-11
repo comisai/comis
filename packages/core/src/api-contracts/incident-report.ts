@@ -125,6 +125,11 @@ export const IncidentReportSchema = z.object({
     saturated: z.boolean(),
     recallDisposition: z.enum(["search", "skip_oversized_token"]).optional(),
   }).optional(),
+  /** Content-free reason a request stopped before model dispatch for clarification. */
+  requestClarification: z.strictObject({
+    reason: z.literal("opaque_payload_missing_instruction"),
+    inputChars: z.number().int().positive().max(1_000_000),
+  }).optional(),
   /** Content-free immutable-policy projection evidence for selected tool schemas. */
   operatorPolicyToolProjections: z.array(z.strictObject({
     toolName: z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),

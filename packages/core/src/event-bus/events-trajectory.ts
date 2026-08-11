@@ -74,6 +74,15 @@ export interface TrajectoryEvents {
     timestamp: number;
   };
 
+  /** The current request contained data but no bounded task instruction. */
+  "request:clarification_required": {
+    agentId: string;
+    sessionKey: string;
+    reason: "opaque_payload_missing_instruction";
+    inputChars: number;
+    timestamp: number;
+  };
+
   /**
    * Session trajectory started — emitted on the first pi-mono `agent_start`
    * for a logical session. The session-scoped registry suppresses later

@@ -114,6 +114,13 @@ export function validateInput(params: {
       },
       "Opaque payload requires an explicit instruction",
     );
+    eventBus.emit("request:clarification_required", {
+      agentId: agentId ?? "unknown",
+      sessionKey: formatSessionKey(sessionKey),
+      reason: "opaque_payload_missing_instruction",
+      inputChars,
+      timestamp: clock.now(),
+    });
     return {
       passed: false,
       earlyResponse:

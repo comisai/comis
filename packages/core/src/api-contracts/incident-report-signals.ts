@@ -63,7 +63,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 29 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 30 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -106,6 +106,11 @@ export interface IncidentSignals {
     charCount: number;
     saturated: boolean;
     recallDisposition?: "search" | "skip_oversized_token";
+  };
+  /** The selected turn stopped before model dispatch to request a task instruction. */
+  requestClarification?: {
+    reason: "opaque_payload_missing_instruction";
+    inputChars: number;
   };
   /** Content-free proof that immutable policy reached request-relevant tool schemas. */
   operatorPolicyToolProjections?: Array<{

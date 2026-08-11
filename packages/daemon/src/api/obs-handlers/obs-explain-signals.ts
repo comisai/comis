@@ -123,6 +123,18 @@ function handleEventRecord(
     latestPromptSeq, previousPromptSeq,
   )) return;
   switch (type) {
+    case "request.clarification_required": {
+      const reason = asString(data.reason);
+      const inputChars = nonnegativeInteger(data.inputChars);
+      if (
+        reason === "opaque_payload_missing_instruction"
+        && inputChars > 0
+        && inputChars <= 1_000_000
+      ) {
+        acc.requestClarification = { reason, inputChars };
+      }
+      return;
+    }
     case "prompt.submitted": {
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
       accumulatePromptRequestRecord(acc, data);
@@ -781,6 +793,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       : {}),
     ...(acc.requestRelevanceHistory !== undefined
       ? { requestRelevanceHistory: acc.requestRelevanceHistory }
+      : {}),
+    ...(acc.requestClarification !== undefined
+      ? { requestClarification: acc.requestClarification }
       : {}),
     ...(acc.operatorPolicyToolProjections !== undefined
       ? { operatorPolicyToolProjections: acc.operatorPolicyToolProjections }
