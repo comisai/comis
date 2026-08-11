@@ -199,6 +199,12 @@ describe("renderForTelegram", () => {
     );
   });
 
+  it("keeps a citation bracket outside a bare URL hyperlink", () => {
+    expect(render("[https://example.com/source]", "telegram")).toBe(
+      '[<a href="https://example.com/source">https://example.com/source</a>]',
+    );
+  });
+
   it("renders code blocks with language class", () => {
     const result = render("```js\ncode\n```", "telegram");
     expect(result).toBe('<pre><code class="language-js">code</code></pre>');
