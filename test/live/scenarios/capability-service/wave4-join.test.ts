@@ -450,6 +450,7 @@ export function makeConfig(input: {
   readonly allowId?: string;
   readonly reviewedToken?: string;
   readonly contextWindow?: number;
+  readonly capabilityClass?: "frontier" | "mid" | "small" | "nano";
 }): Record<string, unknown> {
   const launcher = input.launcher ?? REVIEWED_LAUNCHER;
   const allowId = input.allowId ?? REVIEWED_ALLOW_ID;
@@ -477,6 +478,7 @@ export function makeConfig(input: {
       name: "WaveFourLiaison",
       provider: "fixture",
       model: "fixture-model",
+      ...(input.capabilityClass === undefined ? {} : { capabilityClass: input.capabilityClass }),
       thinkingLevel: "off",
       maxSteps: 16,
       budgets: { perExecution: 500_000, perHour: 5_000_000, perDay: 50_000_000 },

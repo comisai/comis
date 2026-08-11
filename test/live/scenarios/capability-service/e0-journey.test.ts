@@ -479,6 +479,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
         allowId: E0_ALLOW_ID,
         reviewedToken: E0_TOKEN,
         contextWindow: 131_072,
+        capabilityClass: "frontier",
       })), { mode: 0o600 });
 
       const bootDaemon = async (): Promise<{
