@@ -116,11 +116,6 @@ function oversizedLexicalTokens(tokens: readonly string[]): string[] {
   return tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
 }
 
-/** Whether the current request contains a token too large to be retrieval text. */
-export function hasOversizedLexicalToken(text: string): boolean {
-  return oversizedLexicalTokens(tokenize(text)).length > 0;
-}
-
 /**
  * Whether an oversized payload leaves the current request with no retrieval
  * terms of its own — the RECALL question. Prior turns must not supply the
