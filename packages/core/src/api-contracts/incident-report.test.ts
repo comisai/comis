@@ -183,6 +183,22 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
     ).toEqual(evidence);
   });
 
+  it("retains a content-free request clarification reason", () => {
+    const requestClarification = {
+      reason: "opaque_payload_missing_instruction" as const,
+      inputChars: 43_000,
+    };
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      requestClarification,
+    });
+
+    expect(
+      (parsed as unknown as { requestClarification?: typeof requestClarification })
+        .requestClarification,
+    ).toEqual(requestClarification);
+  });
+
   it("retains the normalized inbound edit kind", () => {
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),

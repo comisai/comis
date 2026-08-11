@@ -116,6 +116,27 @@ describe("provider breaker trajectory normalization", () => {
   });
 });
 
+describe("request clarification trajectory normalization", () => {
+  it("retains the latest content-free clarification reason", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "request.clarification_required",
+      seq: 13,
+      data: {
+        reason: "opaque_payload_missing_instruction",
+        inputChars: 43_000,
+      },
+    }]);
+
+    expect(
+      (signals as unknown as { requestClarification?: unknown }).requestClarification,
+    ).toEqual({
+      reason: "opaque_payload_missing_instruction",
+      inputChars: 43_000,
+    });
+  });
+});
+
 // 678 log-shaped failure: errorText carries the injection block AND a
 // `"status": 200` substring (escaped, exactly as in the fixture). The block
 // is >200 chars — matching the real fixture (~1500 chars), so a single

@@ -206,6 +206,25 @@ describe("assembleIncidentReport — request-relevant tool selection", () => {
       }).requestRelevanceHistory,
     ).toEqual(evidence);
   });
+
+  it("surfaces a content-free request clarification on the one-call report", () => {
+    const requestClarification = {
+      reason: "opaque_payload_missing_instruction" as const,
+      inputChars: 43_000,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({ requestClarification } as unknown as Partial<IncidentSignals>),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { requestClarification?: typeof requestClarification })
+        .requestClarification,
+    ).toEqual(requestClarification);
+  });
 });
 
 describe("assembleIncidentReport — queue disposition timeline", () => {

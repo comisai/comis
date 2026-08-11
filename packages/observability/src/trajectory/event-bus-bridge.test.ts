@@ -3026,6 +3026,29 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("request clarification maps its content-free reason and input size", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("request:clarification_required", {
+      agentId: "agent-1",
+      sessionKey: "tenant-a:user_a:test-channel",
+      reason: "opaque_payload_missing_instruction",
+      inputChars: 43_000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "request.clarification_required",
+      data: {
+        reason: "opaque_payload_missing_instruction",
+        inputChars: 43_000,
+      },
+    });
+  });
+
   it("execution_aborted forwards the perRootBudget limb payload onto the record (the explain spend-verdict's input)", () => {
     // The spend verdict names autonomy.budget.<limb> ONLY when the terminal
     // execution.aborted record carries perRootBudget — a dropped payload here

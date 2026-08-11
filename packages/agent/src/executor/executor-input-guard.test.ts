@@ -62,6 +62,7 @@ function makeCaptureBus(): {
   // Subscribe to all known security events validateInput emits.
   bus.on("security:injection_detected", (p) => events.push({ name: "security:injection_detected", payload: p }));
   bus.on("security:injection_rate_exceeded", (p) => events.push({ name: "security:injection_rate_exceeded", payload: p }));
+  bus.on("request:clarification_required", (p) => events.push({ name: "request:clarification_required", payload: p }));
   bus.on("audit:event", (p) => events.push({ name: "audit:event", payload: p }));
   return { bus, events };
 }
@@ -154,7 +155,7 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
   });
 
   it("asks for an instruction before processing a large opaque payload", () => {
-    const { bus } = makeCaptureBus();
+    const { bus, events } = makeCaptureBus();
     const guard = makeGuard({});
     const result = validateInput({
       msg: makeMessage({ text: "x".repeat(43_000) }),
@@ -172,6 +173,16 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     });
     expect(result.earlyResponse).toMatch(/does not include an instruction/i);
     expect(guard.scan).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      name: "request:clarification_required",
+      payload: {
+        agentId: "agent-1",
+        sessionKey: "tenant-a:user_a@example.com:test-channel",
+        reason: "opaque_payload_missing_instruction",
+        inputChars: 43_000,
+        timestamp: 1_700_000_000_000,
+      },
+    });
   });
 
   it("GIANT-INPUT-WEDGE: an UNDEFINED-text message (media-only / internal path) does NOT NPE the size cap", () => {
