@@ -8,7 +8,7 @@ import type {
   TimerPort,
   TypedEventBus,
 } from "@comis/core";
-import { sanitizeLogString } from "@comis/core";
+import { sanitizeLogString, toSafeErrorLogString } from "@comis/core";
 import { err, ok, suppressError, type Result } from "@comis/shared";
 import {
   createManagedRunContinuationCoalescer,
@@ -90,6 +90,7 @@ export function createManagedRunContinuationRuntime(deps: {
         log.error({
           managedRunId,
           serviceInstanceId,
+          err: toSafeErrorLogString(processed.error),
           errorKind: "internal" as const,
           hint: "Inspect the managed-run claim, evidence, policy snapshot, and delivery dependencies before retrying",
         }, "Managed-run continuation processing failed");
