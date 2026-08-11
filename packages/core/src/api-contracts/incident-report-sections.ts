@@ -211,18 +211,13 @@ export const IncidentGraphRunSchema = z.object({
   /** Authenticated parent session when the graph originated from a user turn. */
   sessionKey: z.string().min(1).optional(),
   traceId: z.string().min(1).optional(),
-  /**
-   * Terminal governed-notification disposition, recorded after delivery settles.
-   * `unknown` is the honest projection for a persisted record written before the
-   * runtime recorded the disposition — it never means "not requested".
-   */
+  /** Terminal governed-notification disposition, recorded after delivery settles. */
   announcementDelivery: z.enum([
     "not-requested",
     "unavailable",
     "committed",
     "retained",
     "failed",
-    "unknown",
   ]),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
