@@ -24,30 +24,53 @@
  * @module
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
 import type { TemplateMatch } from "@comis/agent";
 
 import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-helpers.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
+import { graphDispatchHint } from "./graph-dispatch-hint.js";
 
 // After a successful graph.execute dispatch, the model-facing hint must be a
 // strong STOP signal — a weak model that dispatched a 6-node NVDA pipeline then kept
-// researching NVDA itself (130 tool calls) and exhausted its own context. The hint
-// lives in graph-mutate.ts; assert its load-bearing directives via source-grep.
+// researching NVDA itself (130 tool calls) and exhausted its own context. Every
+// branch is asserted from the hint the handler actually emits.
 describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
   it("tells the model its job is DONE, to STOP, and to NOT research the topic itself", () => {
-    const src = readFileSync(resolve(here, "graph-mutate.ts"), "utf-8");
-    const hintMatch = src.match(/:\s*"([^"]*Pipeline launched — your job is now DONE[^"]*)"/);
-    expect(hintMatch).not.toBeNull();
-    const hint = (hintMatch?.[1] ?? "").toLowerCase();
+    const hint = graphDispatchHint({
+      announceChannelType: "telegram",
+      announceChannelId: "678314278",
+      durableDeliveryEnabled: true,
+      agentId: "default",
+    }).toLowerCase();
+
     expect(hint).toContain("done");
     expect(hint).toContain("stop");
     expect(hint).toContain("do not research");
     expect(hint).toContain("exhaust");
+  });
+
+  it("withholds the automatic-notification promise when no completion channel exists", () => {
+    const hint = graphDispatchHint({
+      durableDeliveryEnabled: true,
+      agentId: "default",
+    });
+
+    expect(hint).toContain("no completion channel is available");
+    expect(hint).toContain("do not promise an automatic notification");
+    expect(hint).not.toContain("notified automatically");
+  });
+
+  it("names the durability knob when retained completion delivery is disabled", () => {
+    const hint = graphDispatchHint({
+      announceChannelType: "telegram",
+      announceChannelId: "678314278",
+      durableDeliveryEnabled: false,
+      agentId: "mldag",
+    });
+
+    expect(hint).toContain("agents.mldag.autonomy.durability.enabled");
+    expect(hint).toContain("do not promise an automatic notification");
+    expect(hint).not.toContain("notified automatically");
   });
 });
 

@@ -51,7 +51,10 @@ import {
   attachMcpOperatorPolicy,
   describeMcpOperatorPolicyProjection,
 } from "./mcp-operator-policy.js";
-import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
+import {
+  applyPromptSkillRequestRouting,
+  physicalUserRequestText,
+} from "./prompt-skill-request-routing.js";
 import type {
   ToolAssemblyParams,
   ToolAssemblyResult,
@@ -678,12 +681,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   if (msg.channelType !== "background_task") {
     // Media preprocessing deliberately enriches msg.text with extracted,
     // externally sourced content and runtime coverage instructions. Skill
-    // selection is an intent decision, so it must use the structured physical
-    // user messages captured before that enrichment. The enriched text remains
-    // available to ordinary tool relevance and to the model itself.
-    const currentUserRequestText = msg.originalMessages
-      ?.map((message) => message.text)
-      .join("\n") ?? msg.text;
+    // selection is an intent decision, so it must use the physical user
+    // wording captured before that enrichment — the structured messages, or
+    // the trusted transcription receipt for a spoken turn whose physical text
+    // is empty. The enriched text remains available to ordinary tool relevance
+    // and to the model itself.
+    const currentUserRequestText = physicalUserRequestText(msg);
     applyPromptSkillRequestRouting(deferralResult, {
       currentRequestText: currentUserRequestText,
       requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,

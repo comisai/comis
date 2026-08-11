@@ -244,7 +244,29 @@ describe("response grounding module", () => {
     });
   });
 
-  it("requires runtime-estimate and provider-invoice qualification for cost claims", () => {
+  // Naming the figure a runtime estimate already withholds the provider-invoice
+  // claim, so one qualifier is enough. Demanding both English phrases discarded
+  // correct, qualified answers.
+  it("keeps a cost report qualified only as a runtime estimate", () => {
+    const response = "This turn cost about $0.04 (runtime estimate).";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "how much did this turn cost?",
+      response,
+      toolExecResults: [{
+        toolName: "obs_query",
+        success: true,
+        observabilityEvidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+        },
+      }],
+      honestResponse: "I could not verify provider-billed cost.",
+      unsupportedResponse: "The runtime estimate is not a verified provider invoice.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("replaces an unqualified cost claim the current receipt cannot support", () => {
     const honestResponse = "I could not verify provider-billed cost.";
     const unsupportedResponse = "The runtime estimate is not a verified provider invoice.";
 

@@ -993,6 +993,31 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  // The spawn receipt already exists here, so the only question is whether the
+  // reply DISCLOSES the delegation. A truthful answer that says so with an
+  // ordinary synonym must survive instead of being discarded for a vocabulary
+  // miss.
+  it("keeps a truthful reply that discloses the spawn with a synonym", () => {
+    for (const response of [
+      "Done — the helper is now researching the topic and will report back with results.",
+      "That is running in the background now; I will send the findings when they land.",
+    ]) {
+      const guarded = delegationEvidenceGuard()({
+        request:
+          "delegate this to a background helper and summarise the plan",
+        response,
+        toolExecResults: [
+          { toolName: "sessions_spawn", success: true },
+        ],
+        honestResponse,
+        verifiedSpawnResponse:
+          "I successfully started the requested sub-agent. Its result is still pending.",
+      });
+
+      expect(guarded).toEqual({ response, corrected: false });
+    }
+  });
+
   it("does not count a failed or background-placeholder spawn as proof", () => {
     for (const toolExecResults of [
       [{ toolName: "sessions_spawn", success: false }],
@@ -1384,6 +1409,22 @@ describe("outbound audio evidence guard", () => {
       honestResponse,
     })).toEqual({ response: explanation, corrected: false });
   });
+
+  // An admitted limitation is already honest about the missing receipt, so the
+  // substitute it describes must survive: the delivered prose matches a claim
+  // pattern ("I've read it out") without claiming audio was sent.
+  it("keeps an admitted limitation that also describes the text substitute", () => {
+    const response =
+      "I couldn't send a voice note in this turn, so I have read it out as text below: "
+      + "the total of the two items is £5.75.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please send that as a voice message",
+      response,
+      toolExecResults: [{ toolName: "tts_synthesize", success: false }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
 });
 
 type OutboundImageEvidenceGuard = (params: {
@@ -1479,6 +1520,19 @@ describe("outbound image evidence guard", () => {
       toolExecResults: [],
       honestResponse,
     })).toEqual({ response: explanation, corrected: false });
+  });
+
+  it("keeps an admitted limitation that also describes the written substitute", () => {
+    const response =
+      "I could not generate the picture in this turn, so I have created a text "
+      + "layout description you can hand to a designer instead.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response,
+      toolExecResults: [{ toolName: "image_generate", success: false }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
   });
 });
 

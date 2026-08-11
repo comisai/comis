@@ -29,13 +29,16 @@ const PersistedGraphRunSchema = z.object({
   cancelReason: z.enum(["manual", "budget", "timeout", "killed"]).optional(),
   sessionKey: z.string().min(1).optional(),
   traceId: z.string().min(1).optional(),
+  // Optional on disk: records persisted before the runtime recorded the
+  // governed-notification disposition must still yield their whole graph
+  // section instead of failing validation and silently dropping it.
   announcementDelivery: z.enum([
     "not-requested",
     "unavailable",
     "committed",
     "retained",
     "failed",
-  ]),
+  ]).optional(),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
   durationMs: z.number().nonnegative(),
@@ -84,7 +87,7 @@ export function readIncidentGraphRun(
     ...(raw.cancelReason === undefined ? {} : { cancelReason: raw.cancelReason }),
     ...(raw.sessionKey === undefined ? {} : { sessionKey: raw.sessionKey }),
     ...(raw.traceId === undefined ? {} : { traceId: raw.traceId }),
-    announcementDelivery: raw.announcementDelivery,
+    announcementDelivery: raw.announcementDelivery ?? "unknown",
     ...(raw.startedAt === undefined ? {} : { startedAt: raw.startedAt }),
     ...(raw.completedAt === undefined ? {} : { completedAt: raw.completedAt }),
     durationMs: raw.durationMs,

@@ -25,11 +25,29 @@ describe("MessagingEvents payload structure", () => {
     expect(source).toContain('| "unrecovered_tool_failure_completion_claim"');
   });
 
-  it("keeps missing runtime self-report evidence in the closed recovery reason union", () => {
-    const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
+  // Each reason below is emitted through the typed bus: the literal must be a
+  // member of the closed recovery-reason union or the payload fails to COMPILE,
+  // and the listener proves the runtime carries it through unchanged.
+  it.each([
+    "missing_runtime_self_report_evidence",
+    "unsupported_outage_receipt_evidence",
+  ] as const)("execution recovery can identify the %s correction", (reason) => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["execution:recovery_attempted"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-self-report-1",
+      reason,
+      succeeded: true,
+      timestamp: Date.now(),
+    };
 
-    expect(source).toContain('| "missing_runtime_self_report_evidence"');
-    expect(source).toContain('| "unsupported_outage_receipt_evidence"');
+    bus.on("execution:recovery_attempted", handler);
+    bus.emit("execution:recovery_attempted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(handler.mock.calls[0]![0].reason).toBe(reason);
   });
 
   it("execution recovery can identify a sender-authority grounding correction", () => {

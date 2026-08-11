@@ -185,6 +185,29 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     });
   });
 
+  // Pasting a key or hash and asking "what is this?" is an ordinary request.
+  // Every word of it is a retrieval stopword, so the recall-signal predicate
+  // reported zero terms and the turn was refused before the model saw it.
+  it("admits a question asked about a pasted payload", () => {
+    const { bus, events } = makeCaptureBus();
+    const guard = makeGuard({});
+    const result = validateInput({
+      msg: makeMessage({ text: `what is this? ${"a1B2".repeat(80)}` }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      inputGuard: guard,
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.earlyResponse).toBeUndefined();
+    expect(guard.scan).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.name))
+      .not.toContain("request:clarification_required");
+  });
+
   it("GIANT-INPUT-WEDGE: an UNDEFINED-text message (media-only / internal path) does NOT NPE the size cap", () => {
     // The size guard reads msg.text.length; msg.text is optional, so a text-less
     // message must short-circuit to a no-op (chars 0), not throw a TypeError.

@@ -21,7 +21,12 @@
 
 import type { MemorySearchResult, ComisLogger } from "@comis/core";
 import { describe, it, expect, vi } from "vitest";
-import { buildRelevanceQuery, scoreRelevance } from "./relevance-scorer.js";
+import {
+  buildRelevanceQuery,
+  isOpaquePayloadWithoutInstruction,
+  isOpaquePayloadWithoutRetrievalTerms,
+  scoreRelevance,
+} from "./relevance-scorer.js";
 import type { FusionLane } from "./fuse.js";
 
 /** A neutral content-free logger; individual tests swap in a spy where they assert. */
@@ -105,6 +110,33 @@ describe("buildRelevanceQuery — rolling ~3-user-turn window + GoalAnchor bias"
     const a = buildRelevanceQuery(["restart the gateway now"], "[GoalAnchor: fix the deploy]");
     const b = buildRelevanceQuery(["restart the gateway now"], "[GoalAnchor: fix the deploy]");
     expect(a).toEqual(b);
+  });
+});
+
+describe("opaque-payload classification — admission vs recall are separate questions", () => {
+  const blob = "a1B2".repeat(80); // 320 chars, one token, no delimiters
+
+  it("treats a message that is only the payload as instruction-free", () => {
+    expect(isOpaquePayloadWithoutInstruction(blob)).toBe(true);
+    expect(isOpaquePayloadWithoutInstruction(`${blob}\n${blob}`)).toBe(true);
+  });
+
+  // STOPWORDS drops words with no CORPUS signal; it is not an instruction
+  // detector. Reusing it as one refused a plain question about a pasted key
+  // before the model ever saw the turn.
+  it("admits a stopword-only question asked about the payload", () => {
+    expect(isOpaquePayloadWithoutInstruction(`what is this? ${blob}`)).toBe(false);
+    expect(isOpaquePayloadWithoutInstruction(`can you tell me what this is ${blob}`)).toBe(false);
+  });
+
+  it("still withholds recall terms for a request the payload leaves term-free", () => {
+    expect(isOpaquePayloadWithoutRetrievalTerms(`what is this? ${blob}`)).toBe(true);
+    expect(isOpaquePayloadWithoutRetrievalTerms(`decode this certificate ${blob}`)).toBe(false);
+  });
+
+  it("classifies a message with no oversized token as neither", () => {
+    expect(isOpaquePayloadWithoutInstruction("what is this?")).toBe(false);
+    expect(isOpaquePayloadWithoutRetrievalTerms("what is this?")).toBe(false);
   });
 });
 

@@ -40,6 +40,7 @@ import {
   validateGraphWarnings,
   validateTypeConfigs,
 } from "./graph-helpers.js";
+import { graphDispatchHint } from "./graph-dispatch-hint.js";
 // Authoring telemetry/audit helpers extracted to keep this file under the
 // graph-handlers/ 500-line cap (file-size cap; behavior byte-identical).
 import { createGraphMutateTelemetry, isSynthPattern } from "./graph-mutate-telemetry.js";
@@ -310,11 +311,12 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         async: true,
         nodeCount: finalValidated.graph.nodes.length,
         label: finalValidated.graph.label,
-        hint: announceChannelType === undefined || announceChannelId === undefined
-          ? "Pipeline launched, but no completion channel is available. Tell the caller it is running and include the graphId; do not promise an automatic notification. The caller can inspect graph status later."
-          : deps.durableRuns === undefined
-            ? `Pipeline launched, but retained completion delivery is disabled (agents.${String(rawParams._agentId ?? deps.defaultAgentId)}.autonomy.durability.enabled). Tell the caller it is running and include the graphId; do not promise an automatic notification. The caller can inspect graph status later.`
-            : "Pipeline launched — your job is now DONE. Tell the user the pipeline is running (and what it will produce), then STOP. Do NOT research this topic yourself, do NOT call more tools, and do NOT poll with status/cron: the sub-agents are doing the work in isolated contexts and you will be notified automatically with results when it completes. Duplicating their research here only exhausts your own context window.",
+        hint: graphDispatchHint({
+          ...(announceChannelType === undefined ? {} : { announceChannelType }),
+          ...(announceChannelId === undefined ? {} : { announceChannelId }),
+          durableDeliveryEnabled: deps.durableRuns !== undefined,
+          agentId: String(rawParams._agentId ?? deps.defaultAgentId),
+        }),
         ...(unresolvedWarnings.length > 0 && { warnings: unresolvedWarnings }),
       };
       if (IS_DEV) GraphExecuteContract.response.parse(result);

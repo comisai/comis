@@ -131,7 +131,7 @@ async function emulatorWireRecords(chatId) {
   return records;
 }
 
-async function incidentReportFor(sessionId) {
+export async function incidentReportFor(sessionId) {
   // Strict dev parsing can reject the very report this command is intended to diagnose.
   // Production assembly still validates its durable inputs and returns honest coverage.
   if (process.env.NODE_ENV === undefined) process.env.NODE_ENV = "production";

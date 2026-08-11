@@ -116,10 +116,22 @@ const DELEGATION_SUBJECT_PHRASES = [
   " independent check",
 ];
 
+// A successful spawn receipt exists here, so this set only decides whether the
+// reply DISCLOSES the delegation. It therefore admits the ordinary synonyms a
+// model reaches for ("the helper is now researching X", "handed it off",
+// "running in the background") — otherwise a truthful, substantive answer was
+// discarded for a vocabulary miss rather than for an unsupported claim.
 const GROUNDED_DELEGATION_RESPONSE_PHRASES = [
   ...DELEGATION_SUBJECT_PHRASES,
   " launched ",
   " started ",
+  " helper",
+  " worker",
+  " spawned ",
+  " dispatched ",
+  " handed off",
+  " handed it off",
+  " background",
 ];
 
 function normalizedEvidenceText(value: string): string {

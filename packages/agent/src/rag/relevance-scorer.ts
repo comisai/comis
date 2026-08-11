@@ -117,12 +117,28 @@ export function hasOversizedLexicalToken(text: string): boolean {
 }
 
 /**
- * Identify a large opaque payload that supplies data but no bounded content
- * term describing what the user wants done with it.
+ * Whether an oversized payload leaves the current request with no retrieval
+ * terms of its own — the RECALL question. Prior turns must not supply the
+ * corpus signal such a request lacks, or unrelated memory becomes the only
+ * actionable text in the model request.
  */
-export function isOpaquePayloadWithoutInstruction(text: string): boolean {
+export function isOpaquePayloadWithoutRetrievalTerms(text: string): boolean {
   return hasOversizedLexicalToken(text)
     && buildRelevanceQuery([text]).terms.length === 0;
+}
+
+/**
+ * Whether a message carries NOTHING but a large opaque payload — data with no
+ * accompanying task. This is the ADMISSION question, and it is deliberately
+ * stricter than {@link isOpaquePayloadWithoutRetrievalTerms}: {@link STOPWORDS}
+ * drops words that carry no CORPUS signal, so reusing it as an instruction
+ * detector refused plain questions whose every word is a stopword
+ * ("what is this? <pasted key>").
+ */
+export function isOpaquePayloadWithoutInstruction(text: string): boolean {
+  const tokens = tokenize(text);
+  const oversized = tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
+  return oversized.length > 0 && oversized.length === tokens.length;
 }
 
 /** The shape {@link buildRelevanceQuery} returns and {@link scoreRelevance} consumes. */

@@ -1385,6 +1385,38 @@ describe("tool-metadata-registry -- failure detectors", () => {
     });
   });
 
+  // A provider that needs an ENDPOINT rather than a credential must classify as
+  // missing_configuration too. Matching only secret names dropped searxng to a
+  // dependency verdict, which carries no recovery key — so the actionable
+  // "configure X" reply and the tool_provider_configuration_missing verdict
+  // both disappeared for a missing SearXNG base URL.
+  it("web_search exposes the provider endpoint knob when a base URL is missing", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message:
+            "All web_search providers failed: searxng: web_search provider searxng "
+            + "requires searxng.baseUrl",
+          failures: [
+            "searxng: web_search provider searxng requires searxng.baseUrl",
+          ],
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "config",
+      classifiedField: "message",
+      matchedRule: "missing_provider_configuration",
+      matchedToken: "tools.web.search.searxng.baseUrl",
+      failureDisclosure: {
+        kind: "missing_configuration",
+        configKey: "tools.web.search.searxng.baseUrl",
+      },
+    });
+  });
+
   it("web_search flags a blocked/forbidden failure (structured fields) as a dependency failure attributed to error", () => {
     const detect = webSearchDetector()!;
     // The catch-all branch (top-level `error` present, no rate-limit token) attributes the

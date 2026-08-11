@@ -47,8 +47,23 @@ import { registerToolMetadata } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
 const WEB_SEARCH_CONFIG_KEY = "tools.web.search";
-const WEB_SEARCH_PROVIDER_KEY =
-  /\b(SEARCH_API_KEY|PERPLEXITY_API_KEY|XAI_API_KEY|TAVILY_API_KEY|EXA_API_KEY|JINA_API_KEY)\b/;
+// One regex per recovery-knob SHAPE, each pinning the phrase AND the knob it
+// names, so a provider's own message decides the key. A provider that needs an
+// endpoint rather than a credential (searxng) must classify as
+// missing_configuration too — otherwise it falls through to a dependency
+// verdict that carries no recovery key at all.
+const WEB_SEARCH_PROVIDER_SECRET =
+  /\brequires the (SEARCH_API_KEY|PERPLEXITY_API_KEY|XAI_API_KEY|TAVILY_API_KEY|EXA_API_KEY|JINA_API_KEY) secret\b/;
+const WEB_SEARCH_PROVIDER_SETTING =
+  /\brequires ((?:perplexity|grok|searxng|tavily|exa|jina)\.(?:apiKey|baseUrl))\b/;
+
+/** Name the operator knob a provider's own configuration message points at. */
+function webSearchRecoveryConfigKey(text: string): string | undefined {
+  const secretName = WEB_SEARCH_PROVIDER_SECRET.exec(text)?.[1];
+  if (secretName !== undefined) return `secrets.${secretName}`;
+  const settingPath = WEB_SEARCH_PROVIDER_SETTING.exec(text)?.[1];
+  return settingPath === undefined ? undefined : `${WEB_SEARCH_CONFIG_KEY}.${settingPath}`;
+}
 
 /**
  * Agent tools return structured data in `details`; direct-shape results remain
@@ -80,9 +95,8 @@ export function registerFailureDetectorMetadata(): void {
         ? r.failures.filter((f): f is string => typeof f === "string").join(" ")
         : "";
       const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
-      const missingConfigKey = WEB_SEARCH_PROVIDER_KEY.exec(text)?.[1];
-      if (missingConfigKey !== undefined && /requires the [A-Z_]+ secret/.test(text)) {
-        const recoveryConfigKey = `secrets.${missingConfigKey}`;
+      const recoveryConfigKey = webSearchRecoveryConfigKey(text);
+      if (recoveryConfigKey !== undefined) {
         return {
           errorKind: "config" satisfies ErrorKind,
           classifiedField: "message",

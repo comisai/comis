@@ -30,6 +30,31 @@ interface PromptSkillRequestRoutingInput {
   readonly locations?: ReadonlyMap<string, string>;
 }
 
+/**
+ * The text the user physically supplied this turn, for intent routing only.
+ *
+ * Media preprocessing enriches `text` with extracted external content and
+ * runtime coverage instructions, which must not decide skill selection. The
+ * structured physical messages are the primary source — but a voice or media
+ * turn carries an EMPTY physical text, so the trusted transcription receipt is
+ * the only first-party wording a spoken request has. Without it, "research X
+ * thoroughly" routed a skill when typed and routed nothing when spoken.
+ */
+export function physicalUserRequestText(message: {
+  readonly text?: string;
+  readonly originalMessages?: readonly { readonly text: string }[];
+  readonly attachments?: readonly { readonly transcription?: string }[];
+}): string {
+  const physical = message.originalMessages?.map((original) => original.text)
+    ?? [message.text ?? ""];
+  const typed = physical.filter((text) => text.trim().length > 0);
+  if (typed.length > 0) return typed.join("\n");
+  const spoken = (message.attachments ?? [])
+    .map((attachment) => attachment.transcription ?? "")
+    .filter((text) => text.trim().length > 0);
+  return spoken.length > 0 ? spoken.join("\n") : "";
+}
+
 function terms(text: string): Set<string> {
   return new Set(
     text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)

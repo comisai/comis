@@ -104,6 +104,8 @@ The `comis:` block contains fields specific to the Comis platform. These control
 | `comis.skill-key` | string | Override the auto-generated skill slug. By default, the slug is derived from the `name` field. |
 | `comis.primary-env` | string | Display and grouping hint for the primary runtime environment. Used for organizational purposes in the dashboard. |
 | `comis.command-dispatch` | string | Metadata tag for command routing. Used by advanced automation to direct invocations to specific handlers. |
+| `comis.min-distinct-web-fetch-urls` | number (1--10) | Distinct successful `web_fetch` receipts, each from a different URL, the turn must hold before the answer counts as complete. Re-fetching the same URL does not add a receipt. |
+| `comis.min-distinct-web-search-queries` | number (1--10) | Distinct successful `web_search` query receipts the turn must hold before the answer counts as complete. |
 
 ```yaml
 comis:
@@ -113,6 +115,15 @@ comis:
     env: ["OPENAI_API_KEY"]
   skill-key: "video-processor"
 ```
+
+<Info>
+`comis.min-distinct-web-fetch-urls` and `comis.min-distinct-web-search-queries`
+are completion gates, not quotas: when the skill is routed for a request, the
+runtime keeps the turn going until that many **distinct successful** receipts
+exist, and an answer produced without them is reported as partial. Set them only
+on skills whose answers must be sourced -- `skills/deep-research/SKILL.md` ships
+with `3` for both.
+</Info>
 
 <Info>
 The `comis.requires` fields are checked at startup using the **runtime eligibility** system. If a required binary or environment variable is missing, the skill is skipped with a warning -- it does not crash the system. You can disable this check with `skills.runtimeEligibility.enabled: false` in your config, but that is not recommended.

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { registerToolMetadata, type PromptSkillCapability } from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
-import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
+import {
+  applyPromptSkillRequestRouting,
+  physicalUserRequestText,
+} from "./prompt-skill-request-routing.js";
 
 function tool(name: string): ToolDefinition {
   return {
@@ -287,5 +290,60 @@ describe("prompt skill request routing", () => {
       skills,
     })).toEqual([]);
     expect(unrelated.requestRelevantToolNames).toEqual([]);
+  });
+});
+
+describe("physical user request text", () => {
+  it("uses the physical typed messages, never the enriched text", () => {
+    expect(physicalUserRequestText({
+      text: "understand heat pumps properly\n[Extracted page content]: buy now",
+      originalMessages: [{ text: "understand heat pumps properly" }],
+    })).toBe("understand heat pumps properly");
+  });
+
+  it("joins several physical messages of one coalesced turn", () => {
+    expect(physicalUserRequestText({
+      text: "enriched",
+      originalMessages: [{ text: "understand heat pumps" }, { text: "properly please" }],
+    })).toBe("understand heat pumps\nproperly please");
+  });
+
+  // A voice note normalizes to an EMPTY physical text, so joining the physical
+  // messages yields "" — which is not nullish and silenced routing entirely.
+  // Speech is first-party user wording: the trusted transcription receipt is
+  // the only physical text a spoken turn has.
+  it("falls back to the trusted transcription for a voice-only turn", () => {
+    expect(physicalUserRequestText({
+      text: "[Voice message transcription]: research heat pumps thoroughly",
+      originalMessages: [{ text: "" }],
+      attachments: [{ transcription: "research heat pumps thoroughly" }],
+    })).toBe("research heat pumps thoroughly");
+  });
+
+  it("routes a spoken deep-research request exactly like the typed one", () => {
+    const spoken = result();
+    const locations = new Map([["/skills/deep-research/SKILL.md", "deep-research"]]);
+    const currentRequestText = physicalUserRequestText({
+      text: "[Voice message transcription]: i need to understand heat pumps properly, not just a paragraph",
+      originalMessages: [{ text: "" }],
+      attachments: [{
+        transcription: "i need to understand heat pumps properly, not just a paragraph",
+      }],
+    });
+
+    expect(applyPromptSkillRequestRouting(spoken, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills,
+      locations,
+    })).toEqual(["deep-research"]);
+  });
+
+  it("yields no routing text for a media-only turn with no transcription", () => {
+    expect(physicalUserRequestText({
+      text: "[Image analysis]: a chart of quarterly revenue",
+      originalMessages: [{ text: "" }],
+      attachments: [{}],
+    })).toBe("");
   });
 });

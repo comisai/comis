@@ -42,7 +42,6 @@ export function enforceProviderModelFailureGrounding(params: {
     failureCode?: string;
   }>;
   honestResponse: string;
-  unsupportedResponse?: string;
 }): ProviderModelFailureGroundingGuardResult {
   const results = params.toolExecResults ?? [];
   const failedIndex = results.findIndex(
@@ -218,11 +217,16 @@ export function enforceRuntimeSelfReportEvidence(params: {
   const unsupportedDuration =
     asksForSlowest
     && limits?.crossExecutionDurationRanking === "unavailable";
+  // Either qualifier settles the authority question: naming the figure a runtime
+  // estimate already withholds the provider-invoice claim. Demanding both
+  // phrases discarded correct, qualified answers such as
+  // "this turn cost about $0.04 (runtime estimate)".
   const unsupportedCost =
     asksForCost
     && limits?.cost === "runtime_estimate"
     && limits.providerInvoice === "unverified"
-    && (!qualifiesEstimate || !qualifiesProviderInvoice);
+    && !qualifiesEstimate
+    && !qualifiesProviderInvoice;
   if (unsupportedDuration || unsupportedCost) {
     return {
       response: params.unsupportedResponse ?? params.honestResponse,
@@ -480,14 +484,19 @@ export function enforceOutboundAudioEvidence(params: {
     return { response: params.response, corrected: false };
   }
 
+  // A reply that admits the limitation is already honest about the missing
+  // receipt, so it stands even when it also describes the substitute it did
+  // deliver ("I couldn't send a voice note, so I've read it out as text
+  // below") — that prose matches a claim pattern without claiming audio.
+  // Checked BEFORE the claim patterns, as the delivery-status guard does.
+  if (OUTBOUND_AUDIO_LIMITATION.test(params.response)) {
+    return { response: params.response, corrected: false };
+  }
   const completionClaim = isCompletionClaim(params.response);
   const audioSuccessClaim = OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS.some(
     (pattern) => pattern.test(params.response),
   );
-  if (
-    (!completionClaim && !audioSuccessClaim)
-    || (OUTBOUND_AUDIO_LIMITATION.test(params.response) && !completionClaim && !audioSuccessClaim)
-  ) {
+  if (!completionClaim && !audioSuccessClaim) {
     return { response: params.response, corrected: false };
   }
 
@@ -545,14 +554,16 @@ export function enforceOutboundImageEvidence(params: {
     return { response: params.response, corrected: false };
   }
 
+  // Same ordering as the audio guard: an admitted limitation stands even when
+  // the reply also describes the substitute it delivered instead.
+  if (OUTBOUND_IMAGE_LIMITATION.test(params.response)) {
+    return { response: params.response, corrected: false };
+  }
   const completionClaim = isCompletionClaim(params.response);
   const imageSuccessClaim = OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS.some(
     (pattern) => pattern.test(params.response),
   );
-  if (
-    (!completionClaim && !imageSuccessClaim)
-    || (OUTBOUND_IMAGE_LIMITATION.test(params.response) && !completionClaim && !imageSuccessClaim)
-  ) {
+  if (!completionClaim && !imageSuccessClaim) {
     return { response: params.response, corrected: false };
   }
 

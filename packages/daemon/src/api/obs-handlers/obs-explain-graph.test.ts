@@ -88,6 +88,23 @@ describe("readIncidentGraphRun", () => {
     expect(result.value.cancelReason).toBe("manual");
   });
 
+  // A record written before the runtime recorded the governed-notification
+  // disposition must still yield its whole graph section. Failing validation
+  // dropped `comis explain <graphId> --graph` entirely for every earlier run,
+  // with no honest degradation anywhere in the report.
+  it("projects a record persisted without an announcement disposition as unknown", async () => {
+    const { dataDir, graphId } = await createGraphMetadata({
+      announcementDelivery: undefined,
+    });
+
+    const result = await readIncidentGraphRun(dataDir, graphId);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.announcementDelivery).toBe("unknown");
+    expect(result.value.nodesTotal).toBe(1);
+  });
+
   it("rejects metadata whose graph identifier does not match its path", async () => {
     const { dataDir, graphId } = await createGraphMetadata({
       graphId: "22222222-2222-4222-8222-222222222222",
