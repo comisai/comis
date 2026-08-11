@@ -161,6 +161,15 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(manifest).toMatch(
       /fewer than three[^\n]*(?:partial|incomplete|abstain)/iu,
     );
+    expect(manifest).toMatch(
+      /(?:re-fetching|fetching)[^\n]*same URL[^\n]*does not count/iu,
+    );
+    expect(manifest).toMatch(
+      /every factual[^\n]*(?:claim|paragraph)[^\n]*(?:citation|fetched URL)/iu,
+    );
+    expect(manifest).toMatch(
+      /failed[^\n]*(?:source|fetch)[^\n]*name[^\n]*(?:URL|source)/iu,
+    );
   });
 
   it("downloads a generated chart into an ESM workspace without host renderers", () => {
