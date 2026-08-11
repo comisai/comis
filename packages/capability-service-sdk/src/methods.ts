@@ -192,6 +192,30 @@ export const CapabilityPutEvidenceResponseSchema = z.strictObject({
   }),
 });
 
+export const CapabilityReleaseRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.release"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    workspaceLeaseId: WorkspaceLeaseIdSchema,
+    disposition: z.enum(["reap_safe", "preserve"]),
+  }),
+});
+
+export const CapabilityReleaseResponseSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  result: z.strictObject({
+    managedRunId: ManagedRunIdSchema,
+    workspaceLeaseId: WorkspaceLeaseIdSchema,
+    state: z.literal("released"),
+    disposition: z.enum(["reap_safe", "preserve"]),
+    releasedAtMs: TimestampMsSchema,
+  }),
+});
+
 export const CapabilityTerminalTransitionSchema = z.enum([
   "created",
   "running",
@@ -257,6 +281,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityPutEvidenceRequestSchema,
+  CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
   CapabilityTerminalEventRequestSchema,
 ]);
@@ -269,3 +294,4 @@ export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSche
 export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;
 export type CapabilityPutEvidenceRequest = z.infer<typeof CapabilityPutEvidenceRequestSchema>;
+export type CapabilityReleaseRequest = z.infer<typeof CapabilityReleaseRequestSchema>;

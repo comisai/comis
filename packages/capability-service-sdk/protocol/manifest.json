@@ -22,7 +22,7 @@
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "01f5b17d992f291ce8201b682566e804fedc87ea4f6f3da17848e4e7b08a87bb"
+      "sha256": "920f2162e0f1b5e6fe907445aa62c110bebbebc0b54e2b16423ab301ae63df72"
     },
     {
       "path": "fixtures/version-mismatch.json",
@@ -85,6 +85,14 @@
       "sha256": "fdfa7cc260ceb54bc087c68df1de4dbc1b3ddcf6bcc929467783d61c793a9f82"
     },
     {
+      "path": "schemas/release.request.schema.json",
+      "sha256": "22cb81a5eaefaa8344d2dc6028f7cbc5905debd3987978af453cae8d506604b6"
+    },
+    {
+      "path": "schemas/release.response.schema.json",
+      "sha256": "f54e2e8ad9bf84bfcc2dd6d8d328caff1767012f46ff2a36eb5aafe66aaf929a"
+    },
+    {
       "path": "schemas/report.request.schema.json",
       "sha256": "0401f97d2d39f1ba2b16be699cb5b0cf278147d87b39ca5403b909c849c3f0e6"
     },
@@ -105,7 +113,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7",
+  "bundleDigest": "9eac0c78c932d4abae63bdfe422ec96a5463d1fcf037e5599bc2564f79e7a660",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -187,7 +195,7 @@
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
-    "version": "1.0.61"
+    "version": "1.0.62"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
@@ -300,6 +308,26 @@
       "direction": "service-to-comis",
       "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
+      "method": "managedRuns.release",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/release.request.schema.json",
+      "requiredServiceScope": "workspace_lease",
+      "responseSchema": "schemas/release.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "identical-replay-returns-original-result",
+        "altered-replay-is-rejected",
+        "owning-service-instance-only",
+        "managed-run-workspace-lease-must-match",
+        "terminal-and-attachment-revocation-precedes-lease-release"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.report",
       "operationIdRequired": true,
       "requestSchema": "schemas/report.request.schema.json",
@@ -339,6 +367,7 @@
     "managedRuns.abandon",
     "managedRuns.activate",
     "managedRuns.putEvidence",
+    "managedRuns.release",
     "managedRuns.report",
     "managedRuns.terminalEvent"
   ],

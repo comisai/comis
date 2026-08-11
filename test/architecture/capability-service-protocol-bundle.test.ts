@@ -27,6 +27,7 @@ const EXPECTED_METHODS = [
   "managedRuns.abandon",
   "managedRuns.activate",
   "managedRuns.putEvidence",
+  "managedRuns.release",
   "managedRuns.report",
   "managedRuns.terminalEvent",
 ] as const;
@@ -198,6 +199,18 @@ describe("capability-service protocol bundle contract", () => {
       manifest.methodCatalog.find((entry) => entry.method === "managedRuns.report")
         ?.semanticInvariants,
     ).toContain("utf8-report-content-bytes-at-most-max-report-bytes");
+    expect(
+      manifest.methodCatalog.find((entry) => entry.method === "managedRuns.release"),
+    ).toMatchObject({
+      direction: "service-to-comis",
+      callerClass: "capability-service",
+      classification: "mutation",
+      requiredServiceScope: "workspace_lease",
+      semanticInvariants: expect.arrayContaining([
+        "managed-run-workspace-lease-must-match",
+        "terminal-and-attachment-revocation-precedes-lease-release",
+      ]),
+    });
     expect(
       manifest.methodCatalog.find((entry) => entry.method === "managedRuns.terminalEvent"),
     ).toMatchObject({
@@ -422,6 +435,7 @@ describe("capability-service protocol bundle contract", () => {
       "mcp-call-context": "schemas/mcp-call-context.schema.json",
       "mcp-managed-run-result": "schemas/mcp-managed-run-result.schema.json",
       "put-evidence-response": "schemas/putEvidence.response.schema.json",
+      "release-response": "schemas/release.response.schema.json",
       "report-response": "schemas/report.response.schema.json",
       "terminal-event-response": "schemas/terminalEvent.response.schema.json",
     };

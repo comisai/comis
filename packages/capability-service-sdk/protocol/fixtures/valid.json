@@ -194,6 +194,38 @@
     {
       "expectation": "accept",
       "payload": {
+        "id": "operation_release",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.release",
+        "params": {
+          "disposition": "reap_safe",
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_release",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_release",
+        "jsonrpc": "2.0",
+        "result": {
+          "disposition": "reap_safe",
+          "managedRunId": "managed-run_a",
+          "releasedAtMs": 1800000000000,
+          "state": "released",
+          "workspaceLeaseId": "workspace-lease_a"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "release-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
         "id": "operation_report",
         "jsonrpc": "2.0",
         "method": "managedRuns.report",
