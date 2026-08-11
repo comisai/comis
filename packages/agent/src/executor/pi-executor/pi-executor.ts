@@ -3023,6 +3023,8 @@ async function runSessionLocked(
           deferralResult.requestRelevantPromptSkillWorkflowToolNames,
         requestRelevantPromptSkillMinDistinctWebFetchUrls:
           deferralResult.requestRelevantPromptSkillMinDistinctWebFetchUrls,
+        requestRelevantPromptSkillMinDistinctWebSearchQueries:
+          deferralResult.requestRelevantPromptSkillMinDistinctWebSearchQueries,
         requestRelevantPromptSkillWorkflowContext:
           deferralResult.requestRelevantPromptSkillWorkflowContext,
         requestRelevanceHistory,

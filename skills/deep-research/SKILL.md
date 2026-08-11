@@ -1,9 +1,10 @@
 ---
 name: deep-research
-version: 1.0.6
+version: 1.0.7
 description: "MANDATORY: Conduct systematic, multi-angle web research before answering any request to understand or explain a topic properly, deeply, thoroughly, comprehensively, or beyond a short paragraph, even when general knowledge could produce an answer. Also use for comparisons, explicit research, current online information, and content-generation tasks such as articles, reports, presentations, or documentation. Continue applying this skill to context-dependent follow-ups about source attribution, claim tracing, unavailable-source handling, or compression into a few essentials. Load this skill instead of doing a single web search or answering from memory."
 comis:
   min-distinct-web-fetch-urls: 3
+  min-distinct-web-search-queries: 3
   requires:
     # Runs entirely on the built-in web_search / web_fetch tools.
     bins: []
@@ -20,7 +21,7 @@ Never generate content based solely on general knowledge. The quality of output 
 
 For context-dependent follow-ups about attribution, failed sources, or compression, re-fetch every candidate citation from the existing research before using it in the new answer and preserve the user's requested format. If the user says a source is down but no failed receipt identifies one, do not invent an unavailable URL; report only failures observed during re-fetch.
 
-Before answering, obtain at least three distinct successful `web_fetch` receipts from three different URLs, covering multiple angles. If fewer than three distinct sources can be fetched, label the result partial or incomplete, name each unavailable source or capability blocker, and do not fill the evidence gap from memory.
+Before answering, obtain at least three distinct successful `web_search` query receipts covering different research angles and at least three distinct successful `web_fetch` receipts from three different URLs. If fewer than three successful query receipts or source receipts can be obtained, label the result partial or incomplete, name each unavailable source or capability blocker, and do not fill the evidence gap from memory.
 
 Build a receipt ledger keyed by canonical URL before writing. Re-fetching the same URL does not count as another source, even when the options or returned length differ. Continue fetching until the ledger has three unique successful URLs; otherwise abstain from a substantive answer and return only the incomplete-research status.
 

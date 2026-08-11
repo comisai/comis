@@ -10,6 +10,7 @@ import {
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
+  webSearchQueryDigest,
 } from "./citation-evidence.js";
 import * as citationEvidenceModule from "./citation-evidence.js";
 import { sanitizeSessionSecrets } from "../session/sanitize-session-secrets.js";
@@ -19,6 +20,12 @@ function urlDigest(url: string): string {
 }
 
 describe("exact citation evidence grounding", () => {
+  it("canonicalizes a search query into a content-free digest", () => {
+    expect(webSearchQueryDigest("  Heat Pump CASE studies  "))
+      .toBe(webSearchQueryDigest("heat pump case studies"));
+    expect(webSearchQueryDigest("   ")).toBeUndefined();
+  });
+
   it("removes a one-character citation mutation that lacks an exact fetch digest", () => {
     const fetched = "https://httpbingo.org/base64/UkVTRUFSQ0hfT1ZFUlJJREVfMjAyNjA4MDQ=";
     const mutated = "https://httpbingo.org/base64/UkVTRUFSQ0hfT1ZFUlJJREVfMjAyNjA4MDE=";

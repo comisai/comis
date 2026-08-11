@@ -89,6 +89,8 @@ export interface RunPromptParams {
   requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
   /** Distinct successful web-fetch URL receipts required by the selected skill. */
   requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+  /** Distinct successful web-search query receipts required by the selected skill. */
+  requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
   /** Bounded prior request used to ground context-dependent workflow arguments. */
   requestRelevantPromptSkillWorkflowContext?: string;
   /** Content-free evidence about the bounded prior-user-turn relevance window. */

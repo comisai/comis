@@ -247,7 +247,10 @@ import {
 } from "./tool-failure-recovery.js";
 import { extractProcessSessionObservation } from "./process-session-observation.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
-import { citationUrlDigest } from "../executor/citation-evidence.js";
+import {
+  citationUrlDigest,
+  webSearchQueryDigest,
+} from "../executor/citation-evidence.js";
 import { backgroundFailureCause } from "../background/background-failure-cause.js";
 
 // ---------------------------------------------------------------------------
@@ -1585,6 +1588,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const webResultMeta = toolSuccess
             ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
             : undefined;
+          const searchQueryDigest = toolSuccess && endEvent.toolName === "web_search"
+            ? webSearchQueryDigest(
+                (rawArgsForParams as { query?: unknown } | undefined)?.query,
+              )
+            : undefined;
           const schedulerPolicyEvidence = toolSuccess
             ? extractSchedulerPolicyEvidence(endEvent.toolName, toolAction, resultDetails)
             : undefined;
@@ -1618,6 +1626,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(failureDisclosure !== undefined && { failureDisclosure }),
             ...(webResultMeta?.citationUrlDigest !== undefined && {
               citationUrlDigest: webResultMeta.citationUrlDigest,
+            }),
+            ...(searchQueryDigest !== undefined && {
+              webSearchQueryDigest: searchQueryDigest,
             }),
             ...(schedulerPolicyEvidence === undefined ? {} : { schedulerPolicyEvidence }),
             ...(observabilityEvidenceLimits === undefined

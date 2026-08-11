@@ -157,7 +157,8 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(description).toMatch(/general knowledge/iu);
     expect(description).toMatch(/source attribution|claim tracing/iu);
     expect(description).toMatch(/compression[^.]*essentials/iu);
-    expect(manifest).toMatch(/^version:\s*1\.0\.6$/mu);
+    expect(manifest).toMatch(/^version:\s*1\.0\.7$/mu);
+    expect(manifest).toMatch(/^\s*min-distinct-web-search-queries:\s*3$/mu);
     expect(manifest).toMatch(
       /at least three distinct[^\n]*successful[^\n]*web_fetch/iu,
     );

@@ -17,7 +17,7 @@ import {
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
-import { countDistinctSuccessfulWebFetchUrls, runRequestToolNudge } from "../request-tool-nudge.js";
+import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, runRequestToolNudge } from "../request-tool-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -28,7 +28,6 @@ import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
-
 /** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -438,7 +437,7 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
     requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
     requestRelevantPromptSkillWorkflowToolNames: params.requestRelevantPromptSkillWorkflowToolNames ?? [],
-    requestRelevantPromptSkillMinDistinctWebFetchUrls: params.requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    requestRelevantPromptSkillMinDistinctWebFetchUrls: params.requestRelevantPromptSkillMinDistinctWebFetchUrls, requestRelevantPromptSkillMinDistinctWebSearchQueries: params.requestRelevantPromptSkillMinDistinctWebSearchQueries,
     requestRelevantPromptSkillWorkflowContext: params.requestRelevantPromptSkillWorkflowContext,
     currentSuccessfulMutationCount: () =>
       (params.bridge.getResult().toolExecResults ?? []).filter(
@@ -461,6 +460,7 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(
       params.bridge.getResult().toolExecResults ?? [],
     ),
+    currentDistinctSuccessfulWebSearchQueryCount: () => countDistinctSuccessfulWebSearchQueries(params.bridge.getResult().toolExecResults ?? []),
     currentDeferredWorkCount: () => {
       const relevantNames = new Set(params.requestRelevantToolNames ?? []);
       return (params.bridge.getResult().toolExecResults ?? []).filter(

@@ -48,6 +48,8 @@ export interface PromptSkillCapability {
   readonly requiredBins?: readonly string[];
   /** Successful distinct web-fetch URL receipts required before completion. */
   readonly minDistinctWebFetchUrls?: number;
+  /** Successful distinct web-search query receipts required before completion. */
+  readonly minDistinctWebSearchQueries?: number;
   /**
    * Where the skill was discovered from. Mirrors `@comis/skills` `SkillSource`:
    * "learned" is the verified-learning procedural source, set

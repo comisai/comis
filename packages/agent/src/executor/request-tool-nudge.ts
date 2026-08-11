@@ -46,10 +46,12 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantPromptSkillLocations?: readonly string[];
   requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
   requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+  requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
   requestRelevantPromptSkillWorkflowContext?: string;
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: (toolNames?: readonly string[]) => number;
   currentDistinctSuccessfulWebFetchUrlCount?: () => number;
+  currentDistinctSuccessfulWebSearchQueryCount?: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
   currentDeferredWorkCount: () => number;
   /** Matching tool receipts carrying a terminal policy denial. */
@@ -74,6 +76,12 @@ interface WebFetchReceiptRecord {
   readonly citationUrlDigest?: string;
 }
 
+interface WebSearchReceiptRecord {
+  readonly toolName: string;
+  readonly success: boolean;
+  readonly webSearchQueryDigest?: string;
+}
+
 /** Count successful fetched URLs without exposing their values. */
 export function countDistinctSuccessfulWebFetchUrls(
   records: readonly WebFetchReceiptRecord[],
@@ -83,6 +91,19 @@ export function countDistinctSuccessfulWebFetchUrls(
       && record.success
       && record.citationUrlDigest !== undefined
       ? [record.citationUrlDigest]
+      : []
+  )).size;
+}
+
+/** Count successful search queries without exposing their text. */
+export function countDistinctSuccessfulWebSearchQueries(
+  records: readonly WebSearchReceiptRecord[],
+): number {
+  return new Set(records.flatMap((record) =>
+    record.toolName === "web_search"
+      && record.success
+      && record.webSearchQueryDigest !== undefined
+      ? [record.webSearchQueryDigest]
       : []
   )).size;
 }
@@ -183,6 +204,8 @@ function buildDirective(
   promptSkillWorkflowContext: string | undefined,
   minDistinctWebFetchUrls: number | undefined,
   distinctWebFetchUrlCount: number,
+  minDistinctWebSearchQueries: number | undefined,
+  distinctWebSearchQueryCount: number,
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
@@ -223,6 +246,12 @@ function buildDirective(
               `Content-free receipts currently prove ${distinctWebFetchUrlCount} of ${minDistinctWebFetchUrls} distinct successful web_fetch URLs.`,
               "Only a successful fetch of a new URL advances that evidence count; a duplicate URL does not.",
             ]),
+        ...(minDistinctWebSearchQueries === undefined
+          ? []
+          : [
+              `Content-free receipts currently prove ${distinctWebSearchQueryCount} of ${minDistinctWebSearchQueries} distinct successful web_search queries.`,
+              "Search with new query wording for another research angle until that evidence count is complete; duplicate queries do not advance it.",
+            ]),
         ...(promptSkillWorkflowContext
           ? [
               "Derive context-dependent workflow arguments from this immediately preceding user request; do not pass the current elliptical wording literally:",
@@ -261,6 +290,8 @@ function buildPromptSkillWorkflowDirective(
   actionToolNames: readonly string[],
   minDistinctWebFetchUrls: number | undefined,
   distinctWebFetchUrlCount: number,
+  minDistinctWebSearchQueries: number | undefined,
+  distinctWebSearchQueryCount: number,
   workflowContext?: string,
 ): string {
   const requestedActionToolNames = promptSkillLocations.length > 0
@@ -284,6 +315,12 @@ function buildPromptSkillWorkflowDirective(
       : [
           `Content-free receipts currently prove ${distinctWebFetchUrlCount} of ${minDistinctWebFetchUrls} distinct successful web_fetch URLs.`,
           "Fetch new URLs until the receipt count reaches the required minimum; duplicate URLs do not advance it.",
+        ]),
+    ...(minDistinctWebSearchQueries === undefined
+      ? []
+      : [
+          `Content-free receipts currently prove ${distinctWebSearchQueryCount} of ${minDistinctWebSearchQueries} distinct successful web_search queries.`,
+          "Search another research angle until the query count reaches the required minimum; duplicate queries do not advance it.",
         ]),
     "Use supporting workflow tools only for commands prescribed by the loaded procedure; do not use exec to reread the skill manifest.",
     ...(requestedActionToolNames.length > 0
@@ -357,6 +394,18 @@ export async function runRequestToolNudge(
   const webFetchEvidenceSatisfied = () =>
     minDistinctWebFetchUrls === undefined
     || distinctWebFetchUrlCount() >= minDistinctWebFetchUrls;
+  const minDistinctWebSearchQueries =
+    deps.requestRelevantPromptSkillMinDistinctWebSearchQueries;
+  const distinctWebSearchQueryCount = () =>
+    deps.currentDistinctSuccessfulWebSearchQueryCount?.() ?? 0;
+  const webSearchEvidenceSatisfied = () =>
+    minDistinctWebSearchQueries === undefined
+    || distinctWebSearchQueryCount() >= minDistinctWebSearchQueries;
+  const webEvidenceGateConfigured =
+    minDistinctWebFetchUrls !== undefined
+    || minDistinctWebSearchQueries !== undefined;
+  const webEvidenceSatisfied = () =>
+    webFetchEvidenceSatisfied() && webSearchEvidenceSatisfied();
   if (
     capabilityClass !== "small"
     && capabilityClass !== "nano"
@@ -438,7 +487,7 @@ export async function runRequestToolNudge(
     : currentSuccessfulMutationCount;
   if (
     successfulCount() > 0
-    && webFetchEvidenceSatisfied()
+    && webEvidenceSatisfied()
     && promptSkillProcedureLoaded()
   ) {
     return {
@@ -492,14 +541,16 @@ export async function runRequestToolNudge(
       deps.requestRelevantPromptSkillWorkflowContext,
       minDistinctWebFetchUrls,
       distinctWebFetchUrlCount(),
+      minDistinctWebSearchQueries,
+      distinctWebSearchQueryCount(),
       trigger,
     ),
     deps.guardProviderDispatch,
     continuationOptions,
   );
   const promptSkillWorkflowTools = deps.requestRelevantPromptSkillWorkflowToolNames ?? [];
-  const workflowEvidencePending = minDistinctWebFetchUrls !== undefined
-    && !webFetchEvidenceSatisfied();
+  const workflowEvidencePending = webEvidenceGateConfigured
+    && !webEvidenceSatisfied();
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
@@ -517,6 +568,8 @@ export async function runRequestToolNudge(
         workflowToolNames: promptSkillWorkflowTools,
         minDistinctWebFetchUrls,
         distinctWebFetchUrlCount: distinctWebFetchUrlCount(),
+        minDistinctWebSearchQueries,
+        distinctWebSearchQueryCount: distinctWebSearchQueryCount(),
       },
       "Loaded prompt skill requires one bounded workflow continuation",
     );
@@ -533,20 +586,22 @@ export async function runRequestToolNudge(
         recoveryToolNames,
         minDistinctWebFetchUrls,
         distinctWebFetchUrlCount(),
+        minDistinctWebSearchQueries,
+        distinctWebSearchQueryCount(),
         deps.requestRelevantPromptSkillWorkflowContext,
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: workflowRecoveryTools },
     );
   }
-  const evidenceGatedWorkflowCompleted = minDistinctWebFetchUrls !== undefined
-    && webFetchEvidenceSatisfied();
+  const evidenceGatedWorkflowCompleted = webEvidenceGateConfigured
+    && webEvidenceSatisfied();
   const promptSkillWorkflowCompleted = (
     promptSkillProcedureLoaded() || evidenceGatedWorkflowCompleted
   )
-    && (minDistinctWebFetchUrls === undefined
+    && (!webEvidenceGateConfigured
       ? successfulCount() > successfulToolCountBefore
-      : webFetchEvidenceSatisfied());
+      : webEvidenceSatisfied());
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
@@ -604,13 +659,13 @@ export async function runRequestToolNudge(
   const procedureCompletionProvable = (
     promptSkillProcedureLoaded() || evidenceGatedWorkflowCompleted
   )
-    && (minDistinctWebFetchUrls === undefined
+    && (!webEvidenceGateConfigured
       ? !(
           useReadRecovery
           && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
           && promptSkillWorkflowTools.length > 0
         )
-      : webFetchEvidenceSatisfied());
+      : webEvidenceSatisfied());
   const recovered =
     (
       successfulToolCountAfter > successfulToolCountBefore
@@ -630,6 +685,8 @@ export async function runRequestToolNudge(
       procedureCompletionProvable,
       minDistinctWebFetchUrls,
       distinctWebFetchUrlCount: distinctWebFetchUrlCount(),
+      minDistinctWebSearchQueries,
+      distinctWebSearchQueryCount: distinctWebSearchQueryCount(),
     },
     "Request-tool nudge completed",
   );

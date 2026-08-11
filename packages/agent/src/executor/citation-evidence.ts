@@ -56,6 +56,15 @@ export function citationUrlDigest(url: string): string {
   return createHash("sha256").update(url, "utf8").digest("hex");
 }
 
+/** SHA-256 over a canonicalized search query, without retaining the query text. */
+export function webSearchQueryDigest(query: unknown): string | undefined {
+  if (typeof query !== "string") return undefined;
+  const canonical = query.trim().replace(/\s+/gu, " ").toLowerCase();
+  return canonical.length === 0
+    ? undefined
+    : createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
 function rangesFor(pattern: RegExp, text: string): TextRange[] {
   pattern.lastIndex = 0;
   const ranges: TextRange[] = [];

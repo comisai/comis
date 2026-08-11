@@ -75,6 +75,8 @@ export interface ToolExecutionResultRecord {
   readonly recoveryIdentity?: ToolRecoveryIdentity;
   /** SHA-256 of the exact final URL for a successful web_fetch. */
   readonly citationUrlDigest?: string;
+  /** SHA-256 of the canonical query for a successful web_search. */
+  readonly webSearchQueryDigest?: string;
   /** Closed, content-free policy classifications from a current cron-list receipt. */
   readonly schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
   /** Closed qualifications that prevent a self-report from overstating the receipt. */

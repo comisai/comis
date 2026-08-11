@@ -116,9 +116,11 @@ export function applyPromptSkillRequestRouting(
   const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
   const minDistinctWebFetchUrls = selectedSkills[0]?.minDistinctWebFetchUrls;
-  const receiptToolNames = minDistinctWebFetchUrls === undefined
-    ? []
-    : ["web_search", "web_fetch"].filter((name) => availableToolNames.has(name));
+  const minDistinctWebSearchQueries = selectedSkills[0]?.minDistinctWebSearchQueries;
+  const receiptToolNames = [...new Set([
+    ...(minDistinctWebFetchUrls === undefined ? [] : ["web_search", "web_fetch"]),
+    ...(minDistinctWebSearchQueries === undefined ? [] : ["web_search"]),
+  ])].filter((name) => availableToolNames.has(name));
   const binaryWorkflowToolNames = selectedSkills.some(
     (skill) => (skill.requiredBins?.length ?? 0) > 0,
   )
@@ -131,6 +133,8 @@ export function applyPromptSkillRequestRouting(
   ])];
   deferral.requestRelevantPromptSkillWorkflowToolNames = workflowToolNames;
   deferral.requestRelevantPromptSkillMinDistinctWebFetchUrls = minDistinctWebFetchUrls;
+  deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries =
+    minDistinctWebSearchQueries;
   const priorUserRequest = input.priorUserRequest?.trim();
   if (workflowToolNames.length > 0 && priorUserRequest) {
     deferral.requestRelevantPromptSkillWorkflowContext = scrubSecretsFromText(
