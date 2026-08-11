@@ -402,6 +402,9 @@ describe("runRequestToolNudge", () => {
 
   it("narrates complete evidence when a retained skill is not read again", async () => {
     const prompt = vi.fn(async () => undefined);
+    const externalNotice = `SECURITY NOTICE: external tool content\n${"x".repeat(900)}\n`;
+    const fetchResult = (url: string, status: number, text: string) =>
+      externalNotice + JSON.stringify({ url, status, text });
     const deps = makeDeps({
       capabilityClass: "frontier",
       requestText:
@@ -426,26 +429,38 @@ describe("runRequestToolNudge", () => {
         {
           role: "toolResult",
           toolName: "web_fetch",
-          isError: true,
           content: [{
             type: "text",
-            text: "https://example.com/comis-unreachable-source-404 returned HTTP 404",
+            text: fetchResult(
+              "https://example.com/comis-unreachable-source-404",
+              404,
+              "not found",
+            ),
           }],
         },
         {
           role: "toolResult",
           toolName: "web_fetch",
-          content: [{ type: "text", text: "https://example.com/source-a fetched" }],
+          content: [{
+            type: "text",
+            text: fetchResult("https://example.com/source-a", 200, "evidence a"),
+          }],
         },
         {
           role: "toolResult",
           toolName: "web_fetch",
-          content: [{ type: "text", text: "https://example.com/source-b fetched" }],
+          content: [{
+            type: "text",
+            text: fetchResult("https://example.com/source-b", 200, "evidence b"),
+          }],
         },
         {
           role: "toolResult",
           toolName: "web_fetch",
-          content: [{ type: "text", text: "https://example.com/source-c fetched" }],
+          content: [{
+            type: "text",
+            text: fetchResult("https://example.com/source-c", 200, "evidence c"),
+          }],
         },
       ],
       session: { prompt },
@@ -463,6 +478,7 @@ describe("runRequestToolNudge", () => {
     expect(prompt.mock.calls[2]?.[0]).toMatch(
       /current-turn workflow receipts[\s\S]*earlier failure or unavailable/iu,
     );
+    expect(prompt.mock.calls[2]?.[0]).toMatch(/Receipt 1: failed web_fetch/iu);
     expect(prompt.mock.calls[2]?.[0]).toContain(
       "https://example.com/comis-unreachable-source-404",
     );
