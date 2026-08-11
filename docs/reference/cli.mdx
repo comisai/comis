@@ -1649,7 +1649,9 @@ comis cost export --provider openai --model gpt-4o-mini
 
 Assemble an `IncidentReport` for a single agent session — a bounded, causal post-mortem (outcome, cost, per-tool stats, normalized failures, circuit-breaker timeline, large-result offloads, recall health — including degraded/failed recall lanes — session-wide activity-finalize tallies, and a deterministic likely root cause). The report is derived from log evidence only; no LLM is invoked, so the same session always yields the same verdict. Backed by `ObsExplainContract` (`obs.explain`).
 
-The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise a **session key** (the [current agent-scoped format](/agents/sessions#session-scope-key), containing `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID *or* a `rootRunId` to its session key first, so all three forms produce the identical report. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
+The positional argument is routed automatically by shape: a **`root-` run id** (an autonomy run's `rootRunId` — the synthetic in-process `root-session-<sessionKey>` or a real spawned-run lease id; checked **first** because a synthetic root contains `:` but must route as a run id, not a session key) is passed as `rootRunId`; otherwise an **execution-graph id** (either `--graph`, or an id with local terminal metadata at `<dataDir>/graph-runs/<id>/_run-metadata.json`) is passed as `graphId`; otherwise a **session key** (the [current agent-scoped format](/agents/sessions#session-scope-key), containing `:`) is passed as `sessionKey`; otherwise a **trace ID** (a UUID, no `:`) is passed as `traceId`. The daemon canonicalizes a trace ID, a `rootRunId`, *or* a `graphId` to its session key first, so every form reports on the same session — the trace, session, and run forms produce the identical report, and the graph form adds the `graph` block below. A `rootRunId` is the **`comis system-health` → `comis explain` drill-down target**: paste the `worstRootRunId` that [`comis system-health`](#comis-system-health)'s autonomy block names straight in, and the report renders that run's `spawnTree` (an unresolvable id surfaces an honest `session_not_found`, never a clean-looking empty report).
+
+When the argument resolved to an execution-graph run, the report carries a `graph` block and the table view renders it as `Graph: <status> · <graphId> · <succeeded>/<total> succeeded · <failed> failed · <skipped> skipped · notification=<disposition>`, followed by one indented line per node (`<nodeId>: <status> · <durationMs> · attempts=<n>`, plus `run=<subAgentRunId>` when the node spawned one). `notification=` is the terminal disposition of the graph's aggregate completion announcement — see [`obs.explain`](/reference/json-rpc#obs-explain) for the block's full shape and the meaning of each disposition. An unresolvable graph id surfaces an honest `graph_not_found` verdict naming the missing run metadata, never a clean-looking empty report.
 
 The live daemon resolves session artifacts across every configured agent
 workspace, preferring the workspace owned by the agent encoded in the session
@@ -1670,6 +1672,7 @@ When the session was a proactive check over [inferred follow-up tasks](/operatio
 |------|------|---------|-------------|
 | `--format <format>` | `table` \| `json` | `table` | Output format |
 | `--depth <depth>` | `summary` \| `full` | `summary` | `summary` bounds the report to roughly 6 KB (about 1,500 tokens) and caps the failure list; `full` relaxes the array caps. Both depths are digest-only — no raw tool-output body is ever inlined |
+| `--graph` | `boolean` | `false` | Treat the identifier as an execution-graph id. Only needed when the run's metadata is not on local disk — otherwise the shape routing above detects it |
 | `--offline` | `boolean` | `false` | Assemble from the local `~/.comis` files without contacting the daemon (same pure assembler the RPC handler runs) |
 
 ```bash
@@ -1682,6 +1685,10 @@ comis explain 6ba7b810-9dad-11d1-80b4-00c04fd430c8 --depth full
 # Drill into an autonomy run by its rootRunId (the `comis system-health` worstRootRunId) —
 # resolves the run to its session and renders the run's spawn-tree
 comis explain "root-session-default:agent:default:user123:telegram"
+
+# Post-mortem an execution graph — resolves to the caller's session and adds the
+# graph block (per-node states plus the completion-announcement disposition)
+comis explain abc-123-def --graph
 
 # Machine-readable output (includes the spawnTree array for an autonomous run)
 comis explain "default:agent:default:user123:telegram" --format json
