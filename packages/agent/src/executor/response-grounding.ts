@@ -452,8 +452,22 @@ const OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS = [
 
 const OUTBOUND_AUDIO_LIMITATION =
   /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:say|speak|read|send|deliver|synthesi[sz]e|record|voice|audio)\b/iu;
-const OUTBOUND_AUDIO_TEXT_SUBSTITUTE =
-  /\b(?:as|in)\s+(?:plain\s+)?text\b|\b(?:text|written)\s+(?:below|instead|reply|summary|version)\b/iu;
+const OUTBOUND_AUDIO_TEXT_SUBSTITUTE_PHRASES = [
+  " as text ",
+  " as plain text ",
+  " in text ",
+  " in plain text ",
+  " text below ",
+  " text instead ",
+  " text reply ",
+  " text summary ",
+  " text version ",
+  " written below ",
+  " written instead ",
+  " written reply ",
+  " written summary ",
+  " written version ",
+] as const;
 const OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS = [
   /\b(?:i|we)(?:'ve| have)?(?: now)?\s+(?:said|spoke|read|sent|delivered|synthesi[sz]ed|recorded)\b[\s\S]{0,100}\b(?:out\s+loud|aloud|voice|audio)\b/iu,
   OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS[1],
@@ -497,12 +511,16 @@ export function enforceOutboundAudioEvidence(params: {
   const audioArtifactClaim = OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS.some(
     (pattern) => pattern.test(params.response),
   );
+  const normalizedResponse = ` ${params.response.toLocaleLowerCase()
+    .replaceAll("’", "'")
+    .split(/\s+/u)
+    .join(" ")} `;
   if (!completionClaim && !audioSuccessClaim && !audioArtifactClaim) {
     return { response: params.response, corrected: false };
   }
   if (
     OUTBOUND_AUDIO_LIMITATION.test(params.response)
-    && OUTBOUND_AUDIO_TEXT_SUBSTITUTE.test(params.response)
+    && containsEvidencePhrase(normalizedResponse, OUTBOUND_AUDIO_TEXT_SUBSTITUTE_PHRASES)
     && !audioArtifactClaim
   ) {
     return { response: params.response, corrected: false };
