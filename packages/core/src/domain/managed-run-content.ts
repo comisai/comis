@@ -8,6 +8,7 @@ const TimestampMsSchema = z.number().int().nonnegative();
 
 export const MAX_MANAGED_RUN_REPORT_BYTES = 16_384;
 export const MAX_MANAGED_EVIDENCE_BYTES = 1_048_576;
+export const MAX_MANAGED_EVIDENCE_PRIVATE_BYTES = Math.ceil(MAX_MANAGED_EVIDENCE_BYTES / 3) * 4 + 512;
 
 export const ManagedRunReportKindSchema = z.enum([
   "attention",

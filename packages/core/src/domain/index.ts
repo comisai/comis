@@ -322,6 +322,7 @@ export type {
 export {
   MAX_MANAGED_RUN_REPORT_BYTES,
   MAX_MANAGED_EVIDENCE_BYTES,
+  MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
   ManagedRunReportKindSchema,
   ManagedRunActivationDescriptorSchema,
   ManagedRunPreparedStartSchema,

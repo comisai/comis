@@ -20,6 +20,7 @@ import type Database from "better-sqlite3";
 import {
   ManagedRunActivationDescriptorSchema,
   ManagedRunReportBodySchema,
+  MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
   safePath,
   systemNowMs,
   type ManagedRunActivationDescriptor,
@@ -36,7 +37,6 @@ import {
 import { createRowMapper } from "./row-mapper.js";
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$/;
-const MAX_EVIDENCE_BYTES = 1_048_576;
 const MAX_ATTENTION_BYTES = 16_384;
 const contentMapper = createRowMapper(ManagedRunContentDbRowSchema);
 type ContentKind = ManagedRunContentDbRow["kind"];
@@ -411,7 +411,7 @@ export function createSqliteManagedRunContentStore(
       if (!row.ok || row.value === undefined) return row.ok ? ok(false) : row;
       return row.value.kind === "report" ? removeRow(row.value) : ok(false);
     }),
-    putEvidence: (scope, evidenceRef, input) => boundary(() => input.body.byteLength <= MAX_EVIDENCE_BYTES
+    putEvidence: (scope, evidenceRef, input) => boundary(() => input.body.byteLength <= MAX_MANAGED_EVIDENCE_PRIVATE_BYTES
       ? put(scope, evidenceRef, "evidence", input.body, input.expiresAtMs)
       : err(new Error("managed-run evidence body exceeds its byte limit"))),
     getEvidence: (scope, contentRef) => boundary(() => read(scope, contentRef, "evidence")),

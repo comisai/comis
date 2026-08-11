@@ -150,6 +150,7 @@ export {
   ManagedEvidencePrivateBodySchema,
   ManagedEvidenceIndexSchema,
   MAX_MANAGED_EVIDENCE_BYTES,
+  MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
   reduceManagedRunState,
   ManagedRunAttentionRecordSchema,
   parseWorkspaceLeaseRecord,

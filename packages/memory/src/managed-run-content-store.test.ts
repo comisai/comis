@@ -16,7 +16,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ManagedRunContentPort, ManagedRunContentScope } from "@comis/core";
+import {
+  MAX_MANAGED_EVIDENCE_PRIVATE_BYTES,
+  type ManagedRunContentPort,
+  type ManagedRunContentScope,
+} from "@comis/core";
 import { ensureManagedRunTables } from "./schema-managed-runs.js";
 import { createSqliteManagedRunContentStore } from "./managed-run-content-store.js";
 
@@ -279,7 +283,7 @@ describe("createSqliteManagedRunContentStore confined bodies", () => {
       body: new Uint8Array(),
     })).ok).toBe(false);
     expect((await store.putEvidence(SCOPE, "evidence_oversized", {
-      body: new Uint8Array(1_048_577),
+      body: new Uint8Array(MAX_MANAGED_EVIDENCE_PRIVATE_BYTES + 1),
     })).ok).toBe(false);
     expect((await store.putAttentionBody(SCOPE, "attention_oversized", {
       body: new Uint8Array(16_385),
