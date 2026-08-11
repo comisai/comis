@@ -1365,11 +1365,10 @@ describe("tool-metadata-registry -- failure detectors", () => {
         {
           error: "all_providers_failed",
           message:
-            "All web_search providers failed: tavily: web_search (tavily) needs an API key. "
-            + "Configure tools.web.search.tavily.apiKey in your config.",
+            "All web_search providers failed: tavily: web_search provider tavily requires "
+            + "the TAVILY_API_KEY secret",
           failures: [
-            "tavily: web_search (tavily) needs an API key. "
-              + "Configure tools.web.search.tavily.apiKey in your config.",
+            "tavily: web_search provider tavily requires the TAVILY_API_KEY secret",
           ],
         },
         false,
@@ -1378,10 +1377,10 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "config",
       classifiedField: "message",
       matchedRule: "missing_provider_configuration",
-      matchedToken: "tools.web.search.tavily.apiKey",
+      matchedToken: "TAVILY_API_KEY",
       failureDisclosure: {
         kind: "missing_configuration",
-        configKey: "tools.web.search.tavily.apiKey",
+        configKey: "TAVILY_API_KEY",
       },
     });
   });
