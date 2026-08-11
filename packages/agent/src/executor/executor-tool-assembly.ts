@@ -671,13 +671,19 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps.embeddingPort,
     config.skills?.toolDiscovery,
   );
-  applyPromptSkillRequestRouting(deferralResult, {
-    currentRequestText: msg.text,
-    requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
-    priorUserRequest: recentUserTurns.at(-1),
-    skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
-    locations: deps.getPromptSkillLocations?.(),
-  });
+  // A background completion is runtime-generated evidence for an already-routed
+  // request, not a fresh user request. Matching its diagnostic prose against
+  // prompt-skill descriptions can turn a terminal tool result into unrelated
+  // troubleshooting work and conceal the result from the user.
+  if (msg.channelType !== "background_task") {
+    applyPromptSkillRequestRouting(deferralResult, {
+      currentRequestText: msg.text,
+      requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
+      priorUserRequest: recentUserTurns.at(-1),
+      skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
+      locations: deps.getPromptSkillLocations?.(),
+    });
+  }
 
   const mcpOperatorPolicyRelevant =
     deferralResult.requestRelevantToolNames?.includes("mcp_manage") === true;
