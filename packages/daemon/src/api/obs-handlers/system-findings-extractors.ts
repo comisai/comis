@@ -234,6 +234,7 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
       strandedFindings?: unknown;
       sandboxNoDowngradeDisabled?: unknown;
       browserNoSandbox?: unknown;
+      execSandboxDisabled?: unknown;
       terminalUnsafeDisableSandbox?: unknown;
     };
     const keys: string[] = [];
@@ -252,6 +253,9 @@ export function flaggedPostureKeys(row: DiagnosticRow): string[] {
     // sandbox that never surfaced in system).
     if (d.browserNoSandbox === true) {
       keys.push("browser.noSandbox (Chromium sandbox off)");
+    }
+    if (d.execSandboxDisabled === true) {
+      keys.push('skills.execSandbox.enabled ("never"; OS jail off)');
     }
     // The terminal-driver bwrap jail is opted out (a coding-CLI drive runs directly,
     // no jail) — NAME the exact knob. The boot config_posture row already carries this
