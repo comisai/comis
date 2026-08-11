@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -81,6 +82,7 @@ describe("buildConfigPostureRecord", () => {
       pricingGapCount: 0, // always present (0 default), count-only
       sandboxNoDowngradeDisabled: false, // always present (false default)
       browserNoSandbox: false, // always present (false default)
+      execSandboxDisabled: false, // always present (false default)
       terminalUnsafeDisableSandbox: false, // always present (false default)
       mediaCredentialGapCount: 0,
       toolDeadlineCollisionCount: 0, // always present (0 default), count-only
@@ -120,6 +122,7 @@ describe("buildConfigPostureRecord", () => {
       pricingGapCount: 0,
       sandboxNoDowngradeDisabled: false,
       browserNoSandbox: false,
+      execSandboxDisabled: false,
       terminalUnsafeDisableSandbox: false,
       mediaCredentialGapCount: 0,
       toolDeadlineCollisionCount: 0,
@@ -220,6 +223,32 @@ describe("buildConfigPostureRecord", () => {
     expect(row.severity).toBe("warning");
     const details = JSON.parse(row.details ?? "{}") as { terminalUnsafeDisableSandbox?: boolean };
     expect(details.terminalUnsafeDisableSandbox).toBe(true);
+  });
+
+  it("surfaces a warning when any agent disables the general exec sandbox", () => {
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    const clock = createFakeClock(13);
+    const inputs = {
+      tlsOff: false,
+      allowInsecureHttp: false,
+      strandedFindings: [],
+      canaryFallbackActive: false,
+      servedBelowConfiguredCount: 0,
+      execSandboxDisabled: true,
+    } as unknown as Parameters<typeof buildConfigPostureRecord>[1];
+
+    buildConfigPostureRecord(obsStore, inputs, clock);
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    expect(JSON.parse(row.details ?? "{}")).toMatchObject({ execSandboxDisabled: true });
+  });
+
+  it("threads the resolved exec sandbox relaxation into the boot posture record", () => {
+    const daemonSource = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
+
+    expect(daemonSource).toContain("const execSandboxDisabled =");
+    expect(daemonSource).toMatch(/buildConfigPostureRecord\([^;]*execSandboxDisabled/);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {

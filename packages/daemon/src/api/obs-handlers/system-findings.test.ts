@@ -248,6 +248,18 @@ describe("buildFindings — config_posture rollup names the flagged keys", () =>
     expect(cp!.detail).toMatch(/terminal\.unsafeDisableSandbox/);
   });
 
+  it("names skills.execSandbox.enabled when the general exec jail is disabled", () => {
+    const findings = buildFindings(
+      [],
+      [],
+      [configPostureRow(1_000, { execSandboxDisabled: true })],
+    );
+    const cp = findings.find((finding) => finding.code === "config_posture");
+
+    expect(cp).toBeDefined();
+    expect(cp!.detail).toMatch(/skills\.execSandbox\.enabled.*never/);
+  });
+
   it("names keys from the LATEST posture row only (standing state — a healthy newer boot supersedes)", () => {
     const findings = buildFindings(
       [],
