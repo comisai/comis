@@ -99,8 +99,8 @@ export function materializeManagedRunAttachment(
       0o600,
     );
     try {
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- numeric descriptor is the exclusive no-follow file opened above
-      writeFileSync(fd, delivery.body);
+      // fs-safe-allowed: numeric descriptor is the exclusive owner-only no-follow file opened above
+      writeFileSync(fd, delivery.body); // eslint-disable-line security/detect-non-literal-fs-filename -- descriptor is already confined and mode-checked
     } finally {
       closeSync(fd);
     }

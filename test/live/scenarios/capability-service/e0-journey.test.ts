@@ -670,7 +670,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       await pollUntil(() => {
         const status = cli<TaskStatusSnapshot>(cliBinary, operatorSocket, ["status", "--format", "json"]);
         return [shipTask, scoutTask].every((task) => status.tasks.some((entry) => entry.taskHandle === task && entry.state === "working"));
-      }, 180_000, () => `two E0 workers joined in fleet views; ${JSON.stringify({
+      }, 180_000, () => `two E0 workers joined in status views; ${JSON.stringify({
         shipState: taskState(goDatabase, shipTask),
         scoutState: taskState(goDatabase, scoutTask),
         ship: workerJoinDiagnostic(shipBinding.canonical_path),

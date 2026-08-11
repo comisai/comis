@@ -96,7 +96,7 @@ describe("managed run release coordinator", () => {
     });
   });
 
-  it("refuses mismatched authority and incomplete resource revocation", async () => {
+  it("rejects mismatched authority and incomplete resource revocation", async () => {
     const mismatch = makeCoordinator({ record: record({ workspaceLeaseId: "workspace-lease_b" }) });
     await expect(mismatch.coordinator.release(input)).resolves.toEqual({
       ok: true,

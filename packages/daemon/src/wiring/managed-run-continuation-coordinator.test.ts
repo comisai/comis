@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import type { z } from "zod";
 import {
+  ManagedEvidencePrivateBodySchema,
   TypedEventBus,
   createConversationRef,
   type CapabilityServiceEvidencePolicy,
   type ManagedEvidenceIndex,
-  type ManagedEvidencePrivateBody,
   type ManagedRunContentPort,
   type ManagedRunOwnerScope,
   type ManagedRunRecord,
@@ -21,6 +22,8 @@ import {
   type ManagedRunContinuationExecutionOutcome,
   type ManagedRunContinuationExecutionInput,
 } from "./managed-run-continuation-coordinator.js";
+
+type ManagedEvidencePrivateBody = z.infer<typeof ManagedEvidencePrivateBodySchema>;
 
 const NOW_MS = 1_800_000_000_000;
 

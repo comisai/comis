@@ -9,7 +9,6 @@
  *
  * @module
  */import { assertProactiveFailureIsSupported, proactiveNotArmedLogFields, proactiveNotArmedMessage, EMPTY_PROACTIVE_HANDLES } from "./wiring/proactive-degrade.js";
-
 import {
   bootstrap,
   loadEnvFile,
