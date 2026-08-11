@@ -519,6 +519,24 @@ async function cliAsync<T>(binary: string, socket: string, args: readonly string
   });
 }
 
+async function waitForInstalledService(
+  service: RunningService,
+  operatorSocket: string,
+  mcpSocket: string,
+): Promise<void> {
+  try {
+    await waitForUnixSocket(operatorSocket);
+    await waitForUnixSocket(mcpSocket);
+  } catch (cause) {
+    throw new Error([
+      cause instanceof Error ? cause.message : String(cause),
+      `exit=${String(service.child.exitCode)}`,
+      `signal=${String(service.child.signalCode)}`,
+      `stderr=${service.stderr()}`,
+    ].join("; "));
+  }
+}
+
 describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () => {
   it("delivers ship and scout work through restart, intervention, and fail-closed cleanup", async () => {
     const binaryRoot = process.env["COMIS_DEV_CREW_BIN_DIR"];
@@ -573,8 +591,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       bindForgeBaseUrl(candidate.configPath, candidate.forge.baseUrl);
       await model.start();
       service = startService();
-      await waitForUnixSocket(operatorSocket);
-      await waitForUnixSocket(mcpSocket);
+      await waitForInstalledService(service, operatorSocket, mcpSocket);
       const gatewayPort = await getFreePort();
       writeFileSync(configPath, stringify(makeConfig({
         dataDir: canonicalDataDir,
@@ -808,8 +825,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       await service.stop();
       candidate.forge.releaseChecks();
       service = startService();
-      await waitForUnixSocket(operatorSocket);
-      await waitForUnixSocket(mcpSocket);
+      await waitForInstalledService(service, operatorSocket, mcpSocket);
       boot = await bootDaemon();
       daemon = boot.handle;
       await pollUntil(
