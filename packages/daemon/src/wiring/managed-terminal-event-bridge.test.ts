@@ -17,7 +17,12 @@ describe("managed terminal event bridge", () => {
       transition: command.transition,
     }));
     const control = { terminalEvent } as unknown as CapabilityServiceControlPort;
-    const bridge = createManagedTerminalEventBridge({ control, logger: logger() as never, nowMs: () => 1700 });
+    const bridge = createManagedTerminalEventBridge({
+      control,
+      store: { releaseTerminal: vi.fn() } as never,
+      logger: logger() as never,
+      nowMs: () => 1700,
+    });
 
     await bridge.publish({
       managedRunId: "managed-run_a",
@@ -52,7 +57,7 @@ describe("managed terminal event bridge", () => {
       store: { releaseTerminal },
       logger: logger() as never,
       nowMs: () => 1700,
-    } as never);
+    });
 
     await bridge.publish({
       managedRunId: "managed-run_a",
@@ -75,9 +80,11 @@ describe("managed terminal event bridge", () => {
 
   it("reports service loss without acquiring terminal or lease cleanup authority", async () => {
     const terminalEvent = vi.fn(async () => err({ kind: "unavailable" as const, reasonCode: "instance_not_connected" }));
+    const releaseTerminal = vi.fn();
     const log = logger();
     const bridge = createManagedTerminalEventBridge({
       control: { terminalEvent } as unknown as CapabilityServiceControlPort,
+      store: { releaseTerminal } as never,
       logger: log as never,
       nowMs: () => 1700,
     });
@@ -87,9 +94,10 @@ describe("managed terminal event bridge", () => {
       workspaceLeaseId: "workspace-lease_a",
       serviceInstanceId: "service-instance_a",
       terminalSessionId: "terminal-session_a",
-      transition: "lost",
+      transition: "released",
     })).resolves.toBeUndefined();
     expect(terminalEvent).toHaveBeenCalledOnce();
+    expect(releaseTerminal).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({
       errorKind: "dependency",
       hint: expect.stringContaining("capabilityServices"),

@@ -36,6 +36,8 @@ export type {
   ManagedRunTransitionClaimInput,
   ManagedRunTransitionClaimOutcome,
   ManagedRunTerminalBindingInput,
+  ManagedRunTerminalReleaseInput,
+  ManagedRunTerminalReleaseOutcome,
   ManagedRunWorkspaceBindingInput,
   ManagedRunBindingOutcome,
   ManagedRunExecutionAttachmentBindingInput,

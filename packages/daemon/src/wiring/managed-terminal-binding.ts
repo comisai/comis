@@ -171,6 +171,6 @@ export function createManagedTerminalToolDeps(deps: ManagedTerminalBindingDeps &
 }) {
   return {
     managedBinding: createManagedTerminalBindingResolver(deps),
-    managedTerminalEvents: createManagedTerminalEventBridge({ control: deps.control, logger: deps.logger, nowMs: deps.nowMs }),
+    managedTerminalEvents: createManagedTerminalEventBridge({ control: deps.control, store: deps.store, logger: deps.logger, nowMs: deps.nowMs }),
   };
 }

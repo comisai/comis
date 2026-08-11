@@ -19,6 +19,7 @@ describe("Managed-run store and private-content port contracts", () => {
       | "getByExternalRunRef"
       | "claimTransition"
       | "bindTerminal"
+      | "releaseTerminal"
       | "setWorkspaceLease"
       | "bindExecutionAttachment"
       | "appendReportAndAdvanceAcceptedCursor"

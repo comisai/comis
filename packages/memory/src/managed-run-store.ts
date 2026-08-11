@@ -29,6 +29,8 @@ import {
   type ManagedRunServiceScope,
   type ManagedRunStorePort,
   type ManagedRunTerminalBindingInput,
+  type ManagedRunTerminalReleaseInput,
+  type ManagedRunTerminalReleaseOutcome,
   type ManagedRunTransitionClaimInput,
   type ManagedRunTransitionClaimOutcome,
   type ManagedRunWorkspaceBindingInput,
@@ -73,7 +75,7 @@ function validLimit(limit: number): boolean {
   return Number.isInteger(limit) && limit > 0 && limit <= 10_000;
 }
 
-function resultRecord<K extends "bound" | "claimed" | "identical_replay" | "updated">(
+function resultRecord<K extends "bound" | "claimed" | "identical_replay" | "released" | "updated">(
   kind: K,
   record: ManagedRunRecord,
 ): { readonly kind: K; readonly record: ManagedRunRecord } {
@@ -523,6 +525,34 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     return persisted.ok ? ok(resultRecord("bound", next)) : persisted;
   });
 
+  const terminalReleaseTransaction = db.transaction((
+    scope: ManagedRunServiceScope,
+    input: ManagedRunTerminalReleaseInput,
+  ): Result<ManagedRunTerminalReleaseOutcome, Error> => {
+    const current = readRecord(input.managedRunId);
+    if (!current.ok) return current;
+    if (current.value === undefined) return ok({ kind: "not_found" });
+    if (!scopeMatches(current.value, scope)) return ok({ kind: "scope_mismatch" });
+    if (current.value.workspaceLeaseId !== input.workspaceLeaseId) {
+      return ok({ kind: "ownership_mismatch" });
+    }
+    if (!current.value.terminalSessionIds.includes(input.terminalSessionId)) {
+      return ok(resultRecord("identical_replay", current.value));
+    }
+    if (input.releasedAtMs < current.value.updatedAtMs) {
+      return err(new Error("managed-run terminal release time cannot move backward"));
+    }
+    const next: ManagedRunRecord = {
+      ...current.value,
+      terminalSessionIds: current.value.terminalSessionIds.filter(
+        (terminalSessionId) => terminalSessionId !== input.terminalSessionId,
+      ),
+      updatedAtMs: input.releasedAtMs,
+    };
+    const persisted = persistMutable(next);
+    return persisted.ok ? ok(resultRecord("released", next)) : persisted;
+  });
+
   const claimContinuationTransaction = db.transaction((
     scope: ManagedRunOwnerScope,
     input: ManagedRunContinuationClaimInput,
@@ -717,6 +747,9 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       () => transitionTransaction.immediate(scope, input, "transition"),
     ),
     bindTerminal: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
+    releaseTerminal: (scope, input) => boundary(
+      () => terminalReleaseTransaction.immediate(scope, input),
+    ),
     setWorkspaceLease: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
     bindExecutionAttachment: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
     appendReportAndAdvanceAcceptedCursor: (scope, input) => boundary(

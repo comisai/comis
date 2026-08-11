@@ -12,6 +12,7 @@ import type {
   CapabilityServiceTerminalEventCommand,
   ClockPort,
   ComisLogger,
+  ManagedRunStorePort,
 } from "@comis/core";
 import type { ManagedTerminalEventSink } from "@comis/skills/tools";
 import { err, fromPromise, type Result } from "@comis/shared";
@@ -62,6 +63,7 @@ export async function forwardTerminalEvent(deps: {
 /** Build the content-free lifecycle bridge. Failures are observed but never trigger cleanup. */
 export function createManagedTerminalEventBridge(deps: {
   readonly control: CapabilityServiceControlPort;
+  readonly store: Pick<ManagedRunStorePort, "releaseTerminal">;
   readonly logger: ComisLogger;
   readonly nowMs: () => number;
 }): ManagedTerminalEventSink {
@@ -85,6 +87,30 @@ export function createManagedTerminalEventBridge(deps: {
           errorKind: "dependency" as const,
           hint: "Check the capabilityServices socket and owning service instance; terminal, lease, and content were preserved",
         }, "Managed terminal transition delivery failed");
+        return;
+      }
+      if (input.transition !== "released") return;
+      const released = await fromPromise(deps.store.releaseTerminal(
+        { kind: "service", serviceInstanceId: input.serviceInstanceId },
+        {
+          managedRunId: input.managedRunId,
+          workspaceLeaseId: input.workspaceLeaseId,
+          terminalSessionId: input.terminalSessionId,
+          releasedAtMs: deps.nowMs(),
+        },
+      ));
+      if (
+        !released.ok
+        || !released.value.ok
+        || (released.value.value.kind !== "released" && released.value.value.kind !== "identical_replay")
+      ) {
+        deps.logger.warn({
+          serviceInstanceId: input.serviceInstanceId,
+          managedRunId: input.managedRunId,
+          terminalSessionId: input.terminalSessionId,
+          errorKind: "resource" as const,
+          hint: "Reconcile the exact managed run, workspace lease, and terminal binding before retrying cleanup",
+        }, "Managed terminal release was not durably recorded");
       }
     },
   };

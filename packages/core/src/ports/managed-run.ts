@@ -73,6 +73,13 @@ export interface ManagedRunTerminalBindingInput {
   readonly boundAtMs: number;
 }
 
+export interface ManagedRunTerminalReleaseInput {
+  readonly managedRunId: string;
+  readonly workspaceLeaseId: string;
+  readonly terminalSessionId: string;
+  readonly releasedAtMs: number;
+}
+
 export interface ManagedRunWorkspaceBindingInput {
   readonly managedRunId: string;
   readonly workspaceLeaseId: string;
@@ -93,6 +100,13 @@ export interface ManagedRunExecutionAttachmentBindingInput {
 
 export type ManagedRunBindingOutcome =
   | { readonly kind: "bound"; readonly record: ManagedRunRecord }
+  | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "scope_mismatch" }
+  | { readonly kind: "ownership_mismatch" };
+
+export type ManagedRunTerminalReleaseOutcome =
+  | { readonly kind: "released"; readonly record: ManagedRunRecord }
   | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
@@ -294,6 +308,7 @@ export interface ManagedRunStorePort {
   ): Promise<Result<ManagedRunRecord | undefined, Error>>;
   claimTransition(scope: ManagedRunLookupScope, input: ManagedRunTransitionClaimInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;
   bindTerminal(scope: ManagedRunOwnerScope, input: ManagedRunTerminalBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
+  releaseTerminal(scope: ManagedRunServiceScope, input: ManagedRunTerminalReleaseInput): Promise<Result<ManagedRunTerminalReleaseOutcome, Error>>;
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   bindExecutionAttachment(scope: ManagedRunOwnerScope, input: ManagedRunExecutionAttachmentBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;

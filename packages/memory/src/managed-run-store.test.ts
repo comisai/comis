@@ -755,6 +755,38 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).value?.kind).toBe("bound");
   });
 
+  it("releases only the exact service run lease and terminal binding", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord({ workspaceLeaseId: "workspace-lease_a" }))).ok).toBe(true);
+    expect((await store.bindTerminal(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal_a",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_100,
+    })).value?.kind).toBe("bound");
+    const release = {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      terminalSessionId: "terminal_a",
+      releasedAtMs: 1_800_000_000_200,
+    };
+
+    expect((await store.releaseTerminal(OTHER_SERVICE_SCOPE, release)).value?.kind)
+      .toBe("scope_mismatch");
+    expect((await store.releaseTerminal(SERVICE_SCOPE, {
+      ...release,
+      workspaceLeaseId: "workspace-lease_b",
+    })).value?.kind).toBe("ownership_mismatch");
+    expect((await store.releaseTerminal(SERVICE_SCOPE, release)).value?.kind).toBe("released");
+    expect((await store.releaseTerminal(SERVICE_SCOPE, release)).value?.kind)
+      .toBe("identical_replay");
+    expect(await store.get(OWNER_SCOPE, "managed-run_a")).toMatchObject({
+      ok: true,
+      value: { terminalSessionIds: [], updatedAtMs: 1_800_000_000_200 },
+    });
+  });
+
   it("binds an execution attachment only under the exact run lease and owner", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord({ workspaceLeaseId: "workspace-lease_a" }))).ok).toBe(true);
