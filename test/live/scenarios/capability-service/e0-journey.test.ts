@@ -666,7 +666,8 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       );
       await pollUntil(
         () => evidenceDelivered(goDatabase, handles)
-          && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2),
+          && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2)
+          && managedRunContinuationsSettled(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]),
         60_000,
         "exact evidence delivery before restart",
       );
@@ -697,8 +698,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       holdDb.prepare(`INSERT INTO task_cleanup_holds(task_handle, hold_id, reason, opened_at)
         VALUES (?, 'hold-e0-review', 'review remains open', ?)`).run(scoutTask, new Date().toISOString());
       holdDb.close();
-      const scoutCleanupOperation = "cleanup-e0-scout-0001";
-      expect(cleanupFailure(cliBinary, operatorSocket, scoutTask, scoutCleanupOperation)).not.toBe("");
+      expect(cleanupFailure(cliBinary, operatorSocket, scoutTask, "cleanup-e0-scout-held")).not.toBe("");
       expect(existsSync(scoutBinding.canonical_path)).toBe(true);
 
       const closeHoldDb = new Database(goDatabase);
@@ -706,12 +706,12 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
         WHERE task_handle = ? AND hold_id = 'hold-e0-review'`).run(new Date().toISOString(), scoutTask);
       closeHoldDb.close();
       writeFileSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"), "preserve me\n", { mode: 0o600 });
-      expect(cleanupFailure(cliBinary, operatorSocket, scoutTask, scoutCleanupOperation)).not.toBe("");
+      expect(cleanupFailure(cliBinary, operatorSocket, scoutTask, "cleanup-e0-scout-dirty")).not.toBe("");
       console.log("DIRTY_WORKTREE_CLEANUP_REFUSED");
       expect(existsSync(scoutBinding.canonical_path)).toBe(true);
       rmSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"));
       const cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
-        "task", "cleanup", scoutTask, "--operation", scoutCleanupOperation, "--format", "json",
+        "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-final", "--format", "json",
       ]);
       expect(cleanedScout.state).toBe("cleaned");
 
