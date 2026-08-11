@@ -38,6 +38,7 @@ import {
   buildProviderConfig,
   FRESHNESS_PROVIDERS,
   MAX_SEARCH_COUNT,
+  missingProviderConfigurationMessage,
   parseProvider,
   resolveApiKey,
   resolveConfiguredFallbackProviders,
@@ -149,7 +150,7 @@ export async function executeProviderSearch(params: {
 }): Promise<Record<string, unknown>> {
   const apiKey = resolveApiKey(params.provider, params.config);
   if (!apiKey) {
-    throw new Error("missing_api_key");
+    throw new Error(missingProviderConfigurationMessage(params.provider));
   }
 
   const cacheKey = normalizeCacheKey(

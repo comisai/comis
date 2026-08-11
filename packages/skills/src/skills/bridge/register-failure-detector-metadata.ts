@@ -48,7 +48,7 @@ import type { ErrorKind } from "@comis/core";
 
 const WEB_SEARCH_CONFIG_KEY = "tools.web.search";
 const WEB_SEARCH_PROVIDER_KEY =
-  /\b(tools\.web\.search(?:\.(?:perplexity|grok|searxng|tavily|exa|jina))?\.(?:apiKey|baseUrl))\b/;
+  /\b(SEARCH_API_KEY|PERPLEXITY_API_KEY|XAI_API_KEY|TAVILY_API_KEY|EXA_API_KEY|JINA_API_KEY)\b/;
 
 /**
  * Agent tools return structured data in `details`; direct-shape results remain
@@ -81,7 +81,7 @@ export function registerFailureDetectorMetadata(): void {
         : "";
       const text = `${r.error} ${typeof r.message === "string" ? r.message : ""} ${failures}`;
       const missingConfigKey = WEB_SEARCH_PROVIDER_KEY.exec(text)?.[1];
-      if (missingConfigKey !== undefined && /needs an api key|needs a base url/i.test(text)) {
+      if (missingConfigKey !== undefined && /requires the [A-Z_]+ secret/.test(text)) {
         return {
           errorKind: "config" satisfies ErrorKind,
           classifiedField: "message",
