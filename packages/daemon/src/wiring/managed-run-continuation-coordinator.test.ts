@@ -18,6 +18,7 @@ import { ok } from "@comis/shared";
 import {
   createManagedRunContinuationCoalescer,
   createManagedRunContinuationCoordinator,
+  type ManagedRunContinuationExecutionOutcome,
   type ManagedRunContinuationExecutionInput,
 } from "./managed-run-continuation-coordinator.js";
 
@@ -162,7 +163,9 @@ function makeCoordinator(overrides: {
   missingBody?: boolean;
   evidence?: readonly { readonly index: ManagedEvidenceIndex; readonly bytes: Uint8Array }[];
   evidencePolicies?: readonly CapabilityServiceEvidencePolicy[];
-  execute?: (input: ManagedRunContinuationExecutionInput) => Promise<ReturnType<typeof ok<{ deliveryState: "verified" }>>>;
+  execute?: (
+    input: ManagedRunContinuationExecutionInput,
+  ) => Promise<ReturnType<typeof ok<ManagedRunContinuationExecutionOutcome>>>;
 } = {}) {
   const recordValue = overrides.record ?? makeRecord();
   const reports = overrides.reports ?? [report(1, "progress"), report(2, "candidate_complete")];
@@ -264,7 +267,10 @@ describe("managed-run continuation coordination", () => {
             url: "https://example.com/pull/17",
           },
         });
-        return ok({ deliveryState: "verified" as const });
+        return ok({
+          deliveryState: "verified" as const,
+          verifiedEvidenceRef: "evidence-delivery",
+        });
       },
     });
 

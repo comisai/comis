@@ -3,6 +3,7 @@ import {
   conversationScopeToSessionKey,
   resolvePlatformDeliveryResult,
   type ChannelPort,
+  type CapabilityServiceEvidencePolicy,
   type ComisLogger,
   type DeliveryService,
   type ManagedRunContentPort,
@@ -132,6 +133,9 @@ export async function setupManagedRunContinuations(deps: {
     policyHash: string,
   ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
   readonly deliver: ManagedRunContinuationDelivery;
+  readonly resolveEvidencePolicies: (
+    serviceInstanceId: string,
+  ) => readonly CapabilityServiceEvidencePolicy[] | undefined;
   readonly nowMs: () => number;
   readonly timers: TimerPort;
   readonly heartbeatMaxAgeMs: number;
@@ -150,6 +154,7 @@ export async function setupManagedRunContinuations(deps: {
     nowMs: deps.nowMs,
     heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
     claimTtlMs: deps.claimTtlMs,
+    resolveEvidencePolicies: deps.resolveEvidencePolicies,
     eventBus: deps.eventBus,
     logger: deps.logger,
     execute: async (input) => {

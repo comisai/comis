@@ -2254,6 +2254,16 @@ async function bootChannels(boot: BootContext): Promise<void> {
       ...(durableResume.outwardLedger === undefined ? {} : { outwardLedger: durableResume.outwardLedger }),
       logger: daemonLogger,
     }),
+    resolveEvidencePolicies: (serviceInstanceId) => {
+      const instance = capabilityServices.plan.orderedInstances.find(
+        (candidate) => candidate.serviceInstanceId === serviceInstanceId,
+      );
+      return instance === undefined
+        ? undefined
+        : capabilityServices.plan.orderedDefinitions.find(
+          (definition) => definition.serviceDefinitionId === instance.serviceDefinitionId,
+        )?.evidencePolicies;
+    },
     nowMs: () => handle.clock.now(),
     timers: handle.timers,
     heartbeatMaxAgeMs: 300_000,

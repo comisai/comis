@@ -5,7 +5,9 @@ import {
   reduceManagedRunState,
   wrapExternalContent,
   type ComisLogger,
+  type CapabilityServiceEvidencePolicy,
   type ManagedRunContentPort,
+  type ManagedRunEvidenceHealth,
   type ManagedRunOwnerScope,
   type ManagedRunRecord,
   type ManagedRunReduction,
@@ -15,6 +17,11 @@ import {
   type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import {
+  verifyManagedRunEvidence,
+  type ManagedRunEvidenceVerification,
+  type ManagedRunVerifiedDelivery,
+} from "./managed-run-evidence-verifier.js";
 
 export interface ManagedRunContinuationExecutionInput {
   readonly record: ManagedRunRecord;
@@ -22,10 +29,12 @@ export interface ManagedRunContinuationExecutionInput {
   readonly triggeringSequence: number;
   readonly announcement: string;
   readonly reducedState: ManagedRunReduction;
+  readonly verifiedDelivery?: ManagedRunVerifiedDelivery;
 }
 
 export interface ManagedRunContinuationExecutionOutcome {
   readonly deliveryState: "not_required" | "verified" | "missing" | "unavailable";
+  readonly verifiedEvidenceRef?: string;
 }
 
 export interface ManagedRunContinuationCoordinatorDeps {
@@ -37,6 +46,9 @@ export interface ManagedRunContinuationCoordinatorDeps {
   readonly nowMs: () => number;
   readonly heartbeatMaxAgeMs: number;
   readonly claimTtlMs: number;
+  readonly resolveEvidencePolicies: (
+    serviceInstanceId: string,
+  ) => readonly CapabilityServiceEvidencePolicy[] | undefined;
   readonly eventBus: TypedEventBus;
   readonly logger: ComisLogger;
 }
@@ -167,7 +179,7 @@ export function createManagedRunContinuationCoordinator(
         afterSequence: record.lastReducedReportSequence,
         throughSequence: throughReportSequence,
       }));
-      let evidenceHealth: "available" | "malformed" | "stale" | "unavailable" = "available";
+      let evidenceHealth: ManagedRunEvidenceHealth = "available";
       const reports = range.ok ? range.value : [];
       if (!range.ok) evidenceHealth = "unavailable";
       else if (
@@ -197,6 +209,32 @@ export function createManagedRunContinuationCoordinator(
         }
       }
 
+      const latestBody = bodies[bodies.length - 1];
+      let evidenceVerification: ManagedRunEvidenceVerification = {
+        evidenceHealth: "available",
+        verifiedOutcome: "none",
+        deliveryRequired: false,
+      };
+      if (evidenceHealth === "available" && latestBody?.kind === "candidate_complete") {
+        const policies = deps.resolveEvidencePolicies(record.serviceInstanceId);
+        if (policies === undefined) evidenceHealth = "unavailable";
+        else {
+          evidenceVerification = await verifyManagedRunEvidence({
+            ownerScope: scope,
+            contentScope: contentScope(record),
+            serviceInstanceId: record.serviceInstanceId,
+            managedRunId: record.managedRunId,
+            evidenceRefs: latestBody.artifactRefs ?? [],
+            policies,
+          }, {
+            store: deps.store,
+            contentStore: deps.contentStore,
+            nowMs: deps.nowMs,
+          });
+          evidenceHealth = evidenceVerification.evidenceHealth;
+        }
+      }
+
       const verifiedOutcome = reports.some((report) => report.kind === "failed")
         ? "failed" as const
         : "none" as const;
@@ -223,9 +261,17 @@ export function createManagedRunContinuationCoordinator(
           triggeringSequence: throughReportSequence,
           announcement: buildAnnouncement(record, reports, bodies),
           reducedState: preliminary,
+          ...(evidenceVerification.verifiedDelivery === undefined
+            ? {}
+            : { verifiedDelivery: evidenceVerification.verifiedDelivery }),
         }));
       }
       const executionFailed = execution !== undefined && !execution.ok;
+      const deliveryVerified = evidenceVerification.verifiedDelivery === undefined
+        ? !evidenceVerification.deliveryRequired
+        : execution?.ok
+          && execution.value.deliveryState === "verified"
+          && execution.value.verifiedEvidenceRef === evidenceVerification.verifiedDelivery.evidenceRef;
       const finalReduction = executionFailed
         ? reduceManagedRunState({
           currentStatus: record.status,
@@ -241,7 +287,24 @@ export function createManagedRunContinuationCoordinator(
           deliveryState: "unavailable",
           nowMs: deps.nowMs(),
         })
-        : preliminary;
+        : preliminary.status === "candidate_complete"
+          && evidenceVerification.verifiedOutcome === "succeeded"
+          && deliveryVerified
+          ? reduceManagedRunState({
+            currentStatus: record.status,
+            currentStatusReason: record.statusReason,
+            openAttentionCount: record.openAttentionCount,
+            reports,
+            throughReportSequence,
+            lastHeartbeatAtMs: record.lastHeartbeatAtMs,
+            heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
+            heartbeatRequired: true,
+            evidenceHealth,
+            verifiedOutcome: "succeeded",
+            deliveryState: evidenceVerification.deliveryRequired ? "verified" : "not_required",
+            nowMs: deps.nowMs(),
+          })
+          : preliminary;
       const committedAtMs = deps.nowMs();
       const outcome = terminalOutcome(finalReduction, committedAtMs);
       const committed = await invoke(() => deps.store.commitReducedState(scope, {

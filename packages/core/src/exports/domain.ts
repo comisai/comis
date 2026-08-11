@@ -276,6 +276,7 @@ export type {
   ManagedEvidenceDelivery,
   ManagedEvidencePrivateBody,
   ManagedEvidenceIndex,
+  ManagedRunEvidenceHealth,
   ManagedRunReduction,
   ManagedRunAttentionRecord,
   WorkspaceLeaseFilesystemIdentity,
