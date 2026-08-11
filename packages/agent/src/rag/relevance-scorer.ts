@@ -127,22 +127,20 @@ export function isOpaquePayloadWithoutRetrievalTerms(text: string): boolean {
     && buildRelevanceQuery([text]).terms.length === 0;
 }
 
-/**
- * Characters from writing systems that do not put spaces between words. A run of
- * them is a SENTENCE, not one lexical unit, so token length alone cannot decide
- * whether the text is a payload. Generic and script-based — no human language is
- * named, and the same rule covers every space-free writing system.
- */
-const CONTINUOUS_SCRIPT_PATTERN =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}\p{Script=Javanese}]/u;
+const LETTER_PATTERN = /\p{L}/u;
 
-/** Whether an oversized token is mostly space-free-script prose rather than data. */
-function isContinuousScriptRun(token: string): boolean {
+/**
+ * Whether an oversized token is mostly non-ASCII letters and therefore may be
+ * ordinary space-free prose. This open Unicode signal avoids maintaining a
+ * closed list of scripts while ASCII hashes, encodings, and identifiers remain
+ * opaque.
+ */
+function isSpaceFreeProseCandidate(token: string): boolean {
   const characters = [...token];
-  const continuous = characters.filter(
-    (character) => CONTINUOUS_SCRIPT_PATTERN.test(character),
+  const nonAsciiLetters = characters.filter(
+    (character) => (character.codePointAt(0) ?? 0) > 0x7f && LETTER_PATTERN.test(character),
   ).length;
-  return continuous * 2 > characters.length;
+  return nonAsciiLetters * 2 > characters.length;
 }
 
 /**
@@ -164,7 +162,7 @@ export function isOpaquePayloadWithoutInstruction(text: string): boolean {
   const oversized = tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
   return oversized.length > 0
     && oversized.length === tokens.length
-    && !oversized.some(isContinuousScriptRun);
+    && !oversized.some(isSpaceFreeProseCandidate);
 }
 
 /** The shape {@link buildRelevanceQuery} returns and {@link scoreRelevance} consumes. */
