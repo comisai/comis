@@ -676,8 +676,16 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // prompt-skill descriptions can turn a terminal tool result into unrelated
   // troubleshooting work and conceal the result from the user.
   if (msg.channelType !== "background_task") {
+    // Media preprocessing deliberately enriches msg.text with extracted,
+    // externally sourced content and runtime coverage instructions. Skill
+    // selection is an intent decision, so it must use the structured physical
+    // user messages captured before that enrichment. The enriched text remains
+    // available to ordinary tool relevance and to the model itself.
+    const currentUserRequestText = msg.originalMessages
+      ?.map((message) => message.text)
+      .join("\n") ?? msg.text;
     applyPromptSkillRequestRouting(deferralResult, {
-      currentRequestText: msg.text,
+      currentRequestText: currentUserRequestText,
       requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
       priorUserRequest: recentUserTurns.at(-1),
       skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
