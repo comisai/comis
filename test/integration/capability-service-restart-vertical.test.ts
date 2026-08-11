@@ -68,6 +68,7 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
       })),
     ]),
     requestedScopes: Object.freeze(["health", "report"]),
+    evidencePolicies: Object.freeze([]),
     dependsOn: Object.freeze([]),
   }]),
 });

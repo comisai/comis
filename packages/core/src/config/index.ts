@@ -6,6 +6,7 @@ export { AppConfigSchema } from "./schema.js";
 export {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
   CapabilityServiceScopeSchema,
+  CapabilityServiceEvidencePolicySchema,
   CapabilityServiceDefinitionSchema,
   CapabilityServiceInstanceConfigSchema,
   ManagedToolActionClassificationSchema,
@@ -15,6 +16,7 @@ export {
 } from "./capability-service-contributions.js";
 export type {
   CapabilityServiceScope,
+  CapabilityServiceEvidencePolicy,
   CapabilityServiceDefinition,
   ManagedToolActionClassification,
   ManagedToolBehavior,

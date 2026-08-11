@@ -17,7 +17,7 @@ import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 
 const NOW_MS = 1_800_000_000_000;
-const BUNDLE_DIGEST = "94ec7bd173cd20f0de2cb4e9ab719d392f240236ac80d56e3a7ea1abe4e20cb8";
+const BUNDLE_DIGEST = "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7";
 const BEARER = "synthetic-capability-service-bearer";
 
 function makeLogger(): ComisLogger {
@@ -42,6 +42,7 @@ function makeDefinition(): PlannedCapabilityServiceDefinition {
     mcpServerName: "example-service",
     managedToolBindings: [],
     requestedScopes: ["health", "report"],
+    evidencePolicies: [],
     dependsOn: [],
   };
 }

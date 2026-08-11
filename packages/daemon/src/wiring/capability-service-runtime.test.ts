@@ -36,6 +36,7 @@ function makeContribution(
         invocationSideEffects: ["deferred_work"],
       }],
       requestedScopes: ["health", "report"],
+      evidencePolicies: [],
       dependsOn: [...dependsOn],
     }],
   };

@@ -94,6 +94,7 @@ function makeActiveView(overrides: Partial<ActiveCapabilityServiceView> = {}): A
         "terminal_events",
         "execution_attachment",
       ] as const),
+      evidencePolicies: Object.freeze([]),
     })]),
     instances: Object.freeze([Object.freeze({
       contributionId: "example.service",

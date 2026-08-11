@@ -66,6 +66,7 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
       "terminal_events",
       "execution_attachment",
     ]),
+    evidencePolicies: Object.freeze([]),
     dependsOn: Object.freeze([]),
   }]),
 });

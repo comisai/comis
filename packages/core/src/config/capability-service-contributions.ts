@@ -28,11 +28,18 @@ function isContributionId(value: string): boolean {
 
 export const CapabilityServiceScopeSchema = z.enum([
   "health",
+  "evidence",
   "report",
   "workspace_lease",
   "terminal_events",
   "execution_attachment",
 ]);
+
+export const CapabilityServiceEvidencePolicySchema = z.strictObject({
+  kind: z.string().regex(OPAQUE_ID_PATTERN),
+  verificationLevel: z.literal("adapter_verified"),
+  use: z.enum(["outcome", "delivery_reference", "delivery_attachment"]),
+});
 
 export const ManagedToolBehaviorSchema = z.enum([
   "prepare_run",
@@ -82,7 +89,8 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
   protocolId: z.literal(CAPABILITY_SERVICE_CONTROL_PROTOCOL),
   mcpServerName: z.string().regex(OPAQUE_ID_PATTERN),
   managedToolBindings: z.array(ManagedToolBindingSchema).max(128),
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(5),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(6),
+  evidencePolicies: z.array(CapabilityServiceEvidencePolicySchema).max(32),
   dependsOn: z.array(z.string().refine(isContributionId)).max(32),
 }).superRefine((value, ctx) => {
   if (new Set(value.requestedScopes).size !== value.requestedScopes.length) {
@@ -90,6 +98,21 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
       code: "custom",
       path: ["requestedScopes"],
       message: "requested capability-service scopes must be unique",
+    });
+  }
+  if (new Set(value.evidencePolicies.map((policy) => policy.kind)).size
+    !== value.evidencePolicies.length) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["evidencePolicies"],
+      message: "capability-service evidence kinds must be unique",
+    });
+  }
+  if (value.evidencePolicies.length > 0 && !value.requestedScopes.includes("evidence")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["evidencePolicies"],
+      message: "configured verifier evidence requires the evidence service scope",
     });
   }
   if (new Set(value.dependsOn).size !== value.dependsOn.length) {
@@ -117,6 +140,9 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
 });
 
 export type CapabilityServiceScope = z.infer<typeof CapabilityServiceScopeSchema>;
+export type CapabilityServiceEvidencePolicy = z.infer<
+  typeof CapabilityServiceEvidencePolicySchema
+>;
 export type ManagedToolBehavior = z.infer<typeof ManagedToolBehaviorSchema>;
 export type ManagedToolActionClassification = z.infer<
   typeof ManagedToolActionClassificationSchema
@@ -143,11 +169,12 @@ export interface CapabilityServiceContributionRegistration {
 
 export type PlannedCapabilityServiceDefinition = Omit<
   CapabilityServiceDefinition,
-  "managedToolBindings" | "requestedScopes" | "dependsOn"
+  "managedToolBindings" | "requestedScopes" | "evidencePolicies" | "dependsOn"
 > & {
   readonly contributionId: string;
   readonly managedToolBindings: readonly Readonly<PlannedManagedToolBinding>[];
   readonly requestedScopes: readonly CapabilityServiceScope[];
+  readonly evidencePolicies: readonly Readonly<CapabilityServiceEvidencePolicy>[];
   readonly dependsOn: readonly string[];
 };
 
@@ -194,6 +221,9 @@ function freezeDefinition(
       invocationSideEffects: Object.freeze([...binding.invocationSideEffects].sort()),
     }))),
     requestedScopes: Object.freeze([...definition.requestedScopes].sort()),
+    evidencePolicies: Object.freeze(definition.evidencePolicies
+      .map((policy) => Object.freeze({ ...policy }))
+      .sort((left, right) => left.kind.localeCompare(right.kind))),
     dependsOn: Object.freeze([...definition.dependsOn].sort()),
   });
 }

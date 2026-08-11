@@ -4,6 +4,7 @@ import {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
   emitObservationalEventSafely,
   type CapabilityServiceActivationPlan,
+  type CapabilityServiceEvidencePolicy,
   type CapabilityServiceScope,
   type ComisLogger,
   type PlannedManagedToolBinding,
@@ -37,6 +38,7 @@ export interface ActiveCapabilityServiceDefinition {
   readonly mcpServerName: string;
   readonly managedToolBindings: readonly Readonly<PlannedManagedToolBinding>[];
   readonly requestedScopes: readonly CapabilityServiceScope[];
+  readonly evidencePolicies: readonly Readonly<CapabilityServiceEvidencePolicy>[];
 }
 
 export type CapabilityServiceInstanceFailureReason = "health_mismatch" | "start_failed";
@@ -144,6 +146,9 @@ function definitionView(
       invocationSideEffects: Object.freeze([...binding.invocationSideEffects]),
     }))),
     requestedScopes: Object.freeze([...definition.requestedScopes]),
+    evidencePolicies: Object.freeze(definition.evidencePolicies.map((policy) => Object.freeze({
+      ...policy,
+    }))),
   });
 }
 

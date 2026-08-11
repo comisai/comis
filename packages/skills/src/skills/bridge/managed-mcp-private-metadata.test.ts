@@ -104,6 +104,7 @@ function makeView(behavior: "prepare_run" | "run_command" = "prepare_run") {
         invocationSideEffects: ["deferred_work"],
       }],
       requestedScopes: ["health", "report"] as const,
+      evidencePolicies: [] as const,
     }],
     instances: [{
       contributionId: "example.service",

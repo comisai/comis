@@ -132,6 +132,7 @@ function makeActiveView(allowedWorkspaceRoots: readonly string[] = []): ActiveCa
       mcpServerName: "example-service",
       managedToolBindings: Object.freeze([]),
       requestedScopes: Object.freeze(["health", "workspace_lease"] as const),
+      evidencePolicies: Object.freeze([]),
     })]),
     instances: Object.freeze([Object.freeze({
       contributionId: "example.service",

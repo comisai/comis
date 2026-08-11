@@ -179,6 +179,7 @@ export {
 
 export type {
   CapabilityServiceScope,
+  CapabilityServiceEvidencePolicy,
   PlannedManagedToolBinding,
   CapabilityServicesConfig,
   CapabilityServiceContributionRegistration,
