@@ -418,18 +418,24 @@ describe("wrapOutwardSend", () => {
 
   it("transient error → row is atomically parked unresolved for manual verification", async () => {
     const { ledger, calls } = makeStubLedger();
+    const logger = makeLogger();
     const doSend = vi.fn(async (): Promise<Result<{ messageId: string }, Error>> => {
       calls.push("doSend");
-      return err(new Error("ETIMEDOUT: socket hang up"));
+      return err(new Error("ETIMEDOUT: socket hang up with token=fixture-secret-value"));
     });
 
-    const result = await wrapOutwardSend({ ledger, ...BASE, doSend, logger: makeLogger() });
+    const result = await wrapOutwardSend({ ledger, ...BASE, doSend, logger });
 
     expect(result.ok).toBe(false);
     expect(ledger.commit).not.toHaveBeenCalled();
     expect(ledger.markFailed).not.toHaveBeenCalled();
     expect(ledger.parkUncertain).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(["lookup", "begin", "markUnknown", "doSend", "parkUncertain"]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.stringContaining("ETIMEDOUT: socket hang up") }),
+      "Outward send failure parked for manual verification",
+    );
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain("fixture-secret-value");
   });
 
   it("content-free: the contentDigest is the full SHA-256 of the text and the raw text is NEVER passed to any ledger method", async () => {
