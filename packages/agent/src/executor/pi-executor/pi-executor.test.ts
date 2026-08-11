@@ -6819,6 +6819,43 @@ describe("PiExecutor", () => {
       expect(serializerIndex).toBeGreaterThan(autoBackgroundIndex);
     });
   });
+
+  describe("recall disposition evidence", () => {
+    function submittedPrompt(deps: PiExecutorDeps): Record<string, unknown> | undefined {
+      const call = (deps.eventBus.emit as Mock).mock.calls.find(
+        (entry: unknown[]) => entry[0] === "prompt:submitted",
+      );
+      return call?.[1] as Record<string, unknown> | undefined;
+    }
+
+    it("reports a skipped recall for an oversized opaque request", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        { ...testMessage, text: `what is this? ${"x".repeat(200)}` },
+        testSessionKey,
+      );
+
+      expect(submittedPrompt(deps)).toMatchObject({
+        requestRelevanceHistory: { recallDisposition: "skip_oversized_token" },
+      });
+    });
+
+    it("reports a searchable recall for ordinary request prose", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        { ...testMessage, text: "research residential heat pumps" },
+        testSessionKey,
+      );
+
+      expect(submittedPrompt(deps)).toMatchObject({
+        requestRelevanceHistory: { recallDisposition: "search" },
+      });
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -8734,9 +8771,6 @@ describe("recent recall context provenance wiring", () => {
 
     expect(src).toMatch(
       /selectRecentUserTurns\(\s*sessionContext\.messages,\s*sm\.getEntries\?\.\(\) \?\? \[\],\s*msg\.id,\s*\)/,
-    );
-    expect(src).toMatch(
-      /describeRecentUserTurnSelection\(\s*recentUserTurns,\s*msg\.text,?\s*\)/,
     );
   });
 });

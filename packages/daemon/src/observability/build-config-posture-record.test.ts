@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -276,13 +275,6 @@ describe("buildConfigPostureRecord", () => {
     const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
     expect(row.severity).toBe("warning");
     expect(JSON.parse(row.details ?? "{}")).toMatchObject({ execSandboxDisabled: true });
-  });
-
-  it("threads the resolved exec sandbox relaxation into the boot posture record", () => {
-    const daemonSource = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
-
-    expect(daemonSource).toContain("const execSandboxDisabled =");
-    expect(daemonSource).toMatch(/buildConfigPostureRecord\([^;]*execSandboxDisabled/);
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {

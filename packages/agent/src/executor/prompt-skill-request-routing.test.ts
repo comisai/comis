@@ -143,6 +143,71 @@ describe("prompt skill request routing", () => {
       .toContain("/skills/deep-research/SKILL.md");
   });
 
+  // A floor whose receipt tool is unreachable can never be met, so the
+  // completion gate would discard the model's answer on every routed turn.
+  it("drops web-evidence floors when the receipt tools are unavailable", () => {
+    const deferral = result();
+    deferral.activeTools = deferral.activeTools.filter(
+      (entry) => entry.name !== "web_search" && entry.name !== "web_fetch",
+    );
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevanceText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBeUndefined();
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBeUndefined();
+  });
+
+  it("keeps the search floor enforceable when only web_fetch is unavailable", () => {
+    const deferral = result();
+    deferral.activeTools = deferral.activeTools.filter(
+      (entry) => entry.name !== "web_fetch",
+    );
+
+    applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevanceText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([
+      "web_search",
+    ]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBeUndefined();
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBe(3);
+  });
+
   it("lets the current request outrank stale prompt-skill history", () => {
     const deferral = result();
     const currentRequestText =

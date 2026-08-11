@@ -125,7 +125,10 @@ successful** receipts. If they never arrive, the turn ends
 "could not verify" reply and the session is reported degraded in
 [`comis explain`](/reference/cli#comis-explain) -- so set them only on skills
 whose answers must be sourced. `skills/deep-research/SKILL.md` ships with `3`
-for both.
+for both. A gate is enforced only when the tool that mints its receipts is
+available to the agent for that turn: with `web_fetch` unavailable the
+fetch gate is dropped, with `web_search` unavailable the search gate is
+dropped, and a floor no reachable tool can satisfy never discards the reply.
 </Info>
 
 <Info>

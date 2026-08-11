@@ -111,9 +111,14 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 0);
 }
 
+/** The tokens too large to be retrieval text. */
+function oversizedLexicalTokens(tokens: readonly string[]): string[] {
+  return tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
+}
+
 /** Whether the current request contains a token too large to be retrieval text. */
 export function hasOversizedLexicalToken(text: string): boolean {
-  return tokenize(text).some((token) => token.length > MAX_CONTENT_TERM_CHARS);
+  return oversizedLexicalTokens(tokenize(text)).length > 0;
 }
 
 /**
@@ -123,9 +128,7 @@ export function hasOversizedLexicalToken(text: string): boolean {
  * actionable text in the model request.
  */
 export function isOpaquePayloadWithoutRetrievalTerms(text: string): boolean {
-  const oversized = tokenize(text).filter(
-    (token) => token.length > MAX_CONTENT_TERM_CHARS,
-  );
+  const oversized = oversizedLexicalTokens(tokenize(text));
   return oversized.length > 0
     && !oversized.some(isSpaceFreeProseCandidate)
     && buildRelevanceQuery([text]).terms.length === 0;
@@ -163,7 +166,7 @@ function isSpaceFreeProseCandidate(token: string): boolean {
  */
 export function isOpaquePayloadWithoutInstruction(text: string): boolean {
   const tokens = tokenize(text);
-  const oversized = tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
+  const oversized = oversizedLexicalTokens(tokens);
   return oversized.length > 0
     && oversized.length === tokens.length
     && !oversized.some(isSpaceFreeProseCandidate);

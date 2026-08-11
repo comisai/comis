@@ -177,8 +177,15 @@ export function applyPromptSkillRequestRouting(
   deferral.requestRelevantPromptSkillLocations = selectedLocations;
   const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
-  const minDistinctWebFetchUrls = selectedSkills[0]?.minDistinctWebFetchUrls;
-  const minDistinctWebSearchQueries = selectedSkills[0]?.minDistinctWebSearchQueries;
+  // An evidence floor is only enforceable when the tool that mints its receipts
+  // is actually reachable this turn. Declaring an unreachable floor leaves the
+  // completion gate permanently unsatisfiable, which discards the answer.
+  const minDistinctWebFetchUrls = availableToolNames.has("web_fetch")
+    ? selectedSkills[0]?.minDistinctWebFetchUrls
+    : undefined;
+  const minDistinctWebSearchQueries = availableToolNames.has("web_search")
+    ? selectedSkills[0]?.minDistinctWebSearchQueries
+    : undefined;
   const receiptToolNames = [...new Set([
     ...(minDistinctWebFetchUrls === undefined ? [] : ["web_search", "web_fetch"]),
     ...(minDistinctWebSearchQueries === undefined ? [] : ["web_search"]),
