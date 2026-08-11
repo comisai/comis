@@ -47,6 +47,20 @@ describe("exact citation evidence grounding", () => {
     expect(guarded.response).not.toContain(mutated);
   });
 
+  it("removes an empty citation shell after rejecting an unfetched URL", () => {
+    const fetched = "https://example.com/fetched";
+    const guarded = enforceCitationEvidence({
+      response:
+        `Sources: [https://unverified.example/report] [${fetched}]`,
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    });
+
+    expect(guarded.response).not.toContain("[]");
+    expect(guarded.response).toContain(`[${fetched}]`);
+    expect(guarded.removedCitationCount).toBe(1);
+  });
+
   it("preserves exact fetched citations and a code-formatted unreachable URL", () => {
     const fetched = "https://html.spec.whatwg.org/multipage/webstorage.html";
     const response =

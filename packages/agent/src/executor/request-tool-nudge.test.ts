@@ -478,6 +478,9 @@ describe("runRequestToolNudge", () => {
     expect(prompt.mock.calls[2]?.[0]).toMatch(
       /current-turn workflow receipts[\s\S]*earlier failure or unavailable/iu,
     );
+    expect(prompt.mock.calls[2]?.[0]).toMatch(
+      /copy every citation URL verbatim from[\s\S]*URL:[\s\S]*do not substitute/iu,
+    );
     expect(prompt.mock.calls[2]?.[0]).toMatch(/Receipt 1: failed web_fetch/iu);
     expect(prompt.mock.calls[2]?.[0]).toContain(
       "https://example.com/comis-unreachable-source-404",
