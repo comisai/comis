@@ -288,12 +288,17 @@ export async function handleGraphCompletion(
   // 4. Deliver deterministic graph output through one stable, receipt-aware
   // outward operation. Parent execution is intentionally outside this terminal
   // boundary because replaying it could repeat arbitrary tool effects.
-  if (hasAnyAnnouncementRoute) {
-    if (!announcementIdentityValid) {
-      return err(new Error("Graph announcement identity or route is invalid"));
-    }
+  let announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" =
+    hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement === undefined
+      ? "unavailable"
+      : "not-requested";
+  if (hasAnyAnnouncementRoute && !announcementIdentityValid) {
+    return err(new Error("Graph announcement identity or route is invalid"));
+  }
+  if (hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement !== undefined) {
     const delivery = await sendGoverned(announcement, deliveryOptions);
     if (!delivery.ok) return delivery;
+    announcementDelivery = delivery.value;
   }
 
   // 5. Log at INFO level
@@ -308,6 +313,7 @@ export async function handleGraphCompletion(
       nodesFailed,
       totalCostUsd: gs.cumulativeCost > 0 ? gs.cumulativeCost : undefined,
       totalTokens: gs.cumulativeTokens > 0 ? gs.cumulativeTokens : undefined,
+      announcementDelivery,
       // Graph-level cache aggregation (computed above for event + log)
       ...cacheRollupFields,
     },

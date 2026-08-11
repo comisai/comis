@@ -459,6 +459,21 @@ describe("graph-handlers", () => {
       }));
     });
 
+    it("promises the automatic notification when retained completion delivery is enabled", async () => {
+      deps = createDeps({ durableRuns: {} as never });
+      handlers = createGraphHandlers(deps);
+      const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
+      mockCoord.run.mockResolvedValue(ok("graph-uuid-retained"));
+
+      const result = await handlers["graph.execute"]!({
+        nodes: VALID_NODES,
+        _callerChannelType: "telegram",
+        _callerChannelId: "chat-42",
+      });
+
+      expect((result as Record<string, unknown>).hint).toContain("notified automatically");
+    });
+
     it("throws when agentToAgent.enabled is false", async () => {
       deps = createDeps({ securityConfig: { agentToAgent: { enabled: false } } });
       handlers = createGraphHandlers(deps);

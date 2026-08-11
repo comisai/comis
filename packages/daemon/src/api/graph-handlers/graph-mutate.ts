@@ -310,9 +310,11 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         async: true,
         nodeCount: finalValidated.graph.nodes.length,
         label: finalValidated.graph.label,
-        hint: announceChannelType !== undefined && announceChannelId !== undefined
-          ? "Pipeline launched — your job is now DONE. Tell the user the pipeline is running (and what it will produce), then STOP. Do NOT research this topic yourself, do NOT call more tools, and do NOT poll with status/cron: the sub-agents are doing the work in isolated contexts and you will be notified automatically with results when it completes. Duplicating their research here only exhausts your own context window."
-          : "Pipeline launched, but no completion channel is available. Tell the caller it is running and include the graphId; do not promise an automatic notification. The caller can inspect graph status later.",
+        hint: announceChannelType === undefined || announceChannelId === undefined
+          ? "Pipeline launched, but no completion channel is available. Tell the caller it is running and include the graphId; do not promise an automatic notification. The caller can inspect graph status later."
+          : deps.durableRuns === undefined
+            ? `Pipeline launched, but retained completion delivery is disabled (agents.${String(rawParams._agentId ?? deps.defaultAgentId)}.autonomy.durability.enabled). Tell the caller it is running and include the graphId; do not promise an automatic notification. The caller can inspect graph status later.`
+            : "Pipeline launched — your job is now DONE. Tell the user the pipeline is running (and what it will produce), then STOP. Do NOT research this topic yourself, do NOT call more tools, and do NOT poll with status/cron: the sub-agents are doing the work in isolated contexts and you will be notified automatically with results when it completes. Duplicating their research here only exhausts your own context window.",
         ...(unresolvedWarnings.length > 0 && { warnings: unresolvedWarnings }),
       };
       if (IS_DEV) GraphExecuteContract.response.parse(result);
