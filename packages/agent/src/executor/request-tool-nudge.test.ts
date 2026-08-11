@@ -265,6 +265,46 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("loads the selected prompt skill when workflow receipts already exist", async () => {
+    let successfulReadCount = 0;
+    const successfulWorkflowCount = 3;
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) successfulReadCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: (toolNames) => {
+        const names = new Set(toolNames ?? []);
+        return (names.has("read") ? successfulReadCount : 0)
+          + (names.has("web_fetch") ? successfulWorkflowCount : 0);
+      },
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      getVisibleAssistantText: () =>
+        "Each claim is traced to a current fetched source.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[0]?.[0]).toMatch(
+      /request-relevant prompt skill.*deep-research/isu,
+    );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 
