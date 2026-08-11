@@ -16,6 +16,7 @@ import {
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
+  trajectoryTurnEnded,
 } from "./drive-session-oracle.mjs";
 
 describe("opt-in follow-up delivery wait", () => {
@@ -74,6 +75,26 @@ describe("drive inbound validation", () => {
       "from: synthetic sender\ncan you confirm the window?\n",
     )).toBe("from: synthetic sender\ncan you confirm the window?");
     expect(normalizeDriveStdinText("one line\r\n")).toBe("one line");
+  });
+});
+
+describe("drive trajectory completion", () => {
+  it("ends a pre-model clarification turn without waiting for a model summary", () => {
+    expect(trajectoryTurnEnded([
+      JSON.stringify({
+        type: "request.clarification_required",
+        data: {
+          reason: "opaque_payload_missing_instruction",
+          inputChars: 43_000,
+        },
+      }),
+    ])).toBe(true);
+  });
+
+  it("does not treat an unrelated request event as a terminal turn", () => {
+    expect(trajectoryTurnEnded([
+      JSON.stringify({ type: "prompt.submitted", data: {} }),
+    ])).toBe(false);
   });
 });
 
