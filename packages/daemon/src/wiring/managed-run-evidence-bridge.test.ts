@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createConversationRef,
+  MAX_MANAGED_EVIDENCE_BYTES,
   type CapabilityServiceEvidencePolicy,
   type ComisLogger,
   type ManagedRunContentPort,
@@ -201,6 +202,24 @@ describe("managed-run evidence bridge", () => {
     expect(await makeBridge().putEvidence(makeInput())).toMatchObject({
       ok: true,
       value: { kind: "identical_replay" },
+    });
+  });
+
+  it("accepts the full decoded evidence size promised by the wire contract", async () => {
+    const body = Buffer.alloc(MAX_MANAGED_EVIDENCE_BYTES, 0x61);
+    const accepted = await makeBridge().putEvidence({
+      ...makeInput(),
+      operationId: "operation_evidence_boundary",
+      evidenceRef: "evidence_boundary",
+      kind: "candidate_bundle",
+      contentHash: createHash("sha256").update(body).digest("hex"),
+      bodyBase64: body.toString("base64"),
+      delivery: undefined,
+    });
+
+    expect(accepted).toMatchObject({
+      ok: true,
+      value: { kind: "accepted", evidence: { evidenceRef: "evidence_boundary" } },
     });
   });
 
