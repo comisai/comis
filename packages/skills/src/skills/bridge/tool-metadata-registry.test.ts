@@ -1377,7 +1377,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "config",
       classifiedField: "message",
       matchedRule: "missing_provider_configuration",
-      matchedToken: "TAVILY_API_KEY",
+      matchedToken: "secrets.TAVILY_API_KEY",
       failureDisclosure: {
         kind: "missing_configuration",
         configKey: "secrets.TAVILY_API_KEY",

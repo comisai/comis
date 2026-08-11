@@ -2181,7 +2181,7 @@ describe("prompt_timeout terminal verdict", () => {
             transportOk: true,
             errorKind: "config",
             matchedRule: "missing_provider_configuration",
-            matchedToken: "tools.web.search.tavily.apiKey",
+            matchedToken: "secrets.SEARCH_API_KEY",
             resultDigest: "d",
             resultBytes: 100,
             errorPreview: "bounded failure preview",
@@ -2192,7 +2192,7 @@ describe("prompt_timeout terminal verdict", () => {
 
     expect(r!.code).toBe("tool_provider_configuration_missing");
     expect(r!.suggestedNextSteps[0]).toContain(
-      "tools.web.search.tavily.apiKey",
+      "secrets.SEARCH_API_KEY",
     );
   });
 
