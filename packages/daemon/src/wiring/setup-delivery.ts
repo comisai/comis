@@ -658,13 +658,12 @@ export async function setupDeliveryMirror(deps: {
     register(api) {
       api.registerHook("after_delivery", async (event, ctx) => {
         if (ctx.deliveryAuthority === undefined || ctx.destinationEndpoint === undefined) {
-          logger.warn(
+          logger.debug(
             {
               channelType: event.channelType,
-              hint: "Ensure every delivery originates from a resolved turn or an explicit internal authority boundary",
-              errorKind: "precondition" as const,
+              step: "delivery-mirror",
             },
-            "Delivery mirror record omitted because authority is unavailable",
+            "Delivery mirror record skipped without conversation authority",
           );
           return;
         }
