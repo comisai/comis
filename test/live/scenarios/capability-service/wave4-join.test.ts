@@ -28,11 +28,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
 const REVIEWED_GO_COMMIT = process.env["COMIS_DEV_CREW_COMMIT"]
   ?? "1521c4445dca6eb6e26548dc5f8f6646796b2d01";
-const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
-const MCP_SERVER_NAME = "devcrew";
-const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
-const PROVIDER_SECRET_NAME = "WAVE4_FIXTURE_PROVIDER_KEY";
-const CONTROL_SECRET = "wave4-control-bearer-0123456789abcdef";
+export const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
+export const MCP_SERVER_NAME = "devcrew";
+export const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
+export const PROVIDER_SECRET_NAME = "WAVE4_FIXTURE_PROVIDER_KEY";
+export const CONTROL_SECRET = "wave4-control-bearer-0123456789abcdef";
 const REVIEWED_LAUNCHER = "/usr/local/bin/wave4-codex-launcher";
 const REVIEWED_ALLOW_ID = "codex-confined";
 const REVIEWED_TOKEN = "wave4-reviewed";
@@ -41,60 +41,60 @@ const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
 const isE0Journey = process.env["COMIS_E0_JOURNEY"] === "1";
 
 const E0_MUTATION_BINDINGS = isE0Journey ? [
-  Object.freeze({
+  {
     toolName: "handback_task",
     behavior: "run_command" as const,
     runHandleArgument: "taskHandle",
     actionClassification: "mutate" as const,
-    invocationSideEffects: Object.freeze(["task.handback"]),
-  }),
-  Object.freeze({
+    invocationSideEffects: ["task.handback"],
+  },
+  {
     toolName: "cleanup_task",
     behavior: "run_command" as const,
     runHandleArgument: "taskHandle",
     actionClassification: "destructive" as const,
-    invocationSideEffects: Object.freeze(["task.cleanup"]),
-  }),
+    invocationSideEffects: ["task.cleanup"],
+  },
 ] : [];
 
-const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
+export const CONTRIBUTION: CapabilityServiceContributionRegistration = {
   contributionId: "devcrew.wave4.join",
-  configSections: Object.freeze([]),
-  serviceDefinitions: Object.freeze([{
+  configSections: [],
+  serviceDefinitions: [{
     serviceDefinitionId: "devcrew.wave4.join",
-    protocolId: "comis.capability-service/1",
+    protocolId: "comis.capability-service/1" as const,
     mcpServerName: MCP_SERVER_NAME,
-    managedToolBindings: Object.freeze([
+    managedToolBindings: [
       {
         toolName: "prepare_task",
-        behavior: "prepare_run",
-        actionClassification: "mutate",
-        invocationSideEffects: Object.freeze(["task.prepare"]),
+        behavior: "prepare_run" as const,
+        actionClassification: "mutate" as const,
+        invocationSideEffects: ["task.prepare"],
       },
       ...E0_MUTATION_BINDINGS,
-      ...["list_tasks", "get_task", "explain_task", "get_launch_plan"].map((toolName) => Object.freeze({
+      ...["list_tasks", "get_task", "explain_task", "get_launch_plan"].map((toolName) => ({
         toolName,
         behavior: "read_only" as const,
         actionClassification: "read" as const,
-        invocationSideEffects: Object.freeze([]),
+        invocationSideEffects: [],
       })),
-    ]),
-    requestedScopes: Object.freeze([
+    ],
+    requestedScopes: [
       "health",
       "report",
       ...(isE0Journey ? ["evidence" as const] : []),
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
-    ]),
-    evidencePolicies: Object.freeze(isE0Journey ? [
-      { kind: "candidate_bundle", verificationLevel: "adapter_verified" as const, use: "outcome" as const },
-      { kind: "delivery_reference", verificationLevel: "adapter_verified" as const, use: "delivery_reference" as const },
-      { kind: "report_artifact", verificationLevel: "adapter_verified" as const, use: "delivery_attachment" as const },
-    ] : []),
-    dependsOn: Object.freeze([]),
-  }]),
-});
+    ],
+    evidencePolicies: isE0Journey ? [
+      { kind: "candidate_bundle" as const, verificationLevel: "adapter_verified" as const, use: "outcome" as const },
+      { kind: "delivery_reference" as const, verificationLevel: "adapter_verified" as const, use: "delivery_reference" as const },
+      { kind: "report_artifact" as const, verificationLevel: "adapter_verified" as const, use: "delivery_attachment" as const },
+    ] : [],
+    dependsOn: [],
+  }],
+};
 
 interface ToolStep {
   readonly tool: string;
@@ -132,7 +132,7 @@ function responseChunk(model: string, delta: Record<string, unknown>, finishReas
   })}\n\n`;
 }
 
-class LiaisonModelServer {
+export class LiaisonModelServer {
   private server: Server | undefined;
   private baseUrlValue = "";
   private steps: ToolStep[] = [];
@@ -245,23 +245,23 @@ class LiaisonModelServer {
   }
 }
 
-interface RunningService {
+export interface RunningService {
   readonly child: ChildProcess;
   readonly stderr: () => string;
   stop(): Promise<void>;
 }
 
-interface TaskSummary {
+export interface TaskSummary {
   readonly taskHandle: string;
   readonly state: string;
 }
 
-interface TaskStatusSnapshot {
+export interface TaskStatusSnapshot {
   readonly completeness: string;
   readonly tasks: TaskSummary[];
 }
 
-interface LaunchPlan {
+export interface LaunchPlan {
   readonly schemaVersion: number;
   readonly completeness: string;
   readonly taskHandle: string;
@@ -275,13 +275,13 @@ interface LaunchPlan {
   readonly attachmentTargetName: string;
 }
 
-interface RunBinding {
+export interface RunBinding {
   readonly managed_run_id: string;
   readonly workspace_lease_id: string;
   readonly canonical_path: string;
 }
 
-function normalizedMessage(text: string): NormalizedMessage {
+export function normalizedMessage(text: string): NormalizedMessage {
   return {
     id: randomUUID(),
     channelId: "wave4-conversation",
@@ -294,7 +294,7 @@ function normalizedMessage(text: string): NormalizedMessage {
   };
 }
 
-async function pollUntil(
+export async function pollUntil(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
   label: string | (() => string),
@@ -309,7 +309,7 @@ async function pollUntil(
   }
 }
 
-async function stopDaemon(handle: TestDaemonHandle | undefined): Promise<void> {
+export async function stopDaemon(handle: TestDaemonHandle | undefined): Promise<void> {
   if (handle === undefined) return;
   try {
     await handle.cleanup();
@@ -318,7 +318,7 @@ async function stopDaemon(handle: TestDaemonHandle | undefined): Promise<void> {
   }
 }
 
-function startInstalledService(input: {
+export function startInstalledService(input: {
   readonly binary: string;
   readonly database: string;
   readonly operatorSocket: string;
@@ -328,6 +328,8 @@ function startInstalledService(input: {
   readonly controlSocket: string;
   readonly credentialFile: string;
   readonly candidateConfig?: string;
+  readonly launcher?: string;
+  readonly terminalAllowEntryId?: string;
 }): RunningService {
   mkdirSync(dirname(input.database), { recursive: true, mode: 0o700 });
   mkdirSync(input.runtimeRoot, { recursive: true, mode: 0o700 });
@@ -348,11 +350,11 @@ function startInstalledService(input: {
     "--comis-handshake-operation", "wave4-handshake-operation",
     "--preparation-ttl", "10m",
     "--codex-profile", "codex-reviewed",
-    "--codex-executable", REVIEWED_LAUNCHER,
+    "--codex-executable", input.launcher ?? REVIEWED_LAUNCHER,
     "--codex-version", "codex-cli 0.147.0",
     "--codex-model", process.env["COMIS_WAVE4_CODEX_MODEL"] ?? "gpt-5.5",
     "--codex-effort", "high",
-    "--codex-terminal-allow-entry", REVIEWED_ALLOW_ID,
+    "--codex-terminal-allow-entry", input.terminalAllowEntryId ?? REVIEWED_ALLOW_ID,
     "--codex-network", "host",
     "--codex-concurrency", "2",
   ];
@@ -379,13 +381,13 @@ function startInstalledService(input: {
   };
 }
 
-function cli<T>(binary: string, socket: string, args: readonly string[]): T {
+export function cli<T>(binary: string, socket: string, args: readonly string[]): T {
   const output = execFileSync(binary, ["--socket", socket, ...args], { encoding: "utf8" });
   return JSON.parse(output) as T;
 }
 
-function launcherHash(): string {
-  return createHash("sha256").update(readFileSync(REVIEWED_LAUNCHER)).digest("hex");
+function launcherHash(path = REVIEWED_LAUNCHER): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 function createCandidateConfig(scratch: string): string {
@@ -435,7 +437,7 @@ function createCandidateConfig(scratch: string): string {
   return candidateConfig;
 }
 
-function makeConfig(input: {
+export function makeConfig(input: {
   readonly dataDir: string;
   readonly gatewayPort: number;
   readonly modelBaseUrl: string;
@@ -444,7 +446,14 @@ function makeConfig(input: {
   readonly controlSocket: string;
   readonly workspaceRoot: string;
   readonly runtimeRoot: string;
+  readonly launcher?: string;
+  readonly allowId?: string;
+  readonly reviewedToken?: string;
+  readonly contextWindow?: number;
 }): Record<string, unknown> {
+  const launcher = input.launcher ?? REVIEWED_LAUNCHER;
+  const allowId = input.allowId ?? REVIEWED_ALLOW_ID;
+  const reviewedToken = input.reviewedToken ?? REVIEWED_TOKEN;
   return {
     tenantId: "test",
     logLevel: "warn",
@@ -458,7 +467,7 @@ function makeConfig(input: {
       models: [{
         id: "fixture-model",
         reasoning: false,
-        contextWindow: 32_768,
+        contextWindow: input.contextWindow ?? 32_768,
         maxTokens: 2_048,
         input: ["text"],
       }],
@@ -477,8 +486,8 @@ function makeConfig(input: {
         enabled: true,
         worker: { maxSessions: 2, idleTtlMs: 900_000, ringBytes: 262_144, stuckMs: 30_000, maxConcurrentAttentionTurns: 2 },
         allow: [{
-          id: REVIEWED_ALLOW_ID,
-          match: { path: REVIEWED_LAUNCHER, argsPrefix: [REVIEWED_TOKEN], hash: launcherHash() },
+          id: allowId,
+          match: { path: launcher, argsPrefix: [reviewedToken], hash: launcherHash(launcher) },
           scope: {
             filesystem: "workspace",
             network: "full",
@@ -554,7 +563,7 @@ function makeConfig(input: {
   };
 }
 
-function runBinding(dataDir: string, taskHandle: string): RunBinding {
+export function runBinding(dataDir: string, taskHandle: string): RunBinding {
   const digest = createHash("sha256").update(taskHandle).digest("hex");
   const db = new Database(join(dataDir, "memory.db"), { readonly: true });
   try {
@@ -687,7 +696,7 @@ function failedJoinDurableDiagnostic(databasePath: string, taskHandles: readonly
   }
 }
 
-function acceptedReportDiagnostic(databasePath: string, taskHandles: readonly string[]): string {
+export function acceptedReportDiagnostic(databasePath: string, taskHandles: readonly string[]): string {
   const db = new Database(databasePath, { readonly: true });
   try {
     const placeholders = taskHandles.map(() => "?").join(", ");
@@ -702,7 +711,7 @@ function acceptedReportDiagnostic(databasePath: string, taskHandles: readonly st
   }
 }
 
-function acceptedReportCounts(databasePath: string, taskHandles: readonly string[]): number[] {
+export function acceptedReportCounts(databasePath: string, taskHandles: readonly string[]): number[] {
   const db = new Database(databasePath, { readonly: true });
   try {
     return taskHandles.map((taskHandle) => {
@@ -715,7 +724,7 @@ function acceptedReportCounts(databasePath: string, taskHandles: readonly string
   }
 }
 
-describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", () => {
+describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four real Codex capability-service JOIN", () => {
   it("confines two task-bound workers and preserves candidate custody across one terminal exit", async () => {
     expect(process.env["COMIS_DEV_CREW_COMMIT"]).toBe(REVIEWED_GO_COMMIT);
     const binaryRoot = process.env["COMIS_DEV_CREW_BIN_DIR"];

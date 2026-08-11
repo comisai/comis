@@ -59,6 +59,7 @@ docker_args=(
   --mount type=volume,source=comis-confinement-runner,target=/runner
   --mount type=volume,source=comis-confinement-go-mod,target=/home/comis/go/pkg/mod
   --mount type=volume,source=comis-confinement-go-build,target=/home/comis/.cache/go-build
+  --mount type=volume,source=comis-confinement-models,target=/home/comis/.comis/models
   "${runner_image}"
 )
 

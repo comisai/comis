@@ -43,6 +43,7 @@ describe("capability-service Linux confinement runner", () => {
     expect(runner).toContain("target=/workspace/comis-dev-crew");
     expect(runner).toContain("target=/workspace/comis");
     expect(runner).toContain("target=/home/comis/.codex/auth.json,readonly");
+    expect(runner).toContain("target=/home/comis/.comis/models");
     expect(runner).not.toMatch(/source=\/[^,]*,target=\/,(?:,|\s)/u);
   });
 
@@ -97,18 +98,25 @@ describe("capability-service Linux confinement runner", () => {
 
   it("drives the complete E0 custody journey after the current join", () => {
     const dockerfile = source(dockerfilePath);
+    const dockerignore = source(dockerignorePath);
     const launcher = source(journeyLauncherPath);
     const scenario = source(journeyScenarioPath);
     const gate = source(journeyGatePath);
 
     expect(dockerfile).toContain("COPY --chmod=0755 test/confinement-runner/e0-codex-launcher.sh");
+    expect(dockerignore).toContain("!test/confinement-runner/e0-codex-launcher.sh");
     expect(dockerfile).toContain("/usr/local/bin/e0-codex-launcher");
     expect(launcher).toContain("devcrew-report decision");
     expect(launcher).toContain("devcrew-report resolved");
     expect(launcher).toContain("devcrew-report paused");
-    expect(scenario).toContain('shape: "ship"');
-    expect(scenario).toContain('shape: "scout"');
+    expect(scenario).toContain('["ship", "pull_request"]');
+    expect(scenario).toContain('["scout", "report"]');
     expect(scenario).toContain("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
+    expect(scenario).toContain("process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET");
+    expect(scenario).toContain('process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key"');
+    expect(scenario).toContain('normalizedMessage(`/attention ${attention.attentionId} ${E0_DECISION_ANSWER}`)');
+    expect(scenario).toContain('status === "response_pending"');
+    expect(scenario).toContain('status === "resolved"');
     expect(scenario).toContain("handback_task");
     expect(scenario).toContain("task_cleanup_holds");
     expect(scenario).toContain("DIRTY_WORKTREE_CLEANUP_REFUSED");

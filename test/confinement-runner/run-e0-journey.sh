@@ -59,8 +59,9 @@ pnpm build
 echo "Running current E0 composition JOIN against ${DEV_CREW_COMMIT}"
 COMIS_LIVE=1 \
 COMIS_E0_JOURNEY=1 \
+COMIS_E0_FULL=1 \
 COMIS_DEV_CREW_COMMIT="${DEV_CREW_COMMIT}" \
 COMIS_DEV_CREW_BIN_DIR="${DEV_CREW_BIN}" \
 pnpm exec vitest run --config test/live/vitest.config.ts "${LIVE_TEST}" --reporter=verbose --retry=0
 
-echo "E0_JOIN_BASELINE_PASS"
+echo "E0_JOURNEY_GATE_PASS"
