@@ -486,7 +486,8 @@ export function followupWaitFinished({
  * Has the driven turn actually ENDED, given the trajectory lines appended since the drive began?
  *
  * A terminal record alone is not turn-end: a turn can hand work OFF and finish, and both hand-off
- * paths were observed live on heavy questions.
+ * paths were observed live on heavy questions. A pre-model clarification is independently terminal:
+ * the input guard deliberately emits no model-backed session summary after returning its response.
  *   1. **background task** — the parent's own `session.summary` record carries
  *      `finishReason:"background_pending"` (same line; verified in live trajectories).
  *   2. **sub-agent spawn** — the parent turn finishes cleanly (`endReason:"success"`) while a
@@ -514,6 +515,7 @@ export function trajectoryTurnEnded(lines) {
     else if (
       line.includes('"type":"session.summary"')
       || line.includes('"type":"execution.aborted"')
+      || line.includes('"type":"request.clarification_required"')
     ) {
       if (!line.includes('"finishReason":"background_pending"')) terminal = true;
     }
