@@ -12,6 +12,7 @@ const MIN_SHARED_TERMS = 2;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
 
 interface PromptSkillRequestRoutingInput {
+  readonly currentRequestText: string;
   readonly requestRelevanceText: string;
   readonly priorUserRequest?: string;
   readonly skills: readonly PromptSkillCapability[];
@@ -59,13 +60,21 @@ export function applyPromptSkillRequestRouting(
   input: PromptSkillRequestRoutingInput,
 ): string[] {
   if (input.skills.length === 0) return [];
-  const queryText = input.requestRelevanceText.toLocaleLowerCase();
-  const queryTerms = terms(queryText);
+  const currentText = input.currentRequestText.toLocaleLowerCase();
+  const currentTerms = terms(currentText);
+  const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
+  const relevanceTerms = terms(relevanceText);
   const selectedSkills = input.skills
-    .map((skill) => ({ skill, score: scoreSkill(queryTerms, queryText, skill) }))
-    .filter((entry) => entry.score >= MIN_SHARED_TERMS)
+    .map((skill) => ({
+      skill,
+      currentScore: scoreSkill(currentTerms, currentText, skill),
+      relevanceScore: scoreSkill(relevanceTerms, relevanceText, skill),
+    }))
+    .filter((entry) => entry.currentScore >= MIN_SHARED_TERMS)
     .sort((left, right) =>
-      right.score - left.score || left.skill.name.localeCompare(right.skill.name)
+      right.currentScore - left.currentScore
+      || right.relevanceScore - left.relevanceScore
+      || left.skill.name.localeCompare(right.skill.name)
     )
     .slice(0, MAX_MATCHED_SKILLS)
     .map((entry) => entry.skill);

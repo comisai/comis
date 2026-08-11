@@ -59,6 +59,7 @@ describe("prompt skill request routing", () => {
     deferral.requestRelevantToolNames.push("find");
 
     const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: "find something that does",
       requestRelevanceText: [
         "u dont really know how to make flash cards properly",
         "find something that does",
@@ -87,6 +88,8 @@ describe("prompt skill request routing", () => {
     const deferral = result();
 
     const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "i need to understand heat pumps properly, not just a paragraph",
       requestRelevanceText:
         "i need to understand heat pumps properly, not just a paragraph",
       skills,
@@ -132,6 +135,7 @@ describe("prompt skill request routing", () => {
     const unrelated = result();
 
     expect(applyPromptSkillRequestRouting(unrelated, {
+      currentRequestText: "what is the weather today",
       requestRelevanceText: "what is the weather today",
       skills,
     })).toEqual([]);

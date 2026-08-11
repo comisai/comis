@@ -672,6 +672,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     config.skills?.toolDiscovery,
   );
   applyPromptSkillRequestRouting(deferralResult, {
+    currentRequestText: msg.text,
     requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
     priorUserRequest: recentUserTurns.at(-1),
     skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
