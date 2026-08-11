@@ -12,6 +12,8 @@ const MIN_SHARED_TERMS = 2;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
 const PRIOR_REQUEST_REFERENCE_PATTERN =
   /\b(?:again|continue|earlier|former|it|its|latter|one|ones|previous|same|something|that|them|these|this|those)\b/iu;
+const CONVERSATION_HISTORY_RECALL_PATTERN =
+  /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -99,6 +101,9 @@ export function applyPromptSkillRequestRouting(
   input: PromptSkillRequestRoutingInput,
 ): string[] {
   if (input.skills.length === 0) return [];
+  // Conversation-history lookup is owned by context assembly and scoped
+  // memory recall. Lexical overlap must not turn it into a task procedure.
+  if (CONVERSATION_HISTORY_RECALL_PATTERN.test(input.currentRequestText)) return [];
   const currentText = input.currentRequestText.toLocaleLowerCase();
   const currentTerms = terms(currentText);
   const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
