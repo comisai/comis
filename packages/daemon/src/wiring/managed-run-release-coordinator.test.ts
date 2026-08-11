@@ -66,11 +66,14 @@ describe("managed run release coordinator", () => {
     const result = await harness.coordinator.release(input);
 
     expect(result).toEqual({
-      kind: "released",
-      managedRunId: "managed-run_a",
-      workspaceLeaseId: "workspace-lease_a",
-      disposition: "reap_safe",
-      releasedAtMs: RELEASED_AT_MS,
+      ok: true,
+      value: {
+        kind: "released",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe",
+        releasedAtMs: RELEASED_AT_MS,
+      },
     });
     expect(harness.get).toHaveBeenCalledWith(
       { kind: "service", serviceInstanceId: "service-instance_a" },
@@ -96,8 +99,8 @@ describe("managed run release coordinator", () => {
   it("refuses mismatched authority and incomplete resource revocation", async () => {
     const mismatch = makeCoordinator({ record: record({ workspaceLeaseId: "workspace-lease_b" }) });
     await expect(mismatch.coordinator.release(input)).resolves.toEqual({
-      kind: "rejected",
-      reasonCode: "authority_mismatch",
+      ok: true,
+      value: { kind: "rejected", reasonCode: "authority_mismatch" },
     });
     expect(mismatch.revoke).not.toHaveBeenCalled();
     expect(mismatch.release).not.toHaveBeenCalled();
@@ -105,8 +108,8 @@ describe("managed run release coordinator", () => {
     const revoke = vi.fn(async () => false);
     const held = makeCoordinator({ revoke });
     await expect(held.coordinator.release(input)).resolves.toEqual({
-      kind: "rejected",
-      reasonCode: "resources_active",
+      ok: true,
+      value: { kind: "rejected", reasonCode: "resources_active" },
     });
     expect(held.release).not.toHaveBeenCalled();
   });
