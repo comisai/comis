@@ -116,6 +116,15 @@ export function hasOversizedLexicalToken(text: string): boolean {
   return tokenize(text).some((token) => token.length > MAX_CONTENT_TERM_CHARS);
 }
 
+/**
+ * Identify a large opaque payload that supplies data but no bounded content
+ * term describing what the user wants done with it.
+ */
+export function isOpaquePayloadWithoutInstruction(text: string): boolean {
+  return hasOversizedLexicalToken(text)
+    && buildRelevanceQuery([text]).terms.length === 0;
+}
+
 /** The shape {@link buildRelevanceQuery} returns and {@link scoreRelevance} consumes. */
 export interface RelevanceQuery {
   /** The de-duplicated content terms (stopwords removed), newest-turn terms first. */

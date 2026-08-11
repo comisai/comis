@@ -50,7 +50,7 @@ import { captureRecallObservability, emitRecallDegraded } from "./recall-observa
 import { applyProvenanceDownweighting } from "./recall-provenance.js";
 import {
   buildRelevanceQuery,
-  hasOversizedLexicalToken,
+  isOpaquePayloadWithoutInstruction,
 } from "./relevance-scorer.js";
 import { partitionRecentTailRecall } from "./recent-tail-recall-filter.js";
 import { gateLanes, resolveEffectiveBaseFloor, logPrefilterDrops, passesBaseFloor, type PrefilterAccumulator } from "./recall-security-prefilter.js";
@@ -100,7 +100,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // query terms while older task prose makes the combined query appear
       // healthy, allowing unrelated memory to become the only actionable text
       // in the model request.
-      if (hasOversizedLexicalToken(query)) {
+      if (isOpaquePayloadWithoutInstruction(query)) {
         deps.logger.debug(
           {
             agentId,

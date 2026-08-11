@@ -24,6 +24,7 @@ import {
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { ExecutionResult } from "./types.js";
+import { isOpaquePayloadWithoutInstruction } from "../rag/relevance-scorer.js";
 
 /**
  * GIANT-INPUT-WEDGE guard: the default maximum inbound user-message
@@ -96,6 +97,29 @@ export function validateInput(params: {
       passed: false,
       earlyResponse: `Your message is too large (${inputChars.toLocaleString()} characters; the limit is ${maxInputChars.toLocaleString()}). Please send a shorter message or split it into parts.`,
       earlyFinishReason: "input_too_large",
+    };
+  }
+
+  // An opaque payload is data, not a task. Letting it reach a model with the
+  // full conversation history can make an older workflow the only actionable
+  // prose in the request, causing the model to resume work the user did not
+  // ask for. An instruction beside the payload supplies bounded content terms
+  // and proceeds through the normal path.
+  if (typeof msg.text === "string" && isOpaquePayloadWithoutInstruction(msg.text)) {
+    logger.info(
+      {
+        chars: inputChars,
+        step: "input-shape",
+        classification: "opaque_payload_missing_instruction",
+      },
+      "Opaque payload requires an explicit instruction",
+    );
+    return {
+      passed: false,
+      earlyResponse:
+        "I received a large opaque text payload, but it does not include an instruction. "
+        + "Please tell me what you want me to do with it.",
+      earlyFinishReason: "stop",
     };
   }
 

@@ -139,7 +139,9 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     const { bus } = makeCaptureBus();
     const guard = makeGuard({});
     const result = validateInput({
-      msg: makeMessage({ text: "x".repeat(DEFAULT_MAX_INPUT_CHARS) }),
+      msg: makeMessage({
+        text: `analyze ${"x".repeat(DEFAULT_MAX_INPUT_CHARS - "analyze ".length)}`,
+      }),
       sessionKey: TEST_SESSION_KEY,
       agentId: "agent-1",
       inputGuard: guard,

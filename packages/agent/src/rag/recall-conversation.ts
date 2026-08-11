@@ -5,7 +5,7 @@ import {
   parseInboundMessageProvenanceBatch,
   type OriginalInboundMessage,
 } from "@comis/core";
-import { hasOversizedLexicalToken } from "./relevance-scorer.js";
+import { isOpaquePayloadWithoutInstruction } from "./relevance-scorer.js";
 
 export const RECENT_USER_TURN_COUNT = 8;
 
@@ -25,7 +25,7 @@ export function describeRecentUserTurnSelection(
     charCount: turns.join("\n").length,
     saturated: turns.length >= RECENT_USER_TURN_COUNT,
     recallDisposition: currentRequestText !== undefined
-      && hasOversizedLexicalToken(currentRequestText)
+      && isOpaquePayloadWithoutInstruction(currentRequestText)
       ? "skip_oversized_token"
       : "search",
   };
