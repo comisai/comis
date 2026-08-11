@@ -748,6 +748,31 @@ describe("AnnouncementBatcher", () => {
     expect(batcher.hasDelivered("governed-key")).toBe(true);
   });
 
+  it("discards a permanently rejected governed route instead of replaying it from dead letters", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: false,
+      failure: "operation_validation_blocked" as const,
+    }));
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten for the user"),
+      deadLetterQueue,
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "rejected-route-key" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      "rejected-route-key",
+      "no_reply",
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("rejected-route-key")).toBe(true);
+  });
+
   it("serializes a batch key while its parent execution is in flight", async () => {
     let resolveParent: ((value: string) => void) | undefined;
     const announceToParent = vi.fn().mockImplementation(() => new Promise<string>((resolve) => {
