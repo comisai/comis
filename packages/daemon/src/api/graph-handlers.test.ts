@@ -2,7 +2,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createGraphHandlers as createGraphHandlersRaw, transformNodes, validateGraphWarnings, schemaToExample, type GraphHandlerDeps } from "./graph-handlers/index.js";
 import { ok } from "@comis/shared";
-import type { NodeExecutionState } from "@comis/core";
+import {
+  runWithContext,
+  type NodeExecutionState,
+  type RequestContext,
+  type ResolvedTurnScope,
+} from "@comis/core";
 import { z } from "zod";
 import { createAgentDriver } from "../graph/drivers/agent-driver.js";
 import { createDebateDriver } from "../graph/drivers/debate-driver.js";
@@ -55,6 +60,35 @@ const VALID_NODES = [
   { node_id: "a", task: "Do task A" },
   { node_id: "b", task: "Do task B", depends_on: ["a"] },
 ];
+
+function makeTelegramTurnContext(): RequestContext {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-default",
+    conversationId: "chat-42",
+    conversationKind: "direct" as const,
+  };
+  const turnScope: ResolvedTurnScope = {
+    conversation: {
+      tenantId: "default",
+      agentId: "agent-1",
+      partition: {
+        kind: "endpoint-conversation-principal",
+        endpoint,
+        principalId: "user_a",
+      },
+    },
+    principal: { principalId: "user_a" },
+    endpoint,
+  };
+  return {
+    tenantId: "default",
+    traceId: "00000000-0000-4000-8000-000000000001",
+    startedAt: 1,
+    trustLevel: "admin",
+    turnScope,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -319,6 +353,55 @@ describe("graph-handlers", () => {
           announceChannelId: "chat-42",
         }),
       );
+    });
+
+    it("derives the completion route from trusted turn scope when raw route fields are absent", async () => {
+      const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
+      mockCoord.run.mockResolvedValue(ok("graph-uuid-scoped"));
+
+      await runWithContext(makeTelegramTurnContext(), () =>
+        handlers["graph.execute"]!({
+          nodes: VALID_NODES,
+          _callerSessionKey: "session-1",
+          _agentId: "agent-1",
+        }),
+      );
+
+      expect(mockCoord.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          announceChannelType: "telegram",
+          announceChannelId: "chat-42",
+        }),
+      );
+    });
+
+    it("rejects a raw completion route that conflicts with trusted turn scope", async () => {
+      const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
+      mockCoord.run.mockResolvedValue(ok("graph-uuid-conflict"));
+
+      await expect(
+        runWithContext(makeTelegramTurnContext(), () =>
+          handlers["graph.execute"]!({
+            nodes: VALID_NODES,
+            _callerSessionKey: "session-1",
+            _agentId: "agent-1",
+            _callerChannelType: "discord",
+            _callerChannelId: "other-chat",
+          }),
+        ),
+      ).rejects.toThrow("Graph announcement route conflicts with trusted turn scope");
+      expect(mockCoord.run).not.toHaveBeenCalled();
+    });
+
+    it("does not promise an automatic notification without a completion route", async () => {
+      const mockCoord = deps.graphCoordinator as ReturnType<typeof createMockCoordinator>;
+      mockCoord.run.mockResolvedValue(ok("graph-uuid-unrouted"));
+
+      const result = await handlers["graph.execute"]!({ nodes: VALID_NODES });
+
+      const hint = (result as Record<string, unknown>).hint;
+      expect(hint).toContain("no completion channel is available");
+      expect(hint).not.toContain("notified automatically");
     });
 
     it("throws when agentToAgent.enabled is false", async () => {
