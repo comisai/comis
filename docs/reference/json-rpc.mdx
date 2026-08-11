@@ -813,7 +813,10 @@ bodies. `recallDisposition` states what the turn's memory recall did with that
 window: `search` (the normal path) or `skip_oversized_token` -- the current
 request carried an oversized opaque token and no retrieval terms of its own, so
 recall was skipped rather than letting older turns supply the query and inject
-unrelated memory.
+unrelated memory. An oversized token made mostly of non-ASCII letters is read as
+possible space-free prose (the same open Unicode signal the input guard applies
+below), so a request written in a writing system that does not separate words
+still reports `search` and keeps its recall.
 
 A request that stopped **before** model dispatch to ask the user for an
 instruction carries a content-free **`requestClarification`** section --
