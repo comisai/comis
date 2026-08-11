@@ -653,11 +653,9 @@ describe("wrapToolForAutoBackground", () => {
       expect(wrapped).toBe(tool);
     });
 
-    it("a non-exec tool (e.g., 'web_search') is STILL wrapped when excludeTools does not list it (regression: only exec is narrowed)", () => {
-      // NB: 'sleep' moved to NEVER_AUTO_BACKGROUND_TOOLS (backgrounding a wait is
-      // self-defeating — live incident), so the generic example here is web_search.
+    it("a generic non-exec tool is still wrapped when excludeTools does not list it", () => {
       config.excludeTools = [];
-      const tool = createMockTool({ name: "web_search" });
+      const tool = createMockTool({ name: "test_generic_tool" });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));
 
       // Non-exec tools must still receive the wrapper (the wrapper is a NEW object,
@@ -732,6 +730,8 @@ describe("wrapToolForAutoBackground", () => {
       "video_generate",
       "discover_tools",
       "tokens_manage",
+      "web_search",
+      "web_fetch",
     ]) {
       it(`when tool.name === '${name}', wrapToolForAutoBackground returns the original tool unchanged (excludeTools=[])`, () => {
         config.excludeTools = [];
