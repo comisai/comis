@@ -594,24 +594,42 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
   });
 
   it("records unavailable automatic delivery without failing a completed graph", async () => {
+    const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const sharedDir = mkdtempSync(join(tmpdir(), "comis-graph-unavailable-"));
     const gs = createMinimalGraphRunState([{ nodeId: "final", output: "Short result" }]);
     gs.completedAt = undefined;
+    gs.sharedDir = sharedDir;
     gs.callerSessionKey = "tenant-a:user-a:chat-1";
     gs.callerAgentId = "agent-1";
+    (gs as GraphRunState & { callerTraceId?: string }).callerTraceId = "caller-trace-1";
     gs.announceChannelType = "telegram";
     gs.announceChannelId = "chat-1";
     authorizeGraphState(gs, "telegram", "chat-1");
     const { deps, logger } = completionDeps();
     delete (deps as { sendGovernedAnnouncement?: unknown }).sendGovernedAnnouncement;
 
-    const result = await handleGraphCompletion({} as never, deps, gs);
+    try {
+      const result = await handleGraphCompletion({} as never, deps, gs);
 
-    expect(result).toEqual(ok(undefined));
-    expect(logger.error).not.toHaveBeenCalled();
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ announcementDelivery: "unavailable" }),
-      "Graph execution complete",
-    );
+      expect(result).toEqual(ok(undefined));
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ announcementDelivery: "unavailable" }),
+        "Graph execution complete",
+      );
+      const metadata = JSON.parse(
+        readFileSync(join(sharedDir, "_run-metadata.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(metadata).toMatchObject({
+        sessionKey: "tenant-a:user-a:chat-1",
+        traceId: "caller-trace-1",
+        announcementDelivery: "unavailable",
+      });
+    } finally {
+      rmSync(sharedDir, { recursive: true, force: true });
+    }
   });
 
   it("keeps plugin channel announcements on the governed extensible path", async () => {

@@ -487,6 +487,7 @@ describe("comis explain renders terminal graph lifecycle evidence", () => {
         nodesFailed: 0,
         nodesSkipped: 0,
         nodesRetried: 1,
+        announcementDelivery: "unavailable",
         nodes: [
           {
             nodeId: "weather",
@@ -523,6 +524,7 @@ describe("comis explain renders terminal graph lifecycle evidence", () => {
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("Graph:      completed");
+    expect(output).toContain("notification=unavailable");
     expect(output).toContain("weather");
     expect(output).toContain("decision");
     expect(output).toContain("attempts=2");
