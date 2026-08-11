@@ -241,22 +241,7 @@ export function createManagedRunContinuationCoordinator(
           deliveryState: "unavailable",
           nowMs: deps.nowMs(),
         })
-        : preliminary.status === "candidate_complete" && execution?.ok
-          ? reduceManagedRunState({
-            currentStatus: record.status,
-            currentStatusReason: record.statusReason,
-            openAttentionCount: record.openAttentionCount,
-            reports,
-            throughReportSequence,
-            lastHeartbeatAtMs: record.lastHeartbeatAtMs,
-            heartbeatMaxAgeMs: deps.heartbeatMaxAgeMs,
-            heartbeatRequired: true,
-            evidenceHealth,
-            verifiedOutcome: "succeeded",
-            deliveryState: execution.value.deliveryState,
-            nowMs: deps.nowMs(),
-          })
-          : preliminary;
+        : preliminary;
       const committedAtMs = deps.nowMs();
       const outcome = terminalOutcome(finalReduction, committedAtMs);
       const committed = await invoke(() => deps.store.commitReducedState(scope, {

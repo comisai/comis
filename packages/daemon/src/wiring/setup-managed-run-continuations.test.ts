@@ -194,8 +194,8 @@ describe("managed-run continuation composition", () => {
       cleanupRequired: false,
     }, "ready");
     expect(store.commitReducedState).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
-      status: "succeeded",
-      statusReason: "outcome_verified",
+      status: "candidate_complete",
+      statusReason: "verification_pending",
     }));
     await setup.value.shutdown();
     expect(engine.shutdown).toHaveBeenCalledOnce();
@@ -281,8 +281,8 @@ describe("managed-run continuation composition", () => {
       "ready",
     );
     expect(store.commitReducedState).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
-      status: "succeeded",
-      statusReason: "outcome_verified",
+      status: "candidate_complete",
+      statusReason: "verification_pending",
     }));
     await setup.value.shutdown();
   });
