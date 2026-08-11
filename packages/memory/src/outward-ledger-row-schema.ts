@@ -42,6 +42,7 @@ export const OutwardLedgerDbRowSchema = z.strictObject({
   channel_type: z.string(),
   channel_id: z.string(),
   operation_kind: z.enum([
+    "attachment_send",
     "message_send",
     "message_reply",
     "message_react",

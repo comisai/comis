@@ -25,6 +25,7 @@ import {
   type ManagedRunContinuationExecutionOutcome,
 } from "./managed-run-continuation-coordinator.js";
 import type { ManagedRunVerifiedDelivery } from "./managed-run-evidence-verifier.js";
+import { materializeManagedRunAttachment } from "./managed-run-delivery-attachment.js";
 import {
   createManagedRunContinuationRuntime,
   type ManagedRunContinuationRuntime,
@@ -61,16 +62,12 @@ export function createManagedRunContinuationDelivery(deps: {
   readonly adaptersByType: ReadonlyMap<string, ChannelPort>;
   readonly deliveryService: DeliveryService;
   readonly outwardLedger?: OutwardSendLedgerPort;
+  readonly attachmentDirectory?: string;
   readonly logger: ComisLogger;
 }): ManagedRunContinuationDelivery {
   return async (record, claimId, finalized, phase, verifiedDelivery) => {
     if (phase === "cleanup_pending") return ok({ deliveryState: "unavailable" });
-    if (verifiedDelivery?.kind === "attachment") return ok({ deliveryState: "unavailable" });
     const response = isSilentResponse(finalized.response) ? "" : finalized.response;
-    const text = verifiedDelivery?.kind === "reference"
-      ? [response, verifiedDelivery.url].filter((part) => part.length > 0).join("\n\n")
-      : response;
-    if (text.length === 0) return ok({ deliveryState: "not_required" });
     if (deps.outwardLedger === undefined) return ok({ deliveryState: "unavailable" });
     const endpoint = record.turnScope.endpoint;
     const adapter = deps.adaptersByType.get(endpoint.channelType);
@@ -80,6 +77,69 @@ export function createManagedRunContinuationDelivery(deps: {
     const idempotencyKey = `managed-run-continuation:${claimId}`;
     const allocated = await deps.outwardLedger.allocateStep(record.rootRunId, idempotencyKey);
     if (!allocated.ok) return allocated;
+    if (verifiedDelivery?.kind === "attachment") {
+      const sendAttachment = adapter.sendAttachment;
+      if (deps.attachmentDirectory === undefined || sendAttachment === undefined) {
+        return ok({ deliveryState: "unavailable" });
+      }
+      const materialized = materializeManagedRunAttachment(
+        deps.attachmentDirectory,
+        claimId,
+        verifiedDelivery,
+      );
+      if (!materialized.ok) return materialized;
+      const operationText = JSON.stringify({
+        evidenceRef: verifiedDelivery.evidenceRef,
+        contentHash: verifiedDelivery.contentHash,
+        fileName: verifiedDelivery.fileName,
+        mediaType: verifiedDelivery.mediaType,
+        caption: response,
+      });
+      const delivered = await wrapOutwardSend({
+        ledger: deps.outwardLedger,
+        rootRunId: record.rootRunId,
+        outwardStepIndex: allocated.value,
+        agentId: record.agentId,
+        channelType: endpoint.channelType,
+        channelId: endpoint.conversationId,
+        operationKind: "attachment_send",
+        operationOptions: {
+          evidenceRef: verifiedDelivery.evidenceRef,
+          contentHash: verifiedDelivery.contentHash,
+          fileName: verifiedDelivery.fileName,
+          mediaType: verifiedDelivery.mediaType,
+        },
+        text: operationText,
+        logger: deps.logger,
+        doSend: async () => {
+          const attempted = await fromPromise(sendAttachment(
+            endpoint.conversationId,
+            {
+              type: "file",
+              url: materialized.value.path,
+              mimeType: verifiedDelivery.mediaType,
+              fileName: verifiedDelivery.fileName,
+              ...(response.length === 0 ? {} : { caption: response }),
+            },
+            endpoint.threadId === undefined ? {} : { threadId: endpoint.threadId },
+          ));
+          if (!attempted.ok) return attempted;
+          if (!attempted.value.ok) return attempted.value;
+          return attempted.value.value.kind === "tracked"
+            ? ok({ messageId: attempted.value.value.messageId })
+            : err(new Error("Managed-run attachment delivery did not return a platform receipt"));
+        },
+      });
+      const cleaned = materialized.value.cleanup();
+      if (!cleaned.ok) return cleaned;
+      return delivered.ok
+        ? ok({ deliveryState: "verified", verifiedEvidenceRef: verifiedDelivery.evidenceRef })
+        : err(delivered.error);
+    }
+    const text = verifiedDelivery?.kind === "reference"
+      ? [response, verifiedDelivery.url].filter((part) => part.length > 0).join("\n\n")
+      : response;
+    if (text.length === 0) return ok({ deliveryState: "not_required" });
     const delivered = await wrapOutwardSend({
       ledger: deps.outwardLedger,
       rootRunId: record.rootRunId,

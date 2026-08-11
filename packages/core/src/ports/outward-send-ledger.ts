@@ -50,6 +50,7 @@ export type ReconcileOutcome = "unresolved";
 
 /** Closed discriminator for the irreversible outward operation. */
 export type OutwardOperationKind =
+  | "attachment_send"
   | "message_send"
   | "message_reply"
   | "message_react"

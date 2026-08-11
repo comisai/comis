@@ -430,7 +430,7 @@ describe("managed-run continuation composition", () => {
         mimeType: "text/markdown",
         fileName: "report.md",
         caption: "Verified report",
-      }, expect.objectContaining({ threadId: undefined }));
+      }, {});
       expect(ledger.begin).toHaveBeenCalledWith(expect.objectContaining({
         operationKind: "attachment_send",
       }));

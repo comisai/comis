@@ -495,6 +495,45 @@ describe("ensureOutwardLedgerTable wiring — real initSchema layout", () => {
     }
   });
 
+  it("expands a current retained ledger for attachment sends without losing rows", async () => {
+    const existing = new Database(":memory:");
+    try {
+      existing.exec(`
+        CREATE TABLE outward_send_ledger (
+          id TEXT PRIMARY KEY, root_run_id TEXT NOT NULL, step_index INTEGER NOT NULL,
+          agent_id TEXT NOT NULL, channel_type TEXT NOT NULL, channel_id TEXT NOT NULL,
+          operation_kind TEXT NOT NULL CHECK(operation_kind IN ('message_send','message_reply','message_react','cross_session_announcement','retained_unclassified')),
+          operation_fingerprint TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('send_attempt_started','unknown_after_send','committed','failed','unresolved')),
+          platform_message_id TEXT, content_digest TEXT NOT NULL,
+          reconcile_outcome TEXT CHECK(reconcile_outcome IS NULL OR reconcile_outcome = 'unresolved'),
+          attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+          created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+        );
+      `);
+      existing.prepare(`
+        INSERT INTO outward_send_ledger VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "retained-run:0", "retained-run", 0, "agent-1", "echo", "conversation-a",
+        "message_send", "a".repeat(64), "committed", "message-a", "b".repeat(64),
+        null, 1, null, 900, 950,
+      );
+
+      ensureOutwardLedgerTable(existing);
+      const ledger = createSqliteOutwardSendLedger(existing, nowMs);
+      expect(await ledger.lookup("retained-run", 0)).toMatchObject({
+        ok: true,
+        value: { operationKind: "message_send", platformMessageId: "message-a" },
+      });
+      expect(await ledger.begin(makeBegin({
+        rootRunId: "attachment-run",
+        operationKind: "attachment_send",
+      }))).toEqual({ ok: true, value: undefined });
+    } finally {
+      existing.close();
+    }
+  });
+
   it("the REAL initSchema upgrades a retained ledger without losing committed receipts", async () => {
     const existing = new Database(":memory:");
     try {

@@ -2252,6 +2252,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       adaptersByType,
       deliveryService,
       ...(durableResume.outwardLedger === undefined ? {} : { outwardLedger: durableResume.outwardLedger }),
+      attachmentDirectory: safePath(handle.dataDir, "managed-run-delivery-attachments"),
       logger: daemonLogger,
     }),
     resolveEvidencePolicies: (serviceInstanceId) => {
