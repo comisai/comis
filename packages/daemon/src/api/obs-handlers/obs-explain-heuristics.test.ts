@@ -1124,6 +1124,27 @@ describe("obs-explain-heuristics", () => {
     expect(r?.detail).toMatch(/request_tool_nudge|recovery/iu);
   });
 
+  it("reports completed tools when a later workflow requirement stalls", () => {
+    const r = rootCause(makeSignals({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      toolStats: {
+        read: { ok: 1, failed: 0 },
+      },
+      recoveries: {
+        total: 1,
+        succeeded: 0,
+        byReason: { request_tool_nudge: 1 },
+      },
+    }));
+
+    expect(r?.code).toBe("tool_invocation_stall");
+    expect(r?.detail).toContain("completed current-turn invocations [read=1]");
+    expect(r?.detail).not.toContain("no current-turn invocation completed");
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/skill routing|workflow requirement/iu);
+  });
+
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
     // Grounded in live Hebrew-language runs where recall silently returned
     // nothing and comis explain root-caused nothing.
