@@ -564,7 +564,7 @@ describe("wrapToolForAutoBackground", () => {
       };
       const promoteSpy = vi.spyOn(manager, "promote");
       const tool = createMockTool({
-        name: "web_search",
+        name: "test_generic_tool",
         resolveAfterMs: 200,
         result: toolOk("foreground-search-result"),
       });
@@ -706,7 +706,7 @@ describe("wrapToolForAutoBackground", () => {
   //     live), so the "backgrounded" placeholder is redundant and is exactly
   //     what tricks the model into polling.
   // ---------------------------------------------------------------------------
-  describe("never-auto-background tools (meta, secret-once, and self-delivering media)", () => {
+  describe("never-auto-background tools with results required by the current turn", () => {
     // `sleep` joined the set after a second live incident (2026-07-08): the model
     // slept to await a backgrounded MCP result; the sleep itself hit the 10s
     // threshold, promoted, and its raw 'Background task "sleep" completed.'
@@ -759,7 +759,7 @@ describe("wrapToolForAutoBackground", () => {
       config.excludeTools = [];
       const promoteSpy = vi.spyOn(manager, "promote");
       const tool = createMockTool({
-        name: "web_search",
+        name: "test_generic_tool",
         resolveAfterMs: config.autoBackgroundMs + 100,
         result: toolOk("late"),
       });
