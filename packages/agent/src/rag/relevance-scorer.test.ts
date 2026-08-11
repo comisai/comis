@@ -155,6 +155,18 @@ describe("opaque-payload classification — admission vs recall are separate que
     }
   });
 
+  it("keeps recall available for admitted space-free prose", () => {
+    for (const request of [
+      "请".repeat(200),
+      "ก".repeat(200),
+      "私".repeat(60) + "の".repeat(80),
+      "ᬓ".repeat(200),
+    ]) {
+      expect(isOpaquePayloadWithoutRetrievalTerms(request), request.slice(0, 8))
+        .toBe(false);
+    }
+  });
+
   it("still refuses a space-free payload that is not prose", () => {
     expect(isOpaquePayloadWithoutInstruction("deadbeef".repeat(40))).toBe(true);
     // A payload with a few decorative prose characters is still a payload.
