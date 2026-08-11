@@ -142,6 +142,45 @@ describe("persistInboundMessageProvenance", () => {
     expect(planned.value.ledgerContent).not.toContain("Voice message transcription");
   });
 
+  it("keeps an oversized preprocessing projection from dropping the committed turn", () => {
+    const appendCustomEntry = vi.fn()
+      .mockReturnValueOnce("provenance-entry")
+      .mockReturnValueOnce("conversation-entry");
+    const question = "so what should i do about it";
+    const message = {
+      ...first,
+      text: question,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    const transcript = "and then the neighbour called again about the fence. "
+      .repeat(2_000);
+    const conversationText =
+      `[Voice message transcription]: ${transcript}\n\n${question}`;
+    expect(conversationText.length).toBeGreaterThan(65_536);
+
+    const result = appendInboundMessageProvenance(
+      makeSessionManager(appendCustomEntry),
+      { ...planned.value, conversationText },
+    );
+
+    expect(result).toEqual({ ok: true, value: "conversation-entry" });
+    expect(appendCustomEntry).toHaveBeenCalledTimes(2);
+    const appendedConversation = appendCustomEntry.mock.calls[1]?.[1] as {
+      batchId: string;
+      text: string;
+    };
+    expect(appendedConversation.batchId).toBe(first.id);
+    expect(appendedConversation.text.length).toBeLessThanOrEqual(65_536);
+    expect(appendedConversation.text.startsWith(
+      "[Voice message transcription]: and then the neighbour called",
+    )).toBe(true);
+    expect(appendedConversation.text.endsWith(question)).toBe(true);
+  });
+
   it("persists the content-free forwarded marker with the physical message", () => {
     const message = {
       ...first,

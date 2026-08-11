@@ -156,13 +156,14 @@ export type ExecutionResult = ExecutionResultBase & (
 );
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 23 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 25 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
 // promptTimeout, workspacePolicySnapshot/responseLocalePolicy for immutable background work,
 // finalizedResultJournalKey/onProviderStart/suppressFinalResponseAfterOutboundDelivery
-// for durable provider execution,
+// for durable provider execution, outboundAudioAutoDelivery for a turn the
+// delivery layer speaks,
 // capabilityAccess for isolated model-only runs, and workspaceDir for an
 // isolated worktree run). They are
 // not a cluster-split candidate — each describes ONE execution's override surface,
@@ -242,6 +243,10 @@ export interface ExecutionOverrides {
     channelType: string;
     channelId: string;
   };
+  /** The configured outbound voice route speaks this turn's reply after the
+   *  execution completes, so audio delivery leaves no current-turn tool
+   *  receipt for the response-grounding guards to read. */
+  outboundAudioAutoDelivery?: boolean;
   /** Awaited after the exact terminal result is finalized and before execute resolves. */
   onFinalizedResult?: (
     result: ExecutionResult,

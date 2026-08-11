@@ -1978,6 +1978,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     response: result.response ?? "",
     toolExecResults: bridgeResult.toolExecResults,
     currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    runtimeAudioDelivery:
+      params.executionOverrides?.outboundAudioAutoDelivery === true,
     honestResponse: buildOutboundAudioEvidenceMissingReply(
       replyLanguage,
       localeCatalog,
@@ -1991,7 +1993,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         errorKind: "precondition" as const,
         hint:
           "The response claimed outbound audio delivery without a successful tts_synthesize "
-          + "or trusted completion receipt; inspect tool admission and delivery in comis explain.",
+          + "receipt, a trusted completion receipt, or a configured voice route for this "
+          + "channel; inspect tool admission, integrations.media.tts.autoMode, and delivery "
+          + "in comis explain.",
       },
       "Unverified outbound audio delivery claim replaced",
     );
@@ -2035,7 +2039,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         errorKind: "precondition" as const,
         hint:
           "The response claimed image creation or delivery without a successful image_generate "
-          + "or trusted completion receipt; inspect tool admission and delivery in comis explain.",
+          + "receipt, a successful message attach receipt, or a trusted completion receipt; "
+          + "inspect tool admission and delivery in comis explain.",
       },
       "Unverified outbound image completion claim replaced",
     );

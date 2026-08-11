@@ -493,6 +493,9 @@ const OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS = [
  * Require an authoritative delivery receipt before preserving prose that says
  * a current request was spoken or delivered as audio. A background spawn is
  * only a handoff; the trusted completion relay is the receipt for that path.
+ * A synthesis tool call is not the only way audio reaches the user: when the
+ * runtime's own voice route speaks this turn's reply, that configured delivery
+ * is the receipt, because no tool call can exist for it.
  */
 export function enforceOutboundAudioEvidence(params: {
   request: string;
@@ -503,6 +506,8 @@ export function enforceOutboundAudioEvidence(params: {
     backgrounded?: boolean;
   }>;
   currentActionEvidence?: boolean;
+  /** The configured outbound voice route speaks this turn's reply itself. */
+  runtimeAudioDelivery?: boolean;
   honestResponse: string;
 }): OutboundAudioEvidenceGuardResult {
   const requested = OUTBOUND_AUDIO_REQUEST_PATTERNS.some(
@@ -516,7 +521,11 @@ export function enforceOutboundAudioEvidence(params: {
       && result.success
       && result.backgrounded !== true,
   );
-  if (successfulSynthesis || params.currentActionEvidence === true) {
+  if (
+    successfulSynthesis
+    || params.currentActionEvidence === true
+    || params.runtimeAudioDelivery === true
+  ) {
     return { response: params.response, corrected: false };
   }
 
@@ -572,12 +581,18 @@ const OUTBOUND_IMAGE_ARTIFACT_CLAIM_PATTERNS = [
   OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS[1],
 ] as const;
 
-/** Require generation or trusted completion proof for current image claims. */
+/**
+ * Require generation, an outbound attachment receipt, or trusted completion
+ * proof for current image claims. Generation is not the only way a picture
+ * reaches the user — an attachment delivered by the message tool is the
+ * authoritative receipt for an image the agent produced by other means.
+ */
 export function enforceOutboundImageEvidence(params: {
   request: string;
   response: string;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
+    action?: string;
     success: boolean;
     backgrounded?: boolean;
   }>;
@@ -589,13 +604,14 @@ export function enforceOutboundImageEvidence(params: {
   );
   if (!requested) return { response: params.response, corrected: false };
 
-  const successfulGeneration = (params.toolExecResults ?? []).some(
+  const successfulDelivery = (params.toolExecResults ?? []).some(
     (result) =>
-      result.toolName === "image_generate"
-      && result.success
-      && result.backgrounded !== true,
+      result.success
+      && result.backgrounded !== true
+      && (result.toolName === "image_generate"
+        || (result.toolName === "message" && result.action === "attach")),
   );
-  if (successfulGeneration || params.currentActionEvidence === true) {
+  if (successfulDelivery || params.currentActionEvidence === true) {
     return { response: params.response, corrected: false };
   }
 

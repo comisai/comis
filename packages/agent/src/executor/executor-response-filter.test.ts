@@ -1374,6 +1374,7 @@ type OutboundAudioEvidenceGuard = (params: {
     backgrounded?: boolean;
   }>;
   currentActionEvidence?: boolean;
+  runtimeAudioDelivery?: boolean;
   honestResponse: string;
 }) => {
   response: string;
@@ -1428,6 +1429,34 @@ describe("outbound audio evidence guard", () => {
         honestResponse,
       }).corrected).toBe(true);
     }
+  });
+
+  it("accepts the runtime's own voice route as delivery proof for this turn", () => {
+    // The configured voice route speaks the reply after execution returns, so
+    // a truthful spoken answer can never carry a synthesis tool receipt.
+    const response = "Done — here is the summary, read out loud.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "can you please reply with a voice message?",
+      response,
+      toolExecResults: [],
+      runtimeAudioDelivery: true,
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("still replaces an audio claim when no voice route speaks this turn", () => {
+    expect(outboundAudioEvidenceGuard()({
+      request: "can you please reply with a voice message?",
+      response: "Done — the voice message is sent.",
+      toolExecResults: [],
+      runtimeAudioDelivery: false,
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_audio_evidence",
+    });
   });
 
   it("accepts a trusted background completion receipt for delivered audio", () => {
@@ -1518,6 +1547,7 @@ type OutboundImageEvidenceGuard = (params: {
   response: string;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
+    action?: string;
     success: boolean;
     backgrounded?: boolean;
   }>;
@@ -1572,6 +1602,33 @@ describe("outbound image evidence guard", () => {
       expect(outboundImageEvidenceGuard()({
         request: "could you create a small calendar image?",
         response: "The requested image is ready.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("accepts a successful outbound attachment receipt for an image built without the generator", () => {
+    // An image rendered by exec or an integration reaches the user through the
+    // message tool's attach action; that delivery receipt is the proof.
+    const response = "Done — I created the chart image and sent it to the group.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "please render a picture of the weekly totals and post it to the group",
+      response,
+      toolExecResults: [{ toolName: "message", action: "attach", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not accept a failed or non-attaching message call as image delivery proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "message", action: "attach", success: false }],
+      [{ toolName: "message", action: "send", success: true }],
+    ]) {
+      expect(outboundImageEvidenceGuard()({
+        request: "please render a picture of the weekly totals and post it to the group",
+        response: "Done — I created the chart image and sent it to the group.",
         toolExecResults,
         honestResponse,
       }).corrected).toBe(true);

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseSkillManifest } from "@comis/skills";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const target = readFileSync(
@@ -55,9 +56,18 @@ describe("real-user target source claims", () => {
   it("declares an explicitly empty requirements block for the dependency-free research skill", () => {
     // "No block" and "needs nothing" are different states to the runtime: a shipped skill with no
     // `comis.requires` cannot be pre-flighted at all, and the registry warns about it on every
-    // boot. Dependency-free is declared with empty arrays, not by omission.
-    expect(deepResearch).toContain("\n  requires:");
-    expect(deepResearch).toMatch(/\n {2}requires:\n(?: {4}#[^\n]*\n)* {4}bins: \[\]\n {4}env: \[\]/u);
+    // boot. Dependency-free is declared with empty arrays, not by omission. Asserted through the
+    // registry's own manifest parser, which is what decides that difference at boot — an omitted
+    // block parses to `undefined`, never to empty arrays.
+    for (const [label, source] of [
+      ["skills/deep-research", deepResearch],
+      ["bundled deep-research", bundledDeepResearch],
+    ] as const) {
+      const manifest = parseSkillManifest(source);
+      expect(manifest.ok, `${label}: ${manifest.ok ? "" : manifest.error.message}`).toBe(true);
+      if (!manifest.ok) continue;
+      expect(manifest.value.comis?.requires, label).toEqual({ bins: [], env: [] });
+    }
     expect(target).toContain(
       "`deep-research` declares an empty `comis.requires` (dependency-free); every skill with external requirements declares its own `comis.requires`",
     );

@@ -18,8 +18,6 @@ export interface GraphDispatchHintInput {
   readonly announceChannelId?: string;
   /** Whether retained (durable) completion delivery is available. */
   readonly durableDeliveryEnabled: boolean;
-  /** The agent whose durability knob governs retained delivery. */
-  readonly agentId: string;
 }
 
 const NO_AUTOMATIC_NOTIFICATION =
@@ -32,8 +30,11 @@ export function graphDispatchHint(input: GraphDispatchHintInput): string {
     return `Pipeline launched, but no completion channel is available. ${NO_AUTOMATIC_NOTIFICATION}`;
   }
   if (!input.durableDeliveryEnabled) {
+    // The store is daemon-wide: it is built from the autonomy-bearing agent's
+    // knob, which is not necessarily the agent dispatching this pipeline.
     return "Pipeline launched, but retained completion delivery is disabled "
-      + `(agents.${input.agentId}.autonomy.durability.enabled). ${NO_AUTOMATIC_NOTIFICATION}`;
+      + "(autonomy.durability.enabled on the autonomy-bearing agent). "
+      + NO_AUTOMATIC_NOTIFICATION;
   }
   return "Pipeline launched — your job is now DONE. Tell the user the pipeline is running "
     + "(and what it will produce), then STOP. Do NOT research this topic yourself, do NOT "

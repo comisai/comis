@@ -39,7 +39,6 @@ describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
       announceChannelType: "telegram",
       announceChannelId: "678314278",
       durableDeliveryEnabled: true,
-      agentId: "default",
     }).toLowerCase();
 
     expect(hint).toContain("done");
@@ -51,7 +50,6 @@ describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
   it("withholds the automatic-notification promise when no completion channel exists", () => {
     const hint = graphDispatchHint({
       durableDeliveryEnabled: true,
-      agentId: "default",
     });
 
     expect(hint).toContain("no completion channel is available");
@@ -59,15 +57,19 @@ describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
     expect(hint).not.toContain("notified automatically");
   });
 
-  it("names the durability knob when retained completion delivery is disabled", () => {
+  it("names the durability knob without misattributing it to the dispatching agent", () => {
+    // The durable-run store is daemon-wide: it is resolved from the
+    // autonomy-bearing agent, so naming the dispatcher would send an operator
+    // to a key whose value changes nothing.
     const hint = graphDispatchHint({
       announceChannelType: "telegram",
       announceChannelId: "678314278",
       durableDeliveryEnabled: false,
-      agentId: "mldag",
     });
 
-    expect(hint).toContain("agents.mldag.autonomy.durability.enabled");
+    expect(hint).toContain("autonomy.durability.enabled");
+    expect(hint).toContain("autonomy-bearing agent");
+    expect(hint).not.toContain("agents.mldag.");
     expect(hint).toContain("do not promise an automatic notification");
     expect(hint).not.toContain("notified automatically");
   });

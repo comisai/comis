@@ -44,6 +44,10 @@ const MAX_PROVENANCE_CHUNKS = 32;
 /** SDK-only record that keeps trusted preprocessing output out of raw provenance. */
 const INBOUND_CONVERSATION_TEXT_CUSTOM_TYPE = "comis.inbound-conversation-text";
 
+/** Marks where an oversized preprocessing projection lost its middle. */
+const CONVERSATION_TEXT_ELISION =
+  "\n\n[Preprocessed context elided to fit the durable record limit.]\n\n";
+
 const InboundConversationTextSchema = z.strictObject({
   schemaVersion: z.literal(1),
   batchId: z.guid(),
@@ -220,27 +224,49 @@ export function planInboundMessageProvenance(
   return ok({ payloads, ledgerContent });
 }
 
-/** Append one fully planned occurrence to the SDK session tree. */
+/**
+ * Bound a preprocessing projection to the durable record ceiling.
+ *
+ * Media enrichment prepends transcripts and rejection notices to a message
+ * text that is already allowed to fill the whole normalized limit, so the
+ * projection alone can outgrow it. Both ends stay recoverable: the head keeps
+ * the enrichment prefixes, the tail keeps what the sender actually typed.
+ */
+function boundConversationText(text: string): string {
+  if (text.length <= MAX_NORMALIZED_MESSAGE_TEXT_CHARS) return text;
+  const budget = MAX_NORMALIZED_MESSAGE_TEXT_CHARS - CONVERSATION_TEXT_ELISION.length;
+  const tailChars = Math.floor(budget / 4);
+  let head = text.slice(0, budget - tailChars);
+  let tail = text.slice(text.length - tailChars);
+  const headTrailing = head.charCodeAt(head.length - 1);
+  if (headTrailing >= 0xd800 && headTrailing <= 0xdbff) head = head.slice(0, -1);
+  const tailLeading = tail.charCodeAt(0);
+  if (tailLeading >= 0xdc00 && tailLeading <= 0xdfff) tail = tail.slice(1);
+  return `${head}${CONVERSATION_TEXT_ELISION}${tail}`;
+}
+
+/**
+ * Append one fully planned occurrence to the SDK session tree.
+ *
+ * The physical ledger records are authoritative and always append. The
+ * preprocessing projection is an enhancement of canonical history, so a
+ * projection that cannot be represented degrades to the physical render
+ * instead of failing the turn the ledger already committed.
+ */
 export function appendInboundMessageProvenance(
   sessionManager: SessionManager,
   plan: InboundMessageProvenancePlan,
 ): Result<string, Error> {
   let conversationText: InboundConversationText | undefined;
-  if (plan.conversationText !== undefined) {
-    const batchId = plan.payloads[0]?.batchId;
-    if (batchId === undefined) {
-      return err(new Error("Inbound conversation text has no provenance batch identity"));
-    }
+  const batchId = plan.payloads[0]?.batchId;
+  if (plan.conversationText !== undefined && batchId !== undefined) {
     const scrubbed = scrubSecretsFromText(plan.conversationText);
     const parsed = InboundConversationTextSchema.safeParse({
       schemaVersion: 1,
       batchId,
-      text: scrubbed.text,
+      text: boundConversationText(scrubbed.text),
     });
-    if (!parsed.success) {
-      return err(new Error("Inbound conversation text failed validation"));
-    }
-    conversationText = parsed.data;
+    conversationText = parsed.success ? parsed.data : undefined;
   }
 
   return tryCatch(() => {

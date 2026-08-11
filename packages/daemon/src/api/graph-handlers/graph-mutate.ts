@@ -315,7 +315,6 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
           ...(announceChannelType === undefined ? {} : { announceChannelType }),
           ...(announceChannelId === undefined ? {} : { announceChannelId }),
           durableDeliveryEnabled: deps.durableRuns !== undefined,
-          agentId: String(rawParams._agentId ?? deps.defaultAgentId),
         }),
         ...(unresolvedWarnings.length > 0 && { warnings: unresolvedWarnings }),
       };

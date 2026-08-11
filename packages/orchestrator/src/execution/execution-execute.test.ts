@@ -517,3 +517,83 @@ describe("executeLlm — resource-abort delivery-signal recovery", () => {
     expect(out.deliverySignal.aborted, "a user-cancel abort still suppresses delivery").toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Runtime voice delivery signal
+// ---------------------------------------------------------------------------
+
+/**
+ * The voice route speaks the reply in the DELIVERY stage, after the executor's
+ * response-grounding guards have already run. Those guards therefore need to
+ * learn from this stage that audio delivery for this turn carries no tool
+ * receipt, or a truthful spoken answer is replaced with a denial the same
+ * voice route then reads aloud.
+ */
+describe("executeLlm — configured voice delivery signal", () => {
+  function makeOverridesCapturingExecutor(): {
+    executor: AgentExecutor;
+    getOverrides: () => Record<string, unknown> | undefined;
+  } {
+    let captured: Record<string, unknown> | undefined;
+    const executor: AgentExecutor = {
+      execute: vi.fn(async (...args: unknown[]) => {
+        captured = args[7] as Record<string, unknown> | undefined;
+        return {
+          response: "ok",
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 10, output: 5, total: 15 },
+          cost: { total: 0 },
+          stepsExecuted: 0,
+          llmCalls: 1,
+          finishReason: "stop" as const,
+        };
+      }),
+    } as AgentExecutor;
+    return { executor, getOverrides: () => captured };
+  }
+
+  function makeVoicePipeline(shouldSynthesize: boolean) {
+    return {
+      shouldAutoTts: vi.fn(() => ({ shouldSynthesize })),
+      ttsConfig: { autoMode: "always", tagPattern: "\\[\\[tts\\]\\]", maxTextLength: 4096 },
+    } as unknown as ExecuteDeps["voiceResponsePipeline"];
+  }
+
+  const voiceAdapter = () => makeAdapter({
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked", messageId: "m-1" })),
+  } as Partial<ChannelPort>);
+
+  it("tells the executor the runtime speaks this turn's reply", async () => {
+    const { executor, getOverrides } = makeOverridesCapturingExecutor();
+    const deps = makeDeps({ voiceResponsePipeline: makeVoicePipeline(true) });
+
+    await runWithContext(makeResolvedContext(), () => executeLlm(
+      deps, voiceAdapter(), makeMessage(), makeSessionKey(), "agent-1",
+      executor, "user", makeBlockStreamCfg(), undefined, undefined,
+      undefined, undefined,
+    ));
+
+    expect(getOverrides()?.outboundAudioAutoDelivery).toBe(true);
+  });
+
+  it("claims no runtime voice delivery without a pipeline, an attachment-capable adapter, or an unconditional mode", async () => {
+    const cases: Array<[ExecuteDeps, ChannelPort]> = [
+      [makeDeps(), voiceAdapter()],
+      [makeDeps({ voiceResponsePipeline: makeVoicePipeline(true) }), makeAdapter()],
+      [makeDeps({ voiceResponsePipeline: makeVoicePipeline(false) }), voiceAdapter()],
+    ];
+
+    for (const [deps, adapter] of cases) {
+      const { executor, getOverrides } = makeOverridesCapturingExecutor();
+
+      await runWithContext(makeResolvedContext(), () => executeLlm(
+        deps, adapter, makeMessage(), makeSessionKey(), "agent-1",
+        executor, "user", makeBlockStreamCfg(), undefined, undefined,
+        undefined, undefined,
+      ));
+
+      expect(getOverrides()).toBeDefined();
+      expect(getOverrides()?.outboundAudioAutoDelivery).toBeUndefined();
+    }
+  });
+});
