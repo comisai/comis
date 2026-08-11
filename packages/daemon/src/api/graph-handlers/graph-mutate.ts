@@ -226,11 +226,35 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         }
       }
 
+      const requestContext = tryGetContext();
+      const trustedEndpoint = requestContext?.turnScope?.endpoint;
+      const rawAnnounceChannelType = typeof rawParams._callerChannelType === "string"
+        ? rawParams._callerChannelType
+        : undefined;
+      const rawAnnounceChannelId = typeof rawParams._callerChannelId === "string"
+        ? rawParams._callerChannelId
+        : undefined;
+      if (
+        trustedEndpoint !== undefined
+        && (
+          (rawAnnounceChannelType !== undefined && rawAnnounceChannelType !== trustedEndpoint.channelType)
+          || (rawAnnounceChannelId !== undefined && rawAnnounceChannelId !== trustedEndpoint.conversationId)
+        )
+      ) {
+        deps.logger?.warn({
+          method: "graph.execute",
+          mismatchField: "announcement-route",
+          hint: "Reject the graph and verify the in-process RPC injector preserves the trusted turn endpoint",
+          errorKind: "precondition" as const,
+        }, "Graph announcement route conflicts with trusted turn scope");
+        throw new PreconditionError("Graph announcement route conflicts with trusted turn scope");
+      }
+      const announceChannelType = trustedEndpoint?.channelType ?? rawAnnounceChannelType;
+      const announceChannelId = trustedEndpoint?.conversationId ?? rawAnnounceChannelId;
+
       // Pre-execution channel validation for approval-gate nodes
       const hasApprovalGate = finalValidated.graph.nodes.some(n => n.typeId === "approval-gate");
       if (hasApprovalGate) {
-        const announceChannelType = rawParams._callerChannelType as string | undefined;
-        const announceChannelId = rawParams._callerChannelId as string | undefined;
         if (!announceChannelType || !announceChannelId) {
           throw new Error(
             "Graph contains approval-gate nodes but no announcement channel is configured. " +
@@ -239,7 +263,6 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         }
       }
 
-      const requestContext = tryGetContext();
       const coordResult = await deps.graphCoordinator.run({
         graph: finalValidated,
         callerSessionKey: rawParams._callerSessionKey as string | undefined,
@@ -249,8 +272,8 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         callerLeaseId: rawParams._leaseId as string | undefined,
         callerDeliveryOrigin: requestContext?.deliveryOrigin,
         callerTurnScope: requestContext?.turnScope,
-        announceChannelType: rawParams._callerChannelType as string | undefined,
-        announceChannelId: rawParams._callerChannelId as string | undefined,
+        announceChannelType,
+        announceChannelId,
         nodeProgress: userParams.node_progress === true,
       });
 
@@ -270,7 +293,9 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         async: true,
         nodeCount: finalValidated.graph.nodes.length,
         label: finalValidated.graph.label,
-        hint: "Pipeline launched — your job is now DONE. Tell the user the pipeline is running (and what it will produce), then STOP. Do NOT research this topic yourself, do NOT call more tools, and do NOT poll with status/cron: the sub-agents are doing the work in isolated contexts and you will be notified automatically with results when it completes. Duplicating their research here only exhausts your own context window.",
+        hint: announceChannelType !== undefined && announceChannelId !== undefined
+          ? "Pipeline launched — your job is now DONE. Tell the user the pipeline is running (and what it will produce), then STOP. Do NOT research this topic yourself, do NOT call more tools, and do NOT poll with status/cron: the sub-agents are doing the work in isolated contexts and you will be notified automatically with results when it completes. Duplicating their research here only exhausts your own context window."
+          : "Pipeline launched, but no completion channel is available. Tell the caller it is running and include the graphId; do not promise an automatic notification. The caller can inspect graph status later.",
         ...(unresolvedWarnings.length > 0 && { warnings: unresolvedWarnings }),
       };
       if (IS_DEV) GraphExecuteContract.response.parse(result);
