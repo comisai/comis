@@ -34,7 +34,8 @@ const EvidenceIngressSchema = z.strictObject({
     z.strictObject({ kind: z.literal("reference") }),
     z.strictObject({
       kind: z.literal("attachment"),
-      fileName: z.string().min(1).max(256).regex(/^[^/\\\u0000\r\n]+$/u),
+      fileName: z.string().min(1).max(256).regex(/^[^/\\\r\n]+$/u)
+        .refine((fileName) => !fileName.includes("\0")),
       mediaType: z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,63}\/[a-z0-9][a-z0-9.+-]{0,63}$/u),
     }),
   ]).optional(),
