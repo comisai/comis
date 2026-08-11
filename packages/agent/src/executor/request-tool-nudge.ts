@@ -69,6 +69,7 @@ export interface RunRequestToolNudgeDeps {
 const SUBMODULE = "executor.request-tool-nudge";
 const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
+const MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS = 3;
 
 interface WebFetchReceiptRecord {
   readonly toolName: string;
@@ -320,7 +321,7 @@ function buildPromptSkillWorkflowDirective(
       ? []
       : [
           `Content-free receipts currently prove ${distinctWebSearchQueryCount} of ${minDistinctWebSearchQueries} distinct successful web_search queries.`,
-          "Search another research angle until the query count reaches the required minimum; duplicate queries do not advance it.",
+          "Reuse web_search with new query arguments for another research angle until the query count reaches the required minimum; duplicate queries do not advance it.",
         ]),
     "Use supporting workflow tools only for commands prescribed by the loaded procedure; do not use exec to reread the skill manifest.",
     ...(requestedActionToolNames.length > 0
@@ -331,7 +332,8 @@ function buildPromptSkillWorkflowDirective(
       : "Resolve context-dependent arguments from the recent user requests already in context.",
     "Derive concrete workflow arguments from that request context; the current request is authoritative.",
     "After a successful workflow result, follow the loaded procedure's response contract and preserve its canonical identifiers.",
-    "Do not repeat the skill read or a previously attempted tool path, and do not claim completion without a successful workflow-tool receipt.",
+    "Do not repeat the skill read or identical tool arguments; required distinct searches and fetches reuse workflow tools with new arguments.",
+    "Do not claim completion without a successful workflow-tool receipt.",
   ].join("\n");
 }
 
@@ -549,29 +551,37 @@ export async function runRequestToolNudge(
     continuationOptions,
   );
   const promptSkillWorkflowTools = deps.requestRelevantPromptSkillWorkflowToolNames ?? [];
-  const workflowEvidencePending = webEvidenceGateConfigured
-    && !webEvidenceSatisfied();
-  if (
-    continuation.ok
-    && promptSkillWorkflowTools.length > 0
-    && (
-      workflowEvidencePending
-      || successfulCount() === successfulToolCountBefore
-      || !promptSkillProcedureLoaded()
-    )
-  ) {
+  const workflowContinuationLimit = webEvidenceGateConfigured
+    ? MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS
+    : 1;
+  for (let attempt = 1; attempt <= workflowContinuationLimit; attempt++) {
+    const workflowPending = !webEvidenceSatisfied()
+      || (
+        attempt === 1
+        && (
+          successfulCount() === successfulToolCountBefore
+          || !promptSkillProcedureLoaded()
+        )
+      );
+    if (!continuation.ok || promptSkillWorkflowTools.length === 0 || !workflowPending) break;
+    const successfulBefore = successfulCount();
+    const fetchCountBefore = distinctWebFetchUrlCount();
+    const searchCountBefore = distinctWebSearchQueryCount();
+    const procedureLoadedBefore = promptSkillProcedureLoaded();
     logger.info(
       {
         submodule: SUBMODULE,
         step: "prompt-skill-workflow-nudge",
         agentId,
+        attempt,
+        maxAttempts: workflowContinuationLimit,
         workflowToolNames: promptSkillWorkflowTools,
         minDistinctWebFetchUrls,
         distinctWebFetchUrlCount: distinctWebFetchUrlCount(),
         minDistinctWebSearchQueries,
         distinctWebSearchQueryCount: distinctWebSearchQueryCount(),
       },
-      "Loaded prompt skill requires one bounded workflow continuation",
+      "Loaded prompt skill requires a bounded workflow continuation",
     );
     const workflowRecoveryTools = [...new Set([
       ...(deps.requestRelevantPromptSkillLocations?.length ? ["read"] : []),
@@ -593,6 +603,15 @@ export async function runRequestToolNudge(
       deps.guardProviderDispatch,
       { restrictToToolNames: workflowRecoveryTools },
     );
+    const madeProgress = successfulCount() > successfulBefore
+      || distinctWebFetchUrlCount() > fetchCountBefore
+      || distinctWebSearchQueryCount() > searchCountBefore
+      || (promptSkillProcedureLoaded() && !procedureLoadedBefore);
+    if (
+      continuation.ok
+      && !webEvidenceSatisfied()
+      && !madeProgress
+    ) break;
   }
   const evidenceGatedWorkflowCompleted = webEvidenceGateConfigured
     && webEvidenceSatisfied();
