@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const runnerRoot = resolve(repoRoot, "test/confinement-runner");
+const dockerignorePath = resolve(repoRoot, ".dockerignore");
 const dockerfilePath = resolve(runnerRoot, "Dockerfile");
 const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
 const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
@@ -137,12 +138,14 @@ describe("capability-service Linux confinement runner", () => {
   });
 
   it("surfaces durable launch acknowledgement evidence on a failed join", () => {
+    const dockerignore = source(dockerignorePath);
     const dockerfile = source(dockerfilePath);
     const launcher = source(launcherPath);
     const reporterCapture = source(reporterCapturePath);
     const scenario = source(joinScenarioPath);
 
     expect(dockerfile).toContain("wave4-report-capture.sh");
+    expect(dockerignore).toContain("!test/confinement-runner/wave4-report-capture.sh");
     expect(launcher).toContain("/usr/local/lib/wave4");
     expect(reporterCapture).toContain(".wave4-reporter.log");
     expect(scenario).toContain("reporterDiagnostic");
