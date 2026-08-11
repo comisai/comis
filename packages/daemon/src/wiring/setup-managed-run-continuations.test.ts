@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   TypedEventBus,
@@ -372,5 +375,69 @@ describe("managed-run continuation composition", () => {
       "Verified candidate summary\n\nhttps://example.com/pull/17",
       expect.objectContaining({ origin: "managed-run-continuation" }),
     );
+  });
+
+  it("materializes and removes the exact verified attachment around protected delivery", async () => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), "managed-delivery-")));
+    chmodSync(directory, 0o700);
+    try {
+      const record = makeRecord();
+      const body = Buffer.from("immutable report artifact", "utf8");
+      let materializedPath = "";
+      const sendAttachment = vi.fn(async (_channelId, attachment) => {
+        materializedPath = attachment.url;
+        expect(readFileSync(materializedPath)).toEqual(body);
+        expect(statSync(materializedPath).mode & 0o777).toBe(0o600);
+        return ok({ kind: "tracked" as const, messageId: "attachment-message" });
+      });
+      const adapter = { channelId: "echo-main", channelType: "echo", sendAttachment };
+      const ledger = {
+        allocateStep: vi.fn(async () => ok(5)),
+        lookup: vi.fn(async () => ok(undefined)),
+        begin: vi.fn(async () => ok(undefined)),
+        markUnknown: vi.fn(async () => ok(undefined)),
+        commit: vi.fn(async () => ok(undefined)),
+      } as unknown as OutwardSendLedgerPort;
+      const delivery = createManagedRunContinuationDelivery({
+        adaptersByType: new Map([["echo", adapter as never]]),
+        deliveryService: { deliverToChannel: vi.fn() } as unknown as DeliveryService,
+        outwardLedger: ledger,
+        attachmentDirectory: directory,
+        logger: makeLogger(),
+      });
+
+      const result = await delivery(record, "claim-attachment", {
+        response: "Verified report",
+        executionId: "execution-attachment",
+        cleanupRequired: false,
+      }, "ready", {
+        kind: "attachment",
+        evidenceRef: "evidence-report",
+        subjectDigest: "c".repeat(64),
+        contentHash: createHash("sha256").update(body).digest("hex"),
+        body,
+        fileName: "report.md",
+        mediaType: "text/markdown",
+      });
+
+      expect(result).toEqual(ok({
+        deliveryState: "verified",
+        verifiedEvidenceRef: "evidence-report",
+      }));
+      expect(sendAttachment).toHaveBeenCalledWith("conversation-a", {
+        type: "file",
+        url: materializedPath,
+        mimeType: "text/markdown",
+        fileName: "report.md",
+        caption: "Verified report",
+      }, expect.objectContaining({ threadId: undefined }));
+      expect(ledger.begin).toHaveBeenCalledWith(expect.objectContaining({
+        operationKind: "attachment_send",
+      }));
+      expect(materializedPath).not.toBe("");
+      expect(existsSync(materializedPath)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
