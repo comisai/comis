@@ -300,6 +300,45 @@ describe("setupChannels", () => {
       expect(result).toHaveProperty("activityCoordinatorFactory");
     });
 
+    it("instruments the bootstrapped adapters so attachments publish after_delivery", async () => {
+      // The instrumentation must wrap the adapters bootstrapAdapters produced —
+      // asserting it BEHAVIORALLY (send through the very adapter setupChannels
+      // registered) is what proves the wiring, not the call's position in source.
+      const sendAttachment = vi.fn(async () => ok({ kind: "tracked" as const, messageId: "photo-1" }));
+      const mediaAdapter = {
+        channelId: "telegram-main",
+        channelType: "telegram",
+        sendMessage: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "m-1" })),
+        sendAttachment,
+      } as unknown as ChannelPort;
+      mockAdaptersByType.set("telegram", mediaAdapter);
+      const { container } = makeContainer();
+
+      await setupChannels(makeDeps({
+        container,
+        clock: { now: () => 1_789_000_100_000 } as never,
+      }));
+
+      // The registered adapter is the one the channel runtime holds; sending an
+      // attachment through it must reach the after_delivery hook chain.
+      const sent = await mockAdaptersByType.get("telegram")!.sendAttachment!(
+        "chat-1",
+        { type: "image", url: "/workspace/media/screenshot.png" },
+      );
+
+      expect(sent.ok).toBe(true);
+      expect(sendAttachment).toHaveBeenCalledTimes(1);
+      expect(container.hookRunner.runAfterDelivery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mediaUrls: ["/workspace/media/screenshot.png"],
+          channelType: "telegram",
+          channelId: "chat-1",
+          origin: "channel:attachment",
+        }),
+        expect.anything(),
+      );
+    });
+
     it("threads the configured tenant into the channel manager", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
       const { container } = makeContainer();

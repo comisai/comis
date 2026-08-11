@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   runWithContext,
@@ -104,14 +102,5 @@ describe("attachment delivery hook instrumentation", () => {
 
     expect(result.ok).toBe(false);
     expect(runAfterDelivery).not.toHaveBeenCalled();
-  });
-
-  it("is wired immediately after channel adapter bootstrap", () => {
-    const source = readFileSync(fileURLToPath(new URL("./setup-channels-registry.ts", import.meta.url)), "utf8");
-    const bootstrapIndex = source.indexOf("await bootstrapAdapters(");
-    const instrumentationIndex = source.indexOf("instrumentAttachmentDeliveries(");
-
-    expect(bootstrapIndex).toBeGreaterThan(-1);
-    expect(instrumentationIndex).toBeGreaterThan(bootstrapIndex);
   });
 });
