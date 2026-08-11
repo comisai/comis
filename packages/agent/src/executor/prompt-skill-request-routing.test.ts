@@ -39,6 +39,12 @@ const skills: PromptSkillCapability[] = [
     description: "Generate and edit images from a concrete visual request.",
     replacesPackages: [],
   },
+  {
+    name: "deep-research",
+    description:
+      "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer.",
+    replacesPackages: [],
+  },
 ];
 
 describe("prompt skill request routing", () => {
@@ -70,6 +76,28 @@ describe("prompt skill request routing", () => {
     ]);
     expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
       .toContain("/skills/find-skills/SKILL.md");
+  });
+
+  it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
+    const deferral = result();
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      capabilityClass: "frontier",
+      requestRelevanceText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantToolNames).toEqual(["read"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+    expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
+      .toContain("/skills/deep-research/SKILL.md");
   });
 
   it("leaves unrelated requests and non-nano profiles unchanged", () => {

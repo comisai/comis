@@ -167,6 +167,48 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("loads a matched prompt skill when a frontier answer skipped its procedure", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevantToolNames: ["read"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: [
+        "/skills/deep-research/SKILL.md",
+      ],
+      messages: [
+        {
+          role: "user",
+          content:
+            "i need to understand heat pumps properly, not just a paragraph",
+        },
+        { role: "assistant", content: "Here is an unsupported overview." },
+      ],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () => "Research completed from current receipts.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/request-relevant prompt skill.*deep-research/isu),
+      expect.anything(),
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["read"],
+      outcome: "recovered",
+    });
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 
