@@ -2188,6 +2188,31 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("reports response drift after a successful delegation receipt", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.delegation_response_grounding_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "delegation_response_ungrounded",
+      detail:
+        "sessions_spawn succeeded, but the final response did not describe the current delegation; "
+        + "the response honesty guard replaced it with a receipt-backed status",
+      suggestedNextSteps: [
+        "inspect the model turn after the successful sessions_spawn receipt",
+        "check recalled context and prompt-skill use for stale task influence",
+        "no spawn retry is required unless the delegated result is still needed",
+      ],
+    });
+  });
+
   it("names a persistent-action evidence correction as the acute cause", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
