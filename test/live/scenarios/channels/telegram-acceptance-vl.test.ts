@@ -77,6 +77,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, relative, sep } from "node:path";
 import { createSqliteOutcomeStore, type OutcomeStoreDeps } from "@comis/memory";
 import type { OutcomeObservation, LearningScope } from "@comis/core";
+import { initSchema } from "@comis/memory";
 import { assertChannelTrace } from "../../assert/channel-trace.js";
 import { rpcRequest } from "../../../support/daemon-harness.js";
 import type { BuiltRig } from "../../harness/rig.js";
@@ -264,16 +265,17 @@ describe("ACCEPT-01 scenario 1 Stage-B — the VL A->B loop shape + scoring scaf
     // here on a seeded delivery_mirror so the machinery is certified offline.
     const dbPath = freshDbPath();
     const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE delivery_mirror (
-        id TEXT PRIMARY KEY, session_key TEXT NOT NULL, text TEXT,
-        media_urls TEXT, channel_type TEXT, channel_id TEXT, origin TEXT,
-        idempotency_key TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL
-      );
-    `);
+    // The PRODUCT's boot DDL, not a hand-copied CREATE TABLE: the copy declared
+    // a `session_key` column the real schema does not have (delivery rows key on
+    // the durable tenant_id/agent_id/conversation_ref identity), which made this
+    // fixture agree with itself while the oracle failed against a real db.
+    initSchema(db, 768);
     db.prepare(
-      "INSERT INTO delivery_mirror (id, session_key, text, status, created_at) VALUES (?,?,?,?,?)",
-    ).run("m1", "s", "the reply on the wire", "acknowledged", 1000);
+      `INSERT INTO delivery_mirror
+         (id, tenant_id, agent_id, conversation_ref, destination_endpoint,
+          text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
+       VALUES (?, 'test', 'default', ?, '{}', ?, '[]', 'telegram', 'chat-1', 'agent', ?, ?, ?)`,
+    ).run("m1", "s", "the reply on the wire", "m1", "acknowledged", 1000);
     db.close();
 
     const emulator = {
@@ -283,7 +285,7 @@ describe("ACCEPT-01 scenario 1 Stage-B — the VL A->B loop shape + scoring scaf
     };
     // wire == mirror -> PASS.
     await expect(
-      assertChannelTrace({ emulator, chat: { chatId: 424242 }, memoryDbPath: dbPath, sessionKey: "s" }),
+      assertChannelTrace({ emulator, chat: { chatId: 424242 }, memoryDbPath: dbPath, conversationRef: "s" }),
     ).resolves.toBeUndefined();
     // wire != mirror -> the HARD throw (Comis-thinks-X-but-wire-shows-Y).
     const mismatched = {
@@ -292,7 +294,7 @@ describe("ACCEPT-01 scenario 1 Stage-B — the VL A->B loop shape + scoring scaf
       }),
     };
     await expect(
-      assertChannelTrace({ emulator: mismatched, chat: { chatId: 424242 }, memoryDbPath: dbPath, sessionKey: "s" }),
+      assertChannelTrace({ emulator: mismatched, chat: { chatId: 424242 }, memoryDbPath: dbPath, conversationRef: "s" }),
     ).rejects.toThrow(/dual-oracle mismatch/);
   });
 
@@ -367,16 +369,16 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the A->B reaction-gat
     memoryDbPath = undefined;
   });
 
-  /** Resolve the single delivery_mirror.session_key (bounded poll — the after_delivery hook is fire-and-forget). */
-  async function pollForSessionKey(dbPath: string, timeoutMs = 15_000): Promise<string | undefined> {
+  /** Resolve the single delivery_mirror.conversation_ref (bounded poll — the after_delivery hook is fire-and-forget). */
+  async function pollForConversationRef(dbPath: string, timeoutMs = 15_000): Promise<string | undefined> {
     const start = Date.now();
     const read = (): string | undefined => {
       const db = new Database(dbPath, { readonly: true });
       try {
         const row = db
-          .prepare("SELECT session_key FROM delivery_mirror ORDER BY created_at DESC LIMIT 1")
-          .get() as { session_key?: string } | undefined;
-        return row?.session_key;
+          .prepare("SELECT conversation_ref FROM delivery_mirror ORDER BY created_at DESC LIMIT 1")
+          .get() as { conversation_ref?: string } | undefined;
+        return row?.conversation_ref;
       } finally {
         db.close();
       }
@@ -447,13 +449,13 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the A->B reaction-gat
       // ── The HARD dual-oracle cross-check: the emulator's recorded wire text
       // == delivery_mirror.text for the session. A disagreement is a real defect
       // (Comis-thinks-it-sent-X-but-wire-shows-Y) — a HARD throw, never a pass.
-      const sessionKey = await pollForSessionKey(dbPath);
+      const conversationRef = await pollForConversationRef(dbPath);
       expect(
-        sessionKey,
+        conversationRef,
         "a delivery_mirror row was written for the session (the after_delivery hook fired) — else the reaction has nothing to attribute to",
       ).toBeDefined();
-      if (sessionKey === undefined) return;
-      await assertChannelTrace({ emulator: r.emulator, chat: r.chat, memoryDbPath: dbPath, sessionKey });
+      if (conversationRef === undefined) return;
+      await assertChannelTrace({ emulator: r.emulator, chat: r.chat, memoryDbPath: dbPath, conversationRef });
 
       // ── React thumbs-up on the ATTRIBUTED reply (NOT the most-recent outbound).
       await r.controlClient.injectReaction({

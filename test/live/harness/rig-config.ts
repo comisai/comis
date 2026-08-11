@@ -42,6 +42,44 @@ export const FAKE_BOT_TOKEN = "1234567:emulator-fake-token";
  */
 export const MEMORY_DB_FILE = "test-memory-channel-emu.db";
 
+/** The keyless model id used when the box advertises no local models of its own. */
+const DEFAULT_KEYLESS_MODEL = "qwen3.6:35b";
+
+/** The ollama URL used when the box does not point the live tier elsewhere. */
+const DEFAULT_OLLAMA_URL = "http://localhost:11434";
+
+/**
+ * Resolve the model id the `"keyless"` leg boots.
+ *
+ * `"keyless"` is the model EVERY Stage-C scenario asks for, so a hard-coded id
+ * pinned the whole tier to one 24 GB / 35B rig: a box that cannot hold that
+ * model still boots the daemon but never authors a reply, so the round-trip
+ * burns its `waitForReply` budget and the leg is unrunnable rather than slow.
+ * `COMIS_LIVE_LOCAL_MODELS` is the live tier's existing declaration of the
+ * local tags a box has pulled (`live.env.example`), so the keyless leg boots
+ * its FIRST entry and falls back to {@link DEFAULT_KEYLESS_MODEL} when unset —
+ * byte-identical to the previous behavior on a rig that sets nothing.
+ */
+function resolveKeylessModelId(): string {
+  const first = (process.env["COMIS_LIVE_LOCAL_MODELS"] ?? "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .find((tag) => tag.length > 0);
+  return first ?? DEFAULT_KEYLESS_MODEL;
+}
+
+/**
+ * Resolve the keyless provider `baseUrl` from `COMIS_LIVE_OLLAMA_URL` (the same
+ * knob `scenarios/local/local-models.test.ts` reads), defaulting to
+ * {@link DEFAULT_OLLAMA_URL}. The `/v1` suffix is appended here — and any
+ * trailing slash on the operator's value trimmed first — because pi-ai posts to
+ * `${baseUrl}/chat/completions` and bare ollama 404s without it.
+ */
+function resolveOllamaBaseUrl(): string {
+  const configured = (process.env["COMIS_LIVE_OLLAMA_URL"] ?? "").trim();
+  return `${(configured.length > 0 ? configured : DEFAULT_OLLAMA_URL).replace(/\/+$/, "")}/v1`;
+}
+
 /**
  * Build the throwaway daemon YAML. Modeled on
  * `test/config/config.qwen36-local.test.yaml` (the canonical keyless-ollama
@@ -73,7 +111,8 @@ export const MEMORY_DB_FILE = "test-memory-channel-emu.db";
 export function buildConfigYaml(apiRoot: string, gatewayPort: number, model: string): string {
   // The keyless leg uses ollama; an explicit non-keyless model string is passed
   // through as the provider model id (operator/live.env path).
-  const providerModelId = model === "keyless" ? "qwen3.6:35b" : model;
+  const providerModelId = model === "keyless" ? resolveKeylessModelId() : model;
+  const ollamaBaseUrl = resolveOllamaBaseUrl();
   return `# THROWAWAY config — channel-emulation rig (rig.ts).
 # Written AFTER the emulator starts so channels.telegram.apiRoot carries the
 # kernel-allocated emulator port. The daemon reads this via COMIS_CONFIG_PATHS.
@@ -98,7 +137,7 @@ providers:
       type: ollama
       # /v1 suffix required: pi-ai registers type=ollama as openai-completions and
       # posts to \`\${baseUrl}/chat/completions\` — bare Ollama 404s without /v1.
-      baseUrl: "http://localhost:11434/v1"
+      baseUrl: "${ollamaBaseUrl}"
       # Keyless — ollama is in KEYLESS_PROVIDER_TYPES; no secret entry needed; the
       # daemon registers the ollama-no-auth sentinel (omitting avoids a boot FATAL).
       models:
@@ -224,8 +263,10 @@ monitoring:
 export function buildSignalConfigYaml(baseUrl: string, gatewayPort: number, model: string): string {
   // The keyless leg uses ollama; an explicit non-keyless model string is passed
   // through as the provider model id (operator/live.env path) — identical to
+  // the telegram writer, resolved from the SAME keyless source of truth.
   // buildConfigYaml.
-  const providerModelId = model === "keyless" ? "qwen3.6:35b" : model;
+  const providerModelId = model === "keyless" ? resolveKeylessModelId() : model;
+  const ollamaBaseUrl = resolveOllamaBaseUrl();
   return `# THROWAWAY config — channel-emulation, SIGNAL rig (rig.ts).
 # Written AFTER the emulator starts so channels.signal.baseUrl carries the
 # kernel-allocated emulator port. The daemon reads this via COMIS_CONFIG_PATHS.
@@ -250,7 +291,7 @@ providers:
       type: ollama
       # /v1 suffix required: pi-ai registers type=ollama as openai-completions and
       # posts to \`\${baseUrl}/chat/completions\` — bare Ollama 404s without /v1.
-      baseUrl: "http://localhost:11434/v1"
+      baseUrl: "${ollamaBaseUrl}"
       # Keyless — ollama is in KEYLESS_PROVIDER_TYPES; no secret entry needed; the
       # daemon registers the ollama-no-auth sentinel (omitting avoids a boot FATAL).
       models:

@@ -8,10 +8,10 @@
  *     the bot put on the wire; ORACLE-01); accepted here as a minimal STRUCTURAL
  *     subset so the check stays channel-agnostic (not bound to `TgEmulator`).
  *   - the COMIS oracle — a DIRECT readonly `SELECT text FROM delivery_mirror
- *     WHERE session_key = ?` against the isolated `memory.db` (ORACLE-02).
+ *     WHERE conversation_ref = ?` against the isolated `memory.db` (ORACLE-02).
  *
  * The HARD assertion (`assertChannelTrace`): the emulator-recorded outbound text
- * == `delivery_mirror.text` for the session — a THROW on mismatch OR on a
+ * == `delivery_mirror.text` for the conversation — a THROW on mismatch OR on a
  * missing mirror row (no false success). This catches the "Comis thinks it sent
  * X but the wire shows Y" bug class the single-oracle VPS run structurally
  * cannot.
@@ -57,24 +57,35 @@ function openReadonlyWithVec(dbPath: string): Database.Database {
 }
 
 /**
- * Read the LATEST `delivery_mirror.text` for a `session_key` from the isolated
- * `memory.db`, opened READONLY (the Comis half of the cross-check — ORACLE-02).
+ * Read the LATEST `delivery_mirror.text` for a `conversation_ref` from the
+ * isolated `memory.db`, opened READONLY (the Comis half of the cross-check —
+ * ORACLE-02).
+ *
+ * Keys on `conversation_ref` because that is the DURABLE conversation identity
+ * the product writes (`delivery_mirror` carries
+ * `tenant_id`/`agent_id`/`conversation_ref`/`destination_endpoint`, and
+ * `createSqliteDeliveryMirror` reads back on that triple). There is no
+ * `session_key` column: a formatted session key is a human-readable projection,
+ * not a column, so a read keyed on it dies `no such column: session_key`
+ * against a db a real daemon wrote.
  *
  * Reads the table DIRECTLY (NOT via the delivery mirror port's pending-only
  * accessor, which filters `status='pending'`) so ACKNOWLEDGED rows are
  * included. Returns `undefined` on honest absence — never throws for a missing
  * row.
  *
- * @param dbPath     - Absolute path to the isolated SQLite `memory.db`.
- * @param sessionKey - The delivery session key to read the mirror text for.
- * @returns the latest mirror text for the session, or `undefined` if none.
+ * @param dbPath          - Absolute path to the isolated SQLite `memory.db`.
+ * @param conversationRef - The durable conversation ref to read the mirror text for.
+ * @returns the latest mirror text for the conversation, or `undefined` if none.
  */
-export function readMirrorText(dbPath: string, sessionKey: string): string | undefined {
+export function readMirrorText(dbPath: string, conversationRef: string): string | undefined {
   const db = openReadonlyWithVec(dbPath);
   try {
     const row = db
-      .prepare("SELECT text FROM delivery_mirror WHERE session_key = ? ORDER BY created_at DESC LIMIT 1")
-      .get(sessionKey) as { text?: string } | undefined;
+      .prepare(
+        "SELECT text FROM delivery_mirror WHERE conversation_ref = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(conversationRef) as { text?: string } | undefined;
     return row?.text as string | undefined;
   } finally {
     db.close();
@@ -99,8 +110,8 @@ export interface ChannelTraceOptions {
   readonly chat: { chatId: number };
   /** Absolute path to the isolated SQLite `memory.db` (the Comis oracle source). */
   readonly memoryDbPath: string;
-  /** The delivery session key whose `delivery_mirror.text` is compared. */
-  readonly sessionKey: string;
+  /** The durable `conversation_ref` whose `delivery_mirror.text` is compared. */
+  readonly conversationRef: string;
 }
 
 /**
@@ -108,14 +119,14 @@ export interface ChannelTraceOptions {
  *
  * Reads the CHANNEL oracle (`emulator.lastBotReply(chat).text` — the exact bytes
  * on the wire, ORACLE-01) and the COMIS oracle (`readMirrorText` — the latest
- * `delivery_mirror.text` for the session, ORACLE-02), then asserts they are
+ * `delivery_mirror.text` for the conversation, ORACLE-02), then asserts they are
  * EQUAL. This is a HARD assertion: it THROWS — never a silent pass — when the
  * two disagree OR when the mirror row is absent. It catches the "Comis thinks it
  * sent X but the wire shows Y" bug class the single-oracle VPS run structurally
  * cannot. Matches the `assert/observe.ts` thrower idiom (void return, throws
  * descriptively on failure).
  *
- * @param opts - The two oracle handles + the session/chat identifiers.
+ * @param opts - The two oracle handles + the conversation/chat identifiers.
  * @throws when the mirror row is absent (no delivery_mirror row), or when the
  *   wire text != the mirror text (a both-values-named, `dual-oracle`-tagged
  *   message so the failure is diagnosable from the throw alone).
@@ -123,17 +134,17 @@ export interface ChannelTraceOptions {
 export async function assertChannelTrace(opts: ChannelTraceOptions): Promise<void> {
   // ORACLE-01 — the channel oracle: the exact bytes on the wire.
   const wire = opts.emulator.lastBotReply(opts.chat)?.text;
-  // ORACLE-02 — the Comis oracle: the latest mirror text for the session
+  // ORACLE-02 — the Comis oracle: the latest mirror text for the conversation
   // (read DIRECTLY, acknowledged rows included).
-  const mirror = readMirrorText(opts.memoryDbPath, opts.sessionKey);
+  const mirror = readMirrorText(opts.memoryDbPath, opts.conversationRef);
 
   // Missing mirror → an honest, reason-coded failure (NEVER a silent pass): a
   // wire reply with no corresponding delivery_mirror row is a real defect.
   if (mirror === undefined) {
     throw new Error(
-      `[channel-trace] no delivery_mirror row for session "${opts.sessionKey}" ` +
+      `[channel-trace] no delivery_mirror row for conversation "${opts.conversationRef}" ` +
         `(wire="${String(wire)}") — the bot put bytes on the wire but Comis recorded ` +
-        `no mirror for the session. This is an honest cross-check failure, not a pass.`,
+        `no mirror for the conversation. This is an honest cross-check failure, not a pass.`,
     );
   }
 
@@ -141,7 +152,7 @@ export async function assertChannelTrace(opts: ChannelTraceOptions): Promise<voi
   if (wire !== mirror) {
     throw new Error(
       `[channel-trace] dual-oracle mismatch: wire="${String(wire)}" mirror="${mirror}" ` +
-        `sessionKey="${opts.sessionKey}" chatId=${opts.chat.chatId} — the channel oracle and ` +
+        `conversationRef="${opts.conversationRef}" chatId=${opts.chat.chatId} — the channel oracle and ` +
         `the delivery_mirror disagree (Comis thinks it sent one thing; the wire shows another).`,
     );
   }

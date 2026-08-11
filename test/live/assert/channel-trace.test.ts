@@ -28,6 +28,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initSchema } from "@comis/memory";
 import { assertChannelTrace, readMirrorText } from "./channel-trace.js";
 
 // Tmp dirs created per DB-using test — cleaned up after each test (the
@@ -53,24 +54,17 @@ function freshDbPath(): string {
 function freshMirrorDb(): string {
   const dbPath = freshDbPath();
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE delivery_mirror (
-      id TEXT PRIMARY KEY,
-      session_key TEXT NOT NULL,
-      text TEXT NOT NULL,
-      media_urls TEXT NOT NULL DEFAULT '[]',
-      channel_type TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      origin TEXT NOT NULL DEFAULT 'agent',
-      idempotency_key TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending'
-        CHECK(status IN ('pending', 'acknowledged')),
-      created_at INTEGER NOT NULL,
-      acknowledged_at INTEGER
-    );
-    CREATE UNIQUE INDEX idx_dm_idempotency ON delivery_mirror(idempotency_key);
-  `);
-  db.close();
+  try {
+    // Run the PRODUCT's boot DDL rather than a hand-copied CREATE TABLE. The
+    // copy had drifted: it declared a `conversation_ref` column the real schema does
+    // not have (delivery rows are keyed on the durable
+    // tenant_id/agent_id/conversation_ref identity), so this oracle's own tests
+    // passed against a fiction while the oracle failed `no such column:
+    // conversation_ref` on any db a real daemon wrote.
+    initSchema(db, 768);
+  } finally {
+    db.close();
+  }
   return dbPath;
 }
 
@@ -79,7 +73,7 @@ function insertMirrorRow(
   dbPath: string,
   row: {
     id: string;
-    sessionKey: string;
+    conversationRef: string;
     text: string;
     status?: "pending" | "acknowledged";
     createdAt: number;
@@ -89,11 +83,12 @@ function insertMirrorRow(
   const db = new Database(dbPath);
   db.prepare(
     `INSERT INTO delivery_mirror
-       (id, session_key, text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
-     VALUES (?, ?, ?, '[]', 'telegram', 'chat-1', 'agent', ?, ?, ?)`,
+       (id, tenant_id, agent_id, conversation_ref, destination_endpoint,
+        text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
+     VALUES (?, 'test', 'default', ?, '{}', ?, '[]', 'telegram', 'chat-1', 'agent', ?, ?, ?)`,
   ).run(
     row.id,
-    row.sessionKey,
+    row.conversationRef,
     row.text,
     row.idempotencyKey ?? row.id,
     row.status ?? "acknowledged",
@@ -107,24 +102,24 @@ function insertMirrorRow(
 // ---------------------------------------------------------------------------
 
 describe("readMirrorText — the direct readonly delivery_mirror read (ORACLE-02 Comis half)", () => {
-  it("returns the text for a session_key (a single acknowledged row)", () => {
+  it("returns the text for a conversation_ref (a single acknowledged row)", () => {
     const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "hello", status: "acknowledged", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "r1", conversationRef: "s", text: "hello", status: "acknowledged", createdAt: 1000 });
 
     expect(readMirrorText(dbPath, "s")).toBe("hello");
   });
 
-  it("returns the LATEST row when two rows share a session_key (ORDER BY created_at DESC)", () => {
+  it("returns the LATEST row when two rows share a conversation_ref (ORDER BY created_at DESC)", () => {
     const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "old", sessionKey: "s", text: "first", createdAt: 1000 });
-    insertMirrorRow(dbPath, { id: "new", sessionKey: "s", text: "second", createdAt: 2000 });
+    insertMirrorRow(dbPath, { id: "old", conversationRef: "s", text: "first", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "new", conversationRef: "s", text: "second", createdAt: 2000 });
 
     expect(readMirrorText(dbPath, "s")).toBe("second");
   });
 
-  it("returns undefined (honest absence, never throws) when no row matches the session_key", () => {
+  it("returns undefined (honest absence, never throws) when no row matches the conversation_ref", () => {
     const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "other", text: "hello", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "r1", conversationRef: "other", text: "hello", createdAt: 1000 });
 
     expect(readMirrorText(dbPath, "missing")).toBeUndefined();
   });
@@ -133,14 +128,14 @@ describe("readMirrorText — the direct readonly delivery_mirror read (ORACLE-02
     const dbPath = freshMirrorDb();
     // The documented anti-pattern is DeliveryMirrorPort.pending() filtering
     // status='pending'; an acknowledged row MUST still be returned.
-    insertMirrorRow(dbPath, { id: "ack", sessionKey: "s", text: "acked-text", status: "acknowledged", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "ack", conversationRef: "s", text: "acked-text", status: "acknowledged", createdAt: 1000 });
 
     expect(readMirrorText(dbPath, "s")).toBe("acked-text");
   });
 
   it("opens the DB readonly — a write against the same path-opened handle is rejected", () => {
     const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "hello", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "r1", conversationRef: "s", text: "hello", createdAt: 1000 });
 
     // The read still works (readonly is a read).
     expect(readMirrorText(dbPath, "s")).toBe("hello");
@@ -154,7 +149,7 @@ describe("readMirrorText — the direct readonly delivery_mirror read (ORACLE-02
         ro
           .prepare(
             `INSERT INTO delivery_mirror
-               (id, session_key, text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
+               (id, conversation_ref, text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
              VALUES ('x','s','x','[]','telegram','c','agent','x','acknowledged', 1)`,
           )
           .run(),
@@ -185,28 +180,28 @@ describe("assertChannelTrace — the HARD dual-oracle cross-check (ORACLE-01 + O
 
   it("resolves (no throw) when the wire text equals the mirror text", async () => {
     const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "hi", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "r1", conversationRef: "s", text: "hi", createdAt: 1000 });
 
     await expect(
       assertChannelTrace({
         emulator: fakeEmulator("hi"),
         chat: { chatId: 42 },
         memoryDbPath: dbPath,
-        sessionKey: "s",
+        conversationRef: "s",
       }),
     ).resolves.toBeUndefined();
   });
 
   it("throws naming BOTH values + 'dual-oracle' when the wire text != the mirror text", async () => {
     const dbPath = freshMirrorDb();
-    insertMirrorRow(dbPath, { id: "r1", sessionKey: "s", text: "bye", createdAt: 1000 });
+    insertMirrorRow(dbPath, { id: "r1", conversationRef: "s", text: "bye", createdAt: 1000 });
 
     await expect(
       assertChannelTrace({
         emulator: fakeEmulator("hi"),
         chat: { chatId: 42 },
         memoryDbPath: dbPath,
-        sessionKey: "s",
+        conversationRef: "s",
       }),
     ).rejects.toThrow(/dual-oracle/);
 
@@ -217,7 +212,7 @@ describe("assertChannelTrace — the HARD dual-oracle cross-check (ORACLE-01 + O
         emulator: fakeEmulator("hi"),
         chat: { chatId: 42 },
         memoryDbPath: dbPath,
-        sessionKey: "s",
+        conversationRef: "s",
       }),
     ).rejects.toThrow(/hi[\s\S]*bye|bye[\s\S]*hi/);
   });
@@ -231,7 +226,7 @@ describe("assertChannelTrace — the HARD dual-oracle cross-check (ORACLE-01 + O
         emulator: fakeEmulator("hi"),
         chat: { chatId: 42 },
         memoryDbPath: dbPath,
-        sessionKey: "s",
+        conversationRef: "s",
       }),
     ).rejects.toThrow(/delivery_mirror|no mirror/i);
   });
