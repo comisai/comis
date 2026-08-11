@@ -11,6 +11,7 @@ const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
 const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
 const launcherPath = resolve(runnerRoot, "wave4-codex-launcher.sh");
 const reporterCapturePath = resolve(runnerRoot, "wave4-report-capture.sh");
+const reporterClientDiagnosticPath = resolve(runnerRoot, "wave4-reporter-client-diagnostic.go");
 const joinScenarioPath = resolve(repoRoot, "test/live/scenarios/capability-service/wave4-join.test.ts");
 const hostRunnerPath = resolve(repoRoot, "scripts/run-confinement-runner.sh");
 
@@ -142,12 +143,18 @@ describe("capability-service Linux confinement runner", () => {
     const dockerfile = source(dockerfilePath);
     const launcher = source(launcherPath);
     const reporterCapture = source(reporterCapturePath);
+    const reporterClientDiagnostic = source(reporterClientDiagnosticPath);
     const scenario = source(joinScenarioPath);
 
     expect(dockerfile).toContain("wave4-report-capture.sh");
     expect(dockerignore).toContain("!test/confinement-runner/wave4-report-capture.sh");
+    expect(dockerignore).toContain("!test/confinement-runner/wave4-reporter-client-diagnostic.go");
+    expect(dockerfile).toContain("wave4-reporter-client-diagnostic.go");
     expect(launcher).toContain("/usr/local/lib/wave4");
+    expect(launcher).toContain(".wave4-client-diagnostic.log");
     expect(reporterCapture).toContain(".wave4-reporter.log");
+    expect(reporterClientDiagnostic).toContain("client.Brief");
+    expect(scenario).toContain("clientDiagnostic");
     expect(scenario).toContain("reporterDiagnostic");
     expect(scenario).toContain("failedJoinDurableDiagnostic");
     expect(scenario).toContain("task_launch_acknowledgements");
