@@ -30,6 +30,7 @@ import {
   findTelegramConversationWireAnswer,
   followupWaitFinished,
   isDriveProgressText,
+  logicalSubstantiveAnswerCount,
   normalizeDriveStdinText,
   normalizedInboundTextError,
   outboundVisibleContent,
@@ -468,14 +469,10 @@ const detectCorrectSilence = () => {
 let allowFromBlock = null;
 let firstAnswerAtMs;
 
-const substantiveAnswerCount = () => new Set(
-  seen
-    .filter(isConversationAnswer)
-    .map((outbound, index) => outbound.messageId ?? `missing-${index}`),
-).size;
+const logicalAnswerCount = () => logicalSubstantiveAnswerCount(seen);
 
 const asyncFollowupFinished = (nowMs) => followupWaitMs === 0 || followupWaitFinished({
-  substantiveAnswerCount: substantiveAnswerCount(),
+  followupAnswerCount: Math.max(0, logicalAnswerCount() - 1),
   firstAnswerAtMs,
   nowMs,
   waitMs: followupWaitMs,
@@ -601,7 +598,7 @@ const correctedWireAnswer = sharedConversation && turnEnded
 const hasSubstantiveAnswer = sharedConversation
   ? correlatedWireAnswer || correctedWireAnswer !== null
   : sawAnswer;
-const followupDelivered = followupWaitMs > 0 && substantiveAnswerCount() >= 2;
+const followupDelivered = followupWaitMs > 0 && logicalAnswerCount() >= 2;
 const followupWindowExpired = followupWaitMs > 0
   && typeof firstAnswerAtMs === 'number'
   && Date.now() - firstAnswerAtMs >= followupWaitMs;

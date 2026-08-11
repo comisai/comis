@@ -435,16 +435,49 @@ export function directConversationFinished({
 }
 
 /**
- * Stop an opt-in async follow-up wait after a second substantive delivery or
+ * Count logical answers without treating Telegram's transport chunks as
+ * separate async follow-ups.
+ *
+ * Telegram accepts at most 4,096 characters. Formatting and balanced markup
+ * can make a full transport chunk land slightly below that limit. A
+ * substantive record after a near-limit chunk is therefore
+ * part of the same logical answer. A later record after the final short chunk
+ * starts a new answer. This is deliberately conservative: ambiguity extends
+ * the bounded wait instead of manufacturing a follow-up-delivered verdict.
+ */
+export function logicalSubstantiveAnswerCount(outbound) {
+  const nearTelegramLimit = 4_000;
+  const seenMessageIds = new Set();
+  let logicalCount = 0;
+  let previousWasFullTelegramChunk = false;
+
+  for (let index = 0; index < outbound.length; index += 1) {
+    const item = outbound[index];
+    const visibleContent = outboundVisibleContent(item);
+    if (!visibleContent || isDriveProgressText(visibleContent)) continue;
+
+    const messageKey = item?.messageId ?? `missing-${index}`;
+    if (seenMessageIds.has(messageKey)) continue;
+    seenMessageIds.add(messageKey);
+
+    if (!previousWasFullTelegramChunk) logicalCount += 1;
+    previousWasFullTelegramChunk = visibleContent.length >= nearTelegramLimit;
+  }
+
+  return logicalCount;
+}
+
+/**
+ * Stop an opt-in async follow-up wait after one logical follow-up answer or
  * after the bounded window measured from the launch acknowledgement.
  */
 export function followupWaitFinished({
-  substantiveAnswerCount,
+  followupAnswerCount,
   firstAnswerAtMs,
   nowMs,
   waitMs,
 }) {
-  if (substantiveAnswerCount >= 2) return true;
+  if (followupAnswerCount >= 1) return true;
   if (typeof firstAnswerAtMs !== "number") return false;
   return nowMs - firstAnswerAtMs >= waitMs;
 }
