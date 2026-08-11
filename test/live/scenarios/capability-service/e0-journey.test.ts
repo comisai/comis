@@ -332,6 +332,46 @@ function managedRunContinuationsSettled(dataDir: string, managedRunIds: readonly
   }
 }
 
+function deliveryDiagnostic(
+  goDatabasePath: string,
+  dataDir: string,
+  taskHandles: readonly string[],
+  managedRunIds: readonly string[],
+): string {
+  const goDb = new Database(goDatabasePath, { readonly: true });
+  const comisDb = new Database(join(dataDir, "memory.db"), { readonly: true });
+  try {
+    const taskSlots = taskHandles.map(() => "?").join(", ");
+    const runSlots = managedRunIds.map(() => "?").join(", ");
+    return JSON.stringify({
+      goEvidence: goDb.prepare(`SELECT task_handle AS taskHandle, evidence_ref AS evidenceRef,
+        delivery_kind AS deliveryKind, delivered_at AS deliveredAt
+        FROM comis_evidence_outbox WHERE task_handle IN (${taskSlots})
+        ORDER BY task_handle, evidence_ref`).all(...taskHandles),
+      goReports: goDb.prepare(`SELECT reports.task_handle AS taskHandle, reports.kind,
+        outbox.delivered_at AS deliveredAt
+        FROM comis_report_outbox AS outbox
+        JOIN reports ON reports.task_handle = outbox.task_handle
+          AND reports.local_report_id = outbox.local_report_id
+        WHERE reports.task_handle IN (${taskSlots})
+        ORDER BY reports.task_handle, reports.state_version`).all(...taskHandles),
+      comisRuns: comisDb.prepare(`SELECT managed_run_id AS managedRunId, status,
+        last_accepted_report_sequence AS acceptedSequence,
+        last_reduced_report_sequence AS reducedSequence,
+        pending_continuation AS pendingContinuation
+        FROM managed_runs WHERE managed_run_id IN (${runSlots})
+        ORDER BY managed_run_id`).all(...managedRunIds),
+      comisEvidence: comisDb.prepare(`SELECT managed_run_id AS managedRunId,
+        evidence_ref AS evidenceRef, delivery_kind AS deliveryKind
+        FROM managed_run_evidence WHERE managed_run_id IN (${runSlots})
+        ORDER BY managed_run_id, evidence_ref`).all(...managedRunIds),
+    });
+  } finally {
+    goDb.close();
+    comisDb.close();
+  }
+}
+
 async function liaisonTurn(
   model: LiaisonModelServer,
   channelManager: InjectableChannelManager,
@@ -617,7 +657,12 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       await pollUntil(
         () => taskState(goDatabase, shipTask) === "delivered" && taskState(goDatabase, scoutTask) === "delivered",
         150_000,
-        () => `delivered tasks before restart; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} stderr=${service?.stderr() ?? ""}`,
+        () => `delivered tasks before restart; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} diagnostic=${deliveryDiagnostic(
+          goDatabase,
+          canonicalDataDir,
+          handles,
+          [shipBinding.managed_run_id, scoutBinding.managed_run_id],
+        )} stderr=${service?.stderr() ?? ""}`,
       );
       await pollUntil(
         () => evidenceDelivered(goDatabase, handles)
