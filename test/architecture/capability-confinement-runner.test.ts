@@ -9,10 +9,12 @@ const dockerignorePath = resolve(repoRoot, ".dockerignore");
 const dockerfilePath = resolve(runnerRoot, "Dockerfile");
 const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
 const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
+const journeyGatePath = resolve(runnerRoot, "run-e0-journey.sh");
 const launcherPath = resolve(runnerRoot, "wave4-codex-launcher.sh");
 const reporterCapturePath = resolve(runnerRoot, "wave4-report-capture.sh");
 const reporterClientDiagnosticPath = resolve(runnerRoot, "wave4-reporter-client-diagnostic.go");
 const joinScenarioPath = resolve(repoRoot, "test/live/scenarios/capability-service/wave4-join.test.ts");
+const journeyScenarioPath = resolve(repoRoot, "test/live/scenarios/capability-service/e0-journey.test.ts");
 const hostRunnerPath = resolve(repoRoot, "scripts/run-confinement-runner.sh");
 
 function source(path: string): string {
@@ -75,6 +77,22 @@ describe("capability-service Linux confinement runner", () => {
     expect(joinGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(joinGate).toContain("COMIS_LIVE=1");
     expect(joinGate).toContain("wave4-join.test.ts");
+  });
+
+  it("runs the full E0 journey from a separate exact clean companion archive", () => {
+    const runner = source(hostRunnerPath);
+    const journeyGate = source(journeyGatePath);
+    const scenario = source(journeyScenarioPath);
+
+    expect(runner).toMatch(/spike \| join \| journey \| shell/u);
+    expect(journeyGate).toContain('readonly DEV_CREW_COMMIT="b509f0d3a2df25b09f2164d941891bcc08969a96"');
+    expect(journeyGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
+    expect(journeyGate).toContain("COMIS_LIVE=1");
+    expect(journeyGate).toContain("e0-journey.test.ts");
+    expect(scenario).toContain('"--candidate-config", input.candidateConfig');
+    expect(scenario).toContain("cleanup_task");
+    expect(scenario).toContain("handback_task");
+    expect(scenario).toContain("NETWORK_CONFINEMENT_NOT_PROVEN");
   });
 
   it("installs a fixed real-Codex wrapper outside both source mounts", () => {
