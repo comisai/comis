@@ -164,7 +164,7 @@ describe("prompt skill request routing", () => {
     ]);
   });
 
-  it("keeps the current request authoritative in workflow context", () => {
+  it("excludes stale workflow context from a self-contained current request", () => {
     const deferral = result();
     const currentRequestText =
       "i need to understand heat pumps properly, not just a paragraph";
@@ -181,12 +181,7 @@ describe("prompt skill request routing", () => {
       ]),
     });
 
-    expect(deferral.requestRelevantPromptSkillWorkflowContext)
-      .toContain(currentRequestText);
-    expect(deferral.requestRelevantPromptSkillWorkflowContext?.lastIndexOf(currentRequestText))
-      .toBeGreaterThan(
-        deferral.requestRelevantPromptSkillWorkflowContext?.indexOf(priorUserRequest) ?? -1,
-      );
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toBe(currentRequestText);
   });
 
   it("keeps research attribution follow-ups on the relevant prompt skill", () => {
@@ -213,6 +208,12 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/deep-research/SKILL.md",
     ]);
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toContain(
+      "i need to understand heat pumps properly, not just a paragraph",
+    );
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toContain(
+      currentRequestText,
+    );
   });
 
   it("does not route common prose overlap to an unrelated prompt skill", () => {
