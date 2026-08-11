@@ -10,6 +10,13 @@ import type { ExcludeDeferralResult } from "./tool-deferral.js";
 const MAX_MATCHED_SKILLS = 1;
 const MIN_SHARED_TERMS = 2;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
+const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
+  "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
+  "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
+  "our", "out", "some", "that", "the", "their", "then", "these", "this", "those",
+  "use", "uses", "using", "want", "wants", "was", "were", "when", "where", "which",
+  "with", "would", "you", "your",
+]);
 
 interface PromptSkillRequestRoutingInput {
   readonly currentRequestText: string;
@@ -22,7 +29,7 @@ interface PromptSkillRequestRoutingInput {
 function terms(text: string): Set<string> {
   return new Set(
     text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)
-      ?.filter((term) => term.length >= 3) ?? [],
+      ?.filter((term) => term.length >= 3 && !ROUTING_STOPWORDS.has(term)) ?? [],
   );
 }
 
