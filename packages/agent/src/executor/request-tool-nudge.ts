@@ -261,7 +261,7 @@ function buildDirective(
               }),
               ...(workflowArgumentHint(promptSkillWorkflowContext)
                 ? [
-                    `Concrete workflow argument hint: ${JSON.stringify(workflowArgumentHint(promptSkillWorkflowContext))}. Use these prior-request terms instead of terms from the current elliptical wording.`,
+                    `Concrete workflow argument hint: ${JSON.stringify(workflowArgumentHint(promptSkillWorkflowContext))}. Use these context terms only where they agree with the authoritative current request.`,
                   ]
                 : []),
             ]

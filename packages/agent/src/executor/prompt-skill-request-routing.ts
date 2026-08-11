@@ -10,6 +10,8 @@ import type { ExcludeDeferralResult } from "./tool-deferral.js";
 const MAX_MATCHED_SKILLS = 1;
 const MIN_SHARED_TERMS = 2;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
+const PRIOR_REQUEST_REFERENCE_PATTERN =
+  /\b(?:again|continue|earlier|former|it|its|latter|one|ones|previous|same|something|that|them|these|this|those)\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -33,7 +35,7 @@ function terms(text: string): Set<string> {
   );
 }
 
-/** Keep the current request intact while retaining as much preceding context as fits. */
+/** Retain preceding context only when the current wording refers back to it. */
 function workflowContext(
   currentRequestText: string,
   priorUserRequest: string | undefined,
@@ -43,7 +45,11 @@ function workflowContext(
   if (current.length === 0) {
     return prior.length === 0 ? undefined : prior.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
   }
-  if (prior.length === 0 || prior === current) {
+  if (
+    prior.length === 0
+    || prior === current
+    || !PRIOR_REQUEST_REFERENCE_PATTERN.test(current)
+  ) {
     return current.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
   }
   const currentLabel = "Current request:\n";
