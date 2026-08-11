@@ -234,6 +234,29 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
   });
 
+  it("does not route a conversation-history recall question as a skill workflow", () => {
+    const deferral = result();
+    const currentRequestText = "what did i say about the project near the start?";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: [{
+        name: "project-start",
+        description: "Use a project start workflow to prepare repository tasks.",
+        replacesPackages: [],
+        requiredBins: ["git"],
+      }],
+      locations: new Map([
+        ["/skills/project-start/SKILL.md", "project-start"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantToolNames).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+  });
+
   it("does not treat generic background task and tool terms as a coding request", () => {
     const deferral = result();
     const currentRequestText = [
