@@ -20,13 +20,13 @@ import {
 describe("opt-in follow-up delivery wait", () => {
   it("keeps polling after the launch acknowledgement until a second answer arrives", () => {
     expect(followupWaitFinished({
-      substantiveAnswerCount: 1,
+      followupAnswerCount: 0,
       firstAnswerAtMs: 1_000,
       nowMs: 5_000,
       waitMs: 30_000,
     })).toBe(false);
     expect(followupWaitFinished({
-      substantiveAnswerCount: 2,
+      followupAnswerCount: 1,
       firstAnswerAtMs: 1_000,
       nowMs: 5_000,
       waitMs: 30_000,
@@ -35,13 +35,13 @@ describe("opt-in follow-up delivery wait", () => {
 
   it("ends honestly when the bounded follow-up window expires", () => {
     expect(followupWaitFinished({
-      substantiveAnswerCount: 1,
+      followupAnswerCount: 0,
       firstAnswerAtMs: 1_000,
       nowMs: 31_000,
       waitMs: 30_000,
     })).toBe(true);
     expect(followupWaitFinished({
-      substantiveAnswerCount: 0,
+      followupAnswerCount: 0,
       firstAnswerAtMs: undefined,
       nowMs: 90_000,
       waitMs: 30_000,
