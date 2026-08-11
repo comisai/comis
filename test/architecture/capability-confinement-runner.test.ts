@@ -11,6 +11,7 @@ const containerGatePath = resolve(runnerRoot, "run-spike-gate.sh");
 const joinGatePath = resolve(runnerRoot, "run-join-gate.sh");
 const journeyGatePath = resolve(runnerRoot, "run-e0-journey.sh");
 const launcherPath = resolve(runnerRoot, "wave4-codex-launcher.sh");
+const journeyLauncherPath = resolve(runnerRoot, "e0-codex-launcher.sh");
 const reporterCapturePath = resolve(runnerRoot, "wave4-report-capture.sh");
 const reporterClientDiagnosticPath = resolve(runnerRoot, "wave4-reporter-client-diagnostic.go");
 const joinScenarioPath = resolve(repoRoot, "test/live/scenarios/capability-service/wave4-join.test.ts");
@@ -92,6 +93,28 @@ describe("capability-service Linux confinement runner", () => {
     expect(scenario).toContain("wave4-join.test.js");
     expect(source(joinScenarioPath)).toContain('arguments_.push("--candidate-config", input.candidateConfig)');
     expect(source(joinScenarioPath)).toContain('...(isE0Journey ? ["evidence" as const] : [])');
+  });
+
+  it("drives the complete E0 custody journey after the current join", () => {
+    const dockerfile = source(dockerfilePath);
+    const launcher = source(journeyLauncherPath);
+    const scenario = source(journeyScenarioPath);
+    const gate = source(journeyGatePath);
+
+    expect(dockerfile).toContain("COPY --chmod=0755 test/confinement-runner/e0-codex-launcher.sh");
+    expect(dockerfile).toContain("/usr/local/bin/e0-codex-launcher");
+    expect(launcher).toContain("devcrew-report decision");
+    expect(launcher).toContain("devcrew-report resolved");
+    expect(launcher).toContain("devcrew-report paused");
+    expect(scenario).toContain('shape: "ship"');
+    expect(scenario).toContain('shape: "scout"');
+    expect(scenario).toContain("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
+    expect(scenario).toContain("handback_task");
+    expect(scenario).toContain("task_cleanup_holds");
+    expect(scenario).toContain("DIRTY_WORKTREE_CLEANUP_REFUSED");
+    expect(scenario).toContain("cleanup_task");
+    expect(scenario).toContain("NETWORK_CONFINEMENT_NOT_PROVEN");
+    expect(gate).toContain("E0_JOURNEY_GATE_PASS");
   });
 
   it("installs a fixed real-Codex wrapper outside both source mounts", () => {
