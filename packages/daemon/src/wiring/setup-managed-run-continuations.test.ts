@@ -328,4 +328,49 @@ describe("managed-run continuation composition", () => {
       origin: "managed-run-continuation",
     }));
   });
+
+  it("delivers the exact verified reference and acknowledges its evidence identity", async () => {
+    const record = makeRecord();
+    const adapter = { channelId: "echo-main", channelType: "echo" };
+    const deliverToChannel = vi.fn(async () => ok({
+      platform: { status: "accepted" as const, attemptedChunks: 1, acceptedChunks: 1, lastMessageId: "message-ref" },
+      queue: { status: "not_queued" as const },
+    }));
+    const ledger = {
+      allocateStep: vi.fn(async () => ok(4)),
+      lookup: vi.fn(async () => ok(undefined)),
+      begin: vi.fn(async () => ok(undefined)),
+      markUnknown: vi.fn(async () => ok(undefined)),
+      commit: vi.fn(async () => ok(undefined)),
+    } as unknown as OutwardSendLedgerPort;
+    const delivery = createManagedRunContinuationDelivery({
+      adaptersByType: new Map([["echo", adapter as never]]),
+      deliveryService: { deliverToChannel } as unknown as DeliveryService,
+      outwardLedger: ledger,
+      logger: makeLogger(),
+    });
+
+    const result = await delivery(record, "claim-ref", {
+      response: "Verified candidate summary",
+      executionId: "execution-ref",
+      cleanupRequired: false,
+    }, "ready", {
+      kind: "reference",
+      evidenceRef: "evidence-delivery",
+      subjectDigest: "c".repeat(64),
+      contentHash: "d".repeat(64),
+      url: "https://example.com/pull/17",
+    });
+
+    expect(result).toEqual(ok({
+      deliveryState: "verified",
+      verifiedEvidenceRef: "evidence-delivery",
+    }));
+    expect(deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "conversation-a",
+      "Verified candidate summary\n\nhttps://example.com/pull/17",
+      expect.objectContaining({ origin: "managed-run-continuation" }),
+    );
+  });
 });
