@@ -351,6 +351,21 @@ export function enforceCitationEvidence(params: {
   };
 }
 
+/** Fresh fetch evidence is authoritative; durable receipts fill only an evidence-free follow-up. */
+export function citationEvidenceDigestsForTurn(params: {
+  currentFetchDigests: readonly string[];
+  relayedDigests: readonly string[];
+  historicalDigests: readonly string[];
+}): string[] {
+  const freshDigests = [
+    ...params.currentFetchDigests,
+    ...params.relayedDigests,
+  ];
+  return [...validDigests(
+    freshDigests.length > 0 ? freshDigests : params.historicalDigests,
+  )];
+}
+
 /** Runtime citation receipts from completed earlier turns in this session. */
 export function historicalCitationDigests(
   sessionManager: Pick<SessionManager, "getEntries"> | unknown,

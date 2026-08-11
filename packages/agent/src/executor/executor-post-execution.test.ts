@@ -1142,6 +1142,7 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(
       /const historicalDigests\s*=\s*citationSourceRequest\s*\?\s*historicalCitationDigests\(sm\)/,
     );
+    expect(stripped).toMatch(/citationEvidenceDigestsForTurn\(\{/);
     expect(stripped).toMatch(
       /enabled:[\s\S]{0,300}?\|\|\s*citationSourceRequest/,
     );

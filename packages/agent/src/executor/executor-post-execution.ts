@@ -165,6 +165,7 @@ import {
 } from "./phase-filter.js";
 import {
   appendCitationEvidenceRecord,
+  citationEvidenceDigestsForTurn,
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
@@ -2504,8 +2505,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // locale repair and the optional critic), immediately before the canonical
   // assistant turn is synchronized. Current successful web_fetch receipts are
   // authoritative. A background completion carries only their SHA-256 URL
-  // digests, while a later explicit source question may reuse digests attached
-  // by this same guard to earlier append-only runtime journal receipts.
+  // digests. An explicit source question may reuse digests attached by this
+  // same guard only when it has no fresh successful fetch evidence.
   const currentWebResearchObserved = (bridgeResult.toolExecResults ?? []).some(
     (toolResult) => toolResult.toolName === "web_fetch" || toolResult.toolName === "web_search",
   );
@@ -2526,11 +2527,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const historicalDigests = citationSourceRequest
     ? historicalCitationDigests(sm)
     : [];
-  const allowedCitationDigests = [
-    ...currentFetchDigests,
-    ...(relayedCitationEvidence?.urlDigests ?? []),
-    ...historicalDigests,
-  ];
+  const allowedCitationDigests = citationEvidenceDigestsForTurn({
+    currentFetchDigests,
+    relayedDigests: relayedCitationEvidence?.urlDigests ?? [],
+    historicalDigests,
+  });
   const citationGrounding = enforceCitationEvidence({
     response: result.response ?? "",
     allowedUrlDigests: allowedCitationDigests,
