@@ -1,6 +1,6 @@
 ---
 name: deep-research
-version: 1.0.3
+version: 1.0.4
 description: "MANDATORY: Conduct systematic, multi-angle web research before answering any request to understand or explain a topic properly, deeply, thoroughly, comprehensively, or beyond a short paragraph, even when general knowledge could produce an answer. Also use for comparisons, explicit research, current online information, and content-generation tasks such as articles, reports, presentations, or documentation. Load this skill instead of doing a single web search or answering from memory."
 comis:
   requires:
@@ -18,6 +18,10 @@ Systematic methodology for thorough web research. Load this skill BEFORE startin
 Never generate content based solely on general knowledge. The quality of output depends directly on research quality. A single search query is never enough.
 
 Before answering, obtain at least three distinct successful `web_fetch` receipts from three different URLs, covering multiple angles. If fewer than three distinct sources can be fetched, label the result partial or incomplete, name each unavailable source or capability blocker, and do not fill the evidence gap from memory.
+
+Build a receipt ledger keyed by canonical URL before writing. Re-fetching the same URL does not count as another source, even when the options or returned length differ. Continue fetching until the ledger has three unique successful URLs; otherwise abstain from a substantive answer and return only the incomplete-research status.
+
+Every factual paragraph or claim cluster in the answer must carry an inline citation to one or more fetched URLs that support it. Omit any statement the fetched sources do not support. On every failed source fetch, name the failed URL in an **Unavailable sources** note with its error; never cite or use that source as evidence.
 
 Every URL presented as a citation must have a successful `web_fetch` receipt from the current research run. A `web_search` result or snippet is discovery evidence, not citation evidence. Fetch a discovered source before citing it; if the fetch fails, omit it from citations and name it separately as an attempted but unavailable source.
 
@@ -89,6 +93,8 @@ If any answer is NO, continue researching before generating content.
 ## Search Strategy
 
 ### Effective query patterns
+
+When calling `web_search`, omit `provider` unless using an exact provider value allowed by the tool schema. `web_search` is the tool name, not a provider value.
 
 ```
 # Be specific with context
