@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  CAPABILITY_SERVICE_METHODS,
   CAPABILITY_SERVICE_PROTOCOL_ID,
   CapabilityActivateRequestSchema,
   CapabilityHandshakeRequestSchema,
+  CapabilityServiceRequestSchema,
   McpManagedRunResultSchema,
 } from "./index.js";
 
@@ -21,6 +23,21 @@ function activateParams(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe("capability-service execution-attachment contract", () => {
+  it("accepts exact managed run release requests", () => {
+    expect(CAPABILITY_SERVICE_METHODS).toContain("managedRuns.release");
+    expect(CapabilityServiceRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_release",
+      method: "managedRuns.release",
+      params: {
+        operationId: "operation_release",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe",
+      },
+    }).success).toBe(true);
+  });
+
   it("accepts both requested execution attachment source kinds", () => {
     for (const kind of ["unix_socket", "inherited_descriptor"] as const) {
       expect(McpManagedRunResultSchema.safeParse({
