@@ -289,6 +289,22 @@ function handbackDiagnostic(databasePath: string, taskHandle: string): string {
   }
 }
 
+function cleanupDiagnostic(databasePath: string, taskHandle: string): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const task = db.prepare("SELECT state, state_version AS stateVersion, updated_at AS updatedAt FROM tasks WHERE handle = ?")
+      .get(taskHandle);
+    const cleanups = db.prepare(`SELECT operation_id AS operationId, stage,
+      release_operation_id AS releaseOperationId, released_at AS releasedAt,
+      host_released_at AS hostReleasedAt, removal_authorized_at AS removalAuthorizedAt,
+      completed_at AS completedAt FROM task_cleanup_operations WHERE task_handle = ? ORDER BY operation_id`)
+      .all(taskHandle);
+    return JSON.stringify({ task, cleanups });
+  } finally {
+    db.close();
+  }
+}
+
 function reportKinds(databasePath: string, taskHandle: string): string[] {
   const db = new Database(databasePath, { readonly: true });
   try {
@@ -775,9 +791,18 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       console.log("DIRTY_WORKTREE_CLEANUP_REFUSED");
       expect(existsSync(scoutBinding.canonical_path)).toBe(true);
       rmSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"));
-      const cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
-        "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-dirty", "--format", "json",
-      ]);
+      let cleanedScout: { state: string };
+      try {
+        cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
+          "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-dirty", "--format", "json",
+        ]);
+      } catch (cause) {
+        const processDiagnostic = `serviceExit=${String(service.child.exitCode)}; serviceSignal=${String(service.child.signalCode)}`;
+        throw new Error(
+          `scout cleanup replay failed; ${cleanupDiagnostic(goDatabase, scoutTask)}; ${processDiagnostic}; serviceStderr=${service.stderr()}`,
+          { cause },
+        );
+      }
       expect(cleanedScout.state).toBe("cleaned");
 
       let cleanedShip = "";
