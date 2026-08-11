@@ -563,7 +563,7 @@ describe("executeLlm — configured voice delivery signal", () => {
     sendAttachment: vi.fn(async () => ok({ kind: "tracked", messageId: "m-1" })),
   } as Partial<ChannelPort>);
 
-  it("tells the executor the runtime speaks this turn's reply", async () => {
+  it("passes runtime audio delivery evidence for every finalized reply", async () => {
     const { executor, getOverrides } = makeOverridesCapturingExecutor();
     const deps = makeDeps({ voiceResponsePipeline: makeVoicePipeline(true) });
 
