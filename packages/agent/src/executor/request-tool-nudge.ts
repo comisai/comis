@@ -125,6 +125,41 @@ function workflowArgumentHint(context: string): string | undefined {
   return hint.length > 0 ? hint : undefined;
 }
 
+function decodedJsonString(text: string, pattern: RegExp): string | undefined {
+  const encoded = pattern.exec(text)?.[1];
+  if (encoded === undefined) return undefined;
+  const decoded = tryCatch(() => JSON.parse(encoded) as unknown);
+  return decoded.ok && typeof decoded.value === "string" ? decoded.value : undefined;
+}
+
+function compactWorkflowReceipt(
+  toolName: string,
+  text: string,
+): { readonly text: string; readonly failed: boolean } {
+  if (toolName === "web_search") {
+    const query = decodedJsonString(
+      text,
+      /"query"\s*:\s*("(?:\\.|[^"\\])*")/u,
+    );
+    return { text: query === undefined ? text : `Query: ${query}`, failed: false };
+  }
+  if (toolName !== "web_fetch") return { text, failed: false };
+  const url = decodedJsonString(text, /"url"\s*:\s*("(?:\\.|[^"\\])*")/u);
+  const evidence = decodedJsonString(text, /"text"\s*:\s*("(?:\\.|[^"\\])*")/u)
+    ?? decodedJsonString(text, /"error"\s*:\s*("(?:\\.|[^"\\])*")/u);
+  const statusText = /"status"\s*:\s*(\d+)/u.exec(text)?.[1];
+  const status = statusText === undefined ? undefined : Number(statusText);
+  const summary = [
+    ...(url === undefined ? [] : [`URL: ${url}`]),
+    ...(status === undefined ? [] : [`HTTP status: ${status}`]),
+    ...(evidence === undefined ? [] : [`Evidence: ${evidence}`]),
+  ].join("\n");
+  return {
+    text: summary.length > 0 ? summary : text,
+    failed: status !== undefined && status >= 400,
+  };
+}
+
 function currentWorkflowToolReceipts(
   messages: readonly unknown[],
   workflowToolNames: readonly string[],
@@ -147,9 +182,13 @@ function currentWorkflowToolReceipts(
       || !names.has(entry.toolName)
     ) return [];
     const text = scrubSecretsFromText(visibleTextOf(entry.content)).text.trim();
-    return text.length > 0
-      ? [{ toolName: entry.toolName, failed: entry.isError === true, text }]
-      : [];
+    if (text.length === 0) return [];
+    const compact = compactWorkflowReceipt(entry.toolName, text);
+    return [{
+      toolName: entry.toolName,
+      failed: entry.isError === true || compact.failed,
+      text: compact.text,
+    }];
   });
   if (receipts.length === 0) return undefined;
   const perReceiptChars = Math.max(
