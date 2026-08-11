@@ -155,6 +155,9 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(description).toMatch(/understand|explain/iu);
     expect(description).toMatch(/properly|deeply|thoroughly/iu);
     expect(description).toMatch(/general knowledge/iu);
+    expect(description).toMatch(/source attribution|claim tracing/iu);
+    expect(description).toMatch(/compression[^.]*essentials/iu);
+    expect(manifest).toMatch(/^version:\s*1\.0\.6$/mu);
     expect(manifest).toMatch(
       /at least three distinct[^\n]*successful[^\n]*web_fetch/iu,
     );
@@ -170,6 +173,12 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     );
     expect(manifest).toMatch(
       /failed[^\n]*(?:source|fetch)[^\n]*name[^\n]*(?:URL|source)/iu,
+    );
+    expect(manifest).toMatch(
+      /follow-ups[^\n]*re-fetch[^\n]*citation/iu,
+    );
+    expect(manifest).toMatch(
+      /no failed receipt[^\n]*do not invent/iu,
     );
   });
 
