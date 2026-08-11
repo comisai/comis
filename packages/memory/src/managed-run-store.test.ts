@@ -174,7 +174,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     });
     expect(await store.appendEvidence(SERVICE_SCOPE, input)).toEqual({
       ok: true,
-      value: { kind: "identical_replay", evidence: { ...input, schemaVersion: 1 } },
+      value: {
+        kind: "identical_replay",
+        evidence: { ...input, schemaVersion: 1, serviceInstanceId: "service-instance_a" },
+      },
     });
     expect((await store.appendEvidence(SERVICE_SCOPE, {
       ...input,
@@ -188,7 +191,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(await store.listEvidenceByRefs(OWNER_SCOPE, {
       managedRunId: "managed-run_a",
       evidenceRefs: ["evidence_a"],
-    })).toEqual({ ok: true, value: [{ ...input, schemaVersion: 1 }] });
+    })).toEqual({
+      ok: true,
+      value: [{ ...input, schemaVersion: 1, serviceInstanceId: "service-instance_a" }],
+    });
     expect(await store.listEvidenceByRefs(OTHER_OWNER_SCOPE, {
       managedRunId: "managed-run_a",
       evidenceRefs: ["evidence_a"],

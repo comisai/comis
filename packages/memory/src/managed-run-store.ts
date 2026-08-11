@@ -3,6 +3,11 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import {
   ManagedRunReportIndexSchema,
+  ManagedEvidenceIndexSchema,
+  type ManagedEvidenceAppendInput,
+  type ManagedEvidenceAppendOutcome,
+  type ManagedEvidenceIndex,
+  type ManagedEvidenceListInput,
   type InvalidManagedRunRecord,
   type ManagedRunBindingOutcome,
   type ManagedRunContinuationClaimInput,
@@ -31,6 +36,7 @@ import { err, ok, type Result } from "@comis/shared";
 import {
   ManagedRunContinuationClaimDbRowSchema,
   ManagedRunDbRowSchema,
+  ManagedEvidenceDbRowSchema,
   ManagedRunOperationDbRowSchema,
   ManagedRunReportDbRowSchema,
 } from "./managed-run-row-schema.js";
@@ -50,6 +56,7 @@ import { createRowMapper } from "./row-mapper.js";
 
 const runMapper = createRowMapper(ManagedRunDbRowSchema);
 const reportMapper = createRowMapper(ManagedRunReportDbRowSchema);
+const evidenceMapper = createRowMapper(ManagedEvidenceDbRowSchema);
 const operationMapper = createRowMapper(ManagedRunOperationDbRowSchema);
 const claimMapper = createRowMapper(ManagedRunContinuationClaimDbRowSchema);
 const recoveryIdentitySchema = z.object({
@@ -130,6 +137,23 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     WHERE managed_run_id = ? AND sequence > ? AND sequence <= ?
     ORDER BY sequence ASC
   `);
+  const selectEvidence = db.prepare(`
+    SELECT * FROM managed_run_evidence
+    WHERE service_instance_id = ? AND evidence_ref = ?
+  `);
+  const insertEvidence = db.prepare(`
+    INSERT INTO managed_run_evidence (
+      schema_version, service_instance_id, managed_run_id, evidence_ref, kind,
+      subject_digest, observed_at_ms, expires_at_ms, content_ref, content_hash,
+      private_content_hash, verification_level, delivery_kind, received_at_ms
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const listEvidenceRows = db.prepare(`
+    SELECT evidence.* FROM json_each(?) AS requested
+    JOIN managed_run_evidence AS evidence ON evidence.evidence_ref = requested.value
+    WHERE evidence.managed_run_id = ?
+    ORDER BY CAST(requested.key AS INTEGER) ASC
+  `);
   const selectClaim = db.prepare(`
     SELECT * FROM managed_run_continuation_claims WHERE claim_id = ?
   `);
@@ -198,6 +222,28 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       record.managedRunId,
     );
     return updated.changes === 1 ? ok(undefined) : err(new Error("managed-run update lost its row"));
+  }
+
+  function rowToEvidence(row: z.infer<typeof ManagedEvidenceDbRowSchema>): Result<ManagedEvidenceIndex, Error> {
+    const parsed = ManagedEvidenceIndexSchema.safeParse({
+      schemaVersion: row.schema_version,
+      serviceInstanceId: row.service_instance_id,
+      managedRunId: row.managed_run_id,
+      evidenceRef: row.evidence_ref,
+      kind: row.kind,
+      subjectDigest: row.subject_digest,
+      observedAtMs: row.observed_at_ms,
+      ...(row.expires_at_ms === null ? {} : { expiresAtMs: row.expires_at_ms }),
+      contentRef: row.content_ref,
+      contentHash: row.content_hash,
+      privateContentHash: row.private_content_hash,
+      verificationLevel: row.verification_level,
+      deliveryKind: row.delivery_kind,
+      receivedAtMs: row.received_at_ms,
+    });
+    return parsed.success
+      ? ok(parsed.data)
+      : err(new Error(`stored managed evidence is invalid: ${parsed.error.message}`));
   }
 
   function readStoredOperation(
@@ -361,6 +407,55 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     };
     const persisted = persistMutable(next);
     return persisted.ok ? ok({ kind: "accepted", report: candidate.data }) : persisted;
+  });
+
+  const evidenceTransaction = db.transaction((
+    scope: ManagedRunServiceScope,
+    input: ManagedEvidenceAppendInput,
+  ): Result<ManagedEvidenceAppendOutcome, Error> => {
+    const candidate = ManagedEvidenceIndexSchema.safeParse({
+      schemaVersion: 1,
+      serviceInstanceId: scope.serviceInstanceId,
+      ...input,
+    });
+    if (!candidate.success) {
+      return err(new Error(`managed evidence validation failed: ${candidate.error.message}`));
+    }
+    const previousRow = evidenceMapper.parseOptionalRow(selectEvidence.get(
+      scope.serviceInstanceId,
+      input.evidenceRef,
+    ));
+    if (!previousRow.ok) return err(new Error(previousRow.error.message));
+    if (previousRow.value !== undefined) {
+      const previous = rowToEvidence(previousRow.value);
+      if (!previous.ok) return previous;
+      return hashCanonical(previous.value) === hashCanonical(candidate.data)
+        ? ok({ kind: "identical_replay", evidence: previous.value })
+        : ok({ kind: "replay_conflict" });
+    }
+    const current = readRecord(input.managedRunId);
+    if (!current.ok) return current;
+    if (current.value === undefined) return ok({ kind: "not_found" });
+    if (!scopeMatches(current.value, scope)) return ok({ kind: "scope_mismatch" });
+    if (!new Set(["active", "waiting", "paused", "candidate_complete", "unknown"]).has(current.value.status)) {
+      return ok({ kind: "state_mismatch", status: current.value.status });
+    }
+    insertEvidence.run(
+      scope.serviceInstanceId,
+      input.managedRunId,
+      input.evidenceRef,
+      input.kind,
+      input.subjectDigest,
+      input.observedAtMs,
+      input.expiresAtMs ?? null,
+      input.contentRef,
+      input.contentHash,
+      input.privateContentHash,
+      input.verificationLevel,
+      input.deliveryKind,
+      input.receivedAtMs,
+    );
+    return ok({ kind: "accepted", evidence: candidate.data });
   });
 
   const bindingTransaction = db.transaction((
@@ -612,6 +707,32 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
         reports.push(report.value);
       }
       return ok(reports);
+    }),
+    appendEvidence: (scope, input) => boundary(
+      () => evidenceTransaction.immediate(scope, input),
+    ),
+    listEvidenceByRefs: (scope, input: ManagedEvidenceListInput) => boundary(() => {
+      if (
+        input.evidenceRefs.length === 0
+        || input.evidenceRefs.length > 32
+        || new Set(input.evidenceRefs).size !== input.evidenceRefs.length
+        || input.evidenceRefs.some((reference) => !/^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$/u.test(reference))
+      ) return err(new Error("managed evidence reference list is invalid"));
+      const record = readRecord(input.managedRunId);
+      if (!record.ok) return record;
+      if (record.value === undefined || !scopeMatches(record.value, scope)) return ok([]);
+      const rows = evidenceMapper.parseRows(listEvidenceRows.all(
+        JSON.stringify(input.evidenceRefs),
+        input.managedRunId,
+      ));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      const evidence: ManagedEvidenceIndex[] = [];
+      for (const row of rows.value) {
+        const parsed = rowToEvidence(row);
+        if (!parsed.ok) return parsed;
+        evidence.push(parsed.value);
+      }
+      return ok(evidence);
     }),
     getAttention: (scope, attentionId) => boundary(() => attention.get(scope, attentionId)),
     listOpenAttention: (scope, input) => boundary(() => attention.listOpen(scope, input)),

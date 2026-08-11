@@ -12,6 +12,8 @@ import type {
   ManagedRunReportBody,
   ManagedRunReportIndex,
   ManagedRunReportKind,
+  ManagedEvidenceIndex,
+  ManagedEvidenceVerificationLevel,
 } from "../domain/managed-run-content.js";
 import type { ManagedRunAttentionRecord } from "../domain/managed-run-attention.js";
 
@@ -126,6 +128,34 @@ export interface ManagedRunReportRangeInput {
   readonly managedRunId: string;
   readonly afterSequence: number;
   readonly throughSequence: number;
+}
+
+export interface ManagedEvidenceAppendInput {
+  readonly managedRunId: string;
+  readonly evidenceRef: string;
+  readonly kind: string;
+  readonly subjectDigest: string;
+  readonly observedAtMs: number;
+  readonly expiresAtMs?: number;
+  readonly contentRef: string;
+  readonly contentHash: string;
+  readonly privateContentHash: string;
+  readonly verificationLevel: ManagedEvidenceVerificationLevel;
+  readonly deliveryKind: "none" | "reference" | "attachment";
+  readonly receivedAtMs: number;
+}
+
+export type ManagedEvidenceAppendOutcome =
+  | { readonly kind: "accepted"; readonly evidence: ManagedEvidenceIndex }
+  | { readonly kind: "identical_replay"; readonly evidence: ManagedEvidenceIndex }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "scope_mismatch" }
+  | { readonly kind: "state_mismatch"; readonly status: ManagedRunStatus }
+  | { readonly kind: "replay_conflict" };
+
+export interface ManagedEvidenceListInput {
+  readonly managedRunId: string;
+  readonly evidenceRefs: readonly string[];
 }
 
 export interface ManagedRunAttentionListInput {
@@ -263,6 +293,8 @@ export interface ManagedRunStorePort {
   bindExecutionAttachment(scope: ManagedRunOwnerScope, input: ManagedRunExecutionAttachmentBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;
   listReportRange(scope: ManagedRunOwnerScope, input: ManagedRunReportRangeInput): Promise<Result<ManagedRunReportIndex[], Error>>;
+  appendEvidence(scope: ManagedRunServiceScope, input: ManagedEvidenceAppendInput): Promise<Result<ManagedEvidenceAppendOutcome, Error>>;
+  listEvidenceByRefs(scope: ManagedRunOwnerScope, input: ManagedEvidenceListInput): Promise<Result<ManagedEvidenceIndex[], Error>>;
   getAttention(scope: ManagedRunOwnerScope, attentionId: string): Promise<Result<ManagedRunAttentionRecord | undefined, Error>>;
   listOpenAttention(scope: ManagedRunOwnerScope, input: ManagedRunAttentionListInput): Promise<Result<ManagedRunAttentionRecord[], Error>>;
   claimAttentionResponse(scope: ManagedRunOwnerScope, input: ManagedRunAttentionResponseInput): Promise<Result<ManagedRunAttentionMutationOutcome, Error>>;

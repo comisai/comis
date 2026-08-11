@@ -172,6 +172,27 @@ export function ensureManagedRunTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_managed_run_reports_reduce
       ON managed_run_reports (managed_run_id, sequence);
 
+    CREATE TABLE IF NOT EXISTS managed_run_evidence (
+      schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+      service_instance_id TEXT NOT NULL,
+      managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),
+      evidence_ref TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      subject_digest TEXT NOT NULL,
+      observed_at_ms INTEGER NOT NULL,
+      expires_at_ms INTEGER,
+      content_ref TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      private_content_hash TEXT NOT NULL,
+      verification_level TEXT NOT NULL CHECK(verification_level IN ('reported','adapter_verified','host_verified')),
+      delivery_kind TEXT NOT NULL CHECK(delivery_kind IN ('none','reference','attachment')),
+      received_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (service_instance_id, evidence_ref),
+      UNIQUE (managed_run_id, evidence_ref)
+    );
+    CREATE INDEX IF NOT EXISTS idx_managed_run_evidence_run
+      ON managed_run_evidence (managed_run_id, evidence_ref);
+
     CREATE TABLE IF NOT EXISTS managed_run_attention (
       schema_version INTEGER NOT NULL CHECK(schema_version = 1),
       attention_id TEXT PRIMARY KEY NOT NULL,

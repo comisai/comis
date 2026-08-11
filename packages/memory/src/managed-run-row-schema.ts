@@ -57,6 +57,23 @@ export const ManagedRunReportDbRowSchema = z.strictObject({
   observed_at_ms: z.number().int().nullable(),
 });
 
+export const ManagedEvidenceDbRowSchema = z.strictObject({
+  schema_version: z.literal(1),
+  service_instance_id: z.string(),
+  managed_run_id: z.string(),
+  evidence_ref: z.string(),
+  kind: z.string(),
+  subject_digest: z.string(),
+  observed_at_ms: z.number().int(),
+  expires_at_ms: z.number().int().nullable(),
+  content_ref: z.string(),
+  content_hash: z.string(),
+  private_content_hash: z.string(),
+  verification_level: z.string(),
+  delivery_kind: z.string(),
+  received_at_ms: z.number().int(),
+});
+
 export const ManagedRunOperationDbRowSchema = z.strictObject({
   input_hash: z.string(),
   result_record: z.string(),
@@ -108,6 +125,7 @@ export const ManagedRunAttentionCountDbRowSchema = z.strictObject({
 
 export type ManagedRunDbRow = z.infer<typeof ManagedRunDbRowSchema>;
 export type ManagedRunReportDbRow = z.infer<typeof ManagedRunReportDbRowSchema>;
+export type ManagedEvidenceDbRow = z.infer<typeof ManagedEvidenceDbRowSchema>;
 export type ManagedRunOperationDbRow = z.infer<typeof ManagedRunOperationDbRowSchema>;
 export type ManagedRunContinuationClaimDbRow = z.infer<typeof ManagedRunContinuationClaimDbRowSchema>;
 export type ManagedRunAttentionDbRow = z.infer<typeof ManagedRunAttentionDbRowSchema>;
