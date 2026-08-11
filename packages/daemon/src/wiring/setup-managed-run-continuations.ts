@@ -24,6 +24,7 @@ import {
   createManagedRunContinuationCoordinator,
   type ManagedRunContinuationExecutionOutcome,
 } from "./managed-run-continuation-coordinator.js";
+import type { ManagedRunVerifiedDelivery } from "./managed-run-evidence-verifier.js";
 import {
   createManagedRunContinuationRuntime,
   type ManagedRunContinuationRuntime,
@@ -34,6 +35,7 @@ export type ManagedRunContinuationDelivery = (
   claimId: string,
   finalized: ManagedRunFinalizedResult,
   phase: "cleanup_pending" | "ready",
+  verifiedDelivery?: ManagedRunVerifiedDelivery,
 ) => Promise<Result<ManagedRunContinuationExecutionOutcome, Error>>;
 
 export interface ManagedRunFinalizedResult {
@@ -61,9 +63,14 @@ export function createManagedRunContinuationDelivery(deps: {
   readonly outwardLedger?: OutwardSendLedgerPort;
   readonly logger: ComisLogger;
 }): ManagedRunContinuationDelivery {
-  return async (record, claimId, finalized, phase) => {
+  return async (record, claimId, finalized, phase, verifiedDelivery) => {
     if (phase === "cleanup_pending") return ok({ deliveryState: "unavailable" });
-    if (isSilentResponse(finalized.response)) return ok({ deliveryState: "not_required" });
+    if (verifiedDelivery?.kind === "attachment") return ok({ deliveryState: "unavailable" });
+    const response = isSilentResponse(finalized.response) ? "" : finalized.response;
+    const text = verifiedDelivery?.kind === "reference"
+      ? [response, verifiedDelivery.url].filter((part) => part.length > 0).join("\n\n")
+      : response;
+    if (text.length === 0) return ok({ deliveryState: "not_required" });
     if (deps.outwardLedger === undefined) return ok({ deliveryState: "unavailable" });
     const endpoint = record.turnScope.endpoint;
     const adapter = deps.adaptersByType.get(endpoint.channelType);
@@ -81,13 +88,13 @@ export function createManagedRunContinuationDelivery(deps: {
       channelType: endpoint.channelType,
       channelId: endpoint.conversationId,
       operationKind: "message_send",
-      text: finalized.response,
+      text,
       logger: deps.logger,
       doSend: async () => {
         const attempted = await fromPromise(deps.deliveryService.deliverToChannel(
           adapter,
           endpoint.conversationId,
-          finalized.response,
+          text,
           {
             completionMode: "settled",
             authority: {
@@ -113,7 +120,10 @@ export function createManagedRunContinuationDelivery(deps: {
       },
     });
     return delivered.ok
-      ? ok({ deliveryState: "verified" })
+      ? ok({
+        deliveryState: "verified",
+        ...(verifiedDelivery === undefined ? {} : { verifiedEvidenceRef: verifiedDelivery.evidenceRef }),
+      })
       : err(delivered.error);
   };
 }
@@ -158,6 +168,12 @@ export async function setupManagedRunContinuations(deps: {
     eventBus: deps.eventBus,
     logger: deps.logger,
     execute: async (input) => {
+      const deliverFinalized = (
+        finalized: ManagedRunFinalizedResult,
+        phase: "cleanup_pending" | "ready",
+      ) => input.verifiedDelivery === undefined
+        ? deps.deliver(input.record, input.claimId, finalized, phase)
+        : deps.deliver(input.record, input.claimId, finalized, phase, input.verifiedDelivery);
       const projected = conversationScopeToSessionKey(input.record.turnScope.conversation);
       if (!projected.ok) return err(new Error(projected.error.message));
       const recovered = await deps.recoverFinalizedResult({
@@ -167,9 +183,7 @@ export async function setupManagedRunContinuations(deps: {
       });
       if (!recovered.ok) return recovered;
       if (recovered.value !== undefined) {
-        return deps.deliver(
-          input.record,
-          input.claimId,
+        return deliverFinalized(
           recovered.value,
           recovered.value.cleanupRequired ? "cleanup_pending" : "ready",
         );
@@ -182,7 +196,7 @@ export async function setupManagedRunContinuations(deps: {
         hooks: {
           onProviderStart: () => ok(undefined),
           onJournalFinalizedResult: async () => undefined,
-          onFinalizedResult: (finalized, phase) => deps.deliver(input.record, input.claimId, {
+          onFinalizedResult: (finalized, phase) => deliverFinalized({
             response: finalized.response,
             executionId: finalized.executionId,
             cleanupRequired: finalized.finishReason === "session_reset",
