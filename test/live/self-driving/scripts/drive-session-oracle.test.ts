@@ -6,6 +6,7 @@ import {
   findTelegramConversationWireAnswer,
   followupWaitFinished,
   isDriveProgressText,
+  logicalSubstantiveAnswerCount,
   normalizeWireText,
   normalizeDriveStdinText,
   normalizedInboundTextError,
@@ -18,6 +19,17 @@ import {
 } from "./drive-session-oracle.mjs";
 
 describe("opt-in follow-up delivery wait", () => {
+  it("distinguishes a chunked long answer from a separate short completion", () => {
+    expect(logicalSubstantiveAnswerCount([
+      { messageId: 10, text: "x".repeat(4_059) },
+      { messageId: 11, text: "x".repeat(2_958) },
+    ])).toBe(1);
+    expect(logicalSubstantiveAnswerCount([
+      { messageId: 20, text: "launch acknowledgement" },
+      { messageId: 21, text: "terminal graph result" },
+    ])).toBe(2);
+  });
+
   it("keeps polling after the launch acknowledgement until a second answer arrives", () => {
     expect(followupWaitFinished({
       followupAnswerCount: 0,
