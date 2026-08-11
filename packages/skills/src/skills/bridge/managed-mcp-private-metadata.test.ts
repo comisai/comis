@@ -312,7 +312,7 @@ describe("managed MCP private metadata boundary", () => {
     expect(deps.activatePrepared).not.toHaveBeenCalled();
   });
 
-  it("resolves a run-command handle through the exact owner scope", async () => {
+  it("resolves a model-visible external run handle through the exact owner scope", async () => {
     const record = {
       managedRunId: "managed-run_a",
       serviceInstanceId: "service-instance_a",
@@ -328,7 +328,7 @@ describe("managed MCP private metadata boundary", () => {
       getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
     });
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
-    const call = makeCall("send_command", { run_handle: "managed-run_a", command: "status" });
+    const call = makeCall("send_command", { run_handle: "external-run_a", command: "status" });
 
     const request = await runWithContext(makeContext(), () => bridge.createRequestMeta(call));
 
@@ -343,7 +343,7 @@ describe("managed MCP private metadata boundary", () => {
       agentId: "agent_a",
       principalId: "principal_a",
       conversationRef: conversationRef.value,
-    }, "managed-run_a");
+    }, "external-run_a");
   });
 
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {
