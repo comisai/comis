@@ -263,8 +263,7 @@ monitoring:
 export function buildSignalConfigYaml(baseUrl: string, gatewayPort: number, model: string): string {
   // The keyless leg uses ollama; an explicit non-keyless model string is passed
   // through as the provider model id (operator/live.env path) — identical to
-  // the telegram writer, resolved from the SAME keyless source of truth.
-  // buildConfigYaml.
+  // buildConfigYaml, resolved from the SAME keyless source of truth.
   const providerModelId = model === "keyless" ? resolveKeylessModelId() : model;
   const ollamaBaseUrl = resolveOllamaBaseUrl();
   return `# THROWAWAY config — channel-emulation, SIGNAL rig (rig.ts).

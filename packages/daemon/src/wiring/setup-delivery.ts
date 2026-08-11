@@ -602,8 +602,10 @@ export interface DeliveryMirrorResult {
 
 /**
  * Compute an idempotency key for a mirror entry.
- * Uses session key + text hash + 1-second time bucket to deduplicate
- * repeated deliveries of the same text within the same second.
+ * Uses the caller-supplied conversation identity + a hash of the text AND the
+ * delivered media references + a 1-second time bucket, so a repeated delivery
+ * of the same payload within the same second collapses while two different
+ * attachments sharing one caption stay distinct entries.
  */
 function computeIdempotencyKey(
   sessionKey: string,
