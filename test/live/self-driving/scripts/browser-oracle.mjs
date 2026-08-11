@@ -12,7 +12,7 @@
 // asset path, a 404 on a referenced file. Those need no browser and no timing; this script does them.
 //
 // WHAT IT CHECKS (all zero-dep, Node builtins only):
-//   1. compile   — `node --check` every local .js the page references or that lives in the dir
+//   1. compile   — `node --check` every local .js and executable inline entry script
 //   2. refs      — every <script src> / <link href> / relative asset RESOLVES to a file on disk
 //   3. serve     — boots a static server, fetches "/" + each referenced asset, asserts HTTP 200
 //   Then it PRINTS the chrome-devtools MCP recipe (the render/interaction half you run next).
@@ -63,17 +63,35 @@ function walk(d, acc = []) {
   return acc;
 }
 const allFiles = walk(dir);
+const html = readFileSync(entryPath, "utf8");
 
-// 1) compile — node --check every local .js (module or classic; --check parses both)
+// 1) compile — node --check every local .js and executable inline script.
 const jsFiles = allFiles.filter((f) => extname(f) === ".js" || extname(f) === ".mjs");
 if (jsFiles.length === 0) pass("compile", "no local .js files to check");
 for (const f of jsFiles) {
   try { execFileSync(process.execPath, ["--check", f], { stdio: ["ignore", "ignore", "pipe"] }); pass("compile", relative(dir, f)); }
   catch (e) { fail("compile", `${relative(dir, f)} — ${String(e.stderr || e.message).split("\n").find((l) => l.includes("Error")) || "syntax error"}`); }
 }
+const inlineScripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)]
+  .filter((match) => !/\bsrc\s*=/i.test(match[1]))
+  .filter((match) => {
+    const type = match[1].match(/\btype\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    return type === undefined || type === "module" || type === "text/javascript" || type === "application/javascript";
+  });
+for (const [index, script] of inlineScripts.entries()) {
+  try {
+    execFileSync(process.execPath, ["--check", "-"], {
+      input: script[2],
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    pass("compile", `inline script ${index + 1}`);
+  } catch (e) {
+    const detail = String(e.stderr || e.message).split("\n").find((line) => line.includes("Error")) || "syntax error";
+    fail("compile", `inline script ${index + 1} — syntax error: ${detail}`);
+  }
+}
 
 // 2) refs — every referenced local asset resolves on disk (the "blank page from a broken src" catch)
-const html = readFileSync(entryPath, "utf8");
 const refs = [...html.matchAll(/(?:src|href)\s*=\s*["']([^"']+)["']/gi)]
   .map((m) => m[1])
   .filter((u) => !/^(https?:)?\/\//.test(u) && !u.startsWith("data:") && !u.startsWith("#") && !u.startsWith("mailto:"));
