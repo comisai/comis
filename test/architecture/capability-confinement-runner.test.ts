@@ -87,7 +87,7 @@ describe("capability-service Linux confinement runner", () => {
     const scenario = source(journeyScenarioPath);
 
     expect(runner).toMatch(/spike \| join \| journey \| shell/u);
-    expect(journeyGate).toContain('readonly DEV_CREW_COMMIT="e7f75038b5b2f0da292e7ab01bc11c884f70c8e5"');
+    expect(journeyGate).toContain('readonly DEV_CREW_COMMIT="b9d74894eac1e2ef23c438ce48b96722a359cb6a"');
     expect(journeyGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(journeyGate).toContain("COMIS_LIVE=1");
     expect(journeyGate).toContain("e0-journey.test.ts");
