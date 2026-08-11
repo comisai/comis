@@ -718,7 +718,7 @@ export const IncidentReportSchema = z.object({
     .object({
       count: z.number(),
       lastRunId: z.string(),
-      lastReason: z.enum(["no_origin", "no_channel_params"]),
+      lastReason: z.enum(["no_origin", "no_channel_params", "route_validation_failed"]),
     })
     .optional(),
   /** Distinct agent turns derived from prompt anchors, with tool-lifecycle

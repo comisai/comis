@@ -309,7 +309,7 @@ export interface Acc {
   subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;
   subagentDeliverySkippedLastRunId?: string;
-  subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
+  subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params" | "route_validation_failed";
   /** Child run ids already folded across lifecycle and synchronous-wait observations. */
   subagentCompletedRunIds: Set<string>;
   subagentCompletedCount: number;

@@ -196,7 +196,7 @@ export interface IncidentSignals {
   subagentDeliverySkipped?: {
     count: number;
     lastRunId: string;
-    lastReason: "no_origin" | "no_channel_params";
+    lastReason: "no_origin" | "no_channel_params" | "route_validation_failed";
   };
   /** Direct child terminal outcomes folded from parent-routed completion records. */
   subagentCompletions?: {

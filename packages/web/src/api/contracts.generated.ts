@@ -11880,9 +11880,23 @@ export const CONTRACTS = {
                 "killed"
               ]
             },
+            "sessionKey": {
+              "type": "string",
+              "minLength": 1
+            },
             "traceId": {
               "type": "string",
               "minLength": 1
+            },
+            "announcementDelivery": {
+              "type": "string",
+              "enum": [
+                "not-requested",
+                "unavailable",
+                "committed",
+                "retained",
+                "failed"
+              ]
             },
             "startedAt": {
               "type": "string"
@@ -11991,6 +12005,7 @@ export const CONTRACTS = {
           "required": [
             "graphId",
             "status",
+            "announcementDelivery",
             "durationMs",
             "nodesTotal",
             "nodesSucceeded",
@@ -13120,7 +13135,8 @@ export const CONTRACTS = {
               "type": "string",
               "enum": [
                 "no_origin",
-                "no_channel_params"
+                "no_channel_params",
+                "route_validation_failed"
               ]
             }
           },

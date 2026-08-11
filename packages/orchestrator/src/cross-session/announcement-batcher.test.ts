@@ -38,6 +38,7 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
 
 function makeDeps(overrides: Partial<AnnouncementBatcherDeps> = {}): AnnouncementBatcherDeps & { announceToParent: ReturnType<typeof vi.fn>; sendToChannel: ReturnType<typeof vi.fn> } {
   return {
+    eventBus: new TypedEventBus(),
     announceToParent: vi.fn().mockResolvedValue(undefined),
     sendToChannel: vi.fn().mockResolvedValue(true),
     debounceMs: 2000,
@@ -765,7 +766,7 @@ describe("AnnouncementBatcher", () => {
     const batcher = createAnnouncementBatcher({
       ...deps,
       eventBus,
-    } as AnnouncementBatcherDeps);
+    });
 
     await batcher.enqueue(makeAnnouncement({ idempotencyKey: "rejected-route-key" }));
     await vi.advanceTimersByTimeAsync(2_000);

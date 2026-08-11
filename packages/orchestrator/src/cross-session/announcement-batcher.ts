@@ -9,7 +9,7 @@
  * @module
  */
 
-import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type CitationEvidence, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
+import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type CitationEvidence, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout, type TypedEventBus } from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import {
   buildAnnouncementRewriteInput,
@@ -72,6 +72,7 @@ export interface QueuedAnnouncement {
 }
 
 export interface AnnouncementBatcherDeps {
+  eventBus: TypedEventBus;
   announceToParent: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
@@ -514,12 +515,20 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     if (failure.failure === "operation_validation_blocked") {
       await resolveDecisions(items, "no_reply");
       markItemsDelivered(items);
+      deps.eventBus.emit("subagent:delivery_skipped", {
+        runId: first.runId,
+        agentId: first.callerAgentId,
+        sessionKey: first.callerSessionKey,
+        reason: "route_validation_failed",
+        timestamp: systemNowMs(),
+      });
       deps.logger?.warn(
         {
           batchKey: key,
           runId: first.runId,
           batchSize: items.length,
           failure: failure.failure,
+          step: "completion-delivery-validation",
           errorKind: "validation" as const,
           hint: "Repair the captured caller authority or delivery payload before creating a distinct completion operation",
         },

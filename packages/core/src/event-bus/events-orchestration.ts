@@ -227,19 +227,20 @@ export interface OrchestrationEvents {
   };
 
   /**
-   * A completed sub-agent result had no authenticated announcement route.
-   * Emitted at the runner's terminal delivery branch before the child
-   * trajectory closes. Counts/ids/closed-enum only — never task or result text.
-   * `sessionKey` is the child's formatted key so `comis explain` can reject a
-   * false clean rollup for the affected run.
+   * A completed sub-agent result could not use an authenticated announcement
+   * route. Emitted either when route data is absent at the runner or when the
+   * delivery boundary rejects inconsistent captured authority. Counts/ids/
+   * closed-enum only — never task or result text. `sessionKey` identifies the
+   * session whose completion delivery was suppressed so `comis explain` can
+   * reject a false clean rollup for the affected run.
    */
   "subagent:delivery_skipped": {
     runId: string;
     agentId: string;
-    /** The CHILD session's formatted key (trajectory routing + explain join). */
+    /** The affected session's formatted key (trajectory routing + explain join). */
     sessionKey: string;
-    /** Which required route component was absent. */
-    reason: "no_origin" | "no_channel_params";
+    /** Why the authenticated route could not be used. */
+    reason: "no_origin" | "no_channel_params" | "route_validation_failed";
     timestamp: number;
   };
 
