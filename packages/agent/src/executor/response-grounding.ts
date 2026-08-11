@@ -452,6 +452,12 @@ const OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS = [
 
 const OUTBOUND_AUDIO_LIMITATION =
   /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:say|speak|read|send|deliver|synthesi[sz]e|record|voice|audio)\b/iu;
+const OUTBOUND_AUDIO_TEXT_SUBSTITUTE =
+  /\b(?:as|in)\s+(?:plain\s+)?text\b|\b(?:text|written)\s+(?:below|instead|reply|summary|version)\b/iu;
+const OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?(?: now)?\s+(?:said|spoke|read|sent|delivered|synthesi[sz]ed|recorded)\b[\s\S]{0,100}\b(?:out\s+loud|aloud|voice|audio)\b/iu,
+  OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS[1],
+] as const;
 
 /**
  * Require an authoritative delivery receipt before preserving prose that says
@@ -484,19 +490,21 @@ export function enforceOutboundAudioEvidence(params: {
     return { response: params.response, corrected: false };
   }
 
-  // A reply that admits the limitation is already honest about the missing
-  // receipt, so it stands even when it also describes the substitute it did
-  // deliver ("I couldn't send a voice note, so I've read it out as text
-  // below") — that prose matches a claim pattern without claiming audio.
-  // Checked BEFORE the claim patterns, as the delivery-status guard does.
-  if (OUTBOUND_AUDIO_LIMITATION.test(params.response)) {
-    return { response: params.response, corrected: false };
-  }
   const completionClaim = isCompletionClaim(params.response);
   const audioSuccessClaim = OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS.some(
     (pattern) => pattern.test(params.response),
   );
-  if (!completionClaim && !audioSuccessClaim) {
+  const audioArtifactClaim = OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (!completionClaim && !audioSuccessClaim && !audioArtifactClaim) {
+    return { response: params.response, corrected: false };
+  }
+  if (
+    OUTBOUND_AUDIO_LIMITATION.test(params.response)
+    && OUTBOUND_AUDIO_TEXT_SUBSTITUTE.test(params.response)
+    && !audioArtifactClaim
+  ) {
     return { response: params.response, corrected: false };
   }
 
@@ -526,6 +534,12 @@ const OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS = [
 
 const OUTBOUND_IMAGE_LIMITATION =
   /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:make|create|generate|draw|design|render|send|deliver|image|picture|illustration|graphic|photo)\b/iu;
+const OUTBOUND_IMAGE_TEXT_SUBSTITUTE =
+  /\b(?:text|written)\b[\s\S]{0,40}\b(?:description|layout|instructions?|brief|prompt)\b/iu;
+const OUTBOUND_IMAGE_ARTIFACT_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?(?: now)?\s+(?:made|created|generated|drew|designed|rendered|sent|delivered)\b[\s\S]{0,100}\b(?:image|picture|illustration|graphic|photo)\b/iu,
+  OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS[1],
+] as const;
 
 /** Require generation or trusted completion proof for current image claims. */
 export function enforceOutboundImageEvidence(params: {
@@ -554,16 +568,21 @@ export function enforceOutboundImageEvidence(params: {
     return { response: params.response, corrected: false };
   }
 
-  // Same ordering as the audio guard: an admitted limitation stands even when
-  // the reply also describes the substitute it delivered instead.
-  if (OUTBOUND_IMAGE_LIMITATION.test(params.response)) {
-    return { response: params.response, corrected: false };
-  }
   const completionClaim = isCompletionClaim(params.response);
   const imageSuccessClaim = OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS.some(
     (pattern) => pattern.test(params.response),
   );
-  if (!completionClaim && !imageSuccessClaim) {
+  const imageArtifactClaim = OUTBOUND_IMAGE_ARTIFACT_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (!completionClaim && !imageSuccessClaim && !imageArtifactClaim) {
+    return { response: params.response, corrected: false };
+  }
+  if (
+    OUTBOUND_IMAGE_LIMITATION.test(params.response)
+    && OUTBOUND_IMAGE_TEXT_SUBSTITUTE.test(params.response)
+    && !imageArtifactClaim
+  ) {
     return { response: params.response, corrected: false };
   }
 
