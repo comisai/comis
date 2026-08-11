@@ -103,7 +103,7 @@ function workflowArgumentHint(context: string): string | undefined {
   return hint.length > 0 ? hint : undefined;
 }
 
-function latestWorkflowToolReceipt(
+function currentWorkflowToolReceipts(
   messages: readonly unknown[],
   workflowToolNames: readonly string[],
 ): string | undefined {
@@ -114,19 +114,30 @@ function latestWorkflowToolReceipt(
     content?: unknown;
     isError?: unknown;
   }>;
-  for (const entry of [...entries].reverse()) {
+  const requestIndex = entries.findLastIndex((entry) =>
+    entry.role === "user"
+    && !visibleTextOf(entry.content).includes("[comis: continuation —")
+  );
+  const receipts = entries.slice(requestIndex + 1).flatMap((entry) => {
     if (
       entry.role !== "toolResult"
       || typeof entry.toolName !== "string"
       || !names.has(entry.toolName)
-      || entry.isError === true
-    ) continue;
-    const receipt = scrubSecretsFromText(visibleTextOf(entry.content)).text
-      .slice(0, MAX_WORKFLOW_RECEIPT_CHARS)
-      .trim();
-    if (receipt.length > 0) return receipt;
-  }
-  return undefined;
+    ) return [];
+    const text = scrubSecretsFromText(visibleTextOf(entry.content)).text.trim();
+    return text.length > 0
+      ? [{ toolName: entry.toolName, failed: entry.isError === true, text }]
+      : [];
+  });
+  if (receipts.length === 0) return undefined;
+  const perReceiptChars = Math.max(
+    120,
+    Math.floor((MAX_WORKFLOW_RECEIPT_CHARS - receipts.length * 40) / receipts.length),
+  );
+  return receipts.map((receipt, index) => [
+    `Receipt ${index + 1}: ${receipt.failed ? "failed" : "successful"} ${receipt.toolName}`,
+    receipt.text.slice(0, perReceiptChars),
+  ].join("\n")).join("\n\n").slice(0, MAX_WORKFLOW_RECEIPT_CHARS).trim();
 }
 
 function hasToolCallBlock(content: unknown): boolean {
@@ -287,7 +298,7 @@ function buildPromptSkillWorkflowDirective(
   ].join("\n");
 }
 
-function buildPromptSkillResultNarrationDirective(receipt?: string): string {
+function buildPromptSkillResultNarrationDirective(receipts?: string): string {
   return [
     "[comis: continuation — narrate the completed prompt skill workflow]",
     "A required prompt-skill workflow tool succeeded in this turn.",
@@ -296,10 +307,10 @@ function buildPromptSkillResultNarrationDirective(receipt?: string): string {
     "Use only current-turn workflow receipts as evidence for current success, failure, availability, and citations.",
     "Do not carry an earlier failure or unavailable-source claim into this answer; mention one only when a current-turn tool receipt records it, using its exact identifier.",
     "Every cited URL must come from a successful current-turn web_fetch receipt.",
-    ...(receipt
+    ...(receipts
       ? [
-          "The relevant successful workflow receipt is:",
-          wrapExternalContent(receipt, { source: "unknown", includeWarning: true }),
+          "The bounded current-turn workflow receipts are:",
+          wrapExternalContent(receipts, { source: "unknown", includeWarning: true }),
         ]
       : []),
     "Do not invoke another tool, ask for context already supplied, or replace a specific result with a generic capability.",
@@ -553,7 +564,7 @@ export async function runRequestToolNudge(
     continuation = await runContinuationTurn(
       deps.session,
       buildPromptSkillResultNarrationDirective(
-        latestWorkflowToolReceipt(deps.messages, promptSkillWorkflowTools),
+        currentWorkflowToolReceipts(deps.messages, promptSkillWorkflowTools),
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: [] },
