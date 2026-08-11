@@ -34,8 +34,20 @@ describe("capability-service execution-attachment contract", () => {
         managedRunId: "managed-run_a",
         workspaceLeaseId: "workspace-lease_a",
         disposition: "reap_safe",
+        releasedAtMs: 1_800_000_000_000,
       },
     }).success).toBe(true);
+    expect(CapabilityServiceRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_release",
+      method: "managedRuns.release",
+      params: {
+        operationId: "operation_release",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe",
+      },
+    }).success).toBe(false);
   });
 
   it("accepts both requested execution attachment source kinds", () => {
