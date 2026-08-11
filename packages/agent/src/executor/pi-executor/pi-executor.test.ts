@@ -8735,6 +8735,9 @@ describe("recent recall context provenance wiring", () => {
     expect(src).toMatch(
       /selectRecentUserTurns\(\s*sessionContext\.messages,\s*sm\.getEntries\?\.\(\) \?\? \[\],\s*msg\.id,\s*\)/,
     );
+    expect(src).toMatch(
+      /describeRecentUserTurnSelection\(recentUserTurns,\s*msg\.text\)/,
+    );
   });
 });
 

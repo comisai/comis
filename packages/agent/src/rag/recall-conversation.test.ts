@@ -88,7 +88,17 @@ describe("selectRecentUserTurns", () => {
       turnCount: 3,
       charCount: turns.join("\n").length,
       saturated: false,
+      recallDisposition: "search",
     });
+  });
+
+  it("reports when an oversized current token disables recall", () => {
+    const evidence = describeRecentUserTurnSelection(
+      ["research residential heat pumps"],
+      "x".repeat(43_000),
+    );
+
+    expect(evidence.recallDisposition).toBe("skip_oversized_token");
   });
 
   it("retains the session intent anchor when distinct follow-ups fill the bound", () => {

@@ -230,7 +230,12 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
   it("retains the latest request relevance history saturation evidence", () => {
     const signals = toIncidentSignals([
       event("prompt.submitted", 1, {
-        requestRelevanceHistory: { turnCount: 8, charCount: 147, saturated: true },
+        requestRelevanceHistory: {
+          turnCount: 8,
+          charCount: 147,
+          saturated: true,
+          recallDisposition: "skip_oversized_token",
+        },
         responseLocaleSource: "unset",
         responseLocaleEnforced: false,
       }),
@@ -238,9 +243,19 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
 
     expect(
       (signals as unknown as {
-        requestRelevanceHistory?: { turnCount: number; charCount: number; saturated: boolean };
+        requestRelevanceHistory?: {
+          turnCount: number;
+          charCount: number;
+          saturated: boolean;
+          recallDisposition: string;
+        };
       }).requestRelevanceHistory,
-    ).toEqual({ turnCount: 8, charCount: 147, saturated: true });
+    ).toEqual({
+      turnCount: 8,
+      charCount: 147,
+      saturated: true,
+      recallDisposition: "skip_oversized_token",
+    });
   });
 });
 

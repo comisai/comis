@@ -166,7 +166,12 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
   });
 
   it("retains content-free request relevance history saturation evidence", () => {
-    const evidence = { turnCount: 8, charCount: 147, saturated: true };
+    const evidence = {
+      turnCount: 8,
+      charCount: 147,
+      saturated: true,
+      recallDisposition: "skip_oversized_token" as const,
+    };
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
       requestRelevanceHistory: evidence,
