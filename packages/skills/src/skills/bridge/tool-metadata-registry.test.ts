@@ -1380,7 +1380,7 @@ describe("tool-metadata-registry -- failure detectors", () => {
       matchedToken: "TAVILY_API_KEY",
       failureDisclosure: {
         kind: "missing_configuration",
-        configKey: "TAVILY_API_KEY",
+        configKey: "secrets.TAVILY_API_KEY",
       },
     });
   });

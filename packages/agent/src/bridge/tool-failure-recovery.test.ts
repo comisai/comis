@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  buildToolInvocationStallFailureReply,
   buildToolRecoveryIdentity,
   classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
@@ -332,5 +333,28 @@ describe("subagent terminal tool failure classification", () => {
         finishReason,
       ).toBeUndefined();
     }
+  });
+});
+
+describe("foreground tool invocation stall disclosure", () => {
+  it("names the missing provider secret without copying upstream prose", () => {
+    const reply = buildToolInvocationStallFailureReply({
+      failedTools: ["web_search"],
+      toolExecResults: [{
+        toolName: "web_search",
+        success: false,
+        durationMs: 10,
+        errorText: "private upstream response",
+        failureDisclosure: {
+          kind: "missing_configuration",
+          configKey: "secrets.SEARCH_API_KEY",
+        },
+      }],
+    });
+
+    expect(reply).toContain("web_search");
+    expect(reply).toContain("secrets.SEARCH_API_KEY");
+    expect(reply).toContain("could not complete");
+    expect(reply).not.toContain("private upstream response");
   });
 });
