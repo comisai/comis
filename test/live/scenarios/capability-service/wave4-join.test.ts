@@ -525,6 +525,14 @@ function reporterDiagnostic(worktree: string): string {
   }
 }
 
+function clientDiagnostic(worktree: string): string {
+  try {
+    return readFileSync(join(worktree, ".wave4-client-diagnostic.log"), "utf8").trim();
+  } catch {
+    return "worker did not write runtime client diagnostics";
+  }
+}
+
 function failedJoinDurableDiagnostic(databasePath: string, taskHandles: readonly string[]): string {
   const db = new Database(databasePath, { readonly: true });
   try {
@@ -855,7 +863,7 @@ describe.skipIf(!isLiveLinux)("wave-four real Codex capability-service JOIN", ()
         const message = error instanceof Error ? error.message : String(error);
         const durableDiagnostic = failedJoinDurableDiagnostic(goDatabase, taskHandles);
         throw new Error(
-          `${message}; durable: ${durableDiagnostic}; worker A context: ${runtimeContextDiagnostic(bindingA.canonical_path)}; worker B context: ${runtimeContextDiagnostic(bindingB.canonical_path)}; worker A reporter: ${reporterDiagnostic(bindingA.canonical_path)}; worker B reporter: ${reporterDiagnostic(bindingB.canonical_path)}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`,
+          `${message}; durable: ${durableDiagnostic}; worker A context: ${runtimeContextDiagnostic(bindingA.canonical_path)}; worker B context: ${runtimeContextDiagnostic(bindingB.canonical_path)}; worker A client: ${clientDiagnostic(bindingA.canonical_path)}; worker B client: ${clientDiagnostic(bindingB.canonical_path)}; worker A reporter: ${reporterDiagnostic(bindingA.canonical_path)}; worker B reporter: ${reporterDiagnostic(bindingB.canonical_path)}; worker A terminal: ${workerAView}; worker B terminal: ${workerBView}`,
         );
       }
       await pollUntil(() => reportCounts(canonicalDataDir, taskHandles).every((count) => count === 2), 180_000, "task-local progress and candidate reports");

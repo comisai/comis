@@ -38,7 +38,15 @@ git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}" | tar -x -C "${DEV_CREW
 for binary in devcrew-service devcrew-mcp devcrew devcrew-report; do
   (cd "${DEV_CREW_COPY}" && go build -trimpath -o "${DEV_CREW_BIN}/${binary}" "./cmd/${binary}")
 done
+mkdir -p "${DEV_CREW_COPY}/cmd/wave4-reporter-client-diagnostic"
+cp /usr/local/share/wave4-reporter-client-diagnostic.go \
+  "${DEV_CREW_COPY}/cmd/wave4-reporter-client-diagnostic/main.go"
+(cd "${DEV_CREW_COPY}" && go build -trimpath \
+  -o "${DEV_CREW_BIN}/wave4-reporter-client-diagnostic" \
+  ./cmd/wave4-reporter-client-diagnostic)
 install -m 0555 "${DEV_CREW_BIN}/devcrew-report" /home/comis/.wave4-tools/devcrew-report
+install -m 0555 "${DEV_CREW_BIN}/wave4-reporter-client-diagnostic" \
+  /home/comis/.wave4-tools/wave4-reporter-client-diagnostic
 
 # Keep Linux dependencies and generated artifacts out of the mounted Comis
 # worktree while preserving that mount as the exact source authority.
