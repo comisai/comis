@@ -11457,6 +11457,13 @@ export const CONTRACTS = {
             },
             "saturated": {
               "type": "boolean"
+            },
+            "recallDisposition": {
+              "type": "string",
+              "enum": [
+                "search",
+                "skip_oversized_token"
+              ]
             }
           },
           "required": [

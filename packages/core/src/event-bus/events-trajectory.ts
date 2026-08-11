@@ -54,6 +54,7 @@ export interface TrajectoryEvents {
       readonly turnCount: number;
       readonly charCount: number;
       readonly saturated: boolean;
+      readonly recallDisposition?: "search" | "skip_oversized_token";
     };
     /** Content-free evidence that immutable policy was projected onto tool schemas. */
     operatorPolicyToolProjections?: readonly {

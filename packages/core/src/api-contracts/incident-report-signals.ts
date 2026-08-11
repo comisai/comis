@@ -105,6 +105,7 @@ export interface IncidentSignals {
     turnCount: number;
     charCount: number;
     saturated: boolean;
+    recallDisposition?: "search" | "skip_oversized_token";
   };
   /** Content-free proof that immutable policy reached request-relevant tool schemas. */
   operatorPolicyToolProjections?: Array<{

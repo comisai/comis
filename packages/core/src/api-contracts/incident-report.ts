@@ -123,6 +123,7 @@ export const IncidentReportSchema = z.object({
     turnCount: z.number().int().nonnegative().max(8),
     charCount: z.number().int().nonnegative().max(1_000_000),
     saturated: z.boolean(),
+    recallDisposition: z.enum(["search", "skip_oversized_token"]).optional(),
   }).optional(),
   /** Content-free immutable-policy projection evidence for selected tool schemas. */
   operatorPolicyToolProjections: z.array(z.strictObject({

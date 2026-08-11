@@ -98,6 +98,7 @@ export interface RunPromptParams {
     readonly turnCount: number;
     readonly charCount: number;
     readonly saturated: boolean;
+    readonly recallDisposition: "search" | "skip_oversized_token";
   };
   /** Content-free evidence that immutable operator policy reached tool schemas. */
   operatorPolicyToolProjections?: readonly {

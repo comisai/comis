@@ -1180,7 +1180,10 @@ async function runSessionLocked(
   );
   const forwardedContextActive = msg.metadata.isForwarded === true
     || hasRecentForwardedUserTurn(sm.getEntries?.() ?? [], msg.id);
-  const requestRelevanceHistory = describeRecentUserTurnSelection(recentUserTurns);
+  const requestRelevanceHistory = describeRecentUserTurnSelection(
+    recentUserTurns,
+    msg.text,
+  );
 
   // Get or create session-scoped guide delivery tracking.
   // Clear on session reset (isFirstMessageInSession) so guides re-inject.

@@ -17,6 +17,7 @@ function boundedRequestRelevanceHistory(value: unknown): {
   turnCount: number;
   charCount: number;
   saturated: boolean;
+  recallDisposition?: "search" | "skip_oversized_token";
 } | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -33,6 +34,10 @@ function boundedRequestRelevanceHistory(value: unknown): {
     turnCount: record.turnCount as number,
     charCount: record.charCount as number,
     saturated: record.saturated,
+    ...(record.recallDisposition === "search"
+      || record.recallDisposition === "skip_oversized_token"
+      ? { recallDisposition: record.recallDisposition }
+      : {}),
   };
 }
 
