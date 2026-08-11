@@ -83,5 +83,6 @@ exec "${REAL_CODEX}" exec --json \
   --model "${COMIS_WAVE4_CODEX_MODEL:-gpt-5.5}" \
   --sandbox workspace-write \
   -c 'model_reasoning_effort="high"' \
+  -c 'sandbox_workspace_write.network_access=true' \
   --cd "${PWD}" \
   - <<<"${bootstrap}"
