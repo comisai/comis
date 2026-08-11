@@ -903,7 +903,6 @@ type DelegationEvidenceGuard = (params: {
   response: string;
   corrected: boolean;
   reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
-  correction?: "replaced" | "appended";
 };
 
 function delegationEvidenceGuard(): DelegationEvidenceGuard {
@@ -972,11 +971,11 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
-  // The spawn receipt proves the delegation happened, so an undisclosed reply is
-  // missing a disclosure, not asserting something false. Appending the
-  // receipt-backed status keeps the answer the model DID give — discarding it
-  // destroyed the parts of the request that were answered truthfully.
-  it("appends the verified spawn status to an undisclosed final answer", () => {
+  // A spawn receipt proves only that delegation started. It cannot establish
+  // whether an undisclosed model answer came from independent knowledge or a
+  // fabricated delegated result, so retaining that answer would weaken the
+  // receipt boundary.
+  it("replaces an undisclosed final answer after a successful spawn", () => {
     const verifiedSpawnResponse =
       "I successfully started the requested sub-agent. Its result is still pending.";
     const response =
@@ -993,14 +992,13 @@ describe("current-turn delegation evidence guard", () => {
     });
 
     expect(guarded).toEqual({
-      response: `${response}\n\n${verifiedSpawnResponse}`,
+      response: verifiedSpawnResponse,
       corrected: true,
       reason: "successful_spawn_response_ungrounded",
-      correction: "appended",
     });
   });
 
-  it("keeps a truthful answer to the rest of the request beside the spawn status", () => {
+  it("does not infer that another part of an undisclosed answer is independently grounded", () => {
     const verifiedSpawnResponse =
       "I successfully started the requested sub-agent. Its result is still pending.";
     const guarded = delegationEvidenceGuard()({
@@ -1014,9 +1012,11 @@ describe("current-turn delegation evidence guard", () => {
       verifiedSpawnResponse,
     });
 
-    expect(guarded.corrected).toBe(true);
-    expect(guarded.response).toContain("Today is 11 August 2026.");
-    expect(guarded.response).toContain(verifiedSpawnResponse);
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    });
   });
 
   // A finished-work claim about the delegated task has no receipt behind it —
@@ -1040,7 +1040,6 @@ describe("current-turn delegation evidence guard", () => {
       response: verifiedSpawnResponse,
       corrected: true,
       reason: "successful_spawn_response_ungrounded",
-      correction: "replaced",
     });
   });
 
