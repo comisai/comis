@@ -1349,6 +1349,54 @@ describe("assembleTools — request-relevant routing context", () => {
     expect(assembled.deferralResult.requestRelevantPromptSkillNames).toBeUndefined();
     expect(assembled.deferralResult.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
   });
+
+  it("routes media turns from user-authored text instead of extracted external content", async () => {
+    const promptSkill = {
+      name: "deep-research",
+      description:
+        "Conduct multi-angle web research for source attribution, unavailable-source handling, "
+        + "and context-dependent follow-ups.",
+      replacesPackages: [],
+      minDistinctWebFetchUrls: 3,
+      minDistinctWebSearchQueries: 3,
+    };
+    const caption =
+      "this synthetic document is deliberately oversized; explain if it cannot fit";
+    const enrichedText = [
+      '<document-extraction-coverage complete="false" path="documents/current.txt">',
+      "Only a preview is inline. Use read to recover required sections.",
+      "</document-extraction-coverage>",
+      "SECURITY NOTICE: external content follows with source attribution and context.",
+      "<<<UNTRUSTED_deadbeef>>>",
+      "synthetic fixture data",
+      "<<<END_UNTRUSTED_deadbeef>>>",
+      caption,
+    ].join("\n");
+
+    const assembled = await assembleTools(makeParams({
+      deps: makeDeps({
+        customTools: [
+          makeTool("read", "Read a workspace file"),
+          makeTool("web_search", "Search the web"),
+          makeTool("web_fetch", "Fetch a URL"),
+        ] as never,
+        toolCapabilityPort: createCapabilityPortStub({
+          getPromptSkillCapabilities: () => [promptSkill],
+        }),
+        getPromptSkillLocations: () => new Map([
+          ["/skills/deep-research/SKILL.md", "deep-research"],
+        ]),
+      }),
+      msg: {
+        ...makeMsg(),
+        text: enrichedText,
+        originalMessages: [{ text: caption }],
+      } as never,
+    }));
+
+    expect(assembled.deferralResult.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(assembled.deferralResult.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
