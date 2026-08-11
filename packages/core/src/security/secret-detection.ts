@@ -137,12 +137,12 @@ const PLAINTEXT_SECRET_LENGTH_FLOOR = 44;
 const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
 
 /**
- * Reject the entropy backstop on values containing URL-/path-/sentence-
- * delimiter characters. Real credential bodies are URL-safe base64 / base32 /
- * hex / alphanumeric + `_ - . +`. Connection strings, paths, URLs, comma-lists,
- * and sentence-shaped config all contain at least one of these chars.
+ * Restrict the entropy backstop to credential-body characters. Real credential
+ * bodies use alphanumeric characters plus `_ - . +`; source expressions,
+ * connection strings, paths, URLs, comma-lists, and sentences contain at least
+ * one character outside that set.
  */
-const NON_CREDENTIAL_DELIMITER_RE = /[\s:/?&=@,]/;
+const CREDENTIAL_BODY_RE = /^[A-Za-z0-9_.+\-]+$/;
 
 /** Leading auth-scheme prefix (case-insensitive), stripped before the gate. */
 const AUTH_SCHEME_RE = /^(?:Bearer|Basic|Token|Digest)\s+/i;
@@ -199,9 +199,9 @@ export function looksLikeSecretValue(value: string): boolean {
     }
   }
 
-  // Entropy backstop only applies to credential-shaped values (no URL/path/
-  // sentence delimiter chars).
-  if (NON_CREDENTIAL_DELIMITER_RE.test(remainder)) return false;
+  // Entropy backstop only applies to credential-shaped values. In particular,
+  // do not corrupt source expressions that happen to be long and high-entropy.
+  if (!CREDENTIAL_BODY_RE.test(remainder)) return false;
   return (
     remainder.length >= PLAINTEXT_SECRET_LENGTH_FLOOR &&
     shannonEntropy(remainder) > PLAINTEXT_SECRET_ENTROPY_FLOOR
