@@ -53,7 +53,6 @@ describe("prompt skill request routing", () => {
     deferral.requestRelevantToolNames.push("find");
 
     const selected = applyPromptSkillRequestRouting(deferral, {
-      capabilityClass: "nano",
       requestRelevanceText: [
         "u dont really know how to make flash cards properly",
         "find something that does",
@@ -82,7 +81,6 @@ describe("prompt skill request routing", () => {
     const deferral = result();
 
     const selected = applyPromptSkillRequestRouting(deferral, {
-      capabilityClass: "frontier",
       requestRelevanceText:
         "i need to understand heat pumps properly, not just a paragraph",
       skills,
@@ -100,21 +98,13 @@ describe("prompt skill request routing", () => {
       .toContain("/skills/deep-research/SKILL.md");
   });
 
-  it("leaves unrelated requests and non-nano profiles unchanged", () => {
+  it("leaves unrelated requests unchanged", () => {
     const unrelated = result();
-    const mid = result();
 
     expect(applyPromptSkillRequestRouting(unrelated, {
-      capabilityClass: "nano",
       requestRelevanceText: "what is the weather today",
       skills,
     })).toEqual([]);
-    expect(applyPromptSkillRequestRouting(mid, {
-      capabilityClass: "mid",
-      requestRelevanceText: "find something that does",
-      skills,
-    })).toEqual([]);
     expect(unrelated.requestRelevantToolNames).toEqual([]);
-    expect(mid.requestRelevantToolNames).toEqual([]);
   });
 });

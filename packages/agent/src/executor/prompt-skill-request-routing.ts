@@ -12,7 +12,6 @@ const MIN_SHARED_TERMS = 2;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
 
 interface PromptSkillRequestRoutingInput {
-  readonly capabilityClass: string;
   readonly requestRelevanceText: string;
   readonly priorUserRequest?: string;
   readonly skills: readonly PromptSkillCapability[];
@@ -54,12 +53,12 @@ function attachSkillRoute(
   };
 }
 
-/** Bridge constrained models from a matching prompt skill to read-based disclosure. */
+/** Bridge a request-matched prompt skill to read-based progressive disclosure. */
 export function applyPromptSkillRequestRouting(
   deferral: ExcludeDeferralResult,
   input: PromptSkillRequestRoutingInput,
 ): string[] {
-  if (input.capabilityClass !== "nano" || input.skills.length === 0) return [];
+  if (input.skills.length === 0) return [];
   const queryText = input.requestRelevanceText.toLocaleLowerCase();
   const queryTerms = terms(queryText);
   const selectedSkills = input.skills

@@ -154,6 +154,7 @@ function buildDirective(
     | "declared_mutation_request"
     | "claimed_action_attempt"
     | "explicit_tool_use_request"
+    | "prompt_skill_route"
     | "runtime_self_report",
 ): string {
   const triggerFact = trigger === "repeated_answer"
@@ -161,10 +162,12 @@ function buildDirective(
     : trigger === "declared_mutation_request"
       ? "Capability metadata identifies the current wording as a direct mutation request."
       : trigger === "claimed_action_attempt"
-        ? "Your last answer claimed an external action attempt without a current-turn tool receipt."
-        : trigger === "runtime_self_report"
-          ? "The current request asks for a runtime self-report, but no current obs_query receipt exists."
-          : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
+      ? "Your last answer claimed an external action attempt without a current-turn tool receipt."
+      : trigger === "runtime_self_report"
+        ? "The current request asks for a runtime self-report, but no current obs_query receipt exists."
+        : trigger === "prompt_skill_route"
+          ? "Capability routing identified a request-relevant prompt skill, but its procedure was not loaded."
+        : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
   const capabilityGuidance = toolNames.flatMap((toolName) => {
     const guidance = getToolMetadata(toolName)?.mutationRecoveryGuidance?.trim();
     return guidance
@@ -291,10 +294,14 @@ export async function runRequestToolNudge(
     : requestRelevantToolNames;
 
   const runtimeSelfReportRecovery = runtimeSelfReportRequest && obsQueryActive;
+  const promptSkillRecovery =
+    (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
+    && (deps.requestRelevantPromptSkillLocations?.length ?? 0) > 0;
   if (
     capabilityClass !== "small"
     && capabilityClass !== "nano"
     && !runtimeSelfReportRecovery
+    && !promptSkillRecovery
   ) {
     return {
       fired: false,
@@ -335,7 +342,12 @@ export async function runRequestToolNudge(
   const mutationRecoveryRequested = mutatingToolNames.length > 0
     && (repeatedAnswer || declaredMutationRequest || claimedActionAttempt);
   const readRecoveryRequested = toolBackedReadNames.length > 0
-    && (explicitToolUseRequest || claimedActionAttempt || runtimeSelfReportRecovery);
+    && (
+      explicitToolUseRequest
+      || claimedActionAttempt
+      || runtimeSelfReportRecovery
+      || promptSkillRecovery
+    );
   if (!mutationRecoveryRequested && !readRecoveryRequested) {
     return {
       fired: false,
@@ -349,11 +361,13 @@ export async function runRequestToolNudge(
     ? "runtime_self_report"
     : declaredMutationRequest
       ? "declared_mutation_request"
-      : useReadRecovery && explicitToolUseRequest
-        ? "explicit_tool_use_request"
-        : repeatedAnswer
-          ? "repeated_answer"
-          : "claimed_action_attempt";
+      : promptSkillRecovery
+        ? "prompt_skill_route"
+        : useReadRecovery && explicitToolUseRequest
+          ? "explicit_tool_use_request"
+          : repeatedAnswer
+            ? "repeated_answer"
+            : "claimed_action_attempt";
   const recoveryToolNames = runtimeSelfReportRecovery
     ? ["obs_query"]
     : useReadRecovery
