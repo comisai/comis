@@ -2,6 +2,7 @@
 /** Publish every successful ChannelPort attachment through after_delivery hooks. */
 import {
   createConversationRef,
+  sanitizeLogString,
   tryGetContext,
   type ChannelPort,
   type ClockPort,
@@ -72,6 +73,7 @@ export function instrumentAttachmentDeliveries(
         deps.logger.warn({
           channelType: adapter.channelType,
           channelId,
+          err: sanitizeLogString(hookResult.error.message),
           errorKind: "dependency" as const,
           hint: "Check after_delivery hook health and delivery-mirror storage before the next attachment",
         }, "Attachment delivery hook failed");
