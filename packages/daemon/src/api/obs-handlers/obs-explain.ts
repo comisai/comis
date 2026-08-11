@@ -760,10 +760,12 @@ export async function assembleIncidentReportFromSources(
     report.traceId,
     report.failures,
   );
-  if (delegationEvidenceVerdict !== null) {
+  const completionRouteRejected = report.likelyRootCause?.code === "subagent_delivery_skipped";
+  if (delegationEvidenceVerdict !== null && !completionRouteRejected) {
     // A deterministic response correction is the acute terminal event. Rank it
     // above chronic tool noise so one explain call names the honesty failure
-    // that changed the user-visible outcome.
+    // that changed the user-visible outcome. An authenticated completion route
+    // rejection remains authoritative because it suppressed the later result.
     report.likelyRootCause = delegationEvidenceVerdict;
   }
   const persistentActionEvidenceVerdict =
