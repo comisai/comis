@@ -32,6 +32,7 @@ test/*
 !test/confinement-runner/
 test/confinement-runner/*
 !test/confinement-runner/wave4-codex-launcher.sh
+!test/confinement-runner/wave4-report-capture.sh
 packages/*/src/**/*.test.ts
 coverage/
 .nyc_output/
