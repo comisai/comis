@@ -1306,6 +1306,49 @@ describe("assembleTools — request-relevant routing context", () => {
       "now actually use it",
     ].join("\n"));
   });
+
+  it("does not route runtime background completions through user prompt skills", async () => {
+    const promptSkill = {
+      name: "log-troubleshooting",
+      description:
+        "Investigate and troubleshoot daemon logs. Use when the user asks about logs, errors, "
+        + "daemon issues, slow operations, debugging daemon behavior, or platform issues.",
+      replacesPackages: [],
+      requiredBins: ["python3"],
+    };
+    const customTools = [
+      makeTool("read", "Read a workspace file"),
+      makeTool("exec", "Execute a command"),
+    ];
+    const completionText = [
+      "[Background Task Failed: mcp fixture-hang--hang forever]",
+      "MCP tool error: the call exceeded its deadline. Check server health before retrying; "
+        + "only an operator can adjust the config and restart the daemon.",
+      "Inform the user about this completed background task.",
+    ].join("\n\n");
+
+    const assembled = await assembleTools(makeParams({
+      deps: makeDeps({
+        customTools: customTools as never,
+        toolCapabilityPort: createCapabilityPortStub({
+          getPromptSkillCapabilities: () => [promptSkill],
+        }),
+        getPromptSkillLocations: () => new Map([
+          ["/skills/log-troubleshooting/SKILL.md", "log-troubleshooting"],
+        ]),
+      }),
+      msg: {
+        ...makeMsg(),
+        channelType: "background_task",
+        senderId: "background-task-runner",
+        text: completionText,
+      } as never,
+      recentUserTurns: ["call the hanging fixture and stop at the configured deadline"],
+    }));
+
+    expect(assembled.deferralResult.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(assembled.deferralResult.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
