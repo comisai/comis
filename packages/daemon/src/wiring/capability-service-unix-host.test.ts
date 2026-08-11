@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import net from "node:net";
 import { chmodSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,6 +14,7 @@ import {
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { ok } from "@comis/shared";
+import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 
@@ -41,8 +43,12 @@ function makeDefinition(): PlannedCapabilityServiceDefinition {
     protocolId: "comis.capability-service/1",
     mcpServerName: "example-service",
     managedToolBindings: [],
-    requestedScopes: ["health", "report"],
-    evidencePolicies: [],
+    requestedScopes: ["health", "evidence", "report"],
+    evidencePolicies: [{
+      kind: "delivery_reference",
+      verificationLevel: "adapter_verified",
+      use: "delivery_reference",
+    }],
     dependsOn: [],
   };
 }
@@ -115,7 +121,7 @@ function handshake(bearer: string): unknown {
       bundleDigest: BUNDLE_DIGEST,
       operationId: "operation_handshake_a",
       serviceInstanceId: "service-instance_a",
-      requestedScopes: ["health", "report"],
+      requestedScopes: ["health", "evidence", "report"],
     },
   };
 }
@@ -138,7 +144,11 @@ describe("daemon-owned capability-service Unix host", () => {
     return { directory, socketPath: join(directory, "service.sock") };
   }
 
-  function makeHost(socketPath: string, reportBridge?: ManagedRunReportBridge) {
+  function makeHost(
+    socketPath: string,
+    reportBridge?: ManagedRunReportBridge,
+    evidenceBridge?: ManagedRunEvidenceBridge,
+  ) {
     const clock = createFakeClock(NOW_MS);
     const timers = createFakeTimers(NOW_MS);
     return {
@@ -164,6 +174,27 @@ describe("daemon-owned capability-service Unix host", () => {
               contentHash: "a".repeat(64),
               receivedAtMs: NOW_MS,
               retainedUntilMs: NOW_MS + 60_000,
+            },
+          })),
+        },
+        evidenceBridge: evidenceBridge ?? {
+          putEvidence: vi.fn(async () => ok({
+            kind: "accepted" as const,
+            evidence: {
+              schemaVersion: 1 as const,
+              serviceInstanceId: "service-instance_a",
+              managedRunId: "managed-run_a",
+              evidenceRef: "evidence_a",
+              kind: "delivery_reference",
+              subjectDigest: "e".repeat(64),
+              observedAtMs: NOW_MS - 10,
+              expiresAtMs: NOW_MS + 60_000,
+              contentRef: "evidence_a",
+              contentHash: "a".repeat(64),
+              privateContentHash: "b".repeat(64),
+              verificationLevel: "adapter_verified" as const,
+              deliveryKind: "reference" as const,
+              receivedAtMs: NOW_MS,
             },
           })),
         },
@@ -194,7 +225,30 @@ describe("daemon-owned capability-service Unix host", () => {
         },
       })),
     };
-    const host = makeHost(root.socketPath, reportBridge);
+    const evidenceBody = Buffer.from("https://example.com/result/17", "utf8");
+    const evidenceHash = createHash("sha256").update(evidenceBody).digest("hex");
+    const evidenceBridge: ManagedRunEvidenceBridge = {
+      putEvidence: vi.fn(async () => ok({
+        kind: "accepted" as const,
+        evidence: {
+          schemaVersion: 1 as const,
+          serviceInstanceId: "service-instance_a",
+          managedRunId: "managed-run_a",
+          evidenceRef: "evidence_a",
+          kind: "delivery_reference",
+          subjectDigest: "e".repeat(64),
+          observedAtMs: NOW_MS - 10,
+          expiresAtMs: NOW_MS + 60_000,
+          contentRef: "evidence_a",
+          contentHash: evidenceHash,
+          privateContentHash: "b".repeat(64),
+          verificationLevel: "adapter_verified" as const,
+          deliveryKind: "reference" as const,
+          receivedAtMs: NOW_MS,
+        },
+      })),
+    };
+    const host = makeHost(root.socketPath, reportBridge, evidenceBridge);
     expect(host.created.ok).toBe(true);
     if (!host.created.ok) return;
     const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
@@ -212,7 +266,7 @@ describe("daemon-owned capability-service Unix host", () => {
         protocolId: "comis.capability-service/1",
         bundleDigest: BUNDLE_DIGEST,
         serviceInstanceId: "service-instance_a",
-        activeScopes: ["health", "report"],
+        activeScopes: ["health", "evidence", "report"],
       },
     });
     expect(await started).toEqual({
@@ -220,7 +274,7 @@ describe("daemon-owned capability-service Unix host", () => {
       value: {
         protocolId: "comis.capability-service/1",
         serviceInstanceId: "service-instance_a",
-        activeScopes: ["health", "report"],
+        activeScopes: ["health", "evidence", "report"],
       },
     });
 
@@ -328,6 +382,50 @@ describe("daemon-owned capability-service Unix host", () => {
         kind: "progress",
         summary: "Synthetic progress",
       },
+    });
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_evidence_a",
+      method: "managedRuns.putEvidence",
+      params: {
+        operationId: "operation_evidence_a",
+        managedRunId: "managed-run_a",
+        evidenceRef: "evidence_a",
+        kind: "delivery_reference",
+        subjectDigest: "e".repeat(64),
+        observedAtMs: NOW_MS - 10,
+        expiresAtMs: NOW_MS + 60_000,
+        contentHash: evidenceHash,
+        verificationLevel: "adapter_verified",
+        bodyBase64: evidenceBody.toString("base64"),
+        delivery: { kind: "reference" },
+      },
+    });
+    expect(await peer.next()).toMatchObject({
+      id: "operation_evidence_a",
+      result: {
+        managedRunId: "managed-run_a",
+        evidenceRef: "evidence_a",
+        contentHash: evidenceHash,
+        verificationLevel: "adapter_verified",
+        retainedUntilMs: NOW_MS + 60_000,
+      },
+    });
+    expect(evidenceBridge.putEvidence).toHaveBeenCalledWith({
+      operationId: "operation_evidence_a",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      evidenceRef: "evidence_a",
+      kind: "delivery_reference",
+      subjectDigest: "e".repeat(64),
+      observedAtMs: NOW_MS - 10,
+      expiresAtMs: NOW_MS + 60_000,
+      contentHash: evidenceHash,
+      verificationLevel: "adapter_verified",
+      bodyBase64: evidenceBody.toString("base64"),
+      delivery: { kind: "reference" },
     });
 
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
