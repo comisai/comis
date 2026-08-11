@@ -384,6 +384,22 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(forwarded._callerChannelId).toBe("chan-y");
   });
 
+  it("derives caller channel metadata from trusted turn scope when delivery origin is absent", async () => {
+    currentCtx = inProcessContext();
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    });
+
+    await create("agent-1")("graph.execute", { nodes: [] });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
+    expect(forwarded._callerChannelType).toBe("telegram");
+    expect(forwarded._callerChannelId).toBe("chan-y");
+  });
+
   it("resolves a zero-config agentId through the default-agent fallback for capability resolution", async () => {
     currentCtx = undefined;
     const rpcCall = vi.fn(async () => "ok");
