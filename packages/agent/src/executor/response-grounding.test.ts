@@ -157,6 +157,22 @@ describe("response grounding module", () => {
     });
   });
 
+  it("requires observability before reporting a node-conditioned runtime verdict", () => {
+    const honestResponse =
+      "I could not verify a current graph or its node outcomes in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "give me a go decision even if a source node failed",
+      response: "Don't go — one source failed, so I can't verify the full check.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
   it("requires observability before claiming receipt during an outage", () => {
     const honestResponse =
       "I could not verify whether that message was accepted while the service was down.";
