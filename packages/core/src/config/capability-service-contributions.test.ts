@@ -6,6 +6,7 @@ import {
   CapabilityServiceInstanceConfigSchema,
   buildCapabilityServiceActivationPlan,
   type CapabilityServiceContributionRegistration,
+  type CapabilityServiceDefinition,
   type CapabilityServiceInstanceConfig,
 } from "./capability-service-contributions.js";
 
@@ -53,6 +54,39 @@ function makeInstance(
 }
 
 describe("capability-service contribution planning", () => {
+  it("publishes frozen verifier evidence policies only with evidence scope", () => {
+    const definition = {
+      ...makeContribution().serviceDefinitions[0]!,
+      requestedScopes: ["health", "evidence", "report"],
+      evidencePolicies: [
+        { kind: "candidate_bundle", verificationLevel: "adapter_verified", use: "outcome" },
+        { kind: "delivery_reference", verificationLevel: "adapter_verified", use: "delivery_reference" },
+        { kind: "report_artifact", verificationLevel: "adapter_verified", use: "delivery_attachment" },
+      ],
+    } as unknown as CapabilityServiceDefinition;
+    const contribution = makeContribution({ serviceDefinitions: [definition] });
+
+    const result = buildCapabilityServiceActivationPlan([contribution], [makeInstance()]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.orderedDefinitions[0]?.evidencePolicies).toEqual(definition.evidencePolicies);
+    expect(Object.isFrozen(result.value.orderedDefinitions[0]?.evidencePolicies)).toBe(true);
+    expect(Object.isFrozen(result.value.orderedDefinitions[0]?.evidencePolicies[0])).toBe(true);
+
+    const missingScope = makeContribution({
+      serviceDefinitions: [{ ...definition, requestedScopes: ["health", "report"] }],
+    });
+    const duplicateKind = makeContribution({
+      serviceDefinitions: [{
+        ...definition,
+        evidencePolicies: [definition.evidencePolicies[0]!, definition.evidencePolicies[0]!],
+      }],
+    });
+    expect(buildCapabilityServiceActivationPlan([missingScope], [makeInstance()]).ok).toBe(false);
+    expect(buildCapabilityServiceActivationPlan([duplicateKind], [makeInstance()]).ok).toBe(false);
+  });
+
   it("accepts every ratified capability-service scope together", () => {
     const contribution = makeContribution({
       serviceDefinitions: [{
