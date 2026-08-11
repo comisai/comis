@@ -34,6 +34,7 @@ registerToolMetadata("find", { isReadOnly: true });
 
 type TestPromptSkillCapability = PromptSkillCapability & {
   readonly minDistinctWebFetchUrls?: number;
+  readonly minDistinctWebSearchQueries?: number;
 };
 
 const skills: TestPromptSkillCapability[] = [
@@ -55,6 +56,7 @@ const skills: TestPromptSkillCapability[] = [
       "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer. Continue for context-dependent follow-ups requesting source attribution, claim tracing, unavailable-source handling, or compression into essentials.",
     replacesPackages: [],
     minDistinctWebFetchUrls: 3,
+    minDistinctWebSearchQueries: 3,
   },
   {
     name: "claude-code",
@@ -123,6 +125,11 @@ describe("prompt skill request routing", () => {
       (deferral as ExcludeDeferralResult & {
         requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
       }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBe(3);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
     ).toBe(3);
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/deep-research/SKILL.md",

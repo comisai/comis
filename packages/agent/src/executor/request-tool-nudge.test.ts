@@ -6,6 +6,7 @@ import {
   runRequestToolNudge,
   type RunRequestToolNudgeDeps,
 } from "./request-tool-nudge.js";
+import * as requestToolNudgeModule from "./request-tool-nudge.js";
 
 function makeDeps(
   overrides: Partial<RunRequestToolNudgeDeps> = {},
@@ -97,6 +98,21 @@ describe("runRequestToolNudge", () => {
       { toolName: "web_fetch", success: true, citationUrlDigest: "url_b" },
       { toolName: "web_fetch", success: false, citationUrlDigest: "url_c" },
       { toolName: "web_search", success: true, citationUrlDigest: "url_d" },
+    ])).toBe(2);
+  });
+
+  it("counts only distinct successful web search query receipts", () => {
+    const candidate = (requestToolNudgeModule as Record<string, unknown>)
+      .countDistinctSuccessfulWebSearchQueries;
+    expect(candidate).toBeTypeOf("function");
+    const countQueries = candidate as (records: readonly unknown[]) => number;
+
+    expect(countQueries([
+      { toolName: "web_search", success: true, webSearchQueryDigest: "query_a" },
+      { toolName: "web_search", success: true, webSearchQueryDigest: "query_a" },
+      { toolName: "web_search", success: true, webSearchQueryDigest: "query_b" },
+      { toolName: "web_search", success: false, webSearchQueryDigest: "query_c" },
+      { toolName: "web_fetch", success: true, webSearchQueryDigest: "query_d" },
     ])).toBe(2);
   });
 
@@ -256,6 +272,45 @@ describe("runRequestToolNudge", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(prompt.mock.calls[0]?.[0]).toMatch(
       /2 of 3 distinct successful web_fetch URLs/iu,
+    );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
+  it("continues a prompt skill until distinct web search evidence is complete", async () => {
+    let distinctWebSearchQueryCount = 2;
+    let successfulToolCount = 5;
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        distinctWebSearchQueryCount = 3;
+        successfulToolCount = 6;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "understand this topic properly from multiple angles",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      currentDistinctSuccessfulWebSearchQueryCount: () => distinctWebSearchQueryCount,
+      getVisibleAssistantText: () => "Research completed from several angles.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[0]?.[0]).toMatch(
+      /2 of 3 distinct successful web_search queries/iu,
     );
     expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
     expect(outcome).toMatchObject({
