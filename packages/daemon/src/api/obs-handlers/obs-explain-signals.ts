@@ -21,7 +21,7 @@ import {
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
-import { accumulateOauthRefreshFailure, ensureTool, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
@@ -30,9 +30,6 @@ import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./ob
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
 export const BREAKER_N = 5;
-/** Token literals the misclassification heuristic looks for in a failure body. */
-const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
-const DO_NOT_RETRY_RE = /DO NOT retry/i;
 const PROBLEMATIC_CHANNEL_STATES = new Set(["disconnected", "errored", "stale", "stuck", "unknown"]);
 function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
@@ -41,69 +38,6 @@ function nonnegativeInteger(value: unknown): number {
 // ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
-function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
-  const msg = asString(rec.msg) ?? "";
-  const tool = asString(rec.toolName);
-  const sessionKey = asString(rec.sessionKey);
-  if (sessionKey && !acc.sessionKey) acc.sessionKey = sessionKey;
-  // Offload (log shape).
-  if (msg === "Tool result offloaded to disk" && tool) {
-    acc.offloads.push({
-      seq: acc.seq++,
-      toolName: tool,
-      originalChars: asNumber(rec.originalChars) ?? 0,
-      pointer: relativizeDiskPath(asString(rec.diskPath)),
-    });
-    return;
-  }
-  // Failure (log shape) — keyed on the "Tool execution failed" message.
-  if (msg === "Tool execution failed" && tool) {
-    const entry = ensureTool(acc, tool);
-    entry.failed += 1;
-    const errorKind = asString(rec.errorKind) ?? "internal";
-    entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
-    const errorText = asString(rec.errorText);
-    const { errorPreview, resultDigest, resultBytes } = previewAndDigest(errorText);
-    const httpStatus = asNumber(rec.httpStatus);
-    if (errorText && DO_NOT_RETRY_RE.test(errorText)) {
-      acc.hasDoNotRetrySignal = true;
-      // The breaker's offending tool is this line's toolName (log-shape proxy
-      // for a tool.breaker_opened event, which the log shape never carries).
-      acc.breakerOpenedTool ??= tool;
-      // Synthesize a breaker "opened" timeline entry from the log evidence so a
-      // log-only session still has a non-empty breakerTimeline. Dedup per
-      // tool — the breaker opens once even though the
-      // stream carries multiple "DO NOT retry" lines.
-      if (!acc.synthesizedBreakerTools.has(tool)) {
-        acc.synthesizedBreakerTools.add(tool);
-        acc.breakerEvents.push({ seq: acc.seq++, event: "opened", toolName: tool });
-      }
-    }
-    if (errorText) {
-      const m = errorText.match(MISCLASS_TOKEN_RE);
-      if (m) acc.misclassTokenByTool.set(tool, m[1] ?? m[2] ?? "status");
-    }
-    acc.failures.push({
-      seq: acc.seq++,
-      toolName: tool,
-      // Log shape predates the provenance fields — record an honest empty/false.
-      classifiedFailureBy: "",
-      transportOk: false,
-      ...(httpStatus !== undefined ? { httpStatus } : {}),
-      errorKind,
-      ...(asString(rec.failureCode) !== undefined ? { failureCode: asString(rec.failureCode) } : {}),
-      resultDigest,
-      resultBytes,
-      errorPreview,
-    });
-    return;
-  }
-  // Success (log shape): either an explicit success:true with a toolName, or a
-  // "Tool audit: <tool> succeeded" audit line.
-  if (tool && (rec.success === true || /succeeded/.test(msg))) {
-    ensureTool(acc, tool).ok += 1;
-  }
-}
 function handleEventRecord(
   acc: Acc,
   rec: Record<string, unknown>,

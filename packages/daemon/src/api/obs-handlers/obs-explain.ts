@@ -1,32 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * `obs.explain` RPC handler — the IncidentReport assembler.
- *
- * Wires the full pipeline in five linear steps:
- *
- *   1. admin check (defense-in-depth; gateway-router is the primary gate)
- *   2. `stripInternalFields` THEN `ObsExplainContract.request.parse`
- *      (so `_trustLevel` can never be smuggled into the parsed params)
- *   3. resolve — a `traceId` is canonicalized to its `sessionKey` FIRST
- *      ({@link resolveTraceToSession}), so by-trace and by-session share ONE
- *      assembler path (structural identity)
- *   4. read → normalize → assemble → heuristics → bound:
- *        - {@link IncidentSourceReader} reads the four bounded sources
- *        - {@link toIncidentSignals} collapses log + event shapes
- *        - {@link assembleIncidentReport} merges signals + rollup → the report
- *        - {@link rootCause} stamps the deterministic `likelyRootCause`
- *        - {@link boundIncidentReport} enforces the depth budget
- *   5. dev-mode `response.parse` (catches field regressions in dev only)
- *
- * The `incidentReader` dep is an OPTIONAL test seam: production builds
- * {@link makeRealReader} over the real (safePath-guarded) data dir; tests inject
- * a fixture reader. It does NOT enable arbitrary-file reads in production
- * — the dataDir override convention only, like obs-trace.
- *
+ * `obs.explain` IncidentReport assembler and admin RPC handler. Resolves each
+ * reference to one session before bounded read, normalization, assembly, root
+ * cause classification, and response validation. Tests may inject a source
+ * reader; production always uses the safe-path-guarded data directory.
  * @module
  */
-
 import { AuthorizationError } from "../errors.js";
 import * as os from "node:os";
 import {
@@ -63,7 +43,6 @@ import {
   outboundImageEvidenceGuardVerdict,
   outboundDeliveryStatusEvidenceGuardVerdict,
 } from "./obs-explain-completion-evidence-verdict.js";
-
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
 const DELEGATION_RESPONSE_GROUNDING_GUARD_ACTION =
@@ -79,7 +58,6 @@ const VISION_FALLBACK_GROUNDED_ACTION =
 function defaultDataDir(): string {
   return safePath(os.homedir(), ".comis");
 }
-
 /**
  * Already-validated `obs.explain` params (post `request.parse`). The shared
  * assembler takes this shape DIRECTLY — it performs NO contract parse and NO
