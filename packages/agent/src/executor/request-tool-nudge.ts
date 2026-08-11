@@ -293,6 +293,9 @@ function buildPromptSkillResultNarrationDirective(receipt?: string): string {
     "A required prompt-skill workflow tool succeeded in this turn.",
     "Give the final user-facing answer now from that successful receipt.",
     "Follow the loaded procedure's response contract exactly and preserve canonical identifiers from the result.",
+    "Use only current-turn workflow receipts as evidence for current success, failure, availability, and citations.",
+    "Do not carry an earlier failure or unavailable-source claim into this answer; mention one only when a current-turn tool receipt records it, using its exact identifier.",
+    "Every cited URL must come from a successful current-turn web_fetch receipt.",
     ...(receipt
       ? [
           "The relevant successful workflow receipt is:",
@@ -525,7 +528,11 @@ export async function runRequestToolNudge(
       { restrictToToolNames: workflowRecoveryTools },
     );
   }
-  const promptSkillWorkflowCompleted = promptSkillProcedureLoaded()
+  const evidenceGatedWorkflowCompleted = minDistinctWebFetchUrls !== undefined
+    && webFetchEvidenceSatisfied();
+  const promptSkillWorkflowCompleted = (
+    promptSkillProcedureLoaded() || evidenceGatedWorkflowCompleted
+  )
     && (minDistinctWebFetchUrls === undefined
       ? successfulCount() > successfulToolCountBefore
       : webFetchEvidenceSatisfied());
@@ -583,7 +590,9 @@ export async function runRequestToolNudge(
 
   const response = deps.getVisibleAssistantText(deps.session);
   const successfulToolCountAfter = successfulCount();
-  const procedureCompletionProvable = promptSkillProcedureLoaded()
+  const procedureCompletionProvable = (
+    promptSkillProcedureLoaded() || evidenceGatedWorkflowCompleted
+  )
     && (minDistinctWebFetchUrls === undefined
       ? !(
           useReadRecovery
@@ -592,7 +601,10 @@ export async function runRequestToolNudge(
         )
       : webFetchEvidenceSatisfied());
   const recovered =
-    successfulToolCountAfter > successfulToolCountBefore
+    (
+      successfulToolCountAfter > successfulToolCountBefore
+      || promptSkillWorkflowCompleted
+    )
     && response.trim().length > 0
     && procedureCompletionProvable;
   logger.info(
