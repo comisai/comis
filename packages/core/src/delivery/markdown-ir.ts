@@ -78,7 +78,7 @@ function findInlineToken(text: string, start: number): InlineToken | undefined {
   const isHttpUrl = text.startsWith("http://", start) || text.startsWith("https://", start);
   if (isHttpUrl) {
     let end = start;
-    while (end < text.length && !/\s|[<>"'`)]/.test(text[end]!)) end++;
+    while (end < text.length && !/\s|[<>"'`)\]]/.test(text[end]!)) end++;
     const url = text.slice(start, end);
     return { type: "link", text: url, url, end };
   }
