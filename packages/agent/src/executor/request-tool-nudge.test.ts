@@ -320,6 +320,46 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("keeps continuing a progressing workflow until search evidence is complete", async () => {
+    let distinctWebSearchQueryCount = 0;
+    let successfulToolCount = 3;
+    const prompt = vi.fn(async () => {
+      if (distinctWebSearchQueryCount < 3) {
+        distinctWebSearchQueryCount++;
+        successfulToolCount++;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "understand this topic properly from several angles",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      currentDistinctSuccessfulWebSearchQueryCount: () => distinctWebSearchQueryCount,
+      getVisibleAssistantText: () => "Research completed from several angles.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(4);
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/reuse web_search with new query arguments/iu);
+    expect(prompt.mock.calls[2]?.[0]).toMatch(
+      /2 of 3 distinct successful web_search queries/iu,
+    );
+    expect(prompt.mock.calls[3]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
   it("loads the selected prompt skill when workflow receipts already exist", async () => {
     let successfulReadCount = 0;
     const successfulWorkflowCount = 3;
