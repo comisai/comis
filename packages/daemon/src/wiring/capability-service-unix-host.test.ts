@@ -20,7 +20,7 @@ import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordin
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 
 const NOW_MS = 1_800_000_000_000;
-const BUNDLE_DIGEST = "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7";
+const BUNDLE_DIGEST = "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad";
 const BEARER = "synthetic-capability-service-bearer";
 
 function makeLogger(): ComisLogger {
@@ -204,7 +204,9 @@ describe("daemon-owned capability-service Unix host", () => {
             },
           })),
         },
-        ...(releaseCoordinator === undefined ? {} : { releaseCoordinator }),
+        releaseCoordinator: releaseCoordinator ?? {
+          release: vi.fn(async () => ok({ kind: "rejected" as const, reasonCode: "state_mismatch" as const })),
+        },
         requestDeadlineMs: 5_000,
         clock,
         timers,

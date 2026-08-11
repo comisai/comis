@@ -2,6 +2,7 @@
 import type { z } from "zod";
 import {
   CapabilityPutEvidenceRequestSchema,
+  CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
   type CapabilityServiceErrorKind,
 } from "@comis/capability-service-sdk";
@@ -9,14 +10,61 @@ import type { ClockPort, ComisLogger, TimerPort } from "@comis/core";
 import { err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
+import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 
 export interface CapabilityServiceIngressRouteDeps {
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
+  readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
   readonly logger: ComisLogger;
+}
+
+/** Revoke run-bound capabilities and release the exact workspace lease. */
+export async function routeManagedRunReleaseIngress(
+  serviceInstanceId: string,
+  request: z.infer<typeof CapabilityReleaseRequestSchema>,
+  deps: CapabilityServiceIngressRouteDeps,
+): Promise<CapabilityServiceIngressRouteResult> {
+  const startedAtMs = deps.clock.now();
+  deps.logger.debug({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    step: "capability-service-release-ingress",
+  }, "Routing capability-service release");
+  const invoked = tryCatch(() => deps.releaseCoordinator.release({
+    serviceInstanceId,
+    ...request.params,
+  }));
+  const settled = invoked.ok
+    ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
+    : err(invoked.error);
+  let result: CapabilityServiceIngressRouteResult;
+  if (settled === undefined) result = responseError("deadline_exceeded");
+  else if (!settled.ok) result = responseError("internal_error");
+  else if (settled.value.kind === "rejected") {
+    result = responseError(settled.value.reasonCode === "release_conflict"
+      ? "replay_conflict"
+      : "precondition_failed");
+  } else {
+    result = {
+      response: {
+        managedRunId: settled.value.managedRunId,
+        workspaceLeaseId: settled.value.workspaceLeaseId,
+        state: "released",
+        disposition: settled.value.disposition,
+        releasedAtMs: settled.value.releasedAtMs,
+      },
+    };
+  }
+  deps.logger.info({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+  }, "Capability-service release request completed");
+  return result;
 }
 
 export interface CapabilityServiceIngressRouteResult {

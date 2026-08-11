@@ -28,7 +28,7 @@ import { createCapabilityServiceProtocolFixtureServer } from "./capability-servi
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(here, "../../../..");
-const BUNDLE_DIGEST = "418f92fd129f8df03b3fbf49b7cc79a1d924533e7739e8496d7552ae2af393c7";
+const BUNDLE_DIGEST = "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad";
 const EXPECTED_BEARER = "fixture-bearer-0000000000000000000000000001";
 const SERVICE_INSTANCE_ID = "service-instance_a";
 const NOW_MS = 1_800_000_000_000;

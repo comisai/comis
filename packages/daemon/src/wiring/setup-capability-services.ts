@@ -55,6 +55,8 @@ import {
   type ExecutionAttachmentRecoverySummary,
 } from "./execution-attachment-authority.js";
 import type { ManagedTerminalRevoker } from "./managed-terminal-revoker.js";
+import { createManagedRunResourceRevoker } from "./managed-run-resource-revoker.js";
+import { createManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 
 const SECRET_REFERENCE_PREFIX = "secret://";
 
@@ -259,6 +261,25 @@ export async function setupCapabilityServices(
     resolveEvidencePolicies: (serviceInstanceId) => definitionByInstance.get(serviceInstanceId)?.evidencePolicies,
     logger: deps.logger,
   });
+  let terminalRevoker: ManagedTerminalRevoker | undefined;
+  const revokeManagedTerminals: ManagedTerminalRevoker = async (record) => {
+    if (record.terminalSessionIds.length === 0) return ok(undefined);
+    return terminalRevoker === undefined
+      ? err(new Error("managed terminal revoker is unavailable"))
+      : terminalRevoker(record);
+  };
+  const revokeBoundResources = createManagedRunResourceRevoker({
+    store,
+    attachments,
+    revokeManagedTerminals,
+    nowMs: () => deps.clock.now(),
+    logger: deps.logger,
+  });
+  const releaseCoordinator = createManagedRunReleaseCoordinator({
+    store,
+    workspaceLeases,
+    revokeBoundResources,
+  });
 
   const credentials = new Map<string, () => string | undefined>();
   for (const instance of plan.value.orderedInstances) {
@@ -278,6 +299,7 @@ export async function setupCapabilityServices(
     socketRoot: deps.dataDir,
     reportBridge,
     evidenceBridge,
+    releaseCoordinator,
     requestDeadlineMs: deps.config.requestDeadlineMs,
     clock: deps.clock,
     timers: deps.timers,
@@ -312,14 +334,6 @@ export async function setupCapabilityServices(
     ),
     logger: deps.logger,
   });
-  let terminalRevoker: ManagedTerminalRevoker | undefined;
-  const revokeManagedTerminals: ManagedTerminalRevoker = async (record) => {
-    if (record.terminalSessionIds.length === 0) return ok(undefined);
-    return terminalRevoker === undefined
-      ? err(new Error("managed terminal revoker is unavailable"))
-      : terminalRevoker(record);
-  };
-
   const activationCoordinator = createManagedRunActivationCoordinator({
     store,
     contentStore,
