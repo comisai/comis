@@ -595,11 +595,41 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       ]);
       expect(selectiveList).not.toContain(shipSession);
       expect(selectiveList).toContain(scoutSession);
+
+      commitFile(repository, shipBinding.canonical_path, "ship.txt", `Delivered ship task ${shipTask}\n`, "complete ship task");
+      let handback = "";
+      let postHandbackSessions = "";
+      await liaisonTurn(model, boot.channelManager, boot.echo, "HAND_BACK_DEVELOPER_WORK", [
+        {
+          tool: "handback_task",
+          arguments: { taskHandle: shipTask, action: "validate-developer-work" },
+          capture: (text) => { handback = text; },
+        },
+        {
+          tool: "terminal_session_list",
+          arguments: {},
+          capture: (text) => { postHandbackSessions = text; },
+        },
+      ]);
+      expect(handback).toContain("validating");
+      expect(postHandbackSessions).toContain(scoutSession);
+
+      await pollUntil(
+        () => taskState(goDatabase, shipTask) === "delivered" && taskState(goDatabase, scoutTask) === "delivered",
+        150_000,
+        () => `delivered tasks before restart; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} stderr=${service?.stderr() ?? ""}`,
+      );
+      await pollUntil(
+        () => evidenceDelivered(goDatabase, handles)
+          && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2),
+        60_000,
+        "exact evidence delivery before restart",
+      );
+
       await liaisonTurn(model, boot.channelManager, boot.echo, "STOP_E0_SCOUT", [
         { tool: "terminal_session_kill", arguments: { sessionId: scoutSession } },
       ]);
-
-      console.log("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
+      console.log("RESTART_DAEMON_AND_SERVICE_AFTER_DELIVERY");
       await stopDaemon(daemon);
       daemon = undefined;
       await service.stop();
@@ -608,26 +638,13 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       await waitForUnixSocket(mcpSocket);
       boot = await bootDaemon();
       daemon = boot.handle;
-
-      commitFile(repository, shipBinding.canonical_path, "ship.txt", `Delivered ship task ${shipTask}\n`, "complete ship task");
-      let handback = "";
-      await liaisonTurn(model, boot.channelManager, boot.echo, "HAND_BACK_DEVELOPER_WORK", [{
-        tool: "handback_task",
-        arguments: { taskHandle: shipTask, action: "validate-developer-work" },
-        capture: (text) => { handback = text; },
-      }]);
-      expect(handback).toContain("validating");
-
       await pollUntil(
-        () => taskState(goDatabase, shipTask) === "delivered" && taskState(goDatabase, scoutTask) === "delivered",
-        150_000,
-        () => `delivered tasks after restart; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} stderr=${service?.stderr() ?? ""}`,
-      );
-      await pollUntil(
-        () => evidenceDelivered(goDatabase, handles)
+        () => taskState(goDatabase, shipTask) === "delivered"
+          && taskState(goDatabase, scoutTask) === "delivered"
+          && evidenceDelivered(goDatabase, handles)
           && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2),
-        60_000,
-        "exact evidence delivery after restart",
+        30_000,
+        "delivered custody and exact evidence recovery after restart",
       );
       expect(service.child.exitCode).toBeNull();
 
