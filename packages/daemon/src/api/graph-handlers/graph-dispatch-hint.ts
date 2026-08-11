@@ -2,12 +2,10 @@
 /**
  * The model-facing hint returned by a successful `graph.execute` dispatch.
  *
- * One pure function so each branch is an executable contract instead of a
- * string literal buried in the handler: a weak model that dispatched a 6-node
- * pipeline then kept researching the topic itself (130 tool calls) exhausted
- * its own context, so the delivered wording is load-bearing and every branch —
- * no completion channel, retained delivery disabled, delivery available —
- * must be asserted from its returned value.
+ * One pure function keeps each completion-route branch executable and tested
+ * instead of burying the model-facing contract in the handler. The successful
+ * route must tell the caller to stop duplicating delegated work, while routes
+ * without governed completion delivery must not promise a notification.
  *
  * @module
  */

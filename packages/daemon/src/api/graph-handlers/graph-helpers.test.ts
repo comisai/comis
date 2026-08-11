@@ -30,10 +30,9 @@ import type { TemplateMatch } from "@comis/agent";
 import { transformNodes, isWeakCapabilityClass, buildGraphInput } from "./graph-helpers.js";
 import { graphDispatchHint } from "./graph-dispatch-hint.js";
 
-// After a successful graph.execute dispatch, the model-facing hint must be a
-// strong STOP signal — a weak model that dispatched a 6-node NVDA pipeline then kept
-// researching NVDA itself (130 tool calls) and exhausted its own context. Every
-// branch is asserted from the hint the handler actually emits.
+// After a successful graph.execute dispatch, the model-facing hint must stop
+// the caller from duplicating delegated work. Every completion-route branch is
+// asserted from the hint the handler actually emits.
 describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
   it("tells the model its job is DONE, to STOP, and to NOT research the topic itself", () => {
     const hint = graphDispatchHint({
