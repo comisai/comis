@@ -425,8 +425,12 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         const ctx = tryGetContext();
         const traceId = ctx?.traceId ?? null;
         // Bind reactions to the inbound participant so an unmapped group
-        // bystander cannot inherit the participant's trust.
-        const participantId = ctx?.userId;
+        // bystander cannot inherit the participant's trust. The RAW channel
+        // sender is the only identity comparable to the `reactorId` a channel
+        // binder reports (and the vocabulary senderTrustMap is keyed by); the
+        // canonical principal never matches one, which left every reactor —
+        // the participant included — resolving to "external".
+        const participantId = ctx?.channelSenderId;
 
         // Resolve delivery strategy
         const strategy: DeliveryStrategy = options?.strategy ?? "all-or-abort";

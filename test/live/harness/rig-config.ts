@@ -182,8 +182,10 @@ agents:
     # (elevatedReply.defaultTrustLevel ?? "external"), and
     # 0.6 (REACTION_BASE_CONFIDENCE) x 0.05 (trustWeight external) = 0.03 <
     # 0.05 (REACTION_MIN_CONFIDENCE_TO_WRITE) -> the thumbs-up SILENTLY persists
-    # no row. "known" -> 0.6 x 0.4 = 0.24 >= 0.05 (single-user DM; the group
-    # spoof guard is handled separately). Rig config ONLY — never a product-default flip.
+    # no row. "known" -> 0.6 x 0.4 = 0.24 >= 0.05. This default is inherited by the
+    # conversation PARTICIPANT only (the sender the reply was bound to), so a DM leg
+    # must react as the same user it sent from; a non-participant reactor stays
+    # "external". Rig config ONLY — never a product-default flip.
     elevatedReply:
       defaultTrustLevel: "known"
 

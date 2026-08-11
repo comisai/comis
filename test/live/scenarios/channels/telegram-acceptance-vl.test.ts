@@ -91,7 +91,12 @@ const AGENT = "default";
 // sessionKey; the trajectory-identity invariant the landed identity fix restored).
 const TURN_TRACE_ID = "trace-accept-vl-001";
 const SESSION_ID = "telegram:chat-1:111";
-// The reactor's id (the rig grants trust >= known via elevatedReply.defaultTrustLevel:known).
+// The DM user this leg drives: it both SENDS the task and reacts to the reply.
+// The two must be the same id — a DM has exactly one human, and trust for an
+// unmapped reactor (the rig's elevatedReply.defaultTrustLevel:known) is inherited
+// only by the conversation PARTICIPANT, i.e. the sender the reply was bound to.
+// Reacting as a user who never spoke in the chat is a group-bystander shape that
+// no real DM can produce, and it resolves to "external" (the inert 0.03).
 const REACTOR_ID = 111;
 
 // Tmp dirs created per DB-using Stage-B test — cleaned up after each.
@@ -422,9 +427,13 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the A->B reaction-gat
       // not the exhaustion path. waitForReply is the SYNC POINT — the outbound
       // landed, so the primary-path recordOutboundMessage bound the reply's
       // messageId to the trajectory.
-      const inboundId = await r.send(
-        "List the files in the workspace, then reply with a one-sentence summary of what you found.",
-      );
+      // Injected AS REACTOR_ID (not the rig's default sender) so the reply is bound
+      // to the very user who reacts below — the single-human DM shape.
+      const inboundId = await r.controlClient.injectMessage({
+        chatId: r.chat.chatId,
+        fromUserId: REACTOR_ID,
+        text: "List the files in the workspace, then reply with a one-sentence summary of what you found.",
+      });
       const reply = await r.waitForReply(inboundId, 1_500_000);
       expect(
         reply,
@@ -486,7 +495,16 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the A->B reaction-gat
         jobs?: Array<{ name?: string }>;
       };
       const jobNames = (cronList.jobs ?? []).map((j) => j.name).filter((n): n is string => typeof n === "string");
-      const synthesisJob = jobNames.find((n) => /skill\s*synthesis/i.test(n)) ?? "Skill synthesis";
+      // The built-in job that synthesizes learned skills is registered as
+      // "Reflection" (setup-schedulers.ts, action "reflection"). A literal
+      // "Skill synthesis" fallback names no job the daemon has, so cron.run
+      // RPC-throws and the leg dies on the harness rather than on the product.
+      const synthesisJob = jobNames.find((n) => /reflect|skill\s*synthesis/i.test(n));
+      expect(
+        synthesisJob,
+        `FINDING (harness): no reflection/skill-synthesis cron job registered on the rig — cron.list returned [${jobNames.join(", ")}]. The ADMIT half cannot be forced; check the rig's learning/memory toggles.`,
+      ).toBeDefined();
+      if (synthesisJob === undefined) return;
       await rpcRequest(r.gatewayUrl, "cron.run", { jobName: synthesisJob }, r.authToken);
 
       // ── learned_skills (the HONEST-ABSTAIN gate): a keyless model may ABSTAIN at
@@ -516,9 +534,11 @@ describe.skipIf(!isLive)("ACCEPT-01 scenario 1 Stage-C — the A->B reaction-gat
       // ── Session B reuse (the loop closes). The surfaced skill rides the NEXT
       // session's prompt-skills freeze (reflect:admitted -> refresh). The durable
       // learned_skills row is the deterministic ground truth for reuse.
-      const inboundB = await r.send(
-        "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
-      );
+      const inboundB = await r.controlClient.injectMessage({
+        chatId: r.chat.chatId,
+        fromUserId: REACTOR_ID,
+        text: "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
+      });
       const replyB = await r.waitForReply(inboundB, 1_500_000);
       expect(
         replyB,

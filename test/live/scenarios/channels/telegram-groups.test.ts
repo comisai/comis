@@ -610,7 +610,8 @@ describe.skipIf(!isLive)("GROUP-03 Stage-C — the group reaction-spoof leg: onl
       // binding AUTH as the participant on the outbound trajectory. AUTH's 👍 then inherits the
       // rig's defaultTrustLevel: known; a bystander's (ATTACKER, a non-participant) resolves to
       // "external" (the inert 0.03). waitForReply is the SYNC POINT — the reply landed, so
-      // recordOutboundMessage bound its messageId AND the participant (ctx.userId = AUTH).
+      // recordOutboundMessage bound its messageId AND the participant
+      // (ctx.channelSenderId = AUTH, the raw id a reactorId is comparable to).
       const inboundId = await r.controlClient.injectMessage({
         chatId: r.chat.chatId,
         fromUserId: AUTH_REACTOR_ID,
