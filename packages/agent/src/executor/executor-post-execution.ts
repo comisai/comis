@@ -172,6 +172,7 @@ import {
 } from "./citation-evidence.js";
 import {
   buildSubagentTerminalToolFailureReply,
+  buildToolInvocationStallFailureReply,
   classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
@@ -2356,10 +2357,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // each deterministic degraded-reply builder. Missing locale packs fall back
   // to the injected catalog's English strings.
   if (effectiveFinishReason === "tool_invocation_stall") {
-    result.response = buildPersistentActionEvidenceMissingReply(
-      replyLanguage,
-      localeCatalog,
-    );
+    result.response = buildToolInvocationStallFailureReply({
+      failedTools: bridgeResult.failedTools ?? [],
+      toolExecResults: bridgeResult.toolExecResults,
+    }) ?? buildPersistentActionEvidenceMissingReply(replyLanguage, localeCatalog);
     deps.logger.warn(
       {
         step: "request-tool-nudge",

@@ -89,7 +89,7 @@ export function registerFailureDetectorMetadata(): void {
           matchedToken: missingConfigKey,
           failureDisclosure: {
             kind: "missing_configuration",
-            configKey: missingConfigKey,
+            configKey: `secrets.${missingConfigKey}`,
           },
         };
       }

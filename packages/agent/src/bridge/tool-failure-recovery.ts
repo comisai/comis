@@ -320,6 +320,34 @@ function latestUnrecoveredDisclosure(
   return undefined;
 }
 
+/** Build an actionable foreground reply when a tool stall has a trusted recovery key. */
+export function buildToolInvocationStallFailureReply(params: {
+  failedTools: readonly string[];
+  toolExecResults: readonly ToolExecutionResultRecord[] | undefined;
+}): string | undefined {
+  const failure = latestUnrecoveredDisclosure(
+    params.failedTools,
+    params.toolExecResults,
+  );
+  const disclosure = failure?.failureDisclosure;
+  if (failure === undefined || disclosure === undefined) return undefined;
+
+  switch (disclosure.kind) {
+    case "missing_configuration":
+      return (
+        `I could not complete the request because ${failure.toolName} is not configured. `
+        + `Configure ${disclosure.configKey} before retrying.`
+      );
+    case "quota_exhausted":
+    case "provider_unavailable":
+      return undefined;
+    default: {
+      const _exhaustive: never = disclosure;
+      return _exhaustive;
+    }
+  }
+}
+
 export interface SubagentTerminalToolFailure {
   readonly toolName: string;
   readonly errorKind?: ErrorKind;
