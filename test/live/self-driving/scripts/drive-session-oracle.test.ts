@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   findTelegramConversationWireAnswer,
+  followupWaitFinished,
   isDriveProgressText,
   normalizeWireText,
   normalizeDriveStdinText,
@@ -15,6 +16,38 @@ import {
   sharedConversationFinished,
   telegramInjectAddressingError,
 } from "./drive-session-oracle.mjs";
+
+describe("opt-in follow-up delivery wait", () => {
+  it("keeps polling after the launch acknowledgement until a second answer arrives", () => {
+    expect(followupWaitFinished({
+      substantiveAnswerCount: 1,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(false);
+    expect(followupWaitFinished({
+      substantiveAnswerCount: 2,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(true);
+  });
+
+  it("ends honestly when the bounded follow-up window expires", () => {
+    expect(followupWaitFinished({
+      substantiveAnswerCount: 1,
+      firstAnswerAtMs: 1_000,
+      nowMs: 31_000,
+      waitMs: 30_000,
+    })).toBe(true);
+    expect(followupWaitFinished({
+      substantiveAnswerCount: 0,
+      firstAnswerAtMs: undefined,
+      nowMs: 90_000,
+      waitMs: 30_000,
+    })).toBe(false);
+  });
+});
 
 describe("drive inbound validation", () => {
   it("rejects text beyond the deployed normalized-message limit before injection", () => {
