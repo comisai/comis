@@ -164,7 +164,7 @@ function makeCoordinator(overrides: {
 }
 
 describe("managed-run continuation coordination", () => {
-  it("persists finalized candidate delivery before committing the exact reduced cursor", async () => {
+  it("does not convert finalized model delivery into verified task success", async () => {
     let commitReducedState: ReturnType<typeof vi.fn> | undefined;
     const setup = makeCoordinator({
       execute: async (input) => {
@@ -187,9 +187,11 @@ describe("managed-run continuation coordination", () => {
     });
     expect(setup.commitReducedState).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
       throughReportSequence: 2,
-      status: "succeeded",
-      statusReason: "outcome_verified",
-      terminalOutcome: { kind: "succeeded", recordedAtMs: NOW_MS },
+      status: "candidate_complete",
+      statusReason: "verification_pending",
+    }));
+    expect(setup.commitReducedState).toHaveBeenCalledWith(ownerScope(), expect.not.objectContaining({
+      terminalOutcome: expect.anything(),
     }));
     expect(setup.markContinuationOutcome).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
       outcome: "completed",
