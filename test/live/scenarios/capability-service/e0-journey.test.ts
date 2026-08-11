@@ -263,6 +263,26 @@ function terminalTransition(databasePath: string, taskHandle: string): string {
   }
 }
 
+function handbackDiagnostic(databasePath: string, taskHandle: string): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const task = db.prepare(`SELECT state, updated_at AS updatedAt, report_cursor AS reportCursor,
+      state_version AS stateVersion, brief_revision AS briefRevision,
+      brief_revision_hash AS briefRevisionHash, managed_run_id AS managedRunId,
+      workspace_lease_id AS workspaceLeaseId, execution_attachment_id AS executionAttachmentId,
+      attachment_target_name AS attachmentTargetName
+      FROM tasks WHERE handle = ?`).get(taskHandle);
+    const terminal = db.prepare(`SELECT latest_transition AS latestTransition,
+      running_observed AS runningObserved, updated_at AS updatedAt
+      FROM task_terminal_bindings WHERE task_handle = ?`).get(taskHandle);
+    const validation = db.prepare(`SELECT COUNT(*) AS active
+      FROM validation_processes WHERE task_handle = ? AND state <> 'exited'`).get(taskHandle);
+    return JSON.stringify({ observedAt: new Date().toISOString(), task, terminal, validation });
+  } finally {
+    db.close();
+  }
+}
+
 function reportKinds(databasePath: string, taskHandle: string): string[] {
   const db = new Database(databasePath, { readonly: true });
   try {
@@ -669,7 +689,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
           capture: (text) => { postHandbackSessions = text; },
         },
       ]);
-      expect(handback).toContain("validating");
+      expect(handback, handbackDiagnostic(goDatabase, shipTask)).toContain("validating");
       expect(postHandbackSessions).toContain(scoutSession);
 
       await pollUntil(
