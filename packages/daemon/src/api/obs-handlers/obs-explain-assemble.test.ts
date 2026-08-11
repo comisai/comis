@@ -2213,6 +2213,36 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("ranks a rejected completion route above earlier delegation response drift", async () => {
+    const reader = makeAuditReader(
+      [
+        auditRow("audit", TRACE_ID, {
+          action: "response.delegation_response_grounding_guard",
+          outcome: "denied",
+        }),
+      ],
+      [
+        {
+          traceSchema: "comis-trajectory",
+          type: "subagent.delivery_skipped",
+          seq: 2,
+          traceId: TRACE_ID,
+          data: {
+            runId: "run-route-rejected",
+            reason: "route_validation_failed",
+          },
+        },
+      ],
+    );
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause?.code).toBe("subagent_delivery_skipped");
+    expect(report.likelyRootCause?.detail).toMatch(/route validation failed/i);
+  });
+
   it("names a persistent-action evidence correction as the acute cause", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
