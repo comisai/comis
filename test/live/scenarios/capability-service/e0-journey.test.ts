@@ -712,7 +712,7 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       expect(existsSync(scoutBinding.canonical_path)).toBe(true);
       rmSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"));
       const cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
-        "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-final", "--format", "json",
+        "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-dirty", "--format", "json",
       ]);
       expect(cleanedScout.state).toBe("cleaned");
 
