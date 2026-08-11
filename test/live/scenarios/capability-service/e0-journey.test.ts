@@ -611,7 +611,15 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
         handle.daemon.deliveryAdapters.set("echo", echo);
         const channelManager = handle.daemon.channelManager;
         if (channelManager === undefined) throw new Error("channel manager is unavailable");
-        expect(handle.daemon.capabilityServices.runtime.getActiveView().instances).toContainEqual(
+        const serviceDiagnostic = [
+          `exit=${String(service?.child.exitCode)}`,
+          `signal=${String(service?.child.signalCode)}`,
+          `stderr=${service?.stderr() ?? "unavailable"}`,
+        ].join("; ");
+        expect(
+          handle.daemon.capabilityServices.runtime.getActiveView().instances,
+          `capability service did not become active; ${serviceDiagnostic}`,
+        ).toContainEqual(
           expect.objectContaining({ serviceInstanceId: SERVICE_INSTANCE_ID, state: "active" }),
         );
         return { handle, echo, channelManager };
