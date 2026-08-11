@@ -334,6 +334,8 @@ export async function runRequestToolNudge(
   const promptSkillRecovery =
     (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
     && (deps.requestRelevantPromptSkillLocations?.length ?? 0) > 0;
+  const promptSkillProcedureLoaded = () =>
+    !promptSkillRecovery || currentSuccessfulToolCount(["read"]) > 0;
   const minDistinctWebFetchUrls =
     deps.requestRelevantPromptSkillMinDistinctWebFetchUrls;
   const distinctWebFetchUrlCount = () =>
@@ -420,7 +422,11 @@ export async function runRequestToolNudge(
   const successfulCount = useReadRecovery
     ? () => currentSuccessfulToolCount(recoveryToolNames)
     : currentSuccessfulMutationCount;
-  if (successfulCount() > 0 && webFetchEvidenceSatisfied()) {
+  if (
+    successfulCount() > 0
+    && webFetchEvidenceSatisfied()
+    && promptSkillProcedureLoaded()
+  ) {
     return {
       fired: false,
       recovered: false,
@@ -483,7 +489,11 @@ export async function runRequestToolNudge(
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
-    && (workflowEvidencePending || successfulCount() === successfulToolCountBefore)
+    && (
+      workflowEvidencePending
+      || successfulCount() === successfulToolCountBefore
+      || !promptSkillProcedureLoaded()
+    )
   ) {
     logger.info(
       {
@@ -515,9 +525,10 @@ export async function runRequestToolNudge(
       { restrictToToolNames: workflowRecoveryTools },
     );
   }
-  const promptSkillWorkflowCompleted = minDistinctWebFetchUrls === undefined
-    ? successfulCount() > successfulToolCountBefore
-    : webFetchEvidenceSatisfied();
+  const promptSkillWorkflowCompleted = promptSkillProcedureLoaded()
+    && (minDistinctWebFetchUrls === undefined
+      ? successfulCount() > successfulToolCountBefore
+      : webFetchEvidenceSatisfied());
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
@@ -572,13 +583,14 @@ export async function runRequestToolNudge(
 
   const response = deps.getVisibleAssistantText(deps.session);
   const successfulToolCountAfter = successfulCount();
-  const procedureCompletionProvable = minDistinctWebFetchUrls === undefined
-    ? !(
-        useReadRecovery
-        && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
-        && promptSkillWorkflowTools.length > 0
-      )
-    : webFetchEvidenceSatisfied();
+  const procedureCompletionProvable = promptSkillProcedureLoaded()
+    && (minDistinctWebFetchUrls === undefined
+      ? !(
+          useReadRecovery
+          && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
+          && promptSkillWorkflowTools.length > 0
+        )
+      : webFetchEvidenceSatisfied());
   const recovered =
     successfulToolCountAfter > successfulToolCountBefore
     && response.trim().length > 0

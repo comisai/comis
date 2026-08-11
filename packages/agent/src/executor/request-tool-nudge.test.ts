@@ -522,12 +522,16 @@ describe("runRequestToolNudge", () => {
 
   it("keeps the requested mutation tool in prompt skill workflow recovery", async () => {
     let activeTools = ["read", "exec", "test_mutating_tool"];
+    let successfulReadCount = 0;
     let successfulMutationCount = 0;
     const setActiveToolsByName = vi.fn((names: string[]) => {
       activeTools = [...names];
     });
     const prompt = vi.fn(async () => {
-      if (prompt.mock.calls.length === 1) return;
+      if (prompt.mock.calls.length === 1) {
+        successfulReadCount = 1;
+        return;
+      }
       if (prompt.mock.calls.length === 2) {
         expect(activeTools).toEqual(["read", "exec", "test_mutating_tool"]);
         successfulMutationCount = 1;
@@ -547,6 +551,8 @@ describe("runRequestToolNudge", () => {
         setActiveToolsByName,
       },
       currentSuccessfulMutationCount: () => successfulMutationCount,
+      currentSuccessfulToolCount: (toolNames) =>
+        toolNames?.includes("read") === true ? successfulReadCount : 0,
       getVisibleAssistantText: () => "Configured.",
     });
 
