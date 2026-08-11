@@ -936,6 +936,24 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("replaces a future delegation claim for an explicit plural-agent request", () => {
+    const guarded = delegationEvidenceGuard()({
+      request: "get a few separate agents on the comparison",
+      response:
+        "Yes — I can split the comparison across a few separate agents. Send me the options.",
+      toolExecResults: [
+        { toolName: "agents_manage", success: true },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_spawn",
+    });
+  });
+
   it("preserves a delegation claim backed by a successful current-turn spawn", () => {
     const guarded = delegationEvidenceGuard()({
       request,
