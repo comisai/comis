@@ -1,7 +1,7 @@
 ---
 name: deep-research
-version: 1.0.2
-description: Conduct systematic, multi-angle web research on any topic. Use this skill instead of a single web search for ANY question requiring online information -- "what is X", "explain X", "compare X and Y", "research X", or before content generation tasks like articles, reports, presentations, or documentation. Provides thorough multi-source research methodology. Use proactively when the user's question needs current, comprehensive information from multiple angles.
+version: 1.0.3
+description: "MANDATORY: Conduct systematic, multi-angle web research before answering any request to understand or explain a topic properly, deeply, thoroughly, comprehensively, or beyond a short paragraph, even when general knowledge could produce an answer. Also use for comparisons, explicit research, current online information, and content-generation tasks such as articles, reports, presentations, or documentation. Load this skill instead of doing a single web search or answering from memory."
 comis:
   requires:
     # Runs entirely on the built-in web_search / web_fetch tools.
@@ -16,6 +16,8 @@ Systematic methodology for thorough web research. Load this skill BEFORE startin
 ## Core Principle
 
 Never generate content based solely on general knowledge. The quality of output depends directly on research quality. A single search query is never enough.
+
+Before answering, obtain at least three distinct successful `web_fetch` receipts from three different URLs, covering multiple angles. If fewer than three distinct sources can be fetched, label the result partial or incomplete, name each unavailable source or capability blocker, and do not fill the evidence gap from memory.
 
 Every URL presented as a citation must have a successful `web_fetch` receipt from the current research run. A `web_search` result or snippet is discovery evidence, not citation evidence. Fetch a discovered source before citing it; if the fetch fails, omit it from citations and name it separately as an attempted but unavailable source.
 
@@ -73,6 +75,7 @@ Ensure comprehensive coverage by seeking diverse information types:
 Before proceeding to content generation, verify:
 
 - [ ] Searched from at least 3-5 different angles
+- [ ] Have at least three distinct successful `web_fetch` receipts from different URLs
 - [ ] Fetched and read the most important sources in full
 - [ ] Have concrete data, examples, and expert perspectives
 - [ ] Explored both positive aspects and challenges/limitations
