@@ -108,6 +108,25 @@ describe("ComisNamespaceSchema with capability key", () => {
   });
 });
 
+describe("ComisNamespaceSchema with web-fetch evidence minimum", () => {
+  it("accepts a bounded minimum of distinct successful web fetch URLs", () => {
+    const result = ComisNamespaceSchema.safeParse({
+      "min-distinct-web-fetch-urls": 3,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data?.["min-distinct-web-fetch-urls"]).toBe(3);
+    }
+  });
+
+  it("rejects a zero web fetch evidence minimum", () => {
+    expect(ComisNamespaceSchema.safeParse({
+      "min-distinct-web-fetch-urls": 0,
+    }).success).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // SkillManifestSchema.mcpServers preprocess
 // Normalizer accepts BOTH array (Comis-native) and Claude-Desktop nested-object

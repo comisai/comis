@@ -73,6 +73,14 @@ registerToolMetadata("obs_query", {
   isReadOnly: true,
 });
 
+registerToolMetadata("web_search", {
+  isReadOnly: true,
+});
+
+registerToolMetadata("web_fetch", {
+  isReadOnly: true,
+});
+
 registerToolMetadata("test_guided_mutating_tool", {
   isReadOnly: false,
   mutationRequestPrefixes: ["connect"],
@@ -205,6 +213,43 @@ describe("runRequestToolNudge", () => {
       fired: true,
       recovered: true,
       matchedToolNames: ["read"],
+      outcome: "recovered",
+    });
+  });
+
+  it("continues a loaded prompt skill until distinct web fetch evidence is complete", async () => {
+    let distinctWebFetchUrlCount = 2;
+    let successfulToolCount = 3;
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        distinctWebFetchUrlCount = 3;
+        successfulToolCount = 4;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "understand this topic properly from multiple sources",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => distinctWebFetchUrlCount,
+      getVisibleAssistantText: () => "Research completed from three distinct sources.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[0]?.[0]).toMatch(
+      /2 of 3 distinct successful web_fetch URLs/iu,
+    );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
       outcome: "recovered",
     });
   });

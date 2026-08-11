@@ -14,7 +14,13 @@ function tool(name: string): ToolDefinition {
 
 function result(): ExcludeDeferralResult {
   return {
-    activeTools: [tool("read"), tool("find"), tool("exec")],
+    activeTools: [
+      tool("read"),
+      tool("find"),
+      tool("exec"),
+      tool("web_search"),
+      tool("web_fetch"),
+    ],
     deferredEntries: [],
     discoveredTools: [],
     discoverTool: null,
@@ -26,7 +32,11 @@ function result(): ExcludeDeferralResult {
 
 registerToolMetadata("find", { isReadOnly: true });
 
-const skills: PromptSkillCapability[] = [
+type TestPromptSkillCapability = PromptSkillCapability & {
+  readonly minDistinctWebFetchUrls?: number;
+};
+
+const skills: TestPromptSkillCapability[] = [
   {
     name: "find-skills",
     description:
@@ -44,6 +54,7 @@ const skills: PromptSkillCapability[] = [
     description:
       "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer.",
     replacesPackages: [],
+    minDistinctWebFetchUrls: 3,
   },
   {
     name: "claude-code",
@@ -100,6 +111,15 @@ describe("prompt skill request routing", () => {
 
     expect(selected).toEqual(["deep-research"]);
     expect(deferral.requestRelevantToolNames).toEqual(["read"]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([
+      "web_search",
+      "web_fetch",
+    ]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBe(3);
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/deep-research/SKILL.md",
     ]);

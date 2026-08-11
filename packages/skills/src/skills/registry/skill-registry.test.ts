@@ -107,6 +107,7 @@ function createPromptSkillWithNewFields(
     skillKey?: string;
     primaryEnv?: string;
     commandDispatch?: string;
+    minDistinctWebFetchUrls?: number;
   },
 ): void {
   const comisLines: string[] = [];
@@ -138,6 +139,11 @@ function createPromptSkillWithNewFields(
   }
   if (fields.commandDispatch !== undefined) {
     comisLines.push(`  command-dispatch: ${fields.commandDispatch}`);
+  }
+  if (fields.minDistinctWebFetchUrls !== undefined) {
+    comisLines.push(
+      `  min-distinct-web-fetch-urls: ${fields.minDistinctWebFetchUrls}`,
+    );
   }
 
   const comisYaml = comisLines.length > 0
@@ -2025,6 +2031,27 @@ describe("getPromptSkillCapabilities", () => {
 
     expect(registry.getPromptSkillCapabilities(() => undefined)[0]?.requiredBins)
       .toEqual(["git"]);
+  });
+
+  it("surfaces the distinct web fetch minimum for prompt skill recovery", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithNewFields(
+      skillsDir,
+      "research-skill",
+      "Research a topic from multiple sources",
+      "Fetch distinct sources before answering.",
+      { minDistinctWebFetchUrls: 3 },
+    );
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const capability = registry.getPromptSkillCapabilities(() => undefined)[0] as
+      | { readonly minDistinctWebFetchUrls?: number }
+      | undefined;
+    expect(capability?.minDistinctWebFetchUrls).toBe(3);
   });
 
   it("filter chain: disableModelInvocation === true is FILTERED OUT", () => {
