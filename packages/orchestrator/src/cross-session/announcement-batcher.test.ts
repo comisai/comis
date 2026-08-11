@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
 import { createDeliveryDedup } from "@comis/agent";
-import { createConversationLocator } from "@comis/core";
+import { createConversationLocator, TypedEventBus } from "@comis/core";
 import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -750,6 +750,9 @@ describe("AnnouncementBatcher", () => {
 
   it("discards a permanently rejected governed route instead of replaying it from dead letters", async () => {
     const deadLetterQueue = makeDecisionQueue();
+    const eventBus = new TypedEventBus();
+    const deliverySkipped = vi.fn();
+    eventBus.on("subagent:delivery_skipped", deliverySkipped);
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
       delivered: false,
       failure: "operation_validation_blocked" as const,
@@ -759,7 +762,10 @@ describe("AnnouncementBatcher", () => {
       deadLetterQueue,
       sendGovernedAnnouncement,
     });
-    const batcher = createAnnouncementBatcher(deps);
+    const batcher = createAnnouncementBatcher({
+      ...deps,
+      eventBus,
+    } as AnnouncementBatcherDeps);
 
     await batcher.enqueue(makeAnnouncement({ idempotencyKey: "rejected-route-key" }));
     await vi.advanceTimersByTimeAsync(2_000);
@@ -771,6 +777,13 @@ describe("AnnouncementBatcher", () => {
     );
     expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
     expect(batcher.hasDelivered("rejected-route-key")).toBe(true);
+    expect(deliverySkipped).toHaveBeenCalledWith({
+      runId: "run-1",
+      agentId: "agent-main",
+      sessionKey: "default:agent:agent-main:user1:chan1",
+      reason: "route_validation_failed",
+      timestamp: expect.any(Number),
+    });
   });
 
   it("serializes a batch key while its parent execution is in flight", async () => {

@@ -1070,6 +1070,22 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
     });
   });
 
+  it("folds a rejected announcement route into the affected session incident", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "message" }),
+      event("subagent.delivery_skipped", 2, {
+        runId: "run-route-rejected",
+        reason: "route_validation_failed",
+      }),
+    ]);
+
+    expect(signals.subagentDeliverySkipped).toEqual({
+      count: 1,
+      lastRunId: "run-route-rejected",
+      lastReason: "route_validation_failed",
+    });
+  });
+
   it("preserves each of the three precedence cap sources; an unrecognized one folds to 'unknown'", () => {
     const s = toIncidentSignals([
       { traceSchema: "comis-trajectory", type: "subagent.budget_exceeded", seq: 1, data: { nodeId: "a", capSource: "node", tokenBudget: 1, tokensUsed: 2 } },

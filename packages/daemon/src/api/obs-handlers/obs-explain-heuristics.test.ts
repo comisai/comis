@@ -191,6 +191,24 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/requesterOrigin|announce/i);
   });
 
+  it("names caller authority when announcement route validation suppresses delivery", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "success",
+        degraded: true,
+        subagentDeliverySkipped: {
+          count: 1,
+          lastRunId: "run-route-rejected",
+          lastReason: "route_validation_failed",
+        },
+      } as unknown as Partial<IncidentSignals>),
+    );
+
+    expect(r?.code).toBe("subagent_delivery_skipped");
+    expect(r?.detail).toMatch(/route validation failed/i);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/callerConversation|destinationEndpoint/);
+  });
+
   it("abandoned child processes outrank the expected operator-origin delivery skip", () => {
     const signals = makeSignals({
       endReason: "success",
