@@ -4,6 +4,7 @@ set -euo pipefail
 readonly REAL_CODEX=/usr/local/bin/codex
 readonly REVIEWED_TOKEN=wave4-reviewed
 readonly REPORTER_DIR=/home/comis/.wave4-tools
+readonly REPORTER_CAPTURE_DIR=/usr/local/lib/wave4
 readonly START_FILE=.wave4-start
 readonly SIBLING_FILE=.wave4-sibling.json
 readonly EVIDENCE_FILE=.wave4-confinement.json
@@ -61,7 +62,7 @@ jq -n \
 export CODEX_HOME=/home/comis/.codex
 export DEV_CREW_ATTACHMENT="${own_attachment}"
 export DEV_CREW_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
-export PATH="${REPORTER_DIR}:${PATH}"
+export PATH="${REPORTER_CAPTURE_DIR}:${REPORTER_DIR}:${PATH}"
 jq -n \
   --arg workingDirectory "$(pwd -P)" \
   --arg attachmentTargetName "${DEV_CREW_ATTACHMENT_TARGET_NAME:-}" \

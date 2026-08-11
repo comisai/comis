@@ -53,6 +53,7 @@ RUN npm install --global pnpm@10.34.5 @openai/codex@0.147.0 \
 # mutable source mount. Its exact path is the Go profile's probed executable and
 # the Comis operator allow entry's hash-pinned command.
 COPY --chmod=0755 test/confinement-runner/wave4-codex-launcher.sh /usr/local/bin/wave4-codex-launcher
+COPY --chmod=0755 test/confinement-runner/wave4-report-capture.sh /usr/local/lib/wave4/devcrew-report
 
 # The upstream Node image already owns uid/gid 1000. Rename that account so
 # every spike, including bwrap itself, runs as an unprivileged service user.
