@@ -830,7 +830,7 @@ function delegationEvidenceGuardVerdict(
       code: "delegation_response_ungrounded",
       detail:
         "sessions_spawn succeeded, but the final response did not describe the current delegation; "
-        + "the response honesty guard grounded it with a receipt-backed status",
+        + "the response honesty guard replaced it with a receipt-backed status",
       suggestedNextSteps: [
         "inspect the model turn after the successful sessions_spawn receipt",
         "check recalled context and prompt-skill use for stale task influence",
