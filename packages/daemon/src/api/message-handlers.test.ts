@@ -162,9 +162,6 @@ function createMockDeps(workspaceDir: string): MessageHandlerDeps {
       error: vi.fn(),
     } as unknown as MessageHandlerDeps["logger"],
     deliveryService: makeFakeDeliveryService(),
-    hookRunner: {
-      runAfterDelivery: vi.fn(async () => undefined),
-    },
   };
 }
 
@@ -302,69 +299,6 @@ describe("message.attach handler", () => {
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: "https://example.com/file.pdf",
     }));
-  });
-
-  it("publishes successful attachments through the delivery mirror hook", async () => {
-    const deps = createMockDeps(workspaceDir);
-    const runAfterDelivery = vi.fn(async () => undefined);
-    deps.hookRunner = {
-      runBeforeDelivery: vi.fn(async () => undefined),
-      runAfterDelivery,
-    } as unknown as HookRunner;
-    const handlers = createMessageHandlers(deps);
-    const endpoint = {
-      channelType: "telegram",
-      channelInstanceId: "test-ch",
-      conversationId: "123",
-      conversationKind: "direct" as const,
-    };
-
-    await runWithContext({
-      tenantId: "tenant-a",
-      userId: "user_a",
-      sessionKey: "tenant-a:agent:agent-1:user_a:telegram:peer:user_a",
-      agentId: "agent-1",
-      turnScope: {
-        conversation: {
-          tenantId: "tenant-a",
-          agentId: "agent-1",
-          partition: {
-            kind: "endpoint-conversation-principal",
-            endpoint,
-            principalId: "user_a",
-          },
-        },
-        principal: { principalId: "user_a" },
-        endpoint,
-      },
-      traceId: "550e8400-e29b-41d4-a716-446655440000",
-      startedAt: 1_700_000_000_000,
-      trustLevel: "admin",
-    }, () => handlers["message.attach"]({
-      channel_type: "telegram",
-      channel_id: "123",
-      attachment_url: "https://example.com/current.png",
-      attachment_type: "image",
-      caption: "Current page",
-    }));
-
-    expect(runAfterDelivery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "Current page",
-        mediaUrls: ["https://example.com/current.png"],
-        channelType: "telegram",
-        channelId: "123",
-        origin: "rpc:message.attach",
-      }),
-      expect.objectContaining({
-        agentId: "agent-1",
-        destinationEndpoint: endpoint,
-        deliveryAuthority: expect.objectContaining({
-          tenantId: "tenant-a",
-          agentId: "agent-1",
-        }),
-      }),
-    );
   });
 
   it("file:// URL resolves to local path and calls adapter", async () => {

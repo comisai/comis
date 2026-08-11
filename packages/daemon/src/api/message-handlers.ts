@@ -40,9 +40,8 @@ import {
   tryGetContext,
   resolvePlatformDeliveryResult,
   ChannelEndpointSchema,
-  createConversationRef,
 } from "@comis/core";
-import { err, fromPromise, ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { stat } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { resolveAdapter, authorizeChannelAccess } from "../wiring/daemon-utils.js";
@@ -171,56 +170,6 @@ function requireGatewayEndpointAuthority(
     throw new Error("Gateway message endpoint conflicts with the authenticated turn");
   }
   return endpoint.data;
-}
-
-async function publishAttachmentDelivery(params: {
-  deps: MessageHandlerDeps;
-  endpoint: ChannelEndpoint;
-  channelType: string;
-  channelId: string;
-  mediaUrl: string;
-  caption: string | undefined;
-  result: unknown;
-  durationMs: number;
-}): Promise<void> {
-  const context = tryGetContext();
-  const conversationRef = context?.turnScope === undefined
-    ? undefined
-    : createConversationRef(context.turnScope.conversation);
-  const hookResult = await fromPromise(params.deps.hookRunner.runAfterDelivery(
-    {
-      text: params.caption ?? "",
-      mediaUrls: [params.mediaUrl],
-      channelType: params.channelType,
-      channelId: params.channelId,
-      result: params.result,
-      durationMs: params.durationMs,
-      origin: "rpc:message.attach",
-    },
-    {
-      sessionKey: context?.sessionKey,
-      agentId: context?.agentId,
-      traceId: context?.traceId,
-      ...(context !== undefined && context.agentId !== undefined && conversationRef?.ok
-        ? {
-            deliveryAuthority: {
-              tenantId: context.tenantId,
-              agentId: context.agentId,
-              conversationRef: conversationRef.value,
-            },
-            destinationEndpoint: params.endpoint,
-          }
-        : {}),
-    },
-  ));
-  if (!hookResult.ok) {
-    params.deps.logger.warn({
-      channelType: params.channelType,
-      channelId: params.channelId,
-      errorKind: "dependency" as const,
-      hint: "Check after_delivery hook health and delivery-mirror storage before the next attachment",
-    }, "Attachment delivery hook failed");
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -610,7 +559,6 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
     },
 
     [MessageAttachContract.method]: async (rawParams) => {
-      const startedAt = systemNowMs();
       // message.attach is admin-only and denied to non-admin request origins;
       // it is intentionally outside the agent's orch:message capability.
       const channelType = rawParams.channel_type as string;
@@ -626,7 +574,6 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       MessageAttachContract.request.parse(userParams);
 
       let attachmentUrl = rawParams.attachment_url as string;
-      const mirrorMediaUrl = attachmentUrl;
 
       // Resolve file:// URLs and workspace paths to validated local paths.
       // A RELATIVE path is resolved against the caller's workspace root: that is
@@ -675,7 +622,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       // Gateway is a transport layer, not a ChannelPort adapter.
       // Serve the file via /media/:id and push a WebSocket notification.
       if (channelType === "gateway") {
-        const endpoint = requireGatewayEndpointAuthority(rawParams, channelId);
+        requireGatewayEndpointAuthority(rawParams, channelId);
         if (!deps.wsConnections || !deps.mediaDir) {
           throw new Error("Gateway attachment support requires wsConnections and mediaDir");
         }
@@ -752,16 +699,6 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           receipt: { kind: "tracked" as const, messageId: mediaId },
           channelId,
         };
-        await publishAttachmentDelivery({
-          deps,
-          endpoint,
-          channelType,
-          channelId,
-          mediaUrl: mirrorMediaUrl,
-          caption,
-          result,
-          durationMs: systemNowMs() - startedAt,
-        });
         if (IS_DEV) MessageAttachContract.response.parse(result);
         return result;
       }
@@ -782,16 +719,6 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         : await sendAttachment(channelId, attachment, { threadId: endpoint.threadId });
       if (!attachResult.ok) throw attachResult.error;
       const result = { receipt: attachResult.value, channelId };
-      await publishAttachmentDelivery({
-        deps,
-        endpoint,
-        channelType,
-        channelId,
-        mediaUrl: mirrorMediaUrl,
-        caption: attachment.caption,
-        result,
-        durationMs: systemNowMs() - startedAt,
-      });
       if (IS_DEV) MessageAttachContract.response.parse(result);
       return result;
     },

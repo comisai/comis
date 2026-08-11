@@ -829,7 +829,6 @@ function buildRpcDispatchDeps(deps: {
       : {}),
     graphCoordinator: c.graphCoordinator, namedGraphStore: c.namedGraphStore, nodeTypeRegistry: c.nodeTypeRegistry,
     securityConfig: c.container.config.security, adaptersByType: c.adaptersByType,
-    hookRunner: c.container.hookRunner,
     resolveMessageEndpoint: (agentId, channelType, conversationId) => c.notificationContext.sessionTracker.findUniqueEndpoint(agentId, channelType, conversationId),
     getChannelAdapter: (channelType: string) => c.adaptersByType.get(channelType),
     inboundMessageIdResolver: c.inboundMessageIdResolver, visionRegistry: c.visionRegistry, resolveAgentMainProvider: resolveAgentMainProviderFor, mainModelIdFor: c.mediaVisionBundle?.resolveMainModelId, mainProviderVision: c.mediaVisionBundle?.capability, trajectoryRegistry: c.trajectoryRegistry,

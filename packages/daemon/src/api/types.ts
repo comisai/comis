@@ -270,8 +270,6 @@ export interface ChannelsApiDeps {
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
   /** DeliveryService constructed once at the composition root (setup-channels.ts); createMessageHandlers calls `deps.deliveryService.deliverToChannel(...)`. */
   deliveryService: import("@comis/core").DeliveryService;
-  /** Runs the same after-delivery mirror/observability hooks for attachment RPCs. */
-  hookRunner: Pick<import("@comis/core").HookRunner, "runAfterDelivery">;
   // Channel health monitor
   healthMonitor?: import("@comis/channels").ChannelHealthMonitor;
   // Channel plugins for capabilities RPC. Required: the production composition root
