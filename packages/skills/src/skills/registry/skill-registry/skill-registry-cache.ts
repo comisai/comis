@@ -29,6 +29,7 @@ import * as fs from "node:fs";
 import { systemNowMs } from "@comis/core";
 import { parseComisCapabilityDefensively } from "../../manifest/capability-parser.js";
 import { parseFrontmatter } from "../../manifest/parser.js";
+import { parseMinDistinctWebFetchUrlsDefensively } from "../../manifest/web-fetch-evidence-parser.js";
 import {
   formatAvailableSkillsXml,
   type PromptSkillDescription,
@@ -306,6 +307,7 @@ export function createSkillRegistry(
             summary,
             replacesPackages: Object.freeze([...rawReplaces]),
             requiredBins: Object.freeze([...(metadata.requires?.bins ?? [])]),
+            minDistinctWebFetchUrls: metadata.minDistinctWebFetchUrls,
             source: metadata.source,
           }),
         );
@@ -338,6 +340,7 @@ export function createSkillRegistry(
         let skillKey: string | undefined;
         let primaryEnv: string | undefined;
         let commandDispatch: string | undefined;
+        let minDistinctWebFetchUrls: number | undefined;
         let capability: ToolCapabilityMetadata | undefined;
 
         // Enrichment: read comis: namespace from skill file frontmatter
@@ -411,6 +414,10 @@ export function createSkillRegistry(
               commandDispatch = rawCommandDispatch;
             }
 
+            minDistinctWebFetchUrls = parseMinDistinctWebFetchUrlsDefensively(
+              ns?.["min-distinct-web-fetch-urls"], sdkSkill.name, logger,
+            );
+
             // Capability layer -- defensive parse. A typo or type mismatch
             // in the inner block returns undefined + emits a WARN; the skill
             // itself is NEVER hidden by malformed capability metadata.
@@ -443,6 +450,7 @@ export function createSkillRegistry(
           skillKey,
           primaryEnv,
           commandDispatch,
+          minDistinctWebFetchUrls,
           capability,
         };
 

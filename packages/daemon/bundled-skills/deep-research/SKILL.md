@@ -1,8 +1,9 @@
 ---
 name: deep-research
-version: 1.0.4
+version: 1.0.5
 description: "MANDATORY: Conduct systematic, multi-angle web research before answering any request to understand or explain a topic properly, deeply, thoroughly, comprehensively, or beyond a short paragraph, even when general knowledge could produce an answer. Also use for comparisons, explicit research, current online information, and content-generation tasks such as articles, reports, presentations, or documentation. Load this skill instead of doing a single web search or answering from memory."
 comis:
+  min-distinct-web-fetch-urls: 3
   requires:
     # Runs entirely on the built-in web_search / web_fetch tools.
     bins: []

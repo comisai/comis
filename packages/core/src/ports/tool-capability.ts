@@ -46,6 +46,8 @@ export interface PromptSkillCapability {
   readonly replacesPackages: readonly string[];
   /** External binaries the skill procedure requires. */
   readonly requiredBins?: readonly string[];
+  /** Successful distinct web-fetch URL receipts required before completion. */
+  readonly minDistinctWebFetchUrls?: number;
   /**
    * Where the skill was discovered from. Mirrors `@comis/skills` `SkillSource`:
    * "learned" is the verified-learning procedural source, set

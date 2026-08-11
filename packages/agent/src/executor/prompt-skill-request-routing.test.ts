@@ -110,7 +110,11 @@ describe("prompt skill request routing", () => {
     });
 
     expect(selected).toEqual(["deep-research"]);
-    expect(deferral.requestRelevantToolNames).toEqual(["read"]);
+    expect(deferral.requestRelevantToolNames).toEqual([
+      "read",
+      "web_search",
+      "web_fetch",
+    ]);
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([
       "web_search",
       "web_fetch",

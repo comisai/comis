@@ -2365,8 +2365,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         matchedToolNames: result.requestToolNudge?.matchedToolNames ?? [],
         errorKind: "internal" as const,
         hint:
-          "The model repeated an earlier answer and the bounded continuation still "
-          + "emitted no matched tool call; inspect request-tool-nudge in comis explain.",
+          "The bounded continuation still lacked request-matched tool or prompt-skill "
+          + "evidence; inspect request-tool-nudge counts in comis explain.",
       },
       "tool_invocation_stall — synthesized honest reply delivered",
     );

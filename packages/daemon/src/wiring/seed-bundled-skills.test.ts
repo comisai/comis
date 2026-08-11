@@ -158,6 +158,7 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(manifest).toMatch(
       /at least three distinct[^\n]*successful[^\n]*web_fetch/iu,
     );
+    expect(manifest).toMatch(/min-distinct-web-fetch-urls:\s*3/iu);
     expect(manifest).toMatch(
       /fewer than three[^\n]*(?:partial|incomplete|abstain)/iu,
     );

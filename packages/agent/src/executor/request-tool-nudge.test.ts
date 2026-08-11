@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerToolMetadata } from "@comis/core";
 import { allowProviderDispatch } from "./provider-dispatch.js";
 import {
+  countDistinctSuccessfulWebFetchUrls,
   runRequestToolNudge,
   type RunRequestToolNudgeDeps,
 } from "./request-tool-nudge.js";
@@ -89,6 +90,16 @@ registerToolMetadata("test_guided_mutating_tool", {
 } as never);
 
 describe("runRequestToolNudge", () => {
+  it("counts only distinct successful web fetch URL receipts", () => {
+    expect(countDistinctSuccessfulWebFetchUrls([
+      { toolName: "web_fetch", success: true, citationUrlDigest: "url_a" },
+      { toolName: "web_fetch", success: true, citationUrlDigest: "url_a" },
+      { toolName: "web_fetch", success: true, citationUrlDigest: "url_b" },
+      { toolName: "web_fetch", success: false, citationUrlDigest: "url_c" },
+      { toolName: "web_search", success: true, citationUrlDigest: "url_d" },
+    ])).toBe(2);
+  });
+
   it("recovers a frontier-model runtime self-report that omitted obs_query", async () => {
     let successfulToolCount = 0;
     const prompt = vi.fn(async () => {

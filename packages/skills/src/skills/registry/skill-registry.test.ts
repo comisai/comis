@@ -1387,6 +1387,7 @@ name: ns-skill
 description: "A namespaced skill"
 type: prompt
 comis:
+  min-distinct-web-fetch-urls: 3
   os:
     - linux
     - darwin
@@ -1413,6 +1414,7 @@ Namespaced skill body.
     expect(meta.skillKey).toBe("ns-skill");
     expect(meta.primaryEnv).toBe("discord");
     expect(meta.commandDispatch).toBe("slash");
+    expect(meta.minDistinctWebFetchUrls).toBe(3);
   });
 
   it("skill without comis: namespace has undefined for Comis metadata fields", () => {
@@ -1429,6 +1431,7 @@ Namespaced skill body.
     expect(meta.skillKey).toBeUndefined();
     expect(meta.primaryEnv).toBeUndefined();
     expect(meta.commandDispatch).toBeUndefined();
+    expect(meta.minDistinctWebFetchUrls).toBeUndefined();
   });
 
   it("Level 1 and Level 2 return same values for coerced fields", () => {
@@ -1742,6 +1745,7 @@ type: prompt
 userInvocable: true
 argumentHint: "some hint"
 comis:
+  min-distinct-web-fetch-urls: 3
   os:
     - linux
     - darwin
@@ -1774,6 +1778,9 @@ Enriched skill body.
     // Verify userInvocable is read (should be in user-invocable set)
     const invocable = registry.getUserInvocableSkillNames();
     expect(invocable.has("enriched")).toBe(true);
+    expect(
+      registry.getPromptSkillCapabilities(() => undefined)[0]?.minDistinctWebFetchUrls,
+    ).toBe(3);
   });
 
   it("filters by allowedSkills/deniedSkills", () => {

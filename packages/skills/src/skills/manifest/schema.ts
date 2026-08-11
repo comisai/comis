@@ -100,6 +100,9 @@ export const ComisCapabilityBlockSchema = z.strictObject({
 /** Parsed `comis.capability` block (Zod-inferred, defaults applied). */
 export type ComisCapabilityBlockParsed = z.infer<typeof ComisCapabilityBlockSchema>;
 
+/** Bounded source-receipt minimum for prompt skills that require web research. */
+export const MinDistinctWebFetchUrlsSchema = z.number().int().min(1).max(10);
+
 /**
  * Comis-specific namespace schema for fields that only apply within the
  * Comis platform. Other pi-coding-agent hosts will simply ignore this block.
@@ -117,6 +120,8 @@ export const ComisNamespaceSchema = z.strictObject({
   "primary-env": z.string().optional(),
   /** Metadata-only dispatch tag for command routing */
   "command-dispatch": z.string().optional(),
+  /** Distinct successful web-fetch URL receipts required before completion. */
+  "min-distinct-web-fetch-urls": MinDistinctWebFetchUrlsSchema.optional(),
   /**
    * Capability layer -- optional metadata for cluster, summary,
    * package aliases. Defensively parsed at registry-side; a typo here will
@@ -201,4 +206,3 @@ export type SkillManifestParsed = z.infer<typeof SkillManifestSchema>;
 
 /** Parsed and validated skill permissions. */
 export type SkillPermissionsParsed = z.infer<typeof SkillPermissionsSchema>;
-
