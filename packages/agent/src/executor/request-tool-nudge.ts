@@ -384,7 +384,8 @@ function buildPromptSkillResultNarrationDirective(receipts?: string): string {
     "Follow the loaded procedure's response contract exactly and preserve canonical identifiers from the result.",
     "Use only current-turn workflow receipts as evidence for current success, failure, availability, and citations.",
     "Do not carry an earlier failure or unavailable-source claim into this answer; mention one only when a current-turn tool receipt records it, using its exact identifier.",
-    "Every cited URL must come from a successful current-turn web_fetch receipt.",
+    "Copy every citation URL verbatim from a successful current-turn web_fetch receipt's URL: line.",
+    "Do not substitute a canonical, related, search-result, or earlier URL; omit a claim when no successful receipt supports it.",
     ...(receipts
       ? [
           "The bounded current-turn workflow receipts are:",

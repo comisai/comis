@@ -241,7 +241,13 @@ function collectPlainUrlReplacements(params: {
       pushMatched(verdict.digest, params.state.matchedDigests, params.state.matchedSet);
       continue;
     }
-    replacements.push({ start, end: verdict.removalEnd, text: verdict.removalText });
+    const squareWrapped = params.text.charAt(start - 1) === "["
+      && params.text.charAt(verdict.removalEnd) === "]";
+    replacements.push({
+      start: squareWrapped ? start - 1 : start,
+      end: squareWrapped ? verdict.removalEnd + 1 : verdict.removalEnd,
+      text: squareWrapped ? "" : verdict.removalText,
+    });
     removedCitationCount += 1;
   }
 
