@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   TypedEventBus,
   createConversationRef,
+  type CapabilityServiceEvidencePolicy,
+  type ManagedEvidenceIndex,
+  type ManagedEvidencePrivateBody,
   type ManagedRunContentPort,
   type ManagedRunOwnerScope,
   type ManagedRunRecord,
@@ -108,6 +111,38 @@ function body(index: ManagedRunReportIndex): ManagedRunReportBody {
     serviceReportId: index.serviceReportId,
     kind: index.kind,
     summary: `${index.kind} summary`,
+    ...(index.kind === "candidate_complete"
+      ? { artifactRefs: ["evidence-outcome", "evidence-delivery"] }
+      : {}),
+  };
+}
+
+function evidence(
+  evidenceRef: string,
+  kind: string,
+  privateBody: ManagedEvidencePrivateBody,
+  deliveryKind: ManagedEvidenceIndex["deliveryKind"],
+): { readonly index: ManagedEvidenceIndex; readonly bytes: Uint8Array } {
+  const bytes = Buffer.from(JSON.stringify(privateBody), "utf8");
+  const decoded = Buffer.from(privateBody.bodyBase64, "base64");
+  return {
+    bytes,
+    index: {
+      schemaVersion: 1,
+      serviceInstanceId: "service-a",
+      managedRunId: "managed-run-a",
+      evidenceRef,
+      kind,
+      subjectDigest: "c".repeat(64),
+      observedAtMs: NOW_MS - 500,
+      expiresAtMs: NOW_MS + 60_000,
+      contentRef: evidenceRef,
+      contentHash: createHash("sha256").update(decoded).digest("hex"),
+      privateContentHash: createHash("sha256").update(bytes).digest("hex"),
+      verificationLevel: "adapter_verified",
+      deliveryKind,
+      receivedAtMs: NOW_MS - 400,
+    },
   };
 }
 
@@ -125,6 +160,8 @@ function makeCoordinator(overrides: {
   record?: ManagedRunRecord;
   reports?: ManagedRunReportIndex[];
   missingBody?: boolean;
+  evidence?: readonly { readonly index: ManagedEvidenceIndex; readonly bytes: Uint8Array }[];
+  evidencePolicies?: readonly CapabilityServiceEvidencePolicy[];
   execute?: (input: ManagedRunContinuationExecutionInput) => Promise<ReturnType<typeof ok<{ deliveryState: "verified" }>>>;
 } = {}) {
   const recordValue = overrides.record ?? makeRecord();
@@ -141,12 +178,16 @@ function makeCoordinator(overrides: {
     get: vi.fn(async () => ok(recordValue)),
     claimContinuation: vi.fn(async () => ok({ kind: "claimed" as const, record: recordValue })),
     listReportRange: vi.fn(async () => ok(reports)),
+    listEvidenceByRefs: vi.fn(async () => ok((overrides.evidence ?? []).map((item) => item.index))),
     commitReducedState,
     markContinuationOutcome,
   } as unknown as ManagedRunStorePort;
   const contentStore = {
     getReportBody: vi.fn(async (_scope, contentRef) => ok(
       overrides.missingBody ? undefined : body(reports.find((item) => item.contentRef === contentRef)!),
+    )),
+    getEvidence: vi.fn(async (_scope, contentRef) => ok(
+      overrides.evidence?.find((item) => item.index.contentRef === contentRef)?.bytes,
     )),
   } as unknown as ManagedRunContentPort;
   const execute = vi.fn(overrides.execute ?? (async () => ok({ deliveryState: "verified" as const })));
@@ -157,6 +198,7 @@ function makeCoordinator(overrides: {
     nowMs: () => NOW_MS,
     heartbeatMaxAgeMs: 10_000,
     claimTtlMs: 60_000,
+    resolveEvidencePolicies: () => overrides.evidencePolicies ?? [],
     eventBus: new TypedEventBus(),
     logger: makeLogger(),
   });
@@ -195,6 +237,48 @@ describe("managed-run continuation coordination", () => {
     }));
     expect(setup.markContinuationOutcome).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
       outcome: "completed",
+    }));
+  });
+
+  it("commits success only after exact configured outcome and delivery evidence", async () => {
+    const outcome = evidence("evidence-outcome", "candidate_bundle", {
+      schemaVersion: 1,
+      bodyBase64: Buffer.from("verified candidate bundle", "utf8").toString("base64"),
+    }, "none");
+    const delivery = evidence("evidence-delivery", "delivery_reference", {
+      schemaVersion: 1,
+      bodyBase64: Buffer.from("https://example.com/pull/17", "utf8").toString("base64"),
+      delivery: { kind: "reference" },
+    }, "reference");
+    const setup = makeCoordinator({
+      evidence: [outcome, delivery],
+      evidencePolicies: [
+        { kind: "candidate_bundle", verificationLevel: "adapter_verified", use: "outcome" },
+        { kind: "delivery_reference", verificationLevel: "adapter_verified", use: "delivery_reference" },
+      ],
+      execute: async (input) => {
+        expect(input).toMatchObject({
+          verifiedDelivery: {
+            kind: "reference",
+            evidenceRef: "evidence-delivery",
+            url: "https://example.com/pull/17",
+          },
+        });
+        return ok({ deliveryState: "verified" as const });
+      },
+    });
+
+    const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
+
+    expect(result.ok).toBe(true);
+    expect(setup.store.listEvidenceByRefs).toHaveBeenCalledWith(ownerScope(), {
+      managedRunId: "managed-run-a",
+      evidenceRefs: ["evidence-outcome", "evidence-delivery"],
+    });
+    expect(setup.commitReducedState).toHaveBeenCalledWith(ownerScope(), expect.objectContaining({
+      status: "succeeded",
+      statusReason: "outcome_verified",
+      terminalOutcome: { kind: "succeeded", recordedAtMs: NOW_MS },
     }));
   });
 
