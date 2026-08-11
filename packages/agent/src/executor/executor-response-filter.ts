@@ -161,12 +161,17 @@ export interface DelegationEvidenceGuardResult {
   reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
 }
 
-/** Recognize the runtime-owned envelope that reports a settled background tool result. */
-export function isTrustedBackgroundCompletionEnvelope(
+/** Recognize runtime-owned envelopes that report settled asynchronous results. */
+export function isTrustedRuntimeCompletionEnvelope(
   message: Pick<NormalizedMessage, "channelType" | "senderId">,
 ): boolean {
-  return message.channelType === "background_task"
-    && message.senderId === "background-task-runner";
+  return (
+    message.channelType === "background_task"
+    && message.senderId === "background-task-runner"
+  ) || (
+    message.channelType === "cross-session"
+    && message.senderId === "cross-session-relay"
+  );
 }
 
 /**

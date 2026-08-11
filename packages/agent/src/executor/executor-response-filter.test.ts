@@ -1112,21 +1112,21 @@ describe("current-turn delegation evidence guard", () => {
   });
 });
 
-type TrustedBackgroundCompletionDetector = (message: {
+type TrustedRuntimeCompletionDetector = (message: {
   channelType: string;
   senderId: string;
 }) => boolean;
 
-function trustedBackgroundCompletionDetector(): TrustedBackgroundCompletionDetector {
+function trustedRuntimeCompletionDetector(): TrustedRuntimeCompletionDetector {
   const candidate = (responseFilter as Record<string, unknown>)
-    .isTrustedBackgroundCompletionEnvelope;
+    .isTrustedRuntimeCompletionEnvelope;
   expect(candidate).toBeTypeOf("function");
-  return candidate as TrustedBackgroundCompletionDetector;
+  return candidate as TrustedRuntimeCompletionDetector;
 }
 
-describe("trusted background completion envelope", () => {
+describe("trusted runtime completion envelope", () => {
   it("requires an authenticated internal completion channel and relay identity", () => {
-    const detect = trustedBackgroundCompletionDetector();
+    const detect = trustedRuntimeCompletionDetector();
 
     expect(detect({
       channelType: "background_task",
