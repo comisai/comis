@@ -156,7 +156,7 @@ function makeDeps(
     getCapturedToolIds: () => ["mcp:fixture-service/prepare_work", "web_search"],
     nowMs: () => NOW_MS,
     resolveRootRunId: () => ok("root-run_a"),
-    getManagedRun: vi.fn(async () => ok(undefined)),
+    getManagedRunByExternalRef: vi.fn(async () => ok(undefined)),
     activatePrepared: vi.fn(async () => ok({ kind: "activated" as const })),
     logger: makeLogger(),
     ...overrides,
@@ -321,10 +321,10 @@ describe("managed MCP private metadata boundary", () => {
       principalId: "principal_a",
       conversationRef: conversationRef.value,
     } as ManagedRunRecord;
-    const getManagedRun = vi.fn(async () => ok(record));
+    const getManagedRunByExternalRef = vi.fn(async () => ok(record));
     const deps = makeDeps({
       activeView: makeView("run_command"),
-      getManagedRun,
+      getManagedRunByExternalRef,
       getCapturedToolIds: () => ["mcp:fixture-service/send_command"],
     });
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
@@ -337,13 +337,13 @@ describe("managed MCP private metadata boundary", () => {
     expect(request.value?.[MCP_CAPABILITY_CALL_CONTEXT_KEY]).toMatchObject({
       managedRunId: "managed-run_a",
     });
-    expect(getManagedRun).toHaveBeenCalledWith({
+    expect(getManagedRunByExternalRef).toHaveBeenCalledWith({
       kind: "owner",
       tenantId: "tenant_a",
       agentId: "agent_a",
       principalId: "principal_a",
       conversationRef: conversationRef.value,
-    }, "external-run_a");
+    }, "service-instance_a", "external-run_a");
   });
 
   it("rejects managed metadata from an unbound tool despite server-authored claims", async () => {

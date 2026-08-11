@@ -492,8 +492,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
             ? ok(resolved.value)
             : err(new Error(resolved.error.message));
       },
-      getManagedRun: (scope, managedRunId) =>
-        deps.capabilityServices.store.get(scope, managedRunId),
+      getManagedRunByExternalRef: (scope, serviceInstanceId, externalRunRef) =>
+        deps.capabilityServices.store.getByExternalRunRef(scope, serviceInstanceId, externalRunRef),
       activatePrepared: (input) => deps.capabilityServices.activationCoordinator
         .activatePrepared({
           ...input,

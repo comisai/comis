@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -212,6 +213,33 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     expect(await store.get(OTHER_SERVICE_SCOPE, record.managedRunId)).toEqual({ ok: true, value: undefined });
     expect(await store.listScoped({ scope: OWNER_SCOPE, limit: 10 })).toEqual({ ok: true, value: [record] });
     expect(await store.listScoped({ scope: OTHER_OWNER_SCOPE, limit: 10 })).toEqual({ ok: true, value: [] });
+  });
+
+  it("resolves an external run reference only inside its exact owner and service scope", async () => {
+    const store = createSqliteManagedRunStore(db);
+    const externalRunRef = "external-run_a";
+    const record = makeRecord({
+      externalRunRefDigest: createHash("sha256").update(externalRunRef, "utf8").digest("hex"),
+    });
+    expect((await store.create(record)).ok).toBe(true);
+
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef))
+      .toEqual({ ok: true, value: record });
+    expect(await store.getByExternalRunRef(OTHER_OWNER_SCOPE, "service-instance_a", externalRunRef))
+      .toEqual({ ok: true, value: undefined });
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_b", externalRunRef))
+      .toEqual({ ok: true, value: undefined });
+    expect(await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_b"))
+      .toEqual({ ok: true, value: undefined });
+
+    expect((await store.create({
+      ...record,
+      managedRunId: "managed-run_b",
+      activationDescriptorDigest: "e".repeat(64),
+      activationDescriptorRef: "activation-descriptor_b",
+    })).ok).toBe(true);
+    expect((await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", externalRunRef)).ok)
+      .toBe(false);
   });
 
   it("returns original create results and rejects altered identity reuse", async () => {

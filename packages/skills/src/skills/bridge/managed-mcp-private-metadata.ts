@@ -96,9 +96,10 @@ export interface ManagedMcpPrivateMetadataDeps {
     agentId: string,
     sessionKey: SessionKey,
   ) => Result<string, Error>;
-  readonly getManagedRun: (
+  readonly getManagedRunByExternalRef: (
     scope: ManagedRunOwnerScope,
-    managedRunId: string,
+    serviceInstanceId: string,
+    externalRunRef: string,
   ) => Promise<Result<ManagedRunRecord | undefined, Error>>;
   readonly activatePrepared: (
     input: ManagedMcpActivationInput,
@@ -223,12 +224,15 @@ async function resolveRunHandle(
     return err(new Error("managed-run handle argument is missing or invalid"));
   }
   const handle = params[argument];
-  const loaded = await invoke(() => deps.getManagedRun(scope, handle));
+  const loaded = await invoke(() => deps.getManagedRunByExternalRef(
+    scope,
+    bound.serviceInstanceId,
+    handle,
+  ));
   if (!loaded.ok) return loaded;
   const record = loaded.value;
   if (
     record === undefined
-    || record.managedRunId !== handle
     || record.serviceInstanceId !== bound.serviceInstanceId
     || record.tenantId !== scope.tenantId
     || record.agentId !== scope.agentId

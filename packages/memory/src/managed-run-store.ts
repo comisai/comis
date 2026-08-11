@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import {
@@ -83,6 +84,16 @@ function resultRecord<K extends "bound" | "claimed" | "identical_replay" | "upda
 export function createSqliteManagedRunStore(db: Database.Database): ManagedRunStorePort {
   const attention = createManagedRunAttentionStoreStatements(db);
   const selectRun = db.prepare("SELECT * FROM managed_runs WHERE managed_run_id = ?");
+  const selectRunByExternalRef = db.prepare(`
+    SELECT * FROM managed_runs
+    WHERE external_run_ref_digest = ?
+      AND service_instance_id = ?
+      AND tenant_id = ?
+      AND agent_id = ?
+      AND principal_id = ?
+      AND conversation_ref = ?
+    LIMIT 2
+  `);
   const insertRun = db.prepare(`
     INSERT INTO managed_runs (
       schema_version, managed_run_id, service_instance_id, external_run_ref_digest,
@@ -673,6 +684,34 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       const record = readRecord(managedRunId);
       if (!record.ok || record.value === undefined) return record;
       return ok(scopeMatches(record.value, scope) ? record.value : undefined);
+    }),
+    getByExternalRunRef: (scope, serviceInstanceId, externalRunRef) => boundary(() => {
+      if (
+        serviceInstanceId.length === 0
+        || serviceInstanceId.length > 256
+        || externalRunRef.length === 0
+        || externalRunRef.length > 256
+      ) return err(new Error("managed-run external reference lookup is invalid"));
+      const externalRunRefDigest = createHash("sha256").update(externalRunRef, "utf8").digest("hex");
+      const rows = runMapper.parseRows(selectRunByExternalRef.all(
+        externalRunRefDigest,
+        serviceInstanceId,
+        scope.tenantId,
+        scope.agentId,
+        scope.principalId,
+        scope.conversationRef,
+      ));
+      if (!rows.ok) return err(new Error(rows.error.message));
+      if (rows.value.length > 1) {
+        return err(new Error("managed-run external reference is ambiguous in the owner scope"));
+      }
+      const row = rows.value[0];
+      if (row === undefined) return ok(undefined);
+      const record = rowToManagedRunRecord(row);
+      if (!record.ok) return record;
+      return record.value.serviceInstanceId === serviceInstanceId && scopeMatches(record.value, scope)
+        ? ok(record.value)
+        : ok(undefined);
     }),
     claimTransition: (scope, input) => boundary(
       () => transitionTransaction.immediate(scope, input, "transition"),

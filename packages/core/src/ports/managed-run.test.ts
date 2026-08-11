@@ -16,6 +16,7 @@ describe("Managed-run store and private-content port contracts", () => {
     expectTypeOf<keyof ManagedRunStorePort>().toEqualTypeOf<
       | "create"
       | "get"
+      | "getByExternalRunRef"
       | "claimTransition"
       | "bindTerminal"
       | "setWorkspaceLease"

@@ -82,6 +82,11 @@ export function ensureManagedRunTables(db: Database.Database): void {
       ON managed_runs (tenant_id, agent_id, principal_id, conversation_ref, updated_at_ms);
     CREATE INDEX IF NOT EXISTS idx_managed_runs_service
       ON managed_runs (service_instance_id, updated_at_ms);
+    CREATE INDEX IF NOT EXISTS idx_managed_runs_external_ref
+      ON managed_runs (
+        external_run_ref_digest, service_instance_id, tenant_id, agent_id,
+        principal_id, conversation_ref
+      );
     CREATE INDEX IF NOT EXISTS idx_managed_runs_recovery
       ON managed_runs (status, updated_at_ms);
 

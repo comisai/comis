@@ -287,6 +287,11 @@ export interface ManagedRunRevokeInput {
 export interface ManagedRunStorePort {
   create(record: ManagedRunRecord): Promise<Result<ManagedRunCreateOutcome, Error>>;
   get(scope: ManagedRunLookupScope, managedRunId: string): Promise<Result<ManagedRunRecord | undefined, Error>>;
+  getByExternalRunRef(
+    scope: ManagedRunOwnerScope,
+    serviceInstanceId: string,
+    externalRunRef: string,
+  ): Promise<Result<ManagedRunRecord | undefined, Error>>;
   claimTransition(scope: ManagedRunLookupScope, input: ManagedRunTransitionClaimInput): Promise<Result<ManagedRunTransitionClaimOutcome, Error>>;
   bindTerminal(scope: ManagedRunOwnerScope, input: ManagedRunTerminalBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
