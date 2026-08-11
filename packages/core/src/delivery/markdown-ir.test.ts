@@ -445,6 +445,24 @@ describe("parseMarkdownToIR", () => {
       expect(spans[0]).toMatchObject({ type: "link", text: url, url });
     });
 
+    it("ends a bare URL at a closing bracket it did not open", () => {
+      const spans = firstBlockSpans("See [1: https://example.com/a] for detail");
+      const link = spans.find((s) => s.type === "link");
+      expect(link).toMatchObject({ url: "https://example.com/a" });
+      expect(spans.some((s) => s.type === "text" && s.text.includes("]"))).toBe(true);
+    });
+
+    // An IPv6 host literal carries its own bracket pair. Terminating on the
+    // first `]` truncated the URL to `http://[::1`, so the rendered link
+    // pointed at a host that does not exist and the port and path leaked into
+    // the surrounding prose.
+    it("keeps an IPv6 host literal inside a bare URL", () => {
+      const url = "http://[::1]:8080/status";
+      const spans = firstBlockSpans(`Health: ${url}`);
+      expect(spans).toHaveLength(2);
+      expect(spans[1]).toMatchObject({ type: "link", text: url, url });
+    });
+
     it("does NOT eat italic emphasis OUTSIDE URLs that share text with bare URL detection", () => {
       // The fix must not regress italic parsing for non-URL text. A URL
       // followed by italicized prose should still tokenize correctly.

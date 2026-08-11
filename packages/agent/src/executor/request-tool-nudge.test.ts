@@ -906,6 +906,48 @@ describe("runRequestToolNudge", () => {
     expect(outcome.outcome).toBe("tool_already_succeeded");
   });
 
+  // A mutation request whose wording incidentally overlaps a routed prompt
+  // skill inherits that skill's web-evidence floors. Those floors describe a
+  // research answer, so a completed mutation could never satisfy them: the
+  // nudge fired anyway, spent its continuations pushing web research, and the
+  // unsatisfiable gate ended the turn with the answer discarded.
+  it("does not run a routed prompt skill's web floors against a completed mutation", async () => {
+    const deps = makeDeps({
+      currentSuccessfulMutationCount: () => 1,
+      requestRelevantToolNames: ["test_mutating_tool", "read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["~/.comis/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 0,
+      currentDistinctSuccessfulWebSearchQueryCount: () => 0,
+      currentSuccessfulToolCount: () => 0,
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(outcome.outcome).toBe("tool_already_succeeded");
+  });
+
+  it("still recovers a mutation request that overlaps a routed prompt skill", async () => {
+    const deps = makeDeps({
+      requestRelevantToolNames: ["test_mutating_tool", "read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["~/.comis/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 0,
+      currentDistinctSuccessfulWebSearchQueryCount: () => 0,
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(outcome).toMatchObject({ fired: true, recovered: true });
+  });
+
   it("does not duplicate a mutation after its background handoff was accepted", async () => {
     const deps = makeDeps({ currentDeferredWorkCount: () => 1 });
 

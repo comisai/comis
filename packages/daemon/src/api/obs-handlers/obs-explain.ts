@@ -756,12 +756,12 @@ export async function assembleIncidentReportFromSources(
   if (persistentActionEvidenceVerdict !== null && !hasStructuredMcpFailure) {
     report.likelyRootCause = persistentActionEvidenceVerdict;
   }
-  const outboundAudioEvidenceVerdict = outboundAudioEvidenceGuardVerdict(auditRows, report.traceId);
-  if (outboundAudioEvidenceVerdict !== null) report.likelyRootCause = outboundAudioEvidenceVerdict;
-  const outboundImageEvidenceVerdict = outboundImageEvidenceGuardVerdict(auditRows, report.traceId);
-  if (outboundImageEvidenceVerdict !== null) report.likelyRootCause = outboundImageEvidenceVerdict;
-  const outboundDeliveryVerdict = outboundDeliveryStatusEvidenceGuardVerdict(auditRows, report.traceId);
-  if (outboundDeliveryVerdict !== null) report.likelyRootCause = outboundDeliveryVerdict;
+  // These are response symptoms, ranked delivery > image > audio. A rejected
+  // completion route suppressed the result itself and stays authoritative.
+  const outboundVerdict = outboundDeliveryStatusEvidenceGuardVerdict(auditRows, report.traceId)
+    ?? outboundImageEvidenceGuardVerdict(auditRows, report.traceId)
+    ?? outboundAudioEvidenceGuardVerdict(auditRows, report.traceId);
+  if (outboundVerdict !== null && !completionRouteRejected) report.likelyRootCause = outboundVerdict;
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
     auditRows,
     report.traceId,

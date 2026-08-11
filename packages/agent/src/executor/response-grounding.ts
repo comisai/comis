@@ -540,10 +540,18 @@ export function enforceOutboundAudioEvidence(params: {
   if (!completionClaim && !audioSuccessClaim && !audioArtifactClaim) {
     return { response: params.response, corrected: false };
   }
+  // An admitted inability, or a named text substitute, already withholds the
+  // audio claim, so the delivered prose survives unless it also claims the
+  // artifact. The trigger above fires on a bare completion verb ("ready",
+  // "I sent the summary"), which a reply can carry while honestly refusing the
+  // medium; requiring BOTH signals discarded that reply along with the work it
+  // did deliver.
   if (
-    OUTBOUND_AUDIO_LIMITATION.test(params.response)
-    && containsEvidencePhrase(normalizedResponse, OUTBOUND_AUDIO_TEXT_SUBSTITUTE_PHRASES)
-    && !audioArtifactClaim
+    !audioArtifactClaim
+    && (
+      OUTBOUND_AUDIO_LIMITATION.test(params.response)
+      || containsEvidencePhrase(normalizedResponse, OUTBOUND_AUDIO_TEXT_SUBSTITUTE_PHRASES)
+    )
   ) {
     return { response: params.response, corrected: false };
   }
@@ -625,10 +633,15 @@ export function enforceOutboundImageEvidence(params: {
   if (!completionClaim && !imageSuccessClaim && !imageArtifactClaim) {
     return { response: params.response, corrected: false };
   }
+  // Same rule as the audio guard: an admitted inability or a named written
+  // substitute is already honest about the missing artifact, so a reply that
+  // refuses the image while delivering the rest of the requested work is kept.
   if (
-    OUTBOUND_IMAGE_LIMITATION.test(params.response)
-    && OUTBOUND_IMAGE_TEXT_SUBSTITUTE.test(params.response)
-    && !imageArtifactClaim
+    !imageArtifactClaim
+    && (
+      OUTBOUND_IMAGE_LIMITATION.test(params.response)
+      || OUTBOUND_IMAGE_TEXT_SUBSTITUTE.test(params.response)
+    )
   ) {
     return { response: params.response, corrected: false };
   }

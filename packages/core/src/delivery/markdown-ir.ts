@@ -78,7 +78,20 @@ function findInlineToken(text: string, start: number): InlineToken | undefined {
   const isHttpUrl = text.startsWith("http://", start) || text.startsWith("https://", start);
   if (isHttpUrl) {
     let end = start;
-    while (end < text.length && !/\s|[<>"'`)\]]/.test(text[end]!)) end++;
+    // A closing bracket ends a bare URL only when it is not the URL's own: an
+    // IPv6 host literal (http://[::1]:8080/status) carries a matched pair, so
+    // terminating on the first `]` would truncate the host.
+    let openBrackets = 0;
+    while (end < text.length) {
+      const character = text[end]!;
+      if (/\s|[<>"'`)]/.test(character)) break;
+      if (character === "[") openBrackets++;
+      else if (character === "]") {
+        if (openBrackets === 0) break;
+        openBrackets--;
+      }
+      end++;
+    }
     const url = text.slice(start, end);
     return { type: "link", text: url, url, end };
   }

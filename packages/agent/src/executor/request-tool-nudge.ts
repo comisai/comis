@@ -527,10 +527,20 @@ export async function runRequestToolNudge(
   const successfulCount = useReadRecovery
     ? () => currentSuccessfulToolCount(recoveryToolNames)
     : currentSuccessfulMutationCount;
+  // A loaded procedure and its web-evidence floors describe how a READ-shaped
+  // research request is answered. A mutation recovery is proven by its own
+  // successful mutation receipt: lexical overlap between the request and a
+  // skill description must not arm a research gate the requested action can
+  // never satisfy, because an unsatisfiable gate discards the answer.
+  const promptSkillGatesApply = useReadRecovery;
+  const promptSkillProcedureProven = () =>
+    !promptSkillGatesApply || promptSkillProcedureLoaded();
+  const webEvidenceProven = () => !promptSkillGatesApply || webEvidenceSatisfied();
+  const webEvidenceGateActive = promptSkillGatesApply && webEvidenceGateConfigured;
   if (
     successfulCount() > 0
-    && webEvidenceSatisfied()
-    && promptSkillProcedureLoaded()
+    && webEvidenceProven()
+    && promptSkillProcedureProven()
   ) {
     return {
       fired: false,
@@ -591,23 +601,23 @@ export async function runRequestToolNudge(
     continuationOptions,
   );
   const promptSkillWorkflowTools = deps.requestRelevantPromptSkillWorkflowToolNames ?? [];
-  const workflowContinuationLimit = webEvidenceGateConfigured
+  const workflowContinuationLimit = webEvidenceGateActive
     ? MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS
     : 1;
   for (let attempt = 1; attempt <= workflowContinuationLimit; attempt++) {
-    const workflowPending = !webEvidenceSatisfied()
+    const workflowPending = !webEvidenceProven()
       || (
         attempt === 1
         && (
           successfulCount() === successfulToolCountBefore
-          || !promptSkillProcedureLoaded()
+          || !promptSkillProcedureProven()
         )
       );
     if (!continuation.ok || promptSkillWorkflowTools.length === 0 || !workflowPending) break;
     const successfulBefore = successfulCount();
     const fetchCountBefore = distinctWebFetchUrlCount();
     const searchCountBefore = distinctWebSearchQueryCount();
-    const procedureLoadedBefore = promptSkillProcedureLoaded();
+    const procedureLoadedBefore = promptSkillProcedureProven();
     logger.info(
       {
         submodule: SUBMODULE,
@@ -646,19 +656,19 @@ export async function runRequestToolNudge(
     const madeProgress = successfulCount() > successfulBefore
       || distinctWebFetchUrlCount() > fetchCountBefore
       || distinctWebSearchQueryCount() > searchCountBefore
-      || (promptSkillProcedureLoaded() && !procedureLoadedBefore);
+      || (promptSkillProcedureProven() && !procedureLoadedBefore);
     if (
       continuation.ok
-      && !webEvidenceSatisfied()
+      && !webEvidenceProven()
       && !madeProgress
     ) break;
   }
-  const evidenceGatedWorkflowCompleted = webEvidenceGateConfigured
+  const evidenceGatedWorkflowCompleted = webEvidenceGateActive
     && webEvidenceSatisfied();
   const promptSkillWorkflowCompleted = (
-    promptSkillProcedureLoaded() || evidenceGatedWorkflowCompleted
+    promptSkillProcedureProven() || evidenceGatedWorkflowCompleted
   )
-    && (!webEvidenceGateConfigured
+    && (!webEvidenceGateActive
       ? successfulCount() > successfulToolCountBefore
       : webEvidenceSatisfied());
   if (
@@ -716,9 +726,9 @@ export async function runRequestToolNudge(
   const response = deps.getVisibleAssistantText(deps.session);
   const successfulToolCountAfter = successfulCount();
   const procedureCompletionProvable = (
-    promptSkillProcedureLoaded() || evidenceGatedWorkflowCompleted
+    promptSkillProcedureProven() || evidenceGatedWorkflowCompleted
   )
-    && (!webEvidenceGateConfigured
+    && (!webEvidenceGateActive
       ? !(
           useReadRecovery
           && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0

@@ -1525,6 +1525,23 @@ describe("outbound audio evidence guard", () => {
     }
   });
 
+  // "I sent" trips the success-claim trigger without naming the medium, which
+  // an honest reply carries while refusing that medium. Requiring a named text
+  // substitute on top of the admitted limitation discarded the whole reply,
+  // including the work the turn did deliver.
+  it("keeps an admitted limitation that delivers other requested work", () => {
+    const response =
+      "I can't record a voice note, so I sent the summary here in the chat: "
+      + "the two items total £5.75.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please send that as a voice message",
+      response,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
   it("rejects a limitation followed by an unsupported audio success claim", () => {
     const response =
       "I couldn't send a voice note initially, but I have now sent the audio message.";
@@ -1674,6 +1691,21 @@ describe("outbound image evidence guard", () => {
       request: "make a simple blue calendar image",
       response,
       toolExecResults: [{ toolName: "image_generate", success: false }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  // "Ready for launch." trips the shared completion-claim gate while the reply
+  // openly refuses the image. Replacing it lost the caption the user asked for
+  // in the same turn.
+  it("keeps an admitted limitation that delivers other requested work", () => {
+    const response =
+      "Here's the caption: 'Ready for launch.' I can't generate images.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "please create an image and a caption for our launch post",
+      response,
+      toolExecResults: [],
       honestResponse,
     })).toEqual({ response, corrected: false });
   });

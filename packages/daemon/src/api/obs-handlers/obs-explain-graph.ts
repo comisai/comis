@@ -29,13 +29,17 @@ const PersistedGraphRunSchema = z.object({
   cancelReason: z.enum(["manual", "budget", "timeout", "killed"]).optional(),
   sessionKey: z.string().min(1).optional(),
   traceId: z.string().min(1).optional(),
+  // Optional on the wire, required on the report: a record written before the
+  // runtime recorded outward disposition is still a valid terminal graph run,
+  // and dropping it would hide the whole section behind a graph_not_found
+  // verdict that names a record which is actually present.
   announcementDelivery: z.enum([
     "not-requested",
     "unavailable",
     "committed",
     "retained",
     "failed",
-  ]),
+  ]).optional(),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
   durationMs: z.number().nonnegative(),
@@ -84,7 +88,7 @@ export function readIncidentGraphRun(
     ...(raw.cancelReason === undefined ? {} : { cancelReason: raw.cancelReason }),
     ...(raw.sessionKey === undefined ? {} : { sessionKey: raw.sessionKey }),
     ...(raw.traceId === undefined ? {} : { traceId: raw.traceId }),
-    announcementDelivery: raw.announcementDelivery,
+    announcementDelivery: raw.announcementDelivery ?? "unknown",
     ...(raw.startedAt === undefined ? {} : { startedAt: raw.startedAt }),
     ...(raw.completedAt === undefined ? {} : { completedAt: raw.completedAt }),
     durationMs: raw.durationMs,

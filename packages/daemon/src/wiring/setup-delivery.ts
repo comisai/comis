@@ -664,6 +664,7 @@ export async function setupDeliveryMirror(deps: {
             {
               channelType: event.channelType,
               step: "delivery-mirror",
+              origin: event.origin,
             },
             "Delivery mirror record skipped without conversation authority",
           );

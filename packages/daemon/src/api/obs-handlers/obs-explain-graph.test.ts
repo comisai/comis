@@ -88,14 +88,20 @@ describe("readIncidentGraphRun", () => {
     expect(result.value.cancelReason).toBe("manual");
   });
 
-  it("rejects metadata without the required announcement disposition", async () => {
+  // A run persisted before the runtime recorded outward disposition is still a
+  // valid terminal record. Rejecting it hid the whole graph section behind a
+  // graph_not_found verdict naming metadata that is present and readable.
+  it("reads a record persisted without an announcement disposition as unknown", async () => {
     const { dataDir, graphId } = await createGraphMetadata({
       announcementDelivery: undefined,
     });
 
     const result = await readIncidentGraphRun(dataDir, graphId);
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.announcementDelivery).toBe("unknown");
+    expect(result.value.nodesSucceeded).toBe(1);
   });
 
   it("rejects metadata whose announcement disposition is not a known value", async () => {

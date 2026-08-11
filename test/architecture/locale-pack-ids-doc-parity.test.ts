@@ -9,28 +9,26 @@
  * build, lint, and coverage gates, so an id added to the runtime drifts
  * out of the reference silently.
  *
- * This gate pins the doc list to the union: same ids, same order, and the
- * count stated in the prose. The union is the right source to read —
- * `ENGLISH_PACK` is typed `Record<LocaleMessageId, string>`, so the
- * compiler already rejects any pack key the union does not declare and
- * any union member the pack omits, and `LOCALE_MESSAGE_IDS` is that
- * pack's keys.
+ * This gate pins the doc list to the runtime value: same ids, same order,
+ * and the count stated in the prose. `LOCALE_MESSAGE_IDS` is the right
+ * source to read — `ENGLISH_PACK` is typed
+ * `Record<LocaleMessageId, string>`, so the compiler already rejects any
+ * pack key the union does not declare and any union member the pack omits,
+ * and `LOCALE_MESSAGE_IDS` is that pack's keys. Reading the exported array
+ * rather than the union's source text keeps a behavior-preserving refactor
+ * of the declaration from moving this gate.
  *
- * Read from source rather than an alias-routed `dist/` import, per the
- * resolve-alias note in `test/architecture/vitest.config.ts`: only tests
- * that need a compiled runtime value take the dist route.
+ * The doc row is parsed as text because it is the owned operator contract
+ * under test: an operator authoring a pack reads exactly those tokens.
  *
  * @module
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LOCALE_MESSAGE_IDS } from "../../packages/agent/src/executor/degraded-reply-i18n.js";
 
 const root = resolve(import.meta.dirname, "../..");
-const source = readFileSync(
-  resolve(root, "packages/agent/src/executor/degraded-reply-i18n.ts"),
-  "utf8",
-);
 const configDoc = readFileSync(resolve(root, "docs/reference/config-yaml.mdx"), "utf8");
 
 function section(document: string, startMarker: string, endMarker: string): string {
@@ -40,12 +38,8 @@ function section(document: string, startMarker: string, endMarker: string): stri
   return document.slice(start, end);
 }
 
-/** Members of the `LocaleMessageId` closed union, in declaration order. */
-const unionIds: readonly string[] = [
-  ...section(source, "export type LocaleMessageId", "export type LocalePack").matchAll(
-    /\|\s*"([a-z0-9_]+)"/gu,
-  ),
-].map((match) => match[1]);
+/** Every operator-settable id the runtime string table declares, in order. */
+const unionIds: readonly string[] = LOCALE_MESSAGE_IDS;
 
 const localePacksRow = section(configDoc, "| `localePacks` |", "\n|");
 
