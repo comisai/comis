@@ -1422,14 +1422,15 @@ describe("setupDeliveryMirror", () => {
     result.shutdown();
   });
 
-  it("after_delivery hook skips when sessionKey is undefined", async () => {
+  it("skips an unattributable mirror record without warning about a routine off-turn delivery", async () => {
     const registry = createMockPluginRegistry();
+    const logger = createMockLogger();
 
     const result = await setupDeliveryMirror({
       db: {} as any,
       config: createMockMirrorConfig(),
       pluginRegistry: registry as any,
-      logger: createMockLogger(),
+      logger,
     });
 
     const hookHandler = registry.capturedHooks.get("after_delivery");
@@ -1450,6 +1451,14 @@ describe("setupDeliveryMirror", () => {
 
     // record should NOT be called
     expect(mockSqliteMirror.record).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "telegram",
+        step: "delivery-mirror",
+      }),
+      "Delivery mirror record skipped without conversation authority",
+    );
 
     result.shutdown();
   });
