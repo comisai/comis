@@ -78,7 +78,7 @@ export function createManagedRunContinuationDelivery(deps: {
     const allocated = await deps.outwardLedger.allocateStep(record.rootRunId, idempotencyKey);
     if (!allocated.ok) return allocated;
     if (verifiedDelivery?.kind === "attachment") {
-      const sendAttachment = adapter.sendAttachment;
+      const sendAttachment = adapter.sendAttachment?.bind(adapter);
       if (deps.attachmentDirectory === undefined || sendAttachment === undefined) {
         return ok({ deliveryState: "unavailable" });
       }
