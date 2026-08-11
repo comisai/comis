@@ -756,6 +756,12 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       await liaisonTurn(model, boot.channelManager, boot.echo, "STOP_E0_SCOUT", [
         { tool: "terminal_session_kill", arguments: { sessionId: scoutSession } },
       ]);
+      await pollUntil(
+        () => taskState(goDatabase, scoutTask) === "delivered"
+          && ["exited", "released"].includes(terminalTransition(goDatabase, scoutTask)),
+        30_000,
+        () => `scout terminal settlement; task=${taskState(goDatabase, scoutTask)} terminal=${terminalTransition(goDatabase, scoutTask)}`,
+      );
       console.log("RESTART_DAEMON_AND_SERVICE_AFTER_DELIVERY");
       await stopDaemon(daemon);
       daemon = undefined;
