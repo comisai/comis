@@ -142,7 +142,7 @@ const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
  * connection strings, paths, URLs, comma-lists, and sentences contain at least
  * one character outside that set.
  */
-const CREDENTIAL_BODY_RE = /^[A-Za-z0-9_.+\-]+$/;
+const CREDENTIAL_BODY_RE = /^[A-Za-z0-9_.+-]+$/;
 
 /** Leading auth-scheme prefix (case-insensitive), stripped before the gate. */
 const AUTH_SCHEME_RE = /^(?:Bearer|Basic|Token|Digest)\s+/i;
