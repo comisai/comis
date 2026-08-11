@@ -16,6 +16,7 @@ import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { ok } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
+import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
 
 const NOW_MS = 1_800_000_000_000;
@@ -36,14 +37,16 @@ function makeLogger(): ComisLogger {
   } as unknown as ComisLogger;
 }
 
-function makeDefinition(): PlannedCapabilityServiceDefinition {
+function makeDefinition(release = false): PlannedCapabilityServiceDefinition {
   return {
     contributionId: "example.service",
     serviceDefinitionId: "example.service-definition",
     protocolId: "comis.capability-service/1",
     mcpServerName: "example-service",
     managedToolBindings: [],
-    requestedScopes: ["health", "evidence", "report"],
+    requestedScopes: release
+      ? ["health", "evidence", "report", "workspace_lease"]
+      : ["health", "evidence", "report"],
     evidencePolicies: [{
       kind: "delivery_reference",
       verificationLevel: "adapter_verified",
@@ -110,7 +113,7 @@ async function connectPeer(socketPath: string): Promise<LinePeer> {
   };
 }
 
-function handshake(bearer: string): unknown {
+function handshake(bearer: string, release = false): unknown {
   return {
     bearer,
     jsonrpc: "2.0",
@@ -121,7 +124,9 @@ function handshake(bearer: string): unknown {
       bundleDigest: BUNDLE_DIGEST,
       operationId: "operation_handshake_a",
       serviceInstanceId: "service-instance_a",
-      requestedScopes: ["health", "evidence", "report"],
+      requestedScopes: release
+        ? ["health", "evidence", "report", "workspace_lease"]
+        : ["health", "evidence", "report"],
     },
   };
 }
@@ -148,6 +153,7 @@ describe("daemon-owned capability-service Unix host", () => {
     socketPath: string,
     reportBridge?: ManagedRunReportBridge,
     evidenceBridge?: ManagedRunEvidenceBridge,
+    releaseCoordinator?: ManagedRunReleaseCoordinator,
   ) {
     const clock = createFakeClock(NOW_MS);
     const timers = createFakeTimers(NOW_MS);
@@ -155,7 +161,7 @@ describe("daemon-owned capability-service Unix host", () => {
       clock,
       timers,
       created: createUnixCapabilityServiceHostRuntime({
-        definitions: [makeDefinition()],
+        definitions: [makeDefinition(releaseCoordinator !== undefined)],
         instances: [makeInstance(socketPath)],
         credentials: new Map([["service-instance_a", () => BEARER]]),
         bundleDigest: BUNDLE_DIGEST,
@@ -198,6 +204,7 @@ describe("daemon-owned capability-service Unix host", () => {
             },
           })),
         },
+        ...(releaseCoordinator === undefined ? {} : { releaseCoordinator }),
         requestDeadlineMs: 5_000,
         clock,
         timers,
@@ -205,6 +212,61 @@ describe("daemon-owned capability-service Unix host", () => {
       }),
     };
   }
+
+  it("routes authenticated release requests through host authority", async () => {
+    const root = makeRoot();
+    const release: ManagedRunReleaseCoordinator["release"] = vi.fn(async () => ok({
+      kind: "released" as const,
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "reap_safe" as const,
+      releasedAtMs: NOW_MS,
+    }));
+    const host = makeHost(root.socketPath, undefined, undefined, { release });
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER, true));
+    await peer.next();
+    if (!(await started).ok) return;
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_release_a",
+      method: "managedRuns.release",
+      params: {
+        operationId: "operation_release_a",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe",
+        releasedAtMs: NOW_MS,
+      },
+    });
+    expect(await peer.next()).toEqual({
+      jsonrpc: "2.0",
+      id: "operation_release_a",
+      result: {
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        state: "released",
+        disposition: "reap_safe",
+        releasedAtMs: NOW_MS,
+      },
+    });
+    expect(release).toHaveBeenCalledWith({
+      operationId: "operation_release_a",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "reap_safe",
+      releasedAtMs: NOW_MS,
+    });
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
 
   it("owns a 0600 socket and carries handshake control and reports bidirectionally", async () => {
     const root = makeRoot();
