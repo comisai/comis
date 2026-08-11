@@ -119,6 +119,7 @@ describe("capability-service Linux confinement runner", () => {
     const scenario = source(joinScenarioPath);
 
     expect(launcher).toContain("--sandbox workspace-write");
+    expect(launcher).toContain("sandbox_workspace_write.network_access=true");
     expect(launcher).not.toContain("--sandbox danger-full-access");
     expect(scenario).toContain('filesystem: "workspace"');
     expect(scenario).toContain("siblingReadBlocked: true, siblingWriteBlocked: true, siblingAttachmentAbsent: true");
