@@ -200,6 +200,34 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       managedRunId: "managed-run_a",
       evidenceRefs: ["evidence_a"],
     })).toEqual({ ok: true, value: [] });
+
+    db.prepare("UPDATE managed_run_evidence SET subject_digest = 'invalid' WHERE evidence_ref = 'evidence_a'").run();
+    expect((await store.appendEvidence(SERVICE_SCOPE, input)).ok).toBe(false);
+    expect((await store.listEvidenceByRefs(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      evidenceRefs: ["evidence_a"],
+    })).ok).toBe(false);
+  });
+
+  it("rejects invalid unavailable and inactive evidence operations", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.appendEvidence(SERVICE_SCOPE, evidenceInput({
+      subjectDigest: "invalid",
+    }))).ok).toBe(false);
+    expect((await store.appendEvidence(SERVICE_SCOPE, evidenceInput({
+      managedRunId: "managed-run_missing",
+    }))).value).toEqual({ kind: "not_found" });
+
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    expect((await store.appendEvidence(SERVICE_SCOPE, evidenceInput())).value).toEqual({
+      kind: "state_mismatch",
+      status: "preparing",
+    });
+    expect((await store.listEvidenceByRefs(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      evidenceRefs: ["evidence_a", "evidence_a"],
+    })).ok).toBe(false);
+    expect((await store.getByExternalRunRef(OWNER_SCOPE, "", "external-run_a")).ok).toBe(false);
   });
 
   it("creates reads and lists records only through exact explicit scopes", async () => {
@@ -757,6 +785,12 @@ describe("createSqliteManagedRunStore durable state machine", () => {
 
   it("releases only the exact service run lease and terminal binding", async () => {
     const store = createSqliteManagedRunStore(db);
+    expect((await store.releaseTerminal(SERVICE_SCOPE, {
+      managedRunId: "managed-run_missing",
+      workspaceLeaseId: "workspace-lease_a",
+      terminalSessionId: "terminal_a",
+      releasedAtMs: 1_800_000_000_200,
+    })).value?.kind).toBe("not_found");
     expect((await store.create(makeRecord({ workspaceLeaseId: "workspace-lease_a" }))).ok).toBe(true);
     expect((await store.bindTerminal(OWNER_SCOPE, {
       managedRunId: "managed-run_a",
@@ -778,6 +812,10 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       ...release,
       workspaceLeaseId: "workspace-lease_b",
     })).value?.kind).toBe("ownership_mismatch");
+    expect((await store.releaseTerminal(SERVICE_SCOPE, {
+      ...release,
+      releasedAtMs: 1_799_999_999_999,
+    })).ok).toBe(false);
     expect((await store.releaseTerminal(SERVICE_SCOPE, release)).value?.kind).toBe("released");
     expect((await store.releaseTerminal(SERVICE_SCOPE, release)).value?.kind)
       .toBe("identical_replay");
@@ -1137,7 +1175,9 @@ describe("createSqliteManagedRunStore durable state machine", () => {
 
   it("contains corrupt transactional rows without widening durable authority", async () => {
     const store = createSqliteManagedRunStore(db);
-    expect((await store.create(makeRecord())).ok).toBe(true);
+    expect((await store.create(makeRecord({
+      externalRunRefDigest: createHash("sha256").update("external-run_a", "utf8").digest("hex"),
+    }))).ok).toBe(true);
     await activate(store);
 
     db.prepare("UPDATE managed_run_operations SET input_hash = ? WHERE operation_id = ?")
@@ -1162,6 +1202,19 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       transitionedAtMs: 1_800_000_000_100,
     })).ok).toBe(false);
     expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(false);
+    expect((await store.appendEvidence(SERVICE_SCOPE, evidenceInput())).ok).toBe(false);
+    expect((await store.listEvidenceByRefs(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      evidenceRefs: ["evidence_a"],
+    })).ok).toBe(false);
+    expect((await store.getByExternalRunRef(OWNER_SCOPE, "service-instance_a", "external-run_a")).ok)
+      .toBe(false);
+    expect((await store.releaseTerminal(SERVICE_SCOPE, {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      terminalSessionId: "terminal_corrupt_run",
+      releasedAtMs: 1_800_000_000_100,
+    })).ok).toBe(false);
     expect((await store.bindTerminal(OWNER_SCOPE, {
       managedRunId: "managed-run_a",
       terminalSessionId: "terminal_corrupt_run",

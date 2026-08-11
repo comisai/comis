@@ -130,6 +130,10 @@ describe("createSqliteManagedRunContentStore confined bodies", () => {
     })).ok).toBe(true);
     expect(await store.getEvidence(SCOPE, "evidence_a")).toEqual({ ok: true, value: evidenceBytes });
     expect(await store.getAttentionBody(SCOPE, "attention_a")).toEqual({ ok: true, value: attentionBytes });
+    expect(await store.deleteEvidence(SCOPE, "attention_a")).toEqual({ ok: true, value: false });
+    expect(await store.deleteEvidence(SCOPE, "evidence_a")).toEqual({ ok: true, value: true });
+    expect(await store.deleteEvidence(SCOPE, "evidence_a")).toEqual({ ok: true, value: false });
+    expect(await store.getEvidence(SCOPE, "evidence_a")).toEqual({ ok: true, value: undefined });
 
     const columns = new Set(
       (db.prepare("PRAGMA table_info(managed_run_content_index)").all() as Array<{ name: string }>)
