@@ -898,10 +898,11 @@ type DelegationEvidenceGuard = (params: {
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
+  verifiedSpawnResponse?: string;
 }) => {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn";
+  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
 };
 
 function delegationEvidenceGuard(): DelegationEvidenceGuard {
@@ -967,6 +968,28 @@ describe("current-turn delegation evidence guard", () => {
     expect(guarded).toEqual({
       response: falseClaim,
       corrected: false,
+    });
+  });
+
+  it("replaces an unrelated final answer after a successful current-turn spawn", () => {
+    const verifiedSpawnResponse =
+      "I successfully started the requested sub-agent. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "start one background helper with sessions_spawn and have it start one nested child",
+      response:
+        "A heat pump moves heat instead of creating heat, and geothermal systems use the ground.",
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
     });
   });
 
