@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import type { DiagnosticRow, ObservabilityStore } from "@comis/memory";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, countToolDeadlineCollisions, anyAgentTerminalUnsafeDisableSandbox, isLoopbackHost } from "./build-config-posture-record.js";
+import { buildConfigPostureRecord, countPricingGaps, countUnresolvedModels, countMediaCredentialGaps, countToolDeadlineCollisions, anyAgentTerminalUnsafeDisableSandbox, anyAgentExecSandboxDisabled, isLoopbackHost } from "./build-config-posture-record.js";
 import { unresolvedModelFromRow } from "../api/obs-handlers/system-findings-extractors.js";
 
 describe("isLoopbackHost (TLS-off is benign on a loopback bind)", () => {
@@ -244,11 +243,38 @@ describe("buildConfigPostureRecord", () => {
     expect(JSON.parse(row.details ?? "{}")).toMatchObject({ execSandboxDisabled: true });
   });
 
-  it("threads the resolved exec sandbox relaxation into the boot posture record", () => {
-    const daemonSource = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8");
+  // Boot resolves the flag with this predicate and hands the result to the
+  // record, so exercise that composition: an agent config with the relaxation
+  // must reach the persisted posture row as a warning.
+  it("resolves the exec sandbox relaxation from any agent and surfaces it", () => {
+    expect(anyAgentExecSandboxDisabled({
+      default: {},
+      ops: { skills: { execSandbox: { enabled: "never" } } },
+    })).toBe(true);
+    expect(anyAgentExecSandboxDisabled({
+      default: { skills: { execSandbox: { enabled: "always" } } },
+    })).toBe(false);
+    expect(anyAgentExecSandboxDisabled({})).toBe(false);
 
-    expect(daemonSource).toContain("const execSandboxDisabled =");
-    expect(daemonSource).toMatch(/buildConfigPostureRecord\([^;]*execSandboxDisabled/);
+    const { obsStore, insertDiagnostic } = createSpiedObsStore();
+    buildConfigPostureRecord(
+      obsStore,
+      {
+        tlsOff: false,
+        allowInsecureHttp: false,
+        strandedFindings: [],
+        canaryFallbackActive: false,
+        servedBelowConfiguredCount: 0,
+        execSandboxDisabled: anyAgentExecSandboxDisabled({
+          default: { skills: { execSandbox: { enabled: "never" } } },
+        }),
+      } as unknown as Parameters<typeof buildConfigPostureRecord>[1],
+      createFakeClock(15),
+    );
+
+    const row = insertDiagnostic.mock.calls[0]?.[0] as DiagnosticRow;
+    expect(row.severity).toBe("warning");
+    expect(JSON.parse(row.details ?? "{}")).toMatchObject({ execSandboxDisabled: true });
   });
 
   it("flips severity to warning when ANY single posture issue is present", () => {

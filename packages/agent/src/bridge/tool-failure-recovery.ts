@@ -5,6 +5,10 @@ import type {
   ModelOperationType,
   ToolFailureDisclosure,
 } from "@comis/core";
+import {
+  selectToolInvocationStallMissingConfigurationReply,
+  type LocaleCatalog,
+} from "../executor/degraded-reply-i18n.js";
 
 const MAX_IDENTITY_FIELD_CHARS = 512;
 const MESSAGE_ACTIONS = new Set([
@@ -321,10 +325,19 @@ function latestUnrecoveredDisclosure(
   return undefined;
 }
 
-/** Build an actionable foreground reply when a tool stall has a trusted recovery key. */
+/**
+ * Build an actionable foreground reply when a tool stall has a trusted recovery key.
+ *
+ * This string is delivered to the chat user unchanged, so it resolves through
+ * the locale catalog like every other synthesized degraded reply — there is no
+ * downstream repair pass for synthesized text. The tool name and config key ride
+ * along verbatim; identifiers are never translated.
+ */
 export function buildToolInvocationStallFailureReply(params: {
   failedTools: readonly string[];
   toolExecResults: readonly ToolExecutionResultRecord[] | undefined;
+  language?: string;
+  localeCatalog?: LocaleCatalog;
 }): string | undefined {
   const failure = latestUnrecoveredDisclosure(
     params.failedTools,
@@ -335,9 +348,10 @@ export function buildToolInvocationStallFailureReply(params: {
 
   switch (disclosure.kind) {
     case "missing_configuration":
-      return (
-        `I could not complete the request because ${failure.toolName} is not configured. `
-        + `Configure ${disclosure.configKey} before retrying.`
+      return selectToolInvocationStallMissingConfigurationReply(
+        params.language,
+        { toolName: failure.toolName, configKey: disclosure.configKey },
+        params.localeCatalog,
       );
     case "quota_exhausted":
     case "provider_unavailable":

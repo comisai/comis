@@ -320,11 +320,41 @@ describe("setupChannels", () => {
       }));
 
       // The registered adapter is the one the channel runtime holds; sending an
-      // attachment through it must reach the after_delivery hook chain.
-      const sent = await mockAdaptersByType.get("telegram")!.sendAttachment!(
+      // attachment through it must reach the after_delivery hook chain. The send
+      // runs inside the turn scope a resolved inbound message establishes —
+      // that scope is what attributes the delivery to a conversation, and an
+      // unattributable off-turn send deliberately publishes nothing.
+      const endpoint = {
+        channelType: "telegram",
+        channelInstanceId: "telegram-main",
+        conversationId: "chat-1",
+        conversationKind: "direct" as const,
+      };
+      const sent = await runWithContext({
+        tenantId: "default",
+        userId: "user_a",
+        agentId: "agent1",
+        sessionKey: "default:agent:agent1:user_a:telegram:peer:user_a" as SessionKey,
+        turnScope: {
+          conversation: {
+            tenantId: "default",
+            agentId: "agent1",
+            partition: {
+              kind: "endpoint-conversation-principal" as const,
+              endpoint,
+              principalId: "user_a",
+            },
+          },
+          principal: { principalId: "user_a" },
+          endpoint,
+        },
+        traceId: "550e8400-e29b-41d4-a716-446655440000",
+        startedAt: 1_789_000_100_000,
+        trustLevel: "user",
+      }, () => mockAdaptersByType.get("telegram")!.sendAttachment!(
         "chat-1",
         { type: "image", url: "/workspace/media/screenshot.png" },
-      );
+      ));
 
       expect(sent.ok).toBe(true);
       expect(sendAttachment).toHaveBeenCalledTimes(1);

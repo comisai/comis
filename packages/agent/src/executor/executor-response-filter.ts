@@ -171,6 +171,8 @@ export interface DelegationEvidenceGuardResult {
   response: string;
   corrected: boolean;
   reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
+  /** How the guard reconciled the reply — a replacement discards the model text. */
+  correction?: "replaced" | "appended";
 }
 
 /** Recognize runtime-owned envelopes that report settled asynchronous results. */
@@ -246,10 +248,25 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     if (containsEvidencePhrase(response, GROUNDED_DELEGATION_RESPONSE_PHRASES)) {
       return { response: params.response, corrected: false };
     }
+    // The spawn receipt proves the delegation happened, so the only defect in an
+    // undisclosed reply is the missing disclosure. Discarding the whole reply
+    // also destroyed the parts of the request it DID answer ("delegate the
+    // research, and tell me today's date" → the date). A reply that claims the
+    // delegated work is finished is a different failure: that claim has no
+    // receipt behind it, so it is replaced rather than annotated.
+    if (isCompletionClaim(params.response)) {
+      return {
+        response: params.verifiedSpawnResponse,
+        corrected: true,
+        reason: "successful_spawn_response_ungrounded",
+        correction: "replaced",
+      };
+    }
     return {
-      response: params.verifiedSpawnResponse,
+      response: `${params.response}\n\n${params.verifiedSpawnResponse}`,
       corrected: true,
       reason: "successful_spawn_response_ungrounded",
+      correction: "appended",
     };
   }
 

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -96,6 +98,49 @@ function makeCanonicalTempDirectory(prefix: string): string {
   const directory = realpathSync(mkdtempSync(resolve(tmpdir(), prefix)));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function listFiles(directory: string): string[] {
+  return existsSync(directory) ? readdirSync(directory).sort() : [];
+}
+
+/**
+ * A scratch local rig the clean-restart script can actually be run against: the
+ * kit copied into a temp dir (it resolves `_rig.sh` and `restart-daemon.sh`
+ * beside itself), with the relaunch stubbed so the wipe is observable without
+ * booting a daemon. `LOCAL_SUPERVISOR=direct` and an unbound `GW_PORT` keep the
+ * lifecycle-owner assertion satisfied without touching pm2 or tmux.
+ */
+function makeCleanRestartRig(): {
+  dataDir: string;
+  run: () => ReturnType<typeof spawnSync>;
+} {
+  const kitDir = makeCanonicalTempDirectory("comis-clean-restart-kit-");
+  const dataDir = makeCanonicalTempDirectory("comis-clean-restart-data-");
+  for (const name of ["clean-restart.sh", "_rig.sh"]) {
+    writeFileSync(resolve(kitDir, name), readFileSync(resolve(HERE, name), "utf8"));
+  }
+  writeFileSync(
+    resolve(kitDir, "restart-daemon.sh"),
+    "#!/usr/bin/env bash\necho RESTART-DAEMON-INVOKED\n",
+  );
+  chmodSync(resolve(kitDir, "restart-daemon.sh"), 0o755);
+  return {
+    dataDir,
+    run: () =>
+      spawnSync("bash", [resolve(kitDir, "clean-restart.sh")], {
+        encoding: "utf8",
+        env: {
+          ...NO_RIG_ENV,
+          RIG_MODE: "local",
+          LOCAL_SUPERVISOR: "direct",
+          SERVICE: "comis-clean-restart-rig",
+          DATA: dataDir,
+          GW_PORT: "47661",
+          KIT_DIR: kitDir,
+        },
+      }),
+  };
 }
 
 afterEach(() => {
@@ -243,12 +288,39 @@ describe("local rig mode", () => {
     expect(trajectoryWipe).toBeGreaterThan(guard);
   });
 
+  // Substring ordering is not the wipe: a commented-out line, a line inside a
+  // branch this run never takes, or a reordered guard all read the same. Run the
+  // script against a scratch DATA root and check the state it actually leaves.
   it("clears persisted background tasks during a clean restart", () => {
-    const source = readFileSync(CLEAN_RESTART, "utf8");
-    const guard = source.indexOf('rig_refuse_continuity_wipe "$DATA"');
-    const backgroundTaskWipe = source.indexOf("rm -rf '$DATA'/background-tasks/*");
+    const { dataDir, run } = makeCleanRestartRig();
+    mkdirSync(resolve(dataDir, "background-tasks"), { recursive: true });
+    writeFileSync(
+      resolve(dataDir, "background-tasks", "task-a.json"),
+      JSON.stringify({ id: "task-a", status: "failed" }),
+    );
+    mkdirSync(resolve(dataDir, "trajectories"), { recursive: true });
+    writeFileSync(resolve(dataDir, "trajectories", "prior.jsonl"), "{}\n");
 
-    expect(backgroundTaskWipe).toBeGreaterThan(guard);
+    const wiped = run();
+
+    expect(wiped.status).toBe(0);
+    expect(wiped.stdout).toContain("RESTART-DAEMON-INVOKED");
+    expect(listFiles(resolve(dataDir, "background-tasks"))).toEqual([]);
+    expect(listFiles(resolve(dataDir, "trajectories"))).toEqual([]);
+  });
+
+  it("leaves persisted background tasks intact when continuity is protected", () => {
+    const { dataDir, run } = makeCleanRestartRig();
+    mkdirSync(resolve(dataDir, "background-tasks"), { recursive: true });
+    writeFileSync(resolve(dataDir, "background-tasks", "task-a.json"), "{}");
+    writeFileSync(resolve(dataDir, ".continuity-protected"), "protected\n");
+
+    const refused = run();
+
+    expect(refused.status).toBe(3);
+    expect(refused.stderr).toContain("continuity-protected");
+    expect(refused.stdout).not.toContain("RESTART-DAEMON-INVOKED");
+    expect(listFiles(resolve(dataDir, "background-tasks"))).toEqual(["task-a.json"]);
   });
 
   it("limits clean-restart worker cleanup to the selected data root", () => {

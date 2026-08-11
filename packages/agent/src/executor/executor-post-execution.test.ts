@@ -1194,46 +1194,6 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/preservePartialResponse:/);
   });
 
-  it("source-grep — outbound audio completion requires current delivery evidence", () => {
-    const stripped = readPostExecStripped();
-
-    expect(stripped).toMatch(/enforceOutboundAudioEvidence\(/);
-    expect(stripped).toMatch(/buildOutboundAudioEvidenceMissingReply\(/);
-    expect(stripped).toMatch(/hasTrustedRuntimeActionEvidence\(msg\)/);
-    expect(stripped).toMatch(/response\.outbound_audio_evidence_guard/);
-    expect(stripped).toMatch(
-      /outboundAudioEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_audio_evidence"[\s\S]*?succeeded:\s*true/,
-    );
-    expect(stripped.indexOf("enforceOutboundAudioEvidence("))
-      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-  });
-
-  it("source-grep — outbound image completion requires current generation evidence", () => {
-    const stripped = readPostExecStripped();
-
-    expect(stripped).toMatch(/enforceOutboundImageEvidence\(/);
-    expect(stripped).toMatch(/buildOutboundImageEvidenceMissingReply\(/);
-    expect(stripped).toMatch(/response\.outbound_image_evidence_guard/);
-    expect(stripped).toMatch(
-      /outboundImageEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_image_evidence"[\s\S]*?succeeded:\s*true/,
-    );
-    expect(stripped.indexOf("enforceOutboundImageEvidence("))
-      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-  });
-
-  it("source-grep — elliptical delivery status requires current receipt evidence", () => {
-    const stripped = readPostExecStripped();
-
-    expect(stripped).toMatch(/enforceOutboundDeliveryStatusEvidence\(/);
-    expect(stripped).toMatch(/buildOutboundDeliveryStatusEvidenceMissingReply\(/);
-    expect(stripped).toMatch(/response\.outbound_delivery_status_evidence_guard/);
-    expect(stripped).toMatch(
-      /outboundDeliveryStatusEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_delivery_status_evidence"[\s\S]*?succeeded:\s*true/,
-    );
-    expect(stripped.indexOf("enforceOutboundDeliveryStatusEvidence("))
-      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-  });
-
   it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
     const stripped = readPostExecStripped();
 

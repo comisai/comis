@@ -85,6 +85,36 @@ describe("attachment delivery hook instrumentation", () => {
     );
   });
 
+  // The video poller resolves these same adapter objects from the channel
+  // registry and ticks with NO ALS frame, so an off-turn delivery cannot be
+  // attributed to a conversation. Publishing an authority-less hook made every
+  // successful off-turn attachment emit a precondition WARN from the
+  // delivery-mirror handler.
+  it("does not publish a delivery it cannot attribute to a turn scope", async () => {
+    const adapter = makeAdapter();
+    const runAfterDelivery = vi.fn(async () => undefined);
+    const debug = vi.fn();
+    instrumentAttachmentDeliveries(new Map([["telegram", adapter]]), {
+      hookRunner: { runAfterDelivery } as Pick<HookRunner, "runAfterDelivery">,
+      logger: { warn: vi.fn(), debug } as never,
+      clock: { now: vi.fn(() => 7) },
+    });
+
+    const result = await adapter.sendAttachment("chat-1", {
+      type: "video",
+      url: "/workspace/media/render.mp4",
+    });
+
+    expect(result).toEqual(ok({ kind: "tracked", messageId: "photo-1" }));
+    expect(runAfterDelivery).not.toHaveBeenCalled();
+    expect(debug).toHaveBeenCalledTimes(1);
+    expect(debug.mock.calls[0]?.[0]).toMatchObject({
+      channelType: "telegram",
+      channelId: "chat-1",
+      step: "attachment-delivery-hook",
+    });
+  });
+
   it("does not publish failed attachment attempts", async () => {
     const adapter = makeAdapter();
     adapter.sendAttachment.mockResolvedValueOnce(err(new Error("rejected")));

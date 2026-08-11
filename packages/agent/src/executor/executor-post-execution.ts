@@ -1916,11 +1916,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       {
         step: "delegation-evidence",
         errorKind: "precondition" as const,
+        responseDisposition: delegationEvidence.correction ?? "replaced",
         hint: delegationEvidence.reason === "successful_spawn_response_ungrounded"
           ? "The response did not describe the successful sessions_spawn receipt; inspect the current request and response correction in comis explain."
           : "The response was replaced because this execution had no successful sessions_spawn receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
       },
-      "Unverified current-turn delegation claim replaced",
+      "Unverified current-turn delegation claim grounded with the spawn receipt",
     );
     deps.eventBus.emit("audit:event", {
       timestamp: deps.clock.now(),
@@ -1935,6 +1936,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "delegation",
         reason: delegationEvidence.reason,
         requiredTool: "sessions_spawn",
+        responseDisposition: delegationEvidence.correction ?? "replaced",
       },
     });
   }
@@ -2363,6 +2365,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.response = buildToolInvocationStallFailureReply({
       failedTools: bridgeResult.failedTools ?? [],
       toolExecResults: bridgeResult.toolExecResults,
+      ...(replyLanguage === undefined ? {} : { language: replyLanguage }),
+      localeCatalog,
     }) ?? buildPersistentActionEvidenceMissingReply(replyLanguage, localeCatalog);
     deps.logger.warn(
       {

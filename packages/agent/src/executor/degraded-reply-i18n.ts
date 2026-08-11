@@ -23,6 +23,7 @@ export type LocaleMessageId =
   | "tool_failure_notice"
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
+  | "tool_invocation_stall_missing_configuration"
   | "execution_failed"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
@@ -87,6 +88,10 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + " incomplete.",
   prompt_timeout:
     "The request took too long to process. Please try again with a simpler message.",
+  // `{tool}` and `{configKey}` are identifiers, substituted verbatim.
+  tool_invocation_stall_missing_configuration:
+    "I could not complete the request because {tool} is not configured. "
+      + "Configure {configKey} before retrying.",
   execution_failed:
     "I couldn't complete that request because a required service failed. The request was not completed.",
   background_task_failed_notice:
@@ -346,6 +351,32 @@ export function selectToolFailureNoticeUnnamed(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "tool_failure_notice_unnamed");
+}
+
+/**
+ * The actionable stall reply for a tool that stopped the turn because its
+ * configuration is missing. `{tool}` and `{configKey}` are identifiers,
+ * substituted verbatim, so a pack translates the sentence around them without
+ * renaming what has to be configured. A pack that omits a token still names
+ * both — the user cannot act on the reply without them.
+ */
+export function selectToolInvocationStallMissingConfigurationReply(
+  locale: string | undefined,
+  values: { toolName: string; configKey: string },
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  const template = catalog.resolve(
+    locale,
+    "tool_invocation_stall_missing_configuration",
+  );
+  const substituted = template
+    .replaceAll("{tool}", values.toolName)
+    .replaceAll("{configKey}", values.configKey);
+  const missing = [
+    ...(template.includes("{tool}") ? [] : [values.toolName]),
+    ...(template.includes("{configKey}") ? [] : [values.configKey]),
+  ];
+  return missing.length === 0 ? substituted : `${substituted} ${missing.join(" ")}`;
 }
 
 /**

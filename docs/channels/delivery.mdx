@@ -454,7 +454,11 @@ the delivered text is recorded to the `delivery_mirror` SQLite table. Outbound
 **attachments** are mirrored the same way on every channel that implements
 attachment sending: the entry carries the attachment caption as its text plus the
 delivered media reference, so a caption-less photo or voice note sent during the
-agent's own turn is still remembered rather than leaving a silent gap. On the next
+agent's own turn is still remembered rather than leaving a silent gap. The turn is
+what supplies the conversation the entry belongs to, so an attachment delivered
+outside one -- a long video render announced by the background poller after its
+originating turn ended -- is not mirrored, and records nothing rather than
+guessing a conversation. On the next
 inbound user message,
 pending mirror entries are injected as synthetic assistant context in the dynamic
 preamble so the agent has continuity of what it previously said -- even after a

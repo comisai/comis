@@ -128,17 +128,43 @@ export function isOpaquePayloadWithoutRetrievalTerms(text: string): boolean {
 }
 
 /**
+ * Characters from writing systems that do not put spaces between words. A run of
+ * them is a SENTENCE, not one lexical unit, so token length alone cannot decide
+ * whether the text is a payload. Generic and script-based — no human language is
+ * named, and the same rule covers every space-free writing system.
+ */
+const CONTINUOUS_SCRIPT_PATTERN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}\p{Script=Javanese}]/u;
+
+/** Whether an oversized token is mostly space-free-script prose rather than data. */
+function isContinuousScriptRun(token: string): boolean {
+  const characters = [...token];
+  const continuous = characters.filter(
+    (character) => CONTINUOUS_SCRIPT_PATTERN.test(character),
+  ).length;
+  return continuous * 2 > characters.length;
+}
+
+/**
  * Whether a message carries NOTHING but a large opaque payload — data with no
  * accompanying task. This is the ADMISSION question, and it is deliberately
  * stricter than {@link isOpaquePayloadWithoutRetrievalTerms}: {@link STOPWORDS}
  * drops words that carry no CORPUS signal, so reusing it as an instruction
  * detector refused plain questions whose every word is a stopword
  * ("what is this? <pasted key>").
+ *
+ * Length is only evidence of opacity for a script that separates words. A long
+ * request written in a space-free writing system tokenizes to ONE oversized
+ * token, so the length test alone refused a genuine request before the model saw
+ * it — and the refusal is one of the deliberately untranslated input-guard
+ * strings, so the sender was answered in English regardless of their locale.
  */
 export function isOpaquePayloadWithoutInstruction(text: string): boolean {
   const tokens = tokenize(text);
   const oversized = tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
-  return oversized.length > 0 && oversized.length === tokens.length;
+  return oversized.length > 0
+    && oversized.length === tokens.length
+    && !oversized.some(isContinuousScriptRun);
 }
 
 /** The shape {@link buildRelevanceQuery} returns and {@link scoreRelevance} consumes. */

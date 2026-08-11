@@ -138,6 +138,27 @@ describe("opaque-payload classification — admission vs recall are separate que
     expect(isOpaquePayloadWithoutInstruction("what is this?")).toBe(false);
     expect(isOpaquePayloadWithoutRetrievalTerms("what is this?")).toBe(false);
   });
+
+  // Token length is evidence of opacity only for a script that separates words.
+  // A long request in a space-free writing system tokenizes to ONE oversized
+  // token, so the length test alone refused a genuine request before the model
+  // ever saw it — answered by an untranslated input-guard string at that.
+  it("admits a long request written in a script without word spaces", () => {
+    for (const request of [
+      "请".repeat(200),
+      "ก".repeat(200),
+      "私".repeat(60) + "の".repeat(80),
+    ]) {
+      expect(isOpaquePayloadWithoutInstruction(request), request.slice(0, 8))
+        .toBe(false);
+    }
+  });
+
+  it("still refuses a space-free payload that is not prose", () => {
+    expect(isOpaquePayloadWithoutInstruction("deadbeef".repeat(40))).toBe(true);
+    // A payload with a few decorative prose characters is still a payload.
+    expect(isOpaquePayloadWithoutInstruction(`私${"a1B2".repeat(80)}`)).toBe(true);
+  });
 });
 
 describe("scoreRelevance — BM25 floor, RRF lift, deterministic low-signal fallback", () => {

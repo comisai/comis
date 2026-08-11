@@ -903,6 +903,7 @@ type DelegationEvidenceGuard = (params: {
   response: string;
   corrected: boolean;
   reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
+  correction?: "replaced" | "appended";
 };
 
 function delegationEvidenceGuard(): DelegationEvidenceGuard {
@@ -971,14 +972,63 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
-  it("replaces an unrelated final answer after a successful current-turn spawn", () => {
+  // The spawn receipt proves the delegation happened, so an undisclosed reply is
+  // missing a disclosure, not asserting something false. Appending the
+  // receipt-backed status keeps the answer the model DID give — discarding it
+  // destroyed the parts of the request that were answered truthfully.
+  it("appends the verified spawn status to an undisclosed final answer", () => {
+    const verifiedSpawnResponse =
+      "I successfully started the requested sub-agent. Its result is still pending.";
+    const response =
+      "A heat pump moves heat instead of creating heat, and geothermal systems use the ground.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "start one background helper with sessions_spawn and have it start one nested child",
+      response,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: `${response}\n\n${verifiedSpawnResponse}`,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+      correction: "appended",
+    });
+  });
+
+  it("keeps a truthful answer to the rest of the request beside the spawn status", () => {
+    const verifiedSpawnResponse =
+      "I successfully started the requested sub-agent. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "delegate the research to a background helper, and also tell me today's date",
+      response: "Today is 11 August 2026.",
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded.corrected).toBe(true);
+    expect(guarded.response).toContain("Today is 11 August 2026.");
+    expect(guarded.response).toContain(verifiedSpawnResponse);
+  });
+
+  // A finished-work claim about the delegated task has no receipt behind it —
+  // the spawn is a handoff, not a result — so that reply is still replaced.
+  it("replaces an undisclosed reply that claims the delegated work is finished", () => {
     const verifiedSpawnResponse =
       "I successfully started the requested sub-agent. Its result is still pending.";
     const guarded = delegationEvidenceGuard()({
       request:
         "start one background helper with sessions_spawn and have it start one nested child",
       response:
-        "A heat pump moves heat instead of creating heat, and geothermal systems use the ground.",
+        "Done — the comparison is complete and both options meet the 7-hour requirement.",
       toolExecResults: [
         { toolName: "sessions_spawn", success: true },
       ],
@@ -990,6 +1040,7 @@ describe("current-turn delegation evidence guard", () => {
       response: verifiedSpawnResponse,
       corrected: true,
       reason: "successful_spawn_response_ungrounded",
+      correction: "replaced",
     });
   });
 
@@ -1424,6 +1475,26 @@ describe("outbound audio evidence guard", () => {
       toolExecResults: [{ toolName: "tts_synthesize", success: false }],
       honestResponse,
     })).toEqual({ response, corrected: false });
+  });
+
+  // The substitute phrase must still be recognized where a sentence actually
+  // ends it: before a full stop, a comma, or a closing parenthesis. Matching a
+  // space-delimited phrase list against whitespace-only normalization dropped
+  // every punctuated occurrence and replaced an honest, self-limiting reply.
+  it("keeps an admitted limitation whose text substitute ends a clause", () => {
+    for (const response of [
+      "I couldn't send a voice note, so I have read it out in text.",
+      "I couldn't synthesize the voice note, so I have read it out as the text version.",
+      "I couldn't send the voice note, so I have read it out as text, below.",
+      "I couldn't send it as a voice note (I have read it out in plain text).",
+    ]) {
+      expect(outboundAudioEvidenceGuard()({
+        request: "please send that as a voice message",
+        response,
+        toolExecResults: [{ toolName: "tts_synthesize", success: false }],
+        honestResponse,
+      }), response).toEqual({ response, corrected: false });
+    }
   });
 
   it("rejects a limitation followed by an unsupported audio success claim", () => {

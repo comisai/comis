@@ -11745,7 +11745,8 @@
                 "unavailable",
                 "committed",
                 "retained",
-                "failed"
+                "failed",
+                "unknown"
               ]
             },
             "startedAt": {

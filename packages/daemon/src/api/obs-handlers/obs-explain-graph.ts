@@ -29,13 +29,18 @@ const PersistedGraphRunSchema = z.object({
   cancelReason: z.enum(["manual", "budget", "timeout", "killed"]).optional(),
   sessionKey: z.string().min(1).optional(),
   traceId: z.string().min(1).optional(),
+  // Optional on disk: the field was added after graph runs were already being
+  // persisted, so a record written by an earlier build carries no disposition.
+  // Requiring it failed validation for every such record, which surfaced as a
+  // `graph_not_found` verdict for a graph sitting on disk instead of a graph
+  // section with one honest unknown field.
   announcementDelivery: z.enum([
     "not-requested",
     "unavailable",
     "committed",
     "retained",
     "failed",
-  ]),
+  ]).optional(),
   startedAt: z.string().optional(),
   completedAt: z.string().optional(),
   durationMs: z.number().nonnegative(),
@@ -84,7 +89,7 @@ export function readIncidentGraphRun(
     ...(raw.cancelReason === undefined ? {} : { cancelReason: raw.cancelReason }),
     ...(raw.sessionKey === undefined ? {} : { sessionKey: raw.sessionKey }),
     ...(raw.traceId === undefined ? {} : { traceId: raw.traceId }),
-    announcementDelivery: raw.announcementDelivery,
+    announcementDelivery: raw.announcementDelivery ?? "unknown",
     ...(raw.startedAt === undefined ? {} : { startedAt: raw.startedAt }),
     ...(raw.completedAt === undefined ? {} : { completedAt: raw.completedAt }),
     durationMs: raw.durationMs,

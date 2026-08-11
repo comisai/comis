@@ -10,6 +10,22 @@ function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }
 
+/**
+ * Normalize prose for space-delimited phrase matching. Word separators become
+ * single spaces so a phrase still matches at a sentence end or before a comma:
+ * a phrase list is only equivalent to the word-boundary form it replaced when
+ * punctuation is a boundary too.
+ */
+function normalizedPhraseBoundaryText(value: string): string {
+  return ` ${
+    value
+      .toLocaleLowerCase()
+      .replaceAll("’", "'")
+      .replace(/[^\p{L}\p{N}'-]+/gu, " ")
+      .trim()
+  } `;
+}
+
 function containsEvidencePhrase(text: string, phrases: readonly string[]): boolean {
   return phrases.some((phrase) => text.includes(phrase));
 }
@@ -511,10 +527,7 @@ export function enforceOutboundAudioEvidence(params: {
   const audioArtifactClaim = OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS.some(
     (pattern) => pattern.test(params.response),
   );
-  const normalizedResponse = ` ${params.response.toLocaleLowerCase()
-    .replaceAll("’", "'")
-    .split(/\s+/u)
-    .join(" ")} `;
+  const normalizedResponse = normalizedPhraseBoundaryText(params.response);
   if (!completionClaim && !audioSuccessClaim && !audioArtifactClaim) {
     return { response: params.response, corrected: false };
   }
