@@ -1926,7 +1926,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       timestamp: deps.clock.now(),
       agentId: effectiveAgentId,
       tenantId: deps.tenantId,
-      actionType: "response.delegation_evidence_guard",
+      actionType: delegationEvidence.reason === "successful_spawn_response_ungrounded"
+        ? "response.delegation_response_grounding_guard"
+        : "response.delegation_evidence_guard",
       kind: "audit",
       outcome: "denied",
       metadata: {

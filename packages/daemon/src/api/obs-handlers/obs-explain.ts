@@ -66,6 +66,8 @@ import {
 
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
+const DELEGATION_RESPONSE_GROUNDING_GUARD_ACTION =
+  "response.delegation_response_grounding_guard";
 const PERSISTENT_ACTION_EVIDENCE_GUARD_ACTION =
   "response.persistent_action_evidence_guard";
 const DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION =
@@ -835,6 +837,27 @@ function delegationEvidenceGuardVerdict(
   traceId: string,
   failures: IncidentReport["failures"],
 ): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length > 0
+    && rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === DELEGATION_RESPONSE_GROUNDING_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return {
+      code: "delegation_response_ungrounded",
+      detail:
+        "sessions_spawn succeeded, but the final response did not describe the current delegation; "
+        + "the response honesty guard replaced it with a receipt-backed status",
+      suggestedNextSteps: [
+        "inspect the model turn after the successful sessions_spawn receipt",
+        "check recalled context and prompt-skill use for stale task influence",
+        "no spawn retry is required unless the delegated result is still needed",
+      ],
+    };
+  }
   if (
     traceId.length === 0
     // The guard corrected the response because this concrete spawn failed.
