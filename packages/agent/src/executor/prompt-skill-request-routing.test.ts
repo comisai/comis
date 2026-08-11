@@ -45,6 +45,12 @@ const skills: PromptSkillCapability[] = [
       "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer.",
     replacesPackages: [],
   },
+  {
+    name: "claude-code",
+    description:
+      "Use Claude Code to build, debug, refactor, and test a software project.",
+    replacesPackages: [],
+  },
 ];
 
 describe("prompt skill request routing", () => {
@@ -96,6 +102,30 @@ describe("prompt skill request routing", () => {
     ]);
     expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
       .toContain("/skills/deep-research/SKILL.md");
+  });
+
+  it("lets the current request outrank stale prompt-skill history", () => {
+    const deferral = result();
+    const currentRequestText =
+      "i need to understand heat pumps properly, not just a paragraph";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: [
+        "use Claude Code to build debug refactor and test this software project",
+        currentRequestText,
+      ].join("\n"),
+      skills,
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
   });
 
   it("leaves unrelated requests unchanged", () => {
