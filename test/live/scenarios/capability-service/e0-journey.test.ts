@@ -75,14 +75,35 @@ class ForgeFixtureServer {
   private server: Server | undefined;
   private baseUrlValue = "";
   private pull: PullTruth | undefined;
+  private readonly checkGate: Promise<void>;
+  private releaseCheckGate: (() => void) | undefined;
+  private checkRequestObservedValue = false;
+  private pullCreateCountValue = 0;
 
   constructor(
     readonly gitExecutable: string,
     readonly remote: string,
-  ) {}
+  ) {
+    this.checkGate = new Promise<void>((resolve) => {
+      this.releaseCheckGate = resolve;
+    });
+  }
 
   get baseUrl(): string {
     return this.baseUrlValue;
+  }
+
+  get checkRequestObserved(): boolean {
+    return this.checkRequestObservedValue;
+  }
+
+  get pullCreateCount(): number {
+    return this.pullCreateCountValue;
+  }
+
+  releaseChecks(): void {
+    this.releaseCheckGate?.();
+    this.releaseCheckGate = undefined;
   }
 
   async start(): Promise<void> {
@@ -99,6 +120,7 @@ class ForgeFixtureServer {
   }
 
   async close(): Promise<void> {
+    this.releaseChecks();
     if (this.server === undefined) return;
     await new Promise<void>((resolveClose) => this.server!.close(() => resolveClose()));
     this.server = undefined;
@@ -118,6 +140,7 @@ class ForgeFixtureServer {
         this.json(response, { error: "invalid head" }, 422);
         return;
       }
+      this.pullCreateCountValue += 1;
       this.pull = { number: 1, branch };
       this.json(response, { number: 1 }, 201);
       return;
@@ -136,6 +159,9 @@ class ForgeFixtureServer {
       return;
     }
     if (request.method === "GET" && url.pathname.startsWith(`${prefix}/commits/`) && url.pathname.endsWith("/check-runs")) {
+      this.checkRequestObservedValue = true;
+      await this.checkGate;
+      if (response.destroyed) return;
       this.json(response, {
         check_runs: [{ name: "ci/e0", status: "completed", conclusion: "success" }],
       });
@@ -752,36 +778,27 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       expect(postHandbackSessions).toContain(scoutSession);
 
       await pollUntil(
-        () => taskState(goDatabase, shipTask) === "delivered" && taskState(goDatabase, scoutTask) === "delivered",
-        150_000,
-        () => `delivered tasks before restart; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} diagnostic=${deliveryDiagnostic(
-          goDatabase,
-          canonicalDataDir,
-          handles,
-          [shipBinding.managed_run_id, scoutBinding.managed_run_id],
-        )} stderr=${service?.stderr() ?? ""}`,
+        () => candidate.forge.checkRequestObserved && taskState(goDatabase, shipTask) === "validating",
+        30_000,
+        () => `ship validation blocked on forge truth; ship=${taskState(goDatabase, shipTask)} stderr=${service?.stderr() ?? ""}`,
       );
-      await pollUntil(
-        () => evidenceDelivered(goDatabase, handles)
-          && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2)
-          && managedRunContinuationsSettled(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]),
-        60_000,
-        "exact evidence delivery before restart",
-      );
+      expect(candidate.forge.pullCreateCount).toBe(1);
+      const deliveryMessages = [...boot.echo.getSentMessages()];
 
       await liaisonTurn(model, boot.channelManager, boot.echo, "STOP_E0_SCOUT", [
         { tool: "terminal_session_kill", arguments: { sessionId: scoutSession } },
       ]);
       await pollUntil(
-        () => taskState(goDatabase, scoutTask) === "delivered"
+        () => ["validating", "delivered"].includes(taskState(goDatabase, scoutTask))
           && ["exited", "released"].includes(terminalTransition(goDatabase, scoutTask)),
         30_000,
         () => `scout terminal settlement; task=${taskState(goDatabase, scoutTask)} terminal=${terminalTransition(goDatabase, scoutTask)}`,
       );
-      console.log("RESTART_DAEMON_AND_SERVICE_AFTER_DELIVERY");
+      console.log("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
       await stopDaemon(daemon);
       daemon = undefined;
       await service.stop();
+      candidate.forge.releaseChecks();
       service = startService();
       await waitForUnixSocket(operatorSocket);
       await waitForUnixSocket(mcpSocket);
@@ -791,10 +808,25 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
         () => taskState(goDatabase, shipTask) === "delivered"
           && taskState(goDatabase, scoutTask) === "delivered"
           && evidenceDelivered(goDatabase, handles)
-          && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2),
-        30_000,
-        "delivered custody and exact evidence recovery after restart",
+          && comisEvidenceCounts(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]).every((count) => count === 2)
+          && managedRunContinuationsSettled(canonicalDataDir, [shipBinding.managed_run_id, scoutBinding.managed_run_id]),
+        150_000,
+        () => `delivered custody and exact evidence recovery after restart; ship=${taskState(goDatabase, shipTask)} scout=${taskState(goDatabase, scoutTask)} diagnostic=${deliveryDiagnostic(
+          goDatabase,
+          canonicalDataDir,
+          handles,
+          [shipBinding.managed_run_id, scoutBinding.managed_run_id],
+        )} stderr=${service?.stderr() ?? ""}`,
       );
+      deliveryMessages.push(...boot.echo.getSentMessages());
+      expect(candidate.forge.pullCreateCount).toBe(1);
+      expect(deliveryMessages.filter((entry) =>
+        entry.channelId === "wave4-conversation"
+        && entry.text.includes("https://github.com/fixture-owner/fixture-repository/pull/1")
+      )).toHaveLength(1);
+      expect(deliveryMessages.filter((entry) =>
+        entry.channelId === "wave4-conversation" && entry.text.includes("[file:report.md]")
+      )).toHaveLength(1);
       expect(service.child.exitCode).toBeNull();
 
       const holdDb = new Database(goDatabase);
