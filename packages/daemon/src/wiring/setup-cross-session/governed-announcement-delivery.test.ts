@@ -206,7 +206,7 @@ describe("completion announcement delivery wiring", () => {
     };
     const result = await delivery.sendGovernedAnnouncement?.(request);
 
-    expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
+    expect(result).toEqual(ok({ delivered: false, failure: "operation_validation_blocked" }));
     expect(ledger.allocateStep).not.toHaveBeenCalled();
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
@@ -262,7 +262,7 @@ describe("completion announcement delivery wiring", () => {
       },
     });
 
-    expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
+    expect(result).toEqual(ok({ delivered: false, failure: "operation_validation_blocked" }));
     expect(ledger.allocateStep).not.toHaveBeenCalled();
     expect(sendAttachment).not.toHaveBeenCalled();
     expect(cleanup).not.toHaveBeenCalled();
