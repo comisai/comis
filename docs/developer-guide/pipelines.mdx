@@ -183,7 +183,7 @@ Key responsibilities:
 - **Result forwarding** -- Upstream node outputs are injected into downstream node task descriptions via `{{nodeId.result}}` template interpolation (see [Data Flow](#data-flow)).
 - **Timeout enforcement** -- Both per-node timeouts (kills the individual sub-agent) and graph-level timeouts (cancels all running nodes).
 - **Concurrency limiting** -- Three-tier concurrency control: per-node (`maxParallelSpawns`, default 10 for `spawn_all` typed nodes), per-graph (`maxConcurrency`, default 4 concurrent nodes), and global (`maxGlobalSubAgents`, default 20 across all graphs). Ready nodes wait in a FIFO queue when limits are reached.
-- **Aggregate announcement** -- A single completion message summarizing all node results is sent to the originating channel when the graph finishes.
+- **Aggregate announcement** -- A single completion message summarizing all node results is sent to the originating channel when the graph finishes. It requires an authenticated originating route captured at submission, and **retained** delivery (a completion that survives a daemon restart) additionally requires `agents.<id>.autonomy.durability.enabled`. When either is missing, `graph.execute` tells the launching agent to report the `graphId` and *not* promise an automatic notification, so the caller never claims a follow-up the runtime cannot deliver.
 
 <Info>
 The graph coordinator runs inside the daemon process. It is not directly accessible from other packages -- you interact with execution graphs by creating them through the CLI, RPC, or web dashboard.

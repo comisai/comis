@@ -6,9 +6,9 @@
  *   - WebSearchConfig public type
  *   - SearchProviderName alias + FRESHNESS_PROVIDERS allow-set
  *   - Provider-name parsing and chain assembly (parseProvider, buildProviderChain, resolveProvider)
- *   - Per-provider key resolution (resolveApiKey); missingApiKeyPayload is
- *     declared locally and reserved for future use (carries forward the
- *     dead-code stash with its eslint-disable directive).
+ *   - Per-provider key resolution (resolveApiKey) and the operator-facing
+ *     recovery message naming the knob an explicitly selected provider still
+ *     needs (missingProviderConfigurationMessage)
  *   - Provider config + orchestrator payload builders (buildProviderConfig, buildOrchestratorPayload)
  *   - Per-call count clamping (resolveSearchCount)
  *

@@ -119,10 +119,13 @@ comis:
 <Info>
 `comis.min-distinct-web-fetch-urls` and `comis.min-distinct-web-search-queries`
 are completion gates, not quotas: when the skill is routed for a request, the
-runtime keeps the turn going until that many **distinct successful** receipts
-exist, and an answer produced without them is reported as partial. Set them only
-on skills whose answers must be sourced -- `skills/deep-research/SKILL.md` ships
-with `3` for both.
+runtime spends bounded continuation turns pushing for that many **distinct
+successful** receipts. If they never arrive, the turn ends
+`tool_invocation_stall` -- the unsourced answer is replaced by an honest
+"could not verify" reply and the session is reported degraded in
+[`comis explain`](/reference/cli#comis-explain) -- so set them only on skills
+whose answers must be sourced. `skills/deep-research/SKILL.md` ships with `3`
+for both.
 </Info>
 
 <Info>
