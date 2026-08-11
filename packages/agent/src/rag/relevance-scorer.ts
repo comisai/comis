@@ -123,7 +123,11 @@ export function hasOversizedLexicalToken(text: string): boolean {
  * actionable text in the model request.
  */
 export function isOpaquePayloadWithoutRetrievalTerms(text: string): boolean {
-  return hasOversizedLexicalToken(text)
+  const oversized = tokenize(text).filter(
+    (token) => token.length > MAX_CONTENT_TERM_CHARS,
+  );
+  return oversized.length > 0
+    && !oversized.some(isSpaceFreeProseCandidate)
     && buildRelevanceQuery([text]).terms.length === 0;
 }
 
