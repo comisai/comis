@@ -16,8 +16,8 @@ const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
   "our", "out", "some", "that", "the", "their", "then", "these", "this", "those",
-  "use", "uses", "using", "want", "wants", "was", "were", "when", "where", "which",
-  "with", "would", "you", "your",
+  "task", "tasks", "tool", "tools", "use", "uses", "using", "want", "wants", "was",
+  "were", "when", "where", "which", "with", "would", "you", "your",
 ]);
 
 interface PromptSkillRequestRoutingInput {
