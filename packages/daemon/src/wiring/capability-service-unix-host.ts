@@ -14,6 +14,7 @@ import {
   CapabilityActivateResponseSchema,
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
+  CapabilityPutEvidenceRequestSchema,
   CapabilityReportRequestSchema,
   CapabilityServiceErrorResponseSchema,
   type CapabilityServiceErrorKind,
@@ -42,6 +43,11 @@ import {
   type CapabilityServiceRuntimeHandle,
 } from "./capability-service-runtime.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
+import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
+import {
+  routeManagedRunEvidenceIngress,
+  routeManagedRunReportIngress,
+} from "./capability-service-ingress-routes.js";
 import { parseStrictJson } from "./capability-service-strict-json.js";
 import { forwardTerminalEvent, sendEndpointTerminalEvent } from "./capability-service-terminal-event.js";
 
@@ -106,6 +112,7 @@ export interface UnixCapabilityServiceHostRuntimeDeps {
   readonly bundleDigest: string;
   readonly socketRoot: string;
   readonly reportBridge: ManagedRunReportBridge;
+  readonly evidenceBridge: ManagedRunEvidenceBridge;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
@@ -291,28 +298,6 @@ function writeLine(socket: net.Socket, value: unknown): Result<void, Error> {
   return written.ok ? ok(undefined) : err(written.error);
 }
 
-async function awaitResultDeadline<T>(
-  operation: Promise<Result<T, Error>>,
-  timers: TimerPort,
-  deadlineMs: number,
-): Promise<Result<T, Error> | undefined> {
-  return new Promise((resolveDeadline) => {
-    let settled = false;
-    const timer = timers.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      resolveDeadline(undefined);
-    }, deadlineMs);
-    timer.unref();
-    void fromPromise(operation).then((result) => {
-      if (settled) return;
-      settled = true;
-      timer.cancel();
-      resolveDeadline(result.ok ? result.value : err(result.error));
-    });
-  });
-}
-
 function createEndpoint(
   configured: ConfiguredInstance,
   deps: UnixCapabilityServiceHostRuntimeDeps,
@@ -423,64 +408,50 @@ function createEndpoint(
         return;
       }
       inboundCount += 1;
-      const startedAtMs = deps.clock.now();
-      deps.logger.debug({
-        serviceInstanceId: configured.instance.serviceInstanceId,
-        managedRunId: request.params.managedRunId,
-        step: "capability-service-report-ingress",
-      }, "Routing capability-service report");
-      const invoked = tryCatch(() => deps.reportBridge.ingestReport({
-        serviceInstanceId: configured.instance.serviceInstanceId,
-        managedRunId: request.params.managedRunId,
-        report: {
-          serviceReportId: request.params.serviceReportId,
-          kind: request.params.kind,
-          summary: request.params.summary,
-          ...(request.params.externalKey === undefined ? {} : { externalKey: request.params.externalKey }),
-          ...(request.params.details === undefined ? {} : { details: request.params.details }),
-          ...(request.params.artifactRefs === undefined ? {} : { artifactRefs: request.params.artifactRefs }),
-          ...(request.params.observedAtMs === undefined ? {} : { observedAtMs: request.params.observedAtMs }),
-        },
-      }));
-      const settled = invoked.ok
-        ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
-        : err(invoked.error);
+      const routed = await routeManagedRunReportIngress(
+        configured.instance.serviceInstanceId,
+        request,
+        deps,
+      );
       inboundCount -= 1;
-      let response: unknown;
-      if (settled === undefined) {
-        response = errorResponse("deadline_exceeded", request.id);
-      } else if (!settled.ok) {
-        response = errorResponse("internal_error", request.id);
-      } else if (settled.value.kind === "rejected") {
-        const kind = settled.value.reasonCode === "replay_conflict"
-          ? "replay_conflict" as const
-          : settled.value.reasonCode === "invalid_report"
-            ? "invalid_params" as const
-            : "precondition_failed" as const;
-        response = errorResponse(kind, request.id);
-      } else {
-        response = {
-          jsonrpc: "2.0",
-          id: request.id,
-          result: {
-            managedRunId: settled.value.report.managedRunId,
-            serviceReportId: settled.value.report.serviceReportId,
-            acceptedSequence: settled.value.report.sequence,
-            retainedUntilMs: settled.value.report.retainedUntilMs,
-          },
-        };
-      }
+      const response = routed.errorKind === undefined
+        ? { jsonrpc: "2.0", id: request.id, result: routed.response }
+        : errorResponse(routed.errorKind, request.id);
       rememberResponse(operationId, response);
       reply(socket, response);
-      deps.logger.info({
-        serviceInstanceId: configured.instance.serviceInstanceId,
-        managedRunId: request.params.managedRunId,
-        durationMs: Math.max(0, deps.clock.now() - startedAtMs),
-      }, "Capability-service report request completed");
     }
 
-    function trackReport(socket: net.Socket, request: z.infer<typeof CapabilityReportRequestSchema>): void {
-      const operation = routeReport(socket, request);
+    async function routeEvidence(
+      socket: net.Socket,
+      request: z.infer<typeof CapabilityPutEvidenceRequestSchema>,
+    ): Promise<void> {
+      const operationId = request.params.operationId;
+      const replayState = beginReplay(operationId, request);
+      if (!replayState.ok) {
+        if (typeof replayState.error === "object") reply(socket, replayState.error.response);
+        else rejectRequest(socket, replayState.error === "pending" ? "rate_limited" : "replay_conflict", request.id);
+        return;
+      }
+      if (inboundCount >= CAPABILITY_SERVICE_LIMITS.maxInFlightRequests) {
+        replay.delete(operationId);
+        rejectRequest(socket, "rate_limited", request.id);
+        return;
+      }
+      inboundCount += 1;
+      const routed = await routeManagedRunEvidenceIngress(
+        configured.instance.serviceInstanceId,
+        request,
+        deps,
+      );
+      inboundCount -= 1;
+      const response = routed.errorKind === undefined
+        ? { jsonrpc: "2.0", id: request.id, result: routed.response }
+        : errorResponse(routed.errorKind, request.id);
+      rememberResponse(operationId, response);
+      reply(socket, response);
+    }
+
+    function trackInbound(operation: Promise<void>): void {
       inboundOperations.add(operation);
       void operation.then(
         () => inboundOperations.delete(operation),
@@ -489,8 +460,8 @@ function createEndpoint(
           deps.logger.error({
             serviceInstanceId: configured.instance.serviceInstanceId,
             errorKind: "internal" as const,
-            hint: "Inspect the managed-run report bridge and durable stores before reconnecting the capability service",
-          }, "Capability-service report routing failed unexpectedly");
+            hint: "Inspect the managed-run ingress bridges and durable stores before reconnecting the capability service",
+          }, "Capability-service ingress routing failed unexpectedly");
         },
       );
     }
@@ -643,7 +614,20 @@ function createEndpoint(
           rejectRequest(socket, "invalid_params", id);
           return;
         }
-        trackReport(socket, parsed.data);
+        trackInbound(routeReport(socket, parsed.data));
+        return;
+      }
+      if (frame["method"] === "managedRuns.putEvidence") {
+        if (boundSocket !== socket || !configured.definition.requestedScopes.includes("evidence")) {
+          rejectRequest(socket, "precondition_failed", id);
+          return;
+        }
+        const parsed = CapabilityPutEvidenceRequestSchema.safeParse(request);
+        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
+          rejectRequest(socket, "invalid_params", id);
+          return;
+        }
+        trackInbound(routeEvidence(socket, parsed.data));
         return;
       }
       if (frame["method"] === "managedRuns.activate" || frame["method"] === "managedRuns.abandon") {

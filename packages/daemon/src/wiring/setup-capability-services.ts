@@ -40,6 +40,10 @@ import {
   type ManagedRunActivationRecoverySummary,
 } from "./managed-run-activation-coordinator.js";
 import {
+  createManagedRunEvidenceBridge,
+  type ManagedRunEvidenceBridge,
+} from "./managed-run-evidence-bridge.js";
+import {
   createManagedRunReportBridge,
   type ManagedRunReportBridge,
 } from "./managed-run-report-bridge.js";
@@ -65,6 +69,7 @@ export interface CapabilityServicePlatform {
   readonly control: CapabilityServiceControlPort;
   readonly activationCoordinator: ManagedRunActivationCoordinator;
   readonly reportBridge: ManagedRunReportBridge;
+  readonly evidenceBridge: ManagedRunEvidenceBridge;
   readonly recoverySummary: ManagedRunActivationRecoverySummary;
   readonly attachmentRecoverySummary: ExecutionAttachmentRecoverySummary;
   readonly purgedContentCount: number;
@@ -240,6 +245,20 @@ export async function setupCapabilityServices(
     eventBus: deps.eventBus,
     logger: deps.logger,
   });
+  const definitionByInstance = new Map(plan.value.orderedInstances.map((instance) => [
+    instance.serviceInstanceId,
+    plan.value.orderedDefinitions.find(
+      (definition) => definition.serviceDefinitionId === instance.serviceDefinitionId,
+    ),
+  ]));
+  const evidenceBridge = createManagedRunEvidenceBridge({
+    store,
+    contentStore,
+    nowMs: () => deps.clock.now(),
+    maxObservedClockSkewMs: deps.config.maxObservedClockSkewMs,
+    resolveEvidencePolicies: (serviceInstanceId) => definitionByInstance.get(serviceInstanceId)?.evidencePolicies,
+    logger: deps.logger,
+  });
 
   const credentials = new Map<string, () => string | undefined>();
   for (const instance of plan.value.orderedInstances) {
@@ -258,6 +277,7 @@ export async function setupCapabilityServices(
     bundleDigest: CAPABILITY_SERVICE_BUNDLE_DIGEST,
     socketRoot: deps.dataDir,
     reportBridge,
+    evidenceBridge,
     requestDeadlineMs: deps.config.requestDeadlineMs,
     clock: deps.clock,
     timers: deps.timers,
@@ -368,6 +388,7 @@ export async function setupCapabilityServices(
     control: host.value.control,
     activationCoordinator,
     reportBridge,
+    evidenceBridge,
     recoverySummary: recovered.value,
     attachmentRecoverySummary: attachmentRecovered.value,
     purgedContentCount: purged.value,
