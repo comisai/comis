@@ -130,4 +130,32 @@ describe("attachment delivery hook instrumentation", () => {
     expect(result.ok).toBe(false);
     expect(runAfterDelivery).not.toHaveBeenCalled();
   });
+
+  it("logs the sanitized hook failure while preserving successful delivery", async () => {
+    const adapter = makeAdapter();
+    const runAfterDelivery = vi.fn(async () => {
+      throw new Error("mirror unavailable");
+    });
+    const warn = vi.fn();
+    instrumentAttachmentDeliveries(new Map([["telegram", adapter]]), {
+      hookRunner: { runAfterDelivery } as Pick<HookRunner, "runAfterDelivery">,
+      logger: { warn } as never,
+      clock: { now: vi.fn(() => 5) },
+    });
+
+    const result = await adapter.sendAttachment("chat-1", {
+      type: "image",
+      url: "/workspace/image.png",
+    });
+
+    expect(result).toEqual(ok({ kind: "tracked", messageId: "photo-1" }));
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: "mirror unavailable",
+        errorKind: "dependency",
+        hint: expect.stringContaining("after_delivery"),
+      }),
+      "Attachment delivery hook failed",
+    );
+  });
 });
