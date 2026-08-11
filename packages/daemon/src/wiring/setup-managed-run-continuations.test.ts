@@ -384,19 +384,30 @@ describe("managed-run continuation composition", () => {
       const record = makeRecord();
       const body = Buffer.from("immutable report artifact", "utf8");
       let materializedPath = "";
-      const sendAttachment = vi.fn(async (_channelId, attachment) => {
+      const bindingOwner = { observedBinding: false };
+      const sendAttachment = vi.fn(async function (
+        this: typeof bindingOwner,
+        _channelId,
+        attachment,
+      ) {
+        this.observedBinding = true;
         materializedPath = attachment.url;
         expect(readFileSync(materializedPath)).toEqual(body);
         expect(statSync(materializedPath).mode & 0o777).toBe(0o600);
         return ok({ kind: "tracked" as const, messageId: "attachment-message" });
       });
-      const adapter = { channelId: "echo-main", channelType: "echo", sendAttachment };
+      const adapter = Object.assign(bindingOwner, {
+        channelId: "echo-main",
+        channelType: "echo",
+        sendAttachment,
+      });
       const ledger = {
         allocateStep: vi.fn(async () => ok(5)),
         lookup: vi.fn(async () => ok(undefined)),
         begin: vi.fn(async () => ok(undefined)),
         markUnknown: vi.fn(async () => ok(undefined)),
         commit: vi.fn(async () => ok(undefined)),
+        parkUncertain: vi.fn(async () => ok(true)),
       } as unknown as OutwardSendLedgerPort;
       const delivery = createManagedRunContinuationDelivery({
         adaptersByType: new Map([["echo", adapter as never]]),
@@ -431,6 +442,7 @@ describe("managed-run continuation composition", () => {
         fileName: "report.md",
         caption: "Verified report",
       }, {});
+      expect(bindingOwner.observedBinding).toBe(true);
       expect(ledger.begin).toHaveBeenCalledWith(expect.objectContaining({
         operationKind: "attachment_send",
       }));
