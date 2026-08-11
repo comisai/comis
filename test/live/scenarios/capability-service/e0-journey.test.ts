@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Full live E0 custody journey using the current installed Go composition. */
-import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
+import { execFile, execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
   chmodSync,
@@ -477,6 +477,22 @@ function cleanupFailure(
   }
 }
 
+async function cliAsync<T>(binary: string, socket: string, args: readonly string[]): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    execFile(binary, ["--socket", socket, ...args], { encoding: "utf8" }, (error, stdout) => {
+      if (error !== null) {
+        reject(error);
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout) as T);
+      } catch (cause) {
+        reject(cause);
+      }
+    });
+  });
+}
+
 describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () => {
   it("delivers ship and scout work through restart, intervention, and fail-closed cleanup", async () => {
     const binaryRoot = process.env["COMIS_DEV_CREW_BIN_DIR"];
@@ -799,9 +815,9 @@ describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () =>
       rmSync(join(scoutBinding.canonical_path, "cleanup-dirty.txt"));
       let cleanedScout: { state: string } | undefined;
       let cleanupReplayFailure = "none";
-      await pollUntil(() => {
+      await pollUntil(async () => {
         try {
-          cleanedScout = cli<{ state: string }>(cliBinary, operatorSocket, [
+          cleanedScout = await cliAsync<{ state: string }>(cliBinary, operatorSocket, [
             "task", "cleanup", scoutTask, "--operation", "cleanup-e0-scout-dirty", "--format", "json",
           ]);
           return cleanedScout.state === "cleaned";
