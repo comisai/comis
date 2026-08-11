@@ -322,8 +322,8 @@ describe("setupChannels", () => {
       // The registered adapter is the one the channel runtime holds; sending an
       // attachment through it must reach the after_delivery hook chain. The send
       // runs inside the turn scope a resolved inbound message establishes —
-      // that scope is what attributes the delivery to a conversation, and an
-      // unattributable off-turn send deliberately publishes nothing.
+      // that scope is what attributes the delivery to a conversation for
+      // consumers such as the delivery mirror.
       const endpoint = {
         channelType: "telegram",
         channelInstanceId: "telegram-main",

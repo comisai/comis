@@ -161,6 +161,23 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(parsed.value.version).toBe("1.0.7");
     expect(parsed.value.comis?.["min-distinct-web-fetch-urls"]).toBe(3);
     expect(parsed.value.comis?.["min-distinct-web-search-queries"]).toBe(3);
+
+    const description = (
+      manifest.match(/^description:\s*(.+)$/mu)?.[1] ?? ""
+    ).replace(/^["']|["']$/gu, "");
+    expect(description).toMatch(/^MANDATORY:/u);
+    expect(description).toMatch(/understand|explain/iu);
+    expect(description).toMatch(/properly|deeply|thoroughly/iu);
+    expect(description).toMatch(/general knowledge/iu);
+    expect(description).toMatch(/source attribution|claim tracing/iu);
+    expect(description).toMatch(/compression[^.]*essentials/iu);
+    expect(manifest).toMatch(/at least three distinct[^\n]*successful[^\n]*web_fetch/iu);
+    expect(manifest).toMatch(/fewer than three[^\n]*(?:partial|incomplete|abstain)/iu);
+    expect(manifest).toMatch(/(?:re-fetching|fetching)[^\n]*same URL[^\n]*does not count/iu);
+    expect(manifest).toMatch(/every factual[^\n]*(?:claim|paragraph)[^\n]*(?:citation|fetched URL)/iu);
+    expect(manifest).toMatch(/failed[^\n]*(?:source|fetch)[^\n]*name[^\n]*(?:URL|source)/iu);
+    expect(manifest).toMatch(/follow-ups[^\n]*re-fetch[^\n]*citation/iu);
+    expect(manifest).toMatch(/no failed receipt[^\n]*do not invent/iu);
   });
 
   it("downloads a generated chart into an ESM workspace without host renderers", () => {
