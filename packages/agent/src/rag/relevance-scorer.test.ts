@@ -84,6 +84,12 @@ describe("buildRelevanceQuery — rolling ~3-user-turn window + GoalAnchor bias"
     expect(q.terms.length).toBeLessThan(2);
   });
 
+  it("drops an oversized opaque token instead of treating it as retrieval content", () => {
+    const q = buildRelevanceQuery(["x".repeat(43_000)]);
+
+    expect(q).toEqual({ terms: [], degraded: true });
+  });
+
   it("GoalAnchor bias: the GoalAnchor text contributes terms to the relevance query", () => {
     // A low-signal turn alone would degrade; the GoalAnchor lifts it with focus terms.
     const q = buildRelevanceQuery(["yes do that"], "[GoalAnchor: migrate billing invoices to stripe]");
