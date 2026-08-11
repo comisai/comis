@@ -227,6 +227,7 @@ export function makeCreateAgentRpcCall(
         ...(trustedContext?.turnScope !== undefined && {
           _tenantId: trustedContext.turnScope.conversation.tenantId,
           _callerConversationScope: trustedContext.turnScope.conversation,
+          _callerTurnScope: trustedContext.turnScope,
         }),
         _capabilities: heldCapabilities,
         // The trusted autonomy mode for THIS run, from the

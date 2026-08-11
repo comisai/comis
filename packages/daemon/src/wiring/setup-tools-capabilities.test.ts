@@ -24,6 +24,7 @@ const internalFieldNames = new Set([
   "_callerConversationScope",
   "_callerMetadata",
   "_callerSessionKey",
+  "_callerTurnScope",
   "_capabilities",
   "_channelType",
   "_chatType",

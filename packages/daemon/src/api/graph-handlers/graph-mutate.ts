@@ -24,6 +24,7 @@ import {
   GraphSaveContract,
   GraphDeleteContract,
   GraphDeleteRunContract,
+  ResolvedTurnScopeSchema,
   stripInternalFields,
   requireCapability,
   tryGetContext,
@@ -227,7 +228,23 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       }
 
       const requestContext = tryGetContext();
-      const trustedEndpoint = requestContext?.turnScope?.endpoint;
+      const rawCallerTurnScope = rawParams._callerTurnScope;
+      const parsedCallerTurnScope = rawCallerTurnScope === undefined
+        ? undefined
+        : ResolvedTurnScopeSchema.safeParse(rawCallerTurnScope);
+      if (parsedCallerTurnScope !== undefined && !parsedCallerTurnScope.success) {
+        deps.logger?.warn({
+          method: "graph.execute",
+          mismatchField: "turn-scope",
+          hint: "Reject the graph and verify the in-process RPC injector preserves the validated caller turn scope",
+          errorKind: "precondition" as const,
+        }, "Graph caller turn scope is invalid");
+        throw new PreconditionError("Graph caller turn scope is invalid");
+      }
+      const callerTurnScope = parsedCallerTurnScope?.success === true
+        ? parsedCallerTurnScope.data
+        : requestContext?.turnScope;
+      const trustedEndpoint = callerTurnScope?.endpoint;
       const rawAnnounceChannelType = typeof rawParams._callerChannelType === "string"
         ? rawParams._callerChannelType
         : undefined;
@@ -271,7 +288,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         callerRootRunId: rawParams._rootRunId as string | undefined,
         callerLeaseId: rawParams._leaseId as string | undefined,
         callerDeliveryOrigin: requestContext?.deliveryOrigin,
-        callerTurnScope: requestContext?.turnScope,
+        callerTurnScope,
         announceChannelType,
         announceChannelId,
         nodeProgress: userParams.node_progress === true,
