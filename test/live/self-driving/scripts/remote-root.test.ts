@@ -243,6 +243,14 @@ describe("local rig mode", () => {
     expect(trajectoryWipe).toBeGreaterThan(guard);
   });
 
+  it("clears persisted background tasks during a clean restart", () => {
+    const source = readFileSync(CLEAN_RESTART, "utf8");
+    const guard = source.indexOf('rig_refuse_continuity_wipe "$DATA"');
+    const backgroundTaskWipe = source.indexOf("rm -rf '$DATA'/background-tasks/*");
+
+    expect(backgroundTaskWipe).toBeGreaterThan(guard);
+  });
+
   it("limits clean-restart worker cleanup to the selected data root", () => {
     const source = readFileSync(CLEAN_RESTART, "utf8");
 
