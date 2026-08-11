@@ -305,6 +305,39 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("narrates complete evidence when a retained skill is not read again", async () => {
+    const prompt = vi.fn(async () => undefined);
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: (toolNames) =>
+        toolNames?.includes("web_fetch") === true ? 3 : 0,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      getVisibleAssistantText: () =>
+        "Each claim is traced to a current fetched source.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(3);
+    expect(prompt.mock.calls[2]?.[0]).toMatch(/narrate the completed/iu);
+    expect(prompt.mock.calls[2]?.[0]).toMatch(
+      /current-turn workflow receipts[\s\S]*earlier failure or unavailable/iu,
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 
