@@ -1202,6 +1202,12 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/hasTrustedRuntimeActionEvidence\(msg\)/);
     expect(stripped).toMatch(/response\.outbound_audio_evidence_guard/);
     expect(stripped).toMatch(
+      /acceptedEvidence:\s*\[\s*"tts_synthesize",\s*"trusted_completion",\s*"configured_voice_route"\s*\]/,
+    );
+    expect(stripped).not.toMatch(
+      /claimKind:\s*"outbound_audio"[\s\S]{0,180}requiredTool:/,
+    );
+    expect(stripped).toMatch(
       /outboundAudioEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_audio_evidence"[\s\S]*?succeeded:\s*true/,
     );
     expect(stripped.indexOf("enforceOutboundAudioEvidence("))
@@ -1214,6 +1220,12 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/enforceOutboundImageEvidence\(/);
     expect(stripped).toMatch(/buildOutboundImageEvidenceMissingReply\(/);
     expect(stripped).toMatch(/response\.outbound_image_evidence_guard/);
+    expect(stripped).toMatch(
+      /acceptedEvidence:\s*\[\s*"image_generate",\s*"message\.attach",\s*"trusted_completion"\s*\]/,
+    );
+    expect(stripped).not.toMatch(
+      /claimKind:\s*"outbound_image"[\s\S]{0,180}requiredTool:/,
+    );
     expect(stripped).toMatch(
       /outboundImageEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_image_evidence"[\s\S]*?succeeded:\s*true/,
     );

@@ -576,6 +576,37 @@ describe("executeLlm — configured voice delivery signal", () => {
     expect(getOverrides()?.outboundAudioAutoDelivery).toBe(true);
   });
 
+  it("defers tagged voice delivery evidence until the reply text exists", async () => {
+    const { executor, getOverrides } = makeOverridesCapturingExecutor();
+    const voiceResponsePipeline = {
+      shouldAutoTts: vi.fn((
+        _config: unknown,
+        context: { responseText: string },
+      ) => ({ shouldSynthesize: context.responseText.includes("[[tts]]") })),
+      ttsConfig: {
+        autoMode: "tagged",
+        tagPattern: "\\[\\[tts\\]\\]",
+        maxTextLength: 4096,
+      },
+    } as unknown as ExecuteDeps["voiceResponsePipeline"];
+    const deps = makeDeps({ voiceResponsePipeline });
+
+    await runWithContext(makeResolvedContext(), () => executeLlm(
+      deps, voiceAdapter(), makeMessage(), makeSessionKey(), "agent-1",
+      executor, "user", makeBlockStreamCfg(), undefined, undefined,
+      undefined, undefined,
+    ));
+
+    const deliveryDecision = getOverrides()?.outboundAudioAutoDelivery;
+    expect(deliveryDecision).toBeTypeOf("function");
+    expect((deliveryDecision as (responseText: string) => boolean)(
+      "[[tts]] Done — here is the voice reply.",
+    )).toBe(true);
+    expect((deliveryDecision as (responseText: string) => boolean)(
+      "Done — here is the text reply.",
+    )).toBe(false);
+  });
+
   it("claims no runtime voice delivery without a pipeline, an attachment-capable adapter, or an unconditional mode", async () => {
     const cases: Array<[ExecuteDeps, ChannelPort]> = [
       [makeDeps(), voiceAdapter()],
