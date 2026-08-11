@@ -53,6 +53,7 @@ export interface ObservabilityEvidenceLimits {
   readonly crossExecutionDurationRanking?: "unavailable";
 }
 
+// @optional-field-count: A tool-result receipt aggregates independently conditional evidence from message, exec, web, scheduler, background, and observability boundaries; fields stay absent unless the trusted boundary emitted them.
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
   /** Bounded structured action discriminator from the tool arguments. */

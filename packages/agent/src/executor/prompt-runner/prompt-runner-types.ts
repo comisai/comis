@@ -64,6 +64,7 @@ export interface PromptRunnerBridge {
 }
 
 /** Parameters for runPrompt(). */
+// @optional-field-count: The prompt-runner boundary carries independently conditional routing, skill-receipt, locale, policy-projection, and model-profile evidence; each field is absent when its upstream mechanism does not apply.
 export interface RunPromptParams {
   msg: NormalizedMessage;
   session: AgentSession;

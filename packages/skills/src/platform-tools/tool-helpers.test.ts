@@ -318,7 +318,7 @@ describe("throwToolError", () => {
 });
 
 describe("readEnumParam", () => {
-  it("returns valid value", () => {
+  it("returns a valid enum value", () => {
     const result = readEnumParam({ action: "add" }, "action", ["add", "remove"]);
     expect(result).toBe("add");
   });

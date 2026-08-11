@@ -41,7 +41,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 describe("graph.execute dispatch hint (caller stop-after-delegate)", () => {
   it("tells the model its job is DONE, to STOP, and to NOT research the topic itself", () => {
     const src = readFileSync(resolve(here, "graph-mutate.ts"), "utf-8");
-    const hintMatch = src.match(/hint:\s*"([^"]*Pipeline launched[^"]*)"/);
+    const hintMatch = src.match(/:\s*"([^"]*Pipeline launched — your job is now DONE[^"]*)"/);
     expect(hintMatch).not.toBeNull();
     const hint = (hintMatch?.[1] ?? "").toLowerCase();
     expect(hint).toContain("done");

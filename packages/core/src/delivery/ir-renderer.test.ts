@@ -219,7 +219,7 @@ describe("renderForTelegram", () => {
     expect(render("# Title", "telegram")).toBe("<b>Title</b>");
   });
 
-  it("renders blockquotes", () => {
+  it("renders blockquotes with tags", () => {
     expect(render("> quote", "telegram")).toBe("<blockquote>quote</blockquote>");
   });
 
@@ -261,7 +261,7 @@ describe("renderForWhatsApp", () => {
     expect(render("*italic*", "whatsapp")).toBe("_italic_");
   });
 
-  it("renders inline code", () => {
+  it("renders inline code unchanged", () => {
     expect(render("`code`", "whatsapp")).toBe("`code`");
   });
 
@@ -366,7 +366,7 @@ describe("renderForIMessage", () => {
     expect(render("> quote", "imessage")).toBe("> quote");
   });
 
-  it("renders lists", () => {
+  it("renders lists as plain text", () => {
     const result = render("- a\n- b", "imessage");
     expect(result).toContain("- a");
     expect(result).toContain("- b");
@@ -395,7 +395,7 @@ describe("renderForLine", () => {
     expect(render("> quote", "line")).toBe("> quote");
   });
 
-  it("renders lists", () => {
+  it("renders lists as plain text", () => {
     const result = render("- a\n- b", "line");
     expect(result).toContain("- a");
     expect(result).toContain("- b");
