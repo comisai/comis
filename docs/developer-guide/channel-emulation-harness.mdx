@@ -91,7 +91,7 @@ load boots the daemon fine but never authors a reply, so every Stage-C round-tri
 ```bash
 # Stage-C — operator only (needs the keyless tag pulled and `ollama serve` up):
 COMIS_LIVE=1 COMIS_LIVE_LOCAL_MODELS=llama3.2:3b pnpm vitest run -c test/live/vitest.config.ts \
-  test/live/scenarios/channels/telegram-acceptance.test.ts
+  test/live/scenarios/channels/telegram-acceptance-vl.test.ts
 ```
 
 ## The `chan` / `tg` CLI
