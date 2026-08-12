@@ -1060,6 +1060,41 @@ describe("tool retry breaker", () => {
       expect(reason).toContain("upstream 503 from provider");
     });
 
+    it("holds the no-nesting invariant when its OWN output is fed back, round after round", () => {
+      // The case above hand-escapes its fixture, so it exercises the peel but
+      // never the round trip: the builder embeds lastError RAW while the peeler
+      // parses it as a JSON-escaped string, so a real envelope (every exec and
+      // web_fetch failure is one) fails to peel and each retry adds a layer.
+      // Live on comis-moshe: "failed 13 total times with the same error:
+      // \"…failed 12 total times…\"" — 552 bytes with the real error buried.
+      // The inner text is itself JSON, so it CONTAINS QUOTES — which is what
+      // breaks the round trip. Every real web_fetch/exec failure looks like this.
+      const envelope = JSON.stringify({
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            url: "https://www.tamir-group.co.il/solution/subaru-forester-2020",
+            error: "URL redirected to a different location. Redirects are blocked for security.",
+          }, null, 2),
+        }],
+        details: {},
+      });
+
+      let reason = buildBlockReason("web_fetch", 11, envelope, [], "dependency", true);
+      // Each later turn feeds the PREVIOUS block message back in as lastError —
+      // exactly what the live retry loop does.
+      for (const count of [12, 13, 14]) {
+        reason = buildBlockReason("web_fetch", count, reason, [], "dependency", true);
+      }
+
+      expect((reason.match(/has failed/g) ?? []).length).toBe(1);
+      expect(reason).not.toMatch(/same error:.*has failed/s);
+      expect((reason.match(/appears to be unavailable/g) ?? []).length).toBe(1);
+      // The innermost real error survives every round — it is the whole point
+      // of the clause, and it is what got buried.
+      expect(reason).toContain("Redirects are blocked for security");
+    });
+
     it("collapses a raw serialized envelope lastError to its inner text", () => {
       const envelope = JSON.stringify({
         content: [{ type: "text", text: "[permission_denied] EPERM: operation not permitted" }],
