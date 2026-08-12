@@ -92,7 +92,7 @@ export interface SessionDescriptorStorePort {
  */
 export type RecoveredAction =
   | { action: "reattach"; descriptor: SessionDescriptor }
-  | { action: "failed"; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" | "managed_root_identity_unavailable"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
+  | { action: "failed"; descriptor?: SessionDescriptor; sessionId: string; owner: SessionOwner; reason: "tmux_session_gone" | "managed_root_identity_unavailable"; managedBinding?: { managedRunId: string; workspaceLeaseId: string; serviceInstanceId: string } };
 
 /** Dependencies for {@link recoverSessionDescriptors} — the injected store + liveness probe. */
 export interface RecoverSessionDescriptorsDeps {
@@ -143,14 +143,13 @@ export function recoverSessionDescriptors(deps: RecoverSessionDescriptorsDeps): 
     } else if (decision.action === "failed") {
       // Carry the descriptor's owner (the persisted identity) so the registry's
       // content-free unrecoverable hook gets the agentId without a second lookup.
+      const managedBinding = managedDescriptorIdentity(descriptor);
       out.push({
         action: "failed",
         sessionId: decision.sessionId,
         owner: descriptor.owner,
         reason: decision.reason,
-        ...(descriptor.managedRunId === undefined || descriptor.workspaceLeaseId === undefined || descriptor.serviceInstanceId === undefined
-          ? {}
-          : { managedBinding: { managedRunId: descriptor.managedRunId, workspaceLeaseId: descriptor.workspaceLeaseId, serviceInstanceId: descriptor.serviceInstanceId } }),
+        ...(managedBinding === undefined ? {} : { descriptor, managedBinding }),
       });
     }
     // fallback_nondurable → skip (the registry's existing lost floor handles it).
@@ -421,7 +420,13 @@ export function applyRecoveredSessions(
       // re-emits lost every boot). The JOURNAL is preserved by the daemon holder
       // (the descriptor store is distinct from the journal store).
       deps.onUnrecoverable?.({ sessionId: r.sessionId, agentId: r.owner.agentId, reason: r.reason, errorKind: "dependency", ...(r.managedBinding ?? {}) });
-      if (r.managedBinding === undefined) deps.descriptorStore.remove(r.sessionId);
+      if (r.managedBinding !== undefined && r.descriptor !== undefined && r.reason === "tmux_session_gone") {
+        const handle = rehydrateHandleFromDescriptor(r.descriptor, nowMs());
+        handle.status = "lost";
+        sessions.set(r.sessionId, handle);
+      } else if (r.managedBinding === undefined) {
+        deps.descriptorStore.remove(r.sessionId);
+      }
     }
   }
 }
