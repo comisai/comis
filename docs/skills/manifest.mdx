@@ -124,7 +124,7 @@ successful** receipts. If they never arrive, the turn ends
 `tool_invocation_stall` -- the unsourced answer is replaced by an honest
 "could not verify" reply and the session is reported degraded in
 [`comis explain`](/reference/cli#comis-explain) -- so set them only on skills
-whose answers must be sourced. `skills/deep-research/SKILL.md` ships with `3`
+whose answers must be sourced. The bundled `deep-research` skill ships with `3`
 for both. A gate is enforced only when the tool that mints its receipts is
 available to the agent for that turn: with `web_fetch` unavailable the
 fetch gate is dropped, with `web_search` unavailable the search gate is

@@ -10,12 +10,12 @@ an explanation of how it works, and how to test it.
 
 ## Built-in skill walkthrough: log-troubleshooting
 
-Comis ships with seven prompt skills in the repo's `/skills/` directory, and
-the easiest way to understand the format is to read a real one. Here is the
-manifest and body of `log-troubleshooting`, the skill agents reach for when
-the user asks "what went wrong?" or "why is the daemon slow?"
+Comis ships a set of prompt skills that seed into `~/.comis/skills/` on first
+boot, and the easiest way to understand the format is to read a real one. Here
+is the manifest and body of `log-troubleshooting`, the skill agents reach for
+when the user asks "what went wrong?" or "why is the daemon slow?"
 
-**Live at:** `<repo>/skills/log-troubleshooting/SKILL.md`
+**Live at:** `~/.comis/skills/log-troubleshooting/SKILL.md`
 
 ```yaml
 ---
@@ -68,8 +68,8 @@ The agent automatically loads `log-troubleshooting`, runs
 top errors, slowest operations, and warnings.
 
 <Tip>
-Read the rest in [`<repo>/skills/log-troubleshooting/SKILL.md`](https://github.com/comisai/comis/tree/main/skills/log-troubleshooting).
-The other six shipped skills (`chart-visualization`, `deep-research`,
+Read the rest in [`log-troubleshooting/SKILL.md`](https://github.com/comisai/comis/tree/main/packages/daemon/bundled-skills/log-troubleshooting).
+Its sibling shipped skills (`chart-visualization`, `deep-research`,
 `find-skills`, `image-generation`, `podcast-generation`, `video-generation`)
 follow the same structure -- skim them when picking a template for your own.
 </Tip>

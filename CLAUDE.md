@@ -10,7 +10,7 @@ Preserve Comis as a generic agent runtime on every change. Before editing produc
 
 - Runtime code may provide reusable mechanisms for orchestration, models, tools, memory, channels, scheduling, approvals, delivery, observability, security, typed prompts, locale policy, and immutable workspace policy.
 - Do not add an industry, persona, business workflow, fixed human language, response script, domain vocabulary, or task-specific tool instructions to the engine prompt, workspace starters, default config, `packages/core`, or `packages/agent`.
-- Put deployment-specific policy and persona in operator workspace files. Put reusable procedures, examples, domain knowledge, and tool-selection guidance in an opt-in prompt skill. When it should ship with Comis, build a repository-shipped skill at `skills/<name>/SKILL.md` instead of specializing runtime code.
+- Put deployment-specific policy and persona in operator workspace files. Put reusable procedures, examples, domain knowledge, and tool-selection guidance in an opt-in prompt skill. When it should ship with Comis, build a repository-shipped skill instead of specializing runtime code — AGENTS.md §6.5 owns which skill tree actually ships and seeds.
 - Put external API capabilities behind MCP or a typed adapter. Keep their instructions bounded and attributed, preserve side-effect/approval metadata, and never let integration or skill prose grant capabilities or override engine/operator policy.
 - Promote behavior into the runtime only when an unrelated deployment can use it without inheriting the requester's assumptions. Do not accept a temporary hard-coded special case.
 
