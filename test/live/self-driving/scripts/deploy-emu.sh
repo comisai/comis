@@ -50,7 +50,7 @@ else
   # undrivable"). The kit was causing the condition it tells you to check for.
   # Single quotes are escaped so the JSON array survives the remote shell intact.
   emu_groups_q=$(printf "%s" "${EMU_GROUPS:-}" | sed "s/'/'\\\\''/g")
-  remote_root "EMU_DIR='$EMU_DIR' EMU_GROUPS='$emu_groups_q' bash '$KIT_DIR/restart-emu.sh'"
+  remote_root "RIG_ENV='$RIG_ENV' EMU_DIR='$EMU_DIR' EMU_GROUPS='$emu_groups_q' bash '$KIT_DIR/restart-emu.sh'"
 fi
 
 if [ "${WIRE:-0}" = 1 ]; then
@@ -58,7 +58,7 @@ if [ "${WIRE:-0}" = 1 ]; then
   if rig_is_local; then
     node "$HERE/wire-emu.mjs" && bash "$HERE/restart-daemon.sh"
   else
-    remote_root "node '$KIT_DIR/wire-emu.mjs' && bash '$KIT_DIR/restart-daemon.sh'"
+    remote_root "RIG_ENV='$RIG_ENV' node '$KIT_DIR/wire-emu.mjs' && RIG_ENV='$RIG_ENV' bash '$KIT_DIR/restart-daemon.sh'"
   fi
 elif rig_is_local; then
   echo "NEXT: node $HERE/wire-emu.mjs && $HERE/restart-daemon.sh   # or re-run with WIRE=1"
