@@ -500,8 +500,29 @@ export function startFixtureService(input: {
   });
 }
 
+function unixSocketAcceptsConnection(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(path);
+    let settled = false;
+    const finish = (ready: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ready);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
 export async function waitForUnixSocket(path: string, timeoutMs = 15_000): Promise<void> {
-  await waitUntil(() => existsSync(path), timeoutMs, `Unix socket ${path}`);
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (existsSync(path) && await unixSocketAcceptsConnection(path)) return;
+    if (Date.now() >= deadline) throw new Error(`Unix socket ${path} timed out`);
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
 }
 
 export function readLauncherPids(path: string): number[] {
