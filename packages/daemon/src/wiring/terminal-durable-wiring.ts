@@ -103,7 +103,6 @@ let cachedTmuxPath: string | undefined | "unresolved" = "unresolved";
 export function resolveDaemonTmuxPath(): string | undefined {
   if (cachedTmuxPath !== "unresolved") return cachedTmuxPath;
   try {
-    // eslint-disable-next-line no-restricted-syntax -- one-shot tmux path resolve at daemon startup
     cachedTmuxPath = execFileSync("which", ["tmux"], { encoding: "utf8" }).trim() || undefined;
   } catch {
     cachedTmuxPath = undefined;
@@ -127,7 +126,6 @@ export function buildIsTmuxAlive(
   tmuxPath: string | undefined,
   socketPath: string,
   run: (bin: string, args: string[]) => void = (bin, args) => {
-    // eslint-disable-next-line no-restricted-syntax -- bounded has-session liveness probe (recover-on-boot + backstop)
     execFileSync(bin, args, { stdio: "ignore" });
   },
 ): (name: string, socket?: string) => boolean {
@@ -161,7 +159,6 @@ export function buildKillTmux(
   tmuxPath: string | undefined,
   socketPath: string,
   run: (bin: string, args: string[]) => void = (bin, args) => {
-    // eslint-disable-next-line no-restricted-syntax -- bounded kill-session teardown (durable evict backstop)
     execFileSync(bin, args, { stdio: "ignore" });
   },
 ): (name: string, socket?: string) => void {

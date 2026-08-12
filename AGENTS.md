@@ -8,40 +8,20 @@ Hexagonal (ports + adapters). Core defines port interfaces; adapters implement t
 
 Extension points in `packages/core/src/`:
 
-- `ports/` — port interfaces (`*Port` suffix): `ChannelPort`, `ChannelPluginPort`, `MemoryPort`, `SkillPort`, `EmbeddingPort`, `MediaResolverPort`, `TranscriptionPort`, `TTSPort`, `ImageAnalysisPort`, `VisionPort`, `FileExtractionPort`, `OutputGuardPort`, `SecretStorePort`, `DeviceIdentityPort`, `CredentialMappingPort`, `PluginPort`, `DeliveryQueuePort`, `DeliveryMirrorPort`, `ClockPort`, `EnvPort`, `TimerPort` (+ `TimerHandle`), `ContextStorePort`, `SessionStorePort`, `FileLockPort`, hook types. Adapters live in the consumer package (e.g., `@comis/memory` for store ports) or `@comis/infra` for runtime adapters (`createSystemClock`, `createSystemEnv`, `createSystemTimers`).
+- `ports/` — port interfaces (`*Port` suffix): `ChannelPort`, `ChannelPluginPort`, `MemoryPort`, `SkillPort`, `EmbeddingPort`, `MediaResolverPort`, `TranscriptionPort`, `TTSPort`, `ImageAnalysisPort`, `VisionPort`, `FileExtractionPort`, `OutputGuardPort`, `SecretStorePort`, `DeviceIdentityPort`, `CredentialMappingPort`, `PluginPort`, `DeliveryQueuePort`, `DeliveryMirrorPort`, `ClockPort`, `EnvPort`, `TimerPort` (+ `TimerHandle`), `ContextStorePort`, `SessionStorePort`, `FileLockPort`, `CapabilityServiceControlPort`, `ManagedRunStorePort`, `ManagedRunContentPort`, `WorkspaceLeasePort`, `ExecutionAttachmentPort`, hook types. Adapters live in the consumer package (e.g., `@comis/memory` for store ports) or `@comis/infra` for runtime adapters (`createSystemClock`, `createSystemEnv`, `createSystemTimers`).
 - `runtime/` — sanctioned-root in-package helpers (`system-time.ts`: `systemNowMs`, `systemNowDate`, `systemDateFrom`, `systemSleep`, `systemSetTimeout`/`systemClearTimeout`, `systemSetInterval`/`systemClearInterval`, `systemScheduleTimeout`, `systemGetEnv`, `systemEnvSnapshot`). Use these only at trust-boundary call sites that genuinely cannot accept an injected port (top-level loggers, OAuth poll loops). Secrets must still go through `SecretManager`.
 - `domain/` — Zod-validated domain types (`NormalizedMessage`, `MemoryEntry`, `AgentResponse`, `ExecutionGraph`, `SubagentResult`, `ApprovalRequest`, `CredentialMapping`, `SecretRef`, etc.). Define schema → infer type with `z.infer`.
 - `security/` — security primitives: `safePath`, `validateUrl` (SSRF), `SecretManager`, `SecretsCrypto` (AES-256-GCM), `ScopedSecretManager`, `SecretRefResolver`, `ActionClassifier`, `AuditAggregator`, `InputSecurityGuard`, `validateInput`, `OutputGuard`, `MemoryWriteValidator`, `wrapExternalContent`, `sanitizeLogString`, `CanaryToken`, injection patterns + rate limiter.
-- `config/` — Zod schemas, layered config (defaults → YAML files → env overrides). Paths via `COMIS_CONFIG_PATHS` (comma-separated). Runtime changes via `config.write` RPC (in-memory only).
-- `event-bus/` — `TypedEventBus` with strongly-typed events across `AgentEvents`, `ChannelEvents`, `MessagingEvents`, `InfraEvents`. Logging supplements events, does not replace them.
+- `config/` — Zod schemas, layered config (defaults → YAML files → env overrides). Paths via `COMIS_CONFIG_PATHS` (comma-separated). Runtime writes use `config.patch` / `config.apply`, while immutable topology is changed in config files and applied on restart; [`docs/reference/config-yaml.mdx`](docs/reference/config-yaml.mdx) owns the field contracts.
+- `event-bus/` — `TypedEventBus` with strongly-typed event families including `AgentEvents`, `ChannelEvents`, `MessagingEvents`, `InfraEvents`, `CapabilityServiceEvents`, and `ManagedRunEvents`. Logging supplements events, does not replace them.
 - `hooks/` — `PluginRegistry` + `HookRunner` for plugin lifecycle.
 - `context/` — AsyncLocalStorage request-scoped context via `runWithContext()` / `getContext()`.
 - `bootstrap.ts` — composition root → `AppContainer`.
 
 ### Package Map
 
-```
-shared        Result type, utilities — zero runtime deps
-core          domain, ports, event bus, security, config, hooks, bootstrap, ComisLogger structural contract, FileLockPort, ContextStorePort (the LCD lossless-store port) + SessionStorePort + row DTOs (LcdMessage, LcdMessagePart, LcdPartMetadata, LcdPartKind, LcdRole, ContextStoreScope, AppendMessageInput, SessionData, SessionListEntry, SessionDetailedEntry) + parts-codec (messageToParts/partsToMessage), OAuth helpers, master-key helpers
-infra         Pino structured logging implementation (assignable to core's ComisLogger contract)
-observability Diagnostics substrate: queued writer, payload bounding, sanitization, path guards, cache-trace runtime + EventBus bridge, cache-stats aggregation/RPC
-observability-otel opt-in OTel extension: OTLP traces/metrics/logs + a standalone Prometheus /metrics exporter (single MeterProvider, two readers); subscribes the bus, content-free; the ONLY @opentelemetry/*-dependent package; daemon lazy-loads it (dynamic import) only when observability.otel/prometheus is enabled → core/daemon build OTel-free
-memory        SQLite-backed ContextStorePort + SessionStorePort impls (return types
-              from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
-              CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,
-              observability/embedding adapters). Row DTOs re-exported from core (single
-              source of truth). Daemon consumes; agent + cli consume port types from @comis/core.
-gateway       Hono HTTP, JSON-RPC, WebSocket, mTLS
-skills        manifest, prompt skills, MCP, built-in tools, media, STT/TTS/vision/image-gen integrations
-scheduler     cron, heartbeat, task extraction; createFileLock(): FileLockPort factory backed by proper-lockfile
-agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter (does not reference @comis/infra; OAuth helpers live in @comis/core)
-channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo) (does not reference @comis/infra)
-orchestrator  inbound pipeline, execution coordination, channel-manager, command queue, routing, cross-session messaging
-cli           Commander.js, JSON-RPC client
-daemon        orchestrator, observability, systemd (DeviceIdentityPort adapter)
-comis         umbrella package — namespace re-exports
-web           Lit + Vite + Tailwind standalone SPA
-```
+The authoritative package inventory, package roles, and dependency overview
+live in [`docs/developer-guide/packages.mdx`](docs/developer-guide/packages.mdx).
 
 Dependency direction: inward to `core`. `daemon` depends on everything; `shared` depends on nothing. Use public exports (`packages/*/dist/index.js`) only — no cross-package internal imports.
 

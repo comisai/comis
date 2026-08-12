@@ -12,17 +12,18 @@ Comis has two distinct hot reload mechanisms: **config hot reload** uses RPC-bas
 
 | Change | How it applies | Drops connections? |
 |--------|---------------|--------------------|
-| `config.patch` / `config.apply` (any section) | Validate → write → 200 ms delayed `SIGUSR1` → process restart | Yes — supervisor (pm2/systemd) restarts the daemon. WS clients reconnect with restart-continuation. |
+| `config.patch` / `config.apply` (mutable sections) | Validate → write → 200 ms delayed `SIGUSR1` → process restart | Yes — supervisor (pm2/systemd) restarts the daemon. WS clients reconnect with restart-continuation. |
 | `agents.create` / `agents.update` / `agents.delete` | Same path, but with a 2-second debounced `SIGUSR1` so batches coalesce | Yes |
 | `tokens.create` / `tokens.revoke` / `tokens.rotate` | Same debounced restart path | Yes |
 | `channels.enable` / `channels.disable` | Same debounced restart path | Yes |
 | `gateway.restart` RPC | Direct `SIGUSR1` (200 ms delay to flush response) | Yes |
 | `tooling.*` (entire subtree) | `config.patch` / `config.apply` validate → write → 200 ms delayed `SIGUSR1` → process restart. **Cannot hot-flip** within a running session — `tooling.capabilityIndex.enabled` selects between two cached system-prompt shapes (one-line residual vs flat tool dump), and `tooling.installDetours.mode` is read at adapter-construction time. Operator-only: agents cannot self-edit (the entire `tooling` subtree is in `IMMUTABLE_CONFIG_PREFIXES`). | Yes |
+| `capabilityServices.*` | Runtime writes are rejected. Edit the config file, validate it, and restart manually so linked service topology and authority roots change only at boot. | Yes |
 | New SKILL.md added to a discovery path | chokidar `add` event → debounced re-discovery, no restart | No |
 | Existing SKILL.md edited or deleted | chokidar `change` / `unlink` event → debounced re-discovery | No |
 | Editing `~/.comis/config.yaml` directly | **Not detected.** Run `comis config validate` then restart manually. | -- |
 
-The takeaway: **everything except skill files goes through a daemon restart.** The restart is graceful (ordered teardown, ~30 s hard timeout) and active sessions are preserved across the bounce via the restart continuation tracker, so end users typically don't notice.
+The takeaway: **everything except skill files takes effect through a daemon restart.** The restart is graceful (ordered teardown, 45 s hard timeout by default) and active sessions are preserved across the bounce via the restart continuation tracker, so end users typically don't notice.
 
 <Warning>
   Config hot reload is NOT file watching. The daemon does not watch config files for changes. Config changes go through the RPC API, which validates, writes, and then sends SIGUSR1 to restart the daemon.
@@ -75,6 +76,12 @@ Used by management RPC handlers (agents, tokens, channels) to persist config cha
 ### Immutable Config Keys
 
 Certain config paths cannot be modified at runtime through the RPC API. Attempting to patch these paths returns an error instructing the operator to modify config files manually.
+
+This includes linked capability-service topology under `capabilityServices`.
+Those settings define service activation, credentials, and filesystem authority,
+so they are loaded only at boot. See
+[Capability Services](/reference/config-yaml#capability-services) for the config
+contract.
 
 ### Git Versioning
 
@@ -166,30 +173,10 @@ When SIGUSR1 is received, the daemon initiates an ordered teardown sequence foll
 
 ### Teardown Sequence
 
-The shutdown handler stops components in dependency order:
-
-1. Graph coordinator (cancel running graph pipelines)
-2. Sub-agent runner (drain active sub-agent runs)
-3. Lock cleanup timer
-4. Approval gate (dispose pending timers)
-5. Skill file watchers (close chokidar instances)
-6. Cron schedulers (per-agent)
-7. Session reset schedulers (per-agent)
-8. Browser services (close Chrome processes)
-9. Restart continuation tracker (capture active sessions)
-10. Lifecycle reactors
-11. Channel manager (stop all channel adapters)
-12. Heartbeat runner
-13. Per-agent heartbeat runner
-14. Wake coalescer
-15. Media temp manager
-16. Gateway HTTP/WebSocket server
-17. Observability modules (diagnostic collector, activity tracker, delivery tracer)
-18. Background embedding indexing (with 5-second timeout)
-19. Audit aggregator
-20. Injection rate limiter
-21. Secret store database
-22. Memory database
+The daemon operations guide owns the shutdown order and its operator-visible log
+shape. See [Shutting Down](/operations/daemon#shutting-down). The load-bearing
+capability-service invariant is that new ingress closes and accepted report
+mutations drain before the shared memory database closes.
 
 ### Hard Timeout
 

@@ -6,9 +6,9 @@ icon: "file-code"
 
 **What this is for:** the single source of truth for everything you can put in `~/.comis/config.yaml`. **Who it's for:** anyone tuning agent behavior, wiring channels, hardening the gateway, or composing layered configs across environments.
 
-Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 41 top-level sections with 54+ nested schemas defining agent behavior, channel adapters, security policies, gateway settings, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
+Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 44 top-level sections defining agent behavior, channel adapters, security policies, gateway settings, capability services, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
 
-Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (colon-separated, like the shell `PATH`). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
+Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (comma-separated). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
 
 ## Config Loading
 
@@ -154,11 +154,12 @@ The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`,
 
 ## Quick Reference
 
-All 42 top-level configuration sections at a glance:
+All 44 top-level configuration sections at a glance:
 
 | Section | Type | Description |
 |---------|------|-------------|
 | `tenantId` | `string` | Tenant identifier for multi-tenancy |
+| `identity` | `IdentityConfig` | Authenticated platform-subject to principal mappings |
 | `logLevel` | `enum` | Global log level (trace/debug/info/warn/error/fatal) |
 | `dataDir` | `string` | Base data directory for persistent storage |
 | `agentDir` | `string` | SDK agent directory for persistent settings |
@@ -200,6 +201,7 @@ All 42 top-level configuration sections at a glance:
 | `tooling` | `ToolingConfig` | Tool-first capability layer -- MCP/skill hints, install-detour mode |
 | `orchestration` | `OrchestrationConfig` | Small-model DAG-authoring gates (all default `true` — full authoring out of the box; set a flag `false` to opt it out) |
 | `executor` | `ExecutorConfig` | Credential-broker executor configuration (optional; omit unless using the broker) |
+| `capabilityServices` | `CapabilityServicesConfig` | Restart-only linked service topology and managed-run bounds |
 
 ## Core Settings
 
@@ -221,6 +223,34 @@ tenantId: my-project
 logLevel: info
 dataDir: /opt/comis/data
 agentDir: ~/.pi/agent
+```
+
+</Accordion>
+
+<Accordion title="identity.principalMappings">
+
+Trusted mappings from authenticated platform assertions to stable internal
+principals. An unmapped assertion receives a deterministic namespaced principal;
+display names and other adapter metadata are not identity evidence. The section
+defaults to an empty mapping list and is operator-only at runtime.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `principalMappings` | `PrincipalMapping[]` | `[]` | Exact mappings scoped by tenant, agent, channel type, channel instance, and platform subject |
+
+Each mapping requires `tenantId`, `agentId`, `principalId`, and an `assertion`
+with `channelType`, `channelInstanceId`, and `platformSubjectId`.
+
+```yaml
+identity:
+  principalMappings:
+    - tenantId: my-project
+      agentId: assistant
+      assertion:
+        channelType: telegram
+        channelInstanceId: primary-bot
+        platformSubjectId: "123456789"
+      principalId: customer-123
 ```
 
 </Accordion>
@@ -2210,6 +2240,63 @@ entry without corresponding source wiring has no runtime effect.
 </Accordion>
 
 </AccordionGroup>
+
+## Capability Services
+
+`capabilityServices` configures linked external capability-service instances and
+the durable managed-run limits enforced by the daemon. With the default empty
+`instances` list, the platform is inert. The whole section is restart-only and
+operator-controlled: edit the config file, validate it, and restart the daemon;
+runtime `config.patch` and `config.apply` calls cannot change it.
+
+```yaml
+capabilityServices:
+  privateContentDirectory: managed-runs/private
+  reportRetentionMs: 2592000000
+  maxObservedClockSkewMs: 300000
+  recoveryBatchSize: 256
+  requestDeadlineMs: 5000
+  instances:
+    - serviceInstanceId: example-service-1
+      serviceDefinitionId: example.service
+      enabled: true
+      mcpServerName: example-service
+      control:
+        transport: unix
+        socketPath: /run/comis/example-service.sock
+        credentialRef: secret://capability-services/example-service-1
+      allowedAgents: [assistant]
+      allowedWorkspaceRoots: [/srv/comis-workspaces]
+      allowedRuntimeRoots: [/srv/example-service/runtime]
+```
+
+The `serviceDefinitionId` and `mcpServerName` must match a linked contribution.
+The control transport is Unix-socket only; `socketPath` must be normalized and
+absolute, and `credentialRef` must be a `secret://` reference. Agent IDs must be
+unique. Workspace and runtime roots must be unique, normalized absolute paths
+narrower than a filesystem root.
+
+| Key | Type | Default | Validation |
+|-----|------|---------|------------|
+| `instances` | `CapabilityServiceInstanceConfig[]` | `[]` | At most 256 configured instances |
+| `privateContentDirectory` | `string` | `"managed-runs/private"` | Normalized relative path using safe directory segments |
+| `reportRetentionMs` | `integer` | `2592000000` (30 days) | Positive; at most 365 days |
+| `maxObservedClockSkewMs` | `integer` | `300000` | Non-negative; at most 24 hours |
+| `recoveryBatchSize` | `integer` | `256` | 1–10000 |
+| `requestDeadlineMs` | `integer` | `5000` | 100–60000 |
+
+Each instance requires these fields:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `serviceInstanceId` | `string` | Opaque instance identifier |
+| `serviceDefinitionId` | `string` | Definition exported by a linked contribution |
+| `enabled` | `boolean` | Whether the daemon activates the instance at boot |
+| `mcpServerName` | `string` | MCP server owned by the linked definition |
+| `control` | `object` | Unix socket and secret-backed bearer credential |
+| `allowedAgents` | `string[]` | Non-empty set of agents allowed to use the instance |
+| `allowedWorkspaceRoots` | `string[]` | Workspace-lease authority roots; at most 64 |
+| `allowedRuntimeRoots` | `string[]` | Execution-attachment authority roots; at most 64 |
 
 ## tooling
 

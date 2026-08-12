@@ -539,7 +539,6 @@ export function buildTerminalEgressDeps(
   let bwrapPath: string | undefined;
   if (sandboxProvider?.name === "bwrap") {
     try {
-      // eslint-disable-next-line no-restricted-syntax -- one-shot bwrap path resolve at daemon startup
       bwrapPath = execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
     } catch {
       bwrapPath = undefined; // provider reported bwrap but PATH lost it — fail-closed downstream
