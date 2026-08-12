@@ -154,7 +154,7 @@ describe("capability-service Linux confinement runner", () => {
     expect(dockerfile).toContain("COPY --chmod=0755 test/confinement-runner/wave4-codex-launcher.sh");
     expect(dockerfile).toContain("/usr/local/bin/wave4-codex-launcher");
     expect(launcher).toContain("/usr/local/bin/codex");
-    expect(launcher).toContain("DEV_CREW_ATTACHMENT");
+    expect(launcher).toContain("COMIS_EXECUTION_ATTACHMENT");
     expect(launcher).toContain("devcrew-report acknowledge");
     expect(launcher).toContain("devcrew-report brief");
   });
@@ -173,7 +173,7 @@ describe("capability-service Linux confinement runner", () => {
 
     expect(launcher).not.toMatch(/find \/run\/comis\/attachments[^\n]*-type s/u);
     expect(launcher).toContain('test -S "${attachments[0]}"');
-    expect(launcher).toContain('export DEV_CREW_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"');
+    expect(launcher).toContain('export COMIS_EXECUTION_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"');
   });
 
   it("uses one authenticated catalog model for the profile and real workers", () => {

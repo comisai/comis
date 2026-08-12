@@ -55,8 +55,8 @@ jq -n \
   > "${EVIDENCE_FILE}"
 
 export CODEX_HOME=/home/comis/.codex
-export DEV_CREW_ATTACHMENT="${own_attachment}"
-export DEV_CREW_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
+export COMIS_EXECUTION_ATTACHMENT="${own_attachment}"
+export COMIS_EXECUTION_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
 export PATH="${REPORTER_CAPTURE_DIR}:${REPORTER_DIR}:${PATH}"
 touch .e0-real-codex-started
 

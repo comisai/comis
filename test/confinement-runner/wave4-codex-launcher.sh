@@ -60,12 +60,12 @@ jq -n \
   > "${EVIDENCE_FILE}"
 
 export CODEX_HOME=/home/comis/.codex
-export DEV_CREW_ATTACHMENT="${own_attachment}"
-export DEV_CREW_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
+export COMIS_EXECUTION_ATTACHMENT="${own_attachment}"
+export COMIS_EXECUTION_ATTACHMENT_TARGET_NAME="${own_attachment##*/}"
 export PATH="${REPORTER_CAPTURE_DIR}:${REPORTER_DIR}:${PATH}"
 jq -n \
   --arg workingDirectory "$(pwd -P)" \
-  --arg attachmentTargetName "${DEV_CREW_ATTACHMENT_TARGET_NAME:-}" \
+  --arg attachmentTargetName "${COMIS_EXECUTION_ATTACHMENT_TARGET_NAME:-}" \
   --arg mountedAttachmentName "$(basename "${own_attachment}")" \
   '{workingDirectory:$workingDirectory,attachmentTargetName:$attachmentTargetName,mountedAttachmentName:$mountedAttachmentName}' \
   > "${RUNTIME_CONTEXT_FILE}"
