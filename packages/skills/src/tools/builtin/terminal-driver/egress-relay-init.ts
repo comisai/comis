@@ -69,6 +69,12 @@ export interface RelayInitAudit {
   message?: string;
 }
 
+/** The spawn outcome fields needed to preserve the driven child's exit meaning. */
+export interface RelayChildSpawnResult {
+  readonly status: number | null;
+  readonly error?: Error;
+}
+
 /** Injectable seams for {@link dropPrivileges} (default = the real process + stderr). */
 export interface DropPrivilegesDeps {
   /** `process.setgid` (default). Injected so the not-mapped throw is unit-testable. */
@@ -271,6 +277,30 @@ export function buildRelayChildEnv(parentEnv: NodeJS.ProcessEnv, relayPort: numb
   };
 }
 
+/**
+ * Map the driven child's spawn outcome to an exit code and make an exec failure
+ * operator-actionable. A missing executable is a host/jail composition failure,
+ * not a successful terminal exit, so it emits one structured record before 127.
+ */
+export function relayChildExitCode(
+  result: RelayChildSpawnResult,
+  audit: (record: RelayInitAudit) => void = defaultAudit,
+): number {
+  if (typeof result.status === "number") return result.status;
+  if (result.error === undefined) return 1;
+  const spawnError = result.error as NodeJS.ErrnoException;
+  audit({
+    module: "egress-relay-init",
+    hint:
+      "the driven executable could not start inside the jail; verify " +
+      "skills.terminal.allow[].match.path resolves to the reviewed readable executable",
+    errorKind: "dependency",
+    code: typeof spawnError.code === "string" ? spawnError.code : undefined,
+    message: result.error.message,
+  });
+  return 127;
+}
+
 function execChild(child: string[], relayPort: number): never {
   if (child.length === 0) {
     process.stderr.write("egress-relay-init: no child command after `--`\n");
@@ -278,11 +308,7 @@ function execChild(child: string[], relayPort: number): never {
   }
   const [bin, ...rest] = child;
   const r = spawnSync(bin, rest, { stdio: "inherit", env: buildRelayChildEnv(process.env, relayPort) });
-  if (typeof r.status === "number") {
-    process.exit(r.status);
-  }
-  // Killed by signal (or failed to spawn) — surface a non-zero status.
-  process.exit(r.error !== undefined ? 127 : 1);
+  process.exit(relayChildExitCode(r));
 }
 
 async function main(): Promise<void> {
