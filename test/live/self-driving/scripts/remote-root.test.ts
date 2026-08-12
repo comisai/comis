@@ -36,6 +36,7 @@ const RESTART_EMULATOR = resolve(HERE, "restart-emu.sh");
 const VPS_EMULATOR = resolve(HERE, "../../bin/vps-emu.ts");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
+const SETUP_VPS = resolve(HERE, "setup-vps.sh");
 const RIG_DOCTOR = resolve(HERE, "rig-doctor.sh");
 const VERIFY_BUILD = resolve(HERE, "verify-build.sh");
 const INSTALL_VPS = resolve(HERE, "install-vps.sh");
@@ -850,6 +851,14 @@ describe("local rig mode", () => {
       const source = readFileSync(script, "utf8");
       expect(source, script).toContain("rig_load_env");
     }
+  });
+
+  it("loads the selected isolated rig before remote setup mutates its data root", () => {
+    const source = readFileSync(SETUP_VPS, "utf8");
+
+    expect(source).toContain('source "$HERE/_rig.sh"');
+    expect(source).toContain('rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env');
+    expect(source).not.toContain("[ -f /root/comis-rig.env ] && . /root/comis-rig.env");
   });
 
   it("scopes the local Telegram emulator lifecycle to the selected rig", () => {
