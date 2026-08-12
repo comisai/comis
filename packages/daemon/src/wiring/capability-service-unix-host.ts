@@ -14,6 +14,7 @@ import {
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityPutEvidenceRequestSchema,
+  CapabilityReceiveAttentionResponseRequestSchema,
   CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
   CapabilityServiceErrorResponseSchema,
@@ -44,8 +45,10 @@ import {
 } from "./capability-service-runtime.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
+import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 import {
+  routeManagedAttentionResponseIngress,
   routeManagedRunEvidenceIngress,
   routeManagedRunReleaseIngress,
   routeManagedRunReportIngress,
@@ -104,6 +107,7 @@ export interface UnixCapabilityServiceHostRuntimeDeps {
   readonly socketRoot: string;
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
+  readonly attentionResponseBridge: ManagedAttentionResponseBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
@@ -342,36 +346,13 @@ function createEndpoint(
         : err({ response: previous.response });
     }
 
-    async function routeReport(socket: net.Socket, request: z.infer<typeof CapabilityReportRequestSchema>): Promise<void> {
-      const operationId = request.params.operationId;
-      const replayState = beginReplay(operationId, request);
-      if (!replayState.ok) {
-        if (typeof replayState.error === "object") reply(socket, replayState.error.response);
-        else rejectRequest(socket, replayState.error === "pending" ? "rate_limited" : "replay_conflict", request.id);
-        return;
-      }
-      if (inboundCount >= CAPABILITY_SERVICE_LIMITS.maxInFlightRequests) {
-        replay.delete(operationId);
-        rejectRequest(socket, "rate_limited", request.id);
-        return;
-      }
-      inboundCount += 1;
-      const routed = await routeManagedRunReportIngress(
-        configured.instance.serviceInstanceId,
-        request,
-        deps,
-      );
-      inboundCount -= 1;
-      const response = routed.errorKind === undefined
-        ? { jsonrpc: "2.0", id: request.id, result: routed.response }
-        : capabilityServiceErrorResponse(routed.errorKind, request.id);
-      rememberResponse(operationId, response);
-      reply(socket, response);
-    }
-
-    async function routeEvidence(
+    async function routeIngress(
       socket: net.Socket,
-      request: z.infer<typeof CapabilityPutEvidenceRequestSchema>,
+      request: { readonly id: string; readonly params: { readonly operationId: string } },
+      invokeRoute: () => Promise<{
+        readonly response: unknown;
+        readonly errorKind?: CapabilityServiceErrorKind;
+      }>,
     ): Promise<void> {
       const operationId = request.params.operationId;
       const replayState = beginReplay(operationId, request);
@@ -386,41 +367,7 @@ function createEndpoint(
         return;
       }
       inboundCount += 1;
-      const routed = await routeManagedRunEvidenceIngress(
-        configured.instance.serviceInstanceId,
-        request,
-        deps,
-      );
-      inboundCount -= 1;
-      const response = routed.errorKind === undefined
-        ? { jsonrpc: "2.0", id: request.id, result: routed.response }
-        : capabilityServiceErrorResponse(routed.errorKind, request.id);
-      rememberResponse(operationId, response);
-      reply(socket, response);
-    }
-
-    async function routeRelease(
-      socket: net.Socket,
-      request: z.infer<typeof CapabilityReleaseRequestSchema>,
-    ): Promise<void> {
-      const operationId = request.params.operationId;
-      const replayState = beginReplay(operationId, request);
-      if (!replayState.ok) {
-        if (typeof replayState.error === "object") reply(socket, replayState.error.response);
-        else rejectRequest(socket, replayState.error === "pending" ? "rate_limited" : "replay_conflict", request.id);
-        return;
-      }
-      if (inboundCount >= CAPABILITY_SERVICE_LIMITS.maxInFlightRequests) {
-        replay.delete(operationId);
-        rejectRequest(socket, "rate_limited", request.id);
-        return;
-      }
-      inboundCount += 1;
-      const routed = await routeManagedRunReleaseIngress(
-        configured.instance.serviceInstanceId,
-        request,
-        deps,
-      );
+      const routed = await invokeRoute();
       inboundCount -= 1;
       const response = routed.errorKind === undefined
         ? { jsonrpc: "2.0", id: request.id, result: routed.response }
@@ -592,7 +539,11 @@ function createEndpoint(
           rejectRequest(socket, "invalid_params", id);
           return;
         }
-        trackInbound(routeReport(socket, parsed.data));
+        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunReportIngress(
+          configured.instance.serviceInstanceId,
+          parsed.data,
+          deps,
+        )));
         return;
       }
       if (frame["method"] === "managedRuns.putEvidence") {
@@ -605,7 +556,31 @@ function createEndpoint(
           rejectRequest(socket, "invalid_params", id);
           return;
         }
-        trackInbound(routeEvidence(socket, parsed.data));
+        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunEvidenceIngress(
+          configured.instance.serviceInstanceId,
+          parsed.data,
+          deps,
+        )));
+        return;
+      }
+      if (frame["method"] === "managedRuns.receiveAttentionResponse") {
+        if (
+          boundSocket !== socket
+          || !configured.definition.requestedScopes.includes("attention_response")
+        ) {
+          rejectRequest(socket, "precondition_failed", id);
+          return;
+        }
+        const parsed = CapabilityReceiveAttentionResponseRequestSchema.safeParse(request);
+        if (!parsed.success || parsed.data.id !== parsed.data.params.operationId) {
+          rejectRequest(socket, "invalid_params", id);
+          return;
+        }
+        trackInbound(routeIngress(socket, parsed.data, () => routeManagedAttentionResponseIngress(
+          configured.instance.serviceInstanceId,
+          parsed.data,
+          deps,
+        )));
         return;
       }
       if (frame["method"] === "managedRuns.release") {
@@ -618,7 +593,11 @@ function createEndpoint(
           rejectRequest(socket, "invalid_params", id);
           return;
         }
-        trackInbound(routeRelease(socket, parsed.data));
+        trackInbound(routeIngress(socket, parsed.data, () => routeManagedRunReleaseIngress(
+          configured.instance.serviceInstanceId,
+          parsed.data,
+          deps,
+        )));
         return;
       }
       if (frame["method"] === "managedRuns.activate" || frame["method"] === "managedRuns.abandon") {

@@ -80,6 +80,8 @@ async function run(): Promise<Result<void>> {
   const server = createCapabilityServiceProtocolFixtureServer({
     activeScopes: [
       "health",
+      "attention_response",
+      "evidence",
       "report",
       "workspace_lease",
       "terminal_events",

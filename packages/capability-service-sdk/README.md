@@ -24,7 +24,9 @@ Capability services that request the `attention_response` scope may call
 `managedRuns.receiveAttentionResponse` with an exact managed-run ID and external
 decision key. The response remains `pending` until the owner replies; the first
 successful receive marks the private response delivered and returns it only on
-the authenticated owner-private control connection.
+the authenticated owner-private control connection. A polling service mints a
+new operation ID for each attempt; replaying an operation ID returns that
+attempt's original response.
 
 Fixtures carry `__BUNDLE_DIGEST__` where a wire example needs the enclosing
 bundle digest. A fixture host replaces that token with the manifest digest

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "@comis/capability-service-sdk";
 import {
   TypedEventBus,
   createConversationRef,
@@ -28,7 +29,7 @@ import type { ManagedRunActivationInput } from "./managed-run-activation-coordin
 import { setupCapabilityServices } from "./setup-capability-services.js";
 
 const NOW_MS = 1_800_000_000_000;
-const BUNDLE_DIGEST = "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad";
+const BUNDLE_DIGEST = CAPABILITY_SERVICE_BUNDLE_DIGEST;
 const BEARER = "synthetic-capability-service-bearer";
 const CONVERSATION_SCOPE = {
   tenantId: "tenant_a",

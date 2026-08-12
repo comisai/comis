@@ -15,6 +15,7 @@ import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { ok } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
+import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 import { createUnixCapabilityServiceHostRuntime } from "./capability-service-unix-host.js";
@@ -165,9 +166,7 @@ describe("daemon-owned capability-service Unix host", () => {
     reportBridge?: ManagedRunReportBridge,
     evidenceBridge?: ManagedRunEvidenceBridge,
     releaseCoordinator?: ManagedRunReleaseCoordinator,
-    attentionResponseBridge?: {
-      receiveAttentionResponse(input: Readonly<Record<string, unknown>>): Promise<unknown>;
-    },
+    attentionResponseBridge?: ManagedAttentionResponseBridge,
   ) {
     const clock = createFakeClock(NOW_MS);
     const timers = createFakeTimers(NOW_MS);
@@ -180,7 +179,13 @@ describe("daemon-owned capability-service Unix host", () => {
       credentials: new Map([["service-instance_a", () => BEARER]]),
       bundleDigest: BUNDLE_DIGEST,
       socketRoot: dirname(socketPath),
-      attentionResponseBridge,
+      attentionResponseBridge: attentionResponseBridge ?? {
+        receiveAttentionResponse: vi.fn(async () => ok({
+          kind: "pending" as const,
+          managedRunId: "managed-run_a",
+          externalKey: "attention_a",
+        })),
+      },
       reportBridge: reportBridge ?? {
         ingestReport: vi.fn(async () => ok({
           kind: "accepted" as const,

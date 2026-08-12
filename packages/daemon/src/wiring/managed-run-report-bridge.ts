@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   ManagedRunReportInputSchema,
@@ -14,6 +13,7 @@ import {
   type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import { managedRunAttentionId } from "./managed-run-attention-identity.js";
 
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$/;
 const REPORTABLE_STATUSES = new Set(["active", "waiting", "paused", "candidate_complete", "unknown"]);
@@ -73,12 +73,10 @@ function attentionId(identity: {
   readonly serviceInstanceId: string;
   readonly managedRunId: string;
 }, body: ManagedRunReportBody): string {
-  const key = body.externalKey ?? body.serviceReportId;
-  const digest = createHash("sha256")
-    .update(`${identity.serviceInstanceId}\0${identity.managedRunId}\0${key}`, "utf8")
-    .digest("hex")
-    .slice(0, 48);
-  return `attention-${digest}`;
+  return managedRunAttentionId({
+    ...identity,
+    externalKey: body.externalKey ?? body.serviceReportId,
+  });
 }
 
 function contentScope(

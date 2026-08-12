@@ -12,6 +12,9 @@ import {
   CapabilityActivateResponseSchema,
   CapabilityHandshakeResponseSchema,
   CapabilityHealthResponseSchema,
+  CapabilityPutEvidenceResponseSchema,
+  CapabilityReceiveAttentionResponseResponseSchema,
+  CapabilityReleaseResponseSchema,
   CapabilityReportResponseSchema,
   CapabilityTerminalEventResponseSchema,
   CapabilityServiceRequestSchema,
@@ -125,6 +128,12 @@ function validateResponse(method: CapabilityServiceRequest["method"], response: 
       return CapabilityAbandonResponseSchema.safeParse(response).success;
     case "managedRuns.activate":
       return CapabilityActivateResponseSchema.safeParse(response).success;
+    case "managedRuns.putEvidence":
+      return CapabilityPutEvidenceResponseSchema.safeParse(response).success;
+    case "managedRuns.receiveAttentionResponse":
+      return CapabilityReceiveAttentionResponseResponseSchema.safeParse(response).success;
+    case "managedRuns.release":
+      return CapabilityReleaseResponseSchema.safeParse(response).success;
     case "managedRuns.report":
       return CapabilityReportResponseSchema.safeParse(response).success;
     case "managedRuns.terminalEvent":
@@ -195,6 +204,38 @@ export function createCapabilityServiceProtocolFixtureServer(
             externalRunRef: request.params.externalRunRef,
             state: "active",
             activatedAtMs: options.clock.now(),
+          },
+        };
+      case "managedRuns.putEvidence":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunId: request.params.managedRunId,
+            evidenceRef: request.params.evidenceRef,
+            contentHash: request.params.contentHash,
+            verificationLevel: request.params.verificationLevel === "host_verified"
+              ? "adapter_verified"
+              : request.params.verificationLevel,
+            ...(request.params.expiresAtMs === undefined
+              ? {}
+              : { retainedUntilMs: request.params.expiresAtMs }),
+          },
+        };
+      case "managedRuns.receiveAttentionResponse":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunId: request.params.managedRunId,
+            externalKey: request.params.externalKey,
+            state: "pending",
+          },
+        };
+      case "managedRuns.release":
+        return {
+          jsonrpc: "2.0", id: request.id, result: {
+            managedRunId: request.params.managedRunId,
+            workspaceLeaseId: request.params.workspaceLeaseId,
+            state: "released",
+            disposition: request.params.disposition,
+            releasedAtMs: request.params.releasedAtMs,
           },
         };
       case "managedRuns.report": {
@@ -305,6 +346,24 @@ export function createCapabilityServiceProtocolFixtureServer(
       return errorResponse("precondition_failed", id);
     }
     if (parsed.data.method === "managedRuns.report" && !options.activeScopes.includes("report")) {
+      return errorResponse("precondition_failed", id);
+    }
+    if (
+      parsed.data.method === "managedRuns.putEvidence"
+      && !options.activeScopes.includes("evidence")
+    ) {
+      return errorResponse("precondition_failed", id);
+    }
+    if (
+      parsed.data.method === "managedRuns.receiveAttentionResponse"
+      && !options.activeScopes.includes("attention_response")
+    ) {
+      return errorResponse("precondition_failed", id);
+    }
+    if (
+      parsed.data.method === "managedRuns.release"
+      && !options.activeScopes.includes("workspace_lease")
+    ) {
       return errorResponse("precondition_failed", id);
     }
     const canonical = JSON.stringify(parsed.data);

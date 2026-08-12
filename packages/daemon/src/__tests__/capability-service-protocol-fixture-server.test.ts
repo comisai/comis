@@ -23,12 +23,13 @@ import {
   type CapabilityServiceErrorKind,
 } from "@comis/capability-service-sdk";
 import { afterEach, describe, expect, it } from "vitest";
+import { CAPABILITY_SERVICE_BUNDLE_DIGEST } from "@comis/capability-service-sdk";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createCapabilityServiceProtocolFixtureServer } from "./capability-service-protocol-fixture-server.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(here, "../../../..");
-const BUNDLE_DIGEST = "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad";
+const BUNDLE_DIGEST = CAPABILITY_SERVICE_BUNDLE_DIGEST;
 const EXPECTED_BEARER = "fixture-bearer-0000000000000000000000000001";
 const SERVICE_INSTANCE_ID = "service-instance_a";
 const NOW_MS = 1_800_000_000_000;
@@ -97,6 +98,8 @@ function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
   return createCapabilityServiceProtocolFixtureServer({
     activeScopes: [
       "health",
+      "attention_response",
+      "evidence",
       "report",
       "workspace_lease",
       "terminal_events",
@@ -114,7 +117,7 @@ function makeServer(directoryPath: string, requestDeadlineMs = 2_000) {
 }
 
 describe("standalone capability-service protocol fixture server", () => {
-  it("binds a 0600 Unix socket and strictly dispatches all six pinned methods", async () => {
+  it("binds a 0600 Unix socket and strictly dispatches all nine pinned methods", async () => {
     const directory = temporaryDirectory();
     const server = makeServer(directory);
     const started = await server.start();
@@ -145,6 +148,8 @@ describe("standalone capability-service protocol fixture server", () => {
           serviceInstanceId: SERVICE_INSTANCE_ID,
           activeScopes: [
             "health",
+            "attention_response",
+            "evidence",
             "report",
             "workspace_lease",
             "terminal_events",
@@ -197,6 +202,76 @@ describe("standalone capability-service protocol fixture server", () => {
           serviceReportId: "service-report_a",
           acceptedSequence: 1,
           retainedUntilMs: NOW_MS + CAPABILITY_SERVICE_LIMITS.reportRetentionDays * 86_400_000,
+        },
+      });
+
+      const evidence = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_evidence",
+        "managedRuns.putEvidence",
+        {
+          operationId: "operation_evidence",
+          managedRunId: "managed-run_a",
+          evidenceRef: "evidence_a",
+          kind: "delivery_reference",
+          subjectDigest: "e".repeat(64),
+          observedAtMs: NOW_MS,
+          expiresAtMs: NOW_MS + 60_000,
+          contentHash: "a".repeat(64),
+          verificationLevel: "reported",
+          bodyBase64: "",
+        },
+      )));
+      expect(evidence).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_evidence",
+        result: {
+          managedRunId: "managed-run_a",
+          evidenceRef: "evidence_a",
+          contentHash: "a".repeat(64),
+          verificationLevel: "reported",
+          retainedUntilMs: NOW_MS + 60_000,
+        },
+      });
+
+      const attentionResponse = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_attention_response",
+        "managedRuns.receiveAttentionResponse",
+        {
+          operationId: "operation_attention_response",
+          managedRunId: "managed-run_a",
+          externalKey: "decision_a",
+        },
+      )));
+      expect(attentionResponse).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_attention_response",
+        result: {
+          managedRunId: "managed-run_a",
+          externalKey: "decision_a",
+          state: "pending",
+        },
+      });
+
+      const release = await callSocket(socketPath, authenticatedFrame(request(
+        "operation_release",
+        "managedRuns.release",
+        {
+          operationId: "operation_release",
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          disposition: "reap_safe",
+          releasedAtMs: NOW_MS,
+        },
+      )));
+      expect(release).toEqual({
+        jsonrpc: "2.0",
+        id: "operation_release",
+        result: {
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          state: "released",
+          disposition: "reap_safe",
+          releasedAtMs: NOW_MS,
         },
       });
 

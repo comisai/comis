@@ -61,6 +61,19 @@ export interface ManagedRunEvents {
     durationMs: number;
     timestamp: number;
   };
+  "managed_run:attention_response_delivered": {
+    managedRunId: string;
+    attentionId: string;
+    serviceInstanceId: string;
+    durationMs: number;
+    timestamp: number;
+  };
+  "managed_run:attention_response_delivery_failed": {
+    managedRunId?: string;
+    serviceInstanceId?: string;
+    reasonCode: "attention_not_found" | "invalid_request" | "managed_run_not_found" | "state_mismatch" | "storage_failure";
+    timestamp: number;
+  };
   "managed_run:recovery_quarantined": {
     managedRunId: string;
     serviceInstanceId: string;

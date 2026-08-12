@@ -2,6 +2,7 @@
 import type { z } from "zod";
 import {
   CapabilityPutEvidenceRequestSchema,
+  CapabilityReceiveAttentionResponseRequestSchema,
   CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
   type CapabilityServiceErrorKind,
@@ -9,17 +10,71 @@ import {
 import type { ClockPort, ComisLogger, TimerPort } from "@comis/core";
 import { err, fromPromise, tryCatch, type Result } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
+import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
 import type { ManagedRunReleaseCoordinator } from "./managed-run-release-coordinator.js";
 
 export interface CapabilityServiceIngressRouteDeps {
   readonly reportBridge: ManagedRunReportBridge;
   readonly evidenceBridge: ManagedRunEvidenceBridge;
+  readonly attentionResponseBridge: ManagedAttentionResponseBridge;
   readonly releaseCoordinator: ManagedRunReleaseCoordinator;
   readonly requestDeadlineMs: number;
   readonly clock: ClockPort;
   readonly timers: TimerPort;
   readonly logger: ComisLogger;
+}
+
+/** Receive an owner-bound private attention response within the bounded wire deadline. */
+export async function routeManagedAttentionResponseIngress(
+  serviceInstanceId: string,
+  request: z.infer<typeof CapabilityReceiveAttentionResponseRequestSchema>,
+  deps: CapabilityServiceIngressRouteDeps,
+): Promise<CapabilityServiceIngressRouteResult> {
+  const startedAtMs = deps.clock.now();
+  deps.logger.debug({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    step: "capability-service-attention-response-ingress",
+  }, "Routing capability-service attention response receive");
+  const invoked = tryCatch(() => deps.attentionResponseBridge.receiveAttentionResponse({
+    serviceInstanceId,
+    ...request.params,
+  }));
+  const settled = invoked.ok
+    ? await awaitResultDeadline(invoked.value, deps.timers, deps.requestDeadlineMs)
+    : err(invoked.error);
+  let result: CapabilityServiceIngressRouteResult;
+  if (settled === undefined) result = responseError("deadline_exceeded");
+  else if (!settled.ok) result = responseError("internal_error");
+  else if (settled.value.kind === "rejected") {
+    result = responseError(settled.value.reasonCode === "invalid_request"
+      ? "invalid_params"
+      : "precondition_failed");
+  } else if (settled.value.kind === "pending") {
+    result = {
+      response: {
+        managedRunId: settled.value.managedRunId,
+        externalKey: settled.value.externalKey,
+        state: "pending",
+      },
+    };
+  } else {
+    result = {
+      response: {
+        managedRunId: settled.value.managedRunId,
+        externalKey: settled.value.externalKey,
+        state: "delivered",
+        response: settled.value.response,
+      },
+    };
+  }
+  deps.logger.info({
+    serviceInstanceId,
+    managedRunId: request.params.managedRunId,
+    durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+  }, "Capability-service attention response receive completed");
+  return result;
 }
 
 /** Revoke run-bound capabilities and release the exact workspace lease. */

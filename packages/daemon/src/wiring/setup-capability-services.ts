@@ -43,6 +43,7 @@ import {
   createManagedRunEvidenceBridge,
   type ManagedRunEvidenceBridge,
 } from "./managed-run-evidence-bridge.js";
+import { createManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import {
   createManagedRunReportBridge,
   type ManagedRunReportBridge,
@@ -261,6 +262,13 @@ export async function setupCapabilityServices(
     resolveEvidencePolicies: (serviceInstanceId) => definitionByInstance.get(serviceInstanceId)?.evidencePolicies,
     logger: deps.logger,
   });
+  const attentionResponseBridge = createManagedAttentionResponseBridge({
+    store,
+    contentStore,
+    nowMs: () => deps.clock.now(),
+    eventBus: deps.eventBus,
+    logger: deps.logger,
+  });
   let terminalRevoker: ManagedTerminalRevoker | undefined;
   const revokeManagedTerminals: ManagedTerminalRevoker = async (record) => {
     if (record.terminalSessionIds.length === 0) return ok(undefined);
@@ -299,6 +307,7 @@ export async function setupCapabilityServices(
     socketRoot: deps.dataDir,
     reportBridge,
     evidenceBridge,
+    attentionResponseBridge,
     releaseCoordinator,
     requestDeadlineMs: deps.config.requestDeadlineMs,
     clock: deps.clock,

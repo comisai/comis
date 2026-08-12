@@ -64,4 +64,34 @@ describe("managed-run lifecycle events", () => {
       durationMs: 4,
     }));
   });
+
+  it("delivers content-free attention response delivery outcomes", () => {
+    const bus = new TypedEventBus();
+    const delivered = vi.fn();
+    const failed = vi.fn();
+    bus.on("managed_run:attention_response_delivered", delivered);
+    bus.on("managed_run:attention_response_delivery_failed", failed);
+
+    bus.emit("managed_run:attention_response_delivered", {
+      managedRunId: "managed-run_a",
+      attentionId: "attention_a",
+      serviceInstanceId: "service-instance_a",
+      durationMs: 4,
+      timestamp: 1_800_000_000_000,
+    });
+    bus.emit("managed_run:attention_response_delivery_failed", {
+      managedRunId: "managed-run_a",
+      serviceInstanceId: "service-instance_a",
+      reasonCode: "state_mismatch",
+      timestamp: 1_800_000_000_000,
+    });
+
+    expect(delivered).toHaveBeenCalledWith(expect.objectContaining({
+      attentionId: "attention_a",
+      durationMs: 4,
+    }));
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({
+      reasonCode: "state_mismatch",
+    }));
+  });
 });
