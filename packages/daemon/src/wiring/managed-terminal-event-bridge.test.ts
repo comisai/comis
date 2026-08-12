@@ -45,7 +45,7 @@ describe("managed terminal event bridge", () => {
     ]);
   });
 
-  it("durably releases the exact terminal binding only after service acknowledgement", async () => {
+  it("durably retires exact exited and released terminal bindings only after service acknowledgement", async () => {
     const terminalEvent = vi.fn(async (command) => ok({
       managedRunId: command.managedRunId,
       terminalSessionId: command.terminalSessionId,
@@ -59,15 +59,19 @@ describe("managed terminal event bridge", () => {
       nowMs: () => 1700,
     });
 
-    await bridge.publish({
-      managedRunId: "managed-run_a",
-      workspaceLeaseId: "workspace-lease_a",
-      serviceInstanceId: "service-instance_a",
-      terminalSessionId: "terminal-session_a",
-      transition: "released",
-    });
+    for (const transition of ["exited", "released"] as const) {
+      await bridge.publish({
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        serviceInstanceId: "service-instance_a",
+        terminalSessionId: "terminal-session_a",
+        transition,
+      });
+    }
 
-    expect(releaseTerminal).toHaveBeenCalledWith(
+    expect(releaseTerminal).toHaveBeenCalledTimes(2);
+    expect(releaseTerminal).toHaveBeenNthCalledWith(
+      1,
       { kind: "service", serviceInstanceId: "service-instance_a" },
       {
         managedRunId: "managed-run_a",
