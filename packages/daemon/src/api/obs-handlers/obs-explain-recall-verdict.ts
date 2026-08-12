@@ -125,6 +125,22 @@ export const executionDependencyFailureVerdict = (s: IncidentSignals): RecallVer
   };
 };
 
+/** A local execution budget ended the run before it produced a clean terminal outcome. */
+export const executionBudgetExceededVerdict = (s: IncidentSignals): RecallVerdict | null => {
+  if (s.endReason !== "budget_exceeded" && s.endReason !== "budget_exhausted") return null;
+  return {
+    code: "execution_budget_exceeded",
+    detail:
+      `the execution ended with ${s.endReason}; its configured run budget was exhausted `
+      + "before the task reached a clean terminal outcome",
+    suggestedNextSteps: [
+      "inspect the execution budget and completed step count in obs.explain depth=full",
+      "simplify or split the workflow before increasing the binding budget",
+      "run comis system-health --since 1 to confirm whether the same budget abort recurs",
+    ],
+  };
+};
+
 /**
  * Every REMAINING terminal execution failure kind. Ranked below the specific
  * terminal causes (drive/orchestrate) so specific-over-generic holds, and above the

@@ -505,6 +505,11 @@ export interface IncidentSignals {
    * last-write-wins rollup turnCount. Absent ⇒ no summary records.
    */
   summaryTurnCount?: number;
+  /** Sticky terminal outcome folded from per-execution `session.summary`
+   * records. Real degraded executions remain visible when later executions
+   * sharing the correlation id succeed; a clean continuation resolves only
+   * `background_pending`. */
+  summaryOutcome?: { endReason: string; degraded: boolean };
   /** Closed operational failure kinds accumulated from `session.summary`.
    * This covers terminal model/envelope failures that have no tool-result row. */
   summaryTopErrorKinds?: Partial<Record<ErrorKind, number>>;

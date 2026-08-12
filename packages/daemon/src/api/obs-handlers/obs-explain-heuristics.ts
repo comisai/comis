@@ -31,6 +31,7 @@ import {
 import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
 import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
 import {
+  executionBudgetExceededVerdict,
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
   executionTerminalFailureVerdict,
@@ -791,6 +792,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     obs-explain-recall-verdict.ts module doc).
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionBudgetExceededVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened

@@ -845,6 +845,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.stepLimit !== undefined ? { stepLimit: acc.stepLimit } : {}),
     ...(acc.summaryCostUsd !== undefined ? { summaryCostUsd: acc.summaryCostUsd } : {}),
     ...(acc.summaryTurnCount !== undefined ? { summaryTurnCount: acc.summaryTurnCount } : {}),
+    ...(acc.summaryOutcome !== undefined ? { summaryOutcome: acc.summaryOutcome } : {}),
     ...(acc.summaryTopErrorKinds !== undefined
       ? { summaryTopErrorKinds: acc.summaryTopErrorKinds }
       : {}),

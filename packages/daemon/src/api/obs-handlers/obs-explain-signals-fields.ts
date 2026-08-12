@@ -84,6 +84,7 @@ export function asNumber(v: unknown): number | undefined {
 interface SessionSummaryAccumulator {
   summaryCostUsd?: number;
   summaryTurnCount?: number;
+  summaryOutcome?: IncidentSignals["summaryOutcome"];
   summaryTopErrorKinds?: IncidentSignals["summaryTopErrorKinds"];
   responseLocaleRepairSkipped?: NonNullable<
     IncidentSignals["responseLocaleRepairSkipped"]
@@ -113,6 +114,22 @@ export function accumulateSessionSummaryRecord(
   if (costUsd !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + costUsd;
   const turnCount = asNumber(data.turnCount);
   if (turnCount !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + turnCount;
+  const rowEndReason =
+    typeof data.endReason === "string" && data.endReason.length > 0
+      ? data.endReason
+      : "unknown";
+  const rowDegraded = data.degraded === true;
+  const currentOutcome = acc.summaryOutcome;
+  if (rowDegraded) {
+    const isPendingContinuation = rowEndReason === "background_pending";
+    if (!isPendingContinuation || currentOutcome?.degraded !== true) {
+      acc.summaryOutcome = { endReason: rowEndReason, degraded: true };
+    }
+  } else if (currentOutcome?.endReason === "background_pending") {
+    acc.summaryOutcome = { endReason: rowEndReason, degraded: false };
+  } else if (currentOutcome?.degraded !== true) {
+    acc.summaryOutcome = { endReason: rowEndReason, degraded: false };
+  }
   const rawErrorKinds = data.topErrorKinds;
   if (
     rawErrorKinds !== null

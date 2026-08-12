@@ -294,11 +294,19 @@ export function assembleIncidentReport(
   // sub-agent boundary to generic "error". In both cases the terminal
   // `execution.aborted` reason is the more specific source. Preserve any
   // non-generic metadata outcome.
-  const executionEndReason =
-    signals.abortReason !== undefined &&
-    (metadataEndReason === undefined || metadataEndReason === "error")
-      ? signals.abortReason
-      : metadataEndReason ?? "unknown";
+  const summaryEndReason = signals.summaryOutcome?.endReason;
+  const summaryNeedsAbortCause =
+    summaryEndReason === undefined
+    || summaryEndReason === "unknown"
+    || summaryEndReason === "error";
+  const executionEndReason = signals.abortReason !== undefined && summaryNeedsAbortCause
+    ? signals.abortReason
+    : summaryEndReason ?? (
+        signals.abortReason !== undefined &&
+        (metadataEndReason === undefined || metadataEndReason === "error")
+          ? signals.abortReason
+          : metadataEndReason ?? "unknown"
+      );
   const backgroundTasks = signals.backgroundTasks;
   const backgroundCompletionAccepted =
     executionEndReason === "background_pending"
@@ -329,6 +337,7 @@ export function assembleIncidentReport(
       : lifecycleEndReason;
   const isHardFailure = deliveryFailed || HARD_FAILURE_END_REASONS.has(endReason);
   const persistedDegraded =
+    signals.summaryOutcome?.degraded ??
     (sessionEnd !== undefined ? asBoolean(sessionEnd.degraded) : undefined) ??
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
