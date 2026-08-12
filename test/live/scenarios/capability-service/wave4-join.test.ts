@@ -28,7 +28,7 @@ import { stopManagedChild } from "../../../support/managed-child-process.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
 const REVIEWED_GO_COMMIT = process.env["COMIS_DEV_CREW_COMMIT"]
-  ?? "8d2f520ff171631b3d462c280af1240a69988c1a";
+  ?? "9105a85db22ea0ebcbabdeeed4656c5e6df1a5e8";
 export const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
 export const MCP_SERVER_NAME = "devcrew";
 export const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
