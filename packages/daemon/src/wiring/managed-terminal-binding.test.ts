@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,7 @@ const SCOPE = {
 };
 
 describe("managed terminal binding authority", () => {
-  it("identifies the requested handles when a managed run cannot be resolved", async () => {
+  it("records correlatable handle digests when a managed run cannot be resolved", async () => {
     const logger = { warn: vi.fn() } as unknown as ComisLogger;
     const resolver = createManagedTerminalBindingResolver({
       store: { get: vi.fn(async () => ok(undefined)) } as unknown as ManagedRunStorePort,
@@ -34,8 +35,8 @@ describe("managed terminal binding authority", () => {
       owner: OWNER,
     })).resolves.toEqual({ kind: "rejected", reason: "managed_run_not_found" });
     expect(logger.warn).toHaveBeenCalledWith({
-      managedRunId: "managed-run_missing",
-      workspaceLeaseId: "workspace-lease_missing",
+      requestedManagedRunDigest: createHash("sha256").update("managed-run_missing", "utf8").digest("hex"),
+      requestedWorkspaceLeaseDigest: createHash("sha256").update("workspace-lease_missing", "utf8").digest("hex"),
       tenantId: "tenant_a",
       agentId: "agent_a",
       conversationRef: "cv_owner",
