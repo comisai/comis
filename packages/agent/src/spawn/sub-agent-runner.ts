@@ -20,6 +20,7 @@ import {
   createResolvedRequestContext,
   runWithContext,
   tryGetContext,
+  DELEGATED_EXECUTION_CHANNEL_TYPE,
   type SessionKey,
   type ConversationLocator,
   type ConversationRef,
@@ -163,7 +164,7 @@ function createSubAgentConversation(
     partition: {
       kind: "endpoint-conversation-principal",
       endpoint: {
-        channelType: "sub-agent",
+        channelType: DELEGATED_EXECUTION_CHANNEL_TYPE,
         channelInstanceId: "runtime",
         conversationId: runId,
         conversationKind: "direct",

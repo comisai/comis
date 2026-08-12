@@ -6,6 +6,7 @@ import {
   ConversationScopeSchema,
   createConversationRef,
   emitObservationalEventSafely,
+  isDelegatedExecutionEndpoint,
   systemNowMs,
   type ConversationRef,
 } from "@comis/core";
@@ -174,7 +175,7 @@ export function resolveModelSessionCaller(
   const isSubagent = (
     partition.kind === "endpoint-conversation"
     || partition.kind === "endpoint-conversation-principal"
-  ) && partition.endpoint.channelType === "sub-agent";
+  ) && isDelegatedExecutionEndpoint(partition.endpoint);
   return {
     tenantId: parsed.data.tenantId,
     agentId: callerAgentId,
