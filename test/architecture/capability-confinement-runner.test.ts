@@ -77,7 +77,7 @@ describe("capability-service Linux confinement runner", () => {
     const joinGate = source(joinGatePath);
 
     expect(runner).toMatch(/spike \| join \| mechanics \| observe \| shell/u);
-    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="54c0972f0d5665f598756cfa51115f7f54991690"');
+    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="649601716a060da5345512b362fd9e8423e9d218"');
     expect(joinGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(joinGate).toContain("COMIS_LIVE=1");
     expect(joinGate).toContain("wave4-join.test.ts");
