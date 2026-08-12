@@ -751,6 +751,32 @@ describe("AnnouncementDeadLetterQueue drain marks recovered keys", () => {
     expect(sendToChannel).toHaveBeenCalledOnce();
     expect(dlq.size()).toBe(0);
   });
+
+  // The quarantine WARN is emitted at the non-zero transition and the dead-letter
+  // file is unlinked once the queue drains, so an operator who reads the WARN
+  // later finds no file and no resolution line at the default log level — the
+  // resolution was DEBUG-only. Live, that combination read as "the announcement
+  // was lost" when the entry had in fact been dropped correctly because the
+  // outward ledger proved the user was already told.
+  it("records the resolution at INFO so a drained quarantine is visible without debug logging", async () => {
+    const logger = createMockLogger();
+    const entry = makeFullEntry({
+      runId: "run-resolution-visible",
+      idempotencyKey: "default:u1:c1::run-resolution-visible",
+    });
+    await writeFile(filePath, JSON.stringify(entry) + "\n", "utf-8");
+    const dlq = createAnnouncementDeadLetterQueue({
+      filePath, eventBus: createMockEventBus(), logger, retryIntervalMs: 0,
+    });
+
+    await dlq.drain(vi.fn().mockResolvedValue(true));
+
+    const resolutions = (logger.info as unknown as { mock: { calls: [Record<string, unknown>, string][] } })
+      .mock.calls.filter(([, msg]) => /dead-letter/i.test(msg));
+    expect(resolutions).toHaveLength(1);
+    expect(resolutions[0]?.[0]).toMatchObject({ runId: "run-resolution-visible" });
+    expect(dlq.size()).toBe(0);
+  });
 });
 
 describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
