@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   CAPABILITY_SERVICE_CONTROL_PROTOCOL,
   emitObservationalEventSafely,
+  sanitizeLogString,
   type CapabilityServiceActivationPlan,
   type CapabilityServiceEvidencePolicy,
   type CapabilityServiceScope,
@@ -325,6 +326,7 @@ export function createCapabilityServiceRuntime(
           serviceDefinitionId: owned.instance.serviceDefinitionId,
           serviceInstanceId: owned.instance.serviceInstanceId,
           reasonCode,
+          ...(started.ok ? {} : { failureCause: sanitizeLogString(started.error.message) }),
           errorKind: "dependency" as const,
           hint: "Inspect the configured service health endpoint and confirm its protocol identity, instance identity, and active scopes",
         }, "Capability-service instance failed to start");
