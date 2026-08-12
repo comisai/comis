@@ -263,7 +263,7 @@ export type { WaitResult };
  */
 export interface TerminalSessionRegistry {
   create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult>;
-  /** Round-trip a `read` (render opts + screen diff). Owner-scoped: absent/cross-owner → not-found view (alive false), never the other owner's bytes. */
+  /** Round-trip a `read` (render opts + screen diff), including the retained final screen after a clean process exit. Owner-scoped: absent/cross-owner/lost → not-found view (alive false), never the other owner's bytes. */
   read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView>;
   /** Round-trip a `status` — the worker's classifier perception composed with `handle.lastActivity`. Owner-scoped: absent/cross-owner/killed → the not-found minimal view (`exited`, not parked) WITHOUT a round-trip, never the other owner's state. The classifier stays single-homed in the worker. */
   status(sessionId: string, owner: SessionOwner): Promise<TerminalStatusView>;
@@ -665,8 +665,10 @@ export function createTerminalSessionRegistry(
 
   async function read(sessionId: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView> {
     const handle = ownedHandle(sessionId, owner);
-    if (handle === undefined || handle.status !== "running") {
-      // Not found / not alive — a minimal view the tool layer maps (no diff).
+    if (handle === undefined || handle.status === "lost") {
+      // Not found / worker state lost — a minimal view the tool layer maps (no diff).
+      // An exited session still exists in the worker, whose bounded emulator retains
+      // the final screen needed to diagnose why the child stopped.
       return {
         screen: "",
         cursor: { x: 0, y: 0 },
