@@ -237,6 +237,7 @@ describe("capability-service runtime publication", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
       errorKind: "dependency",
       hint: expect.any(String),
+      failureCause: "synthetic service unavailable",
     }), "Capability-service instance failed to start");
   });
 
