@@ -278,7 +278,14 @@ describe("managed MCP private metadata boundary", () => {
 
   it("rejects an attachment request without execution attachment scope", async () => {
     const logger = makeLogger();
-    const deps = makeDeps({ logger });
+    const activeView = makeView();
+    const deps = makeDeps({
+      logger,
+      activeView: {
+        ...activeView,
+        instances: [{ ...activeView.instances[0]!, activeScopes: ["health", "report", "workspace_lease"] }],
+      },
+    });
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
     const call = makeCall();
 

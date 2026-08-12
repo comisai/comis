@@ -4,6 +4,7 @@ import {
   ResponseLocalePolicySchema,
   createConversationRef,
   parseFormattedSessionKey,
+  sanitizeLogString,
   tryGetContext,
   type AgentCapability,
   type CapabilityServiceScope,
@@ -173,6 +174,7 @@ function rejectCall(
   deps.logger.warn({
     serverName: input.serverName,
     toolName: input.toolName,
+    rejectionReason: sanitizeLogString(message),
     errorKind: "validation" as const,
     hint: "Inspect the operator-owned managedToolBindings entry and the active turn authority before retrying the tool call",
   }, "Managed MCP private metadata rejected");
