@@ -75,6 +75,7 @@ import type {
   SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
+import { liveChildRunIds, selectOrphanedChildRuns } from "./abort-fallout.js";
 import {
   classifyAbortReason,
   isSubAgentAbortFinishReason,
@@ -1229,7 +1230,34 @@ function classifyCompletionErrorKind(
     }
     removeDedupEntry(terminal);
     completionDeferreds.get(runId)?.resolve(completion);
+    cancelOrphanedChildren(runId, completion.endReason);
     return terminal;
+  }
+
+  /**
+   * Cancel children left without a consumer by an abnormally-terminated parent.
+   *
+   * A parent that ends abnormally can never read what its children return, so
+   * every still-live child burns tokens for a result nobody will see. Observed
+   * live: a parent timed out at 17:28:46 and two orphans ran on to 17:29:12 and
+   * 17:29:31, the latter alone spending 1.33M tokens / $1.80 after its reader
+   * was already gone.
+   *
+   * Recursion terminates: each killRun re-enters terminalizeRun for the child,
+   * which returns early once that child is terminal, so the cascade walks the
+   * spawn tree at most once per node and is bounded by maxSpawnDepth.
+   *
+   * A cleanly-completed parent cascades nothing — background delegation is a
+   * legitimate pattern and its children are expected to outlive the turn.
+   */
+  function cancelOrphanedChildren(parentRunId: string, parentEndReason: string): void {
+    const orphaned = selectOrphanedChildRuns(parentRunId, parentEndReason, runs.values());
+    for (const childRunId of orphaned) {
+      killRun(childRunId, {
+        killedBy: "system",
+        reason: `its parent run ended (${parentEndReason}) with no reader left for this result`,
+      });
+    }
   }
 
   function waitForCompletion(runId: string): Promise<SubAgentCompletion> | undefined {
@@ -3292,7 +3320,14 @@ function classifyCompletionErrorKind(
         let abortClassification: AbortClassification | undefined;
         if (isSubAgentAbortFinishReason(result.finishReason)) {
           try {
-            abortClassification = classifyAbortReason(result.finishReason);
+            // Live children at the abort are exactly what the run was awaiting,
+            // so a timeout hint can name them instead of the timeout knob.
+            abortClassification = classifyAbortReason(
+              result.finishReason,
+              undefined,
+              undefined,
+              { awaitedChildRunIds: liveChildRunIds(runId, runs.values()) },
+            );
           } catch { /* classification must never block */ }
         }
 
@@ -4350,9 +4385,13 @@ function classifyCompletionErrorKind(
         callerSessionKey: run.callerSessionKey,  // shared dedup key
         callerConversation: run.callerConversation,
         destinationEndpoint: run.callerEndpoint,
+        // A bare "(system)" names the actor but not the cause; when the caller
+        // supplied a reason it is the only thing here that tells the reader why.
         detail: killedBy === "health_monitor"
           ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
-          : `The background task was stopped (${killedBy}).`,
+          : opts?.reason !== undefined
+            ? `The background task was stopped: ${opts.reason}.`
+            : `The background task was stopped (${killedBy}).`,
       }, deps));
     }
 

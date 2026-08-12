@@ -5701,11 +5701,13 @@ describe("spawn required_tools gate", () => {
     expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
     const message = (caughtErr as RequiredToolsUnreachableError).message;
 
-    // Exactly one actionable re-spawn directive, and it must name a group that
-    // reaches BOTH tools. Only 'full' does.
+    // Exactly one actionable re-spawn directive, and it must name the NARROWEST
+    // ceiling reaching BOTH tools. 'web' does; answering a reachability error
+    // with the unconstrained 'full' is a privilege escalation.
     const directives = message.match(/Re-spawn with tool_groups:\[[^\]]*\]/g) ?? [];
     expect(directives).toHaveLength(1);
-    expect(directives[0]).toContain("full");
+    expect(directives[0]).toContain("web");
+    expect(directives[0]).not.toContain("full");
     expect(directives[0]).not.toContain("cron-minimal");
     // Both tool names are still named, so the caller knows what drove it.
     expect(message).toContain("web_search");
