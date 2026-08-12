@@ -49,6 +49,16 @@ describe("capability-service Linux confinement runner", () => {
     expect(runner).not.toMatch(/source=\/[^,]*,target=\/,(?:,|\s)/u);
   });
 
+  it("materializes linked companion worktrees as disposable standalone authorities", () => {
+    const runner = source(hostRunnerPath);
+
+    expect(runner).toContain('if [[ -f "${dev_crew_root}/.git" ]]');
+    expect(runner).toContain('git clone --local --no-hardlinks --no-checkout "${dev_crew_root}" "${dev_crew_mount_root}"');
+    expect(runner).toContain('git -C "${dev_crew_mount_root}" checkout --detach "${dev_crew_revision}"');
+    expect(runner).toContain('trap cleanup_companion_checkout EXIT');
+    expect(runner).toContain('source=${dev_crew_mount_root},target=/workspace/comis-dev-crew');
+  });
+
   it("uses the bounded Docker privilege proven necessary for nested bwrap", () => {
     const runner = source(hostRunnerPath);
     const gate = source(containerGatePath);
