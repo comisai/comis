@@ -15,10 +15,13 @@
  */
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { EgressControlPort } from "@comis/core";
 
-import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -101,6 +104,35 @@ describe("buildSpawnPlan — verified executable visibility", () => {
     });
 
     expect(hasBind(plan.argv, "--ro-bind", executablePath, executablePath)).toBe(true);
+  });
+});
+
+describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", () => {
+  it("binds the real shared Git administration directory only for an authority-backed workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-"));
+    try {
+      const commonDir = join(root, "repository", ".git");
+      const gitDir = join(commonDir, "worktrees", "task-a");
+      const workspace = join(root, "worktrees", "task-a");
+      mkdirSync(gitDir, { recursive: true });
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
+      writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+
+      const params = {
+        bin: "/bin/cat",
+        argv: [],
+        scope: makeScope(),
+        workspace,
+        cwd: workspace,
+        managedWorkspace: true,
+      } as CreateFrameSpawnParams & { managedWorkspace: true };
+      const plan = await planSpawnFromCreateFrame(params, {}, { bwrapPath: "/usr/bin/bwrap" });
+
+      expect(hasBind(plan.argv, "--bind", commonDir, commonDir)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -1003,6 +1003,8 @@ describe("createTerminalSessionRegistry — worker create failure is surfaced", 
     } as never, OWNER);
 
     expect(resolveRootProcessIdentity).toHaveBeenCalledWith(6200);
+    const createFrame = fake.requestFrames.find((frame) => frame.method === "create");
+    expect(createFrame?.params["managedWorkspace"]).toBe(true);
     expect(created).toMatchObject({
       rootProcessIdentity: { pid: 6200, startIdentity: "linux-proc-start-6200" },
     });
