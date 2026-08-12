@@ -37,16 +37,23 @@ function makeLogger(): ComisLogger {
   } as unknown as ComisLogger;
 }
 
-function makeDefinition(release = false): PlannedCapabilityServiceDefinition {
+function makeDefinition(
+  release = false,
+  attentionResponse = false,
+): PlannedCapabilityServiceDefinition {
   return {
     contributionId: "example.service",
     serviceDefinitionId: "example.service-definition",
     protocolId: "comis.capability-service/1",
     mcpServerName: "example-service",
     managedToolBindings: [],
-    requestedScopes: release
-      ? ["health", "evidence", "report", "workspace_lease"]
-      : ["health", "evidence", "report"],
+    requestedScopes: [
+      "health",
+      ...(attentionResponse ? ["attention_response" as const] : []),
+      "evidence",
+      "report",
+      ...(release ? ["workspace_lease" as const] : []),
+    ],
     evidencePolicies: [{
       kind: "delivery_reference",
       verificationLevel: "adapter_verified",
@@ -113,7 +120,7 @@ async function connectPeer(socketPath: string): Promise<LinePeer> {
   };
 }
 
-function handshake(bearer: string, release = false): unknown {
+function handshake(bearer: string, release = false, attentionResponse = false): unknown {
   return {
     bearer,
     jsonrpc: "2.0",
@@ -124,9 +131,13 @@ function handshake(bearer: string, release = false): unknown {
       bundleDigest: BUNDLE_DIGEST,
       operationId: "operation_handshake_a",
       serviceInstanceId: "service-instance_a",
-      requestedScopes: release
-        ? ["health", "evidence", "report", "workspace_lease"]
-        : ["health", "evidence", "report"],
+      requestedScopes: [
+        "health",
+        ...(attentionResponse ? ["attention_response"] : []),
+        "evidence",
+        "report",
+        ...(release ? ["workspace_lease"] : []),
+      ],
     },
   };
 }
@@ -154,66 +165,130 @@ describe("daemon-owned capability-service Unix host", () => {
     reportBridge?: ManagedRunReportBridge,
     evidenceBridge?: ManagedRunEvidenceBridge,
     releaseCoordinator?: ManagedRunReleaseCoordinator,
+    attentionResponseBridge?: {
+      receiveAttentionResponse(input: Readonly<Record<string, unknown>>): Promise<unknown>;
+    },
   ) {
     const clock = createFakeClock(NOW_MS);
     const timers = createFakeTimers(NOW_MS);
+    const hostDeps = {
+      definitions: [makeDefinition(
+        releaseCoordinator !== undefined,
+        attentionResponseBridge !== undefined,
+      )],
+      instances: [makeInstance(socketPath)],
+      credentials: new Map([["service-instance_a", () => BEARER]]),
+      bundleDigest: BUNDLE_DIGEST,
+      socketRoot: dirname(socketPath),
+      attentionResponseBridge,
+      reportBridge: reportBridge ?? {
+        ingestReport: vi.fn(async () => ok({
+          kind: "accepted" as const,
+          report: {
+            schemaVersion: 1 as const,
+            serviceInstanceId: "service-instance_a",
+            managedRunId: "managed-run_a",
+            serviceReportId: "service-report_a",
+            sequence: 1,
+            kind: "progress" as const,
+            contentRef: "service-report_a",
+            contentHash: "a".repeat(64),
+            receivedAtMs: NOW_MS,
+            retainedUntilMs: NOW_MS + 60_000,
+          },
+        })),
+      },
+      evidenceBridge: evidenceBridge ?? {
+        putEvidence: vi.fn(async () => ok({
+          kind: "accepted" as const,
+          evidence: {
+            schemaVersion: 1 as const,
+            serviceInstanceId: "service-instance_a",
+            managedRunId: "managed-run_a",
+            evidenceRef: "evidence_a",
+            kind: "delivery_reference",
+            subjectDigest: "e".repeat(64),
+            observedAtMs: NOW_MS - 10,
+            expiresAtMs: NOW_MS + 60_000,
+            contentRef: "evidence_a",
+            contentHash: "a".repeat(64),
+            privateContentHash: "b".repeat(64),
+            verificationLevel: "adapter_verified" as const,
+            deliveryKind: "reference" as const,
+            receivedAtMs: NOW_MS,
+          },
+        })),
+      },
+      releaseCoordinator: releaseCoordinator ?? {
+        release: vi.fn(async () => ok({ kind: "rejected" as const, reasonCode: "state_mismatch" as const })),
+      },
+      requestDeadlineMs: 5_000,
+      clock,
+      timers,
+      logger: makeLogger(),
+    };
     return {
       clock,
       timers,
-      created: createUnixCapabilityServiceHostRuntime({
-        definitions: [makeDefinition(releaseCoordinator !== undefined)],
-        instances: [makeInstance(socketPath)],
-        credentials: new Map([["service-instance_a", () => BEARER]]),
-        bundleDigest: BUNDLE_DIGEST,
-        socketRoot: dirname(socketPath),
-        reportBridge: reportBridge ?? {
-          ingestReport: vi.fn(async () => ok({
-            kind: "accepted" as const,
-            report: {
-              schemaVersion: 1 as const,
-              serviceInstanceId: "service-instance_a",
-              managedRunId: "managed-run_a",
-              serviceReportId: "service-report_a",
-              sequence: 1,
-              kind: "progress" as const,
-              contentRef: "service-report_a",
-              contentHash: "a".repeat(64),
-              receivedAtMs: NOW_MS,
-              retainedUntilMs: NOW_MS + 60_000,
-            },
-          })),
-        },
-        evidenceBridge: evidenceBridge ?? {
-          putEvidence: vi.fn(async () => ok({
-            kind: "accepted" as const,
-            evidence: {
-              schemaVersion: 1 as const,
-              serviceInstanceId: "service-instance_a",
-              managedRunId: "managed-run_a",
-              evidenceRef: "evidence_a",
-              kind: "delivery_reference",
-              subjectDigest: "e".repeat(64),
-              observedAtMs: NOW_MS - 10,
-              expiresAtMs: NOW_MS + 60_000,
-              contentRef: "evidence_a",
-              contentHash: "a".repeat(64),
-              privateContentHash: "b".repeat(64),
-              verificationLevel: "adapter_verified" as const,
-              deliveryKind: "reference" as const,
-              receivedAtMs: NOW_MS,
-            },
-          })),
-        },
-        releaseCoordinator: releaseCoordinator ?? {
-          release: vi.fn(async () => ok({ kind: "rejected" as const, reasonCode: "state_mismatch" as const })),
-        },
-        requestDeadlineMs: 5_000,
-        clock,
-        timers,
-        logger: makeLogger(),
-      }),
+      created: createUnixCapabilityServiceHostRuntime(hostDeps),
     };
   }
+
+  it("delivers owner-private attention responses to the authenticated service", async () => {
+    const root = makeRoot();
+    const receiveAttentionResponse = vi.fn(async () => ok({
+      kind: "delivered" as const,
+      managedRunId: "managed-run_a",
+      externalKey: "backend-id-format",
+      response: "Use monotonic issue-N values.",
+    }));
+    const host = makeHost(
+      root.socketPath,
+      undefined,
+      undefined,
+      undefined,
+      { receiveAttentionResponse },
+    );
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER, false, true));
+    await peer.next();
+    if (!(await started).ok) return;
+
+    peer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_attention_response_a",
+      method: "managedRuns.receiveAttentionResponse",
+      params: {
+        operationId: "operation_attention_response_a",
+        managedRunId: "managed-run_a",
+        externalKey: "backend-id-format",
+      },
+    });
+
+    expect(await peer.next()).toEqual({
+      jsonrpc: "2.0",
+      id: "operation_attention_response_a",
+      result: {
+        managedRunId: "managed-run_a",
+        externalKey: "backend-id-format",
+        state: "delivered",
+        response: "Use monotonic issue-N values.",
+      },
+    });
+    expect(receiveAttentionResponse).toHaveBeenCalledWith({
+      operationId: "operation_attention_response_a",
+      serviceInstanceId: "service-instance_a",
+      managedRunId: "managed-run_a",
+      externalKey: "backend-id-format",
+    });
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
 
   it("routes authenticated release requests through host authority", async () => {
     const root = makeRoot();
