@@ -22,6 +22,27 @@ import {
 } from "./common.js";
 
 const ProtocolIdSchema = z.literal(CAPABILITY_SERVICE_PROTOCOL_ID);
+const BASE64_JSON_SCHEMA_PATTERN = "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$";
+
+function hasValidBase64Shape(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const paddingStart = value.endsWith("==")
+    ? value.length - 2
+    : value.endsWith("=") ? value.length - 1 : value.length;
+  for (let index = 0; index < paddingStart; index += 1) {
+    const code = value.charCodeAt(index);
+    const isAlphabet = (code >= 65 && code <= 90)
+      || (code >= 97 && code <= 122)
+      || (code >= 48 && code <= 57)
+      || code === 43
+      || code === 47;
+    if (!isAlphabet) return false;
+  }
+  for (let index = paddingStart; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return false;
+  }
+  return true;
+}
 
 const HandshakeParamsSchema = z.strictObject({
   protocolId: ProtocolIdSchema,
@@ -176,7 +197,8 @@ export const CapabilityPutEvidenceRequestSchema = z.strictObject({
     verificationLevel: z.enum(["reported", "adapter_verified", "host_verified"]),
     bodyBase64: z.string()
       .max(Math.ceil(CAPABILITY_SERVICE_LIMITS.maxEvidenceBytes / 3) * 4)
-      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
+      .refine(hasValidBase64Shape, "must use valid base64 syntax")
+      .meta({ pattern: BASE64_JSON_SCHEMA_PATTERN }),
     delivery: EvidenceDeliverySchema.optional(),
   }),
 });

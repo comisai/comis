@@ -212,18 +212,19 @@ async function resolveRunHandle(
   if (bound.binding.behavior !== "run_command") return ok(undefined);
   const argument = bound.binding.runHandleArgument;
   const params = input.params;
-  if (
-    argument === undefined
+  const handle = argument === undefined
     || typeof params !== "object"
     || params === null
     || Array.isArray(params)
-    || typeof params[argument] !== "string"
-    || params[argument].length === 0
-    || params[argument].length > 256
+    ? undefined
+    : Object.getOwnPropertyDescriptor(params, argument)?.value;
+  if (
+    typeof handle !== "string"
+    || handle.length === 0
+    || handle.length > 256
   ) {
     return err(new Error("managed-run handle argument is missing or invalid"));
   }
-  const handle = params[argument];
   const loaded = await invoke(() => deps.getManagedRunByExternalRef(
     scope,
     bound.serviceInstanceId,
@@ -408,9 +409,11 @@ export function createManagedMcpPrivateMetadataBridge(
     if (!hasPreparedExtension || input.meta === undefined) {
       return rejectCall(deps, input, "managed-run starter omitted its private prepared result");
     }
-    const parsed = McpManagedRunResultSchema.safeParse(
-      input.meta[MCP_MANAGED_RUN_RESULT_KEY],
-    );
+    const preparedResult = Object.getOwnPropertyDescriptor(
+      input.meta,
+      MCP_MANAGED_RUN_RESULT_KEY,
+    )?.value;
+    const parsed = McpManagedRunResultSchema.safeParse(preparedResult);
     if (!parsed.success) {
       return rejectCall(deps, input, "managed-run prepared result failed strict validation");
     }

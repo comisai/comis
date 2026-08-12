@@ -11,7 +11,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, normalize } from "node:path";
+import { safePath } from "@comis/core";
 
 export interface FixtureRepository {
   readonly approvedRoot: string;
@@ -40,26 +41,76 @@ export interface EmittedModelToolCall {
   readonly continuation: boolean;
 }
 
+function validateFixturePath(path: string): string {
+  if (!isAbsolute(path) || normalize(path) !== path || path.includes("\0")) {
+    throw new Error("capability-service fixture path must be absolute and normalized");
+  }
+  return path;
+}
+
+function fixtureChildPath(base: string, ...segments: string[]): string {
+  return safePath(validateFixturePath(base), ...segments);
+}
+
+function fixturePathExists(path: string): boolean {
+  const validated = validateFixturePath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- validateFixturePath admits only absolute normalized test-harness paths
+  return existsSync(validated);
+}
+
+function setFixturePathMode(path: string, mode: number): void {
+  const validated = validateFixturePath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- validateFixturePath admits only absolute normalized test-harness paths
+  chmodSync(validated, mode);
+}
+
+function ensureFixtureDirectory(path: string): void {
+  const validated = validateFixturePath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- validateFixturePath admits only absolute normalized test-harness paths
+  mkdirSync(validated, { recursive: true, mode: 0o700 });
+}
+
+function canonicalFixturePath(path: string): string {
+  const validated = validateFixturePath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- validateFixturePath admits only absolute normalized test-harness paths
+  return realpathSync(validated);
+}
+
+function writeFixtureFile(path: string, content: string): void {
+  const validated = validateFixturePath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- validateFixturePath admits only absolute normalized test-harness paths
+  writeFileSync(validated, content, { mode: 0o600 });
+}
+
+function readFixtureTextFile(path: string): string {
+  const validated = validateFixturePath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- validateFixturePath admits only absolute normalized test-harness paths
+  return readFileSync(validated, "utf8");
+}
+
 function removeSocket(path: string): void {
-  if (existsSync(path)) rmSync(path, { force: true });
+  const validated = validateFixturePath(path);
+  if (fixturePathExists(validated)) rmSync(validated, { force: true });
 }
 
 function listenUnix(server: NetServer, socketPath: string): Promise<void> {
-  removeSocket(socketPath);
+  const validatedSocketPath = validateFixturePath(socketPath);
+  removeSocket(validatedSocketPath);
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(socketPath, () => {
+    server.listen(validatedSocketPath, () => {
       server.off("error", reject);
-      chmodSync(socketPath, 0o600);
+      setFixturePathMode(validatedSocketPath, 0o600);
       resolve();
     });
   });
 }
 
 function closeNetServer(server: NetServer, socketPath: string): Promise<void> {
+  const validatedSocketPath = validateFixturePath(socketPath);
   return new Promise((resolve) => {
     server.close(() => {
-      removeSocket(socketPath);
+      removeSocket(validatedSocketPath);
       resolve();
     });
   });
@@ -100,7 +151,7 @@ export function buildGoFixtureBinary(
   outputDirectory: string,
   name: "devcrew-service" | "devcrew-mcp",
 ): string {
-  const output = join(outputDirectory, name);
+  const output = fixtureChildPath(outputDirectory, name);
   execFileSync("go", ["build", "-trimpath", "-o", output, `./cmd/${name}`], {
     cwd: goRepository,
     stdio: "pipe",
@@ -109,28 +160,31 @@ export function buildGoFixtureBinary(
 }
 
 export function createFixtureRepository(root: string): FixtureRepository {
-  const approvedRoot = join(root, "repositories");
-  const primary = join(approvedRoot, "fixture-repository");
-  const worktreeRoot = join(approvedRoot, "worktrees");
-  mkdirSync(primary, { recursive: true, mode: 0o700 });
-  mkdirSync(worktreeRoot, { recursive: true, mode: 0o700 });
-  const gitExecutable = realpathSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim());
+  const fixtureRoot = validateFixturePath(root);
+  const approvedRoot = fixtureChildPath(fixtureRoot, "repositories");
+  const primary = fixtureChildPath(approvedRoot, "fixture-repository");
+  const worktreeRoot = fixtureChildPath(approvedRoot, "worktrees");
+  ensureFixtureDirectory(primary);
+  ensureFixtureDirectory(worktreeRoot);
+  const gitExecutable = canonicalFixturePath(
+    execFileSync("which", ["git"], { encoding: "utf8" }).trim(),
+  );
   const runGit = (cwd: string, args: readonly string[]): string =>
     execFileSync(gitExecutable, args, { cwd, encoding: "utf8" }).trim();
   runGit(primary, ["init"]);
   runGit(primary, ["config", "user.name", "Capability Fixture"]);
   runGit(primary, ["config", "user.email", "fixture@example.invalid"]);
-  writeFileSync(join(primary, "README.md"), "capability fixture\n", { mode: 0o600 });
+  writeFixtureFile(fixtureChildPath(primary, "README.md"), "capability fixture\n");
   runGit(primary, ["add", "README.md"]);
   runGit(primary, ["commit", "-m", "fixture"]);
   const baseRevision = runGit(primary, ["rev-parse", "HEAD"]);
-  const workspace = join(worktreeRoot, "managed-fixture");
+  const workspace = fixtureChildPath(worktreeRoot, "managed-fixture");
   runGit(primary, ["worktree", "add", "-b", "managed-fixture", workspace, baseRevision]);
   return Object.freeze({
-    approvedRoot: realpathSync(approvedRoot),
-    primary: realpathSync(primary),
-    worktreeRoot: realpathSync(worktreeRoot),
-    workspace: realpathSync(workspace),
+    approvedRoot: canonicalFixturePath(approvedRoot),
+    primary: canonicalFixturePath(primary),
+    worktreeRoot: canonicalFixturePath(worktreeRoot),
+    workspace: canonicalFixturePath(workspace),
     baseRevision,
     gitExecutable,
   });
@@ -463,9 +517,10 @@ export function startFixtureService(input: {
   readonly controlSocket: string;
   readonly credentialFile: string;
 }): RunningFixtureService {
-  mkdirSync(dirname(input.databasePath), { recursive: true, mode: 0o700 });
+  const databasePath = validateFixturePath(input.databasePath);
+  ensureFixtureDirectory(dirname(databasePath));
   const child = spawn(input.binary, [
-    "--database", input.databasePath,
+    "--database", databasePath,
     "--socket", input.operatorSocket,
     "--mcp-socket", input.mcpSocket,
     "--service-instance", input.serviceInstanceId,
@@ -501,8 +556,9 @@ export function startFixtureService(input: {
 }
 
 function unixSocketAcceptsConnection(path: string): Promise<boolean> {
+  const validatedPath = validateFixturePath(path);
   return new Promise((resolve) => {
-    const socket = createConnection(path);
+    const socket = createConnection(validatedPath);
     let settled = false;
     const finish = (ready: boolean): void => {
       if (settled) return;
@@ -517,17 +573,19 @@ function unixSocketAcceptsConnection(path: string): Promise<boolean> {
 }
 
 export async function waitForUnixSocket(path: string, timeoutMs = 15_000): Promise<void> {
+  const validatedPath = validateFixturePath(path);
   const deadline = Date.now() + timeoutMs;
   while (true) {
-    if (existsSync(path) && await unixSocketAcceptsConnection(path)) return;
-    if (Date.now() >= deadline) throw new Error(`Unix socket ${path} timed out`);
+    if (fixturePathExists(validatedPath) && await unixSocketAcceptsConnection(validatedPath)) return;
+    if (Date.now() >= deadline) throw new Error(`Unix socket ${validatedPath} timed out`);
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
   }
 }
 
 export function readLauncherPids(path: string): number[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
+  const validatedPath = validateFixturePath(path);
+  if (!fixturePathExists(validatedPath)) return [];
+  return readFixtureTextFile(validatedPath)
     .split("\n")
     .filter(Boolean)
     .map((line) => (JSON.parse(line) as { pid: number }).pid);

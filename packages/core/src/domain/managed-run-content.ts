@@ -5,6 +5,27 @@ const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 const OpaqueRefSchema = z.string().min(1).max(256).regex(OPAQUE_REF_PATTERN);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const TimestampMsSchema = z.number().int().nonnegative();
+const BASE64_JSON_SCHEMA_PATTERN = "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$";
+
+function hasValidBase64Shape(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const paddingStart = value.endsWith("==")
+    ? value.length - 2
+    : value.endsWith("=") ? value.length - 1 : value.length;
+  for (let index = 0; index < paddingStart; index += 1) {
+    const code = value.charCodeAt(index);
+    const isAlphabet = (code >= 65 && code <= 90)
+      || (code >= 97 && code <= 122)
+      || (code >= 48 && code <= 57)
+      || code === 43
+      || code === 47;
+    if (!isAlphabet) return false;
+  }
+  for (let index = paddingStart; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return false;
+  }
+  return true;
+}
 
 export const MAX_MANAGED_RUN_REPORT_BYTES = 16_384;
 export const MAX_MANAGED_EVIDENCE_BYTES = 1_048_576;
@@ -121,7 +142,8 @@ export const ManagedEvidencePrivateBodySchema = z.strictObject({
   schemaVersion: z.literal(1),
   bodyBase64: z.string()
     .max(Math.ceil(MAX_MANAGED_EVIDENCE_BYTES / 3) * 4)
-    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
+    .refine(hasValidBase64Shape, "must use valid base64 syntax")
+    .meta({ pattern: BASE64_JSON_SCHEMA_PATTERN }),
   delivery: ManagedEvidenceDeliverySchema.optional(),
 });
 

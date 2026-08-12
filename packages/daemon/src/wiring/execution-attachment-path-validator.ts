@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, type Stats } from "node:fs";
 import { isAbsolute, normalize, parse, relative, sep } from "node:path";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import type { ExecutionAttachmentFilesystemIdentity } from "@comis/core";
@@ -22,8 +22,17 @@ function isWithin(path: string, root: string): boolean {
   return child.length === 0 || (child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child));
 }
 
-function canonicalDirectory(path: string): Result<string, Error> {
+function inspectCanonicalPath(path: string): Result<{
+  readonly stat: Stats;
+  readonly canonical: string;
+}, Error> {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- callers admit only absolute normalized paths before this filesystem boundary
   const inspected = tryCatch(() => ({ stat: lstatSync(path), canonical: realpathSync(path) }));
+  return inspected.ok ? ok(inspected.value) : err(inspected.error);
+}
+
+function canonicalDirectory(path: string): Result<string, Error> {
+  const inspected = inspectCanonicalPath(path);
   if (!inspected.ok) return err(inspected.error);
   if (
     !inspected.value.stat.isDirectory()
@@ -41,10 +50,7 @@ export function validateExecutionAttachmentPath(input: ExecutionAttachmentPathIn
     || normalize(input.requestedPath) !== input.requestedPath
   ) return err(new Error("execution attachment source must be an absolute normalized path under an allowed runtime root"));
 
-  const source = tryCatch(() => ({
-    stat: lstatSync(input.requestedPath),
-    canonical: realpathSync(input.requestedPath),
-  }));
+  const source = inspectCanonicalPath(input.requestedPath);
   if (!source.ok) return err(source.error);
   if (
     source.value.stat.isSymbolicLink()

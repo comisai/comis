@@ -34,12 +34,17 @@ function defaultDarwinStart(pid: number): string | undefined {
   return `darwin:${createHash("sha256").update(read.value, "utf8").digest("hex")}`;
 }
 
+function readLinuxProcStat(path: string): Promise<string> {
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the caller constructs this path under /proc from a validated positive integer PID
+  return readFile(path, "utf8");
+}
+
 /** Build the daemon trust-boundary resolver; unprovable or reused PIDs fail closed. */
 export function createTerminalRootProcessIdentityResolver(
   deps: TerminalRootProcessIdentityDeps = {},
 ): (pid: number) => Promise<TerminalRootProcessIdentity | undefined> {
   const platform = deps.platform ?? process.platform;
-  const readText = deps.readText ?? ((path: string) => readFile(path, "utf8"));
+  const readText = deps.readText ?? readLinuxProcStat;
   const readDarwinStart = deps.readDarwinStart ?? defaultDarwinStart;
   return async (pid) => {
     if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;

@@ -11,20 +11,29 @@ import { appendFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import { createInterface } from "node:readline";
+import { isAbsolute, normalize } from "node:path";
 
 function valueAfter(flag) {
   const index = process.argv.indexOf(flag);
   return index < 0 ? undefined : process.argv[index + 1];
 }
 
+function validatedPidLogPath(path) {
+  if (!isAbsolute(path) || normalize(path) !== path || path.includes("\0")) {
+    throw new Error("capability-service MCP fixture PID log must be an absolute normalized path");
+  }
+  return path;
+}
+
 const binary = valueAfter("--binary");
 const socket = valueAfter("--socket");
 const serviceInstance = valueAfter("--service-instance");
-const pidLog = valueAfter("--pid-log");
-if (!binary || !socket || !serviceInstance || !pidLog) {
+const pidLogArg = valueAfter("--pid-log");
+if (!binary || !socket || !serviceInstance || !pidLogArg) {
   process.stderr.write("capability-service MCP fixture launcher is incomplete\n");
   process.exit(2);
 }
+const pidLog = validatedPidLogPath(pidLogArg);
 
 const child = spawn(binary, [
   "--socket",
@@ -34,6 +43,7 @@ const child = spawn(binary, [
 ], {
   stdio: ["pipe", "pipe", "inherit"],
 });
+// eslint-disable-next-line security/detect-non-literal-fs-filename -- validatedPidLogPath admits only an absolute normalized test-harness path
 appendFileSync(pidLog, `${JSON.stringify({ pid: child.pid })}\n`, { mode: 0o600 });
 
 const pending = new Map();

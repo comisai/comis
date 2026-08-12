@@ -2,14 +2,13 @@
 /** Deterministic generator for the release-pinned capability-service bundle. */
 import { createHash } from "node:crypto";
 import {
-  existsSync,
+  globSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z, type ZodType } from "zod";
 import {
@@ -318,18 +317,39 @@ export function createProtocolBundle(): GeneratedBundle {
   return { files, bundleDigest };
 }
 
-function collectJsonFiles(root: string, current: string = root): string[] {
-  if (!existsSync(current)) return [];
-  const files: string[] = [];
-  for (const entry of readdirSync(current, { withFileTypes: true })) {
-    const absolute = resolve(current, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...collectJsonFiles(root, absolute));
-    } else if (entry.isFile() && entry.name.endsWith(".json")) {
-      files.push(relative(root, absolute));
-    }
+function resolveProtocolArtifactPath(path: string): string {
+  if (path.length === 0 || path.includes("\0") || isAbsolute(path)) {
+    throw new Error("protocol artifact path must be a non-empty relative path");
   }
-  return files.sort();
+  const absolute = resolve(PROTOCOL_ROOT, path);
+  const confined = relative(PROTOCOL_ROOT, absolute);
+  if (
+    confined.length === 0
+    || confined === ".."
+    || confined.startsWith(`..${sep}`)
+    || isAbsolute(confined)
+  ) {
+    throw new Error("protocol artifact path must remain inside the protocol bundle");
+  }
+  return absolute;
+}
+
+function writeProtocolArtifact(path: string, content: string): void {
+  const output = resolveProtocolArtifactPath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolveProtocolArtifactPath proves the output remains inside PROTOCOL_ROOT
+  mkdirSync(dirname(output), { recursive: true });
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolveProtocolArtifactPath proves the output remains inside PROTOCOL_ROOT
+  writeFileSync(output, content);
+}
+
+function readProtocolArtifact(path: string): string {
+  const input = resolveProtocolArtifactPath(path);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolveProtocolArtifactPath proves the input remains inside PROTOCOL_ROOT
+  return readFileSync(input, "utf8");
+}
+
+function collectJsonFiles(): string[] {
+  return globSync("**/*.json", { cwd: PROTOCOL_ROOT }).sort();
 }
 
 export function writeProtocolBundle(bundle: GeneratedBundle = createProtocolBundle()): void {
@@ -340,9 +360,7 @@ export function writeProtocolBundle(bundle: GeneratedBundle = createProtocolBund
   mkdirSync(schemasRoot, { recursive: true });
   mkdirSync(fixturesRoot, { recursive: true });
   for (const [path, content] of bundle.files) {
-    const output = resolve(PROTOCOL_ROOT, path);
-    mkdirSync(dirname(output), { recursive: true });
-    writeFileSync(output, content);
+    writeProtocolArtifact(path, content);
   }
 }
 
@@ -350,16 +368,16 @@ export function findProtocolBundleDrift(
   bundle: GeneratedBundle = createProtocolBundle(),
 ): string[] {
   const expectedPaths = [...bundle.files.keys()].sort();
-  const actualPaths = collectJsonFiles(PROTOCOL_ROOT);
+  const actualPaths = collectJsonFiles();
+  const actualPathSet = new Set(actualPaths);
   const drift = new Set<string>();
   for (const path of new Set([...expectedPaths, ...actualPaths])) {
     const expected = bundle.files.get(path);
-    const absolute = resolve(PROTOCOL_ROOT, path);
-    if (expected === undefined || !existsSync(absolute)) {
+    if (expected === undefined || !actualPathSet.has(path)) {
       drift.add(path);
       continue;
     }
-    if (readFileSync(absolute, "utf8") !== expected) drift.add(path);
+    if (readProtocolArtifact(path) !== expected) drift.add(path);
   }
   return [...drift].sort();
 }

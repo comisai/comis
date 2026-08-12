@@ -142,15 +142,16 @@ function validateImmutableInputs(
     return err(new Error("Continuation capability view hash is invalid"));
   }
   const toolIds = input.capturedCapabilityCeiling.toolIds;
-  for (let index = 0; index < toolIds.length; index += 1) {
-    const toolId = toolIds[index];
+  let previousToolId: string | undefined;
+  for (const toolId of toolIds) {
     if (
       typeof toolId !== "string"
       || toolId.length === 0
-      || (index > 0 && (toolIds[index - 1] as string).localeCompare(toolId) >= 0)
+      || (previousToolId !== undefined && previousToolId.localeCompare(toolId) >= 0)
     ) {
       return err(new Error("Continuation captured tool IDs must be unique and sorted"));
     }
+    previousToolId = toolId;
   }
   return ok(undefined);
 }
