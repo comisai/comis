@@ -1658,6 +1658,19 @@ describe("createTerminalWorker — send_text (submit ordering + bracketed paste)
     expect(reply.ok).toBe(true);
     expect((reply.result as { screen: string }).screen).toBe("");
   });
+
+  it("send_text after the child exits refuses delivery without writing stale backend input", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emitExit({ exitCode: 0 });
+
+    const reply = await worker.handle(sendTextFrame("too-late", { submit: true }));
+
+    expect(reply.ok).toBe(true);
+    expect(rec.writes).toEqual([]);
+    expect((reply.result as { delivered?: boolean }).delivered).toBe(false);
+  });
 });
 
 describe("createTerminalWorker — resize (pty winsize + ring geometry)", () => {

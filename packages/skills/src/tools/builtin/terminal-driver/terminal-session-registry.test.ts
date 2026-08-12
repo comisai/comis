@@ -1322,6 +1322,29 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
     expect(after).toBeGreaterThan(created as number);
   });
 
+  it("preserves a worker refusal when the child exits before the registry observes the transition", async () => {
+    const fake = makeFakeWorker((req) => req.method === "send_text"
+      ? {
+          sessionId: req.sessionId,
+          requestId: req.requestId,
+          ok: true,
+          result: { screen: "", cursor: { x: 0, y: 0 }, delivered: false },
+        }
+      : undefined);
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+
+    const out = await registry.sendText(sessionId, OWNER, { text: "too-late" });
+
+    expect(out.delivered).toBe(false);
+  });
+
   it("degrades a send_text on a reply timeout (ok:false) — no throw, no hang", async () => {
     // A worker that ACCEPTS the frame but never replies; the injected timeout fires.
     const fake = makeFakeWorker(); // no autoReply
