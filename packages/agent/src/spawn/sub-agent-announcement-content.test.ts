@@ -74,3 +74,41 @@ describe("sub-agent announcement content", () => {
     expect(disclosure.text?.match(/governor limit of 6/gu)).toHaveLength(1);
   });
 });
+
+describe("buildAnnouncementMessage — a real response is never rendered as an error", () => {
+  // Second half of the same live incident. Even once classification is right,
+  // the failed branch put the child's own response into the `error` slot, so
+  // the reader saw `Result: Error: <the actual answer>`. A deliverable
+  // relabelled as an error invites the user to discard good work.
+  it("shows the response as the result when a degraded run still produced one", () => {
+    const message = buildAnnouncementMessage({
+      task: "find listings",
+      status: "failed",
+      response: "Found 3 active listings; yad2 was behind a bot challenge.",
+      runtimeMs: 1000,
+      tokensUsed: 10,
+      cost: 0.1,
+      finishReason: "max_steps",
+      sessionKey: "s1",
+    });
+
+    expect(message).toContain("Found 3 active listings");
+    expect(message).not.toContain("Error: Found 3 active listings");
+    expect(message).not.toContain("Result: Error:");
+  });
+
+  it("still reports an error when the run produced no response at all", () => {
+    const message = buildAnnouncementMessage({
+      task: "find listings",
+      status: "failed",
+      error: "provider refused the request",
+      runtimeMs: 1000,
+      tokensUsed: 10,
+      cost: 0.1,
+      finishReason: "error",
+      sessionKey: "s1",
+    });
+
+    expect(message).toContain("Error: provider refused the request");
+  });
+});
