@@ -93,6 +93,17 @@ describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module 
   });
 });
 
+describe("buildSpawnPlan — verified executable visibility", () => {
+  it("threads the canonical driven executable into the read-only jail mounts", async () => {
+    const executablePath = "/opt/operator-tools/bin/worker";
+    const plan = await buildSpawnPlan(makeInput({ bin: executablePath }), {
+      bwrapPath: "/usr/bin/bwrap",
+    });
+
+    expect(hasBind(plan.argv, "--ro-bind", executablePath, executablePath)).toBe(true);
+  });
+});
+
 describe("buildSpawnPlan — execution attachment confinement", () => {
   const attachment = {
     executionAttachmentId: "execution-attachment_a",

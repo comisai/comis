@@ -103,6 +103,17 @@ describe("buildScopeArgs — least-privilege default scope", () => {
     expect(hasBind(args, "--dev-bind", "/dev/pts", "/dev/pts")).toBe(true);
     expect(indexOfPair(args, "--tmpfs", "/tmp")).toBeGreaterThanOrEqual(0);
   });
+
+  it("ro-binds the verified driven executable when it lives outside every visible scope root", () => {
+    const executablePath = "/opt/operator-tools/bin/worker";
+    const args = buildScopeArgs({
+      ...makeInput(),
+      executablePath,
+    } as ScopeArgsInput & { executablePath: string });
+
+    expect(hasBind(args, "--ro-bind", executablePath, executablePath)).toBe(true);
+    expect(indexOfPair(args, "--ro-bind", executablePath)).toBeLessThan(args.indexOf("--"));
+  });
 });
 
 describe("buildScopeArgs — filesystem dimension", () => {
