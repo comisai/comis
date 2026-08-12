@@ -110,7 +110,7 @@ describe("CLI entry point", () => {
     ] as const;
 
     it("registers exactly 32 commands", () => {
-      expect(program.commands).toHaveLength(32);
+      expect(program.commands).toHaveLength(33);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

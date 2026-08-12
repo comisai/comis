@@ -3,7 +3,7 @@
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
  * Budget:
- *   - 197,750 bytes minified (`BUDGET_MINIFIED_BYTES`)
+ *   - 198,650 bytes minified (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
  * Measurement architecture:
@@ -24,14 +24,20 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 197,750 bytes minified.
+ * Budget: 198,650 bytes minified.
  *
  * This cap permits bounded additive RPC-schema growth while keeping accidental
  * validator expansion visible in CI. Raise it only for reviewed contract
  * additions after confirming that the independently enforced gzipped wire-size
  * budget still has ample headroom.
+ *
+ * Raised from 197,750 for the two `obs.quarantine.*` contracts (859B combined):
+ * the operator lever over quarantined announcements. Gzipped sat at 20,896B
+ * against its 38,912B budget — 46% headroom — so the wire cost is unaffected.
+ * The ~240B of remaining minified headroom is deliberate: this cap is a ratchet,
+ * and keeping it close to the total is what makes unreviewed growth fail.
  */
-export const BUDGET_MINIFIED_BYTES = 197_750;
+export const BUDGET_MINIFIED_BYTES = 198_650;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

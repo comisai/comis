@@ -28,6 +28,15 @@ export type {
   DeadLetterEntry,
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
+import { projectQuarantined } from "./announcement-dead-letter-quarantine.js";
+import type {
+  QuarantinedAnnouncement,
+  QuarantineReleaseOutcome,
+} from "./announcement-dead-letter-quarantine.js";
+export type {
+  QuarantinedAnnouncement,
+  QuarantineReleaseOutcome,
+} from "./announcement-dead-letter-quarantine.js";
 
 /** Minimal structural logger accepted from the daemon composition root. */
 export interface AnnouncementLogger {
@@ -36,36 +45,6 @@ export interface AnnouncementLogger {
   error(obj: Record<string, unknown>, msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
 }
-
-/**
- * One quarantined announcement, as an operator sees it.
- *
- * Content-free by construction: the announcement's LENGTH is carried, never its
- * text. These rows ride an admin RPC and a terminal, and the announcement is
- * quarantined precisely because it was NOT delivered to its intended reader —
- * an operator deciding its fate needs the route and the reason, not the message.
- */
-export interface QuarantinedAnnouncement {
-  readonly id: string;
-  /** `entry` — a failed delivery. `parent_decision` — a parked adjudication. */
-  readonly kind: "entry" | "parent_decision";
-  readonly runId: string;
-  readonly agentId?: string;
-  readonly channelType: ChannelType;
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly failedAt: number;
-  readonly attemptCount: number;
-  readonly lastAttemptAt?: number;
-  /** Why it is parked (e.g. `outward_operation_unresolved`). */
-  readonly lastError?: string;
-  readonly idempotencyKey?: string;
-  /** Size of the withheld announcement text, in characters. */
-  readonly announcementChars: number;
-}
-
-/** What an operator decided about a quarantined announcement. */
-export type QuarantineReleaseOutcome = "delivered" | "discarded";
 
 /** Dead-letter queue interface for announcement retry management. */
 export interface AnnouncementDeadLetterQueue {
@@ -1012,38 +991,7 @@ export function createAnnouncementDeadLetterQueue(
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
     size: () => entries.length + decisionReservations.length,
-    listQuarantined: () => [
-      ...entries.map((entry): QuarantinedAnnouncement => ({
-        id: entry.id,
-        kind: "entry" as const,
-        runId: entry.runId,
-        ...(entry.agentId === undefined ? {} : { agentId: entry.agentId }),
-        channelType: entry.channelType,
-        channelId: entry.channelId,
-        ...(entry.threadId === undefined ? {} : { threadId: entry.threadId }),
-        failedAt: entry.failedAt,
-        attemptCount: entry.attemptCount,
-        lastAttemptAt: entry.lastAttemptAt,
-        ...(entry.lastError === undefined ? {} : { lastError: entry.lastError }),
-        ...(entry.idempotencyKey === undefined ? {} : { idempotencyKey: entry.idempotencyKey }),
-        announcementChars: entry.announcementText.length,
-      })),
-      ...decisionReservations.map((record): QuarantinedAnnouncement => ({
-        id: record.id,
-        kind: "parent_decision" as const,
-        runId: record.runId,
-        agentId: record.agentId,
-        channelType: record.channelType,
-        channelId: record.channelId,
-        ...(record.threadId === undefined ? {} : { threadId: record.threadId }),
-        failedAt: record.failedAt,
-        // A reservation is parked awaiting adjudication, never retried, so it
-        // has no attempt history to report.
-        attemptCount: 0,
-        idempotencyKey: record.idempotencyKey,
-        announcementChars: record.announcementText.length,
-      })),
-    ].sort((left, right) => left.failedAt - right.failedAt || left.id.localeCompare(right.id)),
+    listQuarantined: () => projectQuarantined(entries, decisionReservations),
     release: (id, outcome) => serialize(() => releaseSerialized(id, outcome)),
   };
 }
