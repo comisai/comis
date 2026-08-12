@@ -122,6 +122,70 @@ describe("persistent action evidence reply", () => {
   });
 });
 
+describe("outbound audio evidence reply", () => {
+  it("is deterministic and can be replaced by an operator locale pack", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildOutboundAudioEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        outbound_audio_evidence_missing:
+          "לא שלחתי את השמע המבוקש בתור הנוכחי.",
+      },
+    });
+
+    expect(build()).toContain("could not verify delivery of the requested audio");
+    expect(build()).not.toContain("did not deliver");
+    expect(build("he", catalog)).toBe(
+      "לא שלחתי את השמע המבוקש בתור הנוכחי.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("outbound_audio_evidence_missing");
+  });
+});
+
+describe("outbound image evidence reply", () => {
+  it("stays neutral and supports an operator locale pack", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildOutboundImageEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const build = candidate as (
+      language?: string,
+      catalog?: ReturnType<typeof catalogFromLocalePacks>,
+    ) => string;
+    const catalog = catalogFromLocalePacks({
+      he: {
+        outbound_image_evidence_missing:
+          "לא ניתן לאמת יצירה או מסירה של התמונה המבוקשת.",
+      },
+    });
+
+    expect(build()).toContain("could not verify creation or delivery");
+    expect(build()).not.toContain("did not create");
+    expect(build("he", catalog)).toBe(
+      "לא ניתן לאמת יצירה או מסירה של התמונה המבוקשת.",
+    );
+    expect(LOCALE_MESSAGE_IDS).toContain("outbound_image_evidence_missing");
+  });
+});
+
+describe("outbound delivery status evidence reply", () => {
+  it("withholds both positive and negative status without a current receipt", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildOutboundDeliveryStatusEvidenceMissingReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toContain("could not verify whether the prior outbound item was delivered");
+    expect(reply).toContain("current delivery or observability receipt");
+    expect(reply).not.toMatch(/(?:was|was not|did|did not) delivered[.!]\s*$/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("outbound_delivery_status_evidence_missing");
+  });
+});
+
 describe("buildOutputStarvedAnnotation — vocabulary + content invariants", () => {
   it("returns a non-empty annotation string", () => {
     const annotation = buildOutputStarvedAnnotation();
@@ -480,7 +544,21 @@ describe("runtime self-report evidence missing reply", () => {
 
     expect(reply).toMatch(/could not verify.*runtime activity/iu);
     expect(reply).toMatch(/work counts?.*cause.*cost/iu);
+    expect(reply).toMatch(/durable job.*restart chronology/iu);
     expect(LOCALE_MESSAGE_IDS).toContain("runtime_self_report_evidence_missing");
+  });
+});
+
+describe("runtime self-report evidence unsupported reply", () => {
+  it("names the missing duration ranking and provider invoice", () => {
+    const candidate = (degradedReply as Record<string, unknown>)
+      .buildRuntimeSelfReportEvidenceUnsupportedReply;
+    expect(candidate).toBeTypeOf("function");
+    const reply = (candidate as () => string)();
+
+    expect(reply).toMatch(/does not compare execution durations/iu);
+    expect(reply).toMatch(/provider invoice.*unverified/iu);
+    expect(LOCALE_MESSAGE_IDS).toContain("runtime_self_report_evidence_unsupported");
   });
 });
 

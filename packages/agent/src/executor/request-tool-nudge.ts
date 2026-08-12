@@ -45,9 +45,13 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantPromptSkillNames?: readonly string[];
   requestRelevantPromptSkillLocations?: readonly string[];
   requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
+  requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+  requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
   requestRelevantPromptSkillWorkflowContext?: string;
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: (toolNames?: readonly string[]) => number;
+  currentDistinctSuccessfulWebFetchUrlCount?: () => number;
+  currentDistinctSuccessfulWebSearchQueryCount?: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
   currentDeferredWorkCount: () => number;
   /** Matching tool receipts carrying a terminal policy denial. */
@@ -65,6 +69,45 @@ export interface RunRequestToolNudgeDeps {
 const SUBMODULE = "executor.request-tool-nudge";
 const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
+const MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS = 3;
+
+interface WebFetchReceiptRecord {
+  readonly toolName: string;
+  readonly success: boolean;
+  readonly citationUrlDigest?: string;
+}
+
+interface WebSearchReceiptRecord {
+  readonly toolName: string;
+  readonly success: boolean;
+  readonly webSearchQueryDigest?: string;
+}
+
+/** Count successful fetched URLs without exposing their values. */
+export function countDistinctSuccessfulWebFetchUrls(
+  records: readonly WebFetchReceiptRecord[],
+): number {
+  return new Set(records.flatMap((record) =>
+    record.toolName === "web_fetch"
+      && record.success
+      && record.citationUrlDigest !== undefined
+      ? [record.citationUrlDigest]
+      : []
+  )).size;
+}
+
+/** Count successful search queries without exposing their text. */
+export function countDistinctSuccessfulWebSearchQueries(
+  records: readonly WebSearchReceiptRecord[],
+): number {
+  return new Set(records.flatMap((record) =>
+    record.toolName === "web_search"
+      && record.success
+      && record.webSearchQueryDigest !== undefined
+      ? [record.webSearchQueryDigest]
+      : []
+  )).size;
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function visibleTextOf(content: unknown): string {
@@ -82,7 +125,42 @@ function workflowArgumentHint(context: string): string | undefined {
   return hint.length > 0 ? hint : undefined;
 }
 
-function latestWorkflowToolReceipt(
+function decodedJsonString(text: string, pattern: RegExp): string | undefined {
+  const encoded = pattern.exec(text)?.[1];
+  if (encoded === undefined) return undefined;
+  const decoded = tryCatch(() => JSON.parse(encoded) as unknown);
+  return decoded.ok && typeof decoded.value === "string" ? decoded.value : undefined;
+}
+
+function compactWorkflowReceipt(
+  toolName: string,
+  text: string,
+): { readonly text: string; readonly failed: boolean } {
+  if (toolName === "web_search") {
+    const query = decodedJsonString(
+      text,
+      /"query"\s*:\s*("(?:\\.|[^"\\])*")/u,
+    );
+    return { text: query === undefined ? text : `Query: ${query}`, failed: false };
+  }
+  if (toolName !== "web_fetch") return { text, failed: false };
+  const url = decodedJsonString(text, /"url"\s*:\s*("(?:\\.|[^"\\])*")/u);
+  const evidence = decodedJsonString(text, /"text"\s*:\s*("(?:\\.|[^"\\])*")/u)
+    ?? decodedJsonString(text, /"error"\s*:\s*("(?:\\.|[^"\\])*")/u);
+  const statusText = /"status"\s*:\s*(\d+)/u.exec(text)?.[1];
+  const status = statusText === undefined ? undefined : Number(statusText);
+  const summary = [
+    ...(url === undefined ? [] : [`URL: ${url}`]),
+    ...(status === undefined ? [] : [`HTTP status: ${status}`]),
+    ...(evidence === undefined ? [] : [`Evidence: ${evidence}`]),
+  ].join("\n");
+  return {
+    text: summary.length > 0 ? summary : text,
+    failed: status !== undefined && status >= 400,
+  };
+}
+
+function currentWorkflowToolReceipts(
   messages: readonly unknown[],
   workflowToolNames: readonly string[],
 ): string | undefined {
@@ -93,19 +171,34 @@ function latestWorkflowToolReceipt(
     content?: unknown;
     isError?: unknown;
   }>;
-  for (const entry of [...entries].reverse()) {
+  const requestIndex = entries.findLastIndex((entry) =>
+    entry.role === "user"
+    && !visibleTextOf(entry.content).includes("[comis: continuation —")
+  );
+  const receipts = entries.slice(requestIndex + 1).flatMap((entry) => {
     if (
       entry.role !== "toolResult"
       || typeof entry.toolName !== "string"
       || !names.has(entry.toolName)
-      || entry.isError === true
-    ) continue;
-    const receipt = scrubSecretsFromText(visibleTextOf(entry.content)).text
-      .slice(0, MAX_WORKFLOW_RECEIPT_CHARS)
-      .trim();
-    if (receipt.length > 0) return receipt;
-  }
-  return undefined;
+    ) return [];
+    const text = scrubSecretsFromText(visibleTextOf(entry.content)).text.trim();
+    if (text.length === 0) return [];
+    const compact = compactWorkflowReceipt(entry.toolName, text);
+    return [{
+      toolName: entry.toolName,
+      failed: entry.isError === true || compact.failed,
+      text: compact.text,
+    }];
+  });
+  if (receipts.length === 0) return undefined;
+  const perReceiptChars = Math.max(
+    120,
+    Math.floor((MAX_WORKFLOW_RECEIPT_CHARS - receipts.length * 40) / receipts.length),
+  );
+  return receipts.map((receipt, index) => [
+    `Receipt ${index + 1}: ${receipt.failed ? "failed" : "successful"} ${receipt.toolName}`,
+    receipt.text.slice(0, perReceiptChars),
+  ].join("\n")).join("\n\n").slice(0, MAX_WORKFLOW_RECEIPT_CHARS).trim();
 }
 
 function hasToolCallBlock(content: unknown): boolean {
@@ -149,11 +242,16 @@ function buildDirective(
   promptSkillLocations: readonly string[],
   promptSkillWorkflowToolNames: readonly string[],
   promptSkillWorkflowContext: string | undefined,
+  minDistinctWebFetchUrls: number | undefined,
+  distinctWebFetchUrlCount: number,
+  minDistinctWebSearchQueries: number | undefined,
+  distinctWebSearchQueryCount: number,
   trigger:
     | "repeated_answer"
     | "declared_mutation_request"
     | "claimed_action_attempt"
     | "explicit_tool_use_request"
+    | "prompt_skill_route"
     | "runtime_self_report",
 ): string {
   const triggerFact = trigger === "repeated_answer"
@@ -161,10 +259,12 @@ function buildDirective(
     : trigger === "declared_mutation_request"
       ? "Capability metadata identifies the current wording as a direct mutation request."
       : trigger === "claimed_action_attempt"
-        ? "Your last answer claimed an external action attempt without a current-turn tool receipt."
-        : trigger === "runtime_self_report"
-          ? "The current request asks for a runtime self-report, but no current obs_query receipt exists."
-          : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
+      ? "Your last answer claimed an external action attempt without a current-turn tool receipt."
+      : trigger === "runtime_self_report"
+        ? "The current request asks for a runtime self-report, but no current obs_query receipt exists."
+        : trigger === "prompt_skill_route"
+          ? "Capability routing identified a request-relevant prompt skill, but its procedure was not loaded."
+        : "The current request explicitly asks to use a matched capability, but no current-turn tool receipt exists.";
   const capabilityGuidance = toolNames.flatMap((toolName) => {
     const guidance = getToolMetadata(toolName)?.mutationRecoveryGuidance?.trim();
     return guidance
@@ -180,16 +280,28 @@ function buildDirective(
         ...(promptSkillWorkflowToolNames.length > 0
           ? [`After loading it, complete the procedure with these required workflow tools: ${promptSkillWorkflowToolNames.join(", ")}.`]
           : []),
+        ...(minDistinctWebFetchUrls === undefined
+          ? []
+          : [
+              `Content-free receipts currently prove ${distinctWebFetchUrlCount} of ${minDistinctWebFetchUrls} distinct successful web_fetch URLs.`,
+              "Only a successful fetch of a new URL advances that evidence count; a duplicate URL does not.",
+            ]),
+        ...(minDistinctWebSearchQueries === undefined
+          ? []
+          : [
+              `Content-free receipts currently prove ${distinctWebSearchQueryCount} of ${minDistinctWebSearchQueries} distinct successful web_search queries.`,
+              "Search with new query wording for another research angle until that evidence count is complete; duplicate queries do not advance it.",
+            ]),
         ...(promptSkillWorkflowContext
           ? [
-              "Derive context-dependent workflow arguments from this immediately preceding user request; do not pass the current elliptical wording literally:",
+              "Use this bounded request context for workflow arguments. The Current request section outranks Earlier request context:",
               wrapExternalContent(promptSkillWorkflowContext, {
                 source: "channel_history",
                 includeWarning: true,
               }),
               ...(workflowArgumentHint(promptSkillWorkflowContext)
                 ? [
-                    `Concrete workflow argument hint: ${JSON.stringify(workflowArgumentHint(promptSkillWorkflowContext))}. Use these prior-request terms instead of terms from the current elliptical wording.`,
+                    `Concrete workflow argument hint: ${JSON.stringify(workflowArgumentHint(promptSkillWorkflowContext))}. Use these context terms only where they agree with the authoritative current request.`,
                   ]
                 : []),
             ]
@@ -216,6 +328,10 @@ function buildPromptSkillWorkflowDirective(
   workflowToolNames: readonly string[],
   promptSkillLocations: readonly string[],
   actionToolNames: readonly string[],
+  minDistinctWebFetchUrls: number | undefined,
+  distinctWebFetchUrlCount: number,
+  minDistinctWebSearchQueries: number | undefined,
+  distinctWebSearchQueryCount: number,
   workflowContext?: string,
 ): string {
   const requestedActionToolNames = promptSkillLocations.length > 0
@@ -234,29 +350,46 @@ function buildPromptSkillWorkflowDirective(
       ? [`If it is not loaded yet, use read with: ${promptSkillLocations.join(", ")}.`]
       : []),
     `Complete its supporting workflow with: ${workflowToolNames.join(", ")}.`,
+    ...(minDistinctWebFetchUrls === undefined
+      ? []
+      : [
+          `Content-free receipts currently prove ${distinctWebFetchUrlCount} of ${minDistinctWebFetchUrls} distinct successful web_fetch URLs.`,
+          "Fetch new URLs until the receipt count reaches the required minimum; duplicate URLs do not advance it.",
+        ]),
+    ...(minDistinctWebSearchQueries === undefined
+      ? []
+      : [
+          `Content-free receipts currently prove ${distinctWebSearchQueryCount} of ${minDistinctWebSearchQueries} distinct successful web_search queries.`,
+          "Reuse web_search with new query arguments for another research angle until the query count reaches the required minimum; duplicate queries do not advance it.",
+        ]),
     "Use supporting workflow tools only for commands prescribed by the loaded procedure; do not use exec to reread the skill manifest.",
     ...(requestedActionToolNames.length > 0
       ? [`Complete the requested action with: ${requestedActionToolNames.join(", ")}.`]
       : []),
     priorRequest
-      ? `The immediately preceding user request was:\n${priorRequest}`
+      ? `The bounded request context is:\n${priorRequest}`
       : "Resolve context-dependent arguments from the recent user requests already in context.",
-    "Derive concrete workflow arguments from that prior request; do not pass the current elliptical wording literally.",
+    "Derive concrete workflow arguments from that request context; the current request is authoritative.",
     "After a successful workflow result, follow the loaded procedure's response contract and preserve its canonical identifiers.",
-    "Do not repeat the skill read or a previously attempted tool path, and do not claim completion without a successful workflow-tool receipt.",
+    "Do not repeat the skill read or identical tool arguments; required distinct searches and fetches reuse workflow tools with new arguments.",
+    "Do not claim completion without a successful workflow-tool receipt.",
   ].join("\n");
 }
 
-function buildPromptSkillResultNarrationDirective(receipt?: string): string {
+function buildPromptSkillResultNarrationDirective(receipts?: string): string {
   return [
     "[comis: continuation — narrate the completed prompt skill workflow]",
     "A required prompt-skill workflow tool succeeded in this turn.",
     "Give the final user-facing answer now from that successful receipt.",
     "Follow the loaded procedure's response contract exactly and preserve canonical identifiers from the result.",
-    ...(receipt
+    "Use only current-turn workflow receipts as evidence for current success, failure, availability, and citations.",
+    "Do not carry an earlier failure or unavailable-source claim into this answer; mention one only when a current-turn tool receipt records it, using its exact identifier.",
+    "Copy every citation URL verbatim from a successful current-turn web_fetch receipt's URL: line.",
+    "Do not substitute a canonical, related, search-result, or earlier URL; omit a claim when no successful receipt supports it.",
+    ...(receipts
       ? [
-          "The relevant successful workflow receipt is:",
-          wrapExternalContent(receipt, { source: "unknown", includeWarning: true }),
+          "The bounded current-turn workflow receipts are:",
+          wrapExternalContent(receipts, { source: "unknown", includeWarning: true }),
         ]
       : []),
     "Do not invoke another tool, ask for context already supplied, or replace a specific result with a generic capability.",
@@ -291,10 +424,35 @@ export async function runRequestToolNudge(
     : requestRelevantToolNames;
 
   const runtimeSelfReportRecovery = runtimeSelfReportRequest && obsQueryActive;
+  const promptSkillRecovery =
+    (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
+    && (deps.requestRelevantPromptSkillLocations?.length ?? 0) > 0;
+  const promptSkillProcedureLoaded = () =>
+    !promptSkillRecovery || currentSuccessfulToolCount(["read"]) > 0;
+  const minDistinctWebFetchUrls =
+    deps.requestRelevantPromptSkillMinDistinctWebFetchUrls;
+  const distinctWebFetchUrlCount = () =>
+    deps.currentDistinctSuccessfulWebFetchUrlCount?.() ?? 0;
+  const webFetchEvidenceSatisfied = () =>
+    minDistinctWebFetchUrls === undefined
+    || distinctWebFetchUrlCount() >= minDistinctWebFetchUrls;
+  const minDistinctWebSearchQueries =
+    deps.requestRelevantPromptSkillMinDistinctWebSearchQueries;
+  const distinctWebSearchQueryCount = () =>
+    deps.currentDistinctSuccessfulWebSearchQueryCount?.() ?? 0;
+  const webSearchEvidenceSatisfied = () =>
+    minDistinctWebSearchQueries === undefined
+    || distinctWebSearchQueryCount() >= minDistinctWebSearchQueries;
+  const webEvidenceGateConfigured =
+    minDistinctWebFetchUrls !== undefined
+    || minDistinctWebSearchQueries !== undefined;
+  const webEvidenceSatisfied = () =>
+    webFetchEvidenceSatisfied() && webSearchEvidenceSatisfied();
   if (
     capabilityClass !== "small"
     && capabilityClass !== "nano"
     && !runtimeSelfReportRecovery
+    && !promptSkillRecovery
   ) {
     return {
       fired: false,
@@ -335,7 +493,12 @@ export async function runRequestToolNudge(
   const mutationRecoveryRequested = mutatingToolNames.length > 0
     && (repeatedAnswer || declaredMutationRequest || claimedActionAttempt);
   const readRecoveryRequested = toolBackedReadNames.length > 0
-    && (explicitToolUseRequest || claimedActionAttempt || runtimeSelfReportRecovery);
+    && (
+      explicitToolUseRequest
+      || claimedActionAttempt
+      || runtimeSelfReportRecovery
+      || promptSkillRecovery
+    );
   if (!mutationRecoveryRequested && !readRecoveryRequested) {
     return {
       fired: false,
@@ -349,11 +512,13 @@ export async function runRequestToolNudge(
     ? "runtime_self_report"
     : declaredMutationRequest
       ? "declared_mutation_request"
-      : useReadRecovery && explicitToolUseRequest
-        ? "explicit_tool_use_request"
-        : repeatedAnswer
-          ? "repeated_answer"
-          : "claimed_action_attempt";
+      : promptSkillRecovery
+        ? "prompt_skill_route"
+        : useReadRecovery && explicitToolUseRequest
+          ? "explicit_tool_use_request"
+          : repeatedAnswer
+            ? "repeated_answer"
+            : "claimed_action_attempt";
   const recoveryToolNames = runtimeSelfReportRecovery
     ? ["obs_query"]
     : useReadRecovery
@@ -362,7 +527,21 @@ export async function runRequestToolNudge(
   const successfulCount = useReadRecovery
     ? () => currentSuccessfulToolCount(recoveryToolNames)
     : currentSuccessfulMutationCount;
-  if (successfulCount() > 0) {
+  // A loaded procedure and its web-evidence floors describe how a READ-shaped
+  // research request is answered. A mutation recovery is proven by its own
+  // successful mutation receipt: lexical overlap between the request and a
+  // skill description must not arm a research gate the requested action can
+  // never satisfy, because an unsatisfiable gate discards the answer.
+  const promptSkillGatesApply = useReadRecovery;
+  const promptSkillProcedureProven = () =>
+    !promptSkillGatesApply || promptSkillProcedureLoaded();
+  const webEvidenceProven = () => !promptSkillGatesApply || webEvidenceSatisfied();
+  const webEvidenceGateActive = promptSkillGatesApply && webEvidenceGateConfigured;
+  if (
+    successfulCount() > 0
+    && webEvidenceProven()
+    && promptSkillProcedureProven()
+  ) {
     return {
       fired: false,
       recovered: false,
@@ -412,25 +591,47 @@ export async function runRequestToolNudge(
       deps.requestRelevantPromptSkillLocations ?? [],
       deps.requestRelevantPromptSkillWorkflowToolNames ?? [],
       deps.requestRelevantPromptSkillWorkflowContext,
+      minDistinctWebFetchUrls,
+      distinctWebFetchUrlCount(),
+      minDistinctWebSearchQueries,
+      distinctWebSearchQueryCount(),
       trigger,
     ),
     deps.guardProviderDispatch,
     continuationOptions,
   );
   const promptSkillWorkflowTools = deps.requestRelevantPromptSkillWorkflowToolNames ?? [];
-  if (
-    continuation.ok
-    && promptSkillWorkflowTools.length > 0
-    && successfulCount() === successfulToolCountBefore
-  ) {
+  const workflowContinuationLimit = webEvidenceGateActive
+    ? MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS
+    : 1;
+  for (let attempt = 1; attempt <= workflowContinuationLimit; attempt++) {
+    const workflowPending = !webEvidenceProven()
+      || (
+        attempt === 1
+        && (
+          successfulCount() === successfulToolCountBefore
+          || !promptSkillProcedureProven()
+        )
+      );
+    if (!continuation.ok || promptSkillWorkflowTools.length === 0 || !workflowPending) break;
+    const successfulBefore = successfulCount();
+    const fetchCountBefore = distinctWebFetchUrlCount();
+    const searchCountBefore = distinctWebSearchQueryCount();
+    const procedureLoadedBefore = promptSkillProcedureProven();
     logger.info(
       {
         submodule: SUBMODULE,
         step: "prompt-skill-workflow-nudge",
         agentId,
+        attempt,
+        maxAttempts: workflowContinuationLimit,
         workflowToolNames: promptSkillWorkflowTools,
+        minDistinctWebFetchUrls,
+        distinctWebFetchUrlCount: distinctWebFetchUrlCount(),
+        minDistinctWebSearchQueries,
+        distinctWebSearchQueryCount: distinctWebSearchQueryCount(),
       },
-      "Loaded prompt skill requires one bounded workflow continuation",
+      "Loaded prompt skill requires a bounded workflow continuation",
     );
     const workflowRecoveryTools = [...new Set([
       ...(deps.requestRelevantPromptSkillLocations?.length ? ["read"] : []),
@@ -443,16 +644,37 @@ export async function runRequestToolNudge(
         promptSkillWorkflowTools,
         deps.requestRelevantPromptSkillLocations ?? [],
         recoveryToolNames,
+        minDistinctWebFetchUrls,
+        distinctWebFetchUrlCount(),
+        minDistinctWebSearchQueries,
+        distinctWebSearchQueryCount(),
         deps.requestRelevantPromptSkillWorkflowContext,
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: workflowRecoveryTools },
     );
+    const madeProgress = successfulCount() > successfulBefore
+      || distinctWebFetchUrlCount() > fetchCountBefore
+      || distinctWebSearchQueryCount() > searchCountBefore
+      || (promptSkillProcedureProven() && !procedureLoadedBefore);
+    if (
+      continuation.ok
+      && !webEvidenceProven()
+      && !madeProgress
+    ) break;
   }
+  const evidenceGatedWorkflowCompleted = webEvidenceGateActive
+    && webEvidenceSatisfied();
+  const promptSkillWorkflowCompleted = (
+    promptSkillProcedureProven() || evidenceGatedWorkflowCompleted
+  )
+    && (!webEvidenceGateActive
+      ? successfulCount() > successfulToolCountBefore
+      : webEvidenceSatisfied());
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
-    && successfulCount() > successfulToolCountBefore
+    && promptSkillWorkflowCompleted
   ) {
     logger.info(
       {
@@ -466,7 +688,7 @@ export async function runRequestToolNudge(
     continuation = await runContinuationTurn(
       deps.session,
       buildPromptSkillResultNarrationDirective(
-        latestWorkflowToolReceipt(deps.messages, promptSkillWorkflowTools),
+        currentWorkflowToolReceipts(deps.messages, promptSkillWorkflowTools),
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: [] },
@@ -503,13 +725,21 @@ export async function runRequestToolNudge(
 
   const response = deps.getVisibleAssistantText(deps.session);
   const successfulToolCountAfter = successfulCount();
-  const procedureCompletionProvable = !(
-    useReadRecovery
-    && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
-    && promptSkillWorkflowTools.length > 0
-  );
+  const procedureCompletionProvable = (
+    promptSkillProcedureProven() || evidenceGatedWorkflowCompleted
+  )
+    && (!webEvidenceGateActive
+      ? !(
+          useReadRecovery
+          && (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
+          && promptSkillWorkflowTools.length > 0
+        )
+      : webEvidenceSatisfied());
   const recovered =
-    successfulToolCountAfter > successfulToolCountBefore
+    (
+      successfulToolCountAfter > successfulToolCountBefore
+      || promptSkillWorkflowCompleted
+    )
     && response.trim().length > 0
     && procedureCompletionProvable;
   logger.info(
@@ -522,6 +752,10 @@ export async function runRequestToolNudge(
       successfulToolCountBefore,
       successfulToolCountAfter,
       procedureCompletionProvable,
+      minDistinctWebFetchUrls,
+      distinctWebFetchUrlCount: distinctWebFetchUrlCount(),
+      minDistinctWebSearchQueries,
+      distinctWebSearchQueryCount: distinctWebSearchQueryCount(),
     },
     "Request-tool nudge completed",
   );

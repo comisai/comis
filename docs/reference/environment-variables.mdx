@@ -547,6 +547,31 @@ export COMIS_LIVE_JUDGE_MODEL=claude-3-5-haiku-20241022
 export COMIS_LIVE_JUDGE_API_KEY=sk-ant-...
 ```
 
+### `COMIS_LIVE_LOCAL_MODELS` / `COMIS_LIVE_OLLAMA_URL`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | The keyless-model legs of the live tier: `test/live/scenarios/local/local-models.test.ts` and the Stage-C channel rig (`test/live/harness/rig-config.ts`) |
+| **Format** | Comma-separated ollama tags / an ollama base URL |
+| **Default** | `COMIS_LIVE_LOCAL_MODELS` unset → the local tier auto-discovers every `qwen3.6` tag the server has and the Stage-C rig boots `qwen3.6:35b`; `COMIS_LIVE_OLLAMA_URL` unset → `http://localhost:11434` |
+
+Which on-device tags the live tier may use and where its ollama server listens —
+no key, on-device, `$0`. `COMIS_LIVE_LOCAL_MODELS` is read two ways: the local-model
+scenario treats it as a **filter** over the tags the server reports, while the Stage-C
+channel rig boots its **first** entry as the `"keyless"` model. Point it at a tag the
+box can actually hold — an oversized model boots the daemon but never authors a reply,
+so a Stage-C round-trip exhausts its reply budget instead of failing loudly.
+
+```bash
+export COMIS_LIVE_OLLAMA_URL=http://localhost:11434
+export COMIS_LIVE_LOCAL_MODELS=llama3.2:3b     # e.g. a CPU-only box
+```
+
+The full live-tier template — including the `COMIS_LIVE_EMBED_MODEL_PATH` /
+`COMIS_LIVE_RERANKER_MODEL_PATH` GGUF paths for the memory scenarios — is
+`test/live/live.env.example`; the Stage-C rig is described in the
+[channel emulation harness](/developer-guide/channel-emulation-harness).
+
 ### `COMIS_LIVE_PROBES`
 
 | Property | Value |

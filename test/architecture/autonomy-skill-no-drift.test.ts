@@ -204,6 +204,6 @@ describe("autonomy SKILL.md names only real caps + tools (no drift)", () => {
   });
 
   it("versions the profile comparison for deployed bundle refresh", () => {
-    expect(body).toMatch(/^version: "0\.3\.0"$/mu);
+    expect(body).toMatch(/^version: "0\.3\.1"$/mu);
   });
 });

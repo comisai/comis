@@ -39,6 +39,14 @@ export async function deliverGovernedGraphAnnouncement(
   deps: GraphAnnouncementDeliveryDeps,
   params: GraphAnnouncementDeliveryParams,
 ): Promise<Result<GraphAnnouncementSettlement, Error>> {
+  const missingPrerequisites: string[] = [];
+  if (deps.send === undefined) missingPrerequisites.push("sendBoundary");
+  if (params.agentId === undefined) missingPrerequisites.push("agentId");
+  if (params.callerSessionKey === undefined) missingPrerequisites.push("callerSessionKey");
+  if (params.callerConversation === undefined) missingPrerequisites.push("callerConversation");
+  if (params.destinationEndpoint === undefined) missingPrerequisites.push("destinationEndpoint");
+  if (params.channelType === undefined) missingPrerequisites.push("channelType");
+  if (params.channelId === undefined) missingPrerequisites.push("channelId");
   if (
     deps.send === undefined
     || params.agentId === undefined
@@ -51,8 +59,9 @@ export async function deliverGovernedGraphAnnouncement(
     deps.logger?.error({
       graphId: params.graphId,
       step: "graph-completion-announcement",
+      missingPrerequisites,
       errorKind: "precondition" as const,
-      hint: "restore the governed announcement boundary and authenticated graph owner before retrying",
+      hint: `Restore graph completion prerequisites: ${missingPrerequisites.join(", ")}; verify the governed announcement boundary and authenticated graph owner before retrying`,
     }, "Graph governed announcement prerequisites unavailable");
     return err(new Error("Graph governed announcement prerequisites unavailable"));
   }

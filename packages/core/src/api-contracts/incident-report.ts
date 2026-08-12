@@ -123,6 +123,12 @@ export const IncidentReportSchema = z.object({
     turnCount: z.number().int().nonnegative().max(8),
     charCount: z.number().int().nonnegative().max(1_000_000),
     saturated: z.boolean(),
+    recallDisposition: z.enum(["search", "skip_oversized_token"]).optional(),
+  }).optional(),
+  /** Content-free reason a request stopped before model dispatch for clarification. */
+  requestClarification: z.strictObject({
+    reason: z.literal("opaque_payload_missing_instruction"),
+    inputChars: z.number().int().positive().max(1_000_000),
   }).optional(),
   /** Content-free immutable-policy projection evidence for selected tool schemas. */
   operatorPolicyToolProjections: z.array(z.strictObject({
@@ -718,7 +724,7 @@ export const IncidentReportSchema = z.object({
     .object({
       count: z.number(),
       lastRunId: z.string(),
-      lastReason: z.enum(["no_origin", "no_channel_params"]),
+      lastReason: z.enum(["no_origin", "no_channel_params", "route_validation_failed"]),
     })
     .optional(),
   /** Distinct agent turns derived from prompt anchors, with tool-lifecycle

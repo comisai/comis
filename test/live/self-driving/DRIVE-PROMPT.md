@@ -53,10 +53,10 @@ Before acting, read these files in order and follow them as the campaign protoco
     findings and the previous-run baseline
 
 The pinned target spec is authoritative for the cast; implementation-state claims; A0–A13, B1–B15, and
-C1–C7 arcs; predicates; ground-truth and HARD oracles; config polarities; capability coverage matrix;
-known traps; out-of-scope declarations; and defaults review. Re-confirm every implementation claim against
-HEAD before relying on it. If source and prose disagree, source is the implementation truth and the drift
-is a framework finding to correct.
+C1–C7 arcs; the D1–D9 and E1–E6 journeys; predicates; ground-truth and HARD oracles; config polarities; capability
+coverage matrix; known traps; out-of-scope declarations; and defaults review. Re-confirm every
+implementation claim against HEAD before relying on it. If source and prose disagree, source is the
+implementation truth and the drift is a framework finding to correct.
 
 Before changing any production source, also read
 `docs/developer-guide/generic-agent-architecture.md`. Keep Comis domain-neutral: persona and fixture
@@ -183,7 +183,7 @@ not an improvisation.
 ## Plan gate
 
 Write a complete `TEST-PLAN.md` before the first scored inject, but do not stop after writing it. Expand
-every A, B, and C arc from the pinned spec, plus every Track CC row, into:
+every A, B, and C arc and every D- and E-journey from the pinned spec, plus every Track CC row, into:
 
 - the real-world happy path in the continuous relationship;
 - edge, malformed, boundary, concurrency, outage, and recovery variants;
@@ -376,10 +376,9 @@ surprising result.
 11. **Two lenses on the same number can double-count, and the same field name can mean different things on
     different lines.** Before reporting a discrepancy between two surfaces, confirm they define the field
     identically; reconcile the definitions first, then the values.
-12. **A kit unit test run with a bare `pnpm vitest run <path>` runs nothing.**
-    `test/live/self-driving/scripts/` is in no default vitest project, so the filter matches zero files and
-    the command exits looking clean. Pass the live config
-    (`npx vitest run --config test/live/vitest.config.ts <path>`) and always read the test COUNT.
+12. **A kit unit run that reports no test COUNT proved nothing.** A mistyped path, or a `*.test.mjs`
+    neighbour (a `node:test` suite the kit's vitest project does not collect), matches zero files and exits
+    looking clean. `scripts/README.md` owns how the kit's tests are run.
 13. **`drive.mjs` cannot drive concurrency.** It holds `/tmp/comis-drive-<conversation>.lock` and refuses
     two drives in one conversation, so N parallel drives serialize; the row then scores "no interleaving" as
     a pass on a test that never ran. Use `burst-inject.mjs` + `burst-verify.mjs`, and require the overlap
@@ -421,7 +420,7 @@ defer a pile of ordinary defects.
 Do not declare the campaign complete until all applicable stop conditions in `02-DISCIPLINE.md` hold,
 including:
 
-- every A, B, C and Track CC row and every capability-matrix row resolved;
+- every A, B, C, D and Track CC row and every capability-matrix row resolved;
 - every carried finding either re-verified, closed, or escalated with evidence;
 - all HARD oracles green and zero false successes;
 - Telegram outbound and delivery mirror reconciled with no duplicates or cross-chat leaks;

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Composition layer for durable DAG execution and terminal delivery. */
-
 import {
   createGraphStateMachine,
   restoreGraphStateMachine,
@@ -38,8 +37,6 @@ import {
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
 import { getModel, completeSimple } from "@earendil-works/pi-ai/compat";
-
-// Module imports
 import { globalCompletionHandler, releaseAndDrainQueue, type GraphSubAgentCompletionEvent } from "./graph-concurrency.js";
 import {
   spawnNode as spawnNodeFn,
@@ -84,7 +81,6 @@ export type {
   GraphRunParams,
   GraphRunSummary,
 } from "./graph-coordinator-contract.js";
-
 /** Create a graph coordinator that executes validated graphs end-to-end. */
 export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordinator {
   const config: CoordinatorConfig = {
@@ -109,7 +105,6 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   const graphCompletions = createGraphCompletionTracker(
     (gs) => handleGraphCompletionFn(state, deps, gs), deps.logger,
   );
-
   /** Persist node state before releasing work; terminal writes await notification delivery. */
   async function checkpointGraph(gs: GraphRunState): Promise<boolean> {
     if (
@@ -508,6 +503,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       startedAt: systemNowMs(),
       runningCount: 0,
       callerSessionKey: params.callerSessionKey,
+      ...(callerAuthorityValid && callerContext !== undefined
+        ? { callerTraceId: callerContext.traceId }
+        : {}),
       callerAgentId: params.callerAgentId,
       ...(callerConversationRef?.ok === true && callerTurnScope !== undefined
         ? {
@@ -886,6 +884,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         : { workspacePolicyHash: validRecord.workspacePolicyHash }),
       callerAgentId: validRecord.agentId,
       callerSessionKey: formatSessionKey(callerSession.value),
+      ...(loaded.value.callerTraceId === undefined
+        ? {}
+        : { callerTraceId: loaded.value.callerTraceId }),
       callerConversationLocator: {
         conversationScope: resumedTurnScope.value.conversation,
         conversationRef: validRecord.conversationRef,

@@ -26,7 +26,7 @@ const decimals = (s) => [...new Set((s.match(/-?\d[\d,]*\.\d{1,6}/g) || []).map(
 // Resolve through structured provenance. Privacy-principal session directories
 // do not contain the physical Telegram chat id, so a guessed legacy path is not
 // an authority-bearing lookup.
-const artifacts = resolveChatSessionArtifacts(DATA, String(chatId));
+const artifacts = resolveChatSessionArtifacts(DATA, String(chatId), threadId);
 const trajFile = artifacts?.trajectoryFile;
 const sessFile = artifacts?.sessionFile;
 if (!trajFile) {

@@ -16,7 +16,7 @@ describe("closed agent execution outcome contracts", () => {
       "provider_degraded", "context_loop", "context_exhausted", "output_starved",
       "session_reset", "loop_detected", "prompt_timeout", "spend_exceeded",
       "input_too_large", "completed_with_tool_errors", "narration_stall",
-      "tool_invocation_stall", "background_pending", "error",
+      "tool_invocation_stall", "background_pending", "cancelled", "error",
     ];
     expect(members.every((member) => AgentExecutionFinishReasonSchema.safeParse(member).success)).toBe(true);
     expect(AgentExecutionFinishReasonSchema.safeParse("end_turn").success).toBe(false);
@@ -26,6 +26,7 @@ describe("closed agent execution outcome contracts", () => {
     expect(AgentExecutionAbortReasonSchema.options).toEqual([
       "user_stop", "budget_exceeded", "circuit_breaker", "max_steps", "context_exhausted",
       "pipeline_timeout", "loop_detected", "spend_exceeded", "denial_breaker",
+      "caller_cancelled",
     ]);
     expect(ModelResolutionSourceSchema.options).toEqual([
       "explicit_config", "cron_job_override", "parent_inherited", "family_default", "agent_primary",
@@ -39,6 +40,7 @@ describe("closed agent execution outcome contracts", () => {
       status: "failed", finishReason: "completed_with_tool_errors", errorKind: "dependency",
     }).success).toBe(true);
     expect(AgentTurnExecutionOutcomeSchema.safeParse({ status: "aborted", abortReason: "user_stop" }).success).toBe(true);
+    expect(AgentTurnExecutionOutcomeSchema.safeParse({ status: "aborted", abortReason: "caller_cancelled" }).success).toBe(true);
     expect(AgentTurnExecutionOutcomeSchema.safeParse({ status: "aborted", abortReason: "max_steps" }).success).toBe(false);
   });
 
@@ -51,6 +53,7 @@ describe("closed agent execution outcome contracts", () => {
     expect(classifyAgentFinishErrorKind("tool_invocation_stall")).toBe("internal");
     expect(classifyAgentFinishErrorKind("output_starved")).toBe("resource");
     expect(classifyAgentFinishErrorKind("error")).toBeUndefined();
+    expect(classifyAgentFinishErrorKind("cancelled" as never)).toBeUndefined();
   });
 
   it("classifies terminal turns from authoritative abort and finish discriminators", () => {
@@ -62,6 +65,14 @@ describe("closed agent execution outcome contracts", () => {
       finishReason: "stop",
       abortReason: "user_stop",
     })).toEqual({ status: "aborted", abortReason: "user_stop", finishReason: "stop" });
+    expect(classifyAgentTurnExecutionOutcome({
+      finishReason: "cancelled" as never,
+      abortReason: "caller_cancelled" as never,
+    })).toEqual({
+      status: "aborted",
+      abortReason: "caller_cancelled",
+      finishReason: "cancelled",
+    });
     expect(classifyAgentTurnExecutionOutcome({
       finishReason: "provider_degraded",
     })).toEqual({ status: "failed", finishReason: "provider_degraded", errorKind: "dependency" });

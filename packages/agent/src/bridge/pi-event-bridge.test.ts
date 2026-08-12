@@ -592,6 +592,27 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("tool_execution_end", () => {
+    it("records a content-free digest for a successful web search query", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "web_search",
+        toolCallId: "tc-search-query",
+        args: { query: "  Heat Pump CASE studies  " },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "web_search",
+        "tc-search-query",
+        false,
+        { details: { results: [] }, content: [{ type: "text", text: "[]" }] },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        webSearchQueryDigest?: string;
+      };
+      expect(record.webSearchQueryDigest).toMatch(/^[a-f0-9]{64}$/u);
+    });
+
     it("records successful background output consumption only after the turn journal boundary", () => {
       const acknowledgeBackgroundTaskConsumption = vi.fn(() => ok(true));
       const { listener } = createPiEventBridge(createMockDeps({
@@ -834,6 +855,44 @@ describe("createPiEventBridge", () => {
       };
       expect(record.schedulerPolicyEvidence).toEqual(["holiday", "weekday"]);
       expect(JSON.stringify(record)).not.toContain("Skip federal holidays");
+    });
+
+    it("retains only closed observability evidence limits for self-report grounding", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "obs_query",
+        toolCallId: "tc-obs-limits",
+        args: { action: "system_health" },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "obs_query",
+        "tc-obs-limits",
+        false,
+        {
+          content: [{ type: "text", text: "large diagnostic report" }],
+          details: {
+            evidenceLimits: {
+              cost: "runtime_estimate",
+              providerInvoice: "unverified",
+              crossExecutionDurationRanking: "unavailable",
+              ignored: "untrusted value",
+            },
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        observabilityEvidenceLimits?: Record<string, unknown>;
+      };
+      expect(record.observabilityEvidenceLimits).toEqual({
+        cost: "runtime_estimate",
+        providerInvoice: "unverified",
+        crossExecutionDurationRanking: "unavailable",
+      });
+      expect(JSON.stringify(record)).not.toContain("untrusted value");
+      expect(JSON.stringify(record)).not.toContain("large diagnostic report");
     });
 
     it("keeps an auto-background handoff neutral in breaker and execution outcome accounting", () => {

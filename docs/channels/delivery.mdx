@@ -412,6 +412,8 @@ registry.registerHook("before_delivery", (event, ctx) => {
 registry.registerHook("after_delivery", (event, ctx) => {
   // event.result: delivery outcome
   // event.durationMs: how long delivery took
+  // event.mediaUrls: delivered media references -- present when the delivery
+  //   was an attachment (`origin: "channel:attachment"`), absent for text-only
   console.log(`Delivered to ${event.channelType} in ${event.durationMs}ms`);
 });
 ```
@@ -448,10 +450,19 @@ are logged and ignored, protecting the pipeline from malformed hook output.
 ## Session mirroring
 
 Agents remember what they sent. After a message is delivered to a chat channel,
-the delivered text is recorded to the `delivery_mirror` SQLite table. On the
-next inbound user message, pending mirror entries are injected as synthetic
-assistant context in the dynamic preamble so the agent has continuity of what it
-previously said -- even after a daemon restart.
+the delivered text is recorded to the `delivery_mirror` SQLite table. Outbound
+**attachments** are mirrored the same way on every channel that implements
+attachment sending: the entry carries the attachment caption as its text plus the
+delivered media reference, so a caption-less photo or voice note sent during the
+agent's own turn is still remembered rather than leaving a silent gap. The turn is
+what supplies the conversation the entry belongs to, so an attachment delivered
+outside one -- a long video render announced by the background poller after its
+originating turn ended -- is not mirrored, and records nothing rather than
+guessing a conversation. On the next
+inbound user message,
+pending mirror entries are injected as synthetic assistant context in the dynamic
+preamble so the agent has continuity of what it previously said -- even after a
+daemon restart.
 
 <Info>
 Session mirroring is powered by the `after_delivery` hook. It runs automatically
@@ -463,12 +474,15 @@ subsystem.
 
 When the agent sends a message, the mirror records it in four steps:
 
-1. Message is delivered to the channel via `deliverToChannel()`
+1. Message is delivered to the channel via `deliverToChannel()`, or an
+   attachment via the channel adapter's `sendAttachment()`
 2. The `after_delivery` hook fires (void, fire-and-forget)
 3. The built-in `comis:delivery-mirror` plugin handler records the entry to the
    `delivery_mirror` table
-4. An idempotency key (session + text hash + 1-second time bucket) prevents
-   duplicates via `INSERT OR IGNORE`
+4. An idempotency key (the durable `conversation_ref` + a hash of the text
+   **and** media references + 1-second time bucket) prevents duplicates via
+   `INSERT OR IGNORE` -- hashing the media references keeps two different
+   attachments sent in the same second with the same caption as two entries
 
 Recording never blocks or delays message delivery. If recording fails for any
 reason, the message is still delivered normally -- only the mirror entry is lost.
@@ -479,8 +493,9 @@ When the user sends their next message, mirror entries are injected into the
 agent prompt:
 
 1. User sends a message, agent execution starts
-2. `assembleExecutionPrompt()` calls `deliveryMirror.pending(sessionKey)` to
-   fetch unacknowledged entries
+2. `assembleExecutionPrompt()` calls `deliveryMirror.pending(authority)` -- the
+   exact tenant, agent, and opaque `conversationRef` triple, never a formatted
+   session key -- to fetch that conversation's unacknowledged entries
 3. Pending entries are formatted as "Your Recent Outbound Messages" in the
    dynamic preamble section of the prompt
 4. Budget caps are applied (max entries, then max characters)

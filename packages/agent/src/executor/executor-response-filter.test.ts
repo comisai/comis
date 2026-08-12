@@ -898,10 +898,11 @@ type DelegationEvidenceGuard = (params: {
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
+  verifiedSpawnResponse?: string;
 }) => {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn";
+  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
 };
 
 function delegationEvidenceGuard(): DelegationEvidenceGuard {
@@ -936,6 +937,24 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("replaces a future delegation claim for an explicit plural-agent request", () => {
+    const guarded = delegationEvidenceGuard()({
+      request: "get a few separate agents on the comparison",
+      response:
+        "Yes — I can split the comparison across a few separate agents. Send me the options.",
+      toolExecResults: [
+        { toolName: "agents_manage", success: true },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_current_turn_spawn",
+    });
+  });
+
   it("preserves a delegation claim backed by a successful current-turn spawn", () => {
     const guarded = delegationEvidenceGuard()({
       request,
@@ -950,6 +969,103 @@ describe("current-turn delegation evidence guard", () => {
       response: falseClaim,
       corrected: false,
     });
+  });
+
+  // A spawn receipt proves only that delegation started. It cannot establish
+  // whether an undisclosed model answer came from independent knowledge or a
+  // fabricated delegated result, so retaining that answer would weaken the
+  // receipt boundary.
+  it("replaces an undisclosed final answer after a successful spawn", () => {
+    const verifiedSpawnResponse =
+      "I successfully started the requested sub-agent. Its result is still pending.";
+    const response =
+      "A heat pump moves heat instead of creating heat, and geothermal systems use the ground.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "start one background helper with sessions_spawn and have it start one nested child",
+      response,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    });
+  });
+
+  it("does not infer that another part of an undisclosed answer is independently grounded", () => {
+    const verifiedSpawnResponse =
+      "I successfully started the requested sub-agent. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "delegate the research to a background helper, and also tell me today's date",
+      response: "Today is 11 August 2026.",
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    });
+  });
+
+  // A finished-work claim about the delegated task has no receipt behind it —
+  // the spawn is a handoff, not a result — so that reply is still replaced.
+  it("replaces an undisclosed reply that claims the delegated work is finished", () => {
+    const verifiedSpawnResponse =
+      "I successfully started the requested sub-agent. Its result is still pending.";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "start one background helper with sessions_spawn and have it start one nested child",
+      response:
+        "Done — the comparison is complete and both options meet the 7-hour requirement.",
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+      ],
+      honestResponse,
+      verifiedSpawnResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    });
+  });
+
+  // The spawn receipt already exists here, so the only question is whether the
+  // reply DISCLOSES the delegation. A truthful answer that says so with an
+  // ordinary synonym must survive instead of being discarded for a vocabulary
+  // miss.
+  it("keeps a truthful reply that discloses the spawn with a synonym", () => {
+    for (const response of [
+      "Done — the helper is now researching the topic and will report back with results.",
+      "That is running in the background now; I will send the findings when they land.",
+    ]) {
+      const guarded = delegationEvidenceGuard()({
+        request:
+          "delegate this to a background helper and summarise the plan",
+        response,
+        toolExecResults: [
+          { toolName: "sessions_spawn", success: true },
+        ],
+        honestResponse,
+        verifiedSpawnResponse:
+          "I successfully started the requested sub-agent. Its result is still pending.",
+      });
+
+      expect(guarded).toEqual({ response, corrected: false });
+    }
   });
 
   it("does not count a failed or background-placeholder spawn as proof", () => {
@@ -1071,21 +1187,21 @@ describe("current-turn delegation evidence guard", () => {
   });
 });
 
-type TrustedBackgroundCompletionDetector = (message: {
+type TrustedRuntimeCompletionDetector = (message: {
   channelType: string;
   senderId: string;
 }) => boolean;
 
-function trustedBackgroundCompletionDetector(): TrustedBackgroundCompletionDetector {
+function trustedRuntimeCompletionDetector(): TrustedRuntimeCompletionDetector {
   const candidate = (responseFilter as Record<string, unknown>)
-    .isTrustedBackgroundCompletionEnvelope;
+    .isTrustedRuntimeCompletionEnvelope;
   expect(candidate).toBeTypeOf("function");
-  return candidate as TrustedBackgroundCompletionDetector;
+  return candidate as TrustedRuntimeCompletionDetector;
 }
 
-describe("trusted background completion envelope", () => {
-  it("requires both the internal channel and completion-runner identity", () => {
-    const detect = trustedBackgroundCompletionDetector();
+describe("trusted runtime completion envelope", () => {
+  it("requires an authenticated internal completion channel and relay identity", () => {
+    const detect = trustedRuntimeCompletionDetector();
 
     expect(detect({
       channelType: "background_task",
@@ -1097,6 +1213,14 @@ describe("trusted background completion envelope", () => {
     })).toBe(false);
     expect(detect({
       channelType: "background_task",
+      senderId: "user_a",
+    })).toBe(false);
+    expect(detect({
+      channelType: "cross-session",
+      senderId: "cross-session-relay",
+    })).toBe(true);
+    expect(detect({
+      channelType: "cross-session",
       senderId: "user_a",
     })).toBe(false);
   });
@@ -1238,6 +1362,467 @@ describe("persistent action evidence guard", () => {
       corrected: true,
       reason: "missing_current_turn_action_evidence",
     });
+  });
+});
+
+type OutboundAudioEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  runtimeAudioDelivery?: boolean;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_audio_evidence";
+};
+
+function outboundAudioEvidenceGuard(): OutboundAudioEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceOutboundAudioEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as OutboundAudioEvidenceGuard;
+}
+
+describe("outbound audio evidence guard", () => {
+  const honestResponse =
+    "I did not deliver the requested audio in this turn because there is no successful synthesis receipt.";
+
+  it("replaces a spoken-summary completion claim when the turn used no tool", () => {
+    expect(outboundAudioEvidenceGuard()({
+      request: "say the summary out loud",
+      response: "Done — I said: “The total of the two items is £5.75.”",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_audio_evidence",
+    });
+  });
+
+  it("preserves spoken completion backed by successful synthesis", () => {
+    const response = "Done — I said the summary out loud.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please read the total aloud",
+      response,
+      toolExecResults: [{ toolName: "tts_synthesize", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not count a failed synthesis or background placeholder as delivery proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "tts_synthesize", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      expect(outboundAudioEvidenceGuard()({
+        request: "could you send that as a voice message?",
+        response: "The voice message is sent.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("accepts the runtime's own voice route as delivery proof for this turn", () => {
+    // The configured voice route speaks the reply after execution returns, so
+    // a truthful spoken answer can never carry a synthesis tool receipt.
+    const response = "Done — here is the summary, read out loud.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "can you please reply with a voice message?",
+      response,
+      toolExecResults: [],
+      runtimeAudioDelivery: true,
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("still replaces an audio claim when no voice route speaks this turn", () => {
+    expect(outboundAudioEvidenceGuard()({
+      request: "can you please reply with a voice message?",
+      response: "Done — the voice message is sent.",
+      toolExecResults: [],
+      runtimeAudioDelivery: false,
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_audio_evidence",
+    });
+  });
+
+  it("accepts a trusted background completion receipt for delivered audio", () => {
+    const response = "The requested voice reply was delivered.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "say the summary out loud",
+      response,
+      toolExecResults: [],
+      currentActionEvidence: true,
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("leaves honest limitations and unrelated explanatory questions unchanged", () => {
+    const limitation = "I couldn't synthesize or send the audio in this turn.";
+    expect(outboundAudioEvidenceGuard()({
+      request: "say the summary out loud",
+      response: limitation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: limitation, corrected: false });
+
+    const explanation = "It means to speak audibly rather than silently.";
+    expect(outboundAudioEvidenceGuard()({
+      request: "what does 'say it out loud' mean?",
+      response: explanation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: explanation, corrected: false });
+  });
+
+  // An admitted limitation is already honest about the missing receipt, so the
+  // substitute it describes must survive: the delivered prose matches a claim
+  // pattern ("I've read it out") without claiming audio was sent.
+  it("keeps an admitted limitation that also describes the text substitute", () => {
+    const response =
+      "I couldn't send a voice note in this turn, so I have read it out as text below: "
+      + "the total of the two items is £5.75.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please send that as a voice message",
+      response,
+      toolExecResults: [{ toolName: "tts_synthesize", success: false }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  // The substitute phrase must still be recognized where a sentence actually
+  // ends it: before a full stop, a comma, or a closing parenthesis. Matching a
+  // space-delimited phrase list against whitespace-only normalization dropped
+  // every punctuated occurrence and replaced an honest, self-limiting reply.
+  it("keeps an admitted limitation whose text substitute ends a clause", () => {
+    for (const response of [
+      "I couldn't send a voice note, so I have read it out in text.",
+      "I couldn't synthesize the voice note, so I have read it out as the text version.",
+      "I couldn't send the voice note, so I have read it out as text, below.",
+      "I couldn't send it as a voice note (I have read it out in plain text).",
+    ]) {
+      expect(outboundAudioEvidenceGuard()({
+        request: "please send that as a voice message",
+        response,
+        toolExecResults: [{ toolName: "tts_synthesize", success: false }],
+        honestResponse,
+      }), response).toEqual({ response, corrected: false });
+    }
+  });
+
+  // "I sent" trips the success-claim trigger without naming the medium, which
+  // an honest reply carries while refusing that medium. Requiring a named text
+  // substitute on top of the admitted limitation discarded the whole reply,
+  // including the work the turn did deliver.
+  it("keeps an admitted limitation that delivers other requested work", () => {
+    const response =
+      "I can't record a voice note, so I sent the summary here in the chat: "
+      + "the two items total £5.75.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please send that as a voice message",
+      response,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("rejects a limitation followed by an unsupported audio success claim", () => {
+    const response =
+      "I couldn't send a voice note initially, but I have now sent the audio message.";
+
+    expect(outboundAudioEvidenceGuard()({
+      request: "please send that as a voice message",
+      response,
+      toolExecResults: [{ toolName: "tts_synthesize", success: false }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_audio_evidence",
+    });
+  });
+});
+
+type OutboundImageEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_image_evidence";
+};
+
+function outboundImageEvidenceGuard(): OutboundImageEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceOutboundImageEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as OutboundImageEvidenceGuard;
+}
+
+describe("outbound image evidence guard", () => {
+  const honestResponse =
+    "I could not verify creation or delivery of the requested image in this turn.";
+
+  it("replaces a generated-image completion claim when the turn used no tool", () => {
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response: "Done — I created a simple, predominantly blue calendar image.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_image_evidence",
+    });
+  });
+
+  it("preserves image completion backed by successful generation", () => {
+    const response = "Done — I created and delivered the calendar image.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "please generate a blue calendar picture",
+      response,
+      toolExecResults: [{ toolName: "image_generate", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not count failed generation or a background placeholder as image proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "image_generate", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      expect(outboundImageEvidenceGuard()({
+        request: "could you create a small calendar image?",
+        response: "The requested image is ready.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("accepts a successful outbound attachment receipt for an image built without the generator", () => {
+    // An image rendered by exec or an integration reaches the user through the
+    // message tool's attach action; that delivery receipt is the proof.
+    const response = "Done — I created the chart image and sent it to the group.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "please render a picture of the weekly totals and post it to the group",
+      response,
+      toolExecResults: [{ toolName: "message", action: "attach", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("does not accept a failed or non-attaching message call as image delivery proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "message", action: "attach", success: false }],
+      [{ toolName: "message", action: "send", success: true }],
+    ]) {
+      expect(outboundImageEvidenceGuard()({
+        request: "please render a picture of the weekly totals and post it to the group",
+        response: "Done — I created the chart image and sent it to the group.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("accepts a trusted background completion receipt for a delivered image", () => {
+    const response = "Done — the requested image was delivered.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response,
+      toolExecResults: [],
+      currentActionEvidence: true,
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("leaves image explanations and honest generation limitations unchanged", () => {
+    const limitation = "I couldn't generate or deliver the requested image in this turn.";
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response: limitation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: limitation, corrected: false });
+
+    const explanation = "Use a blue palette and a seven-column grid.";
+    expect(outboundImageEvidenceGuard()({
+      request: "how do I make a simple blue calendar image?",
+      response: explanation,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: explanation, corrected: false });
+  });
+
+  it("keeps an admitted limitation that also describes the written substitute", () => {
+    const response =
+      "I could not generate the picture in this turn, so I have created a text "
+      + "layout description you can hand to a designer instead.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response,
+      toolExecResults: [{ toolName: "image_generate", success: false }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  // "Ready for launch." trips the shared completion-claim gate while the reply
+  // openly refuses the image. Replacing it lost the caption the user asked for
+  // in the same turn.
+  it("keeps an admitted limitation that delivers other requested work", () => {
+    const response =
+      "Here's the caption: 'Ready for launch.' I can't generate images.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "please create an image and a caption for our launch post",
+      response,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("rejects a limitation followed by an unsupported image success claim", () => {
+    const response =
+      "I could not generate the picture initially, but I have now created the image.";
+
+    expect(outboundImageEvidenceGuard()({
+      request: "make a simple blue calendar image",
+      response,
+      toolExecResults: [{ toolName: "image_generate", success: false }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_image_evidence",
+    });
+  });
+});
+
+type OutboundDeliveryStatusEvidenceGuard = (params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}) => {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_delivery_status_evidence";
+};
+
+function outboundDeliveryStatusEvidenceGuard(): OutboundDeliveryStatusEvidenceGuard {
+  const candidate = (responseFilter as Record<string, unknown>)
+    .enforceOutboundDeliveryStatusEvidence;
+  expect(candidate).toBeTypeOf("function");
+  return candidate as OutboundDeliveryStatusEvidenceGuard;
+}
+
+describe("outbound delivery status evidence guard", () => {
+  const honestResponse =
+    "I could not verify whether the prior outbound item was delivered in this turn.";
+
+  it("rejects an affirmative elliptical delivery answer with no current receipt", () => {
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "did it send?",
+      response: "Yes — the audio was created and delivered to this conversation.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_outbound_delivery_status_evidence",
+    });
+  });
+
+  it("preserves delivery status backed by current observability evidence", () => {
+    const response = "Yes — the image was delivered successfully.";
+
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "did it send?",
+      response,
+      toolExecResults: [{ toolName: "obs_query", success: true }],
+      honestResponse,
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("accepts a current self-delivering media receipt or trusted completion", () => {
+    const response = "It did — the file was delivered.";
+    for (const params of [
+      { toolExecResults: [{ toolName: "image_generate", success: true }] },
+      { toolExecResults: [], currentActionEvidence: true },
+    ]) {
+      expect(outboundDeliveryStatusEvidenceGuard()({
+        request: "did that go through?",
+        response,
+        honestResponse,
+        ...params,
+      })).toEqual({ response, corrected: false });
+    }
+  });
+
+  it("does not treat failed lookups or background placeholders as status proof", () => {
+    for (const toolExecResults of [
+      [{ toolName: "obs_query", success: false }],
+      [{ toolName: "sessions_spawn", success: true, backgrounded: true }],
+    ]) {
+      expect(outboundDeliveryStatusEvidenceGuard()({
+        request: "was that delivered?",
+        response: "Yes, it was delivered.",
+        toolExecResults,
+        honestResponse,
+      }).corrected).toBe(true);
+    }
+  });
+
+  it("leaves honest negative answers and unrelated questions unchanged", () => {
+    const negative = "No — the image was not delivered.";
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "did it send?",
+      response: negative,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: negative, corrected: false });
+
+    const unrelated = "The send button is in the lower-right corner.";
+    expect(outboundDeliveryStatusEvidenceGuard()({
+      request: "where is the send button?",
+      response: unrelated,
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({ response: unrelated, corrected: false });
   });
 });
 

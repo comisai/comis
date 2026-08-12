@@ -25,6 +25,10 @@ import ignore from "ignore";
 import { safePath, type ToolCapabilityMetadata } from "@comis/core";
 import { parseFrontmatter } from "../manifest/parser.js";
 import { parseComisCapabilityDefensively } from "../manifest/capability-parser.js";
+import {
+  parseMinDistinctWebFetchUrlsDefensively,
+  parseMinDistinctWebSearchQueriesDefensively,
+} from "../manifest/web-fetch-evidence-parser.js";
 import type { ResourceDiagnostic, ResourceCollision } from "./diagnostics.js";
 
 // ---------------------------------------------------------------------------
@@ -85,6 +89,8 @@ export interface SkillMetadata {
   readonly primaryEnv?: string;
   /** Dispatch mode tag (metadata-only). */
   readonly commandDispatch?: string;
+  readonly minDistinctWebFetchUrls?: number;
+  readonly minDistinctWebSearchQueries?: number;
   /**
    * Capability layer -- extracted from `comis.capability` via defensive
    * parse. Malformed metadata -> undefined + WARN log. The skill still
@@ -197,6 +203,8 @@ interface ExtractedMetadata {
   readonly skillKey?: string;
   readonly primaryEnv?: string;
   readonly commandDispatch?: string;
+  readonly minDistinctWebFetchUrls?: number;
+  readonly minDistinctWebSearchQueries?: number;
   readonly capability?: ToolCapabilityMetadata;
 }
 
@@ -274,13 +282,24 @@ function extractMetadataFromSkillMd(
   const rawCommandDispatch = ns?.["command-dispatch"];
   const commandDispatch = typeof rawCommandDispatch === "string" ? rawCommandDispatch : undefined;
 
+  const minDistinctWebFetchUrls = parseMinDistinctWebFetchUrlsDefensively(
+    ns?.["min-distinct-web-fetch-urls"],
+    obj["name"],
+    logger,
+  );
+  const minDistinctWebSearchQueries = parseMinDistinctWebSearchQueriesDefensively(
+    ns?.["min-distinct-web-search-queries"],
+    obj["name"],
+    logger,
+  );
+
   // Capability layer -- defensive parse. A typo or type mismatch in
   // `comis.capability` returns undefined + emits a WARN; the skill itself
   // remains visible (renders under the fallback "prompt-skills" cluster
   // downstream).
   const capability = parseComisCapabilityDefensively(ns?.["capability"], obj["name"], logger);
 
-  return { name: obj["name"], description: obj["description"], type, userInvocable, disableModelInvocation, argumentHint, os, requires, skillKey, primaryEnv, commandDispatch, capability };
+  return { name: obj["name"], description: obj["description"], type, userInvocable, disableModelInvocation, argumentHint, os, requires, skillKey, primaryEnv, commandDispatch, minDistinctWebFetchUrls, minDistinctWebSearchQueries, capability };
 }
 
 /**
@@ -415,6 +434,8 @@ function discoverSkillsFromDir(
         skillKey: metadata.skillKey,
         primaryEnv: metadata.primaryEnv,
         commandDispatch: metadata.commandDispatch,
+        minDistinctWebFetchUrls: metadata.minDistinctWebFetchUrls,
+        minDistinctWebSearchQueries: metadata.minDistinctWebSearchQueries,
         capability: metadata.capability,
       };
       skillMap.set(metadata.name, skillMeta);

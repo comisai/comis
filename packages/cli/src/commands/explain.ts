@@ -190,7 +190,8 @@ export function registerExplainCommand(program: Command): void {
             info(
               `Graph:      ${graph.status} · ${graph.graphId} · `
               + `${graph.nodesSucceeded}/${graph.nodesTotal} succeeded · `
-              + `${graph.nodesFailed} failed · ${graph.nodesSkipped} skipped`,
+              + `${graph.nodesFailed} failed · ${graph.nodesSkipped} skipped · `
+              + `notification=${graph.announcementDelivery}`,
             );
             for (const node of graph.nodes) {
               const duration = node.durationMs === null ? "n/a" : `${node.durationMs}ms`;

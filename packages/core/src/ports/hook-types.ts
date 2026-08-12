@@ -175,6 +175,8 @@ export interface HookBeforeDeliveryResult {
 /** Event payload for the after_delivery hook. */
 export interface HookAfterDeliveryEvent {
   readonly text: string;
+  /** Delivered media references, empty or absent for text-only delivery. */
+  readonly mediaUrls?: readonly string[];
   readonly channelType: string;
   readonly channelId: string;
   readonly result: unknown;

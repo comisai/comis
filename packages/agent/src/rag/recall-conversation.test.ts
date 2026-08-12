@@ -88,7 +88,26 @@ describe("selectRecentUserTurns", () => {
       turnCount: 3,
       charCount: turns.join("\n").length,
       saturated: false,
+      recallDisposition: "search",
     });
+  });
+
+  it("reports when an oversized current token disables recall", () => {
+    const evidence = describeRecentUserTurnSelection(
+      ["research residential heat pumps"],
+      "x".repeat(43_000),
+    );
+
+    expect(evidence.recallDisposition).toBe("skip_oversized_token");
+  });
+
+  it("reports search when an oversized token has an explicit instruction", () => {
+    const evidence = describeRecentUserTurnSelection(
+      [],
+      `analyze ${"x".repeat(43_000)}`,
+    );
+
+    expect(evidence.recallDisposition).toBe("search");
   });
 
   it("retains the session intent anchor when distinct follow-ups fill the bound", () => {

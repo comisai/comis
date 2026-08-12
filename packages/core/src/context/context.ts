@@ -62,6 +62,14 @@ export const RequestContextSchema = z.strictObject({
     senderTrustTier: z.string().min(1).optional(),
     /** True only when the operator explicitly named the raw sender in senderTrustMap. */
     senderTrustExplicit: z.boolean().optional(),
+    /**
+     * The raw channel sender id of the inbound turn — the platform vocabulary
+     * `senderTrustMap` is keyed by and an inbound reaction names its author in.
+     * An attribution key only: authorization narrows through `trustLevel` /
+     * `senderTrustTier`, and partitioning through `userId` / `turnScope`, neither
+     * of which shares this namespace with the platform.
+     */
+    channelSenderId: z.string().min(1).optional(),
     /** False when this runtime-generated turn must not contribute outcome evidence to learning. */
     learningEligible: z.boolean().optional(),
     /** Per-session random delimiter for external content wrapping */
@@ -103,13 +111,14 @@ export interface ResolvedRequestContext {
   trustLevel: UserTrustLevel;
   senderTrustTier?: string;
   senderTrustExplicit?: boolean;
+  channelSenderId?: string;
   learningEligible?: boolean;
   deliveryOrigin: DeliveryOrigin;
   turnScope?: ResolvedTurnScope;
 }
 
 /** Complete identity for a freshly-created synthetic request boundary. */
-// @optional-field-count: synthetic sources capture different identity facets; resolution normalizes omissions before ALS publication.
+// @optional-field-count: Request-boundary facets are independently conditional by ingress type, trust resolution, delivery route, model/locale inheritance, learning eligibility, and operator-policy availability; absent fields must remain absent rather than be fabricated for synthetic turns.
 export interface ResolvedRequestContextSeed {
   tenantId: string;
   userId: string;
@@ -122,6 +131,7 @@ export interface ResolvedRequestContextSeed {
   trustLevel: UserTrustLevel;
   senderTrustTier?: string;
   senderTrustExplicit?: boolean;
+  channelSenderId?: string;
   learningEligible?: boolean;
   contentDelimiter?: string;
   channelType?: string;
@@ -154,6 +164,7 @@ const lockedContextFields = [
   "trustLevel",
   "senderTrustTier",
   "senderTrustExplicit",
+  "channelSenderId",
   "learningEligible",
   "contentDelimiter",
   "channelType",
@@ -262,6 +273,7 @@ function lockResolvedContext(
       ["trustLevel", parsed.trustLevel],
       ["senderTrustTier", parsed.senderTrustTier],
       ["senderTrustExplicit", parsed.senderTrustExplicit],
+      ["channelSenderId", parsed.channelSenderId],
       ["learningEligible", parsed.learningEligible],
       ["contentDelimiter", parsed.contentDelimiter],
       ["channelType", parsed.channelType],
@@ -317,6 +329,7 @@ export function createResolvedRequestContext(
     trustLevel: seed.trustLevel,
     senderTrustTier: seed.senderTrustTier,
     senderTrustExplicit: seed.senderTrustExplicit,
+    channelSenderId: seed.channelSenderId,
     learningEligible: seed.learningEligible,
     contentDelimiter: seed.contentDelimiter,
     channelType: seed.channelType,
@@ -479,6 +492,7 @@ export function enrichCurrentContext(
     trustLevel: enrichment.trustLevel,
     senderTrustTier: enrichment.senderTrustTier,
     senderTrustExplicit: enrichment.senderTrustExplicit,
+    channelSenderId: enrichment.channelSenderId,
     learningEligible: enrichment.learningEligible,
     deliveryOrigin: enrichment.deliveryOrigin,
     turnScope: enrichment.turnScope,
@@ -543,6 +557,7 @@ export function enrichCurrentContext(
     trustLevel: resolved.trustLevel,
     senderTrustTier: resolved.senderTrustTier,
     senderTrustExplicit: resolved.senderTrustExplicit,
+    channelSenderId: resolved.channelSenderId,
     learningEligible: resolved.learningEligible,
     channelType: existingChannelType ?? deliveryOrigin.channelType,
     deliveryOrigin,

@@ -9,21 +9,99 @@ import type { ExcludeDeferralResult } from "./tool-deferral.js";
 
 const MAX_MATCHED_SKILLS = 1;
 const MIN_SHARED_TERMS = 2;
+/**
+ * Disclosure and ENFORCEMENT are separate decisions. Routing at
+ * `MIN_SHARED_TERMS` only decorates the read tool with a skill location, which
+ * costs nothing when the guess is wrong. A skill's web-evidence floor is a
+ * completion REQUIREMENT: unmet receipts end the turn as a tool-invocation
+ * stall and the model's answer is discarded. A broad description ("understand",
+ * "explain", "reports", "documentation", …) shares the bare two-term minimum
+ * with ordinary local-context prose, so that weakest admissible signal must not
+ * arm a destructive floor — above it, the request is speaking the skill's own
+ * vocabulary, and naming the skill outright always clears it.
+ */
+const MIN_EVIDENCE_FLOOR_SHARED_TERMS = MIN_SHARED_TERMS + 1;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
+const PRIOR_REQUEST_REFERENCE_PATTERN =
+  /\b(?:again|continue|earlier|former|it|its|latter|one|ones|previous|same|something|that|them|these|this|those)\b/iu;
+const CONVERSATION_HISTORY_RECALL_PATTERN =
+  /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
+const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
+  "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
+  "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
+  "our", "out", "some", "that", "the", "their", "then", "these", "this", "those",
+  "task", "tasks", "tool", "tools", "use", "uses", "using", "want", "wants", "was",
+  "were", "when", "where", "which", "with", "would", "you", "your",
+]);
 
 interface PromptSkillRequestRoutingInput {
-  readonly capabilityClass: string;
+  readonly currentRequestText: string;
   readonly requestRelevanceText: string;
   readonly priorUserRequest?: string;
   readonly skills: readonly PromptSkillCapability[];
   readonly locations?: ReadonlyMap<string, string>;
 }
 
+/**
+ * The text the user physically supplied this turn, for intent routing only.
+ *
+ * Media preprocessing enriches `text` with extracted external content and
+ * runtime coverage instructions, which must not decide skill selection. The
+ * structured physical messages are the primary source — but a voice or media
+ * turn carries an EMPTY physical text, so the trusted transcription receipt is
+ * the only first-party wording a spoken request has. Without it, "research X
+ * thoroughly" routed a skill when typed and routed nothing when spoken.
+ */
+export function physicalUserRequestText(message: {
+  readonly text?: string;
+  readonly originalMessages?: readonly { readonly text: string }[];
+  readonly attachments?: readonly { readonly transcription?: string }[];
+}): string {
+  const physical = message.originalMessages?.map((original) => original.text)
+    ?? [message.text ?? ""];
+  const typed = physical.filter((text) => text.trim().length > 0);
+  if (typed.length > 0) return typed.join("\n");
+  const spoken = (message.attachments ?? [])
+    .map((attachment) => attachment.transcription ?? "")
+    .filter((text) => text.trim().length > 0);
+  return spoken.length > 0 ? spoken.join("\n") : "";
+}
+
 function terms(text: string): Set<string> {
   return new Set(
     text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)
-      ?.filter((term) => term.length >= 3) ?? [],
+      ?.filter((term) => term.length >= 3 && !ROUTING_STOPWORDS.has(term)) ?? [],
   );
+}
+
+/** Retain preceding context only when the current wording refers back to it. */
+function workflowContext(
+  currentRequestText: string,
+  priorUserRequest: string | undefined,
+): string | undefined {
+  const current = scrubSecretsFromText(currentRequestText.trim()).text;
+  const prior = scrubSecretsFromText(priorUserRequest?.trim() ?? "").text;
+  if (current.length === 0) {
+    return prior.length === 0 ? undefined : prior.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  }
+  if (
+    prior.length === 0
+    || prior === current
+    || !PRIOR_REQUEST_REFERENCE_PATTERN.test(current)
+  ) {
+    return current.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  }
+  const currentLabel = "Current request:\n";
+  const priorLabel = "Earlier request:\n";
+  const currentSection = currentLabel
+    + current.slice(0, MAX_WORKFLOW_CONTEXT_CHARS - currentLabel.length);
+  const priorBudget = MAX_WORKFLOW_CONTEXT_CHARS
+    - currentSection.length
+    - priorLabel.length
+    - 1;
+  return priorBudget <= 0
+    ? currentSection
+    : `${priorLabel}${prior.slice(0, priorBudget)}\n${currentSection}`;
 }
 
 function scoreSkill(
@@ -54,22 +132,33 @@ function attachSkillRoute(
   };
 }
 
-/** Bridge constrained models from a matching prompt skill to read-based disclosure. */
+/** Bridge a request-matched prompt skill to read-based progressive disclosure. */
 export function applyPromptSkillRequestRouting(
   deferral: ExcludeDeferralResult,
   input: PromptSkillRequestRoutingInput,
 ): string[] {
-  if (input.capabilityClass !== "nano" || input.skills.length === 0) return [];
-  const queryText = input.requestRelevanceText.toLocaleLowerCase();
-  const queryTerms = terms(queryText);
-  const selectedSkills = input.skills
-    .map((skill) => ({ skill, score: scoreSkill(queryTerms, queryText, skill) }))
-    .filter((entry) => entry.score >= MIN_SHARED_TERMS)
+  if (input.skills.length === 0) return [];
+  // Conversation-history lookup is owned by context assembly and scoped
+  // memory recall. Lexical overlap must not turn it into a task procedure.
+  if (CONVERSATION_HISTORY_RECALL_PATTERN.test(input.currentRequestText)) return [];
+  const currentText = input.currentRequestText.toLocaleLowerCase();
+  const currentTerms = terms(currentText);
+  const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
+  const relevanceTerms = terms(relevanceText);
+  const selectedEntries = input.skills
+    .map((skill) => ({
+      skill,
+      currentScore: scoreSkill(currentTerms, currentText, skill),
+      relevanceScore: scoreSkill(relevanceTerms, relevanceText, skill),
+    }))
+    .filter((entry) => entry.currentScore >= MIN_SHARED_TERMS)
     .sort((left, right) =>
-      right.score - left.score || left.skill.name.localeCompare(right.skill.name)
+      right.currentScore - left.currentScore
+      || right.relevanceScore - left.relevanceScore
+      || left.skill.name.localeCompare(right.skill.name)
     )
-    .slice(0, MAX_MATCHED_SKILLS)
-    .map((entry) => entry.skill);
+    .slice(0, MAX_MATCHED_SKILLS);
+  const selectedSkills = selectedEntries.map((entry) => entry.skill);
   const selected = selectedSkills.map((skill) => skill.name);
   if (selected.length === 0) return [];
   const selectedSet = new Set(selected);
@@ -99,16 +188,44 @@ export function applyPromptSkillRequestRouting(
   deferral.requestRelevantPromptSkillNames = selected;
   deferral.requestRelevantPromptSkillLocations = selectedLocations;
   const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
-  const workflowToolNames = selectedSkills.some((skill) => (skill.requiredBins?.length ?? 0) > 0)
+  const availableToolNames = new Set(allTools.map((tool) => tool.name));
+  // An evidence floor is only enforceable when the tool that mints its receipts
+  // is actually reachable this turn AND the current request matched the skill
+  // above the bare disclosure minimum. Declaring an unreachable floor leaves the
+  // completion gate permanently unsatisfiable, and arming one on incidental
+  // description overlap discards a correct answer; both end the turn with the
+  // model's reply thrown away.
+  const evidenceFloorsEnforceable =
+    (selectedEntries[0]?.currentScore ?? 0) >= MIN_EVIDENCE_FLOOR_SHARED_TERMS;
+  const minDistinctWebFetchUrls =
+    evidenceFloorsEnforceable && availableToolNames.has("web_fetch")
+      ? selectedSkills[0]?.minDistinctWebFetchUrls
+      : undefined;
+  const minDistinctWebSearchQueries =
+    evidenceFloorsEnforceable && availableToolNames.has("web_search")
+      ? selectedSkills[0]?.minDistinctWebSearchQueries
+      : undefined;
+  const receiptToolNames = [...new Set([
+    ...(minDistinctWebFetchUrls === undefined ? [] : ["web_search", "web_fetch"]),
+    ...(minDistinctWebSearchQueries === undefined ? [] : ["web_search"]),
+  ])].filter((name) => availableToolNames.has(name));
+  const binaryWorkflowToolNames = selectedSkills.some(
+    (skill) => (skill.requiredBins?.length ?? 0) > 0,
+  )
     && allTools.some((tool) => tool.name === "exec")
     ? ["exec"]
     : [];
+  const workflowToolNames = [...new Set([
+    ...binaryWorkflowToolNames,
+    ...receiptToolNames,
+  ])];
   deferral.requestRelevantPromptSkillWorkflowToolNames = workflowToolNames;
-  const priorUserRequest = input.priorUserRequest?.trim();
-  if (workflowToolNames.length > 0 && priorUserRequest) {
-    deferral.requestRelevantPromptSkillWorkflowContext = scrubSecretsFromText(
-      priorUserRequest,
-    ).text.slice(0, MAX_WORKFLOW_CONTEXT_CHARS);
+  deferral.requestRelevantPromptSkillMinDistinctWebFetchUrls = minDistinctWebFetchUrls;
+  deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries =
+    minDistinctWebSearchQueries;
+  const context = workflowContext(input.currentRequestText, input.priorUserRequest);
+  if (workflowToolNames.length > 0 && context !== undefined) {
+    deferral.requestRelevantPromptSkillWorkflowContext = context;
   }
   const mutationToolNames = workflowToolNames.length > 0
     ? deferral.requestRelevantToolNames.filter(

@@ -91,6 +91,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
 
   // ---- Session + prompt lifecycle ----
   "prompt:submitted": "prompt.submitted",
+  "request:clarification_required": "request.clarification_required",
   "session:started": "session.started",
   "session:ended": "session.ended",
   // Per-session health rollup emitted once at agent-end.

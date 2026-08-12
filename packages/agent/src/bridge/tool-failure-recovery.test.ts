@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
+  buildToolInvocationStallFailureReply,
   buildToolRecoveryIdentity,
   classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
 } from "./tool-failure-recovery.js";
+import { createLocaleCatalog } from "../executor/degraded-reply-i18n.js";
 
 const IDENTITY_SALT = "identity-salt-a";
 
@@ -332,5 +334,92 @@ describe("subagent terminal tool failure classification", () => {
         finishReason,
       ).toBeUndefined();
     }
+  });
+});
+
+describe("foreground tool invocation stall disclosure", () => {
+  it("names the missing provider secret without copying upstream prose", () => {
+    const reply = buildToolInvocationStallFailureReply({
+      failedTools: ["web_search"],
+      toolExecResults: [{
+        toolName: "web_search",
+        success: false,
+        durationMs: 10,
+        errorText: "private upstream response",
+        failureDisclosure: {
+          kind: "missing_configuration",
+          configKey: "secrets.SEARCH_API_KEY",
+        },
+      }],
+    });
+
+    expect(reply).toContain("web_search");
+    expect(reply).toContain("secrets.SEARCH_API_KEY");
+    expect(reply).toContain("could not complete");
+    expect(reply).not.toContain("private upstream response");
+  });
+
+  // This reply REPLACES the user-facing response, and no downstream pass
+  // repairs synthesized text, so it must resolve through the locale catalog
+  // like every other synthesized degraded reply. The tool name and config key
+  // stay verbatim — identifiers are never translated.
+  it("answers in the configured response locale and keeps both identifiers", () => {
+    const catalog = createLocaleCatalog({
+      he: {
+        tool_invocation_stall_missing_configuration:
+          "לא הצלחתי להשלים את הבקשה כי {tool} אינו מוגדר. הגדירו {configKey} ונסו שוב.",
+      },
+    });
+    const params = {
+      failedTools: ["web_search"],
+      toolExecResults: [{
+        toolName: "web_search",
+        success: false,
+        durationMs: 10,
+        failureDisclosure: {
+          kind: "missing_configuration" as const,
+          configKey: "secrets.SEARCH_API_KEY",
+        },
+      }],
+      localeCatalog: catalog,
+    };
+
+    const localized = buildToolInvocationStallFailureReply({
+      ...params,
+      language: "he",
+    });
+
+    expect(localized).toContain("לא הצלחתי להשלים את הבקשה");
+    expect(localized).toContain("web_search");
+    expect(localized).toContain("secrets.SEARCH_API_KEY");
+    expect(localized).not.toContain("could not complete");
+
+    // No pack for the resolved locale still answers, in English.
+    expect(buildToolInvocationStallFailureReply({ ...params, language: "fr" }))
+      .toContain("could not complete");
+  });
+
+  // An operator pack that drops a token must not drop the identifiers with it:
+  // the reply is unactionable without the tool name and the key to configure.
+  it("still names the tool and key when a pack omits the tokens", () => {
+    const reply = buildToolInvocationStallFailureReply({
+      failedTools: ["web_search"],
+      toolExecResults: [{
+        toolName: "web_search",
+        success: false,
+        durationMs: 10,
+        failureDisclosure: {
+          kind: "missing_configuration",
+          configKey: "secrets.SEARCH_API_KEY",
+        },
+      }],
+      language: "he",
+      localeCatalog: createLocaleCatalog({
+        he: { tool_invocation_stall_missing_configuration: "לא הצלחתי להשלים את הבקשה." },
+      }),
+    });
+
+    expect(reply).toContain("web_search");
+    expect(reply).toContain("secrets.SEARCH_API_KEY");
   });
 });

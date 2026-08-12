@@ -23,7 +23,10 @@ interface SchedulerStateEvidenceGuardResult {
 interface RuntimeSelfReportEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_runtime_self_report_evidence";
+  reason?:
+    | "missing_runtime_self_report_evidence"
+    | "unsupported_runtime_self_report_evidence"
+    | "unsupported_outage_receipt_evidence";
 }
 
 function runtimeSelfReportEvidenceGuard(): (params: {
@@ -32,8 +35,14 @@ function runtimeSelfReportEvidenceGuard(): (params: {
   toolExecResults?: readonly {
     toolName: string;
     success: boolean;
+    observabilityEvidenceLimits?: {
+      cost?: "runtime_estimate";
+      providerInvoice?: "unverified";
+      crossExecutionDurationRanking?: "unavailable";
+    };
   }[];
   honestResponse: string;
+  unsupportedResponse?: string;
 }) => RuntimeSelfReportEvidenceGuardResult {
   const candidate = (responseGrounding as Record<string, unknown>)
     .enforceRuntimeSelfReportEvidence;
@@ -129,6 +138,175 @@ describe("response grounding module", () => {
       corrected: true,
       reason: "missing_runtime_self_report_evidence",
     });
+  });
+
+  it("requires observability for durable-job restart chronology", () => {
+    const honestResponse =
+      "I could not verify whether the durable job resumed across the restart.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "resume the durable synthetic job after the restart",
+      response:
+        "The durable job completed before the restart, so there is nothing to resume.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("requires observability before reporting a node-conditioned runtime verdict", () => {
+    const honestResponse =
+      "I could not verify a current graph or its node outcomes in this turn.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "give me a go decision even if a source node failed",
+      response: "Don't go — one source failed, so I can't verify the full check.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("requires observability before claiming receipt during an outage", () => {
+    const honestResponse =
+      "I could not verify whether that message was accepted while the service was down.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "did you receive the message injected while you were down?",
+      response:
+        "Yes, I received the earlier resume message after the restart.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  it("rejects outage receipt timing that a generic observability result cannot prove", () => {
+    const honestResponse =
+      "I could not verify whether that message was accepted while the service was down.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "did you receive the message injected while you were down?",
+      response: "Yes — I received it after the restart.",
+      toolExecResults: [{ toolName: "obs_query", success: true }],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "unsupported_outage_receipt_evidence",
+    });
+  });
+
+  it("requires duration-ranking evidence for a slowest-execution claim", () => {
+    const honestResponse = "I could not verify which execution was slowest.";
+    const unsupportedResponse = "The current report does not rank execution duration.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "why was the slowest bit slow?",
+      response: "The slowest bit was the failed TTS sub-agent path.",
+      toolExecResults: [{
+        toolName: "obs_query",
+        success: true,
+        observabilityEvidenceLimits: {
+          crossExecutionDurationRanking: "unavailable",
+        },
+      }],
+      honestResponse,
+      unsupportedResponse,
+    })).toEqual({
+      response: unsupportedResponse,
+      corrected: true,
+      reason: "unsupported_runtime_self_report_evidence",
+    });
+  });
+
+  it("recognizes the direct slowest-execution question as a runtime self-report", () => {
+    const honestResponse = "I could not verify which execution was slowest.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "why was the slowest bit slow?",
+      response: "The slowest bit was the failed TTS sub-agent path.",
+      toolExecResults: [],
+      honestResponse,
+    })).toEqual({
+      response: honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    });
+  });
+
+  // Naming the figure a runtime estimate already withholds the provider-invoice
+  // claim, so one qualifier is enough. Demanding both English phrases discarded
+  // correct, qualified answers.
+  it("keeps a cost report qualified only as a runtime estimate", () => {
+    const response = "This turn cost about $0.04 (runtime estimate).";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "how much did this turn cost?",
+      response,
+      toolExecResults: [{
+        toolName: "obs_query",
+        success: true,
+        observabilityEvidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+        },
+      }],
+      honestResponse: "I could not verify provider-billed cost.",
+      unsupportedResponse: "The runtime estimate is not a verified provider invoice.",
+    })).toEqual({ response, corrected: false });
+  });
+
+  it("replaces an unqualified cost claim the current receipt cannot support", () => {
+    const honestResponse = "I could not verify provider-billed cost.";
+    const unsupportedResponse = "The runtime estimate is not a verified provider invoice.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "how much have you cost me?",
+      response: "I have cost $5.00.",
+      toolExecResults: [{
+        toolName: "obs_query",
+        success: true,
+        observabilityEvidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+        },
+      }],
+      honestResponse,
+      unsupportedResponse,
+    })).toEqual({
+      response: unsupportedResponse,
+      corrected: true,
+      reason: "unsupported_runtime_self_report_evidence",
+    });
+  });
+
+  it("keeps a qualified runtime cost estimate", () => {
+    const response =
+      "The runtime estimate is $5.00; I cannot verify the provider invoice.";
+
+    expect(runtimeSelfReportEvidenceGuard()({
+      request: "how much have you cost me?",
+      response,
+      toolExecResults: [{
+        toolName: "obs_query",
+        success: true,
+        observabilityEvidenceLimits: {
+          cost: "runtime_estimate",
+          providerInvoice: "unverified",
+        },
+      }],
+      honestResponse: "I could not verify provider-billed cost.",
+    })).toEqual({ response, corrected: false });
   });
 
   it.each([

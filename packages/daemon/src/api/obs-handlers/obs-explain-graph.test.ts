@@ -22,6 +22,8 @@ async function createGraphMetadata(
       graphName: "private graph label",
       status: "completed",
       traceId: "trace_graph_test",
+      sessionKey: "default:agent:default:user_a:telegram:peer:user_a",
+      announcementDelivery: "unavailable",
       startedAt: "2026-07-30T06:20:44.795Z",
       completedAt: "2026-07-30T06:20:45.795Z",
       durationMs: 1_000,
@@ -65,6 +67,8 @@ describe("readIncidentGraphRun", () => {
       status: "completed",
       nodesTotal: 1,
       nodesSucceeded: 1,
+      sessionKey: "default:agent:default:user_a:telegram:peer:user_a",
+      announcementDelivery: "unavailable",
     });
     expect(JSON.stringify(result.value)).not.toContain("private graph label");
     expect(JSON.stringify(result.value)).not.toContain("private node output");
@@ -82,6 +86,26 @@ describe("readIncidentGraphRun", () => {
     if (!result.ok) return;
     expect(result.value.status).toBe("cancelled");
     expect(result.value.cancelReason).toBe("manual");
+  });
+
+  it("rejects metadata without the required announcement disposition", async () => {
+    const { dataDir, graphId } = await createGraphMetadata({
+      announcementDelivery: undefined,
+    });
+
+    const result = await readIncidentGraphRun(dataDir, graphId);
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects metadata whose announcement disposition is not a known value", async () => {
+    const { dataDir, graphId } = await createGraphMetadata({
+      announcementDelivery: "maybe-delivered",
+    });
+
+    const result = await readIncidentGraphRun(dataDir, graphId);
+
+    expect(result.ok).toBe(false);
   });
 
   it("rejects metadata whose graph identifier does not match its path", async () => {

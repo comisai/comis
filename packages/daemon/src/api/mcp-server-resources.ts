@@ -79,6 +79,10 @@ interface SessionHistoryResponse {
     timestamp: number;
     deliveryStatus?: "confirmed" | "pending";
   }>;
+  /** Displayable message count for the whole conversation (not just this page) --
+   *  drives the tail re-request when the session exceeds one page. Optional here
+   *  because the resources surface must not break on a responder that omits it. */
+  total?: number;
 }
 
 /**
@@ -166,13 +170,27 @@ export function registerMcpResourcesForClient(
       // what caller scope is supplied. The authorization that applies here is the
       // per-client allowlist checked immediately above, which is what makes
       // `conversationRef` reachable at all.
-      const history = (await deps.daemonRpcForMcpClient("session.history", {
-        agentId: deps.defaultAgentId,
-        tenant_id: deps.tenantId,
-        agent_id: deps.defaultAgentId,
-        conversation_ref: conversationRef,
-        limit: deps.resourceReadLimit,
-      })) as SessionHistoryResponse;
+      const readPage = async (offset?: number): Promise<SessionHistoryResponse> =>
+        (await deps.daemonRpcForMcpClient("session.history", {
+          agentId: deps.defaultAgentId,
+          tenant_id: deps.tenantId,
+          agent_id: deps.defaultAgentId,
+          conversation_ref: conversationRef,
+          limit: deps.resourceReadLimit,
+          ...(offset === undefined ? {} : { offset }),
+        })) as SessionHistoryResponse;
+
+      // `session.history` pages from the START of the conversation, but this resource is
+      // the session's CURRENT confirmed state: a client re-reads it to pick up messages
+      // whose outbound delivery has since confirmed, and those are at the END. So when the
+      // conversation is longer than one page, re-request the TAIL. `total` is reported by
+      // the first page; a responder that omits it leaves the head page as-is.
+      const firstPage = await readPage();
+      const total = firstPage.total;
+      const history =
+        typeof total === "number" && total > deps.resourceReadLimit
+          ? await readPage(total - deps.resourceReadLimit)
+          : firstPage;
 
       // -------- CONFIRMED filter (unconfirmed-message leak) --------------
       // Outbound messages whose deliveryStatus is "pending" are excluded.

@@ -46,7 +46,7 @@ The browser tool supports **16 actions**, verified against `BROWSER_TOOL_ACTIONS
   </Accordion>
 
   <Accordion title="screenshot -- Capture a screenshot" icon="camera">
-    Take a screenshot of the current page. The image is returned as a message attachment.
+    Take a screenshot of the current page. The image comes back inline in the tool result and is saved to the workspace; the result names the workspace path and the `message` tool `attach` call that delivers it, so reaching the chat is an explicit second step.
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|

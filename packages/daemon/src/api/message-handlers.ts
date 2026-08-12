@@ -649,11 +649,11 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         );
 
         const requestContext = tryGetContext();
-        const endpoint = requestContext?.turnScope?.endpoint;
-        const endpointDisplayId = endpoint === undefined
+        const turnEndpoint = requestContext?.turnScope?.endpoint;
+        const endpointDisplayId = turnEndpoint === undefined
           ? undefined
-          : `${endpoint.channelType}:${endpoint.channelInstanceId}:${endpoint.conversationId}`;
-        const hasMatchingSession = endpoint?.conversationId === channelId
+          : `${turnEndpoint.channelType}:${turnEndpoint.channelInstanceId}:${turnEndpoint.conversationId}`;
+        const hasMatchingSession = turnEndpoint?.conversationId === channelId
           || endpointDisplayId === channelId;
 
         const attachmentType = (rawParams.attachment_type as string) ?? "file";

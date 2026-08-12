@@ -70,7 +70,7 @@ function transformSnapshot(snap: EmulatorSnapshot): EmulatorSnapshot {
 export const claudeCodeProfile: TerminalPlatformProfile = {
   id: "claude-code",
   allowIds: ["claude", "claude-code"],
-  platformVersion: "1.1.5",
+  platformVersion: "1.1.6",
   transformSnapshot,
   // Claude Code perception signatures the classifier consumes (layered on the generic structural
   // detection). All anchored + ReDoS-safe (the registry guard enforces at load).

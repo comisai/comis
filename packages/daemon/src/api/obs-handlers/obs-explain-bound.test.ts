@@ -58,6 +58,7 @@ function graphWithNodes(count: number): NonNullable<IncidentReport["graph"]> {
     graphId: "11111111-1111-4111-8111-111111111111",
     status: "completed",
     traceId: "trace_graph_test",
+    announcementDelivery: "committed",
     startedAt: "2026-07-30T06:20:44.795Z",
     completedAt: "2026-07-30T06:20:45.795Z",
     durationMs: 1_000,

@@ -224,8 +224,46 @@ async function loadAuthProfiles(
 }
 
 /**
+ * Read back the writer PID that `atomicWriteJson` stamped into a tmp filename
+ * (`<FILE_NAME>.<pid>.<random>.tmp`). Returns undefined when the name carries
+ * no usable PID, so the leftover is unattributable and safe to reclaim.
+ *
+ * PID 0 is deliberately rejected: `process.kill(0, …)` addresses the caller's
+ * whole process group, so it must never reach the liveness probe.
+ */
+function tmpWriterPid(name: string): number | undefined {
+  const stamped = name.slice(FILE_NAME.length + 1, -".tmp".length).split(".")[0];
+  if (!/^\d+$/.test(stamped)) return undefined;
+  const pid = Number.parseInt(stamped, 10);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/**
+ * True when `pid` names a running process.
+ * - signal 0 delivered → alive.
+ * - EPERM → alive (exists, but this user may not signal it).
+ * - ESRCH → dead.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
  * Cleanup orphaned *.tmp files from previous crashed writes (hygiene).
  * Best-effort — failures are silent; this is housekeeping, not correctness.
+ *
+ * Only leftovers of DEAD writers are reclaimed. This sweep is fire-and-forget,
+ * so its directory scan overlaps every write that starts just after the store
+ * is constructed — this process's own first `set()`, or a sibling daemon/CLI
+ * writing into the shared data dir. Unlinking a live writer's tmp file removes
+ * the source its `rename` is about to consume, which fails the credential write
+ * (ENOENT) and silently logs the user out. The PID that `atomicWriteJson`
+ * stamps into the tmp name is what tells the two apart.
  */
 async function cleanupStaleTmpFiles(parentDir: string): Promise<void> {
   try {
@@ -234,6 +272,8 @@ async function cleanupStaleTmpFiles(parentDir: string): Promise<void> {
       (n) => n.startsWith(FILE_NAME) && n.endsWith(".tmp"),
     );
     for (const name of tmpFiles) {
+      const writerPid = tmpWriterPid(name);
+      if (writerPid !== undefined && isPidAlive(writerPid)) continue;
       try {
         await fs.unlink(safePath(parentDir, name));
       } catch {
@@ -249,7 +289,7 @@ async function cleanupStaleTmpFiles(parentDir: string): Promise<void> {
  * Create a plaintext file-backed OAuthCredentialStorePort adapter.
  *
  * Atomic, lock-protected, version-validated. Lifecycle:
- * - On factory call: ensures dataDir exists (mkdir 0o700 recursive); cleans up stale .tmp files.
+ * - On factory call: ensures dataDir exists (mkdir 0o700 recursive); reclaims .tmp files left by DEAD writers.
  * - On every set/delete: per-profile-ID file lock → load → mutate → atomic-write.
  * - On every get/has/list: load (no lock — readers see snapshot per POSIX rename atomicity).
  */
@@ -312,7 +352,9 @@ export function createOAuthCredentialStoreFile(
               "OAuth file adapter set(" +
                 profileId +
                 ") failed: lock " +
-                lockResult.error.kind,
+                lockResult.error.kind +
+                ": " +
+                lockResult.error.message,
             ),
           );
         }
@@ -347,7 +389,9 @@ export function createOAuthCredentialStoreFile(
               "OAuth file adapter delete(" +
                 profileId +
                 ") failed: lock " +
-                lockResult.error.kind,
+                lockResult.error.kind +
+                ": " +
+                lockResult.error.message,
             ),
           );
         }

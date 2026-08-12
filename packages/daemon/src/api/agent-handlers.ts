@@ -576,17 +576,19 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         assertKnownAgentModel(deps, agentId, parsedConfig, config);
       }
 
-      // Validate oauthProfiles patch — each profileId must exist in the
-      // OAuth credential store. Skipped when no oauthCredentialStore is
-      // wired (test contexts; non-OAuth-aware setups). Critical: this
-      // throws BEFORE the `deps.agents[agentId] = parsedConfig`
+      // Validate an explicit oauthProfiles patch — each profileId it supplies
+      // must exist in the OAuth credential store. An unrelated update must not
+      // be blocked by an untouched stale mapping; provider changes validate
+      // their target credential separately below. Skipped when no
+      // oauthCredentialStore is wired (test contexts; non-OAuth-aware setups).
+      // Critical: this throws BEFORE the `deps.agents[agentId] = parsedConfig`
       // reference-replacement at the end of the handler, so on failure the
       // daemon's in-memory map AND the YAML are both unchanged. The
       // Zod-layer format check has already run during
       // PerAgentConfigSchema.parse(merged) above — this block ONLY checks
       // existence in the store.
-      if (parsedConfig.oauthProfiles !== undefined && deps.oauthCredentialStore) {
-        for (const [provider, profileId] of Object.entries(parsedConfig.oauthProfiles)) {
+      if (config.oauthProfiles !== undefined && deps.oauthCredentialStore) {
+        for (const [provider, profileId] of Object.entries(config.oauthProfiles)) {
           const has = await deps.oauthCredentialStore.has(profileId);
           if (!has.ok) {
             throw new Error(

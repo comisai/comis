@@ -540,6 +540,9 @@ export function assembleIncidentReport(
     ...(signals.requestRelevanceHistory !== undefined
       ? { requestRelevanceHistory: signals.requestRelevanceHistory }
       : {}),
+    ...(signals.requestClarification !== undefined
+      ? { requestClarification: signals.requestClarification }
+      : {}),
     ...(signals.operatorPolicyToolProjections !== undefined
       ? { operatorPolicyToolProjections: signals.operatorPolicyToolProjections }
       : {}),

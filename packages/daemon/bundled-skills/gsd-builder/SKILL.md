@@ -1,8 +1,15 @@
 ---
 name: gsd-builder
 type: prompt
-version: "0.3.1"
+version: "0.3.2"
 description: Implement a design document end-to-end in a target repo by driving Claude Code through the GSD workflow — define a GSD milestone from the doc, then run /gsd-autonomous (TDD, skip-discuss) to build all phases unattended. Use when the operator hands you a design/spec document and asks to autonomously build, implement, or "ship" it as a milestone in a specific repository. This is a LONG, durable drive (often hours) — not a quick task.
+comis:
+  requires:
+    # The driven CLI is reached through an operator terminal allow-entry, which
+    # pins an absolute `match.path` — not a PATH lookup — so it is not a
+    # pre-flightable `bins` entry. Nothing else is needed on the host.
+    bins: []
+    env: []
 ---
 
 # Driving a GSD autonomous build from a design doc

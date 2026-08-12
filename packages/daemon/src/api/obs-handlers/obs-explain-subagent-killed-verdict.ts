@@ -64,6 +64,20 @@ export function subagentDeliverySkippedVerdict(
 ): SubagentKilledVerdict | null {
   const skipped = s.subagentDeliverySkipped;
   if (skipped === undefined) return null;
+  if (skipped.lastReason === "route_validation_failed") {
+    return {
+      code: "subagent_delivery_skipped",
+      detail:
+        `${String(skipped.count)} sub-agent completion(s) could not use their authenticated delivery route; `
+        + `route validation failed for the latest run ${skipped.lastRunId}, so automatic delivery and replay were suppressed. `
+        + "A clean child execution rollup does not mean the result reached its parent.",
+      suggestedNextSteps: [
+        "compare the captured callerConversation with destinationEndpoint and the authenticated caller turn",
+        "correct the caller authority before creating a distinct completion operation",
+        "obs.explain depth=full on the affected caller session",
+      ],
+    };
+  }
   const missing = skipped.lastReason === "no_origin"
     ? "requesterOrigin"
     : "announceChannelType/announceChannelId";

@@ -254,6 +254,12 @@ function enrichResolvedInboundContext(
     ),
     senderTrustTier,
     senderTrustExplicit,
+    // The authenticated raw sender, in the platform vocabulary an inbound
+    // reaction names its author in. Delivery binds it as the conversation
+    // participant so a later reaction on this turn's reply can tell the
+    // participant from a group bystander; the canonical principal and the
+    // session partition cannot be compared against a platform reactor id.
+    channelSenderId: processedMsg.senderId,
     // Runtime-generated restart continuations may finish the authorized user turn,
     // but they are not independent user evidence and must not seed durable learning.
     learningEligible: processedMsg.metadata?.isRestartContinuation !== true,

@@ -213,7 +213,13 @@ export function makeCreateAgentRpcCall(
         }
         outwardStepIndex = allocated.value;
       }
-      // Extract caller channel metadata from DeliveryOrigin
+      // The resolved turn endpoint remains authoritative when the execution
+      // context intentionally omits the narrower delivery-origin snapshot.
+      // Graph completion still needs the same trusted conversation route so it
+      // can deliver its terminal result instead of promising an unreachable
+      // follow-up.
+      const callerChannelType = origin?.channelType ?? trustedContext?.turnScope?.endpoint.channelType;
+      const callerChannelId = origin?.channelId ?? trustedContext?.turnScope?.endpoint.conversationId;
       return rpcCall(method, {
         ...stripInternalFields(params),
         ...(metadata?.signal ? { _abortSignal: metadata.signal } : {}),
@@ -221,6 +227,7 @@ export function makeCreateAgentRpcCall(
         ...(trustedContext?.turnScope !== undefined && {
           _tenantId: trustedContext.turnScope.conversation.tenantId,
           _callerConversationScope: trustedContext.turnScope.conversation,
+          _callerTurnScope: trustedContext.turnScope,
         }),
         _capabilities: heldCapabilities,
         // The trusted autonomy mode for THIS run, from the
@@ -244,8 +251,8 @@ export function makeCreateAgentRpcCall(
         ...(metadata?.discoveredDeferredTools?.length && {
           _discoveredDeferredTools: [...metadata.discoveredDeferredTools],
         }),
-        ...(origin && { _callerChannelType: origin.channelType }),
-        ...(origin && { _callerChannelId: origin.channelId }),
+        ...(callerChannelType !== undefined && { _callerChannelType: callerChannelType }),
+        ...(callerChannelId !== undefined && { _callerChannelId: callerChannelId }),
         ...(rootRunId !== undefined && { _rootRunId: rootRunId }),
         ...(outwardOperationId !== undefined && { _outwardOperationId: outwardOperationId }),
         ...(outwardStepIndex !== undefined && { _outwardStepIndex: outwardStepIndex }),

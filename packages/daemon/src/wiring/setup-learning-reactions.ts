@@ -81,8 +81,10 @@ export interface OutboundTrajectoryEntry {
   /**
    * Group-reaction-spoof guard: the conversation PARTICIPANT — the inbound
    * sender whose message triggered this agent reply, captured from
-   * `RequestContext.userId` at the delivery binding (the inbound pipeline sets
-   * `ctx.userId = sessionKey.userId = msg.senderId`). It is the ONE reactor who
+   * `RequestContext.channelSenderId` at the delivery binding: the RAW channel
+   * sender id, the one identity in the same namespace as an inbound
+   * `reactorId` (the canonical `userId` principal never matches one, and
+   * comparing it silently demoted every reactor). It is the ONE reactor who
    * legitimately inherits the agent's `defaultTrustLevel`; an unmapped group
    * BYSTANDER (any other member) must resolve to `"external"` (inert) so they
    * cannot spoof reaction-learning by reacting to the bot's reply. OPTIONAL —

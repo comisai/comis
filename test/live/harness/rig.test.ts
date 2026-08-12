@@ -528,3 +528,121 @@ describe("CHAN2-01/02 channel dispatch map — the factory + config-writer regis
     expect(viaMap).toBe(direct);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The keyless leg resolves its local model + ollama URL from the live-tier env
+// ---------------------------------------------------------------------------
+
+/**
+ * The keyless leg is the ONLY model config every Stage-C scenario boots
+ * (`buildRig({ model: "keyless" })` — the delivery round-trip, the attachment
+ * mirror, groups, media, fault-injection, …). Hard-coding its model id and
+ * ollama URL pinned the whole Stage-C tier to ONE 24 GB / 35B rig: on any box
+ * that cannot hold that model the daemon boots but no reply is ever authored,
+ * so `waitForReply` burns its 45 s budget and the leg is unrunnable rather
+ * than merely slow. The live tier already documents `COMIS_LIVE_OLLAMA_URL`
+ * and `COMIS_LIVE_LOCAL_MODELS` for "the local models this box has pulled"
+ * (`live.env.example`; `scenarios/local/local-models.test.ts` reads the former
+ * already), so the keyless leg reads the SAME two knobs — one source of truth,
+ * defaults byte-identical to today's when unset.
+ *
+ * These assertions parse the produced YAML through the REAL `AppConfigSchema`
+ * and read the resolved values off the typed config, so they assert the
+ * config's MEANING (which provider/model the daemon would boot), not the
+ * presence of a string in the writer's template.
+ */
+describe("rig config keyless leg — the local model + ollama URL come from the live-tier env", () => {
+  const MODELS_VAR = "COMIS_LIVE_LOCAL_MODELS";
+  const URL_VAR = "COMIS_LIVE_OLLAMA_URL";
+
+  /** Build the keyless YAML under a temporary env, always restoring it. */
+  function withEnv<T>(env: Record<string, string | undefined>, fn: () => T): T {
+    const saved = new Map(Object.keys(env).map((k) => [k, process.env[k]]));
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      return fn();
+    } finally {
+      for (const [k, v] of saved) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  /**
+   * The three places the keyless model id must land for the agent to actually
+   * resolve a model, read off the SCHEMA-VALIDATED config: the provider's model
+   * entry, `models.defaultModel`, and `agents.default.model`. A model that
+   * reaches only some of them boots a daemon that cannot author a reply.
+   */
+  function resolvedKeyless(writer: (model: string) => string, model = "keyless") {
+    const doc = parseYaml(writer(model)) as Record<string, unknown>;
+    const parsed = AppConfigSchema.safeParse(doc);
+    expect(
+      parsed.success,
+      parsed.success ? "" : `keyless config is schema-INVALID: ${JSON.stringify(parsed.error.issues.slice(0, 5))}`,
+    ).toBe(true);
+    const cfg = parsed.success ? (parsed.data as Record<string, any>) : (undefined as never);
+    const entry = cfg["providers"]["entries"]["keyless-local"];
+    return {
+      baseUrl: entry["baseUrl"] as string,
+      providerModelIds: (entry["models"] as Array<{ id: string }>).map((m) => m.id),
+      defaultModel: cfg["models"]["defaultModel"] as string,
+      agentModel: cfg["agents"]["default"]["model"] as string,
+    };
+  }
+
+  it("defaults to the qwen3.6:35b / localhost:11434 rig when neither var is set (today's behavior, unchanged)", () => {
+    const r = withEnv({ [MODELS_VAR]: undefined, [URL_VAR]: undefined }, () =>
+      resolvedKeyless((m) => buildConfigYaml(APP_ROOT, GATEWAY_PORT, m)),
+    );
+    expect(r.providerModelIds).toEqual(["qwen3.6:35b"]);
+    expect(r.defaultModel).toBe("keyless-local:qwen3.6:35b");
+    expect(r.agentModel).toBe("qwen3.6:35b");
+    // The /v1 suffix is load-bearing: pi-ai posts to `${baseUrl}/chat/completions`
+    // and bare ollama 404s without it.
+    expect(r.baseUrl).toBe("http://localhost:11434/v1");
+  });
+
+  it("boots the FIRST COMIS_LIVE_LOCAL_MODELS entry — the model this box actually has pulled — in all three model slots", () => {
+    const r = withEnv({ [MODELS_VAR]: "qwen3:1.7b,qwen3.6:35b", [URL_VAR]: undefined }, () =>
+      resolvedKeyless((m) => buildConfigYaml(APP_ROOT, GATEWAY_PORT, m)),
+    );
+    expect(r.providerModelIds).toEqual(["qwen3:1.7b"]);
+    expect(r.defaultModel).toBe("keyless-local:qwen3:1.7b");
+    expect(r.agentModel).toBe("qwen3:1.7b");
+  });
+
+  it("tolerates whitespace and a trailing empty entry in the comma list (an operator-typed live.env)", () => {
+    const r = withEnv({ [MODELS_VAR]: "  , qwen3:4b , ", [URL_VAR]: undefined }, () =>
+      resolvedKeyless((m) => buildConfigYaml(APP_ROOT, GATEWAY_PORT, m)),
+    );
+    expect(r.agentModel).toBe("qwen3:4b");
+  });
+
+  it("points the provider at COMIS_LIVE_OLLAMA_URL, keeping exactly one /v1 suffix", () => {
+    const r = withEnv({ [MODELS_VAR]: undefined, [URL_VAR]: "http://127.0.0.1:39999/" }, () =>
+      resolvedKeyless((m) => buildConfigYaml(APP_ROOT, GATEWAY_PORT, m)),
+    );
+    expect(r.baseUrl).toBe("http://127.0.0.1:39999/v1");
+  });
+
+  it("still lets an EXPLICIT model argument win over the env (the reconfigure / operator path is unchanged)", () => {
+    const r = withEnv({ [MODELS_VAR]: "qwen3:1.7b", [URL_VAR]: undefined }, () =>
+      resolvedKeyless((m) => buildConfigYaml(APP_ROOT, GATEWAY_PORT, m), "llama3.2:3b"),
+    );
+    expect(r.agentModel).toBe("llama3.2:3b");
+    expect(r.providerModelIds).toEqual(["llama3.2:3b"]);
+  });
+
+  it("resolves identically for the Signal writer (ONE keyless source of truth, not a per-channel copy)", () => {
+    const r = withEnv({ [MODELS_VAR]: "qwen3:1.7b", [URL_VAR]: "http://127.0.0.1:39999" }, () =>
+      resolvedKeyless((m) => buildSignalConfigYaml(APP_ROOT, GATEWAY_PORT, m)),
+    );
+    expect(r.agentModel).toBe("qwen3:1.7b");
+    expect(r.baseUrl).toBe("http://127.0.0.1:39999/v1");
+  });
+});

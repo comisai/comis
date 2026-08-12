@@ -6,9 +6,9 @@
  *   - WebSearchConfig public type
  *   - SearchProviderName alias + FRESHNESS_PROVIDERS allow-set
  *   - Provider-name parsing and chain assembly (parseProvider, buildProviderChain, resolveProvider)
- *   - Per-provider key resolution (resolveApiKey); missingApiKeyPayload is
- *     declared locally and reserved for future use (carries forward the
- *     dead-code stash with its eslint-disable directive).
+ *   - Per-provider key resolution (resolveApiKey) and the operator-facing
+ *     recovery message naming the knob an explicitly selected provider still
+ *     needs (missingProviderConfigurationMessage)
  *   - Provider config + orchestrator payload builders (buildProviderConfig, buildOrchestratorPayload)
  *   - Per-call count clamping (resolveSearchCount)
  *
@@ -200,43 +200,22 @@ export function resolveConfiguredFallbackProviders(
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for future provider-specific error payloads
-function missingApiKeyPayload(provider: SearchProviderName): Record<string, unknown> {
-  const messages: Record<SearchProviderName, { error: string; message: string }> = {
-    brave: {
-      error: "missing_brave_api_key",
-      message: "web_search needs a Brave Search API key. Configure tools.web.search.apiKey in your config.",
-    },
-    perplexity: {
-      error: "missing_perplexity_api_key",
-      message: "web_search (perplexity) needs an API key. Configure tools.web.search.perplexity.apiKey in your config.",
-    },
-    grok: {
-      error: "missing_xai_api_key",
-      message: "web_search (grok) needs an xAI API key. Configure tools.web.search.grok.apiKey in your config.",
-    },
-    duckduckgo: {
-      error: "missing_duckduckgo_config",
-      message: "web_search (duckduckgo) failed unexpectedly.",
-    },
-    searxng: {
-      error: "missing_searxng_base_url",
-      message: "web_search (searxng) needs a base URL. Configure tools.web.search.searxng.baseUrl in your config.",
-    },
-    tavily: {
-      error: "missing_tavily_api_key",
-      message: "web_search (tavily) needs an API key. Configure tools.web.search.tavily.apiKey in your config.",
-    },
-    exa: {
-      error: "missing_exa_api_key",
-      message: "web_search (exa) needs an API key. Configure tools.web.search.exa.apiKey in your config.",
-    },
-    jina: {
-      error: "missing_jina_api_key",
-      message: "web_search (jina) needs an API key. Configure tools.web.search.jina.apiKey in your config.",
-    },
-  };
-  return messages[provider];
+/** Name the operator setting that enables an explicitly selected provider. */
+export function missingProviderConfigurationMessage(provider: SearchProviderName): string {
+  switch (provider) {
+    case "brave": return "web_search provider brave requires the SEARCH_API_KEY secret";
+    case "perplexity": return "web_search provider perplexity requires the PERPLEXITY_API_KEY secret";
+    case "grok": return "web_search provider grok requires the XAI_API_KEY secret";
+    case "duckduckgo": return "web_search provider duckduckgo configuration is unavailable";
+    case "searxng": return "web_search provider searxng requires searxng.baseUrl";
+    case "tavily": return "web_search provider tavily requires the TAVILY_API_KEY secret";
+    case "exa": return "web_search provider exa requires the EXA_API_KEY secret";
+    case "jina": return "web_search provider jina requires the JINA_API_KEY secret";
+    default: {
+      const _exhaustive: never = provider;
+      return _exhaustive;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

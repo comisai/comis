@@ -94,10 +94,10 @@ Additional manifest fields available in SKILL.md frontmatter:
 | `inputSchema` | object | JSON Schema for parameters |
 | `permissions` | object | Security permissions: `fsRead`, `fsWrite`, `net`, `env` |
 | `metadata` | object | Arbitrary string-to-string key-value metadata |
-| `comis` | object | Comis-only namespace block: `os`, `requires` (`bins` + `env`), `skill-key`, `primary-env`, `command-dispatch` |
+| `comis` | object | Comis-only namespace block -- see the [`comis:` field table](/skills/manifest#comis-namespace) for its fields |
 
 <Info>
-Comis-platform-only fields (`os`, `requires`, `skill-key`, `primary-env`, `command-dispatch`) live exclusively under the `comis:` namespace block in frontmatter. Other pi-coding-agent hosts ignore this block. The full schema is `SkillManifestSchema` in `packages/skills/src/manifest/schema.ts`.
+Comis-platform-only fields live exclusively under the `comis:` namespace block in frontmatter, enumerated in [Skill Manifest Reference](/skills/manifest#comis-namespace). Other pi-coding-agent hosts ignore this block. The full schema is `SkillManifestSchema` in `packages/skills/src/skills/manifest/schema.ts`.
 </Info>
 
 <Info>

@@ -602,11 +602,21 @@ export interface DeliveryMirrorResult {
 
 /**
  * Compute an idempotency key for a mirror entry.
- * Uses session key + text hash + 1-second time bucket to deduplicate
- * repeated deliveries of the same text within the same second.
+ * Uses the caller-supplied conversation identity + a hash of the text AND the
+ * delivered media references + a 1-second time bucket, so a repeated delivery
+ * of the same payload within the same second collapses while two different
+ * attachments sharing one caption stay distinct entries.
  */
-function computeIdempotencyKey(sessionKey: string, text: string, timestamp: number): string {
-  const textHash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+function computeIdempotencyKey(
+  sessionKey: string,
+  text: string,
+  timestamp: number,
+  mediaUrls: readonly string[] = [],
+): string {
+  const textHash = createHash("sha256")
+    .update(JSON.stringify({ text, mediaUrls }))
+    .digest("hex")
+    .slice(0, 16);
   const bucket = Math.floor(timestamp / 1000);
   return `${sessionKey}:${textHash}:${bucket}`;
 }
@@ -650,13 +660,13 @@ export async function setupDeliveryMirror(deps: {
     register(api) {
       api.registerHook("after_delivery", async (event, ctx) => {
         if (ctx.deliveryAuthority === undefined || ctx.destinationEndpoint === undefined) {
-          logger.warn(
+          logger.debug(
             {
               channelType: event.channelType,
-              hint: "Ensure every delivery originates from a resolved turn or an explicit internal authority boundary",
-              errorKind: "precondition" as const,
+              step: "delivery-mirror",
+              origin: event.origin,
             },
-            "Delivery mirror record omitted because authority is unavailable",
+            "Delivery mirror record skipped without conversation authority",
           );
           return;
         }
@@ -665,6 +675,7 @@ export async function setupDeliveryMirror(deps: {
           ctx.deliveryAuthority.conversationRef,
           event.text,
           now,
+          event.mediaUrls,
         );
         const result = await deliveryMirror.record({
           tenantId: ctx.deliveryAuthority.tenantId,
@@ -672,7 +683,7 @@ export async function setupDeliveryMirror(deps: {
           conversationRef: ctx.deliveryAuthority.conversationRef,
           destinationEndpoint: ctx.destinationEndpoint,
           text: event.text,
-          mediaUrls: [],  // HookAfterDeliveryEvent has no mediaUrls field; media URL mirroring deferred
+          mediaUrls: [...(event.mediaUrls ?? [])],
           channelType: event.channelType,
           channelId: event.channelId,
           origin: event.origin,

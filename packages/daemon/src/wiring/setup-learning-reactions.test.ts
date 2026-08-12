@@ -766,8 +766,10 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
   // -------------------------------------------------------------------------
   // Group reaction-spoof guard: defaultTrustLevel is the CONVERSATION
   // PARTICIPANT's privilege, NOT a blanket grant to every unmapped group member.
-  // The participant is the inbound sender (RequestContext.userId, threaded onto
-  // OutboundTrajectoryEntry.participantId). An unmapped NON-participant group
+  // The participant is the inbound sender's RAW channel id
+  // (RequestContext.channelSenderId, threaded onto
+  // OutboundTrajectoryEntry.participantId) — the same namespace as a reactorId.
+  // An unmapped NON-participant group
   // member must resolve to "external" (inert) so a bystander cannot spoof the
   // reaction-learning signal by reacting to the bot's reply.
   // -------------------------------------------------------------------------

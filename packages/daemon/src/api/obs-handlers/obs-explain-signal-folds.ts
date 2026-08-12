@@ -143,7 +143,16 @@ export function accumulatePromptRequestRecord(
     const turnCount = nonnegativeInteger(history.turnCount) ?? 0;
     const charCount = nonnegativeInteger(history.charCount) ?? 0;
     if (turnCount <= 8 && charCount <= 1_000_000 && typeof history.saturated === "boolean") {
-      acc.requestRelevanceHistory = { turnCount, charCount, saturated: history.saturated };
+      const recallDisposition = history.recallDisposition === "search"
+        || history.recallDisposition === "skip_oversized_token"
+        ? history.recallDisposition
+        : undefined;
+      acc.requestRelevanceHistory = {
+        turnCount,
+        charCount,
+        saturated: history.saturated,
+        ...(recallDisposition === undefined ? {} : { recallDisposition }),
+      };
     }
   }
 

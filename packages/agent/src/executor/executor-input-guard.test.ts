@@ -62,6 +62,7 @@ function makeCaptureBus(): {
   // Subscribe to all known security events validateInput emits.
   bus.on("security:injection_detected", (p) => events.push({ name: "security:injection_detected", payload: p }));
   bus.on("security:injection_rate_exceeded", (p) => events.push({ name: "security:injection_rate_exceeded", payload: p }));
+  bus.on("request:clarification_required", (p) => events.push({ name: "request:clarification_required", payload: p }));
   bus.on("audit:event", (p) => events.push({ name: "audit:event", payload: p }));
   return { bus, events };
 }
@@ -139,7 +140,9 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     const { bus } = makeCaptureBus();
     const guard = makeGuard({});
     const result = validateInput({
-      msg: makeMessage({ text: "x".repeat(DEFAULT_MAX_INPUT_CHARS) }),
+      msg: makeMessage({
+        text: `analyze ${"x".repeat(DEFAULT_MAX_INPUT_CHARS - "analyze ".length)}`,
+      }),
       sessionKey: TEST_SESSION_KEY,
       agentId: "agent-1",
       inputGuard: guard,
@@ -149,6 +152,60 @@ describe("validateInput — input guard, jailbreak scoring, rate-limit cooldown"
     });
     expect(result.passed).toBe(true);
     expect(guard.scan).toHaveBeenCalledOnce();
+  });
+
+  it("asks for an instruction before processing a large opaque payload", () => {
+    const { bus, events } = makeCaptureBus();
+    const guard = makeGuard({});
+    const result = validateInput({
+      msg: makeMessage({ text: "x".repeat(43_000) }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      inputGuard: guard,
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+
+    expect(result).toMatchObject({
+      passed: false,
+      earlyFinishReason: "stop",
+    });
+    expect(result.earlyResponse).toMatch(/does not include an instruction/i);
+    expect(guard.scan).not.toHaveBeenCalled();
+    expect(events).toContainEqual({
+      name: "request:clarification_required",
+      payload: {
+        agentId: "agent-1",
+        sessionKey: "tenant-a:agent:undefined:user_a@example.com:test-channel",
+        reason: "opaque_payload_missing_instruction",
+        inputChars: 43_000,
+        timestamp: 1_700_000_000_000,
+      },
+    });
+  });
+
+  // Pasting a key or hash and asking "what is this?" is an ordinary request.
+  // Every word of it is a retrieval stopword, so the recall-signal predicate
+  // reported zero terms and the turn was refused before the model saw it.
+  it("returns a passing result for a question about a pasted payload", () => {
+    const { bus, events } = makeCaptureBus();
+    const guard = makeGuard({});
+    const result = validateInput({
+      msg: makeMessage({ text: `what is this? ${"a1B2".repeat(80)}` }),
+      sessionKey: TEST_SESSION_KEY,
+      agentId: "agent-1",
+      inputGuard: guard,
+      eventBus: bus,
+      logger: createMockLogger(),
+      clock: createFakeClock(1_700_000_000_000),
+    });
+
+    expect(result.passed).toBe(true);
+    expect(result.earlyResponse).toBeUndefined();
+    expect(guard.scan).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.name))
+      .not.toContain("request:clarification_required");
   });
 
   it("GIANT-INPUT-WEDGE: an UNDEFINED-text message (media-only / internal path) does NOT NPE the size cap", () => {

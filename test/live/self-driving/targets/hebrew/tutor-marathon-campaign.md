@@ -307,7 +307,7 @@ Build a real-world use-case backlog from four sources, then plan from it:
 3. **The kit's own catalog.** `../../05-CATALOG.md` (capability domains, the 30 UCs, Track K/L/M,
    the HARD security oracles — H4 memory-poisoning, H6 recipient-binding, H7 commitment honesty,
    and H10 long-session drift are this campaign's home turf) + `../MEMORY-LEARNING-STRESS-CATALOG.md`
-   (the 12 complex memory/learning workloads — a rich source for the personalization flagship;
+   (the complex memory/learning workloads — a rich source for the personalization flagship;
    plan BEYOND them) + prior runs under `runs/` and `runs/FINDINGS-LEDGER.md` (local-only, if
    present) + the worked `../EXAMPLE-verified-learning.md` (inherit its offline/DB/event oracles) —
    plan BEYOND what is already proven: deeper compositions, edge/failure/abuse variants, not

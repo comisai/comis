@@ -209,7 +209,7 @@ Supervisor tools can make significant changes to your system. They are intended 
 | Tool | Actions | What It Manages |
 |------|---------|-----------------|
 | `agents_manage` | create, get, update, delete, suspend, resume | Agent system -- create new agents, modify settings, suspend or resume them |
-| `obs_query` | diagnostics, billing, delivery, channels | Observability -- system diagnostics, cost tracking, and delivery metrics |
+| `obs_query` | diagnostics, billing, delivery, channels, explain, trace, session_report, system_health, audit | Observability -- system diagnostics, cost tracking, delivery metrics, incident reports, and the security audit log |
 | `sessions_manage` | delete, reset, export, compact | Session lifecycle -- clean up, export, and compact conversation data |
 | `memory_manage` | stats, browse, delete, forget, flush, export, pin, unpin | Memory lifecycle -- view stats, remove every scoped match for a natural-language forget request, clean up memory, and pin/unpin always-inject entries |
 | `channels_manage` | list, get, enable, disable, restart, configure | Channel adapters -- manage connected chat platforms |
@@ -237,13 +237,20 @@ Supervisor tools can make significant changes to your system. They are intended 
   </Accordion>
 
   <Accordion title="obs_query -- Observability and metrics" icon="chart-line">
-    Query system diagnostics, cost tracking, message delivery metrics, and channel health.
+    The agent-facing read surface onto the same observability data as the [`comis explain` / `comis system-health` / `comis security audit-log`](/reference/cli) commands and the [`obs.*` RPCs](/reference/json-rpc). Read-only -- no approval gate, but every action requires admin trust.
 
     **Actions:**
-    - **diagnostics** -- System health overview (memory usage, uptime, error rates)
-    - **billing** -- AI provider cost tracking and budget usage
-    - **delivery** -- Message delivery success rates and latency
-    - **channels** -- Per-channel health and connection status
+    - **diagnostics** -- Recorded diagnostic events by family; `category` accepts `usage`, `webhook`, `message`, or `session` (it is not a failure filter -- use `system_health` for degraded or failure counts)
+    - **billing** -- AI provider cost tracking; `sub_action` selects `currentRoot` (default; includes spawned descendants), `byProvider`, `byAgent`, `bySession` (excludes descendants), or `total` (daemon lifetime)
+    - **delivery** -- Message delivery traces (`sub_action`: `recent`, `stats`)
+    - **channels** -- Per-channel activity and staleness (`sub_action`: `all`, `stale`, `get`)
+    - **explain** -- The assembled root-cause `IncidentReport` for a session or trace; defaults to the current session
+    - **trace** -- Search trace rows
+    - **session_report** -- The session rollup (the same `IncidentReport` as `explain`)
+    - **system_health** -- Cross-session triage over a window (`since_hours`, default 24): degradation rate, recurring errors, model and config health
+    - **audit** -- The durable [security audit log](/security/audit): secret access, injection detection, command blocks, filterable by `kind`, `classification`, `agent_id`, `tenant`, `outcome`, and time
+
+    Cost and latency evidence is qualified at the boundary. The `billing`, `explain`, `session_report`, and `system_health` results carry an `evidenceLimits` field marking their cost figures as a **runtime estimate** derived from reported tokens and configured pricing, with the provider invoice `unverified`; the three report actions also mark cross-execution duration ranking `unavailable`. An agent quoting these numbers therefore cannot present them as a billed amount, nor its worst degraded execution as the slowest one.
   </Accordion>
 
   <Accordion title="sessions_manage -- Session lifecycle" icon="comments">

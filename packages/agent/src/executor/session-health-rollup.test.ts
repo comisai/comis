@@ -44,16 +44,17 @@ describe("buildSessionHealthRollup", () => {
     expect(rollup.breakerTripCount).toBe(1);
   });
 
-  it("degraded is derived from the mapped endReason: false ONLY for 'success', true for every other endReason (single source)", () => {
+  it("treats success and caller cancellation as clean while failures remain degraded", () => {
     // The rollup's 2nd arg is the ALREADY-MAPPED
     // SessionMetadata.sessionEnd.endReason (the SAME value persisted onto
     // sessionEnd), not a raw finishReason re-classified against a second closed
-    // set. `degraded := endReason !== "success"`. This couples degraded to the
+    // set. The clean-terminal predicate couples degraded to the
     // single source of truth (END_REASON_MAP) so a finish reason that maps to a
     // non-success endReason can never record degraded:false.
 
-    // The clean class — endReason "success" is the ONLY non-degraded value.
+    // Successful completion and caller cancellation are both non-degraded.
     expect(buildSessionHealthRollup({}, "success").degraded).toBe(false);
+    expect(buildSessionHealthRollup({}, "cancelled").degraded).toBe(false);
 
     // Every OTHER member of the endReason union is degraded. This is the FULL
     // SessionMetadata.sessionEnd.endReason union — crucially including "error",

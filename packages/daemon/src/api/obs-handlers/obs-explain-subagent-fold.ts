@@ -31,7 +31,11 @@ export function accumulateSubagentIncidentRecord(
   }
   if (type !== "subagent.delivery_skipped") return;
   const reason = asString(data.reason);
-  if (reason !== "no_origin" && reason !== "no_channel_params") return;
+  if (
+    reason !== "no_origin"
+    && reason !== "no_channel_params"
+    && reason !== "route_validation_failed"
+  ) return;
   acc.subagentDeliverySkippedCount += 1;
   acc.subagentDeliverySkippedLastRunId = runId;
   acc.subagentDeliverySkippedLastReason = reason;

@@ -1982,6 +1982,26 @@ describe("createAgentHandlers", () => {
       expect(store.has).not.toHaveBeenCalled();
     });
 
+    it("allows an unrelated update when an untouched OAuth profile is absent from the store", async () => {
+      const store = makeStoreMock(() => ok(false));
+      const deps = makeDeps({ oauthCredentialStore: store });
+      deps.agents["default"] = {
+        ...deps.agents["default"],
+        oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      };
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { maxSteps: 151 },
+        _trustLevel: "admin",
+      })) as { updated: boolean; config: { maxSteps: number } };
+
+      expect(result.updated).toBe(true);
+      expect(result.config.maxSteps).toBe(151);
+      expect(store.has).not.toHaveBeenCalled();
+    });
+
     it("rejects multi-key oauthProfiles when any one profileId is missing (Object.entries iteration)", async () => {
       // First key exists; second key missing → throw on the second.
       const store = makeStoreMock((id) =>

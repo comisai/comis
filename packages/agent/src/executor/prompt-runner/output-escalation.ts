@@ -17,7 +17,7 @@ import {
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
-import { runRequestToolNudge } from "../request-tool-nudge.js";
+import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, runRequestToolNudge } from "../request-tool-nudge.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -28,7 +28,6 @@ import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js
 import { suppressRedundantFinalAfterOutboundDelivery } from "./outbound-delivery-reconciliation.js";
 import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 import { runBudgetContinuation } from "./budget-continuation.js";
-
 /** Runs output escalation and final success or failure response processing. */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -423,7 +422,7 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
   }
 }
 
-/** Request-tool nudge step — bounded recovery for an exact stale-answer repeat. */
+/** Bounded recovery when request-matched procedure or tool evidence is missing. */
 async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
   const { session, agentId, result, deps } = params;
   if (result.narrateNudge?.fired === true) return;
@@ -431,18 +430,15 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
   const sessionMessages: unknown[] = (session as any).messages ?? [];
   const outcome = await runRequestToolNudge({
     session,
-    requestText:
-      params.msg.originalMessages?.map((message) => message.text).join("\n")
-      ?? params.msg.text,
+    requestText: params.msg.originalMessages?.map((message) => message.text).join("\n") ?? params.msg.text,
     messages: sessionMessages,
     capabilityClass: params.modelProfile?.capabilityClass,
     requestRelevantToolNames: params.requestRelevantToolNames ?? [],
     requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
     requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
-    requestRelevantPromptSkillWorkflowToolNames:
-      params.requestRelevantPromptSkillWorkflowToolNames ?? [],
-    requestRelevantPromptSkillWorkflowContext:
-      params.requestRelevantPromptSkillWorkflowContext,
+    requestRelevantPromptSkillWorkflowToolNames: params.requestRelevantPromptSkillWorkflowToolNames ?? [],
+    requestRelevantPromptSkillMinDistinctWebFetchUrls: params.requestRelevantPromptSkillMinDistinctWebFetchUrls, requestRelevantPromptSkillMinDistinctWebSearchQueries: params.requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    requestRelevantPromptSkillWorkflowContext: params.requestRelevantPromptSkillWorkflowContext,
     currentSuccessfulMutationCount: () =>
       (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) =>
@@ -461,6 +457,10 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
         (record) => record.success && relevantNames.has(record.toolName),
       ).length;
     },
+    currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(
+      params.bridge.getResult().toolExecResults ?? [],
+    ),
+    currentDistinctSuccessfulWebSearchQueryCount: () => countDistinctSuccessfulWebSearchQueries(params.bridge.getResult().toolExecResults ?? []),
     currentDeferredWorkCount: () => {
       const relevantNames = new Set(params.requestRelevantToolNames ?? []);
       return (params.bridge.getResult().toolExecResults ?? []).filter(

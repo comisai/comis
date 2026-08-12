@@ -4024,10 +4024,10 @@ describe("PiExecutor", () => {
       );
 
       expect(mockPrompt).not.toHaveBeenCalled();
-      expect(result.finishReason).toBe("prompt_timeout");
+      expect(result.finishReason).toBe("cancelled");
       expect(deps.eventBus.emit).toHaveBeenCalledWith("execution:aborted", {
         sessionKey: testSessionKey,
-        reason: "pipeline_timeout",
+        reason: "caller_cancelled",
         agentId: "agent-1",
         timestamp: expect.any(Number),
       });
@@ -4058,7 +4058,8 @@ describe("PiExecutor", () => {
       await vi.waitFor(() => expect(mockAbort).toHaveBeenCalledTimes(1));
       expect(mockAbortCompaction).toHaveBeenCalledTimes(1);
       releasePrompt();
-      await executing;
+      const result = await executing;
+      expect(result.finishReason).toBe("cancelled");
 
       mockAbort.mockClear();
       controller.abort();
@@ -6816,6 +6817,139 @@ describe("PiExecutor", () => {
 
       expect(autoBackgroundIndex).toBeGreaterThan(-1);
       expect(serializerIndex).toBeGreaterThan(autoBackgroundIndex);
+    });
+  });
+
+  describe("recall disposition evidence", () => {
+    function submittedPrompt(deps: PiExecutorDeps): Record<string, unknown> | undefined {
+      const call = (deps.eventBus.emit as Mock).mock.calls.find(
+        (entry: unknown[]) => entry[0] === "prompt:submitted",
+      );
+      return call?.[1] as Record<string, unknown> | undefined;
+    }
+
+    it("reports a skipped recall for an oversized opaque request", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        { ...testMessage, text: `what is this? ${"x".repeat(200)}` },
+        testSessionKey,
+      );
+
+      expect(submittedPrompt(deps)).toMatchObject({
+        requestRelevanceHistory: { recallDisposition: "skip_oversized_token" },
+      });
+    });
+
+    it("reports a searchable recall for ordinary request prose", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        { ...testMessage, text: "research residential heat pumps" },
+        testSessionKey,
+      );
+
+      expect(submittedPrompt(deps)).toMatchObject({
+        requestRelevanceHistory: { recallDisposition: "search" },
+      });
+    });
+  });
+
+  // Each probe drives the real execute() path so the ASSERTION is the delivered
+  // reply plus the events the operator reads back, not the presence of a guard
+  // call in the source. A commented-out or reordered guard fails these.
+  describe("outbound artifact claims are grounded before the reply is delivered", () => {
+    function recoveryReasons(deps: PiExecutorDeps): string[] {
+      return (deps.eventBus.emit as Mock).mock.calls
+        .filter((entry: unknown[]) => entry[0] === "execution:recovery_attempted")
+        .map((entry: unknown[]) => (entry[1] as { reason: string }).reason);
+    }
+
+    function auditActionTypes(deps: PiExecutorDeps): string[] {
+      return (deps.eventBus.emit as Mock).mock.calls
+        .filter((entry: unknown[]) => entry[0] === "audit:event")
+        .map((entry: unknown[]) => (entry[1] as { actionType: string }).actionType);
+    }
+
+    it("replaces an audio-delivery claim with no synthesis receipt", async () => {
+      setMockAssistantText("Done — I said the summary out loud.");
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        { ...testMessage, text: "say the summary out loud" },
+        testSessionKey,
+      );
+
+      expect(result.response).not.toContain("I said the summary out loud");
+      expect(result.response).toContain("could not verify delivery of the requested audio");
+      expect(recoveryReasons(deps)).toContain("missing_outbound_audio_evidence");
+      expect(auditActionTypes(deps))
+        .toContain("response.outbound_audio_evidence_guard");
+    });
+
+    it("preserves the claim when the configured voice route speaks this reply", async () => {
+      const response = "Done — I said the summary out loud.";
+      setMockAssistantText(response);
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        { ...testMessage, text: "say the summary out loud" },
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          outboundAudioAutoDelivery: () => true,
+        },
+      );
+
+      expect(result.response).toBe(response);
+      expect(recoveryReasons(deps)).not.toContain("missing_outbound_audio_evidence");
+    });
+
+    it("replaces an image-creation claim with no generation receipt", async () => {
+      setMockAssistantText("Done — I created the blue calendar image.");
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        { ...testMessage, text: "make a simple blue calendar image" },
+        testSessionKey,
+      );
+
+      expect(result.response).not.toContain("I created the blue calendar image");
+      expect(result.response)
+        .toContain("could not verify creation or delivery of the requested image");
+      expect(recoveryReasons(deps)).toContain("missing_outbound_image_evidence");
+      expect(auditActionTypes(deps))
+        .toContain("response.outbound_image_evidence_guard");
+    });
+
+    it("replaces an elliptical delivery-status affirmation with no current receipt", async () => {
+      setMockAssistantText("Yes — the audio was delivered to this conversation.");
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        { ...testMessage, text: "did it send?" },
+        testSessionKey,
+      );
+
+      expect(result.response).not.toContain("Yes — the audio was delivered");
+      expect(result.response).toContain(
+        "could not verify whether the prior outbound item was delivered",
+      );
+      expect(recoveryReasons(deps))
+        .toContain("missing_outbound_delivery_status_evidence");
+      expect(auditActionTypes(deps))
+        .toContain("response.outbound_delivery_status_evidence_guard");
     });
   });
 });

@@ -2726,6 +2726,22 @@ describe("queue abort and rejection classification truthfulness", () => {
       expect.anything(),
     );
   });
+
+  it("threads the active queue cancellation signal into agent execution", async () => {
+    const queueAbort = new AbortController();
+    const executor = makeExecutor();
+    const msg = makeMessage();
+
+    await executeAndDeliver(
+      makeDeps(), makeAdapter(), msg, msg, executor, makeSessionKey(),
+      "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      undefined, undefined, undefined, undefined, queueAbort.signal,
+    );
+
+    expect(vi.mocked(executor.execute).mock.calls[0]?.[7]).toMatchObject({
+      signal: queueAbort.signal,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -2972,6 +2972,117 @@ describe("createMemoryRecall — query understanding", () => {
     );
   });
 
+  it("skips recall for an oversized opaque request instead of inheriting an old task", async () => {
+    let searchCalls = 0;
+    const stale = [makeResult("stale-task", {
+      base: 0.9,
+      content: "an old task about researching heat pumps",
+    })];
+    const recordingPort = {
+      async search() {
+        searchCalls += 1;
+        return ok(stale);
+      },
+      async searchLanes() {
+        searchCalls += 1;
+        return ok({ fts: stale, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: QU_OFF,
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall(
+      "x".repeat(43_000),
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+      ["research residential heat pumps", "compare installation costs"],
+    );
+
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value).toEqual([]);
+    expect(searchCalls).toBe(0);
+  });
+
+  it("keeps recall available when an instruction accompanies an oversized token", async () => {
+    let searchCalls = 0;
+    const recordingPort = {
+      async search() {
+        searchCalls += 1;
+        return ok([]);
+      },
+      async searchLanes() {
+        searchCalls += 1;
+        return ok({ fts: [], vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: QU_OFF,
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall(
+      `analyze ${"x".repeat(43_000)}`,
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+    );
+
+    expect(got.ok).toBe(true);
+    expect(searchCalls).toBe(1);
+  });
+
+  it("keeps prior-turn recall for a terse lexical follow-up", async () => {
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok([]);
+      },
+      async searchLanes(_key: SessionKey, query: string) {
+        seenQuery = query;
+        return ok({ fts: [], vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      {
+        memoryPort: recordingPort,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: QU_OFF,
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    await recall.recall(
+      "yes do that",
+      memoryScope("agent_y", "tenant_x"),
+      SESSION_KEY_OBJ,
+      ["inspect the deployment configuration"],
+    );
+
+    expect(seenQuery).toBe("inspect deployment configuration");
+  });
+
   it("NO queryUnderstanding CONFIG: an absent queryUnderstanding → original query + no range (byte-identical)", async () => {
     const fts = [makeResult("a", { base: 0.9 })];
     const capture: { laneOpts?: MemorySearchOptions } = {};

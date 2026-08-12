@@ -89,8 +89,7 @@ export interface ExecutionResultBase {
    *  unrecovered nudge promotes the clean would-be terminal to the named
    *  degraded cause `narration_stall` at the post-execution chokepoint. */
   narrateNudge?: { fired: boolean; recovered: boolean };
-  /** Small/nano recovery when an action request repeated an earlier answer
-   * without invoking a request-matched mutating tool. */
+  /** Bounded recovery when a request lacks matched tool or procedure evidence. */
   requestToolNudge?: {
     fired: boolean;
     recovered: boolean;
@@ -157,13 +156,14 @@ export type ExecutionResult = ExecutionResultBase & (
 );
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 23 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 25 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
 // promptTimeout, workspacePolicySnapshot/responseLocalePolicy for immutable background work,
 // finalizedResultJournalKey/onProviderStart/suppressFinalResponseAfterOutboundDelivery
-// for durable provider execution,
+// for durable provider execution, outboundAudioAutoDelivery for a turn the
+// delivery layer speaks,
 // capabilityAccess for isolated model-only runs, and workspaceDir for an
 // isolated worktree run). They are
 // not a cluster-split candidate — each describes ONE execution's override surface,
@@ -243,6 +243,9 @@ export interface ExecutionOverrides {
     channelType: string;
     channelId: string;
   };
+  /** Decide whether the configured outbound voice route speaks the finalized
+   *  reply after execution, where no current-turn tool receipt can exist. */
+  outboundAudioAutoDelivery?: (responseText: string) => boolean;
   /** Awaited after the exact terminal result is finalized and before execute resolves. */
   onFinalizedResult?: (
     result: ExecutionResult,

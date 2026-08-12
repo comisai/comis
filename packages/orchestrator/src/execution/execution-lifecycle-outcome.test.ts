@@ -83,6 +83,7 @@ describe("execution lifecycle outcome classification", () => {
     ["session_reset", { status: "error", failureStage: "execution", errorKind: "internal" }],
     ["tool_invocation_stall", { status: "error", failureStage: "execution", errorKind: "internal" }],
     ["prompt_timeout", { status: "timeout", failureStage: "execution", errorKind: "timeout" }],
+    ["cancelled", { status: "aborted" }],
     ["input_too_large", { status: "error", failureStage: "execution", errorKind: "validation" }],
     ["error", { status: "error", failureStage: "execution", errorKind: "dependency" }],
     // A deliberate hand-off to background execution is NOT a delivery failure: the foreground turn
@@ -99,6 +100,7 @@ describe("execution lifecycle outcome classification", () => {
 
   it.each([
     ["user_stop", { status: "aborted" }],
+    ["caller_cancelled", { status: "aborted" }],
     ["pipeline_timeout", { status: "timeout", failureStage: "execution", errorKind: "timeout" }],
     ["budget_exceeded", { status: "error", failureStage: "execution", errorKind: "resource" }],
     ["max_steps", { status: "error", failureStage: "execution", errorKind: "resource" }],
@@ -108,6 +110,6 @@ describe("execution lifecycle outcome classification", () => {
     ["circuit_breaker", { status: "error", failureStage: "execution", errorKind: "dependency" }],
     ["denial_breaker", { status: "error", failureStage: "execution", errorKind: "precondition" }],
   ] as const)("classifies abort reason %s before downstream delivery", (reason, expected) => {
-    expect(classifyExecutionAbortReason(reason)).toEqual(expected);
+    expect(classifyExecutionAbortReason(reason as never)).toEqual(expected);
   });
 });

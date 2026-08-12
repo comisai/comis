@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { defineConfig } from "vitest/config";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const packagesRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../packages");
 
 /**
  * Codegen-script unit tests live in this directory alongside the codegen
@@ -13,6 +17,15 @@ import { defineConfig } from "vitest/config";
  * @module
  */
 export default defineConfig({
+  // The skill-manifest contract asserts what the registry's own parser reads
+  // out of a shipped SKILL.md, so it needs the COMPILED parser + schema rather
+  // than a re-implementation of the frontmatter rules. Mirrors the scoped dist
+  // alias `test/architecture/vitest.config.ts` uses for the same reason.
+  resolve: {
+    alias: [
+      { find: /^@comis\/skills$/, replacement: resolve(packagesRoot, "skills/dist/skills/index.js") },
+    ],
+  },
   test: {
     name: "scripts-contracts",
     include: ["**/*.test.ts"],

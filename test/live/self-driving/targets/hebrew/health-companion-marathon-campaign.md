@@ -233,7 +233,7 @@ Build a real-world use-case backlog from four sources, then plan from it:
    gitignored (local-only), so backlog/source notes there may cite them freely.
 3. **The kit's own catalog.** `../../05-CATALOG.md` (capability domains, the 30 UCs, Track K/L/M, the HARD
    security oracles — H4 memory-poisoning and the injection gauntlet are this campaign's untrusted-
-   source home turf) + `../MEMORY-LEARNING-STRESS-CATALOG.md` (the 12 complex memory/learning workloads —
+   source home turf) + `../MEMORY-LEARNING-STRESS-CATALOG.md` (the complex memory/learning workloads —
    a rich source for the longitudinal-tracking flagship; plan BEYOND them) + prior runs under `runs/`
    and `runs/FINDINGS-LEDGER.md` (local-only, if present) + the worked `../EXAMPLE-verified-learning.md`
    (inherit its offline/DB/event oracles) — plan BEYOND what is already proven: deeper compositions,

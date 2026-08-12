@@ -11457,12 +11457,38 @@ export const CONTRACTS = {
             },
             "saturated": {
               "type": "boolean"
+            },
+            "recallDisposition": {
+              "type": "string",
+              "enum": [
+                "search",
+                "skip_oversized_token"
+              ]
             }
           },
           "required": [
             "turnCount",
             "charCount",
             "saturated"
+          ],
+          "additionalProperties": false
+        },
+        "requestClarification": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "opaque_payload_missing_instruction"
+            },
+            "inputChars": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 1000000
+            }
+          },
+          "required": [
+            "reason",
+            "inputChars"
           ],
           "additionalProperties": false
         },
@@ -11880,9 +11906,23 @@ export const CONTRACTS = {
                 "killed"
               ]
             },
+            "sessionKey": {
+              "type": "string",
+              "minLength": 1
+            },
             "traceId": {
               "type": "string",
               "minLength": 1
+            },
+            "announcementDelivery": {
+              "type": "string",
+              "enum": [
+                "not-requested",
+                "unavailable",
+                "committed",
+                "retained",
+                "failed"
+              ]
             },
             "startedAt": {
               "type": "string"
@@ -11991,6 +12031,7 @@ export const CONTRACTS = {
           "required": [
             "graphId",
             "status",
+            "announcementDelivery",
             "durationMs",
             "nodesTotal",
             "nodesSucceeded",
@@ -13120,7 +13161,8 @@ export const CONTRACTS = {
               "type": "string",
               "enum": [
                 "no_origin",
-                "no_channel_params"
+                "no_channel_params",
+                "route_validation_failed"
               ]
             }
           },

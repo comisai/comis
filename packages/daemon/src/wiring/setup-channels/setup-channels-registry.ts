@@ -29,6 +29,7 @@ import { bootstrapAdapters } from "../setup-channels-adapters.js";
 import { buildMediaPipeline } from "../setup-channels-media.js";
 import { buildAndStartChannelManager } from "./setup-channels-runtime.js";
 import type { GraphReportDurability } from "./graph-report-delivery.js";
+import { instrumentAttachmentDeliveries } from "./attachment-delivery-hooks.js";
 
 // Re-export the unused VoiceResponsePipelineDeps + LifecycleReactor types to
 // silence lint and document the public-surface boundary: callers of this
@@ -392,6 +393,11 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     // Live EnvPort → the managed-identity App-Service header path reads
     // IDENTITY_ENDPOINT/IDENTITY_HEADER per mint (they rotate).
     env: deps.env,
+  });
+  instrumentAttachmentDeliveries(adaptersByType, {
+    hookRunner: container.hookRunner,
+    logger: channelsLogger,
+    clock: deps.clock,
   });
 
   // Assemble media pipeline (resolvers, preprocessor, preflight)

@@ -30,6 +30,7 @@ export type { PlatformReplyLocale } from "./execution-platform-reply-locale.js";
 import { emitObservationalEvent } from "./execution-event-emitter.js";
 import { buildThreadSendOpts } from "./execution-routing-config.js";
 import type { TypingLifecycleController } from "@comis/channels";
+import { autoVoiceDeliveryActive } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -39,7 +40,7 @@ import type { TypingLifecycleController } from "@comis/channels";
 export type ExecuteDeps = Pick<
   ExecutionPipelineDeps,
   "eventBus" | "logger" | "assembleToolsForAgent" | "executionTimeoutMs" | "enforceFinalTag"
-  | "getPlatformReplyLocale"
+  | "getPlatformReplyLocale" | "voiceResponsePipeline"
 >;
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,7 @@ export async function executeLlm(
   tools: any[] | undefined,
   directives: Record<string, unknown> | undefined,
   inboundProvenancePlans: readonly InboundMessageProvenancePlan[],
+  executionSignal?: AbortSignal,
 ): Promise<ExecuteResult> {
   const executionTraceId = tryGetContext()?.traceId ?? randomUUID();
 
@@ -197,6 +199,21 @@ export async function executeLlm(
     typingLifecycle?.controller.refreshTtl();
   };
 
+  // Delivery converts this turn's reply to speech AFTER execution returns, so
+  // the executor's honesty guards would otherwise see an audio request with no
+  // possible synthesis receipt and replace a truthful reply with a denial the
+  // voice route then speaks.
+  const voiceResponsePipeline = deps.voiceResponsePipeline;
+  const outboundAudioAutoDelivery =
+    voiceResponsePipeline !== undefined
+    && typeof adapter.sendAttachment === "function"
+      ? (responseText: string): boolean => autoVoiceDeliveryActive(
+          voiceResponsePipeline,
+          effectiveMsg,
+          responseText,
+        )
+      : undefined;
+
   let result: ExecutionResult;
   try {
     result = await withTimeout(
@@ -210,11 +227,15 @@ export async function executeLlm(
         undefined,
         {
           operationType: "interactive" as const,
+          ...(executionSignal === undefined ? {} : { signal: executionSignal }),
           inboundProvenancePlans,
           suppressFinalResponseAfterOutboundDelivery: {
             channelType: effectiveMsg.channelType,
             channelId: effectiveMsg.channelId,
           },
+          ...(outboundAudioAutoDelivery !== undefined
+            ? { outboundAudioAutoDelivery }
+            : {}),
         },
       ),
       deps.executionTimeoutMs ?? 600_000,

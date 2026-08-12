@@ -141,7 +141,7 @@ Agent administration tools are supervisor-level capabilities for managing the
 entire Comis installation:
 
 - `agents_manage` -- six actions for agent lifecycle: `create`, `get`, `update`, `delete`, `suspend`, `resume` (create/delete take effect immediately without daemon restart; update requires restart)
-- `obs_query` -- query operational data with the action sub-system: `diagnostics`, `billing`, `delivery`, and `channels` (each action also accepts a `sub_action` for finer queries)
+- `obs_query` -- read-only observability queries via an action sub-system (some actions also take a `sub_action` for finer queries); the action list lives in the [Infrastructure Guide](/agent-tools/infrastructure#supervisor-tool-details)
 - `sessions_manage` -- administrative session operations
 - `memory_manage` -- administrative memory operations (bulk delete, export)
 - `channels_manage` -- manage channel connections and settings

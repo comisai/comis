@@ -10,8 +10,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Integration tests import from dist (built packages)
@@ -143,5 +145,72 @@ describe("skill-schema-drift", () => {
     // Python may have more individual patterns than TS broader regexes, but TS must
     // cover at least as many categories
     expect(tsCategories.size).toBeGreaterThanOrEqual(expectedCategories.size);
+  });
+});
+
+/**
+ * The constant-parity assertions above compare declared sets. These run the
+ * shipped validator itself — the artifact a skill author is told to invoke —
+ * against the skill the daemon actually seeds, so a `comis:` field the Zod
+ * schema accepts cannot silently report as unrecognized to that author.
+ *
+ * Requires python3 with PyYAML: the validator's no-PyYAML fallback is a flat
+ * key/value parser that cannot represent the nested `comis:` block at all, so
+ * the whole nested-namespace contract is out of scope without it.
+ */
+const pythonRuntimeReady =
+  spawnSync("python3", ["-c", "import yaml"], { encoding: "utf-8", timeout: 10_000 }).status === 0;
+const describePython = pythonRuntimeReady ? describe : describe.skip;
+
+describePython("skill-creator validate-skill.py — comis namespace acceptance", () => {
+  function runValidator(target: string): { status: number | null; output: string } {
+    const result = spawnSync("python3", [pythonPath, target], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
+  }
+
+  it("reports no unknown comis: field for the shipped deep-research skill", () => {
+    // deep-research declares min-distinct-web-fetch-urls / -web-search-queries,
+    // both accepted by ComisNamespaceSchema.
+    const skillDir = resolve(packagesDir, "daemon/bundled-skills/deep-research");
+    const { status, output } = runValidator(skillDir);
+
+    expect(output).not.toMatch(/Unknown comis: field/);
+    expect(output).toContain("RESULT: VALID");
+    expect(status).toBe(0);
+  });
+
+  it("still reports a comis: field absent from the TypeScript schema", () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-skill-validate-"));
+    try {
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        [
+          "---",
+          "name: floor-probe",
+          'description: "Probe skill for comis namespace validation."',
+          "comis:",
+          "  min-distinct-web-fetch-urls: 3",
+          "  min-distinct-web-search-queries: 3",
+          "  not-a-real-comis-field: 1",
+          "---",
+          "",
+          "# Floor probe",
+          "",
+          "Body content.",
+          "",
+        ].join("\n"),
+        "utf-8",
+      );
+
+      const { output } = runValidator(dir);
+
+      expect(output).toContain("Unknown comis: field: 'not-a-real-comis-field'");
+      expect(output).not.toMatch(/Unknown comis: field: 'min-distinct-web-/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

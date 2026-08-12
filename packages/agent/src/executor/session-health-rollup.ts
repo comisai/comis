@@ -7,7 +7,7 @@ import type { ErrorKind } from "@comis/core";
  *
  * - `degraded`        — the run finished in a non-clean state (tool errors,
  *                       budget/breaker/provider trips, or a hard error). Derived
- *                       from the mapped `endReason` (≠ "success"), the SAME source
+ *                       from the mapped `endReason`, the SAME source
  *                       of truth as the co-persisted `sessionEnd.endReason`.
  * - `costUsd`         — THIS execution's USD cost. The rollup is emitted once
  *                       per execution, so a session's total is the SUM of its
@@ -51,9 +51,9 @@ interface RollupInput {
 }
 
 /**
- * The ONLY clean (non-degraded) `endReason`. Single source of truth: a run is
- * degraded iff its persisted `SessionMetadata.sessionEnd.endReason` is not
- * `"success"`. The chokepoint maps the finish reason through `END_REASON_MAP`
+ * The clean (non-degraded) `endReason` values. Single source of truth: a run is
+ * degraded iff its persisted `SessionMetadata.sessionEnd.endReason` is neither
+ * `"success"` nor `"cancelled"`. The chokepoint maps the finish reason through `END_REASON_MAP`
  * (executor-post-execution.ts — the one authoritative table) and passes that
  * SAME mapped value here, so `degraded` and `endReason` can never disagree.
  *
@@ -65,7 +65,7 @@ interface RollupInput {
  * `endReason` removes the second domain entirely, so a newly added finish
  * reason cannot open a divergence.
  */
-const CLEAN_END_REASONS: ReadonlySet<string> = new Set<string>(["success"]);
+const CLEAN_END_REASONS: ReadonlySet<string> = new Set<string>(["success", "cancelled"]);
 
 /** How many distinct ErrorKinds the rollup keeps — hard cap, DoS-bounded. */
 const TOP_ERROR_KINDS_CAP = 3;
@@ -80,7 +80,7 @@ const TOP_ERROR_KINDS_CAP = 3;
  * @param bridgeResult - the narrow bridge slice (cost, breaker trips, per-tool results).
  * @param endReason - the ALREADY-MAPPED `SessionMetadata.sessionEnd.endReason`
  *   (the SAME value persisted onto sessionEnd, derived once at the chokepoint via
- *   `END_REASON_MAP`). `degraded := endReason !== "success"` — see CLEAN_END_REASONS.
+ *   `END_REASON_MAP`). See CLEAN_END_REASONS for the non-degraded terminals.
  */
 export function buildSessionHealthRollup(
   bridgeResult: RollupInput,
@@ -125,7 +125,7 @@ export function buildSessionHealthRollup(
       .slice(0, TOP_ERROR_KINDS_CAP),
   );
 
-  // Single source of truth: degraded iff the mapped endReason is not "success".
+  // Single source of truth: degraded iff the mapped endReason is not clean.
   // The chokepoint derives endReason once via END_REASON_MAP and passes it here,
   // so this can never contradict the co-persisted sessionEnd.endReason.
   const degraded = !CLEAN_END_REASONS.has(endReason);

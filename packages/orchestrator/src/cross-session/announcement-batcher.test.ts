@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
 import { createDeliveryDedup } from "@comis/agent";
-import { createConversationLocator } from "@comis/core";
+import { createConversationLocator, TypedEventBus } from "@comis/core";
 import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,7 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
 
 function makeDeps(overrides: Partial<AnnouncementBatcherDeps> = {}): AnnouncementBatcherDeps & { announceToParent: ReturnType<typeof vi.fn>; sendToChannel: ReturnType<typeof vi.fn> } {
   return {
+    eventBus: new TypedEventBus(),
     announceToParent: vi.fn().mockResolvedValue(undefined),
     sendToChannel: vi.fn().mockResolvedValue(true),
     debounceMs: 2000,
@@ -746,6 +747,44 @@ describe("AnnouncementBatcher", () => {
     }));
     expect(deps.sendToChannel).not.toHaveBeenCalled();
     expect(batcher.hasDelivered("governed-key")).toBe(true);
+  });
+
+  it("discards a permanently rejected governed route instead of replaying it from dead letters", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const eventBus = new TypedEventBus();
+    const deliverySkipped = vi.fn();
+    eventBus.on("subagent:delivery_skipped", deliverySkipped);
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: false,
+      failure: "operation_validation_blocked" as const,
+    }));
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten for the user"),
+      deadLetterQueue,
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher({
+      ...deps,
+      eventBus,
+    });
+
+    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "rejected-route-key" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      "rejected-route-key",
+      "no_reply",
+    );
+    expect(deadLetterQueue.enqueue).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("rejected-route-key")).toBe(true);
+    expect(deliverySkipped).toHaveBeenCalledWith({
+      runId: "run-1",
+      agentId: "agent-main",
+      sessionKey: "default:agent:agent-main:user1:chan1",
+      reason: "route_validation_failed",
+      timestamp: expect.any(Number),
+    });
   });
 
   it("serializes a batch key while its parent execution is in flight", async () => {

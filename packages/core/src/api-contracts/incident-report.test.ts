@@ -166,7 +166,12 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
   });
 
   it("retains content-free request relevance history saturation evidence", () => {
-    const evidence = { turnCount: 8, charCount: 147, saturated: true };
+    const evidence = {
+      turnCount: 8,
+      charCount: 147,
+      saturated: true,
+      recallDisposition: "skip_oversized_token" as const,
+    };
     const parsed = IncidentReportSchema.parse({
       ...baseReport(),
       requestRelevanceHistory: evidence,
@@ -176,6 +181,22 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
       (parsed as unknown as { requestRelevanceHistory?: typeof evidence })
         .requestRelevanceHistory,
     ).toEqual(evidence);
+  });
+
+  it("retains a content-free request clarification reason", () => {
+    const requestClarification = {
+      reason: "opaque_payload_missing_instruction" as const,
+      inputChars: 43_000,
+    };
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      requestClarification,
+    });
+
+    expect(
+      (parsed as unknown as { requestClarification?: typeof requestClarification })
+        .requestClarification,
+    ).toEqual(requestClarification);
   });
 
   it("retains the normalized inbound edit kind", () => {
@@ -670,6 +691,7 @@ describe("ObsExplainContract.request graphId arm", () => {
         graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
         status: "completed",
         traceId: "trace-graph-a",
+        announcementDelivery: "committed",
         startedAt: "2026-07-30T06:20:44.795Z",
         completedAt: "2026-07-30T06:22:27.305Z",
         durationMs: 102_510,
@@ -716,5 +738,23 @@ describe("ObsExplainContract.request graphId arm", () => {
       attemptsUsed: 2,
     });
     expect(JSON.stringify(parsed.graph)).not.toContain("PRIVATE");
+  });
+
+  it("rejects an unknown graph announcement disposition", () => {
+    expect(() => IncidentReportSchema.parse({
+      ...baseReport(),
+      graph: {
+        graphId: "5ea53a58-f0fc-4683-b6e6-53b1d828e602",
+        status: "completed",
+        announcementDelivery: "unknown",
+        durationMs: 1,
+        nodesTotal: 0,
+        nodesSucceeded: 0,
+        nodesFailed: 0,
+        nodesSkipped: 0,
+        nodesRetried: 0,
+        nodes: [],
+      },
+    })).toThrow();
   });
 });

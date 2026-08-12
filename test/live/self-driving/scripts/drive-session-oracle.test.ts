@@ -4,16 +4,63 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   findTelegramConversationWireAnswer,
+  followupWaitFinished,
   isDriveProgressText,
+  logicalSubstantiveAnswerCount,
   normalizeWireText,
   normalizeDriveStdinText,
   normalizedInboundTextError,
+  outboundVisibleContent,
   outboundVisibleText,
   reconcileAssistantSurfaces,
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
+  trajectoryTurnEnded,
 } from "./drive-session-oracle.mjs";
+
+describe("opt-in follow-up delivery wait", () => {
+  it("distinguishes a chunked long answer from a separate short completion", () => {
+    expect(logicalSubstantiveAnswerCount([
+      { messageId: 10, text: "x".repeat(4_059) },
+      { messageId: 11, text: "x".repeat(2_958) },
+    ])).toBe(1);
+    expect(logicalSubstantiveAnswerCount([
+      { messageId: 20, text: "launch acknowledgement" },
+      { messageId: 21, text: "terminal graph result" },
+    ])).toBe(2);
+  });
+
+  it("keeps polling after the launch acknowledgement until a second answer arrives", () => {
+    expect(followupWaitFinished({
+      followupAnswerCount: 0,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(false);
+    expect(followupWaitFinished({
+      followupAnswerCount: 1,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(true);
+  });
+
+  it("ends honestly when the bounded follow-up window expires", () => {
+    expect(followupWaitFinished({
+      followupAnswerCount: 0,
+      firstAnswerAtMs: 1_000,
+      nowMs: 31_000,
+      waitMs: 30_000,
+    })).toBe(true);
+    expect(followupWaitFinished({
+      followupAnswerCount: 0,
+      firstAnswerAtMs: undefined,
+      nowMs: 90_000,
+      waitMs: 30_000,
+    })).toBe(false);
+  });
+});
 
 describe("drive inbound validation", () => {
   it("rejects text beyond the deployed normalized-message limit before injection", () => {
@@ -28,6 +75,26 @@ describe("drive inbound validation", () => {
       "from: synthetic sender\ncan you confirm the window?\n",
     )).toBe("from: synthetic sender\ncan you confirm the window?");
     expect(normalizeDriveStdinText("one line\r\n")).toBe("one line");
+  });
+});
+
+describe("drive trajectory completion", () => {
+  it("ends a pre-model clarification turn without waiting for a model summary", () => {
+    expect(trajectoryTurnEnded([
+      JSON.stringify({
+        type: "request.clarification_required",
+        data: {
+          reason: "opaque_payload_missing_instruction",
+          inputChars: 43_000,
+        },
+      }),
+    ])).toBe(true);
+  });
+
+  it("does not treat an unrelated request event as a terminal turn", () => {
+    expect(trajectoryTurnEnded([
+      JSON.stringify({ type: "prompt.submitted", data: {} }),
+    ])).toBe(false);
   });
 });
 
@@ -71,6 +138,19 @@ describe("drive outbound visibility", () => {
       messageId: 44,
       caption: "",
     })).toBe("");
+  });
+
+  it("classifies a captionless photo as a substantive wire delivery", () => {
+    const photo = {
+      method: "sendPhoto",
+      messageId: 45,
+      caption: "",
+      mediaKind: "photo",
+    };
+
+    expect(outboundVisibleText(photo)).toBe("");
+    expect(outboundVisibleContent(photo)).toBe("[photo delivered]");
+    expect(findTelegramConversationWireAnswer([photo])).toBe("[photo delivered]");
   });
 
   it("keeps the persisted assistant draft separate from the corrected wire reply", () => {

@@ -21,6 +21,12 @@ import type {
   IncidentVideoSignal,
   IncidentVoiceSignal,
 } from "./obs-explain-signals-fields.js";
+import {
+  asNumber,
+  asString,
+  previewAndDigest,
+  relativizeDiskPath,
+} from "./obs-explain-signals-fields.js";
 type IncidentLearningSignal = NonNullable<IncidentSignals["learning"]>;
 type LearningOutcome = NonNullable<IncidentLearningSignal["outcome"]>;
 type LearningSource = IncidentLearningSignal["sources"][number];
@@ -136,6 +142,8 @@ export interface Acc {
   requestRelevanceHistory?: NonNullable<
     IncidentSignals["requestRelevanceHistory"]
   >;
+  /** The LAST pre-model clarification stop in the selected records. */
+  requestClarification?: NonNullable<IncidentSignals["requestClarification"]>;
   /** The LAST prompt's content-free operator-policy tool projections. */
   operatorPolicyToolProjections?: NonNullable<
     IncidentSignals["operatorPolicyToolProjections"]
@@ -309,7 +317,7 @@ export interface Acc {
   subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;
   subagentDeliverySkippedLastRunId?: string;
-  subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params";
+  subagentDeliverySkippedLastReason?: "no_origin" | "no_channel_params" | "route_validation_failed";
   /** Child run ids already folded across lifecycle and synchronous-wait observations. */
   subagentCompletedRunIds: Set<string>;
   subagentCompletedCount: number;
@@ -348,6 +356,63 @@ export function ensureTool(acc: Acc, tool: string): { ok: number; failed: number
     acc.toolStats.set(tool, entry);
   }
   return entry;
+}
+
+const MISCLASS_TOKEN_RE = /"?status"?\s*:?\s*(200|403)|\b(200|403)\b|status/i;
+const DO_NOT_RETRY_RE = /DO NOT retry/i;
+
+/** Fold one legacy structured-log record into the incident accumulator. */
+export function handleLogRecord(acc: Acc, rec: Record<string, unknown>): void {
+  const msg = asString(rec.msg) ?? "";
+  const tool = asString(rec.toolName);
+  const sessionKey = asString(rec.sessionKey);
+  if (sessionKey && !acc.sessionKey) acc.sessionKey = sessionKey;
+  if (msg === "Tool result offloaded to disk" && tool) {
+    acc.offloads.push({
+      seq: acc.seq++,
+      toolName: tool,
+      originalChars: asNumber(rec.originalChars) ?? 0,
+      pointer: relativizeDiskPath(asString(rec.diskPath)),
+    });
+    return;
+  }
+  if (msg === "Tool execution failed" && tool) {
+    const entry = ensureTool(acc, tool);
+    entry.failed += 1;
+    const errorKind = asString(rec.errorKind) ?? "internal";
+    entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
+    const errorText = asString(rec.errorText);
+    const { errorPreview, resultDigest, resultBytes } = previewAndDigest(errorText);
+    const httpStatus = asNumber(rec.httpStatus);
+    if (errorText && DO_NOT_RETRY_RE.test(errorText)) {
+      acc.hasDoNotRetrySignal = true;
+      acc.breakerOpenedTool ??= tool;
+      if (!acc.synthesizedBreakerTools.has(tool)) {
+        acc.synthesizedBreakerTools.add(tool);
+        acc.breakerEvents.push({ seq: acc.seq++, event: "opened", toolName: tool });
+      }
+    }
+    if (errorText) {
+      const match = errorText.match(MISCLASS_TOKEN_RE);
+      if (match) acc.misclassTokenByTool.set(tool, match[1] ?? match[2] ?? "status");
+    }
+    acc.failures.push({
+      seq: acc.seq++,
+      toolName: tool,
+      classifiedFailureBy: "",
+      transportOk: false,
+      ...(httpStatus !== undefined ? { httpStatus } : {}),
+      errorKind,
+      ...(asString(rec.failureCode) !== undefined ? { failureCode: asString(rec.failureCode) } : {}),
+      resultDigest,
+      resultBytes,
+      errorPreview,
+    });
+    return;
+  }
+  if (tool && (rec.success === true || /succeeded/.test(msg))) {
+    ensureTool(acc, tool).ok += 1;
+  }
 }
 
 /** Fold a content-free OAuth refresh failure; malformed records do not erase the last valid one. */

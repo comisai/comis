@@ -57,7 +57,12 @@ describe("translatePayload — response locale decision", () => {
         },
       ],
       requestRelevantToolNames: ["mcp_manage", "gateway"],
-      requestRelevanceHistory: { turnCount: 8, charCount: 147, saturated: true },
+      requestRelevanceHistory: {
+        turnCount: 8,
+        charCount: 147,
+        saturated: true,
+        recallDisposition: "skip_oversized_token",
+      },
       operatorPolicyToolProjections: [{
         toolName: "mcp_manage",
         sectionId: "workspace:tools",
@@ -87,7 +92,12 @@ describe("translatePayload — response locale decision", () => {
         },
       ],
       requestRelevantToolNames: ["mcp_manage", "gateway"],
-      requestRelevanceHistory: { turnCount: 8, charCount: 147, saturated: true },
+      requestRelevanceHistory: {
+        turnCount: 8,
+        charCount: 147,
+        saturated: true,
+        recallDisposition: "skip_oversized_token",
+      },
       operatorPolicyToolProjections: [{
         toolName: "mcp_manage",
         sectionId: "workspace:tools",

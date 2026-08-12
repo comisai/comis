@@ -101,6 +101,7 @@ describe("governed graph announcement delivery", () => {
 
   it("keeps the completion resumable when authenticated identity is missing", async () => {
     const send = vi.fn();
+    const log = logger();
     const missingIdentity = {
       graphId: "graph-1",
       callerSessionKey: "tenant:user:chat-1",
@@ -110,12 +111,19 @@ describe("governed graph announcement delivery", () => {
     };
 
     const result = await deliverGovernedGraphAnnouncement(
-      { send, logger: logger() },
+      { send, logger: log },
       missingIdentity,
     );
 
     expect(result.ok).toBe(false);
     expect(send).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        missingPrerequisites: ["agentId", "callerConversation", "destinationEndpoint"],
+        hint: expect.stringContaining("agentId, callerConversation, destinationEndpoint"),
+      }),
+      "Graph governed announcement prerequisites unavailable",
+    );
   });
 
   it.each([

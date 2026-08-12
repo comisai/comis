@@ -83,7 +83,10 @@ describe("web-search-tool: missing API key", () => {
     const result = await tool.execute("call-1", { query: "test query" });
     const parsed = parseResult(result);
     expect(parsed.error).toBe("all_providers_failed");
-    expect(parsed.failures).toEqual(expect.arrayContaining([expect.stringContaining("brave")]));
+    expect(parsed.failures).toEqual([
+      "brave: web_search provider brave requires the SEARCH_API_KEY secret",
+    ]);
+    expect(parsed.message).toContain("SEARCH_API_KEY");
   });
 
   it("returns all_providers_failed when no API key (perplexity, no fallback)", async () => {

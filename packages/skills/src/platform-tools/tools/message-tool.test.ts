@@ -12,6 +12,15 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("message tool", () => {
+  it("documents workspace-relative attachment paths for artifact delivery", () => {
+    const tool = createMessageTool(vi.fn(async () => ({ ok: true })));
+    const parameters = tool.parameters as unknown as {
+      properties: { attachment_url: { description?: string } };
+    };
+
+    expect(parameters.properties.attachment_url.description).toContain("workspace-relative");
+  });
+
   it("send action delegates to rpcCall('message.send')", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "message.send") {

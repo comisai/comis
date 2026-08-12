@@ -90,8 +90,8 @@ export const GraphDefineContract = defineContract({
  * Bespoke pre-Zod validation:
  *   - Agent-to-agent messaging disabled by securityConfig → throws.
  *   - Missing nodes → `"Missing required parameter: nodes"`.
- *   - Approval-gate nodes without `_callerChannelType`/`_callerChannelId` →
- *     throws (announcement channel required).
+ *   - Approval-gate nodes without a trusted turn endpoint or complete internal
+ *     announcement route → throws (announcement channel required).
  *
  * Request: loose-record (carries `nodes`, `variables?`, plus per-call hints).
  * Response: loose-record (carries `graphId`, `async`, `nodeCount`, `label?`,

@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { registerToolMetadata } from "@comis/core";
 import { allowProviderDispatch } from "./provider-dispatch.js";
 import {
+  countDistinctSuccessfulWebFetchUrls,
   runRequestToolNudge,
   type RunRequestToolNudgeDeps,
 } from "./request-tool-nudge.js";
+import * as requestToolNudgeModule from "./request-tool-nudge.js";
 
 function makeDeps(
   overrides: Partial<RunRequestToolNudgeDeps> = {},
@@ -73,6 +75,14 @@ registerToolMetadata("obs_query", {
   isReadOnly: true,
 });
 
+registerToolMetadata("web_search", {
+  isReadOnly: true,
+});
+
+registerToolMetadata("web_fetch", {
+  isReadOnly: true,
+});
+
 registerToolMetadata("test_guided_mutating_tool", {
   isReadOnly: false,
   mutationRequestPrefixes: ["connect"],
@@ -81,6 +91,31 @@ registerToolMetadata("test_guided_mutating_tool", {
 } as never);
 
 describe("runRequestToolNudge", () => {
+  it("counts only distinct successful web fetch URL receipts", () => {
+    expect(countDistinctSuccessfulWebFetchUrls([
+      { toolName: "web_fetch", success: true, citationUrlDigest: "url_a" },
+      { toolName: "web_fetch", success: true, citationUrlDigest: "url_a" },
+      { toolName: "web_fetch", success: true, citationUrlDigest: "url_b" },
+      { toolName: "web_fetch", success: false, citationUrlDigest: "url_c" },
+      { toolName: "web_search", success: true, citationUrlDigest: "url_d" },
+    ])).toBe(2);
+  });
+
+  it("counts only distinct successful web search query receipts", () => {
+    const candidate = (requestToolNudgeModule as Record<string, unknown>)
+      .countDistinctSuccessfulWebSearchQueries;
+    expect(candidate).toBeTypeOf("function");
+    const countQueries = candidate as (records: readonly unknown[]) => number;
+
+    expect(countQueries([
+      { toolName: "web_search", success: true, webSearchQueryDigest: "query_a" },
+      { toolName: "web_search", success: true, webSearchQueryDigest: "query_a" },
+      { toolName: "web_search", success: true, webSearchQueryDigest: "query_b" },
+      { toolName: "web_search", success: false, webSearchQueryDigest: "query_c" },
+      { toolName: "web_fetch", success: true, webSearchQueryDigest: "query_d" },
+    ])).toBe(2);
+  });
+
   it("recovers a frontier-model runtime self-report that omitted obs_query", async () => {
     let successfulToolCount = 0;
     const prompt = vi.fn(async () => {
@@ -107,6 +142,358 @@ describe("runRequestToolNudge", () => {
       fired: true,
       recovered: true,
       matchedToolNames: ["obs_query"],
+      outcome: "recovered",
+    });
+  });
+
+  it("recovers a durable-job restart report that omitted obs_query", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "resume the durable synthetic job after the restart",
+      requestRelevantToolNames: ["obs_query"],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () =>
+        "The current observability report shows that the durable run resumed.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/runtime self-report.*obs_query/isu),
+      expect.anything(),
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["obs_query"],
+      outcome: "recovered",
+    });
+  });
+
+  it("recovers a claimed message receipt during an outage that omitted obs_query", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "did you receive the message injected while you were down?",
+      requestRelevantToolNames: ["obs_query"],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () =>
+        "The current observability result does not prove when the message was accepted.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["obs_query"],
+      outcome: "recovered",
+    });
+  });
+
+  it("loads a matched prompt skill when a frontier answer skipped its procedure", async () => {
+    let successfulToolCount = 0;
+    const prompt = vi.fn(async () => {
+      successfulToolCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevantToolNames: ["read"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: [
+        "/skills/deep-research/SKILL.md",
+      ],
+      messages: [
+        {
+          role: "user",
+          content:
+            "i need to understand heat pumps properly, not just a paragraph",
+        },
+        { role: "assistant", content: "Here is an unsupported overview." },
+      ],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      getVisibleAssistantText: () => "Research completed from current receipts.",
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringMatching(/request-relevant prompt skill.*deep-research/isu),
+      expect.anything(),
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      matchedToolNames: ["read"],
+      outcome: "recovered",
+    });
+  });
+
+  it("continues a loaded prompt skill until distinct web fetch evidence is complete", async () => {
+    let distinctWebFetchUrlCount = 2;
+    let successfulToolCount = 3;
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        distinctWebFetchUrlCount = 3;
+        successfulToolCount = 4;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "understand this topic properly from multiple sources",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => distinctWebFetchUrlCount,
+      getVisibleAssistantText: () => "Research completed from three distinct sources.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[0]?.[0]).toMatch(
+      /2 of 3 distinct successful web_fetch URLs/iu,
+    );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
+  it("continues a prompt skill until distinct web search evidence is complete", async () => {
+    let distinctWebSearchQueryCount = 2;
+    let successfulToolCount = 5;
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        distinctWebSearchQueryCount = 3;
+        successfulToolCount = 6;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "understand this topic properly from multiple angles",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      currentDistinctSuccessfulWebSearchQueryCount: () => distinctWebSearchQueryCount,
+      getVisibleAssistantText: () => "Research completed from several angles.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[0]?.[0]).toMatch(
+      /2 of 3 distinct successful web_search queries/iu,
+    );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
+  it("keeps continuing a progressing workflow until search evidence is complete", async () => {
+    let distinctWebSearchQueryCount = 0;
+    let successfulToolCount = 3;
+    const prompt = vi.fn(async () => {
+      if (distinctWebSearchQueryCount < 3) {
+        distinctWebSearchQueryCount++;
+        successfulToolCount++;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "understand this topic properly from several angles",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      currentDistinctSuccessfulWebSearchQueryCount: () => distinctWebSearchQueryCount,
+      getVisibleAssistantText: () => "Research completed from several angles.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(4);
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/reuse web_search with new query arguments/iu);
+    expect(prompt.mock.calls[2]?.[0]).toMatch(
+      /2 of 3 distinct successful web_search queries/iu,
+    );
+    expect(prompt.mock.calls[3]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
+  it("loads the selected prompt skill when workflow receipts already exist", async () => {
+    let successfulReadCount = 0;
+    const successfulWorkflowCount = 3;
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) successfulReadCount = 1;
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      session: { prompt },
+      currentSuccessfulToolCount: (toolNames) => {
+        const names = new Set(toolNames ?? []);
+        return (names.has("read") ? successfulReadCount : 0)
+          + (names.has("web_fetch") ? successfulWorkflowCount : 0);
+      },
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      getVisibleAssistantText: () =>
+        "Each claim is traced to a current fetched source.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[0]?.[0]).toMatch(
+      /request-relevant prompt skill.*deep-research/isu,
+    );
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/narrate the completed/iu);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+  });
+
+  it("narrates complete evidence when a retained skill is not read again", async () => {
+    const prompt = vi.fn(async () => undefined);
+    const externalNotice = `SECURITY NOTICE: external tool content\n${"x".repeat(900)}\n`;
+    const fetchResult = (url: string, status: number, text: string) =>
+      externalNotice + JSON.stringify({ url, status, text });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      messages: [
+        { role: "user", content: "an older request" },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{ type: "text", text: "https://example.com/older-source" }],
+        },
+        {
+          role: "user",
+          content:
+            "name the unavailable source, then give me the three essentials",
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{
+            type: "text",
+            text: fetchResult(
+              "https://example.com/comis-unreachable-source-404",
+              404,
+              "not found",
+            ),
+          }],
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{
+            type: "text",
+            text: fetchResult("https://example.com/source-a", 200, "evidence a"),
+          }],
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{
+            type: "text",
+            text: fetchResult("https://example.com/source-b", 200, "evidence b"),
+          }],
+        },
+        {
+          role: "toolResult",
+          toolName: "web_fetch",
+          content: [{
+            type: "text",
+            text: fetchResult("https://example.com/source-c", 200, "evidence c"),
+          }],
+        },
+      ],
+      session: { prompt },
+      currentSuccessfulToolCount: (toolNames) =>
+        toolNames?.includes("web_fetch") === true ? 3 : 0,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 3,
+      getVisibleAssistantText: () =>
+        "Each claim is traced to a current fetched source.",
+    } as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(3);
+    expect(prompt.mock.calls[2]?.[0]).toMatch(/narrate the completed/iu);
+    expect(prompt.mock.calls[2]?.[0]).toMatch(
+      /current-turn workflow receipts[\s\S]*earlier failure or unavailable/iu,
+    );
+    expect(prompt.mock.calls[2]?.[0]).toMatch(
+      /copy every citation URL verbatim from[\s\S]*URL:[\s\S]*do not substitute/iu,
+    );
+    expect(prompt.mock.calls[2]?.[0]).toMatch(/Receipt 1: failed web_fetch/iu);
+    expect(prompt.mock.calls[2]?.[0]).toContain(
+      "https://example.com/comis-unreachable-source-404",
+    );
+    expect(prompt.mock.calls[2]?.[0]).toContain("https://example.com/source-a");
+    expect(prompt.mock.calls[2]?.[0]).toContain("https://example.com/source-b");
+    expect(prompt.mock.calls[2]?.[0]).toContain("https://example.com/source-c");
+    expect(prompt.mock.calls[2]?.[0]).not.toContain(
+      "https://example.com/older-source",
+    );
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
       outcome: "recovered",
     });
   });
@@ -328,12 +715,16 @@ describe("runRequestToolNudge", () => {
 
   it("keeps the requested mutation tool in prompt skill workflow recovery", async () => {
     let activeTools = ["read", "exec", "test_mutating_tool"];
+    let successfulReadCount = 0;
     let successfulMutationCount = 0;
     const setActiveToolsByName = vi.fn((names: string[]) => {
       activeTools = [...names];
     });
     const prompt = vi.fn(async () => {
-      if (prompt.mock.calls.length === 1) return;
+      if (prompt.mock.calls.length === 1) {
+        successfulReadCount = 1;
+        return;
+      }
       if (prompt.mock.calls.length === 2) {
         expect(activeTools).toEqual(["read", "exec", "test_mutating_tool"]);
         successfulMutationCount = 1;
@@ -353,6 +744,8 @@ describe("runRequestToolNudge", () => {
         setActiveToolsByName,
       },
       currentSuccessfulMutationCount: () => successfulMutationCount,
+      currentSuccessfulToolCount: (toolNames) =>
+        toolNames?.includes("read") === true ? successfulReadCount : 0,
       getVisibleAssistantText: () => "Configured.",
     });
 
@@ -511,6 +904,48 @@ describe("runRequestToolNudge", () => {
 
     expect(deps.session.prompt).not.toHaveBeenCalled();
     expect(outcome.outcome).toBe("tool_already_succeeded");
+  });
+
+  // A mutation request whose wording incidentally overlaps a routed prompt
+  // skill inherits that skill's web-evidence floors. Those floors describe a
+  // research answer, so a completed mutation could never satisfy them: the
+  // nudge fired anyway, spent its continuations pushing web research, and the
+  // unsatisfiable gate ended the turn with the answer discarded.
+  it("does not run a routed prompt skill's web floors against a completed mutation", async () => {
+    const deps = makeDeps({
+      currentSuccessfulMutationCount: () => 1,
+      requestRelevantToolNames: ["test_mutating_tool", "read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["~/.comis/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 0,
+      currentDistinctSuccessfulWebSearchQueryCount: () => 0,
+      currentSuccessfulToolCount: () => 0,
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(outcome.outcome).toBe("tool_already_succeeded");
+  });
+
+  it("still recovers a mutation request that overlaps a routed prompt skill", async () => {
+    const deps = makeDeps({
+      requestRelevantToolNames: ["test_mutating_tool", "read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["~/.comis/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      currentDistinctSuccessfulWebFetchUrlCount: () => 0,
+      currentDistinctSuccessfulWebSearchQueryCount: () => 0,
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(outcome).toMatchObject({ fired: true, recovered: true });
   });
 
   it("does not duplicate a mutation after its background handoff was accepted", async () => {

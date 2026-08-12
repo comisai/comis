@@ -2336,7 +2336,7 @@
           "description": "Attachment media type (for attach, default: file). Valid values: image (photo/picture), file (generic document), audio (sound/voice), video (video clip)"
         },
         "attachment_url": {
-          "description": "URL or workspace path of file to send: http(s)://, file://, or absolute path (for attach)",
+          "description": "URL or workspace-relative/absolute path of file to send: http(s)://, file://, or a workspace path (for attach)",
           "type": "string"
         },
         "before": {

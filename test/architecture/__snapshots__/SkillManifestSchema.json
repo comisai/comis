@@ -147,6 +147,16 @@
         "command-dispatch": {
           "type": "string"
         },
+        "min-distinct-web-fetch-urls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "min-distinct-web-search-queries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
         "capability": {
           "type": "object",
           "properties": {

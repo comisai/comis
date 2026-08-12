@@ -116,6 +116,27 @@ describe("provider breaker trajectory normalization", () => {
   });
 });
 
+describe("request clarification trajectory normalization", () => {
+  it("retains the latest content-free clarification reason", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "request.clarification_required",
+      seq: 13,
+      data: {
+        reason: "opaque_payload_missing_instruction",
+        inputChars: 43_000,
+      },
+    }]);
+
+    expect(
+      (signals as unknown as { requestClarification?: unknown }).requestClarification,
+    ).toEqual({
+      reason: "opaque_payload_missing_instruction",
+      inputChars: 43_000,
+    });
+  });
+});
+
 // 678 log-shaped failure: errorText carries the injection block AND a
 // `"status": 200` substring (escaped, exactly as in the fixture). The block
 // is >200 chars — matching the real fixture (~1500 chars), so a single
@@ -230,7 +251,12 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
   it("retains the latest request relevance history saturation evidence", () => {
     const signals = toIncidentSignals([
       event("prompt.submitted", 1, {
-        requestRelevanceHistory: { turnCount: 8, charCount: 147, saturated: true },
+        requestRelevanceHistory: {
+          turnCount: 8,
+          charCount: 147,
+          saturated: true,
+          recallDisposition: "skip_oversized_token",
+        },
         responseLocaleSource: "unset",
         responseLocaleEnforced: false,
       }),
@@ -238,9 +264,19 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
 
     expect(
       (signals as unknown as {
-        requestRelevanceHistory?: { turnCount: number; charCount: number; saturated: boolean };
+        requestRelevanceHistory?: {
+          turnCount: number;
+          charCount: number;
+          saturated: boolean;
+          recallDisposition: string;
+        };
       }).requestRelevanceHistory,
-    ).toEqual({ turnCount: 8, charCount: 147, saturated: true });
+    ).toEqual({
+      turnCount: 8,
+      charCount: 147,
+      saturated: true,
+      recallDisposition: "skip_oversized_token",
+    });
   });
 });
 
@@ -1067,6 +1103,22 @@ describe("toIncidentSignals — subagent.budget_exceeded fold (nodeBudgetBreache
       capSource: "node",
       tokenBudget: 5000,
       tokensUsed: 17770,
+    });
+  });
+
+  it("folds a rejected announcement route into the affected session incident", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, { inboundKind: "message" }),
+      event("subagent.delivery_skipped", 2, {
+        runId: "run-route-rejected",
+        reason: "route_validation_failed",
+      }),
+    ]);
+
+    expect(signals.subagentDeliverySkipped).toEqual({
+      count: 1,
+      lastRunId: "run-route-rejected",
+      lastReason: "route_validation_failed",
     });
   });
 

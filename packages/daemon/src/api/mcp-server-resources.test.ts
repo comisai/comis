@@ -289,6 +289,43 @@ describe("registerMcpResourcesForClient", () => {
     }
   });
 
+  it("registerMcpResourcesForClient resources read pages to the TAIL when the conversation exceeds one page", async () => {
+    // `session.history` pages from the START (offset 0 = oldest). The resource is the
+    // CURRENT confirmed state — re-read to see messages whose outbound delivery has since
+    // confirmed, and those are at the END. A head page would pin an over-long conversation
+    // to its opening forever and never surface a newly confirmed reply.
+    const client = makeClient(["sk-allowed"]);
+    const rpc = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      const offset = (params["offset"] as number | undefined) ?? 0;
+      const all = [
+        { role: "user", content: "oldest-turn", timestamp: 1, deliveryStatus: "confirmed" },
+        { role: "assistant", content: "middle-turn", timestamp: 2, deliveryStatus: "confirmed" },
+        { role: "assistant", content: "newest-turn", timestamp: 3, deliveryStatus: "confirmed" },
+      ];
+      return { messages: all.slice(offset, offset + 2), total: all.length };
+    });
+    const { captured, restore } = spyOnRegisterResource();
+    try {
+      registerMcpResourcesForClient(
+        makeMcp(),
+        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 2, tenantId: "test", defaultAgentId: "test-agent" },
+        client,
+      );
+      const cb = captured[0]!.readCallback;
+      const result = await cb(new URL("comis://session/sk-allowed"), { conversationRef: "sk-allowed" });
+      const text = result.contents[0]!.text ?? "";
+
+      expect(rpc).toHaveBeenCalledTimes(2);
+      expect(rpc.mock.calls[0]![1]).not.toHaveProperty("offset");
+      expect((rpc.mock.calls[1]![1] as Record<string, unknown>).offset).toBe(1);
+      expect(text).toContain("newest-turn");
+      expect(text).toContain("middle-turn");
+      expect(text).not.toContain("oldest-turn");
+    } finally {
+      restore();
+    }
+  });
+
   it("registerMcpResourcesForClient resources read wraps content via wrapExternalContent markers and SECURITY NOTICE present", async () => {
     const client = makeClient(["sk-allowed"]);
     const rpc = vi.fn(async () => ({
