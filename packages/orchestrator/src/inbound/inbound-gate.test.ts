@@ -475,6 +475,31 @@ describe("evaluateInboundGate managed attention replies", () => {
     expect(result).toMatchObject({ action: "process", processedMsg: { text: "ordinary chat" } });
     expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
   });
+
+  it("leaves text for another managed run untouched while attention is open", async () => {
+    const bind = vi.fn(async () => ok({ kind: "not_applicable" as const }));
+    const deps = makeDeps({
+      managedAttentionReplies: { bind },
+      autoReplyEngineConfig: { enabled: false } as never,
+    } as unknown as Partial<GateDeps>);
+
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "For task-frontend, validate the committed developer edit" }),
+      makeSessionKey(),
+      "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
+      SEND_OVERRIDES as never,
+    );
+
+    expect(result).toMatchObject({
+      action: "process",
+      processedMsg: { text: "For task-frontend, validate the committed developer edit" },
+    });
+    expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
 });
 
 /** Build a full ApprovalRequest fixture (the slash path reads shortId/toolName/action/sessionKey). */

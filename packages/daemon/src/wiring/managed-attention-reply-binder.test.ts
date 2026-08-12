@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   createConversationRef,
   type ManagedRunAttentionRecord,
   type ManagedRunContentPort,
   type ManagedRunOwnerScope,
+  type ManagedRunRecord,
   type ManagedRunStorePort,
 } from "@comis/core";
 import { err, ok } from "@comis/shared";
@@ -34,11 +36,11 @@ const SCOPE: ManagedRunOwnerScope = {
   conversationRef: conversationRef.value,
 };
 
-function attention(attentionId: string): ManagedRunAttentionRecord {
+function attention(attentionId: string, managedRunId = "managed-run-a"): ManagedRunAttentionRecord {
   return {
     schemaVersion: 1,
     attentionId,
-    managedRunId: "managed-run-a",
+    managedRunId,
     serviceInstanceId: "service-a",
     tenantId: "tenant-a",
     agentId: "agent-a",
@@ -52,7 +54,17 @@ function attention(attentionId: string): ManagedRunAttentionRecord {
   };
 }
 
-function makeBinder(candidates: ManagedRunAttentionRecord[]) {
+function managedRun(managedRunId: string, externalRunRef: string): ManagedRunRecord {
+  return {
+    managedRunId,
+    externalRunRefDigest: createHash("sha256").update(externalRunRef, "utf8").digest("hex"),
+  } as unknown as ManagedRunRecord;
+}
+
+function makeBinder(
+  candidates: ManagedRunAttentionRecord[],
+  runs: ManagedRunRecord[] = [managedRun("managed-run-a", "external-run-a")],
+) {
   const claimAttentionResponse = vi.fn(async (_scope, input) => ok({
     kind: "updated" as const,
     record: {
@@ -67,6 +79,7 @@ function makeBinder(candidates: ManagedRunAttentionRecord[]) {
     getAttention: vi.fn(async (_scope, attentionId) => ok(
       candidates.find((item) => item.attentionId === attentionId),
     )),
+    listScoped: vi.fn(async () => ok(runs)),
     claimAttentionResponse,
   } as unknown as ManagedRunStorePort;
   const contentStore = {
@@ -139,6 +152,34 @@ describe("managed attention reply binding", () => {
     }));
     expect(ambiguous.contentStore.putAttentionBody).not.toHaveBeenCalled();
     expect(absent.claimAttentionResponse).not.toHaveBeenCalled();
+  });
+
+  it("routes handle-qualified replies only to attention owned by that managed run", async () => {
+    const runs = [
+      managedRun("managed-run-a", "task-backend"),
+      managedRun("managed-run-b", "task-frontend"),
+    ];
+    const disambiguated = makeBinder([
+      attention("attention-backend", "managed-run-a"),
+      attention("attention-frontend", "managed-run-b"),
+    ], runs);
+    const unrelated = makeBinder([attention("attention-backend", "managed-run-a")], runs);
+
+    expect(await disambiguated.binder.bind(SCOPE, {
+      operationId: "reply-qualified-backend",
+      text: "task-backend use monotonic issue-N values",
+      respondedAtMs: 100,
+    })).toMatchObject({
+      ok: true,
+      value: { kind: "bound", attention: { attentionId: "attention-backend" } },
+    });
+    expect(await unrelated.binder.bind(SCOPE, {
+      operationId: "reply-qualified-frontend",
+      text: "For task-frontend, validate the committed developer edit",
+      respondedAtMs: 100,
+    })).toEqual(ok({ kind: "not_applicable" }));
+    expect(unrelated.contentStore.putAttentionBody).not.toHaveBeenCalled();
+    expect(unrelated.claimAttentionResponse).not.toHaveBeenCalled();
   });
 
   it("never substitutes a missing explicit handle and removes orphaned private content", async () => {
