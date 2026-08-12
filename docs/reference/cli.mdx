@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis currently ships **32 top-level command groups**. Some commands call the
+Comis currently ships **33 top-level command groups**. Some commands call the
 running daemon over JSON-RPC; others inspect or update local state. The built-in
 `--help` output is authoritative for the installed version.
 
@@ -1642,6 +1642,32 @@ comis cost export --quarter-hour --since "$(( $(date +%s000) - 86400000 ))" --ag
 # One provider+model slice
 comis cost export --provider openai --model gpt-4o-mini
 ```
+
+---
+
+### `comis quarantine`
+
+Inspect and release **quarantined background-task announcements** — a completed task's outcome that the runtime could not prove reached its reader.
+
+Nothing drains a quarantined announcement automatically: re-sending one whose delivery is unproven risks telling a user the same thing twice, so the runtime holds it and waits for a human. This command is that decision point. Backed by `ObsQuarantineListContract` (`obs.quarantine.list`) and `ObsQuarantineReleaseContract` (`obs.quarantine.release`), both admin-only.
+
+```bash
+# What is waiting, oldest first
+comis quarantine list
+comis quarantine list --format json
+
+# Decide one
+comis quarantine release <id> --outcome delivered
+comis quarantine release <id> --outcome discarded
+```
+
+Use `delivered` when you have confirmed out of band that the reader already has the message, and `discarded` when it is not worth sending. Both remove the item — the queue exists to hold an *undecided* announcement — and the distinction is kept for the audit trail. Releasing an id that is already gone reports that plainly instead of failing, so re-running the command is safe.
+
+The listing is **content-free**: it shows ids, route, timing, attempt count, the failure reason and the announcement's *length*, never its text. An operator deciding whether a reader was already informed needs the route and the reason, not the message body.
+
+<Warning>
+There is deliberately no offline mode. While the daemon is running it is the only authority over the queue: it holds the state in memory and rewrites `~/.comis/dead-letters.jsonl` from it on the next persist, so editing that file under a live daemon is silently undone. Always go through this command; see [`dead-letters.jsonl`](/operations/data-directory#dead-letters-jsonl).
+</Warning>
 
 ---
 

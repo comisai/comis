@@ -848,6 +848,7 @@ function buildRpcDispatchDeps(deps: {
     approvalGate: c.approvalGate, suspendedAgents: c.suspendedAgents,
     hotAdd: g.hotAdd, hotRemove: g.hotRemove,
     diagnosticCollector: c.diagnosticCollector, billingEstimator: c.billingEstimator,
+    deadLetterQueue: c.deadLetterQueue,
     channelActivityTracker: c.channelActivityTracker, deliveryTracer: c.deliveryTracer, budgetGuards: c.budgetGuards,
     // Thread the LIVE spend snapshot the kill-switch enforces
     // (getSnapshot(), NOT the lagging SQL read) + the configured ceilings, so
