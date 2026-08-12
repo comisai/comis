@@ -30,8 +30,7 @@ if rig_is_local; then
   RIG_HELPER="$HERE/_rig.sh"
   KIT_DIR="$HERE"
 else
-  RIG_HELPER="/root/_rig.sh"
-  KIT_DIR="/root"
+  RIG_HELPER="$KIT_DIR/_rig.sh"
   VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
   if ! out="$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$VPS" 'echo ok' 2>&1)"; then
     fail "ssh" "$VPS unreachable: $(printf '%s' "$out" | tail -1)"
