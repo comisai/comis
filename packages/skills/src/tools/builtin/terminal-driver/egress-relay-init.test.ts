@@ -27,7 +27,7 @@
 
 import { describe, it, expect } from "vitest";
 
-import { dropPrivileges, buildRelayChildEnv, type RelayInitAudit } from "./egress-relay-init.js";
+import { dropPrivileges, buildRelayChildEnv, relayChildExitCode, type RelayInitAudit } from "./egress-relay-init.js";
 
 describe("egress-relay-init dropPrivileges — best-effort under the unmapped userns-root", () => {
   it("does NOT throw when setuid throws the not-mapped EPERM/EINVAL (the VPS root-worker reality)", () => {
@@ -126,5 +126,28 @@ describe("egress-relay-init buildRelayChildEnv — points the driven child at th
     // Inherited env is preserved (the scrubbed env + the bound paths still reach the child).
     expect(env.PATH).toBe("/usr/bin");
     expect(env.HOME).toBe("/home/comis");
+  });
+});
+
+describe("egress-relay-init child launch diagnostics", () => {
+  it("emits an actionable structured record when the verified executable is absent inside the jail", () => {
+    const audit: RelayInitAudit[] = [];
+    const spawnError = new Error("spawnSync /opt/operator/bin/worker ENOENT") as NodeJS.ErrnoException;
+    spawnError.code = "ENOENT";
+
+    const exitCode = relayChildExitCode(
+      { status: null, error: spawnError },
+      (record) => audit.push(record),
+    );
+
+    expect(exitCode).toBe(127);
+    expect(audit).toEqual([
+      expect.objectContaining({
+        module: "egress-relay-init",
+        errorKind: "dependency",
+        code: "ENOENT",
+        hint: expect.stringContaining("skills.terminal.allow[].match.path"),
+      }),
+    ]);
   });
 });
