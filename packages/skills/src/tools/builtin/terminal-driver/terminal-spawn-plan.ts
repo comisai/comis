@@ -52,7 +52,12 @@ import {
   buildEgressRelayLaunch as defaultBuildEgressRelayLaunch,
   type EgressRelayLaunch,
 } from "./terminal-egress-relay.js";
-import type { ManagedTerminalExecutionAttachment } from "./terminal-managed-binding.js";
+import {
+  MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT,
+  MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT,
+  managedTerminalAttachmentTargetPath,
+  type ManagedTerminalExecutionAttachment,
+} from "./terminal-managed-binding.js";
 
 /**
  * The net-new uid/gid the dedicated-uid posture drops to inside the jail
@@ -450,8 +455,14 @@ export async function buildSpawnPlan(
 
   // bwrap forwards the spawner env to the child (no --clearenv): scrub it, then for
   // listed-hosts merge the relay's HTTPS_PROXY/HTTP_PROXY over the scrubbed env.
+  const childEnv = scrubChildEnv(input.env);
+  delete childEnv[MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT];
+  delete childEnv[MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT];
+  const soleAttachment = input.executionAttachments?.length === 1
+    ? input.executionAttachments[0]
+    : undefined;
   const env: NodeJS.ProcessEnv = {
-    ...scrubChildEnv(input.env),
+    ...childEnv,
     ...(relay?.proxyEnv ?? {}),
     // We ALWAYS run the CLI inside THIS bwrap jail (the spawn throws JailUnavailableError
     // otherwise), so tell a sandbox-aware CLI it is already bubblewrapped → it skips nesting
@@ -462,6 +473,10 @@ export async function buildSpawnPlan(
     // POST-scrub: scrubChildEnv blanket-strips CLAUDE_CODE_* (so it would erase this otherwise —
     // which is exactly why the jailed claude never detected the outer jail and nested).
     CLAUDE_CODE_BUBBLEWRAP: "1",
+    ...(soleAttachment === undefined ? {} : {
+      [MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT]: managedTerminalAttachmentTargetPath(soleAttachment.targetName),
+      [MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT]: soleAttachment.targetName,
+    }),
   };
 
   return {
