@@ -40,7 +40,7 @@
  */
 
 import net from "node:net";
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -250,18 +250,17 @@ function auditDropFailure(
 }
 
 /**
- * Exec the driven child in-place. We use a synchronous spawn that inherits stdio
- * and replaces the init's role for the session's lifetime (the relay server stays
- * bound in THIS process, so we run the child as a foreground child and exit with
- * its code — the relay is torn down when the jail dies with the parent worker via
- * `--die-with-parent`). `process.exit` carries the child's status out of the jail.
+ * Run the driven child as a foreground subprocess that inherits stdio
+ * while keeping this process's event loop available to bridge the child's proxy
+ * connections. The relay is torn down when the child exits and the jail dies with
+ * the parent worker via `--die-with-parent`.
  */
 /**
  * Build the driven child's env: the inherited (scrubbed) env PLUS the proxy vars
  * pointing at the in-jail loopback relay (`http://127.0.0.1:<relayPort>`). The
  * relay-init binds the relay on `relayPort`, so it is the AUTHORITATIVE source of
  * this value — set here, NOT relied upon via bwrap env-forwarding (which does not
- * survive the relay-init→child `spawnSync` boundary). Without
+ * survive the relay-init→child process boundary). Without
  * it a proxy-aware child attempts a DIRECT connect that `--unshare-net` blocks
  * ("could not resolve host"). Both upper- and lower-case forms cover the common
  * clients (curl reads lower; most others honor upper).
@@ -301,14 +300,26 @@ export function relayChildExitCode(
   return 127;
 }
 
-function execChild(child: string[], relayPort: number): never {
+async function execChild(child: string[], relayPort: number): Promise<number> {
   if (child.length === 0) {
     process.stderr.write("egress-relay-init: no child command after `--`\n");
-    process.exit(2);
+    return 2;
   }
   const [bin, ...rest] = child;
-  const r = spawnSync(bin, rest, { stdio: "inherit", env: buildRelayChildEnv(process.env, relayPort) });
-  process.exit(relayChildExitCode(r));
+  const childProcess = spawn(bin, rest, {
+    stdio: "inherit",
+    env: buildRelayChildEnv(process.env, relayPort),
+  });
+  return new Promise<number>((resolve) => {
+    let settled = false;
+    const finish = (result: RelayChildSpawnResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(relayChildExitCode(result));
+    };
+    childProcess.once("error", (error) => finish({ status: null, error }));
+    childProcess.once("close", (status) => finish({ status }));
+  });
 }
 
 async function main(): Promise<void> {
@@ -322,7 +333,7 @@ async function main(): Promise<void> {
   // mapped in the bwrap single-uid userns, so the drop is refused; dropPrivileges
   // logs the audit posture and continues rather than crash the relay-init PID-1.
   dropPrivileges(args.setuid, args.setgid);
-  execChild(args.child, args.port);
+  process.exit(await execChild(args.child, args.port));
 }
 
 /**
