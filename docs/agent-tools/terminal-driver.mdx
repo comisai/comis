@@ -144,6 +144,7 @@ Every driven session runs in a bwrap jail materializing the entry's `scope`:
 | `filesystem` | `workspace` / `listed-paths` / `home` / `full` | `workspace` |
 | `network` | `none` / `listed-hosts` / `full` | `none` |
 | `credentialPaths` | `string[]` — credential paths **RO**-bound into the jail (`~` expands to home). For a CLI that is **system-installed** (binary under `/usr`, so reachable at `filesystem: workspace`) **and** only **reads** its creds. A CLI that writes its cred/state dir (claude, codex) needs `filesystem: home` or `listed-paths` instead. | `[]` |
+| `ephemeralWritablePaths` | `string[]` — existing directories replaced by empty, jail-private tmpfs mounts (`~` expands to home). Use this for narrowly scoped runtime state beneath a read-only credential directory. Each host target must already exist as a real directory; an unavailable target rejects the session before bubblewrap starts and names this config field. | `[]` |
 | `uid` | `dedicated` / `daemon` | `dedicated` |
 
 - **`~/.comis` carve-out (non-dialable):** the daemon data dir (master key, secret store) is masked with a tmpfs in **every** jail, even at `filesystem: full`. A driven child can never read Comis's secrets.

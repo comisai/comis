@@ -117,6 +117,23 @@ export interface SpawnPlanComposers {
   unsafeDisableSandbox?: boolean;
 }
 
+const EPHEMERAL_WRITABLE_PATH_CONFIG = "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths";
+
+function validateEphemeralWritablePaths(scope: TerminalScope, home: string): Result<void, Error> {
+  for (const configuredPath of scope.ephemeralWritablePaths) {
+    const expanded = configuredPath === "~"
+      ? home
+      : configuredPath.startsWith("~/")
+        ? resolvePath(home, configuredPath.slice(2))
+        : configuredPath;
+    const inspected = tryCatch(() => lstatSync(expanded));
+    if (!inspected.ok || !inspected.value.isDirectory() || inspected.value.isSymbolicLink()) {
+      return err(new EphemeralWritablePathUnavailableError(expanded));
+    }
+  }
+  return ok(undefined);
+}
+
 /** The session geometry + identity the plan needs (off the create frame). */
 export interface SpawnPlanInput {
   /** The operator-declared scope (least-privilege default applied upstream). */
@@ -193,6 +210,15 @@ export class AttachmentSandboxUnavailableError extends Error {
   constructor() {
     super("sandbox_unavailable: execution attachments require an enforceable bubblewrap jail");
     this.name = "AttachmentSandboxUnavailableError";
+  }
+}
+
+/** Raised before bubblewrap when an operator-declared writable overlay has no safe mountpoint. */
+export class EphemeralWritablePathUnavailableError extends Error {
+  readonly errorKind = "precondition" as const;
+  constructor(target: string) {
+    super(`${EPHEMERAL_WRITABLE_PATH_CONFIG} target is unavailable: ${target}; create it as a directory before starting the terminal`);
+    this.name = "EphemeralWritablePathUnavailableError";
   }
 }
 
@@ -388,6 +414,8 @@ export async function buildSpawnPlan(
     composers.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch;
 
   const { scope } = input;
+  const writablePaths = validateEphemeralWritablePaths(scope, input.home);
+  if (!writablePaths.ok) throw writablePaths.error;
   // Fail-closed: the agent-supplied cwd (the jail --chdir target) MUST sit within a
   // path the scope binds — reject typed + EARLY (before any egress socket / spawn), not
   // as an opaque `bwrap: Can't chdir`. filesystem:full binds everything → no check.

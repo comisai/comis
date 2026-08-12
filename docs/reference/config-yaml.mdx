@@ -1017,6 +1017,13 @@ so warning-level jailbreak-like language can be admitted.
 | `enabled` | `enum` | `"always"` | Requested OS-level sandbox posture for ordinary `exec`. With `"always"`, Comis uses the detected provider, but if no supported provider is available it logs a warning and ordinary `exec` runs on the host. `"never"` disables the sandbox. Use the Linux jailed autonomy or terminal surfaces when unavailable isolation must refuse execution |
 | `readOnlyAllowPaths` | `string[]` | `[]` | Additional filesystem paths exposed read-only inside the sandbox (e.g., `/opt/data`) |
 
+**Terminal writable overlays (agents.*.skills.terminal.allow[].scope)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `credentialPaths` | `string[]` | `[]` | Host credential paths exposed read-only inside the terminal jail. Home-relative values beginning with `~/` are expanded against the daemon account's home. |
+| `ephemeralWritablePaths` | `string[]` | `[]` | Existing host directories replaced inside the jail by empty, non-persistent tmpfs mounts. Every target must be absolute or home-relative and must already exist as a real directory. A missing, unreadable, symlinked, or non-directory target rejects terminal creation before bubblewrap starts and identifies `agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths` as the configuration field to fix. |
+
 #### Secrets (agents.*.secrets)
 
 | Key | Type | Default | Description |

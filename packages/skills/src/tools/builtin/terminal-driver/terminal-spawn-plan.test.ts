@@ -320,16 +320,23 @@ describe("buildSpawnPlan — operator-declared ephemeral writable paths", () => 
   });
 
   it("materializes an explicit ephemeral path before the data-directory mask", async () => {
+    const root = mkdtempSync(join(tmpdir(), "comis-ephemeral-directory-"));
+    const target = join(root, "runtime");
+    mkdirSync(target, { mode: 0o700 });
     const scope = {
       ...makeScope(),
-      ephemeralWritablePaths: ["~/.agent-state/runtime"],
+      ephemeralWritablePaths: [target],
     } as unknown as TerminalScope;
-    const plan = await buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" });
-    const s = plan.argv.join(" ");
-    const ephemeralIdx = s.indexOf("--tmpfs /home/u/.agent-state/runtime");
-    const comisIdx = s.indexOf("--tmpfs /home/u/.comis");
-    expect(ephemeralIdx).toBeGreaterThanOrEqual(0);
-    expect(comisIdx).toBeGreaterThan(ephemeralIdx);
+    try {
+      const plan = await buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" });
+      const s = plan.argv.join(" ");
+      const ephemeralIdx = s.indexOf(`--tmpfs ${target}`);
+      const comisIdx = s.indexOf("--tmpfs /home/u/.comis");
+      expect(ephemeralIdx).toBeGreaterThanOrEqual(0);
+      expect(comisIdx).toBeGreaterThan(ephemeralIdx);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
