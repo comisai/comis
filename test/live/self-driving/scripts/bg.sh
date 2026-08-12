@@ -6,7 +6,7 @@
 # so a long orchestration (esp. drive-sim-workload.sh) survives the ssh link dropping — launch detached,
 # then poll in short ssh calls.
 #
-#   bash bg.sh <tag> <command...>        launch <command> detached (setsid+nohup); writes
+#   bash bg.sh <tag> <command...>        launch <command> in a detached process group; writes
 #                                        /tmp/bg-<tag>.out (stdout+stderr) and /tmp/bg-<tag>.done (on exit,
 #                                        containing the exit code). Returns immediately.
 #   bash bg.sh --poll <tag> [maxSec=600] wait until /tmp/bg-<tag>.done exists (or timeout), then tail the out.
@@ -71,11 +71,31 @@ rm -f "$OUT" "$DONE" "$PID"
 # only the child — the wrapper then captures $? into the done-marker (an `exit` inside a `{ …; }` group
 # would have killed the wrapper before the marker write, leaving --poll stuck on "STILL RUNNING").
 printf '%s\n' "$*" > "$RUNNER" || { echo "bg.sh: cannot write detached runner" >&2; exit 1; }
-command -v nohup >/dev/null 2>&1 || { echo "bg.sh: nohup is required" >&2; exit 127; }
 if command -v setsid >/dev/null 2>&1; then
+  command -v nohup >/dev/null 2>&1 || { echo "bg.sh: nohup is required" >&2; exit 127; }
   setsid nohup bash -c "bash '$RUNNER' > '$OUT' 2>&1; echo \$? > '$DONE'" >/dev/null 2>&1 &
+  PID_VALUE="$!"
 else
-  nohup bash -c "bash '$RUNNER' > '$OUT' 2>&1; echo \$? > '$DONE'" >/dev/null 2>&1 &
+  command -v node >/dev/null 2>&1 || {
+    echo "bg.sh: node is required to detach when setsid is unavailable" >&2
+    exit 127
+  }
+  PID_VALUE="$(node -e '
+const { spawn } = require("node:child_process");
+const child = spawn(process.argv[1], ["-c", process.argv[2]], {
+  detached: true,
+  stdio: "ignore",
+});
+child.unref();
+if (!Number.isInteger(child.pid)) process.exit(1);
+process.stdout.write(String(child.pid));
+' "$(command -v bash)" "bash '$RUNNER' > '$OUT' 2>&1; echo \$? > '$DONE'")" || {
+    echo "bg.sh: could not create detached process" >&2
+    exit 1
+  }
 fi
-printf '%s\n' "$!" > "$PID" || { echo "bg.sh: cannot record detached process" >&2; exit 1; }
+case "$PID_VALUE" in
+  ""|*[!0-9]*) echo "bg.sh: detached process returned an invalid pid" >&2; exit 1 ;;
+esac
+printf '%s\n' "$PID_VALUE" > "$PID" || { echo "bg.sh: cannot record detached process" >&2; exit 1; }
 echo "[bg:$TAG] launched detached (cmd: $*) → poll with: bash bg.sh --poll $TAG"
