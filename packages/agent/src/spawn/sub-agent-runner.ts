@@ -277,6 +277,9 @@ interface SubAgentRunCommon {
   /** Announce channel ID for failure notifications (stored at spawn for ghost sweep access). */
   announceChannelId?: string;
   /** Graph ID for kill cascade routing. */
+  /** Immediate in-process parent run, persisted so the health monitor can see
+   *  the spawn tree: a run waiting on a live child is not stalled. */
+  parentRunId?: string;
   graphId?: string;
   /** Graph node ID for kill cascade routing. */
   nodeId?: string;
@@ -2599,6 +2602,10 @@ function classifyCompletionErrorKind(
           runId: queuedRunId,
           status: "queued",
           agentId: params.agentId,
+          // Persisted, not merely emitted: the health monitor reads the run
+          // records to see the spawn tree, and without this a parent waiting on
+          // a child is indistinguishable from a stalled one.
+          ...(params.parentRunId !== undefined ? { parentRunId: params.parentRunId } : {}),
           trustLevel: acceptedTrustLevel,
           task: params.task,
           sessionKey: queuedDisplay.formatted,
@@ -2764,6 +2771,9 @@ function classifyCompletionErrorKind(
     const startedAt = clock.now();
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
+      // See the queued path above — the stuck sweep needs the parent link on
+      // the record, not just on the spawn event.
+      ...(params.parentRunId !== undefined ? { parentRunId: params.parentRunId } : {}),
       trustLevel: acceptedTrustLevel,
       task: params.task, sessionKey: runDisplay.formatted,
       conversationScope: runConversation.conversationScope,

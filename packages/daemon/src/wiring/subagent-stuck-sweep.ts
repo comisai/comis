@@ -96,6 +96,8 @@ export interface StuckSweepRunView {
   startedAt: number;
   sessionKey: string;
   graphId?: string;
+  /** Run this one was spawned by, when it is a nested spawn. */
+  parentRunId?: string;
 }
 
 /** One kill decision with the telemetry the WARN + killRun attribution carry. */
@@ -112,6 +114,13 @@ export interface StuckKillDecision {
  * Decide which running sub-agents are stuck. A run is stuck when its IDLE
  * time — `now - (lastActivityFor(sessionKey) ?? startedAt)` — exceeds its
  * threshold (graph runs get the longer graph threshold; `0` disables).
+ *
+ * A run with a RUNNING child is exempt: waiting on delegated work emits no
+ * tool or LLM progress of its own, so idle time measures the wait rather than
+ * a stall, and killing the waiter discards the child's work along with it.
+ * This does not blunt the watchdog — every child is swept on the same tick
+ * under its own threshold, so a hung tree still dies at the leaves and the
+ * parent becomes eligible again on the next tick once no child is running.
  */
 export function sweepStuckSubAgentRuns(params: {
   runs: readonly StuckSweepRunView[];
@@ -127,6 +136,11 @@ export function sweepStuckSubAgentRuns(params: {
   let activeSubAgentRuns = 0;
   let stuckSubAgentRuns = 0;
   const kills: StuckKillDecision[] = [];
+  const awaitingChildren = new Set(
+    params.runs
+      .filter((run) => run.status === "running" && run.parentRunId !== undefined)
+      .map((run) => run.parentRunId as string),
+  );
 
   for (const run of params.runs) {
     if (run.status !== "running") continue;
@@ -136,6 +150,8 @@ export function sweepStuckSubAgentRuns(params: {
       ? params.graphStuckKillThresholdMs
       : params.stuckKillThresholdMs;
     if (thresholdMs <= 0) continue;
+
+    if (awaitingChildren.has(run.runId)) continue;
 
     const lastActivityAt = params.lastActivityFor(run.sessionKey) ?? run.startedAt;
     const idleMs = params.now - lastActivityAt;
