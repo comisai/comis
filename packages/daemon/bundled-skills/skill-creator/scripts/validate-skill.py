@@ -38,6 +38,7 @@ VALID_TOP_FIELDS = {
 
 VALID_COMIS_FIELDS = {
     "os", "requires", "skill-key", "primary-env", "command-dispatch", "capability",
+    "min-distinct-web-fetch-urls", "min-distinct-web-search-queries",
 }
 
 VALID_PERMISSIONS_FIELDS = {"fsRead", "fsWrite", "net", "env"}

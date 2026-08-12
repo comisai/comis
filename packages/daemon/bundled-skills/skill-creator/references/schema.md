@@ -49,6 +49,8 @@ comis:
   skill-key: my-custom-key           # Explicit skill key override (slug format)
   primary-env: discord               # Display/grouping hint for primary environment
   command-dispatch: my-command       # Metadata-only dispatch tag for command routing
+  min-distinct-web-fetch-urls: 3     # Distinct successful web_fetch URL receipts required (1-10)
+  min-distinct-web-search-queries: 3 # Distinct successful web_search queries required (1-10)
 ```
 
 ## Body Constraints
