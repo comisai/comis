@@ -110,6 +110,22 @@ export function appendRing(state: SessionState, chunk: string): void {
   for (const cb of state.ringListeners) cb();
 }
 
+const TMUX_TEARDOWN_MARKER = "\u001b[1;0r";
+
+/** Preserve the final worker screen while retaining tmux's attached-client teardown bytes in the raw ring. */
+function appendTmuxRing(state: SessionState, chunk: string): void {
+  state.ring += chunk;
+  if (state.tmuxTeardownSeen !== true) {
+    const teardownAt = chunk.lastIndexOf(TMUX_TEARDOWN_MARKER);
+    const workerOutput = teardownAt < 0 ? chunk : chunk.slice(0, teardownAt);
+    if (teardownAt >= 0) state.tmuxTeardownSeen = true;
+    if (workerOutput !== "") {
+      state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(workerOutput));
+    }
+  }
+  for (const cb of state.ringListeners) cb();
+}
+
 /**
  * Flip a session to not-alive + notify the settle's exit subscribers (onExit half) so a pending
  * `wait`/settle resolves `exit`. ALSO disposes the `listed-hosts` egress materialization ONCE
@@ -223,7 +239,7 @@ export function attachBackend(args: AttachBackendArgs): boolean {
     if (loadTmux === undefined) return false; // cannot re-attach without the tmux backend.
     const handle = loadTmux.reattach({ sessionId, cols, rows, env: plan.env, tmuxSocket });
     if (handle === undefined) return false; // the tmux session is gone — honest death.
-    handle.onData((d) => appendRing(state, d));
+    handle.onData((d) => appendTmuxRing(state, d));
     handle.onExit((e) => {
       markExited(state, logger, e?.exitCode);
     });
@@ -255,7 +271,7 @@ export function attachBackend(args: AttachBackendArgs): boolean {
       rows,
       env: plan.env,
     });
-    handle.onData((d) => appendRing(state, d));
+    handle.onData((d) => appendTmuxRing(state, d));
     handle.onExit((e) => {
       markExited(state, logger, e?.exitCode);
     });

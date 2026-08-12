@@ -139,7 +139,7 @@ export interface TmuxBackendLike {
  * `terminal-worker-backend-attach.ts`) can type the `state` it feeds; it is NOT a
  * public-surface contract (not re-exported by the barrel) — purely intra-module.
  */
-// @optional-field-count: 13 optional fields — SessionState is the worker's per-session
+// @optional-field-count: 14 optional fields — SessionState is the worker's per-session
 // record: EVERY optional is a genuinely-conditional per-session datum that is present
 // only on a specific path (pty XOR pipe handle; emu/writeFlush/lastSnapshot once the
 // emulator is built; emitter/lastClassifiedSnapshot/lastProgressMs once attention is
@@ -173,6 +173,8 @@ export interface SessionState {
   interactions: number;
   /** The PTY exit code when the backend reported one: captured on the pty `onExit` payload; surfaced by the `status` frame as the `exitCode`. Absent on the pipe close/error path (no code) and while alive. */
   exitCode?: number;
+  /** Set after tmux begins its attached-client teardown sequence. Later tmux chrome is retained in the raw ring but never allowed to clear the final worker screen in the emulator. */
+  tmuxTeardownSeen?: boolean;
   /** Settle ring-grow subscribers (`SettleDeps.onRingChange`), closure-local; `appendRing` notifies these. */
   ringListeners: Set<() => void>;
   /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */
