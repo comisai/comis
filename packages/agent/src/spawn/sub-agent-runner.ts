@@ -89,7 +89,7 @@ import {
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
 import { buildHaltedAccount } from "./halted-account.js";
-import { resolveSubAgentOutcome } from "./sub-agent-outcome.js";
+import { isDeliveredFinishReason, resolveSubAgentOutcome } from "./sub-agent-outcome.js";
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
@@ -3191,8 +3191,7 @@ function classifyCompletionErrorKind(
         if (deliverySuppressedRunIds.has(runId)) return;
 
         const providerCompletedAt = clock.now();
-        const modelStoppedCleanly =
-          result.finishReason === "stop" || result.finishReason === "end_turn";
+        const modelDelivered = isDeliveredFinishReason(result.finishReason);
 
         // Output-contract validation. Hoisted ABOVE the outcome derivation (it used to run
         // several hundred lines below, purely as a WARN) because a clean model stop is not the
@@ -3259,7 +3258,7 @@ function classifyCompletionErrorKind(
         }
 
         const subAgentOutcome = resolveSubAgentOutcome({
-          modelStoppedCleanly,
+          modelDelivered,
           missingContractedOutputs,
         });
         // Two INDEPENDENT reasons a run is not a success, and a run can hit
@@ -3609,16 +3608,20 @@ function classifyCompletionErrorKind(
               announcementText = buildAnnouncementMessage({
                 task: params.task,
                 status: isSuccess ? "completed" : "failed",
-                ...(isSuccess
-                  ? {
+                // The child's output is its RESPONSE on both paths. Only a
+                // genuine failure string belongs in `error`: abandoned
+                // background work is the one case where the response cannot be
+                // trusted as the result, because the child reported done while
+                // work it launched was still running. Everywhere else the run
+                // produced something and the reader must see it as output —
+                // routing it through `error` published a complete answer to the
+                // user prefixed "Error:".
+                ...(backgroundProcessFailure !== undefined
+                  ? { error: backgroundProcessFailure }
+                  : {
                       response: condensedResult
                         ? `${condensedResult.result.summary}${fullResultLine}`
                         : sanitizeAssistantResponse(result.response),
-                    }
-                  : {
-                      error: backgroundProcessFailure ?? (condensedResult
-                        ? `${condensedResult.result.summary}${fullResultLine}`
-                        : sanitizeAssistantResponse(result.response)),
                     }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
