@@ -14,6 +14,7 @@ import type { TypedEventBus, WorkspaceFileName } from "@comis/core";
 import {
   formatSessionKey,
   createMemoryRecallScope,
+  isDelegatedExecutionEndpoint,
   scriptTokenFactor,
   tryGetContext,
   systemNowMs,
@@ -351,7 +352,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       const isSubagentTurn = (
         partition?.kind === "endpoint-conversation"
         || partition?.kind === "endpoint-conversation-principal"
-      ) && partition.endpoint.channelType === "sub-agent";
+      ) && isDelegatedExecutionEndpoint(partition.endpoint);
       const memoryScope = turnScope === undefined
         ? err(new Error("RAG recall requires resolved turn authority"))
         : createMemoryRecallScope(turnScope, !isSubagentTurn);
