@@ -837,7 +837,13 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
       dataDir,
       { traceId: CHILD_RUN_ID, depth: "summary" },
     );
+    const traceReport = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir),
+      dataDir,
+      { traceId: CHILD_TRACE_ID, depth: "summary" },
+    );
 
+    expect(report).toEqual(traceReport);
     expect(report.sessionKey).toBe(CHILD_SESSION_KEY);
     expect(report.traceId).toBe(CHILD_TRACE_ID);
     expect(report.outcome).toEqual({
@@ -847,7 +853,7 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     });
     expect(report.toolStats.web_fetch).toMatchObject({ ok: 0, failed: 1 });
     expect(report.coverage?.trajectory).toEqual({ found: true, records: 4 });
-    expect(report.coverage?.rollup).toEqual({ present: false });
+    expect(report.coverage?.rollup).toEqual({ present: true });
   });
 
   it("diagnoses a provider tool-identity rejection from the real nested session layout", async () => {

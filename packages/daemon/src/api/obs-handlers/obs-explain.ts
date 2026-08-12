@@ -19,6 +19,7 @@ import {
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
 import {
+  resolveTraceReference,
   resolveTraceToSession,
   resolveRootRunToSession,
   traceIdFromCronRootRun,
@@ -386,6 +387,9 @@ export async function assembleIncidentReportFromSources(
       ? await reader.readGraphRun(params.graphId)
       : null;
   const graphTraceId = graph?.traceId;
+  const traceResolution = params.traceId === undefined
+    ? null
+    : await resolveTraceReference(dataDir, params.traceId, params.includeSynthetic);
   // Step 3: canonicalize a traceId OR a rootRunId to its sessionKey FIRST,
   // so by-trace, by-rootRun, and by-session collapse to one assembler path. The
   // rootRunId arm is checked FIRST; `sessionKey` is present when both
@@ -404,12 +408,13 @@ export async function assembleIncidentReportFromSources(
     : params.rootRunId
     ? await resolveRootRunToSession(dataDir, params.rootRunId, taskCheck)
     : params.traceId
-      ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
+      ? traceResolution?.sessionKey ?? ""
       : params.sessionKey!;
   const cronExecutionTraceId = params.rootRunId !== undefined
     ? traceIdFromCronRootRun(params.rootRunId)
     : undefined;
-  const fallbackTraceId = params.traceId ?? cronExecutionTraceId ?? graphTraceId;
+  const fallbackTraceId =
+    traceResolution?.traceId ?? params.traceId ?? cronExecutionTraceId ?? graphTraceId;
   const executionDiagnostic =
     fallbackTraceId !== undefined && reader.readMessageLifecycleDiagnostic !== undefined
       ? await reader.readMessageLifecycleDiagnostic(fallbackTraceId)
@@ -468,7 +473,8 @@ export async function assembleIncidentReportFromSources(
   const taskSessionCache = taskCheck === null || taskExecutionSessionKey.length === 0
     ? []
     : await reader.readCacheTraceRecords(taskExecutionSessionKey);
-  const executionTraceId = params.traceId ?? cronExecutionTraceId ?? graphTraceId;
+  const executionTraceId =
+    traceResolution?.traceId ?? params.traceId ?? cronExecutionTraceId ?? graphTraceId;
   const latestSessionTraceId =
     taskCheck === null && executionTraceId === undefined
       ? latestPromptTraceId(sessionRecords)

@@ -25,7 +25,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-resolve.js";
+import {
+  resolveRootRunToSession,
+  resolveTraceReference,
+  resolveTraceToSession,
+} from "./obs-explain-resolve.js";
 
 // The 678 fixture's two traceIds and the single canonical sessionKey.
 const TRACE_TURN_1 = "f942d38c-e372-43cc-99f1-ead4f0b8582f";
@@ -164,6 +168,22 @@ describe("resolveTraceToSession", () => {
     const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
 
     expect(resolved).toBe(CHILD_SESSION_KEY);
+  });
+
+  it("preserves the indexed execution trace when resolving a sub-agent run identifier", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "child-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+    ]);
+
+    const resolved = await resolveTraceReference(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toEqual({
+      sessionKey: CHILD_SESSION_KEY,
+      traceId: "child-trace-id",
+    });
   });
 
   it("does not resolve a run identifier found outside the sub-agent channel", async () => {

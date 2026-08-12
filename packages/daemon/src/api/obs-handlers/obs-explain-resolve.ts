@@ -37,6 +37,12 @@ export interface TaskRootResolutionEvidence {
   readonly sessionKey: string;
 }
 
+/** Canonical identity for a trace-shaped `obs.explain` reference. */
+export interface TraceSessionResolution {
+  readonly sessionKey: string;
+  readonly traceId: string;
+}
+
 /** Default data directory (lazy — resolved at call time). Mirrors obs-trace.ts. */
 function defaultDataDir(): string {
   return safePath(os.homedir(), ".comis");
@@ -64,7 +70,8 @@ export function traceIdFromCronRootRun(rootRunId: string): string | undefined {
 }
 
 /**
- * Resolve a `traceId` or child run id to its canonical `sessionKey` by scanning
+ * Resolve a `traceId` or child run id to its canonical session and execution
+ * trace by scanning
  * the last two days of session-index JSONL files. Exact trace matches take
  * precedence. A child run id falls back to a structurally parsed session key
  * whose channel is exactly `sub-agent:runtime:<runId>`. Returns `""` when no
@@ -78,15 +85,16 @@ export function traceIdFromCronRootRun(rootRunId: string): string | undefined {
  *   `synthetic === true` (test/harness sessions) are skipped, so a synthetic
  *   row never canonicalizes a traceId for `obs.explain`. Pass `true` to resolve
  *   them (the admin opt-in).
- * @returns the canonical sessionKey, or `""` when unresolvable.
+ * @returns canonical session and execution-trace identity, or `null` when
+ *   unresolvable.
  */
-export async function resolveTraceToSession(
+export async function resolveTraceReference(
   dataDir: string,
   traceId: string,
   includeSynthetic = false,
-): Promise<string> {
+): Promise<TraceSessionResolution | null> {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
-  let childRunSessionKey = "";
+  let childRunResolution: TraceSessionResolution | null = null;
   for (const dayKey of [yesterdayKey(), todayKey()]) {
     const logsDir = safePath(base, "logs");
     const file = safePath(logsDir, `session-index.${dayKey}.jsonl`);
@@ -115,16 +123,35 @@ export async function resolveTraceToSession(
             ? rec.sessionId
             : "";
       if (canonicalSessionKey.length === 0) continue;
-      if (rec.traceId === traceId) return canonicalSessionKey;
-      if (childRunSessionKey.length === 0) {
+      const indexedTraceId =
+        typeof rec.traceId === "string" && rec.traceId.length > 0
+          ? rec.traceId
+          : undefined;
+      if (indexedTraceId === traceId) {
+        return { sessionKey: canonicalSessionKey, traceId: indexedTraceId };
+      }
+      if (childRunResolution === null && indexedTraceId !== undefined) {
         const parsed = parseFormattedSessionKey(canonicalSessionKey);
         if (parsed?.channelId === `sub-agent:runtime:${traceId}`) {
-          childRunSessionKey = canonicalSessionKey;
+          childRunResolution = {
+            sessionKey: canonicalSessionKey,
+            traceId: indexedTraceId,
+          };
         }
       }
     }
   }
-  return childRunSessionKey;
+  return childRunResolution;
+}
+
+/** Resolve only the canonical session key for consumers whose reference is
+ * already the execution trace, preserving the established string interface. */
+export async function resolveTraceToSession(
+  dataDir: string,
+  traceId: string,
+  includeSynthetic = false,
+): Promise<string> {
+  return (await resolveTraceReference(dataDir, traceId, includeSynthetic))?.sessionKey ?? "";
 }
 
 /**
