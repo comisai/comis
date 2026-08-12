@@ -340,3 +340,27 @@ describe("AgentToAgentConfigSchema.steerInject (gated-off by default)", () => {
     expect(registrySrc).not.toMatch(/steerInject/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AgentToAgentConfigSchema.subAgentMaxSteps — the sub-agent step ceiling.
+// ---------------------------------------------------------------------------
+describe("AgentToAgentConfigSchema.subAgentMaxSteps", () => {
+  // The previous default of 50 could not carry a research-style delegation: a
+  // live run spent 18 web_search + 21 web_fetch calls, hit the ceiling at step
+  // 51, and returned nothing after $1.15 and 1.1M tokens. A spawn's own
+  // `max_steps` is clamped to this value, so this schema default is the only
+  // thing that sets the reachable ceiling for a default deployment.
+  it("defaults to a ceiling that can carry a multi-source research delegation", () => {
+    const result = AgentToAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.subAgentMaxSteps).toBe(300);
+  });
+
+  it("still accepts an explicit operator value in either direction", () => {
+    for (const value of [25, 1000]) {
+      const result = AgentToAgentConfigSchema.safeParse({ subAgentMaxSteps: value });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.subAgentMaxSteps).toBe(value);
+    }
+  });
+});
