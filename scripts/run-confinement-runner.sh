@@ -12,7 +12,7 @@ readonly codex_auth_file="${COMIS_CODEX_AUTH_FILE:-${CODEX_HOME:-${HOME}/.codex}
 readonly runner_image="${COMIS_CONFINEMENT_IMAGE:-comis-stage4-confinement:node22-go1.26.5-codex0.147.0}"
 readonly mode="${1:-spike}"
 
-if [[ ! -f "${runner_root}/Dockerfile" || ! -x "${runner_root}/run-spike-gate.sh" || ! -x "${runner_root}/run-join-gate.sh" || ! -x "${runner_root}/run-e0-journey.sh" ]]; then
+if [[ ! -f "${runner_root}/Dockerfile" || ! -x "${runner_root}/run-spike-gate.sh" || ! -x "${runner_root}/run-join-gate.sh" || ! -x "${runner_root}/run-e0-mechanics-gate.sh" || ! -x "${runner_root}/run-e0-journey.sh" ]]; then
   echo "confinement runner files are incomplete or not executable" >&2
   exit 1
 fi
@@ -20,14 +20,14 @@ if ! git -C "${dev_crew_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; 
   echo "COMIS_DEV_CREW_ROOT must name the committed companion checkout" >&2
   exit 1
 fi
-if [[ ! -f "${codex_auth_file}" ]]; then
+if [[ "${mode}" =~ ^(join|observe|shell)$ && ! -f "${codex_auth_file}" ]]; then
   echo "Codex authentication file is unavailable" >&2
   exit 1
 fi
 case "${mode}" in
-  spike | join | journey | shell) ;;
+  spike | join | mechanics | observe | shell) ;;
   *)
-    echo "usage: $0 [spike|join|journey|shell]" >&2
+    echo "usage: $0 [spike|join|mechanics|observe|shell]" >&2
     exit 2
     ;;
 esac
@@ -55,7 +55,11 @@ docker_args=(
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g
   --mount "type=bind,source=${comis_root},target=/workspace/comis"
   --mount "type=bind,source=${dev_crew_root},target=/workspace/comis-dev-crew"
-  --mount "type=bind,source=${codex_auth_file},target=/home/comis/.codex/auth.json,readonly"
+)
+if [[ "${mode}" =~ ^(join|observe|shell)$ ]]; then
+  docker_args+=(--mount "type=bind,source=${codex_auth_file},target=/home/comis/.codex/auth.json,readonly")
+fi
+docker_args+=(
   --mount type=volume,source=comis-confinement-runner,target=/runner
   --mount type=volume,source=comis-confinement-go-mod,target=/home/comis/go/pkg/mod
   --mount type=volume,source=comis-confinement-go-build,target=/home/comis/.cache/go-build
@@ -69,7 +73,10 @@ fi
 if [[ "${mode}" == "join" ]]; then
   exec docker "${docker_args[@]}" /bin/bash /workspace/comis/test/confinement-runner/run-join-gate.sh
 fi
-if [[ "${mode}" == "journey" ]]; then
+if [[ "${mode}" == "mechanics" ]]; then
+  exec docker "${docker_args[@]}" /bin/bash /workspace/comis/test/confinement-runner/run-e0-mechanics-gate.sh
+fi
+if [[ "${mode}" == "observe" ]]; then
   exec docker "${docker_args[@]}" /bin/bash /workspace/comis/test/confinement-runner/run-e0-journey.sh
 fi
 exec docker "${docker_args[@]}" /bin/bash /workspace/comis/test/confinement-runner/run-spike-gate.sh

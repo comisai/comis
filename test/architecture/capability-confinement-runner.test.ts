@@ -77,7 +77,7 @@ describe("capability-service Linux confinement runner", () => {
     const joinGate = source(joinGatePath);
 
     expect(runner).toMatch(/spike \| join \| mechanics \| observe \| shell/u);
-    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="519ead5dab99c562379810288fadfec81521b38c"');
+    expect(joinGate).toContain('readonly DEV_CREW_COMMIT="af5af3e2f76e900e9ee1aeb56933c0b702e30b2a"');
     expect(joinGate).toContain('git -C "${DEV_CREW_SOURCE}" archive "${DEV_CREW_COMMIT}"');
     expect(joinGate).toContain("COMIS_LIVE=1");
     expect(joinGate).toContain("wave4-join.test.ts");
@@ -96,10 +96,12 @@ describe("capability-service Linux confinement runner", () => {
     expect(mechanicsGate).toContain("E0_MECHANICS_GATE_PASS");
     expect(mechanicsGate).not.toContain("COMIS_E0_FULL");
     expect(mechanicsGate).not.toContain("COMIS_E0_JOURNEY");
+    expect(mechanicsGate).not.toContain("CODEX_HOME");
     expect(scenario).toContain("wave4-join.test.js");
     expect(scenario).toContain('workerProfileId: "fixture-worker"');
     expect(scenario).toContain('"--fixture-worker"');
     expect(scenario).toContain('"--fixture-artifact", "report.md"');
+    expect(scenario).not.toContain('tool: "terminal_session_create"');
     expect(scenario).toContain("RESTART_DAEMON_AND_SERVICE_MID_FLIGHT");
     expect(scenario).toContain("FORGE_TRUTH_HELD_BEFORE_RELEASE");
     expect(scenario).toContain("EXACTLY_ONCE_SHIP_AND_SCOUT_DELIVERY");

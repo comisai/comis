@@ -8,19 +8,19 @@ readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly JOURNEY_ROOT="${RUNNER_ROOT}/e0-journey"
 readonly DEV_CREW_COPY="${JOURNEY_ROOT}/go-source"
 readonly DEV_CREW_BIN="${JOURNEY_ROOT}/bin"
-readonly DEV_CREW_COMMIT="519ead5dab99c562379810288fadfec81521b38c"
+readonly DEV_CREW_COMMIT="af5af3e2f76e900e9ee1aeb56933c0b702e30b2a"
 readonly LIVE_TEST=test/live/scenarios/capability-service/e0-journey.test.ts
 
 if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
-  echo "the E0 journey requires an unprivileged Linux runner" >&2
+  echo "the E0 real-Codex journey observation requires an unprivileged Linux runner" >&2
   exit 1
 fi
 if [[ "$(git -C "${DEV_CREW_SOURCE}" rev-parse HEAD)" != "${DEV_CREW_COMMIT}" ]]; then
-  echo "the companion checkout is not at the reviewed E0 commit" >&2
+  echo "the companion checkout is not at the reviewed E0 observation commit" >&2
   exit 1
 fi
 if [[ -n "$(git -C "${DEV_CREW_SOURCE}" status --porcelain)" ]]; then
-  echo "the companion checkout must be clean before the E0 journey" >&2
+  echo "the companion checkout must be clean before the E0 observation" >&2
   exit 1
 fi
 if [[ ! -r "${CODEX_HOME}/auth.json" || -w "${CODEX_HOME}/auth.json" ]]; then
@@ -56,12 +56,11 @@ pnpm install --frozen-lockfile --store-dir "${RUNNER_ROOT}/pnpm-store"
 pnpm clean
 pnpm build
 
-echo "Running current E0 composition JOIN against ${DEV_CREW_COMMIT}"
+echo "Running non-gating real-Codex E0 journey observation against ${DEV_CREW_COMMIT}"
 COMIS_LIVE=1 \
-COMIS_E0_JOURNEY=1 \
-COMIS_E0_FULL=1 \
+COMIS_E0_OBSERVE=1 \
 COMIS_DEV_CREW_COMMIT="${DEV_CREW_COMMIT}" \
 COMIS_DEV_CREW_BIN_DIR="${DEV_CREW_BIN}" \
 pnpm exec vitest run --config test/live/vitest.config.ts "${LIVE_TEST}" --reporter=verbose --retry=0
 
-echo "E0_JOURNEY_GATE_PASS"
+echo "E0_CODEX_JOURNEY_OBSERVATION_COMPLETE"

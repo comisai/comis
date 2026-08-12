@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-/** Full live E0 custody journey using the current installed Go composition. */
+/** Non-gating real-Codex E0 journey observation using the installed Go composition. */
 import { execFile, execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
@@ -48,7 +48,7 @@ const E0_TOKEN = "e0-reviewed";
 const E0_PROFILE = "e0-live";
 const E0_DECISION_ANSWER = "Proceed with the bounded developer intervention.";
 const isFullJourney = process.env["COMIS_LIVE"] === "1"
-  && process.env["COMIS_E0_FULL"] === "1"
+  && process.env["COMIS_E0_OBSERVE"] === "1"
   && process.platform === "linux";
 
 interface ToolStep {
@@ -537,7 +537,7 @@ async function waitForInstalledService(
   }
 }
 
-describe.skipIf(!isFullJourney)("complete E0 real-worker custody journey", () => {
+describe.skipIf(!isFullJourney)("non-gating E0 real-worker custody journey observation", () => {
   it("delivers ship and scout work through restart, intervention, and fail-closed cleanup", async () => {
     const binaryRoot = process.env["COMIS_DEV_CREW_BIN_DIR"];
     if (binaryRoot === undefined) throw new Error("COMIS_DEV_CREW_BIN_DIR is required");

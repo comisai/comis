@@ -27,7 +27,7 @@ import { getFreePort } from "../../../support/free-port.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
 const REVIEWED_GO_COMMIT = process.env["COMIS_DEV_CREW_COMMIT"]
-  ?? "1521c4445dca6eb6e26548dc5f8f6646796b2d01";
+  ?? "af5af3e2f76e900e9ee1aeb56933c0b702e30b2a";
 export const SERVICE_INSTANCE_ID = "service-instance-wave4-join";
 export const MCP_SERVER_NAME = "devcrew";
 export const CONTROL_SECRET_NAME = "WAVE4_CONTROL_BEARER";
@@ -341,6 +341,7 @@ export function startInstalledService(input: {
   readonly candidateConfig?: string;
   readonly launcher?: string;
   readonly terminalAllowEntryId?: string;
+  readonly additionalArguments?: readonly string[];
 }): RunningService {
   mkdirSync(dirname(input.database), { recursive: true, mode: 0o700 });
   mkdirSync(input.runtimeRoot, { recursive: true, mode: 0o700 });
@@ -372,6 +373,7 @@ export function startInstalledService(input: {
   if (input.candidateConfig !== undefined) {
     arguments_.push("--candidate-config", input.candidateConfig);
   }
+  arguments_.push(...(input.additionalArguments ?? []));
   const child = spawn(input.binary, arguments_, { stdio: ["ignore", "ignore", "pipe"] });
   const stderr: Buffer[] = [];
   child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
