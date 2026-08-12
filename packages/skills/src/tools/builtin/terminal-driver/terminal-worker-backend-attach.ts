@@ -113,17 +113,39 @@ export function appendRing(state: SessionState, chunk: string): void {
 const TMUX_TEARDOWN_MARKER = "\u001b[1;0r";
 
 /** Preserve the final worker screen while retaining tmux's attached-client teardown bytes in the raw ring. */
-function appendTmuxRing(state: SessionState, chunk: string): void {
-  state.ring += chunk;
-  if (state.tmuxTeardownSeen !== true) {
-    const teardownAt = chunk.lastIndexOf(TMUX_TEARDOWN_MARKER);
-    const workerOutput = teardownAt < 0 ? chunk : chunk.slice(0, teardownAt);
-    if (teardownAt >= 0) state.tmuxTeardownSeen = true;
-    if (workerOutput !== "") {
-      state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(workerOutput));
-    }
-  }
-  for (const cb of state.ringListeners) cb();
+function createTmuxRingAppender(state: SessionState): { append(chunk: string): void; flush(): void } {
+  let pendingMarkerPrefix = "";
+  const writeWorkerOutput = (output: string): void => {
+    if (output === "") return;
+    state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(output));
+  };
+  return {
+    append(chunk: string): void {
+      state.ring += chunk;
+      if (state.tmuxTeardownSeen !== true) {
+        const candidate = pendingMarkerPrefix + chunk;
+        const teardownAt = candidate.lastIndexOf(TMUX_TEARDOWN_MARKER);
+        if (teardownAt >= 0) {
+          pendingMarkerPrefix = "";
+          state.tmuxTeardownSeen = true;
+          writeWorkerOutput(candidate.slice(0, teardownAt));
+        } else {
+          let retainedLength = Math.min(candidate.length, TMUX_TEARDOWN_MARKER.length - 1);
+          while (retainedLength > 0 && !TMUX_TEARDOWN_MARKER.startsWith(candidate.slice(-retainedLength))) {
+            retainedLength -= 1;
+          }
+          const outputLength = candidate.length - retainedLength;
+          writeWorkerOutput(candidate.slice(0, outputLength));
+          pendingMarkerPrefix = candidate.slice(outputLength);
+        }
+      }
+      for (const cb of state.ringListeners) cb();
+    },
+    flush(): void {
+      if (state.tmuxTeardownSeen !== true) writeWorkerOutput(pendingMarkerPrefix);
+      pendingMarkerPrefix = "";
+    },
+  };
 }
 
 /**
@@ -239,8 +261,10 @@ export function attachBackend(args: AttachBackendArgs): boolean {
     if (loadTmux === undefined) return false; // cannot re-attach without the tmux backend.
     const handle = loadTmux.reattach({ sessionId, cols, rows, env: plan.env, tmuxSocket });
     if (handle === undefined) return false; // the tmux session is gone — honest death.
-    handle.onData((d) => appendTmuxRing(state, d));
+    const ring = createTmuxRingAppender(state);
+    handle.onData((d) => ring.append(d));
     handle.onExit((e) => {
+      ring.flush();
       markExited(state, logger, e?.exitCode);
     });
     state.pty = handle;
@@ -271,8 +295,10 @@ export function attachBackend(args: AttachBackendArgs): boolean {
       rows,
       env: plan.env,
     });
-    handle.onData((d) => appendTmuxRing(state, d));
+    const ring = createTmuxRingAppender(state);
+    handle.onData((d) => ring.append(d));
     handle.onExit((e) => {
+      ring.flush();
       markExited(state, logger, e?.exitCode);
     });
     state.pty = handle;
