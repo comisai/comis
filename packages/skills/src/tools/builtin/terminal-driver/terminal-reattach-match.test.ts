@@ -66,6 +66,7 @@ function makeDescriptor(overrides: Partial<SessionDescriptor> = {}): SessionDesc
       filesystem: "workspace",
       network: "none",
       credentialPaths: [],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     },
     cols: 80,
@@ -119,6 +120,7 @@ describe("terminal-reattach-match — reattachDecision (the re-attach decision, 
         network: "listed-hosts",
         hosts: ["api.internal"],
         credentialPaths: ["~/.codex"],
+        ephemeralWritablePaths: [],
         uid: "dedicated",
       },
     });
@@ -211,6 +213,7 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
         filesystem: "home",
         network: "full",
         credentialPaths: ["~/.gemini"],
+        ephemeralWritablePaths: [],
         uid: "daemon",
       },
       cols: 120,
@@ -294,6 +297,7 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
         filesystem: "listed-paths",
         network: "listed-hosts",
         credentialPaths: ["~/.aws/credentials"],
+        ephemeralWritablePaths: [],
         uid: "dedicated",
         paths: ["/work/repo", "/work/cache"],
         hosts: ["api.example.com", "registry.example.com"],
@@ -309,12 +313,12 @@ describe("terminal-reattach-match — serialize/deserialize round-trip (the dura
   it("rejects a scope whose paths or hosts array carries a non-string element (corrupt-skip — the identity must be well-typed)", () => {
     const badPaths = {
       ...makeDescriptor(),
-      scope: { filesystem: "listed-paths", network: "none", credentialPaths: [], uid: "dedicated", paths: ["/ok", 42 as unknown as string] },
+      scope: { filesystem: "listed-paths", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated", paths: ["/ok", 42 as unknown as string] },
     };
     expect(deserializeDescriptor(badPaths)).toBeUndefined();
     const badHosts = {
       ...makeDescriptor(),
-      scope: { filesystem: "workspace", network: "listed-hosts", credentialPaths: [], uid: "dedicated", hosts: ["ok.example.com", 7 as unknown as string] },
+      scope: { filesystem: "workspace", network: "listed-hosts", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated", hosts: ["ok.example.com", 7 as unknown as string] },
     };
     expect(deserializeDescriptor(badHosts)).toBeUndefined();
   });

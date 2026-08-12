@@ -654,6 +654,7 @@ describe("createTerminalSessionRegistry — scope rides the create frame", () =>
       network: "listed-hosts",
       hosts: ["api.example.com"],
       credentialPaths: ["~/.claude"],
+      ephemeralWritablePaths: [],
       uid: "dedicated",
     };
 
@@ -775,7 +776,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);
@@ -797,7 +798,7 @@ describe("createTerminalSessionRegistry — bwrapPath rides the create frame (ja
       argv: [],
       cols: 80,
       rows: 24,
-      scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "dedicated" },
+      scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "dedicated" },
       workspace: "/work/agent-1",
       cwd: "/work/agent-1",
     }, OWNER);

@@ -89,6 +89,7 @@ const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
   credentialPaths: [],
+  ephemeralWritablePaths: [],
   uid: "dedicated",
 };
 
@@ -293,7 +294,7 @@ describe.skipIf(!isLinux() || !distBuilt)(
             ],
             cols: 100,
             rows: 30,
-            scope: { filesystem: "workspace", network: "none", credentialPaths: [], uid: "daemon" },
+            scope: { filesystem: "workspace", network: "none", credentialPaths: [], ephemeralWritablePaths: [], uid: "daemon" },
             workspace,
             cwd: workspace,
             managedBinding: {

@@ -27,6 +27,7 @@ function makeScope(overrides: Partial<TerminalScope> = {}): TerminalScope {
     filesystem: "workspace",
     network: "none",
     credentialPaths: [],
+    ephemeralWritablePaths: [],
     uid: "dedicated",
     ...overrides,
   };
@@ -218,27 +219,23 @@ describe("buildSpawnPlan — daemon secrets MUST NOT enter the jailed CLI env (T
   });
 });
 
-describe("buildSpawnPlan — claude session-env carve-out (the actual EROFS fix)", () => {
-  // Real-VPS 2026-06-17: claude's Bash tool / SessionStart hook EROFSes on `mkdir ~/.claude/
-  // session-env/<id>` because claude's OWN bash sandbox remounts $HOME read-only IN-PLACE. The
-  // CLAUDE_CODE_BUBBLEWRAP var does NOT suppress that remount in the prod seccomp'd daemon (it only
-  // appeared to on a non-seccomp socket). A writable --tmpfs carve-out at <home>/.claude/session-env
-  // is a SEPARATE sub-mount that survives claude's in-place $HOME remount → the mkdir lands on a rw
-  // tmpfs → no EROFS. Live-proven on the seccomp'd daemon under --permission-mode bypassPermissions
-  // (`● Bash(echo …) ⎿ CARVE_BASH_OK`). claude's creds/config under ~/.claude stay intact (only the
-  // transient session-env subdir becomes an ephemeral tmpfs).
-  it("emits --tmpfs <home>/.claude/session-env (a writable sub-mount that survives claude's $HOME-ro remount)", async () => {
+describe("buildSpawnPlan — operator-declared ephemeral writable paths", () => {
+  it("does not inject a platform-specific writable path into an unrelated terminal jail", async () => {
     const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
-    expect(plan.argv.join(" ")).toContain("--tmpfs /home/u/.claude/session-env");
+    expect(plan.argv.join(" ")).not.toContain("--tmpfs /home/u/.claude/session-env");
   });
 
-  it("places the session-env carve-out BEFORE the ~/.comis mask (the mask + workspace re-bind stay the last mounts)", async () => {
-    const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
+  it("materializes an explicit ephemeral path before the data-directory mask", async () => {
+    const scope = {
+      ...makeScope(),
+      ephemeralWritablePaths: ["~/.agent-state/runtime"],
+    } as unknown as TerminalScope;
+    const plan = await buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" });
     const s = plan.argv.join(" ");
-    const seIdx = s.indexOf("--tmpfs /home/u/.claude/session-env");
+    const ephemeralIdx = s.indexOf("--tmpfs /home/u/.agent-state/runtime");
     const comisIdx = s.indexOf("--tmpfs /home/u/.comis");
-    expect(seIdx).toBeGreaterThanOrEqual(0);
-    expect(comisIdx).toBeGreaterThan(seIdx); // the secret-masking ~/.comis tmpfs comes AFTER → stays last
+    expect(ephemeralIdx).toBeGreaterThanOrEqual(0);
+    expect(comisIdx).toBeGreaterThan(ephemeralIdx);
   });
 });
 

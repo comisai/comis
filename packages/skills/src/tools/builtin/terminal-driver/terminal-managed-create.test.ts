@@ -10,11 +10,13 @@ describe("managed terminal scope narrowing", () => {
       filesystem: "home",
       network: "full",
       credentialPaths: ["/home/comis/.codex/auth.json"],
+      ephemeralWritablePaths: ["/home/comis/.codex/runtime"],
       uid: "daemon",
     })).toEqual({
       filesystem: "workspace",
       network: "full",
       credentialPaths: ["/home/comis/.codex/auth.json"],
+      ephemeralWritablePaths: ["/home/comis/.codex/runtime"],
       uid: "daemon",
     });
   });
