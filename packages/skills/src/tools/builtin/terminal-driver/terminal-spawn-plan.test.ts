@@ -177,6 +177,17 @@ describe("buildSpawnPlan — execution attachment confinement", () => {
       `/run/comis/attachments/${attachment.targetName}`,
     )).toBe(true);
   });
+
+  it("publishes the sole protected attachment identity to the jailed child", async () => {
+    const plan = await buildSpawnPlan(makeInput({ executionAttachments: [attachment] }), {
+      bwrapPath: "/usr/bin/bwrap",
+    });
+
+    expect(plan.env).toMatchObject({
+      COMIS_EXECUTION_ATTACHMENT: `/run/comis/attachments/${attachment.targetName}`,
+      COMIS_EXECUTION_ATTACHMENT_TARGET_NAME: attachment.targetName,
+    });
+  });
 });
 
 describe("buildSpawnPlan — sandbox signal (a driven CLI must not nest its own broken sandbox)", () => {
