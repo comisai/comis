@@ -273,6 +273,16 @@ async function routeManagedAttentionReply(
     return true;
   }
 
+  if (bound.value.kind === "not_applicable") {
+    deps.logger.info({
+      step: "managed-attention-reply",
+      agentId,
+      outcome: "external_run_mismatch",
+      durationMs: Math.max(0, systemNowMs() - startedAtMs),
+    }, "Inbound text names a different managed run and remains ordinary chat");
+    return false;
+  }
+
   if (bound.value.reason === "none_open" && parsed.attentionId === undefined) {
     deps.logger.debug({
       step: "managed-attention-reply",

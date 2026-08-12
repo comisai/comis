@@ -207,6 +207,7 @@ export interface ManagedAttentionReplyInput {
 
 export type ManagedAttentionReplyBindingOutcome =
   | { readonly kind: "bound"; readonly attention: ManagedRunAttentionRecord }
+  | { readonly kind: "not_applicable" }
   | {
     readonly kind: "clarification_required";
     readonly reason: "none_open" | "ambiguous" | "handle_not_found" | "already_answered";

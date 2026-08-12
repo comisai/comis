@@ -81,6 +81,12 @@ Once started, the daemon runs continuously in the background. It processes messa
 as they arrive, runs health checks at regular intervals (every 5 minutes by default),
 and collects system metrics every 30 seconds.
 
+When a linked capability service has an open attention request, a bare reply binds
+automatically only if its managed-run handle is absent or identifies the run that owns
+the request. Text that names another managed run continues through normal message
+processing. A matching run handle can disambiguate attention across concurrent runs;
+use `/attention <ID> <response>` when one run has multiple open requests.
+
 You do not need to interact with the daemon while it is running -- it handles
 everything automatically. To check on it, view the logs or visit the
 [Web Dashboard](/operations/web-ui).

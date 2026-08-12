@@ -11,6 +11,8 @@ import type {
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
+const externalRunTokenPattern = /(?<![A-Za-z0-9._~-])[A-Za-z0-9][A-Za-z0-9._~-]{0,255}(?![A-Za-z0-9._~-])/gu;
+
 async function invoke<T>(operation: () => Promise<Result<T, Error>>): Promise<Result<T, Error>> {
   const invoked = tryCatch(operation);
   if (!invoked.ok) return err(invoked.error);
@@ -32,6 +34,14 @@ function contentScope(attention: ManagedRunAttentionRecord) {
     agentId: attention.agentId,
     managedRunId: attention.managedRunId,
   };
+}
+
+function referencedRunDigests(text: string): ReadonlySet<string> {
+  const digests = new Set<string>();
+  for (const token of text.match(externalRunTokenPattern) ?? []) {
+    digests.add(createHash("sha256").update(token, "utf8").digest("hex"));
+  }
+  return digests;
 }
 
 /** Bind private reply content only after exact durable attention selection. */
@@ -62,10 +72,29 @@ export function createManagedAttentionReplyBinder(deps: {
         selected = exact.value;
       } else if (open.length === 0) {
         return ok({ kind: "clarification_required", reason: "none_open", candidateAttentionIds });
-      } else if (open.length !== 1) {
-        return ok({ kind: "clarification_required", reason: "ambiguous", candidateAttentionIds });
       } else {
-        selected = open[0];
+        const referencedDigests = referencedRunDigests(input.text);
+        const scopedRuns = await invoke(() => deps.store.listScoped({ scope, limit: 10_000 }));
+        if (!scopedRuns.ok) return scopedRuns;
+        const referencedRunIds = new Set(scopedRuns.value
+          .filter((run) => referencedDigests.has(run.externalRunRefDigest))
+          .map((run) => run.managedRunId));
+        if (referencedRunIds.size === 1) {
+          const matching = open.filter((candidate) => referencedRunIds.has(candidate.managedRunId));
+          if (matching.length === 0) return ok({ kind: "not_applicable" });
+          if (matching.length === 1) selected = matching[0];
+          else {
+            return ok({
+              kind: "clarification_required",
+              reason: "ambiguous",
+              candidateAttentionIds: matching.map((candidate) => candidate.attentionId).sort(),
+            });
+          }
+        } else if (referencedRunIds.size > 1 || open.length !== 1) {
+          return ok({ kind: "clarification_required", reason: "ambiguous", candidateAttentionIds });
+        } else {
+          selected = open[0];
+        }
       }
       if (selected === undefined) return err(new Error("managed-run attention selection failed closed"));
 
