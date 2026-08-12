@@ -41,7 +41,7 @@ if [[ -f "${dev_crew_root}/.git" ]]; then
   git clone --local --no-hardlinks --no-checkout "${dev_crew_root}" "${dev_crew_mount_root}" >/dev/null
   git -C "${dev_crew_mount_root}" checkout --detach "${dev_crew_revision}" >/dev/null
 fi
-if [[ "${mode}" =~ ^(join|observe|shell)$ && ! -f "${codex_auth_file}" ]]; then
+if [[ "${mode}" =~ ^(spike|join|observe|shell)$ && ! -f "${codex_auth_file}" ]]; then
   echo "Codex authentication file is unavailable" >&2
   exit 1
 fi
@@ -77,7 +77,7 @@ docker_args=(
   --mount "type=bind,source=${comis_root},target=/workspace/comis"
   --mount "type=bind,source=${dev_crew_mount_root},target=/workspace/comis-dev-crew"
 )
-if [[ "${mode}" =~ ^(join|observe|shell)$ ]]; then
+if [[ "${mode}" =~ ^(spike|join|observe|shell)$ ]]; then
   docker_args+=(--mount "type=bind,source=${codex_auth_file},target=/home/comis/.codex/auth.json,readonly")
 fi
 docker_args+=(
