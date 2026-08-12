@@ -26,8 +26,15 @@
  */
 
 import { describe, it, expect } from "vitest";
+import net from "node:net";
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { dropPrivileges, buildRelayChildEnv, relayChildExitCode, type RelayInitAudit } from "./egress-relay-init.js";
+import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 
 describe("egress-relay-init dropPrivileges — best-effort under the unmapped userns-root", () => {
   it("does NOT throw when setuid throws the not-mapped EPERM/EINVAL (the VPS root-worker reality)", () => {
@@ -150,4 +157,49 @@ describe("egress-relay-init child launch diagnostics", () => {
       }),
     ]);
   });
+
+  it("keeps the relay event loop live while the driven child uses the TCP to Unix bridge", async () => {
+    const root = mkdtempSync(join(tmpdir(), "relay-child-runtime-"));
+    const socketPath = join(root, "upstream.sock");
+    const upstream = net.createServer((socket) => socket.pipe(socket));
+    await new Promise<void>((resolve, reject) => {
+      upstream.once("error", reject);
+      upstream.listen(socketPath, resolve);
+    });
+    const reservation = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      reservation.once("error", reject);
+      reservation.listen(0, "127.0.0.1", resolve);
+    });
+    const address = reservation.address();
+    if (address === null || typeof address === "string") throw new Error("loopback port reservation failed");
+    const relayPort = address.port;
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
+    const childCode = [
+      'const net = require("node:net")',
+      `const socket = net.connect(${relayPort}, "127.0.0.1", () => socket.write("PING"))`,
+      'socket.on("data", data => process.exit(data.toString() === "PING" ? 0 : 2))',
+      'socket.on("error", () => process.exit(3))',
+      'setTimeout(() => process.exit(4), 2000)',
+    ].join(";");
+
+    try {
+      const result = await new Promise<{ status: number | null; stderr: string }>((resolve) => {
+        const child = spawn(process.execPath, [
+          fileURLToPath(RELAY_INIT_SCRIPT_URL),
+          "--socket", socketPath,
+          "--port", String(relayPort),
+          "--", process.execPath, "-e", childCode,
+        ], { stdio: ["ignore", "ignore", "pipe"] });
+        let stderr = "";
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+        child.once("close", (status) => resolve({ status, stderr }));
+      });
+      expect(result, result.stderr).toMatchObject({ status: 0 });
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
