@@ -22,6 +22,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi } from "vitest";
+import { parseSkillManifest } from "@comis/skills";
 import {
   defaultSeedBundledSkillsDeps,
   seedBundledSkills,
@@ -136,6 +137,29 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(manifest).toMatch(/action:\s*["'`]import["'`]/iu);
     expect(manifest).toMatch(/scope:\s*["'`]local["'`]/iu);
     expect(manifest).not.toMatch(/copies it to ~\/\.comis\/skills/iu);
+  });
+
+  // The machine-consumed half of this manifest is what the runtime acts on: the
+  // registry parses the frontmatter and the request-nudge enforces the declared
+  // web-evidence floors. Assert it through the real parser as typed values —
+  // the prose body is a prompt, and its wording proves nothing here.
+  it("declares deep-research web-evidence floors the skill parser accepts", () => {
+    const repositoryRoot = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../..",
+    );
+    const manifest = readFileSync(
+      resolve(repositoryRoot, "skills/deep-research/SKILL.md"),
+      "utf8",
+    );
+
+    const parsed = parseSkillManifest(manifest);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.name).toBe("deep-research");
+    expect(parsed.value.comis?.["min-distinct-web-fetch-urls"]).toBe(3);
+    expect(parsed.value.comis?.["min-distinct-web-search-queries"]).toBe(3);
   });
 
   it("downloads a generated chart into an ESM workspace without host renderers", () => {

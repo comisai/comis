@@ -48,7 +48,10 @@ import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability, emitRecallDegraded } from "./recall-observability.js";
 import { applyProvenanceDownweighting } from "./recall-provenance.js";
-import { buildRelevanceQuery } from "./relevance-scorer.js";
+import {
+  buildRelevanceQuery,
+  isOpaquePayloadWithoutRetrievalTerms,
+} from "./relevance-scorer.js";
 import { partitionRecentTailRecall } from "./recent-tail-recall-filter.js";
 import { gateLanes, resolveEffectiveBaseFloor, logPrefilterDrops, passesBaseFloor, type PrefilterAccumulator } from "./recall-security-prefilter.js";
 import {
@@ -90,6 +93,25 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // wrapped non-fatal at the end so observability NEVER fails the recall hot path.
       const recallStart = deps.clock.now();
       const degradations: RecallDegradation[] = [];
+
+      // Prior turns may disambiguate a terse lexical follow-up, but they cannot
+      // supply intent for a current request that contains only an opaque blob.
+      // Without this gate, an oversized single token contributes no meaningful
+      // query terms while older task prose makes the combined query appear
+      // healthy, allowing unrelated memory to become the only actionable text
+      // in the model request.
+      if (isOpaquePayloadWithoutRetrievalTerms(query)) {
+        deps.logger.debug(
+          {
+            agentId,
+            step: "memory-recall-query",
+            oversizedLexicalToken: true,
+            historyUsed: false,
+          },
+          "RAG recall skipped for request containing an oversized lexical token",
+        );
+        return ok([]);
+      }
 
       // 0. PINNED-FIRST LANE — fetch pinned entries for this scope BEFORE fused search.
       //    DEFAULT-OFF BYTE-IDENTITY: with pinned.enabled=false, no pinnedStore, or no

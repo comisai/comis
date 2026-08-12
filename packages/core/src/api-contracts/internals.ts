@@ -36,6 +36,7 @@ export const INTERNAL_FIELD_NAMES = [
   "_callerConversationScope",
   "_callerMetadata",
   "_callerSessionKey",
+  "_callerTurnScope",
   // The trusted in-process caller's resolved orchestration capabilities.
   // Injected by createAgentRpcCall / the capability lease endpoint;
   // stripped from external WS/REST callers so caps cannot be forged.

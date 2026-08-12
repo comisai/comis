@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
 import {
+  autoVoiceDeliveryActive,
   executeVoiceResponse,
   type VoiceResponsePipelineDeps,
   type VoiceResponseContext,
@@ -806,5 +807,54 @@ describe("executeVoiceResponse", () => {
 
     const errField = warnErrFor(deps.logger, "TTS synthesis failed");
     expect(errField).toBe("timeout after 30s");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// autoVoiceDeliveryActive
+// ---------------------------------------------------------------------------
+
+describe("autoVoiceDeliveryActive", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("asks the auto-TTS decision for a verdict that does not depend on the reply text", () => {
+    // Callers need this answer BEFORE the reply exists, so a mode that only
+    // speaks when the reply opts in must not be reported as unconditional.
+    const shouldAutoTts = vi.fn().mockReturnValue({ shouldSynthesize: true });
+    const deps = createMockDeps({ shouldAutoTts });
+
+    const active = autoVoiceDeliveryActive(deps, {
+      attachments: [{ type: "audio", isVoiceNote: true }],
+    }, "reply text");
+
+    expect(active).toBe(true);
+    expect(shouldAutoTts).toHaveBeenCalledWith(
+      {
+        autoMode: deps.ttsConfig.autoMode,
+        tagPattern: deps.ttsConfig.tagPattern,
+      },
+      { responseText: "reply text", hasInboundAudio: true, hasMediaUrl: false },
+    );
+  });
+
+  it("reports no inbound audio for a message that carries no voice note", () => {
+    const shouldAutoTts = vi.fn().mockReturnValue({ shouldSynthesize: false });
+    const deps = createMockDeps({ shouldAutoTts });
+
+    expect(autoVoiceDeliveryActive(
+      deps,
+      { attachments: [{ type: "image" }] },
+      "reply text",
+    )).toBe(false);
+    expect(autoVoiceDeliveryActive(deps, {}, "reply text")).toBe(false);
+    for (const call of shouldAutoTts.mock.calls) {
+      expect(call[1]).toEqual({
+        responseText: "reply text",
+        hasInboundAudio: false,
+        hasMediaUrl: false,
+      });
+    }
   });
 });

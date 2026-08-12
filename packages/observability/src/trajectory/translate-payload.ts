@@ -532,6 +532,12 @@ export function translatePayload(
         reason: payload.reason,
       };
 
+    case "request:clarification_required":
+      return {
+        reason: payload.reason,
+        inputChars: payload.inputChars,
+      };
+
     // ---- Execution control ----
     // agentId and sessionKey are envelope-only — stripped from data.
 

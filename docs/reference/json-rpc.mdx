@@ -777,6 +777,13 @@ Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for 
 
 `outcome.endReason` names the terminal cause. Three degradation causes are named individually rather than collapsing into a generic `error` (and drive `likelyRootCause`): **`context_exhausted`** (the context-window pre-flight guard aborted the run before the model could continue), **`output_starved`** (the final response was truncated at a length limit; the accompanying WARN's `hint` names the remedy that applies, because the cause splits three ways -- output that consumed the whole allowance is fixed by raising the agent's `maxTokens` or enabling `contextEngine.outputEscalation`; output that ended *below* the model's own ceiling (`recoverableLength: true` on the WARN) was truncated early under context pressure, which is fixed by reducing assembled context, and the SDK already compacted and retried that turn once; a turn that stopped at the cap having emitted nothing usually spent its whole output allowance on thinking), and **`timeout`** (the prompt-level stall budget or makespan ceiling killed the turn; `likelyRootCause` code `prompt_timeout` -- when the trajectory carries the enriched `execution.prompt_timeout` record the verdict is numbers-backed: the stall variant names the binding knob, e.g. `agents.<id>.promptTimeout.promptTimeoutMs`, with the configured budget and elapsed time, and the makespan variant names `agents.<id>.promptTimeout.stallCeilingMultiplier` for a streaming runaway; sessions whose trajectory lacks that record fall back to a generic knob suggestion). A tool-failure root cause still out-ranks them -- they explain the terminal state, not a tool crash. The same causes are aggregated deployment-wide by [`obs.system.health`](#obs-system-health)'s `degradedByCause`.
 
+An `outcome.endReason` of **`cancelled`** means the **caller** aborted the
+execution (a shutdown or queue-cancellation signal), not the runtime failing:
+like `success` it is a **clean** terminal, so it does not count toward the
+degraded rate or `degradedByCause` in
+[`obs.system.health`](#obs-system-health) and carries no `errorKind`. Do not
+read it as a `timeout`.
+
 An `outcome.endReason` of **`background_pending`** means the foreground turn
 deliberately ended after promoting work; the terminal user outcome belongs to
 the durable background completion and exact-origin delivery lifecycle.
@@ -797,12 +804,29 @@ have tripped -- the ceiling is the cause, the breaker its downstream symptom.
 
 The report may include content-free request-selection evidence:
 `requestRelevantToolNames` lists the bounded tool names selected for the turn;
-`requestRelevanceHistory` records `{ turnCount, charCount, saturated }` for the
-bounded prior-user-turn window; and `operatorPolicyToolProjections` records up
+`requestRelevanceHistory` records `{ turnCount, charCount, saturated, recallDisposition? }`
+for the bounded prior-user-turn window; and `operatorPolicyToolProjections` records up
 to 16 `{ toolName, sectionId, contentHash, projectedChars }` receipts for
 immutable operator-policy sections projected into selected tool schemas. These
 fields contain names, hashes, sizes, and counts only -- never policy or message
-bodies.
+bodies. `recallDisposition` states what the turn's memory recall did with that
+window: `search` (the normal path) or `skip_oversized_token` -- the current
+request carried an oversized opaque token and no retrieval terms of its own, so
+recall was skipped rather than letting older turns supply the query and inject
+unrelated memory. An oversized token made mostly of non-ASCII letters is read as
+possible space-free prose (the same open Unicode signal the input guard applies
+below), so a request written in a writing system that does not separate words
+still reports `search` and keeps its recall.
+
+A request that stopped **before** model dispatch to ask the user for an
+instruction carries a content-free **`requestClarification`** section --
+`{ reason: "opaque_payload_missing_instruction", inputChars }`. It means the
+inbound message was a large opaque payload with no task beside it (data, not a
+request), so the input guard answered with a clarification ask instead of
+running a model turn on it. A long token made mostly of non-ASCII letters is
+treated as possible space-free prose and admitted without relying on a closed
+locale or script list. The size only, never the payload. The section is absent
+for every ordinary turn.
 
 For `context_exhausted` sessions the report carries an optional **`contextBudget`** section -- the terminal per-LLM-call budget equation extracted from the trajectory's `context.budget` records (last record wins): `{ windowTokens, rawContextWindowTokens, windowCapSource, systemTokens, freshTailTokens, budgetedHistoryTokens, keptCount, assembledInputTokens, outputHeadroom, verdict, freshTailSteps?, freshTailStepsConfigured?, originatingRequestRetained?, freshTailTrimmedCount? }`. `freshTailSteps` / `freshTailStepsConfigured` are the **effective vs operator-configured** count of trailing conversation steps kept verbatim (`contextEngine.freshTailTurns`). The verbatim tail also reaches back to the store's persisted horizon, and residual trimming pins the current turn's originating request while discarding completed tool segments. `originatingRequestRetained` records the resulting coverage directly; only an explicit `false` produces the `fresh_tail_origin_lost` root-cause verdict, while a step-count clamp alone is not treated as evidence of loss. `windowCapSource` names what clamped the effective window below the model's configured `contextWindow`: the exact `contextEngine.budget.*` knob (`effectiveContextCapSmall` / `effectiveContextCapNano`), `served` (the Ollama-served `num_ctx` bound the window -- fix with `OLLAMA_CONTEXT_LENGTH=<configured> ollama serve` or a Modelfile `PARAMETER num_ctx`), `capabilityClass` (the operator's `providers.entries.<id>.capabilities.capabilityClass` pin bound the window -- pin a higher class or remove the pin; the `contextEngine.budget.*` caps do not move this bind), or `none`. `verdict` is the fit-check outcome (`fits` / `downshifted` / `exhausted`). When present, `likelyRootCause` is numbers-backed: it states the assembled-vs-window totals, the binding cap, the system+tools share of the window, and the kept-history count, and its suggested steps name the binding lever (the budget knob to raise, the Ollama serve knobs, or the `capabilityClass` pin) or recommend reducing the active tool surface when tool schemas dominate. The section is absent when the trajectory carries no `context.budget` records; the verdict then falls back to the generic wording.
 
@@ -829,7 +853,11 @@ For an **unattended coding-CLI drive** (a webhook/cron turn that opens a `claude
 
 When the session ran any [`orchestrate`](/agent-tools/orchestrate) scripts the report carries an optional **`orchestrate`** array — one content-free entry per run, reconstructed from the run's `orchestrate.run_summary` + per-run `capability.audited` trajectory records: `{ runId, leaseId?, outcome, durationMs, exitCode, failureClass?, toolCalls[], resultRefs: { count, bytes }, savings? }` (ids, closed enums, counts, and token **estimates** only — never the script body, stdout, tool args, or the stderr tail). `outcome` derives from `exitCode` (`0` → `success`); `failureClass` is a closed enum (`timeout` / `stdout_cap` / `nonzero_exit` / `spawn_fail` / `lease_absent`) present only on a failed run; each `toolCalls` entry (`{ tool, capability, decision, count }`) is attributed to the run by its **per-run child leaseId**, so an in-jail `decision: "deny"` groups under the run that attempted it, not the shared assembly lease that spans the session; `savings` (`{ estSavedTokens, savedRatio }`) is the measured token-savings estimate, present only when the run materialized ResultRefs. This drives a deterministic **`orchestrate_failed`** `likelyRootCause` verdict — it fires when any run's `outcome` is `failure` **or** any `toolCalls` entry is a `deny`, names the failed-of-total run count with the de-duplicated `failureClass` / `exitCode` / denied-capability sets, and (keyed on a signal absent from a non-autonomy session) never reorders the other verdicts. Note that `capability:audited` records the **authorization** decision only — an *allowed* tool call whose result then failed is not in that stream; the run-level `failureClass` + the failing tool's own bounded stderr tail cover that half. The daemon-wide savings roll-up is [`obs.system.health`](#obs-system-health)'s `orchestrate_efficiency` finding. The section is absent for sessions that ran no orchestrate scripts.
 
-Accepts ONE of `sessionKey` / `traceId` / `rootRunId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.system.health`](#obs-system-health) → `obs.explain` drill-down ref: pass the system report's `autonomy.worstRootRunId` to render that run's `spawnTree`. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report. There is **no by-job-id form**: a cron [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) skip opens no session, so a cron **job id** is not a valid input — read a job's skipped fires from [`cron.runs`](#cron-runs) instead.
+When the report was targeted at an [execution graph](/agents/execution-graphs) run (the `graphId` input below) it carries an optional **`graph`** section read from that run's terminal `graph-runs/<graphId>/_run-metadata.json`: `{ graphId, status, cancelReason?, sessionKey?, traceId?, announcementDelivery, startedAt?, completedAt?, durationMs, nodesTotal, nodesSucceeded, nodesFailed, nodesSkipped, nodesRetried, totalCostUsd?, totalTokens?, nodes[] }`, where `nodes` holds up to 20 `{ nodeId, status, durationMs, subAgentRunId, attemptsUsed }` entries. Ids, closed enums, counts, timing, and aggregate usage only — never a node label, task, output, or error body. `sessionKey` is the authenticated **caller** turn the graph was submitted from, so the surrounding report is the launching session's post-mortem rather than an unrelated one: "the graph finished — what did the user who asked for it actually get?" is one call.
+
+**`announcementDelivery`** is the terminal disposition of the graph's [aggregate completion announcement](/developer-guide/pipelines#graph-coordinator), recorded only after delivery settles so one record carries both the execution outcome and the outward one: `not-requested` (the run captured no announcement route), `unavailable` (a route existed but the governed announcement boundary was unwired, so nothing could be sent), `committed` (the channel returned a delivery receipt), `retained` (the send did not commit but the outward operation is durably retained and resumable — inspect it before any retry), or `failed` (the route or caller identity was invalid, or the send settled with no durable evidence). [`comis explain`](/reference/cli#comis-explain) prints it as `notification=<disposition>` on the `Graph:` line.
+
+Accepts ONE of `sessionKey` / `traceId` / `rootRunId` / `graphId` (at least one is required). A `traceId` *or* a `rootRunId` is canonicalized to its `sessionKey` first, so by-trace, by-session, and by-run produce the identical report. `rootRunId` is an autonomy run's id — the synthetic in-process `root-session-<sessionKey>` (resolved by a pure prefix-strip) or a real spawned/socket root (resolved by scanning the day-keyed session-index for the run's `capability.audited` record). It is the [`obs.system.health`](#obs-system-health) → `obs.explain` drill-down ref: pass the system report's `autonomy.worstRootRunId` to render that run's `spawnTree`. `graphId` is a terminal execution-graph run's id, canonicalized through the graph record's own `sessionKey` (else its `traceId`) to the caller session, and rendered with the `graph` section above. An unresolvable `rootRunId` (or `traceId`) yields the honest `session_not_found` marker naming the ref that missed — never a clean-looking empty report; an unresolvable `graphId` yields the sibling `graph_not_found` marker, which names the missing `graph-runs/<graphId>/_run-metadata.json` record and points at [`graph.runs`](#graph-runs) / [`graph.runDetail`](#graph-rundetail) to verify the id, or [`graph.status`](#graph-status) while the graph is still running and its terminal metadata is not yet written. There is **no by-job-id form**: a cron [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) skip opens no session, so a cron **job id** is not a valid input — read a job's skipped fires from [`cron.runs`](#cron-runs) instead.
 
 When a scheduled fire's wake-gate **woke** the model, the resulting session's report folds an optional content-free `cronWakeGate` fact — `{ jobId, wake, durationMs, toolCalls, estTurnsSaved }` (ids and counts only, never the gate's gathered finding or script). It is present only when the woke fire ran in a session the recorder had already opened; a **skipped** fire runs no model and reaches no report. The cross-job skip-rate / turns-saved rollup is on [`obs.system.health`](#obs-system-health)'s `cronWakeGate` block.
 
@@ -844,8 +872,8 @@ An optional `coverage` block reports READ-coverage -- whether the trajectory, ro
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` route plus admin trust. A gateway token needs both `rpc` and `admin` (or `*`); the handler rejects non-admin trust. |
-| **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` required. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
-| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
+| **Parameters** | `{ sessionKey?: string, traceId?: string, rootRunId?: string, graphId?: string, depth?: "summary" \| "full", includeSynthetic?: boolean }` -- at least one of `sessionKey` / `traceId` / `rootRunId` / `graphId` required. `rootRunId` is an autonomy run's id, canonicalized to its session before assembly (a `root-` synthetic root resolves by prefix-strip; a real spawned root by a session-index scan) and renders the run's `spawnTree`. `graphId` is a terminal execution-graph run's id, canonicalized to its caller session through the persisted run metadata and rendered with the `graph` section. `includeSynthetic` is optional; include synthetic/test-harness sessions, which are excluded by default. |
+| **Returns** | An `IncidentReport`: `{ schemaVersion, sessionKey, traceId, agentId, channel, outcome: { endReason, degraded, severity }, cost: { costUsd, totalTokens, tokenBasis?, cacheReadRatio }, timing: { durationMs, turnCount }, toolStats, failures[], breakerTimeline[], offloads[], requestRelevantToolNames?: string[], requestRelevanceHistory?: { turnCount, charCount, saturated, recallDisposition? }, requestClarification?: { reason, inputChars }, operatorPolicyToolProjections?: Array<{ toolName, sectionId, contentHash, projectedChars }>, contextBudget?, recall?, voice?, learning?, orchestrate?, graph?, cronWakeGate?: { jobId, wake, durationMs, toolCalls, estTurnsSaved }, summary, likelyRootCause, suggestedNextSteps[], truncations[], coverage? }` |
 
 <CodeGroup>
 ```json Request
@@ -2894,8 +2922,8 @@ Graph execution engine for multi-step agent pipelines (DAGs).
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ nodes: NodeDefinition[], edges: EdgeDefinition[] }` |
-| **Returns** | `{ graphId: string }` |
+| **Parameters** | `{ nodes: NodeDefinition[], label?: string, onFailure?: string, timeoutMs?: number, budget?: object }` -- dependencies come from each node's own `depends_on`, so there is no edge list to supply (an `edges` array is accepted for symmetry with [`graph.save`](#graph-save) but ignored here) |
+| **Returns** | `{ valid: true, nodeCount: number, executionOrder: string[], label?: string, warnings: ValidationIssue[], errors: ValidationIssue[], userVariables: string[] }` -- validation only: nothing runs and **no `graphId` is minted** (ids come from [`graph.execute`](#graph-execute)). `executionOrder` is the topologically sorted node ids, each `ValidationIssue` is `{ nodeId?, type, message, fix }`, and `userVariables` lists the `${VAR}` placeholders found in node tasks |
 
 Each `NodeDefinition` includes `node_id`, `task`, and optional fields: `depends_on`, `agent`, `model`, `timeout_ms`, `max_steps`, `barrier_mode`, `retries`, `type_id`, `type_config`, `context_mode`. When `type_id` is set, `type_config` is validated against the driver's config schema. See [Node Types](/developer-guide/pipelines#node-types) for available types.
 
@@ -2925,17 +2953,32 @@ The `Expected:` suffix is generated by `schemaToExample()` and shows each field'
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ graphId: string, inputs?: Record<string, unknown> }` |
-| **Returns** | Execution result with per-node outputs |
+| **Parameters** | `{ nodes: NodeDefinition[], label?: string, onFailure?: string, timeoutMs?: number, budget?: object, variables?: Record<string, string>, node_progress?: boolean }` -- the graph is submitted **inline**, in the same `NodeDefinition` shape [`graph.define`](#graph-define) takes; there is no run-a-saved-graph-by-id form on this method (load it with [`graph.load`](#graph-load) and pass its nodes). `variables` fills `${VAR}` placeholders in node tasks at execute time; an unfilled placeholder comes back as an `unresolved_variable` warning |
+| **Returns** | An **async dispatch receipt**: `{ graphId, async: true, nodeCount, label, hint, warnings? }`. Dispatch returns as soon as the coordinator accepts the run -- per-node state and outputs come from [`graph.status`](#graph-status) / [`graph.outputs`](#graph-outputs), and the terminal post-mortem from [`obs.explain`](#obs-explain)'s `graph` section. `hint` is the model-facing instruction for the launching agent, and it branches on the resolved route below: with governed completion delivery it tells the caller to stop duplicating the delegated work; without it, the caller is told to report the `graphId` and **not** promise an automatic notification |
 
-If the graph contains `approval-gate` nodes, the request must include `announceChannelType` and `announceChannelId` for user interaction routing.
+The announcement route -- used for `approval-gate` user interaction and for the
+[aggregate completion announcement](/developer-guide/pipelines#graph-coordinator) -- is resolved
+server-side, never from an ordinary request parameter: it is taken from the **authenticated caller
+turn's endpoint** when the submission carries one, and otherwise from the dispatcher-injected
+`_callerChannelType` / `_callerChannelId` internal fields the in-process agent leg supplies. Those
+fields are stripped from every external WS/REST caller, so a remote client cannot aim a graph at a
+conversation of its choosing; a carried route that disagrees with the turn endpoint is **rejected**
+rather than honored, for the same reason. A graph containing `approval-gate` nodes fails when
+neither source resolves a route, because the gate would have nowhere to prompt.
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "graph.execute",
-  "params": { "graphId": "research-pipeline" },
+  "params": {
+    "label": "Research pipeline",
+    "nodes": [
+      { "node_id": "research", "task": "Research ${TOPIC}" },
+      { "node_id": "summarize", "task": "Summarize the findings", "depends_on": ["research"] }
+    ],
+    "variables": { "TOPIC": "vector databases" }
+  },
   "id": 1
 }
 ```
@@ -2943,9 +2986,11 @@ If the graph contains `approval-gate` nodes, the request must include `announceC
 {
   "jsonrpc": "2.0",
   "result": {
-    "executionId": "exec_abc123",
-    "status": "completed",
-    "outputs": {}
+    "graphId": "research-pipeline-1a2b3c",
+    "async": true,
+    "nodeCount": 2,
+    "label": "Research pipeline",
+    "hint": "Pipeline launched — your job is now DONE. …"
   },
   "id": 1
 }
@@ -2978,7 +3023,6 @@ Returns graph execution status. This method has two response forms depending on 
   "jsonrpc": "2.0",
   "result": {
     "graphId": "abc-123",
-    "label": "Research Pipeline",
     "status": "running",
     "isTerminal": false,
     "executionOrder": ["research", "analyze", "write"],
@@ -2994,7 +3038,7 @@ Returns graph execution status. This method has two response forms depending on 
 ```
 </CodeGroup>
 
-**Without `graphId`** -- Returns a list of all recent graphs with aggregate status, plus live concurrency statistics. Use the optional `recentMinutes` parameter to filter to graphs active within the specified time window.
+**Without `graphId`** -- Returns a summary line per recent graph (`graphId`, `label`, `status`, `startedAt`, and `completedAt` once terminal), plus live concurrency statistics. Per-node state and `stats` come only from the with-`graphId` form above. Use the optional `recentMinutes` parameter to filter to graphs active within the specified time window.
 
 <CodeGroup>
 ```json Request (list all)
@@ -3013,7 +3057,7 @@ Returns graph execution status. This method has two response forms depending on 
         "graphId": "abc-123",
         "label": "Research Pipeline",
         "status": "running",
-        "stats": { "total": 3, "completed": 1, "failed": 0, "skipped": 0, "running": 1, "pending": 1 }
+        "startedAt": 1773313498000
       }
     ],
     "concurrency": {
@@ -3079,30 +3123,30 @@ Cancel a running graph execution. No new nodes are dispatched after the cancella
 
 ### `graph.save`
 
-Save a graph definition under a human-readable name so you can reload it later with `graph.load`. The `graphId` refers to a graph you have already defined with `graph.define`.
+Persist a graph definition under a human-readable label so you can reload it later with [`graph.load`](#graph-load). The nodes are submitted **inline**, in the same `NodeDefinition` shape [`graph.define`](#graph-define) takes, and are validated before they are stored -- there is no save-an-already-defined-graph-by-id form. The raw nodes and edges are persisted verbatim (a loaded graph is re-validated when it is executed).
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string, graphId: string }` |
-| **Returns** | `{ name: string, saved: true }` |
+| **Parameters** | `{ label: string, nodes: NodeDefinition[], id?: string, agentId?: string, edges?: object[], settings?: object }` -- omit `id` to mint a new entry; passing the `id` of an existing entry overwrites it. `agentId` defaults to the daemon's default agent |
+| **Returns** | `{ id: string, saved: true }` -- `id` is the handle to pass to `graph.load` / `graph.delete` |
 
 ### `graph.load`
 
-Load a previously saved named graph definition and return a fresh `graphId` you can execute. This is equivalent to calling `graph.define` with the saved node/edge structure.
+Load a previously saved named graph by its id. The stored entry comes back as-is -- pass its `nodes` to [`graph.execute`](#graph-execute) to run it; loading does not mint a `graphId` or start anything. `inputFrom` / `inputMapping` fields are stripped from the persisted nodes and edges on load -- use the `{{nodeId.result}}` pattern instead (see [Pipelines](/developer-guide/pipelines)).
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | `{ graphId: string, name: string }` |
+| **Parameters** | `{ id: string }` |
+| **Returns** | The stored entry: `{ id, tenantId, agentId, label, nodes, edges, settings, createdAt, updatedAt }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "graph.load",
-  "params": { "name": "research-pipeline" },
+  "params": { "id": "8f2c1e40-5a7b-4c3d-9e11-2b6a7d4f0c93" },
   "id": 1
 }
 ```
@@ -3110,8 +3154,18 @@ Load a previously saved named graph definition and return a fresh `graphId` you 
 {
   "jsonrpc": "2.0",
   "result": {
-    "graphId": "abc-def-123",
-    "name": "research-pipeline"
+    "id": "8f2c1e40-5a7b-4c3d-9e11-2b6a7d4f0c93",
+    "tenantId": "default",
+    "agentId": "default",
+    "label": "research-pipeline",
+    "nodes": [
+      { "node_id": "research", "task": "Research ${TOPIC}" },
+      { "node_id": "summarize", "task": "Summarize the findings", "depends_on": ["research"] }
+    ],
+    "edges": [],
+    "settings": {},
+    "createdAt": 1773313498000,
+    "updatedAt": 1773313498000
   },
   "id": 1
 }
@@ -3120,54 +3174,59 @@ Load a previously saved named graph definition and return a fresh `graphId` you 
 
 ### `graph.list`
 
-List all saved named graph definitions. Returns the name, creation timestamp, and node count for each entry.
+List the tenant's saved named graphs, most recent first. Each row is a summary -- the full node/edge payload comes from [`graph.load`](#graph-load).
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ limit?: number, offset?: number }` |
+| **Returns** | `{ entries: Array<{ id: string, label: string, nodeCount: number, createdAt: number, updatedAt: number }>, total: number }` -- `total` is the unpaginated count |
+
+### `graph.delete`
+
+Soft-delete a saved named graph definition: the entry stops appearing in `graph.list` and `graph.load` returns "Named graph not found". This only removes the saved definition — it does not affect any in-progress executions or stored run artifacts.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ id: string }` |
+| **Returns** | `{ id: string, deleted: true }` |
+
+### `graph.deleteRun`
+
+Irrecoverably delete one run's directory (`graph-runs/<graphId>/`) and every artifact in it -- the node outputs and the terminal `_run-metadata.json` that [`graph.runDetail`](#graph-rundetail) and `comis explain --graph` read. Saved definitions are untouched.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ graphId: string }` |
+| **Returns** | `{ graphId: string, deleted: true }` |
+
+### `graph.runDetail`
+
+Read one run's per-node outputs and artifacts back from disk, so a run stays inspectable after it has left the coordinator's in-memory retention window.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ graphId: string }` |
+| **Returns** | `{ graphId: string, name: string, status: "running" \| "interrupted" \| "completed" \| "failed" \| "cancelled", date: string, nodes: Array<{ nodeId: string, output: string \| null, artifacts: Array<{ filename: string, content: string }> }> }` -- `output` and each artifact `content` are truncated at 12,000 characters; `date` is the run directory's mtime as an ISO string |
+
+### `graph.runs`
+
+Enumerate the run directories under `graph-runs/`, most recent first. `status` is resolved from the live coordinator when the graph is still tracked, and otherwise from the run's terminal metadata / durable checkpoint on disk -- so a run interrupted by a restart reports `interrupted` rather than a false `completed`.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | None |
-| **Returns** | `{ graphs: Array<{ name: string, createdAt: number, nodeCount: number }> }` |
-
-### `graph.delete`
-
-Delete a saved named graph definition. This only removes the saved definition — it does not affect any in-progress executions or stored run artifacts.
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | `{ name: string, deleted: true }` |
-
-### `graph.deleteRun`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ runId: string }` |
-| **Returns** | Deletion confirmation |
-
-### `graph.runDetail`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ runId: string }` |
-| **Returns** | Detailed run info with per-node state, outputs, and timing |
-
-### `graph.runs`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ limit?: number }` |
-| **Returns** | `{ runs: object[] }` -- recent graph execution history |
+| **Returns** | `{ runs: Array<{ graphId: string, name: string, status: "running" \| "interrupted" \| "completed" \| "failed" \| "cancelled", nodeCount: number, date: string, fileCount: number }> }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "graph.runs",
-  "params": { "limit": 5 },
   "id": 1
 }
 ```
@@ -3176,7 +3235,14 @@ Delete a saved named graph definition. This only removes the saved definition �
   "jsonrpc": "2.0",
   "result": {
     "runs": [
-      { "runId": "run_abc", "graphId": "research-pipeline", "status": "completed", "startedAt": 1773313498000, "durationMs": 45000 }
+      {
+        "graphId": "research-pipeline-1a2b3c",
+        "name": "research",
+        "status": "completed",
+        "nodeCount": 2,
+        "date": "2026-03-12T09:04:58.000Z",
+        "fileCount": 4
+      }
     ]
   },
   "id": 1

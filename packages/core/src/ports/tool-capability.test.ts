@@ -56,7 +56,7 @@ describe("ToolCapabilityPort interface", () => {
     expect(softStop.getInstallDetourMode()).toBe("soft-stop");
   });
 
-  it("PromptSkillCapability type has all 7 fields with correct readonly-ness", () => {
+  it("PromptSkillCapability exposes optional workflow evidence metadata", () => {
     const cap: PromptSkillCapability = {
       name: "test-skill",
       description: "A test skill",
@@ -69,6 +69,7 @@ describe("ToolCapabilityPort interface", () => {
     expect(cap.skillKey).toBeUndefined();
     expect(cap.cluster).toBeUndefined();
     expect(cap.summary).toBeUndefined();
+    expect(cap.minDistinctWebFetchUrls).toBeUndefined();
     expect(cap.source).toBeUndefined();
 
     // Verify the optional fields are accepted when provided:
@@ -79,10 +80,12 @@ describe("ToolCapabilityPort interface", () => {
       cluster: "data-fetching",
       summary: "fetch data",
       replacesPackages: ["yfinance"],
+      minDistinctWebFetchUrls: 3,
       source: "bundled",
     };
     expect(full.cluster).toBe("data-fetching");
     expect(full.source).toBe("bundled");
+    expect(full.minDistinctWebFetchUrls).toBe(3);
   });
 
   it("PromptSkillCapability.source accepts 'learned' (mirrors the widened SkillSource)", () => {

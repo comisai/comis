@@ -154,6 +154,28 @@ const VALID_BILLING_SUB_ACTIONS = ["currentRoot", "byProvider", "byAgent", "bySe
 const VALID_DELIVERY_SUB_ACTIONS = ["recent", "stats"] as const;
 const VALID_CHANNELS_SUB_ACTIONS = ["all", "stale", "get"] as const;
 
+/**
+ * Qualify model-facing cost and latency evidence at the boundary where the
+ * observability result becomes prompt context. Provider/model token usage plus
+ * configured pricing yields a runtime estimate; this tool does not query a
+ * provider invoice. Session and health reports also do not compare execution
+ * durations across the window. Keeping these limits as the final JSON property
+ * makes them visible in the bounded tail when a large result is offloaded.
+ */
+function runtimeEvidenceResult(result: unknown, includeDurationLimit = false): AgentToolResult<unknown> {
+  const evidenceLimits = {
+    cost: "runtime_estimate" as const,
+    providerInvoice: "unverified" as const,
+    ...(includeDurationLimit
+      ? { crossExecutionDurationRanking: "unavailable" as const }
+      : {}),
+  };
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return jsonResult({ ...(result as Record<string, unknown>), evidenceLimits });
+  }
+  return jsonResult({ result, evidenceLimits });
+}
+
 export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryToolParams> {
   const trustGuard = createTrustGuard("obs_query");
 
@@ -161,7 +183,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
     name: "obs_query",
     label: "Observability Query",
     description:
-      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. For this task or cost-so-far questions, use billing.currentRoot: it includes spawned descendants. Report runtime cost separately from external purchases. billing.total is daemon-lifetime cost; billing.bySession excludes descendant sessions. Use system_health for failure or degraded counts; diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
+      "MANDATORY evidence for runtime self-reports. Asked what Comis did, what failed, why it was slow, counts, or cost? Call explain, system_health, or billing before answering. For this task or cost-so-far questions, use billing.currentRoot: it includes spawned descendants. Report runtime cost separately from external purchases. billing.total is daemon-lifetime cost; billing.bySession excludes descendant sessions. Use system_health for failure or degraded counts; system_health does not rank duration, so its worst degraded execution is not evidence of the slowest execution. Cost is a runtime estimate from reported tokens and configured pricing, not a provider invoice; label it and say the invoice is unverified. diagnostics.category only accepts usage, webhook, message, or session. Never infer runtime cause from chat memory. If the query cannot establish it, say unknown.",
     parameters: ObsQueryToolParams,
 
     async execute(
@@ -228,18 +250,18 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
               scope: "currentRoot",
               _trustLevel: tl,
             });
-            return jsonResult(result);
+            return runtimeEvidenceResult(result);
           }
           if (subAction === "byProvider") {
             const sinceMs = readNumberParam(p, "since_ms", false);
             const result = await rpcCall("obs.billing.byProvider", { sinceMs, _trustLevel: tl });
-            return jsonResult(result);
+            return runtimeEvidenceResult(result);
           }
           if (subAction === "byAgent") {
             const agentId = readStringParam(p, "agent_id");
             const sinceMs = readNumberParam(p, "since_ms", false);
             const result = await rpcCall("obs.billing.byAgent", { agentId, sinceMs, _trustLevel: tl });
-            return jsonResult(result);
+            return runtimeEvidenceResult(result);
           }
           if (subAction === "bySession") {
             const sessionKey = readStringParam(p, "session_key", false) ?? ctx?.sessionKey;
@@ -251,12 +273,12 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
             }
             const sinceMs = readNumberParam(p, "since_ms", false);
             const result = await rpcCall("obs.billing.bySession", { sessionKey, sinceMs, _trustLevel: tl });
-            return jsonResult(result);
+            return runtimeEvidenceResult(result);
           }
           // subAction === "total"
           const sinceMs = readNumberParam(p, "since_ms", false);
           const result = await rpcCall("obs.billing.total", { sinceMs, _trustLevel: tl });
-          return jsonResult(result);
+          return runtimeEvidenceResult(result);
         }
 
         if (action === "delivery") {
@@ -328,7 +350,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
             depth,
             _trustLevel: ctx?.trustLevel ?? "guest",
           });
-          return jsonResult(result);
+          return runtimeEvidenceResult(result, true);
         }
 
         if (action === "system_health") {
@@ -338,7 +360,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
             sinceHours,
             _trustLevel: ctx?.trustLevel ?? "guest",
           });
-          return jsonResult(result);
+          return runtimeEvidenceResult(result, true);
         }
 
         if (action === "audit") {
@@ -396,7 +418,7 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
           depth,
           _trustLevel: ctx?.trustLevel ?? "guest",
         });
-        return jsonResult(result);
+        return runtimeEvidenceResult(result, true);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;
         throw err instanceof Error ? err : new Error(String(err));

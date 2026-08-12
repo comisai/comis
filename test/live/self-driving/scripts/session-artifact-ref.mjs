@@ -64,7 +64,21 @@ function trajectoryForSession(sessionFile) {
   return existsSync(colocated) ? colocated : undefined;
 }
 
-export function resolveChatSessionArtifacts(dataDir, chatId) {
+function sessionMatchesThread(sessionFile, threadId) {
+  if (threadId === undefined) return true;
+  const pointerFile = `${sessionFile}.trajectory-path.json`;
+  try {
+    const pointer = JSON.parse(readFileSync(pointerFile, "utf8"));
+    return pointer.traceSchema === "comis-trajectory-pointer"
+      && pointer.schemaVersion === 1
+      && typeof pointer.sessionId === "string"
+      && pointer.sessionId.endsWith(`:thread:${String(threadId)}`);
+  } catch {
+    return false;
+  }
+}
+
+export function resolveChatSessionArtifacts(dataDir, chatId, threadId = undefined) {
   const root = join(dataDir, "workspace", "sessions");
   const stack = [root];
   const candidates = new Map();
@@ -90,6 +104,7 @@ export function resolveChatSessionArtifacts(dataDir, chatId) {
       const sessionFile = file.endsWith("~ledger~inbound.jsonl")
         ? file.replace(/~ledger~inbound\.jsonl$/, ".jsonl")
         : file;
+      if (!sessionMatchesThread(sessionFile, threadId)) continue;
       const trajectoryFile = trajectoryForSession(sessionFile);
       if (trajectoryFile === undefined) continue;
       candidates.set(sessionFile, {

@@ -132,10 +132,13 @@ import { createHash, randomUUID } from "node:crypto";
 // Critic hook (no inline logic — all logic in verification-gate.ts)
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
-import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildPersistentActionEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
+import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildToolFailureNotice, buildToolFailureNoticeUnnamed, buildDelegationEvidenceMissingReply, buildDelegationEvidenceStartedReply, buildPersistentActionEvidenceMissingReply, buildOutboundAudioEvidenceMissingReply, buildOutboundImageEvidenceMissingReply, buildOutboundDeliveryStatusEvidenceMissingReply, buildDestructiveActionNotVerifiedReply, buildProviderRequiresModelReply, buildAgentUpdateNoOpReply, buildOngoingWorkEvidenceMissingReply, buildRuntimeSelfReportEvidenceMissingReply, buildRuntimeSelfReportEvidenceUnsupportedReply, buildSchedulerStateEvidenceMissingReply, buildPendingSchedulerConfirmationReply, buildCompletionEvidenceMissingReply, buildSenderAuthorityOverclaimReply, buildVisionUnavailableReply, groundedVisionFallbackTool, hasUnavailableVisionFailure, catalogFromLocalePacks, LOCALE_MESSAGE_IDS } from "./degraded-reply.js";
 import {
   enforceCurrentTurnDelegationEvidence,
   enforcePersistentActionEvidence,
+  enforceOutboundAudioEvidence,
+  enforceOutboundImageEvidence,
+  enforceOutboundDeliveryStatusEvidence,
   enforceDestructiveEffectEvidence,
   enforceProviderModelFailureGrounding,
   enforceAgentUpdateNoOpGrounding,
@@ -146,7 +149,7 @@ import {
   enforceSenderAuthorityGrounding,
   enforceActiveModelSelfStatus,
   hasTrustedRuntimeActionEvidence,
-  isTrustedBackgroundCompletionEnvelope,
+  isTrustedRuntimeCompletionEnvelope,
 } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
@@ -162,12 +165,14 @@ import {
 } from "./phase-filter.js";
 import {
   appendCitationEvidenceRecord,
+  citationEvidenceDigestsForTurn,
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
 } from "./citation-evidence.js";
 import {
   buildSubagentTerminalToolFailureReply,
+  buildToolInvocationStallFailureReply,
   classifySubagentTerminalToolFailure,
   classifyToolFailureRecovery,
   type ToolExecutionResultRecord,
@@ -729,7 +734,7 @@ export function shouldRunContextStorePasses(config: {
  *
  * SINGLE SOURCE OF TRUTH for the run's terminal classification: the rollup's
  * `degraded` flag (session-health-rollup.ts) is derived from the value this map
- * yields (degraded := mapped endReason !== "success"), so `endReason` and
+ * yields (degraded := mapped endReason is not a clean terminal), so `endReason` and
  * `degraded` are computed from the SAME table and cannot diverge.
  * Exported so the chokepoint maps once and the unit tests can
  * enumerate the finishReason union against it.
@@ -753,7 +758,7 @@ export function shouldRunContextStorePasses(config: {
  * bridge-safety-controls.ts) and `context_loop` (the loop-on-exhaustion abort) —
  * FOLD into ONE named cause `"context_exhausted"`. `output_starved` (the
  * chokepoint promotes a terminal output-cap truncation) is its own named
- * cause `"output_starved"`. Both are degraded by construction (≠ "success", so
+ * cause `"output_starved"`. Both are degraded by construction (neither maps to a clean terminal, so
  * session-health-rollup's CLEAN_END_REASONS derives degraded:true unchanged).
  */
 export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
@@ -766,6 +771,7 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // The terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
   background_pending: "background_pending",
+  cancelled: "cancelled",
   // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
   // and the system degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
@@ -1705,16 +1711,29 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       replyLanguage,
       localeCatalog,
     ),
+    unsupportedResponse: buildRuntimeSelfReportEvidenceUnsupportedReply(
+      replyLanguage,
+      localeCatalog,
+    ),
   });
   if (runtimeSelfReportGrounding.corrected) {
     result.response = runtimeSelfReportGrounding.response;
+    const unsupportedEvidence =
+      runtimeSelfReportGrounding.reason === "unsupported_runtime_self_report_evidence";
+    const unsupportedOutageReceipt =
+      runtimeSelfReportGrounding.reason === "unsupported_outage_receipt_evidence";
     deps.logger.warn(
       {
         step: "response-honesty",
         errorKind: "precondition" as const,
-        hint:
-          "The runtime self-report lacked a successful current-turn obs_query receipt; "
-          + "inspect request-tool relevance and obs_query availability in comis explain.",
+        hint: unsupportedOutageReceipt
+          ? "The current obs_query receipt did not prove when the inbound message was accepted; inspect "
+            + "the inbound lifecycle and runtime self-report guard in comis explain."
+          : unsupportedEvidence
+            ? "The current obs_query receipt did not support the comparative latency or provider-billed "
+              + "cost claim; inspect its evidenceLimits in comis explain."
+            : "The runtime self-report lacked a successful current-turn obs_query receipt; "
+              + "inspect request-tool relevance and obs_query availability in comis explain.",
       },
       "Unsupported runtime self-report replaced with an evidence limitation",
     );
@@ -1728,13 +1747,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       metadata: {
         claimKind: "runtime_self_report",
         reason: runtimeSelfReportGrounding.reason,
-        requiredTool: "obs_query",
+        requiredEvidence: unsupportedOutageReceipt
+          ? "inbound_acceptance_timeline"
+          : "obs_query",
       },
     });
     deps.eventBus.emit("execution:recovery_attempted", {
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
-      reason: "missing_runtime_self_report_evidence",
+      reason: unsupportedOutageReceipt
+        ? "unsupported_outage_receipt_evidence"
+        : unsupportedEvidence
+          ? "unsupported_runtime_self_report_evidence"
+          : "missing_runtime_self_report_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),
@@ -1883,8 +1908,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     request: msg.text ?? "",
     response: result.response ?? "",
     toolExecResults: bridgeResult.toolExecResults,
-    runtimeCompletion: isTrustedBackgroundCompletionEnvelope(msg),
+    runtimeCompletion: isTrustedRuntimeCompletionEnvelope(msg),
     honestResponse: buildDelegationEvidenceMissingReply(replyLanguage, localeCatalog),
+    verifiedSpawnResponse: buildDelegationEvidenceStartedReply(replyLanguage, localeCatalog),
   });
   if (delegationEvidence.corrected) {
     result.response = delegationEvidence.response;
@@ -1892,9 +1918,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       {
         step: "delegation-evidence",
         errorKind: "precondition" as const,
-        hint:
-          "The response was replaced because this execution had no successful sessions_spawn "
-          + "receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
+        hint: delegationEvidence.reason === "successful_spawn_response_ungrounded"
+          ? "The response did not describe the successful sessions_spawn receipt; inspect the current request and response correction in comis explain."
+          : "The response was replaced because this execution had no successful sessions_spawn receipt; inspect the current tool inventory and sessions_spawn admission in comis explain.",
       },
       "Unverified current-turn delegation claim replaced",
     );
@@ -1902,7 +1928,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       timestamp: deps.clock.now(),
       agentId: effectiveAgentId,
       tenantId: deps.tenantId,
-      actionType: "response.delegation_evidence_guard",
+      actionType: delegationEvidence.reason === "successful_spawn_response_ungrounded"
+        ? "response.delegation_response_grounding_guard"
+        : "response.delegation_evidence_guard",
       kind: "audit",
       outcome: "denied",
       metadata: {
@@ -1945,6 +1973,150 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         claimKind: "persistent_action",
         reason: persistentActionEvidence.reason,
       },
+    });
+  }
+  const outboundAudioEvidence = enforceOutboundAudioEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    runtimeAudioDelivery:
+      params.executionOverrides?.outboundAudioAutoDelivery?.(
+        result.response ?? "",
+      ) === true,
+    honestResponse: buildOutboundAudioEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (outboundAudioEvidence.corrected) {
+    result.response = outboundAudioEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response claimed outbound audio delivery without a successful tts_synthesize "
+          + "receipt, a trusted completion receipt, or a configured voice route for this "
+          + "channel; inspect tool admission, integrations.media.tts.autoMode, and delivery "
+          + "in comis explain.",
+      },
+      "Unverified outbound audio delivery claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.outbound_audio_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "outbound_audio",
+        reason: outboundAudioEvidence.reason,
+        acceptedEvidence: [
+          "tts_synthesize",
+          "trusted_completion",
+          "configured_voice_route",
+        ],
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_outbound_audio_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const outboundImageEvidence = enforceOutboundImageEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    honestResponse: buildOutboundImageEvidenceMissingReply(
+      replyLanguage,
+      localeCatalog,
+    ),
+  });
+  if (outboundImageEvidence.corrected) {
+    result.response = outboundImageEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response claimed image creation or delivery without a successful image_generate "
+          + "receipt, a successful message attach receipt, or a trusted completion receipt; "
+          + "inspect tool admission and delivery in comis explain.",
+      },
+      "Unverified outbound image completion claim replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.outbound_image_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "outbound_image",
+        reason: outboundImageEvidence.reason,
+        acceptedEvidence: [
+          "image_generate",
+          "message.attach",
+          "trusted_completion",
+        ],
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_outbound_image_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
+    });
+  }
+  const outboundDeliveryStatusEvidence = enforceOutboundDeliveryStatusEvidence({
+    request: msg.text ?? "",
+    response: result.response ?? "",
+    toolExecResults: bridgeResult.toolExecResults,
+    currentActionEvidence: hasTrustedRuntimeActionEvidence(msg),
+    honestResponse: buildOutboundDeliveryStatusEvidenceMissingReply(replyLanguage, localeCatalog),
+  });
+  if (outboundDeliveryStatusEvidence.corrected) {
+    result.response = outboundDeliveryStatusEvidence.response;
+    deps.logger.warn(
+      {
+        step: "action-evidence",
+        errorKind: "precondition" as const,
+        hint:
+          "The response affirmed an elliptical delivery status without a current obs_query "
+          + "or self-delivering media receipt; inspect this turn in comis explain.",
+      },
+      "Unverified outbound delivery-status answer replaced",
+    );
+    deps.eventBus.emit("audit:event", {
+      timestamp: deps.clock.now(),
+      agentId: effectiveAgentId,
+      tenantId: deps.tenantId,
+      actionType: "response.outbound_delivery_status_evidence_guard",
+      kind: "audit",
+      outcome: "denied",
+      metadata: {
+        claimKind: "outbound_delivery_status",
+        reason: outboundDeliveryStatusEvidence.reason,
+        requiredTool: "obs_query",
+      },
+    });
+    deps.eventBus.emit("execution:recovery_attempted", {
+      agentId: effectiveAgentId,
+      sessionKey: formattedKey,
+      reason: "missing_outbound_delivery_status_evidence",
+      succeeded: true,
+      traceId: tryGetContext()?.traceId,
+      timestamp: deps.clock.now(),
     });
   }
   const destructiveEffectEvidence = enforceDestructiveEffectEvidence({
@@ -2205,18 +2377,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // each deterministic degraded-reply builder. Missing locale packs fall back
   // to the injected catalog's English strings.
   if (effectiveFinishReason === "tool_invocation_stall") {
-    result.response = buildPersistentActionEvidenceMissingReply(
-      replyLanguage,
+    result.response = buildToolInvocationStallFailureReply({
+      failedTools: bridgeResult.failedTools ?? [],
+      toolExecResults: bridgeResult.toolExecResults,
+      ...(replyLanguage === undefined ? {} : { language: replyLanguage }),
       localeCatalog,
-    );
+    }) ?? buildPersistentActionEvidenceMissingReply(replyLanguage, localeCatalog);
     deps.logger.warn(
       {
         step: "request-tool-nudge",
         matchedToolNames: result.requestToolNudge?.matchedToolNames ?? [],
         errorKind: "internal" as const,
         hint:
-          "The model repeated an earlier answer and the bounded continuation still "
-          + "emitted no matched tool call; inspect request-tool-nudge in comis explain.",
+          "The bounded continuation still lacked request-matched tool or prompt-skill "
+          + "evidence; inspect request-tool-nudge counts in comis explain.",
       },
       "tool_invocation_stall — synthesized honest reply delivered",
     );
@@ -2354,8 +2528,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // locale repair and the optional critic), immediately before the canonical
   // assistant turn is synchronized. Current successful web_fetch receipts are
   // authoritative. A background completion carries only their SHA-256 URL
-  // digests, while a later explicit source question may reuse digests attached
-  // by this same guard to earlier append-only runtime journal receipts.
+  // digests. An explicit source question may reuse digests attached by this
+  // same guard only when it has no fresh successful fetch evidence.
   const currentWebResearchObserved = (bridgeResult.toolExecResults ?? []).some(
     (toolResult) => toolResult.toolName === "web_fetch" || toolResult.toolName === "web_search",
   );
@@ -2376,11 +2550,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const historicalDigests = citationSourceRequest
     ? historicalCitationDigests(sm)
     : [];
-  const allowedCitationDigests = [
-    ...currentFetchDigests,
-    ...(relayedCitationEvidence?.urlDigests ?? []),
-    ...historicalDigests,
-  ];
+  const allowedCitationDigests = citationEvidenceDigestsForTurn({
+    currentFetchDigests,
+    relayedDigests: relayedCitationEvidence?.urlDigests ?? [],
+    historicalDigests,
+  });
   const citationGrounding = enforceCitationEvidence({
     response: result.response ?? "",
     allowedUrlDigests: allowedCitationDigests,
@@ -2522,13 +2696,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // authoritative table (END_REASON_MAP). This SAME mapped value drives BOTH the
   // persisted sessionEnd.endReason (in buildSessionEndMetadata, which re-maps
   // the identical effectiveFinishReason through the identical table) AND the
-  // rollup's `degraded` flag below — so a reason that maps to a non-success
+  // rollup's `degraded` flag below — so a reason that maps to a degraded
   // endReason (e.g. loop_detected / session_reset → "error") can never record
   // degraded:false alongside it. No second closed reason set.
   const endReason = END_REASON_MAP[effectiveFinishReason] ?? "error";
 
   // Compute the per-session health rollup ONCE at the chokepoint.
-  // degraded is derived from the mapped endReason (≠ "success"); the same record
+  // degraded is derived from the mapped endReason's clean/degraded class; the same record
   // feeds BOTH sinks below — the sessionEnd metadata and the session:summary
   // event — so persist and emit never diverge.
   const sessionHealthRollup = buildSessionHealthRollup(

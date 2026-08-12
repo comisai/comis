@@ -71,6 +71,13 @@ export function anyAgentTerminalUnsafeDisableSandbox(
   return Object.values(agents).some((a) => a.skills?.terminal?.unsafeDisableSandbox === true);
 }
 
+/** `true` when any configured agent explicitly opts ordinary exec out of its OS jail. */
+export function anyAgentExecSandboxDisabled(
+  agents: Readonly<Record<string, { skills?: { execSandbox?: { enabled?: "always" | "never" } } }>>,
+): boolean {
+  return Object.values(agents).some((agent) => agent.skills?.execSandbox?.enabled === "never");
+}
+
 // isLoopbackHost moved to @comis/core (security/loopback-host) so the gateway's
 // boot log shares the SAME TLS-off-is-benign-on-loopback judgment as this
 // posture record and the gateway-exposure security check. Re-exported so the
@@ -289,6 +296,8 @@ export interface ConfigPostureInputs {
    * config bodies. Optional (defaults to `false`).
    */
   browserNoSandbox?: boolean;
+  /** `true` when any agent sets `skills.execSandbox.enabled: "never"`. */
+  execSandboxDisabled?: boolean;
   /**
    * `true` when ANY configured agent set `skills.terminal.unsafeDisableSandbox: true` — the
    * operator opt-out of the terminal-driver bwrap jail (a driven coding CLI runs unsandboxed). A
@@ -334,6 +343,7 @@ export function buildConfigPostureRecord(
   const pricingGapCount = inputs.pricingGapCount ?? 0;
   const sandboxNoDowngradeDisabled = inputs.sandboxNoDowngradeDisabled ?? false;
   const browserNoSandbox = inputs.browserNoSandbox ?? false;
+  const execSandboxDisabled = inputs.execSandboxDisabled ?? false;
   const terminalUnsafeDisableSandbox = inputs.terminalUnsafeDisableSandbox ?? false;
   const mediaCredentialGapCount = inputs.mediaCredentialGapCount ?? 0;
   const toolDeadlineCollisionCount = inputs.toolDeadlineCollisionCount ?? 0;
@@ -347,6 +357,7 @@ export function buildConfigPostureRecord(
     pricingGapCount > 0 ||
     sandboxNoDowngradeDisabled ||
     browserNoSandbox ||
+    execSandboxDisabled ||
     terminalUnsafeDisableSandbox ||
     mediaCredentialGapCount > 0 ||
     toolDeadlineCollisionCount > 0;
@@ -377,6 +388,8 @@ export function buildConfigPostureRecord(
       // Chromium runs WITHOUT its sandbox (browser.noSandbox: true) — a relaxed
       // security default surfaced at boot, not silent. A boolean, never bodies.
       browserNoSandbox,
+      // Ordinary exec runs without its configured OS jail for at least one agent.
+      execSandboxDisabled,
       // A driven coding CLI runs WITHOUT the bwrap jail
       // (skills.terminal.unsafeDisableSandbox: true) — a relaxed security default surfaced at
       // boot, not silent. A boolean, never agent ids or bodies.

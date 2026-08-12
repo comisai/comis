@@ -338,4 +338,35 @@ describe("resolveAndPreprocess inbound provenance ownership", () => {
 
     expect(result).toMatchObject({ inboundProvenancePlan: persistedPlan });
   });
+
+  it("carries trusted preprocessing text beside immutable physical provenance", async () => {
+    const persistedPlan = {
+      payloads: [],
+      ledgerContent: "planned-line\n",
+    };
+    const deps = makeDeps({
+      persistInboundMessage: vi.fn(async () => ({
+        ok: true,
+        value: persistedPlan,
+      })) as never,
+      preprocessMessage: vi.fn(async (message: NormalizedMessage) => ({
+        ...message,
+        text: "[Voice message transcription]: Remind me to buy oats tomorrow.",
+      })) as never,
+    });
+
+    const result = await resolveAndPreprocess(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "" }),
+    );
+
+    expect(result).toMatchObject({
+      inboundProvenancePlan: {
+        ...persistedPlan,
+        conversationText:
+          "[Voice message transcription]: Remind me to buy oats tomorrow.",
+      },
+    });
+  });
 });

@@ -58,6 +58,13 @@ const RELEVANCE_TURN_WINDOW = 3;
 const MIN_CONTENT_TERMS = 2;
 
 /**
+ * Retrieval terms are identifiers, words, and short values, not unbounded
+ * payload bodies. Keeping one term below this ceiling prevents a pasted opaque
+ * blob from becoming the semantic authority for memory search.
+ */
+const MAX_CONTENT_TERM_CHARS = 128;
+
+/**
  * A small, BOUNDED English stopword set — the common deictic / filler / function words that
  * carry no retrieval signal ("yes do that", "is it the …"). Kept deliberately compact (the
  * KISS/YAGNI "bounded static map" discipline, mirroring query-understanding.ts's static
@@ -104,6 +111,62 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 0);
 }
 
+/** The tokens too large to be retrieval text. */
+function oversizedLexicalTokens(tokens: readonly string[]): string[] {
+  return tokens.filter((token) => token.length > MAX_CONTENT_TERM_CHARS);
+}
+
+/**
+ * Whether an oversized payload leaves the current request with no retrieval
+ * terms of its own — the RECALL question. Prior turns must not supply the
+ * corpus signal such a request lacks, or unrelated memory becomes the only
+ * actionable text in the model request.
+ */
+export function isOpaquePayloadWithoutRetrievalTerms(text: string): boolean {
+  const oversized = oversizedLexicalTokens(tokenize(text));
+  return oversized.length > 0
+    && !oversized.some(isSpaceFreeProseCandidate)
+    && buildRelevanceQuery([text]).terms.length === 0;
+}
+
+const LETTER_PATTERN = /\p{L}/u;
+
+/**
+ * Whether an oversized token is mostly non-ASCII letters and therefore may be
+ * ordinary space-free prose. This open Unicode signal avoids maintaining a
+ * closed list of scripts while ASCII hashes, encodings, and identifiers remain
+ * opaque.
+ */
+function isSpaceFreeProseCandidate(token: string): boolean {
+  const characters = [...token];
+  const nonAsciiLetters = characters.filter(
+    (character) => (character.codePointAt(0) ?? 0) > 0x7f && LETTER_PATTERN.test(character),
+  ).length;
+  return nonAsciiLetters * 2 > characters.length;
+}
+
+/**
+ * Whether a message carries NOTHING but a large opaque payload — data with no
+ * accompanying task. This is the ADMISSION question, and it is deliberately
+ * stricter than {@link isOpaquePayloadWithoutRetrievalTerms}: {@link STOPWORDS}
+ * drops words that carry no CORPUS signal, so reusing it as an instruction
+ * detector refused plain questions whose every word is a stopword
+ * ("what is this? <pasted key>").
+ *
+ * Length is only evidence of opacity for a script that separates words. A long
+ * request written in a space-free writing system tokenizes to ONE oversized
+ * token, so the length test alone refused a genuine request before the model saw
+ * it — and the refusal is one of the deliberately untranslated input-guard
+ * strings, so the sender was answered in English regardless of their locale.
+ */
+export function isOpaquePayloadWithoutInstruction(text: string): boolean {
+  const tokens = tokenize(text);
+  const oversized = oversizedLexicalTokens(tokens);
+  return oversized.length > 0
+    && oversized.length === tokens.length
+    && !oversized.some(isSpaceFreeProseCandidate);
+}
+
 /** The shape {@link buildRelevanceQuery} returns and {@link scoreRelevance} consumes. */
 export interface RelevanceQuery {
   /** The de-duplicated content terms (stopwords removed), newest-turn terms first. */
@@ -137,6 +200,7 @@ export function buildRelevanceQuery(userTurns: string[], goalAnchorText?: string
   const seen = new Set<string>();
   const terms: string[] = [];
   const pushTerm = (raw: string): void => {
+    if (raw.length > MAX_CONTENT_TERM_CHARS) return;
     if (STOPWORDS.has(raw)) return; // drop function words — content-only
     if (seen.has(raw)) return; // de-dup (keeps the first = newest occurrence)
     seen.add(raw);

@@ -51,7 +51,10 @@ import {
   attachMcpOperatorPolicy,
   describeMcpOperatorPolicyProjection,
 } from "./mcp-operator-policy.js";
-import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
+import {
+  applyPromptSkillRequestRouting,
+  physicalUserRequestText,
+} from "./prompt-skill-request-routing.js";
 import type {
   ToolAssemblyParams,
   ToolAssemblyResult,
@@ -671,13 +674,27 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps.embeddingPort,
     config.skills?.toolDiscovery,
   );
-  applyPromptSkillRequestRouting(deferralResult, {
-    capabilityClass,
-    requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
-    priorUserRequest: recentUserTurns.at(-1),
-    skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
-    locations: deps.getPromptSkillLocations?.(),
-  });
+  // A background completion is runtime-generated evidence for an already-routed
+  // request, not a fresh user request. Matching its diagnostic prose against
+  // prompt-skill descriptions can turn a terminal tool result into unrelated
+  // troubleshooting work and conceal the result from the user.
+  if (msg.channelType !== "background_task") {
+    // Media preprocessing deliberately enriches msg.text with extracted,
+    // externally sourced content and runtime coverage instructions. Skill
+    // selection is an intent decision, so it must use the physical user
+    // wording captured before that enrichment — the structured messages, or
+    // the trusted transcription receipt for a spoken turn whose physical text
+    // is empty. The enriched text remains available to ordinary tool relevance
+    // and to the model itself.
+    const currentUserRequestText = physicalUserRequestText(msg);
+    applyPromptSkillRequestRouting(deferralResult, {
+      currentRequestText: currentUserRequestText,
+      requestRelevanceText: deferralCtx.requestRelevanceText ?? msg.text,
+      priorUserRequest: recentUserTurns.at(-1),
+      skills: deps.toolCapabilityPort.getPromptSkillCapabilities(),
+      locations: deps.getPromptSkillLocations?.(),
+    });
+  }
 
   const mcpOperatorPolicyRelevant =
     deferralResult.requestRelevantToolNames?.includes("mcp_manage") === true;

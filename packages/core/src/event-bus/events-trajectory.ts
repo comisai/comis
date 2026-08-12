@@ -54,6 +54,7 @@ export interface TrajectoryEvents {
       readonly turnCount: number;
       readonly charCount: number;
       readonly saturated: boolean;
+      readonly recallDisposition?: "search" | "skip_oversized_token";
     };
     /** Content-free evidence that immutable policy was projected onto tool schemas. */
     operatorPolicyToolProjections?: readonly {
@@ -70,6 +71,15 @@ export interface TrajectoryEvents {
     responseLocale?: string;
     responseLocaleSource: "request" | "explicit" | "unset";
     responseLocaleEnforced: boolean;
+    timestamp: number;
+  };
+
+  /** The current request contained data but no bounded task instruction. */
+  "request:clarification_required": {
+    agentId: string;
+    sessionKey: string;
+    reason: "opaque_payload_missing_instruction";
+    inputChars: number;
     timestamp: number;
   };
 

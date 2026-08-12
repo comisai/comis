@@ -64,6 +64,7 @@ export interface PromptRunnerBridge {
 }
 
 /** Parameters for runPrompt(). */
+// @optional-field-count: The prompt-runner boundary carries independently conditional routing, skill-receipt, locale, policy-projection, and model-profile evidence; each field is absent when its upstream mechanism does not apply.
 export interface RunPromptParams {
   msg: NormalizedMessage;
   session: AgentSession;
@@ -87,6 +88,10 @@ export interface RunPromptParams {
   requestRelevantPromptSkillLocations?: readonly string[];
   /** Tools required to execute the request-relevant prompt skill procedure. */
   requestRelevantPromptSkillWorkflowToolNames?: readonly string[];
+  /** Distinct successful web-fetch URL receipts required by the selected skill. */
+  requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+  /** Distinct successful web-search query receipts required by the selected skill. */
+  requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
   /** Bounded prior request used to ground context-dependent workflow arguments. */
   requestRelevantPromptSkillWorkflowContext?: string;
   /** Content-free evidence about the bounded prior-user-turn relevance window. */
@@ -94,6 +99,7 @@ export interface RunPromptParams {
     readonly turnCount: number;
     readonly charCount: number;
     readonly saturated: boolean;
+    readonly recallDisposition: "search" | "skip_oversized_token";
   };
   /** Content-free evidence that immutable operator policy reached tool schemas. */
   operatorPolicyToolProjections?: readonly {

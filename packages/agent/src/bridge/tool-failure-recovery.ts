@@ -5,6 +5,10 @@ import type {
   ModelOperationType,
   ToolFailureDisclosure,
 } from "@comis/core";
+import {
+  selectToolInvocationStallMissingConfigurationReply,
+  type LocaleCatalog,
+} from "../executor/degraded-reply-i18n.js";
 
 const MAX_IDENTITY_FIELD_CHARS = 512;
 const MESSAGE_ACTIONS = new Set([
@@ -46,6 +50,14 @@ export type ToolRecoveryIdentity = MessageRecoveryIdentity | ExecRecoveryIdentit
 
 export type SchedulerPolicyEvidence = "holiday" | "weekday" | "weekend";
 
+/** Closed, content-free limitations carried by a model-facing observability receipt. */
+export interface ObservabilityEvidenceLimits {
+  readonly cost?: "runtime_estimate";
+  readonly providerInvoice?: "unverified";
+  readonly crossExecutionDurationRanking?: "unavailable";
+}
+
+// @optional-field-count: A tool-result receipt aggregates independently conditional evidence from message, exec, web, scheduler, background, and observability boundaries; fields stay absent unless the trusted boundary emitted them.
 export interface ToolExecutionResultRecord {
   readonly toolName: string;
   /** Bounded structured action discriminator from the tool arguments. */
@@ -68,8 +80,12 @@ export interface ToolExecutionResultRecord {
   readonly recoveryIdentity?: ToolRecoveryIdentity;
   /** SHA-256 of the exact final URL for a successful web_fetch. */
   readonly citationUrlDigest?: string;
+  /** SHA-256 of the canonical query for a successful web_search. */
+  readonly webSearchQueryDigest?: string;
   /** Closed, content-free policy classifications from a current cron-list receipt. */
   readonly schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
+  /** Closed qualifications that prevent a self-report from overstating the receipt. */
+  readonly observabilityEvidenceLimits?: ObservabilityEvidenceLimits;
 }
 
 export interface ToolFailureRecoveryClassification {
@@ -307,6 +323,44 @@ function latestUnrecoveredDisclosure(
     }
   }
   return undefined;
+}
+
+/**
+ * Build an actionable foreground reply when a tool stall has a trusted recovery key.
+ *
+ * This string is delivered to the chat user unchanged, so it resolves through
+ * the locale catalog like every other synthesized degraded reply — there is no
+ * downstream repair pass for synthesized text. The tool name and config key ride
+ * along verbatim; identifiers are never translated.
+ */
+export function buildToolInvocationStallFailureReply(params: {
+  failedTools: readonly string[];
+  toolExecResults: readonly ToolExecutionResultRecord[] | undefined;
+  language?: string;
+  localeCatalog?: LocaleCatalog;
+}): string | undefined {
+  const failure = latestUnrecoveredDisclosure(
+    params.failedTools,
+    params.toolExecResults,
+  );
+  const disclosure = failure?.failureDisclosure;
+  if (failure === undefined || disclosure === undefined) return undefined;
+
+  switch (disclosure.kind) {
+    case "missing_configuration":
+      return selectToolInvocationStallMissingConfigurationReply(
+        params.language,
+        { toolName: failure.toolName, configKey: disclosure.configKey },
+        params.localeCatalog,
+      );
+    case "quota_exhausted":
+    case "provider_unavailable":
+      return undefined;
+    default: {
+      const _exhaustive: never = disclosure;
+      return _exhaustive;
+    }
+  }
 }
 
 export interface SubagentTerminalToolFailure {

@@ -176,9 +176,6 @@ export async function handleGraphCompletion(
     ...nodeCostFields,
   });
 
-  // 2c. Write _run-metadata.json to disk
-  writeRunMetadata(deps, gs, graphStatus);
-
   const callerConversation = gs.callerConversationLocator;
   const callerEndpoint = gs.callerEndpoint;
   const hasCallerIdentity = gs.callerSessionKey !== undefined || gs.callerAgentId !== undefined;
@@ -288,13 +285,26 @@ export async function handleGraphCompletion(
   // 4. Deliver deterministic graph output through one stable, receipt-aware
   // outward operation. Parent execution is intentionally outside this terminal
   // boundary because replaying it could repeat arbitrary tool effects.
-  if (hasAnyAnnouncementRoute) {
-    if (!announcementIdentityValid) {
-      return err(new Error("Graph announcement identity or route is invalid"));
-    }
-    const delivery = await sendGoverned(announcement, deliveryOptions);
-    if (!delivery.ok) return delivery;
+  let announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "failed" =
+    hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement === undefined
+      ? "unavailable"
+      : "not-requested";
+  if (hasAnyAnnouncementRoute && !announcementIdentityValid) {
+    writeRunMetadata(deps, gs, graphStatus, "failed");
+    return err(new Error("Graph announcement identity or route is invalid"));
   }
+  if (hasAnyAnnouncementRoute && deps.sendGovernedAnnouncement !== undefined) {
+    const delivery = await sendGoverned(announcement, deliveryOptions);
+    if (!delivery.ok) {
+      writeRunMetadata(deps, gs, graphStatus, "failed");
+      return delivery;
+    }
+    announcementDelivery = delivery.value;
+  }
+
+  // Persist only after the governed notification has settled so one graph
+  // record carries both terminal execution and terminal outward disposition.
+  writeRunMetadata(deps, gs, graphStatus, announcementDelivery);
 
   // 5. Log at INFO level
   deps.logger?.info(
@@ -308,6 +318,7 @@ export async function handleGraphCompletion(
       nodesFailed,
       totalCostUsd: gs.cumulativeCost > 0 ? gs.cumulativeCost : undefined,
       totalTokens: gs.cumulativeTokens > 0 ? gs.cumulativeTokens : undefined,
+      announcementDelivery,
       // Graph-level cache aggregation (computed above for event + log)
       ...cacheRollupFields,
     },
@@ -636,6 +647,7 @@ export function writeRunMetadata(
   deps: Pick<GraphCoordinatorDeps, "logger">,
   gs: GraphRunState,
   graphStatus: GraphStatus,
+  announcementDelivery: "not-requested" | "unavailable" | "committed" | "retained" | "failed",
 ): void {
   try {
     const snap = gs.stateMachine.snapshot();
@@ -720,7 +732,9 @@ export function writeRunMetadata(
       completedAt: systemDateFrom(gs.completedAt ?? systemNowMs()).toISOString(),
       durationMs: (gs.completedAt ?? systemNowMs()) - gs.startedAt,
       status: graphStatus,
-      traceId: gs.graphTraceId,
+      ...(gs.callerSessionKey === undefined ? {} : { sessionKey: gs.callerSessionKey }),
+      traceId: gs.callerTraceId ?? gs.graphTraceId,
+      announcementDelivery,
       nodesTotal: gs.graph.graph.nodes.length,
       nodesSucceeded,
       nodesFailed,

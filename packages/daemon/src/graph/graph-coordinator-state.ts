@@ -66,6 +66,8 @@ export interface GraphRunState {
   completedAt?: number;
   runningCount: number;
   callerSessionKey?: string;
+  /** Parent turn trace captured with the authenticated submission authority. */
+  callerTraceId?: string;
   callerAgentId?: string;
   /** Canonical durable authority captured at graph submission. */
   callerConversationLocator?: ConversationLocator;

@@ -485,6 +485,12 @@ describe("buildSessionEndMetadata", () => {
     expect(buildSessionHealthRollup({}, "timeout").degraded).toBe(true);
   });
 
+  it("records caller cancellation as a clean cancelled terminal instead of success or timeout", () => {
+    expect(END_REASON_MAP.cancelled).toBe("cancelled");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "cancelled" }).sessionEnd?.endReason).toBe("cancelled");
+    expect(buildSessionHealthRollup({}, "cancelled").degraded).toBe(false);
+  });
+
   it("un-flattens the context-exhaustion cause — context_exhausted and context_loop both name it (not generic error)", () => {
     // Collapsing BOTH context-exhaustion
     // finish reasons to the generic "error" bucket would make a context-exhausted
@@ -536,7 +542,7 @@ describe("buildSessionEndMetadata", () => {
   it("degraded is coupled to END_REASON_MAP over the WHOLE finishReason union (no dual-set drift)", () => {
     // The enforced single-source invariant: for EVERY ExecutionResult.finishReason
     // (plus the synthetic completed_with_tool_errors / end_turn that reach the
-    // chokepoint), the rollup's degraded MUST equal `mappedEndReason !== "success"`.
+    // chokepoint), the rollup's degraded MUST match the mapped terminal class.
     // This converts the prose "mirrors END_REASON_MAP" comment into a test —
     // adding a new finish reason to the union without an END_REASON_MAP entry
     // cannot silently reopen a degraded/endReason divergence (it falls to
@@ -546,10 +552,11 @@ describe("buildSessionEndMetadata", () => {
       "budget_exceeded", "budget_exhausted", "circuit_open", "provider_degraded",
       "context_loop", "context_exhausted", "output_starved", "session_reset", "loop_detected",
       "completed_with_tool_errors", "prompt_timeout", "spend_exceeded", "tool_invocation_stall",
+      "cancelled",
     ];
     for (const reason of ALL_FINISH_REASONS) {
       const mappedEndReason = END_REASON_MAP[reason] ?? "error";
-      const expectedDegraded = mappedEndReason !== "success";
+      const expectedDegraded = mappedEndReason !== "success" && mappedEndReason !== "cancelled";
       // The chokepoint maps once, then passes the mapped endReason to the rollup.
       expect(buildSessionHealthRollup({}, mappedEndReason).degraded).toBe(expectedDegraded);
     }
@@ -1135,6 +1142,7 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(
       /const historicalDigests\s*=\s*citationSourceRequest\s*\?\s*historicalCitationDigests\(sm\)/,
     );
+    expect(stripped).toMatch(/citationEvidenceDigestsForTurn\(\{/);
     expect(stripped).toMatch(
       /enabled:[\s\S]{0,300}?\|\|\s*citationSourceRequest/,
     );
@@ -1186,6 +1194,11 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/preservePartialResponse:/);
   });
 
+  // The outbound audio / image / delivery-status guards are proven by driving
+  // execute() in pi-executor.test.ts ("outbound artifact claims are grounded
+  // before the reply is delivered"): those probes assert the delivered reply and
+  // the emitted audit + recovery events, which a source grep cannot.
+
   it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
     const stripped = readPostExecStripped();
 
@@ -1207,8 +1220,9 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/enforceRuntimeSelfReportEvidence\(/);
     expect(stripped).toMatch(/buildRuntimeSelfReportEvidenceMissingReply\(/);
     expect(stripped).toMatch(/response\.runtime_self_report_evidence_guard/);
+    expect(stripped).toMatch(/unsupported_outage_receipt_evidence/);
     expect(stripped).toMatch(
-      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
+      /runtimeSelfReportGrounding\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:[\s\S]*?"unsupported_outage_receipt_evidence"[\s\S]*?"missing_runtime_self_report_evidence"[\s\S]*?succeeded:\s*true/,
     );
     expect(stripped.indexOf("enforceRuntimeSelfReportEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));

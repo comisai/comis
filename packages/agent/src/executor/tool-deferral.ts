@@ -156,6 +156,10 @@ export interface ExcludeDeferralResult {
   requestRelevantPromptSkillLocations?: string[];
   /** Tools required to execute the selected prompt skill procedure. */
   requestRelevantPromptSkillWorkflowToolNames?: string[];
+  /** Distinct successful web-fetch URL receipts required by the procedure. */
+  requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+  /** Distinct successful web-search query receipts required by the procedure. */
+  requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
   /** Bounded prior request used to ground context-dependent workflow arguments. */
   requestRelevantPromptSkillWorkflowContext?: string;
 }

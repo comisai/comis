@@ -247,7 +247,10 @@ import {
 } from "./tool-failure-recovery.js";
 import { extractProcessSessionObservation } from "./process-session-observation.js";
 import { isContextExhaustionErrorMessage } from "../context-engine/errors.js";
-import { citationUrlDigest } from "../executor/citation-evidence.js";
+import {
+  citationUrlDigest,
+  webSearchQueryDigest,
+} from "../executor/citation-evidence.js";
 import { backgroundFailureCause } from "../background/background-failure-cause.js";
 
 // ---------------------------------------------------------------------------
@@ -333,6 +336,26 @@ function extractSchedulerPolicyEvidence(
   if (/\bweekdays?\b/u.test(normalized)) evidence.push("weekday");
   if (/\bweekends?\b/u.test(normalized)) evidence.push("weekend");
   return evidence;
+}
+
+function extractObservabilityEvidenceLimits(
+  toolName: string,
+  details: Record<string, unknown> | undefined,
+): ToolExecutionResultRecord["observabilityEvidenceLimits"] {
+  if (toolName !== "obs_query") return undefined;
+  const raw = details?.evidenceLimits;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const limits = raw as Record<string, unknown>;
+  const classified = {
+    ...(limits.cost === "runtime_estimate" ? { cost: "runtime_estimate" as const } : {}),
+    ...(limits.providerInvoice === "unverified"
+      ? { providerInvoice: "unverified" as const }
+      : {}),
+    ...(limits.crossExecutionDurationRanking === "unavailable"
+      ? { crossExecutionDurationRanking: "unavailable" as const }
+      : {}),
+  };
+  return Object.keys(classified).length === 0 ? undefined : classified;
 }
 
 /**
@@ -1565,8 +1588,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const webResultMeta = toolSuccess
             ? extractWebResultMetadata(endEvent.toolName, endEvent.result)
             : undefined;
+          const searchQueryDigest = toolSuccess && endEvent.toolName === "web_search"
+            ? webSearchQueryDigest(
+                (rawArgsForParams as { query?: unknown } | undefined)?.query,
+              )
+            : undefined;
           const schedulerPolicyEvidence = toolSuccess
             ? extractSchedulerPolicyEvidence(endEvent.toolName, toolAction, resultDetails)
+            : undefined;
+          const observabilityEvidenceLimits = toolSuccess
+            ? extractObservabilityEvidenceLimits(endEvent.toolName, resultDetails)
             : undefined;
           const processSessionObservation = extractProcessSessionObservation({
             toolName: endEvent.toolName,
@@ -1596,7 +1627,13 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(webResultMeta?.citationUrlDigest !== undefined && {
               citationUrlDigest: webResultMeta.citationUrlDigest,
             }),
+            ...(searchQueryDigest !== undefined && {
+              webSearchQueryDigest: searchQueryDigest,
+            }),
             ...(schedulerPolicyEvidence === undefined ? {} : { schedulerPolicyEvidence }),
+            ...(observabilityEvidenceLimits === undefined
+              ? {}
+              : { observabilityEvidenceLimits }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel

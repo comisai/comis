@@ -53,7 +53,7 @@ describe("stripInternalFields()", () => {
   });
 
   it("exposes every dispatcher-injected internal field name in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(26);
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(27);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });

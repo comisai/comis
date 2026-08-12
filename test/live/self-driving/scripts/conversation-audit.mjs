@@ -131,20 +131,16 @@ async function emulatorWireRecords(chatId) {
   return records;
 }
 
-async function incidentReportFor(sessionId) {
+export async function incidentReportFor(sessionId) {
   // Strict dev parsing can reject the very report this command is intended to diagnose.
   // Production assembly still validates its durable inputs and returns honest coverage.
   if (process.env.NODE_ENV === undefined) process.env.NODE_ENV = "production";
-  const daemonDist = await import(comisDist("daemon", "dist/index.js"));
-  const exports = { ...daemonDist.default, ...daemonDist };
-  if (
-    typeof exports.assembleIncidentReportFromSources !== "function"
-    || typeof exports.makeRealReader !== "function"
-  ) {
-    throw new Error("deployed observability incident-report exports are unavailable");
+  const cliOfflineDist = await import(comisDist("cli", "dist/util/offline-obs.js"));
+  const exports = { ...cliOfflineDist.default, ...cliOfflineDist };
+  if (typeof exports.assembleIncidentReportOffline !== "function") {
+    throw new Error("deployed CLI offline observability adapter is unavailable");
   }
-  return exports.assembleIncidentReportFromSources(
-    exports.makeRealReader(rig.dataDir),
+  return exports.assembleIncidentReportOffline(
     rig.dataDir,
     paramsForExplainRef(sessionId, "full"),
   );

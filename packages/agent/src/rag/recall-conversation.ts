@@ -5,6 +5,7 @@ import {
   parseInboundMessageProvenanceBatch,
   type OriginalInboundMessage,
 } from "@comis/core";
+import { isOpaquePayloadWithoutRetrievalTerms } from "./relevance-scorer.js";
 
 export const RECENT_USER_TURN_COUNT = 8;
 
@@ -12,15 +13,21 @@ export interface RecentUserTurnSelectionEvidence {
   readonly turnCount: number;
   readonly charCount: number;
   readonly saturated: boolean;
+  readonly recallDisposition: "search" | "skip_oversized_token";
 }
 
 export function describeRecentUserTurnSelection(
   turns: readonly string[],
+  currentRequestText?: string,
 ): RecentUserTurnSelectionEvidence {
   return {
     turnCount: turns.length,
     charCount: turns.join("\n").length,
     saturated: turns.length >= RECENT_USER_TURN_COUNT,
+    recallDisposition: currentRequestText !== undefined
+      && isOpaquePayloadWithoutRetrievalTerms(currentRequestText)
+      ? "skip_oversized_token"
+      : "search",
   };
 }
 

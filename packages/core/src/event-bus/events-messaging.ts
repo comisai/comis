@@ -654,7 +654,7 @@ export interface MessagingEvents {
    *  breaker — this is the CAPABILITY-DENIAL breaker. */
   "execution:aborted": {
     sessionKey: SessionKey;
-    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker";
+    reason: "user_stop" | "budget_exceeded" | "circuit_breaker" | "max_steps" | "context_exhausted" | "pipeline_timeout" | "loop_detected" | "spend_exceeded" | "denial_breaker" | "caller_cancelled";
     agentId: string;
     /** Model provider whose request failures opened the circuit breaker. */
     provider?: string;
@@ -763,7 +763,20 @@ export interface MessagingEvents {
    *  `missing_scheduler_state_evidence` means affirmative reminder state was
    *  replaced because no current-turn scheduler receipt supported it;
    *  `pending_scheduler_confirmation` means a gated removal stopped before
-   *  mutation and an overclaim was replaced with a neutral confirmation ask.
+   *  mutation and an overclaim was replaced with a neutral confirmation ask;
+   *  `missing_outbound_audio_evidence` means an audio-delivery claim lacked a
+   *  successful synthesis or trusted completion receipt.
+   *  `missing_outbound_image_evidence` applies the same rule to image
+   *  generation and delivery claims.
+   *  `missing_outbound_delivery_status_evidence` means an elliptical status
+   *  answer lacked a current delivery or observability receipt.
+   *  `unsupported_outage_receipt_evidence` means a generic observability
+   *  receipt did not prove when an inbound message was accepted around an outage.
+   *  `unsupported_runtime_self_report_evidence` is the third, DISTINCT branch:
+   *  a successful current-turn obs_query receipt DID arrive but could not carry
+   *  the comparative-latency or provider-billed-cost claim. Collapsing it into
+   *  `missing_runtime_self_report_evidence` sent operators to check obs_query
+   *  admission for a turn where obs_query worked.
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -781,8 +794,13 @@ export interface MessagingEvents {
       | "agent_update_noop_grounding"
       | "missing_ongoing_work_evidence"
       | "missing_runtime_self_report_evidence"
+      | "unsupported_runtime_self_report_evidence"
+      | "unsupported_outage_receipt_evidence"
       | "missing_scheduler_state_evidence"
       | "pending_scheduler_confirmation"
+      | "missing_outbound_audio_evidence"
+      | "missing_outbound_image_evidence"
+      | "missing_outbound_delivery_status_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
     timestamp: number;

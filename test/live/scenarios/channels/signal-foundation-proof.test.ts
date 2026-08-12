@@ -59,6 +59,7 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { initSchema } from "@comis/memory";
 import { assertChannelTrace, readMirrorText } from "../../assert/channel-trace.js";
 import { createSignalEmulator, type SignalEmulator } from "../../emulators/signal/signal-emulator.js";
 import { signalCaps, SIGNAL_MAX_MESSAGE_CHARS } from "../../emulators/signal/signal-caps.js";
@@ -102,51 +103,44 @@ function freshDbPath(): string {
 }
 
 /**
- * Create the delivery_mirror table with the REAL schema (the Comis half of the
- * dual oracle — `readMirrorText` reads `delivery_mirror.text WHERE session_key`),
- * channel-neutral: the `channel_type` column carries `signal` here but the
- * cross-check reads it the same for any channel (`channel-trace.ts:76`).
+ * Create the delivery_mirror table by running the PRODUCT's own boot DDL (the
+ * Comis half of the dual oracle — `readMirrorText` reads
+ * `delivery_mirror.text WHERE conversation_ref`), channel-neutral: the
+ * `channel_type` column carries `signal` here but the cross-check reads it the
+ * same for any channel.
+ *
+ * `initSchema` rather than a hand-copied CREATE TABLE: the copy had drifted to a
+ * `session_key` column the real schema does not have, so this fixture agreed
+ * with itself while the oracle failed against any daemon-written db.
  */
 function freshMirrorDb(): string {
   const dbPath = freshDbPath();
   const db = new Database(dbPath);
-  db.exec(`
-    CREATE TABLE delivery_mirror (
-      id TEXT PRIMARY KEY,
-      session_key TEXT NOT NULL,
-      text TEXT NOT NULL,
-      media_urls TEXT NOT NULL DEFAULT '[]',
-      channel_type TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      origin TEXT NOT NULL DEFAULT 'agent',
-      idempotency_key TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending'
-        CHECK(status IN ('pending', 'acknowledged')),
-      created_at INTEGER NOT NULL,
-      acknowledged_at INTEGER
-    );
-    CREATE UNIQUE INDEX idx_dm_idempotency ON delivery_mirror(idempotency_key);
-  `);
-  db.close();
+  try {
+    initSchema(db, 768);
+  } finally {
+    db.close();
+  }
   return dbPath;
 }
 
 /**
  * INSERT a delivery_mirror fixture row for `signal` (the MIRROR half — the Comis
  * oracle the cross-check compares the wire against). `readMirrorText` keys on
- * `session_key` only (the dual oracle is channel-agnostic by design).
+ * `conversation_ref` only (the dual oracle is channel-agnostic by design).
  */
 function insertSignalMirrorRow(
   dbPath: string,
-  row: { id: string; sessionKey: string; text: string; idempotencyKey: string },
+  row: { id: string; conversationRef: string; text: string; idempotencyKey: string },
 ): void {
   const db = new Database(dbPath);
   try {
     db.prepare(
       `INSERT INTO delivery_mirror
-         (id, session_key, text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
-       VALUES (?, ?, ?, '[]', 'signal', ?, 'agent', ?, 'acknowledged', ?)`,
-    ).run(row.id, row.sessionKey, row.text, SIGNAL_CHAT, row.idempotencyKey, 1000);
+         (id, tenant_id, agent_id, conversation_ref, destination_endpoint,
+          text, media_urls, channel_type, channel_id, origin, idempotency_key, status, created_at)
+       VALUES (?, 'test', 'default', ?, '{}', ?, '[]', 'signal', ?, 'agent', ?, 'acknowledged', ?)`,
+    ).run(row.id, row.conversationRef, row.text, SIGNAL_CHAT, row.idempotencyKey, 1000);
   } finally {
     db.close();
   }
@@ -337,7 +331,7 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
       // Seed the matching delivery_mirror row (the Comis oracle).
       insertSignalMirrorRow(dbPath, {
         id: "m1",
-        sessionKey: "s",
+        conversationRef: "s",
         text: wireText,
         idempotencyKey: "s:hash:1",
       });
@@ -348,14 +342,14 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
           emulator: asChannelOracle(emulator),
           chat: { chatId: 424242 },
           memoryDbPath: dbPath,
-          sessionKey: "s",
+          conversationRef: "s",
         }),
       ).resolves.toBeUndefined();
 
       // Disagreement -> a HARD throw (Comis thinks it sent X but the wire shows Y).
       insertSignalMirrorRow(dbPath, {
         id: "m2",
-        sessionKey: "s2",
+        conversationRef: "s2",
         text: "a DIFFERENT Comis-recorded reply",
         idempotencyKey: "s2:hash:1",
       });
@@ -364,7 +358,7 @@ describe("CHAN2-02 Stage-B — the Signal foundation-proof structure (no COMIS_L
           emulator: asChannelOracle(emulator), // wire is still `wireText`
           chat: { chatId: 424242 },
           memoryDbPath: dbPath,
-          sessionKey: "s2",
+          conversationRef: "s2",
         }),
       ).rejects.toThrow(/dual-oracle/);
 
@@ -589,8 +583,8 @@ describe.skipIf(!PHASE_BASE_RESOLVABLE)("CHAN2-02 Stage-B — THE ZERO-CHANGE PR
     // The structural subset the dual oracle accepts (channel-agnostic, not bound
     // to TgEmulator) — `lastBotReply(chat): { text? }`.
     expect(dualOracle).toMatch(/lastBotReply\(chat:\s*\{\s*chatId:\s*number\s*\}\)/);
-    // The channel-neutral delivery_mirror read (keyed on session_key only).
-    expect(dualOracle).toMatch(/SELECT text FROM delivery_mirror WHERE session_key/);
+    // The channel-neutral delivery_mirror read (keyed on the durable conversation_ref only).
+    expect(dualOracle).toMatch(/SELECT text FROM delivery_mirror WHERE conversation_ref/);
 
     const handle = readFileSync(
       resolve(REPO_ROOT, "test/live/harness/chanlive-handle.ts"),
@@ -719,16 +713,16 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
     memoryDbPath = undefined;
   });
 
-  /** Bounded poll for the single delivery_mirror.session_key (the after_delivery hook is async). */
-  async function pollForSessionKey(dbPath: string, timeoutMs = 5000): Promise<string | undefined> {
+  /** Bounded poll for the single delivery_mirror.conversation_ref (the after_delivery hook is async). */
+  async function pollForConversationRef(dbPath: string, timeoutMs = 5000): Promise<string | undefined> {
     const start = Date.now();
     const read = (): string | undefined => {
       const db = new Database(dbPath, { readonly: true });
       try {
         const row = db
-          .prepare("SELECT session_key FROM delivery_mirror ORDER BY created_at DESC LIMIT 1")
-          .get() as { session_key?: string } | undefined;
-        return row?.session_key;
+          .prepare("SELECT conversation_ref FROM delivery_mirror ORDER BY created_at DESC LIMIT 1")
+          .get() as { conversation_ref?: string } | undefined;
+        return row?.conversation_ref;
       } finally {
         db.close();
       }
@@ -762,13 +756,13 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
       ).toBeDefined();
       if (reply === undefined) return;
 
-      // Resolve the session key from the single mirror row (bounded poll).
-      const sessionKey = await pollForSessionKey(dbPath);
+      // Resolve the durable conversation ref from the single mirror row (bounded poll).
+      const conversationRef = await pollForConversationRef(dbPath);
       expect(
-        sessionKey,
-        "a delivery_mirror row was written for the session (the after_delivery hook fired on the Signal path)",
+        conversationRef,
+        "a delivery_mirror row was written for the conversation (the after_delivery hook fired on the Signal path)",
       ).toBeDefined();
-      if (sessionKey === undefined) return;
+      if (conversationRef === undefined) return;
 
       // THE HARD dual-oracle cross-check on Signal: the SignalEmulator's recorded
       // wire text == delivery_mirror.text for the session (assertChannelTrace, a
@@ -784,11 +778,11 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
         emulator: { lastBotReply: () => r.emulator.lastBotReply(RIG_SIGNAL_CHAT) },
         chat: r.chat,
         memoryDbPath: dbPath,
-        sessionKey,
+        conversationRef,
       });
 
       // explain works channel-agnostically over the rpc-over-WS transport:
-      // a known sessionKey returns an IncidentReport. (Driven via the chan CLI's
+      // a known conversation reference returns an IncidentReport. (Driven via the chan CLI's
       // explain verb against the rig's gateway — channel-agnostic obs.)
       const { runVerb: liveRunVerb } = await import("../../bin/chan.js");
       const explainHandle: ChanliveHandle = {
@@ -801,7 +795,7 @@ describe.skipIf(!isLive)("CHAN2-02 Stage-C — the Signal agent round-trip + exp
         dataDir: dirname(dbPath),
         memoryDbPath: dbPath,
       };
-      const report = (await liveRunVerb("explain", [sessionKey], {
+      const report = (await liveRunVerb("explain", [conversationRef], {
         handle: explainHandle,
       })) as Record<string, unknown>;
       // A channel-agnostic IncidentReport came back (not an error shape).

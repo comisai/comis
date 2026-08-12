@@ -107,6 +107,8 @@ function createPromptSkillWithNewFields(
     skillKey?: string;
     primaryEnv?: string;
     commandDispatch?: string;
+    minDistinctWebFetchUrls?: number;
+    minDistinctWebSearchQueries?: number;
   },
 ): void {
   const comisLines: string[] = [];
@@ -138,6 +140,16 @@ function createPromptSkillWithNewFields(
   }
   if (fields.commandDispatch !== undefined) {
     comisLines.push(`  command-dispatch: ${fields.commandDispatch}`);
+  }
+  if (fields.minDistinctWebFetchUrls !== undefined) {
+    comisLines.push(
+      `  min-distinct-web-fetch-urls: ${fields.minDistinctWebFetchUrls}`,
+    );
+  }
+  if (fields.minDistinctWebSearchQueries !== undefined) {
+    comisLines.push(
+      `  min-distinct-web-search-queries: ${fields.minDistinctWebSearchQueries}`,
+    );
   }
 
   const comisYaml = comisLines.length > 0
@@ -1381,6 +1393,8 @@ name: ns-skill
 description: "A namespaced skill"
 type: prompt
 comis:
+  min-distinct-web-fetch-urls: 3
+  min-distinct-web-search-queries: 3
   os:
     - linux
     - darwin
@@ -1407,6 +1421,9 @@ Namespaced skill body.
     expect(meta.skillKey).toBe("ns-skill");
     expect(meta.primaryEnv).toBe("discord");
     expect(meta.commandDispatch).toBe("slash");
+    expect(meta.minDistinctWebFetchUrls).toBe(3);
+    expect((meta as unknown as { minDistinctWebSearchQueries?: number })
+      .minDistinctWebSearchQueries).toBe(3);
   });
 
   it("skill without comis: namespace has undefined for Comis metadata fields", () => {
@@ -1423,6 +1440,7 @@ Namespaced skill body.
     expect(meta.skillKey).toBeUndefined();
     expect(meta.primaryEnv).toBeUndefined();
     expect(meta.commandDispatch).toBeUndefined();
+    expect(meta.minDistinctWebFetchUrls).toBeUndefined();
   });
 
   it("Level 1 and Level 2 return same values for coerced fields", () => {
@@ -1736,6 +1754,7 @@ type: prompt
 userInvocable: true
 argumentHint: "some hint"
 comis:
+  min-distinct-web-fetch-urls: 3
   os:
     - linux
     - darwin
@@ -1768,6 +1787,9 @@ Enriched skill body.
     // Verify userInvocable is read (should be in user-invocable set)
     const invocable = registry.getUserInvocableSkillNames();
     expect(invocable.has("enriched")).toBe(true);
+    expect(
+      registry.getPromptSkillCapabilities(() => undefined)[0]?.minDistinctWebFetchUrls,
+    ).toBe(3);
   });
 
   it("filters by allowedSkills/deniedSkills", () => {
@@ -2025,6 +2047,48 @@ describe("getPromptSkillCapabilities", () => {
 
     expect(registry.getPromptSkillCapabilities(() => undefined)[0]?.requiredBins)
       .toEqual(["git"]);
+  });
+
+  it("surfaces the distinct web fetch minimum for prompt skill recovery", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithNewFields(
+      skillsDir,
+      "research-skill",
+      "Research a topic from multiple sources",
+      "Fetch distinct sources before answering.",
+      { minDistinctWebFetchUrls: 3 },
+    );
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const capability = registry.getPromptSkillCapabilities(() => undefined)[0] as
+      | { readonly minDistinctWebFetchUrls?: number }
+      | undefined;
+    expect(capability?.minDistinctWebFetchUrls).toBe(3);
+  });
+
+  it("surfaces the distinct web search minimum for prompt skill recovery", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithNewFields(
+      skillsDir,
+      "research-skill",
+      "Research a topic from multiple angles",
+      "Search distinct angles before answering.",
+      { minDistinctWebSearchQueries: 3 },
+    );
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const capability = registry.getPromptSkillCapabilities(() => undefined)[0] as
+      | { readonly minDistinctWebSearchQueries?: number }
+      | undefined;
+    expect(capability?.minDistinctWebSearchQueries).toBe(3);
   });
 
   it("filter chain: disableModelInvocation === true is FILTERED OUT", () => {

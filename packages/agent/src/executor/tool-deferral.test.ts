@@ -1716,7 +1716,7 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
 
     // Description shows clean lean text, NOT searchHint keywords
     expect(entry.description).not.toContain("monitoring");
-    expect(entry.description).toContain("runtime self-reports");
+    expect(entry.description).toContain("self-report evidence");
     expect(entry.description).toContain("explain");
   });
 

@@ -62,7 +62,7 @@ const MessageToolParams = Type.Object({
     Type.String({ description: "Fetch messages before this message ID (for fetch)" }),
   ),
   attachment_url: Type.Optional(
-    Type.String({ description: "URL or workspace path of file to send: http(s)://, file://, or absolute path (for attach)" }),
+    Type.String({ description: "URL or workspace-relative/absolute path of file to send: http(s)://, file://, or a workspace path (for attach)" }),
   ),
   attachment_type: Type.Optional(
     Type.Union(

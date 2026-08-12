@@ -191,6 +191,24 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/requesterOrigin|announce/i);
   });
 
+  it("names caller authority when announcement route validation suppresses delivery", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "success",
+        degraded: true,
+        subagentDeliverySkipped: {
+          count: 1,
+          lastRunId: "run-route-rejected",
+          lastReason: "route_validation_failed",
+        },
+      } as unknown as Partial<IncidentSignals>),
+    );
+
+    expect(r?.code).toBe("subagent_delivery_skipped");
+    expect(r?.detail).toMatch(/route validation failed/i);
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/callerConversation|destinationEndpoint/);
+  });
+
   it("abandoned child processes outrank the expected operator-origin delivery skip", () => {
     const signals = makeSignals({
       endReason: "success",
@@ -1104,6 +1122,27 @@ describe("obs-explain-heuristics", () => {
     expect(r?.code).toBe("tool_invocation_stall");
     expect(r?.detail).toContain("mcp__test-service--account_summary");
     expect(r?.detail).toMatch(/request_tool_nudge|recovery/iu);
+  });
+
+  it("reports completed tools when a later workflow requirement stalls", () => {
+    const r = rootCause(makeSignals({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      toolStats: {
+        read: { ok: 1, failed: 0 },
+      },
+      recoveries: {
+        total: 1,
+        succeeded: 0,
+        byReason: { request_tool_nudge: 1 },
+      },
+    }));
+
+    expect(r?.code).toBe("tool_invocation_stall");
+    expect(r?.detail).toContain("completed current-turn invocations [read=1]");
+    expect(r?.detail).not.toContain("no current-turn invocation completed");
+    expect(r?.suggestedNextSteps.join(" ")).toMatch(/skill routing|workflow requirement/iu);
   });
 
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
@@ -2181,7 +2220,7 @@ describe("prompt_timeout terminal verdict", () => {
             transportOk: true,
             errorKind: "config",
             matchedRule: "missing_provider_configuration",
-            matchedToken: "tools.web.search.tavily.apiKey",
+            matchedToken: "secrets.SEARCH_API_KEY",
             resultDigest: "d",
             resultBytes: 100,
             errorPreview: "bounded failure preview",
@@ -2192,7 +2231,7 @@ describe("prompt_timeout terminal verdict", () => {
 
     expect(r!.code).toBe("tool_provider_configuration_missing");
     expect(r!.suggestedNextSteps[0]).toContain(
-      "tools.web.search.tavily.apiKey",
+      "secrets.SEARCH_API_KEY",
     );
   });
 

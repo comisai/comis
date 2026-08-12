@@ -10,6 +10,22 @@ function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }
 
+/**
+ * Normalize prose for space-delimited phrase matching. Word separators become
+ * single spaces so a phrase still matches at a sentence end or before a comma:
+ * a phrase list is only equivalent to the word-boundary form it replaced when
+ * punctuation is a boundary too.
+ */
+function normalizedPhraseBoundaryText(value: string): string {
+  return ` ${
+    value
+      .toLocaleLowerCase()
+      .replaceAll("’", "'")
+      .replace(/[^\p{L}\p{N}'-]+/gu, " ")
+      .trim()
+  } `;
+}
+
 function containsEvidencePhrase(text: string, phrases: readonly string[]): boolean {
   return phrases.some((phrase) => text.includes(phrase));
 }
@@ -123,8 +139,14 @@ export interface OngoingWorkEvidenceGuardResult {
 export interface RuntimeSelfReportEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_runtime_self_report_evidence";
+  reason?:
+    | "missing_runtime_self_report_evidence"
+    | "unsupported_runtime_self_report_evidence"
+    | "unsupported_outage_receipt_evidence";
 }
+
+const OUTAGE_RECEIPT_REQUEST_PATTERN =
+  /\b(?:did|have) (?:you|u) (?:receive|get|see|process)\b[^?\n]{0,120}\b(?:message|update|request)\b[^?\n]{0,120}\b(?:while|when) (?:you|u|the (?:daemon|service|system)) (?:were|was) (?:down|offline|restarting)\b/iu;
 
 const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
   /\bwhat (?:did|have) (?:you|u) (?:even )?(?:do|done)\b/iu,
@@ -132,6 +154,10 @@ const RUNTIME_SELF_REPORT_REQUEST_PATTERNS = [
   /\bhow much (?:(?:have|did) )?(?:you|u) cost(?: me| us)?\b/iu,
   /\bwhy (?:were|are) (?:you|u) (?:so )?(?:slow|expensive)\b/iu,
   /\bwhy was (?:that|this|it) so slow\b/iu,
+  /\bwhy was the slowest\b[^?\n]{0,80}\bslow\b/iu,
+  /\b(?:resume|recover|continue)\b[^?\n]{0,120}\b(?:durable|background|pipeline|graph|job|task|work)\b[^?\n]{0,120}\b(?:after|across|through)\b[^?\n]{0,30}\b(?:the )?(?:daemon |service |system )?restart\b/iu,
+  /\b(?:give|show|tell)\b[^?\n]{0,100}\b(?:answer|decision|output|result|verdict)\b[^?\n]{0,120}\b(?:after|because|even if|when)\b[^?\n]{0,80}\b(?:(?:graph|pipeline|source) )?node\b[^?\n]{0,50}\b(?:cancelled|completed|failed|stopped)\b/iu,
+  OUTAGE_RECEIPT_REQUEST_PATTERN,
   /\bhow many\b[^?\n]{0,80}\b(?:did|have) (?:you|u)\b/iu,
   /\b(?:cost|total)\b[^?\n]{0,100}\bbecause\b[^?\n]{0,80}\b(?:was|were) down\b[^?\n]{0,30}\b(?:right|correct|yeah)\b/iu,
   /\b(?:you|u) only (?:did|used)\b[^?\n]{0,80}\b(?:turns?|calls?|tokens?|sessions?)\b[^?\n]{0,100}\b(?:confirm|right|correct|yeah)\b/iu,
@@ -154,23 +180,77 @@ export function enforceRuntimeSelfReportEvidence(params: {
   toolExecResults?: ReadonlyArray<{
     toolName: string;
     success: boolean;
+    observabilityEvidenceLimits?: {
+      cost?: "runtime_estimate";
+      providerInvoice?: "unverified";
+      crossExecutionDurationRanking?: "unavailable";
+    };
   }>;
   honestResponse: string;
+  unsupportedResponse?: string;
 }): RuntimeSelfReportEvidenceGuardResult {
   if (!isRuntimeSelfReportRequest(params.request)) {
     return { response: params.response, corrected: false };
   }
-  const hasEvidence = (params.toolExecResults ?? []).some(
+  const evidence = (params.toolExecResults ?? []).findLast(
     (result) => result.toolName === "obs_query" && result.success,
   );
-  if (hasEvidence || params.response === params.honestResponse) {
+  if (params.response === params.honestResponse) {
     return { response: params.response, corrected: false };
   }
-  return {
-    response: params.honestResponse,
-    corrected: true,
-    reason: "missing_runtime_self_report_evidence",
-  };
+  if (evidence === undefined) {
+    return {
+      response: params.honestResponse,
+      corrected: true,
+      reason: "missing_runtime_self_report_evidence",
+    };
+  }
+
+  const normalizedResponse = normalizedEvidenceText(params.response);
+  const admitsOutageReceiptUncertainty =
+    /\b(?:cannot|can't|could not|couldn't|did not|didn't|unable|unverified|not verified|does not prove|no (?:current )?(?:evidence|receipt))\b/iu.test(normalizedResponse);
+  const claimsOutageReceipt =
+    /\b(?:i|we) (?:received|got|saw|processed|accepted)\b|\b(?:message|update|request|it) (?:was )?(?:received|processed|accepted)\b/iu.test(normalizedResponse);
+  if (
+    OUTAGE_RECEIPT_REQUEST_PATTERN.test(params.request)
+    && claimsOutageReceipt
+    && !admitsOutageReceiptUncertainty
+  ) {
+    return {
+      response: params.honestResponse,
+      corrected: true,
+      reason: "unsupported_outage_receipt_evidence",
+    };
+  }
+
+  const limits = evidence.observabilityEvidenceLimits;
+  const asksForSlowest = /\bslowest\b/iu.test(params.request);
+  const asksForCost = /\b(?:cost|spend|spent|expensive)\b/iu.test(params.request);
+  const qualifiesEstimate = /\b(?:runtime )?estimate(?:d)?\b/iu.test(normalizedResponse);
+  const qualifiesProviderInvoice =
+    /\b(?:provider|actual) (?:invoice|bill(?:ing)?)\b/iu.test(normalizedResponse)
+    && /\b(?:unverified|cannot verify|can't verify|not verified|unavailable)\b/iu.test(normalizedResponse);
+  const unsupportedDuration =
+    asksForSlowest
+    && limits?.crossExecutionDurationRanking === "unavailable";
+  // Either qualifier settles the authority question: naming the figure a runtime
+  // estimate already withholds the provider-invoice claim. Demanding both
+  // phrases discarded correct, qualified answers such as
+  // "this turn cost about $0.04 (runtime estimate)".
+  const unsupportedCost =
+    asksForCost
+    && limits?.cost === "runtime_estimate"
+    && limits.providerInvoice === "unverified"
+    && !qualifiesEstimate
+    && !qualifiesProviderInvoice;
+  if (unsupportedDuration || unsupportedCost) {
+    return {
+      response: params.unsupportedResponse ?? params.honestResponse,
+      corrected: true,
+      reason: "unsupported_runtime_self_report_evidence",
+    };
+  }
+  return { response: params.response, corrected: false };
 }
 
 export interface SchedulerStateEvidenceGuardResult {
@@ -364,6 +444,277 @@ export function enforceCompletionEvidence(params: {
     corrected: true,
     reason: "unrecovered_tool_failure_completion_claim",
     correction: "replaced",
+  };
+}
+
+export interface OutboundAudioEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_audio_evidence";
+}
+
+const OUTBOUND_AUDIO_REQUEST_PATTERNS = [
+  /^\s*(?:please\s+)?(?:say|read|speak)\b[\s\S]{0,160}\b(?:out\s+loud|aloud)\b/iu,
+  /\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?(?:say|read|speak)\b[\s\S]{0,160}\b(?:out\s+loud|aloud)\b/iu,
+  /^\s*(?:please\s+)?(?:send|reply|respond)\b[\s\S]{0,100}\b(?:voice|audio)(?:\s+(?:message|note|reply))?\b/iu,
+  /\b(?:can|could|would|will)\s+(?:you|u)\b[\s\S]{0,100}\b(?:send|reply|respond)\b[\s\S]{0,100}\b(?:voice|audio)\b/iu,
+  /^\s*(?:please\s+)?(?:turn|convert)\b[\s\S]{0,160}\b(?:into|to)\s+(?:an?\s+)?(?:audio|voice|speech)\b/iu,
+] as const;
+
+const OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?\s+(?:said|spoke|read|sent|delivered|synthesi[sz]ed|recorded)\b/iu,
+  /\b(?:voice|audio)(?:\s+(?:message|note|reply))?\s+(?:(?:was|is|has been)\s+)?(?:sent|delivered|synthesi[sz]ed|recorded|attached|ready)\b/iu,
+] as const;
+
+const OUTBOUND_AUDIO_LIMITATION =
+  /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:say|speak|read|send|deliver|synthesi[sz]e|record|voice|audio)\b/iu;
+const OUTBOUND_AUDIO_TEXT_SUBSTITUTE_PHRASES = [
+  " as text ",
+  " as plain text ",
+  " in text ",
+  " in plain text ",
+  " text below ",
+  " text instead ",
+  " text reply ",
+  " text summary ",
+  " text version ",
+  " written below ",
+  " written instead ",
+  " written reply ",
+  " written summary ",
+  " written version ",
+] as const;
+const OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?(?: now)?\s+(?:said|spoke|read|sent|delivered|synthesi[sz]ed|recorded)\b[\s\S]{0,100}\b(?:out\s+loud|aloud|voice|audio)\b/iu,
+  OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS[1],
+] as const;
+
+/**
+ * Require an authoritative delivery receipt before preserving prose that says
+ * a current request was spoken or delivered as audio. A background spawn is
+ * only a handoff; the trusted completion relay is the receipt for that path.
+ * A synthesis tool call is not the only way audio reaches the user: when the
+ * runtime's own voice route speaks this turn's reply, that configured delivery
+ * is the receipt, because no tool call can exist for it.
+ */
+export function enforceOutboundAudioEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  /** The configured outbound voice route speaks this turn's reply itself. */
+  runtimeAudioDelivery?: boolean;
+  honestResponse: string;
+}): OutboundAudioEvidenceGuardResult {
+  const requested = OUTBOUND_AUDIO_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!requested) return { response: params.response, corrected: false };
+
+  const successfulSynthesis = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.toolName === "tts_synthesize"
+      && result.success
+      && result.backgrounded !== true,
+  );
+  if (
+    successfulSynthesis
+    || params.currentActionEvidence === true
+    || params.runtimeAudioDelivery === true
+  ) {
+    return { response: params.response, corrected: false };
+  }
+
+  const completionClaim = isCompletionClaim(params.response);
+  const audioSuccessClaim = OUTBOUND_AUDIO_SUCCESS_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  const audioArtifactClaim = OUTBOUND_AUDIO_ARTIFACT_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  const normalizedResponse = normalizedPhraseBoundaryText(params.response);
+  if (!completionClaim && !audioSuccessClaim && !audioArtifactClaim) {
+    return { response: params.response, corrected: false };
+  }
+  // An admitted inability, or a named text substitute, already withholds the
+  // audio claim, so the delivered prose survives unless it also claims the
+  // artifact. The trigger above fires on a bare completion verb ("ready",
+  // "I sent the summary"), which a reply can carry while honestly refusing the
+  // medium; requiring BOTH signals discarded that reply along with the work it
+  // did deliver.
+  if (
+    !audioArtifactClaim
+    && (
+      OUTBOUND_AUDIO_LIMITATION.test(params.response)
+      || containsEvidencePhrase(normalizedResponse, OUTBOUND_AUDIO_TEXT_SUBSTITUTE_PHRASES)
+    )
+  ) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_outbound_audio_evidence",
+  };
+}
+
+export interface OutboundImageEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_image_evidence";
+}
+
+const OUTBOUND_IMAGE_REQUEST_PATTERNS = [
+  /^\s*(?:please\s+)?(?:make|create|generate|draw|design|render)\b[\s\S]{0,180}\b(?:image|picture|illustration|graphic|photo)\b/iu,
+  /\b(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?(?:make|create|generate|draw|design|render)\b[\s\S]{0,180}\b(?:image|picture|illustration|graphic|photo)\b/iu,
+  /^\s*(?:please\s+)?(?:turn|convert)\b[\s\S]{0,160}\b(?:into|to)\s+(?:an?\s+)?(?:image|picture|illustration|graphic|photo)\b/iu,
+] as const;
+
+const OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?\s+(?:made|created|generated|drew|designed|rendered|sent|delivered)\b/iu,
+  /\b(?:image|picture|illustration|graphic|photo)\s+(?:(?:was|is|has been)\s+)?(?:made|created|generated|drawn|designed|rendered|sent|delivered|attached|ready)\b/iu,
+] as const;
+
+const OUTBOUND_IMAGE_LIMITATION =
+  /\b(?:could not|couldn't|cannot|can't|did not|didn't|unable to|failed to)\b[\s\S]{0,100}\b(?:make|create|generate|draw|design|render|send|deliver|image|picture|illustration|graphic|photo)\b/iu;
+const OUTBOUND_IMAGE_TEXT_SUBSTITUTE =
+  /\b(?:text|written)\b[\s\S]{0,40}\b(?:description|layout|instructions?|brief|prompt)\b/iu;
+const OUTBOUND_IMAGE_ARTIFACT_CLAIM_PATTERNS = [
+  /\b(?:i|we)(?:'ve| have)?(?: now)?\s+(?:made|created|generated|drew|designed|rendered|sent|delivered)\b[\s\S]{0,100}\b(?:image|picture|illustration|graphic|photo)\b/iu,
+  OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS[1],
+] as const;
+
+/**
+ * Require generation, an outbound attachment receipt, or trusted completion
+ * proof for current image claims. Generation is not the only way a picture
+ * reaches the user — an attachment delivered by the message tool is the
+ * authoritative receipt for an image the agent produced by other means.
+ */
+export function enforceOutboundImageEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    action?: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}): OutboundImageEvidenceGuardResult {
+  const requested = OUTBOUND_IMAGE_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!requested) return { response: params.response, corrected: false };
+
+  const successfulDelivery = (params.toolExecResults ?? []).some(
+    (result) =>
+      result.success
+      && result.backgrounded !== true
+      && (result.toolName === "image_generate"
+        || (result.toolName === "message" && result.action === "attach")),
+  );
+  if (successfulDelivery || params.currentActionEvidence === true) {
+    return { response: params.response, corrected: false };
+  }
+
+  const completionClaim = isCompletionClaim(params.response);
+  const imageSuccessClaim = OUTBOUND_IMAGE_SUCCESS_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  const imageArtifactClaim = OUTBOUND_IMAGE_ARTIFACT_CLAIM_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (!completionClaim && !imageSuccessClaim && !imageArtifactClaim) {
+    return { response: params.response, corrected: false };
+  }
+  // Same rule as the audio guard: an admitted inability or a named written
+  // substitute is already honest about the missing artifact, so a reply that
+  // refuses the image while delivering the rest of the requested work is kept.
+  if (
+    !imageArtifactClaim
+    && (
+      OUTBOUND_IMAGE_LIMITATION.test(params.response)
+      || OUTBOUND_IMAGE_TEXT_SUBSTITUTE.test(params.response)
+    )
+  ) {
+    return { response: params.response, corrected: false };
+  }
+
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_outbound_image_evidence",
+  };
+}
+
+export interface OutboundDeliveryStatusEvidenceGuardResult {
+  response: string;
+  corrected: boolean;
+  reason?: "missing_outbound_delivery_status_evidence";
+}
+
+const OUTBOUND_DELIVERY_STATUS_REQUEST_PATTERNS = [
+  /^\s*did\s+(?:it|that|this)\s+(?:send|go\s+through)\s*\??\s*$/iu,
+  /^\s*(?:was|has)\s+(?:it|that|this)\s+(?:sent|delivered|uploaded|posted)\s*\??\s*$/iu,
+] as const;
+
+const OUTBOUND_DELIVERY_STATUS_SUCCESS_PATTERNS = [
+  /\b(?:yes|it\s+did)\b[\s\S]{0,180}\b(?:sent|delivered|went\s+through|uploaded|posted)\b/iu,
+  /\b(?:was|is|has\s+been)\s+(?:sent|delivered|uploaded|posted)\s+successfully\b/iu,
+] as const;
+
+const OUTBOUND_DELIVERY_STATUS_LIMITATION =
+  /\b(?:no|not|never|could\s+not|couldn't|did\s+not|didn't|was\s+not|wasn't|failed)\b[\s\S]{0,100}\b(?:send|sent|deliver|delivered|upload|uploaded|post|posted|go\s+through)\b/iu;
+
+const OUTBOUND_DELIVERY_RECEIPT_TOOLS = new Set([
+  "obs_query",
+  "image_generate",
+  "tts_synthesize",
+  "video_generate",
+]);
+
+/** Require current evidence before preserving an elliptical delivery-status affirmation. */
+export function enforceOutboundDeliveryStatusEvidence(params: {
+  request: string;
+  response: string;
+  toolExecResults?: ReadonlyArray<{
+    toolName: string;
+    success: boolean;
+    backgrounded?: boolean;
+  }>;
+  currentActionEvidence?: boolean;
+  honestResponse: string;
+}): OutboundDeliveryStatusEvidenceGuardResult {
+  const statusRequested = OUTBOUND_DELIVERY_STATUS_REQUEST_PATTERNS.some(
+    (pattern) => pattern.test(params.request),
+  );
+  if (!statusRequested || OUTBOUND_DELIVERY_STATUS_LIMITATION.test(params.response)) {
+    return { response: params.response, corrected: false };
+  }
+  const affirmative = OUTBOUND_DELIVERY_STATUS_SUCCESS_PATTERNS.some(
+    (pattern) => pattern.test(params.response),
+  );
+  if (!affirmative) return { response: params.response, corrected: false };
+
+  const hasCurrentReceipt = (params.toolExecResults ?? []).some(
+    (result) =>
+      OUTBOUND_DELIVERY_RECEIPT_TOOLS.has(result.toolName)
+      && result.success
+      && result.backgrounded !== true,
+  );
+  if (hasCurrentReceipt || params.currentActionEvidence === true) {
+    return { response: params.response, corrected: false };
+  }
+  return {
+    response: params.honestResponse,
+    corrected: true,
+    reason: "missing_outbound_delivery_status_evidence",
   };
 }
 

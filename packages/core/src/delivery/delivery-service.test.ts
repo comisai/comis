@@ -1860,6 +1860,76 @@ describe("DeliveryService — full pipeline behavior", () => {
         expect(boundScope.traceId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
       }
     });
+
+    it("binds the RAW channel sender as the reaction participant — the id namespace an inbound reactorId lives in, NOT the canonical principal", async () => {
+      // The bound participant is compared (daemon-side) against the `reactorId` a
+      // channel binder reports for an inbound reaction — the RAW platform sender id
+      // ("111" for Telegram user 111), the same vocabulary `elevatedReply.senderTrustMap`
+      // is keyed by. `userId` is the canonical principal minted by the principal
+      // resolver (`platform_<digest>`), so binding it here made that comparison
+      // unsatisfiable: every reactor — including the DM participant who just spoke —
+      // resolved to "external" (0.6 x 0.05 = 0.03, under the 0.05 write floor) and the
+      // 👍 silently persisted no outcome row.
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-111"));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      await runWithContext(
+        {
+          traceId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          tenantId: "default",
+          agentId: "mldag",
+          // The inbound pipeline enriches BOTH: the canonical principal (userId,
+          // which the session key is partitioned by) and the raw channel sender.
+          userId: "platform_9RkD2xhash",
+          sessionKey: "default:platform_9RkD2xhash:telegram",
+          channelSenderId: "111",
+          startedAt: Date.now(),
+          trustLevel: "user",
+        },
+        async () => {
+          await deliver(service, adapter, "chat-1", "agent reply", { origin: "agent" });
+        },
+      );
+
+      expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
+      const [, boundScope] = recordOutboundMessage.mock.calls[0];
+      expect(boundScope.participantId).toBe("111");
+    });
+
+    it("fail-safe: no raw channel sender in context (a cron/gateway-originated send) binds NO participant", async () => {
+      // An origin with no channel sender must leave `participantId` undefined so the
+      // daemon-side trust resolution takes its documented unthreaded fail-safe branch,
+      // never a canonical id that silently reads as a non-participant.
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("reply-msg-112"));
+      const recordOutboundMessage = vi.fn();
+      const service = createDeliveryService(
+        makeDeps({ deliveryQueue: queue, eventBus, recordOutboundMessage }),
+      );
+
+      await runWithContext(
+        {
+          traceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          tenantId: "default",
+          agentId: "mldag",
+          userId: "platform_9RkD2xhash",
+          sessionKey: "default:platform_9RkD2xhash:telegram",
+          startedAt: Date.now(),
+          trustLevel: "user",
+        },
+        async () => {
+          await deliver(service, adapter, "chat-1", "cron reply", { origin: "cron" });
+        },
+      );
+
+      expect(recordOutboundMessage).toHaveBeenCalledTimes(1);
+      const [, boundScope] = recordOutboundMessage.mock.calls[0];
+      expect(boundScope.participantId).toBeUndefined();
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -364,6 +364,7 @@ export async function executeAndDeliver(
     sendOverrides,
     ...(tools === undefined ? {} : { tools }),
     ...(directives === undefined ? {} : { directives }),
+    ...(queueSignal === undefined ? {} : { executionSignal: queueSignal }),
     inboundProvenancePlans,
     onExecutionStart: () => { executionStartedAt = systemNowMs(); },
     onExecutionComplete: () => { executionCompletedAt = systemNowMs(); },
@@ -431,6 +432,7 @@ export async function executeAndDeliver(
           trustLevel, blockStreamCfg, replyTo, typingLifecycle,
           tools, directives,
           inboundProvenancePlans,
+          queueSignal,
         );
         executionCompletedAt = systemNowMs();
         return completed;

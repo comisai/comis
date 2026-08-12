@@ -410,6 +410,7 @@ export function setupCrossSession(deps: {
 
   // Announcement batcher coalesces near-simultaneous sub-agent completions.
   const announcementBatcher = createAnnouncementBatcher({
+    eventBus: container.eventBus,
     announceToParent,
     sendToChannel,
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),

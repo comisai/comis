@@ -108,6 +108,36 @@ describe("collect burst ground-truth oracle", () => {
     expect(scored.collect.executedTurns).toBe(2);
   });
 
+  it("accepts one recorded enqueue for the queued half of a two-message collect", () => {
+    const pair = injects.slice(0, 2);
+    const terms = expectedAnswerTerms.slice(0, 2);
+    const trajectory = [
+      record("session.summary", "trace-1", 2_000),
+      record("queue.enqueued", "trace-2", 2_005, { mode: "collect", queueDepth: 1 }),
+      record("queue.coalesced", "trace-2", 2_010, { messageCount: 1 }),
+      record("session.summary", "trace-2", 3_000),
+    ];
+    const transcript = [
+      provenanceRecord([{ id: pair[0]!.inboundGuid, text: "first" }]),
+      provenanceRecord([{ id: pair[1]!.inboundGuid, text: "second" }]),
+    ].join("\n");
+    const scored = scoreCollectBurst({
+      injects: pair,
+      transcriptSource: transcript,
+      trajectoryRecords: trajectory,
+      wire: [
+        { method: "sendMessage", text: terms[0] },
+        { method: "sendMessage", text: terms[1] },
+      ],
+      expectedAnswerTerms: terms,
+    });
+
+    expect(scored.verdict.verdict).toBe("ok");
+    expect(scored.collect.enqueued).toBe(1);
+    expect(scored.collect.coalescedMessages).toBe(1);
+    expect(scored.collect.provenanceAccounted).toBe(2);
+  });
+
   it("rejects a coalesced answer that silently omits one source request", () => {
     const wire = collectWire();
     wire[1] = {

@@ -23,15 +23,21 @@ export type LocaleMessageId =
   | "tool_failure_notice"
   | "tool_failure_notice_unnamed"
   | "prompt_timeout"
+  | "tool_invocation_stall_missing_configuration"
   | "execution_failed"
   | "background_task_failed_notice"
   | "delegation_evidence_missing"
+  | "delegation_evidence_started"
   | "persistent_action_evidence_missing"
+  | "outbound_audio_evidence_missing"
+  | "outbound_image_evidence_missing"
+  | "outbound_delivery_status_evidence_missing"
   | "destructive_action_not_verified"
   | "provider_requires_model"
   | "agent_update_noop"
   | "ongoing_work_evidence_missing"
   | "runtime_self_report_evidence_missing"
+  | "runtime_self_report_evidence_unsupported"
   | "scheduler_state_evidence_missing"
   | "pending_scheduler_confirmation"
   | "completion_evidence_missing"
@@ -82,14 +88,31 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
       + " incomplete.",
   prompt_timeout:
     "The request took too long to process. Please try again with a simpler message.",
+  // `{tool}` and `{configKey}` are identifiers, substituted verbatim.
+  tool_invocation_stall_missing_configuration:
+    "I could not complete the request because {tool} is not configured. "
+      + "Configure {configKey} before retrying.",
   execution_failed:
     "I couldn't complete that request because a required service failed. The request was not completed.",
   background_task_failed_notice:
     "⚠️ This background task failed, so its result may be incomplete.",
   delegation_evidence_missing:
     "I did not successfully start the requested sub-agent in this turn, so I cannot claim a new independent check. Please retry the request.",
+  delegation_evidence_started:
+    "I successfully started the requested sub-agent. Its result has not been verified in this turn yet.",
   persistent_action_evidence_missing:
     "I did not perform or verify the requested repeated action in this turn, so I cannot report it as successful. Please retry the request.",
+  outbound_audio_evidence_missing:
+    "I could not verify delivery of the requested audio in this turn because there is no "
+      + "successful current-turn synthesis or trusted completion receipt. I cannot confirm "
+      + "that it was delivered; please check for a voice message or retry.",
+  outbound_image_evidence_missing:
+    "I could not verify creation or delivery of the requested image in this turn because "
+      + "there is no successful current-turn generation or trusted completion receipt. "
+      + "I cannot confirm that it was created or delivered; please retry.",
+  outbound_delivery_status_evidence_missing:
+    "I could not verify whether the prior outbound item was delivered in this turn because "
+      + "there is no current delivery or observability receipt. I cannot confirm delivery yet.",
   destructive_action_not_verified:
     "I could not verify that anything was deleted. The command had no observable effect, so I am not treating the deletion as complete.",
   provider_requires_model:
@@ -102,8 +125,13 @@ const ENGLISH_PACK: Readonly<Record<LocaleMessageId, string>> = {
     "I did not start ongoing work in this turn. A required step failed, so there "
       + "is no background task running or result still pending. Please retry the request.",
   runtime_self_report_evidence_missing:
-    "I could not verify my runtime activity in this turn. Work counts, failure causes, and cost "
-      + "require a current observability report, so I cannot provide those claims yet.",
+    "I could not verify my runtime activity claim in this turn. Work counts, comparative latency, failure "
+      + "causes, cost, and durable job restart chronology require a current observability result that "
+      + "supports the specific claim.",
+  runtime_self_report_evidence_unsupported:
+    "The current observability result does not compare execution durations, and its cost figures are runtime "
+      + "estimates rather than a provider invoice. The provider invoice is unverified, so I cannot identify "
+      + "the slowest execution or claim provider-billed cost from this result.",
   scheduler_state_evidence_missing:
     "I did not verify the current reminder or scheduled-job state in this turn, so I cannot "
       + "say that it is set. I need to check the scheduler before confirming it.",
@@ -326,6 +354,32 @@ export function selectToolFailureNoticeUnnamed(
 }
 
 /**
+ * The actionable stall reply for a tool that stopped the turn because its
+ * configuration is missing. `{tool}` and `{configKey}` are identifiers,
+ * substituted verbatim, so a pack translates the sentence around them without
+ * renaming what has to be configured. A pack that omits a token still names
+ * both — the user cannot act on the reply without them.
+ */
+export function selectToolInvocationStallMissingConfigurationReply(
+  locale: string | undefined,
+  values: { toolName: string; configKey: string },
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  const template = catalog.resolve(
+    locale,
+    "tool_invocation_stall_missing_configuration",
+  );
+  const substituted = template
+    .replaceAll("{tool}", values.toolName)
+    .replaceAll("{configKey}", values.configKey);
+  const missing = [
+    ...(template.includes("{tool}") ? [] : [values.toolName]),
+    ...(template.includes("{configKey}") ? [] : [values.configKey]),
+  ];
+  return missing.length === 0 ? substituted : `${substituted} ${missing.join(" ")}`;
+}
+
+/**
  * The reply for a turn killed by the stall budget or whole-turn retry timeout.
  * Was a hard-coded English literal in error-classifier.ts, shipped verbatim into
  * conversations in any language.
@@ -365,12 +419,44 @@ export function selectDelegationEvidenceMissingReply(
   return catalog.resolve(locale, "delegation_evidence_missing");
 }
 
+/** Receipt-backed replacement when a successful spawn response is unrelated. */
+export function selectDelegationEvidenceStartedReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "delegation_evidence_started");
+}
+
 /** Honest replacement when a persistent action has no current-turn tool proof. */
 export function selectPersistentActionEvidenceMissingReply(
   locale: string | undefined,
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "persistent_action_evidence_missing");
+}
+
+/** Honest replacement when an audio-delivery claim has no current-turn receipt. */
+export function selectOutboundAudioEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "outbound_audio_evidence_missing");
+}
+
+/** Honest replacement when an image claim has no current-turn receipt. */
+export function selectOutboundImageEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "outbound_image_evidence_missing");
+}
+
+/** Honest replacement when an elliptical delivery answer lacks current proof. */
+export function selectOutboundDeliveryStatusEvidenceMissingReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "outbound_delivery_status_evidence_missing");
 }
 
 /** Honest replacement when a destructive command reports no observable effect. */
@@ -413,6 +499,14 @@ export function selectRuntimeSelfReportEvidenceMissingReply(
   catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
 ): string {
   return catalog.resolve(locale, "runtime_self_report_evidence_missing");
+}
+
+/** Honest replacement when a current observability receipt cannot support the claim. */
+export function selectRuntimeSelfReportEvidenceUnsupportedReply(
+  locale: string | undefined,
+  catalog: LocaleCatalog = DEFAULT_LOCALE_CATALOG,
+): string {
+  return catalog.resolve(locale, "runtime_self_report_evidence_unsupported");
 }
 
 /** Honest replacement when current scheduler state lacks a current-turn receipt. */

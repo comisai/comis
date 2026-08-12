@@ -731,4 +731,59 @@ describe("inbound preprocessing trust boundary", () => {
       },
     });
   });
+
+  it("carries the raw channel sender beside the canonical principal so outbound replies can be attributed to the participant a reaction names", async () => {
+    // A reaction names its author in the RAW platform vocabulary (Telegram user
+    // "111"), the same vocabulary senderTrustMap is keyed by. Neither `userId`
+    // (a shared conversation partitions it to "conversation") nor the principal
+    // digest can be compared against that id, so the turn must also carry the raw
+    // sender for the outbound delivery to bind as the conversation participant.
+    let observedContext: RequestContext | undefined;
+    const deps: InboundPipelineDeps = {
+      ...makeDeps({ autoReplyEngineConfig: mentionGatedConfig }),
+      deliveryService: {} as never,
+      getElevatedReplyConfig: () => ({
+        enabled: true,
+        senderTrustMap: {},
+        defaultTrustLevel: "known",
+        trustModelRoutes: {},
+        trustPromptOverrides: {},
+      }),
+      handleSlashCommand: vi.fn(async () => {
+        observedContext = tryGetContext();
+        return { handled: true };
+      }),
+    };
+    const ingressContext = {
+      tenantId: "default",
+      traceId: "00000000-0000-4000-8000-000000000013",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user" as const,
+      channelType: "telegram",
+    };
+    const message = makeMessage({
+      text: "/inspect-context",
+      senderId: "111",
+      chatType: "group",
+      metadata: {
+        ...makeMessage().metadata,
+        telegramChatType: "supergroup",
+        isBotMentioned: true,
+      },
+    });
+
+    await runWithContext(ingressContext, () => processInboundMessage(
+      deps,
+      makeAdapter(),
+      message,
+      new Set(),
+      new Map(),
+    ));
+
+    expect(observedContext?.channelSenderId).toBe("111");
+    // The canonical identities stay what they were — the raw sender is an
+    // attribution key, never an authorization or partitioning one.
+    expect(observedContext?.userId).toBe("conversation");
+    expect(observedContext?.turnScope?.principal.principalId).not.toBe("111");
+  });
 });

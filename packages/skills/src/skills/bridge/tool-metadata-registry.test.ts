@@ -1365,11 +1365,10 @@ describe("tool-metadata-registry -- failure detectors", () => {
         {
           error: "all_providers_failed",
           message:
-            "All web_search providers failed: tavily: web_search (tavily) needs an API key. "
-            + "Configure tools.web.search.tavily.apiKey in your config.",
+            "All web_search providers failed: tavily: web_search provider tavily requires "
+            + "the TAVILY_API_KEY secret",
           failures: [
-            "tavily: web_search (tavily) needs an API key. "
-              + "Configure tools.web.search.tavily.apiKey in your config.",
+            "tavily: web_search provider tavily requires the TAVILY_API_KEY secret",
           ],
         },
         false,
@@ -1378,10 +1377,42 @@ describe("tool-metadata-registry -- failure detectors", () => {
       errorKind: "config",
       classifiedField: "message",
       matchedRule: "missing_provider_configuration",
-      matchedToken: "tools.web.search.tavily.apiKey",
+      matchedToken: "secrets.TAVILY_API_KEY",
       failureDisclosure: {
         kind: "missing_configuration",
-        configKey: "tools.web.search.tavily.apiKey",
+        configKey: "secrets.TAVILY_API_KEY",
+      },
+    });
+  });
+
+  // A provider that needs an ENDPOINT rather than a credential must classify as
+  // missing_configuration too. Matching only secret names dropped searxng to a
+  // dependency verdict, which carries no recovery key — so the actionable
+  // "configure X" reply and the tool_provider_configuration_missing verdict
+  // both disappeared for a missing SearXNG base URL.
+  it("web_search exposes the provider endpoint knob when a base URL is missing", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          error: "all_providers_failed",
+          message:
+            "All web_search providers failed: searxng: web_search provider searxng "
+            + "requires searxng.baseUrl",
+          failures: [
+            "searxng: web_search provider searxng requires searxng.baseUrl",
+          ],
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "config",
+      classifiedField: "message",
+      matchedRule: "missing_provider_configuration",
+      matchedToken: "tools.web.search.searxng.baseUrl",
+      failureDisclosure: {
+        kind: "missing_configuration",
+        configKey: "tools.web.search.searxng.baseUrl",
       },
     });
   });

@@ -486,6 +486,50 @@ function graphTrajectoryLines(): string {
   ].map((line) => JSON.stringify(line)).join("\n") + "\n";
 }
 
+function graphBudgetTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.started",
+      seq: 1,
+      traceId: GRAPH_TRACE_ID,
+      data: { channelType: "telegram", channelId: "678314278" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "subagent.budget_exceeded",
+      seq: 2,
+      traceId: GRAPH_TRACE_ID,
+      data: {
+        graphId: GRAPH_ID,
+        nodeId: "weather",
+        capSource: "operator-default",
+        tokenBudget: 1_000,
+        tokensUsed: 0,
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 3,
+      traceId: GRAPH_TRACE_ID,
+      data: {
+        degraded: true,
+        turnCount: 0,
+        costUsd: 0,
+        toolStats: {},
+        breakerTripCount: 0,
+        topErrorKinds: { resource: 1 },
+        source: "runtime",
+        endReason: "budget_exceeded",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
 function writeGraphSessionIndex(dataDir: string): void {
   const logsDir = path.join(dataDir, "logs");
   fs.mkdirSync(logsDir, { recursive: true });
@@ -503,7 +547,10 @@ function writeGraphSessionIndex(dataDir: string): void {
   );
 }
 
-function writeGraphRunMetadata(dataDir: string): void {
+function writeGraphRunMetadata(
+  dataDir: string,
+  overrides: Record<string, unknown> = {},
+): void {
   const graphDir = path.join(dataDir, "graph-runs", GRAPH_ID);
   fs.mkdirSync(graphDir, { recursive: true });
   fs.writeFileSync(
@@ -516,6 +563,7 @@ function writeGraphRunMetadata(dataDir: string): void {
       durationMs: 102_510,
       status: "completed",
       traceId: GRAPH_TRACE_ID,
+      announcementDelivery: "committed",
       nodesTotal: 2,
       nodesSucceeded: 2,
       nodesFailed: 0,
@@ -544,6 +592,7 @@ function writeGraphRunMetadata(dataDir: string): void {
           attemptsUsed: 1,
         },
       },
+      ...overrides,
     }),
     "utf-8",
   );
@@ -1088,6 +1137,47 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
       }),
     ]);
     expect(JSON.stringify(graph)).not.toContain("PRIVATE");
+  });
+
+  it("uses persisted graph caller identity to diagnose a parent-turn node budget without an index join", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, graphBudgetTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: SESSION_KEY,
+      runtimeFile,
+    });
+    writeGraphRunMetadata(dataDir, {
+      sessionKey: SESSION_KEY,
+      announcementDelivery: "unavailable",
+      status: "failed",
+      nodesSucceeded: 0,
+      nodesFailed: 1,
+      nodesSkipped: 1,
+    });
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir),
+      dataDir,
+      { graphId: GRAPH_ID, depth: "full" } as unknown as Parameters<
+        typeof assembleIncidentReportFromSources
+      >[2],
+    );
+    const graph = report.graph as unknown as Record<string, unknown> | undefined;
+
+    expect(report.sessionKey).toBe(SESSION_KEY);
+    expect(report.likelyRootCause?.code).toBe("node_budget_exceeded");
+    expect(report.nodeBudgetBreaches).toEqual([
+      expect.objectContaining({
+        nodeId: "weather",
+        capSource: "operator-default",
+        tokenBudget: 1_000,
+        tokensUsed: 0,
+      }),
+    ]);
+    expect(graph).toMatchObject({ announcementDelivery: "unavailable" });
   });
 
 });

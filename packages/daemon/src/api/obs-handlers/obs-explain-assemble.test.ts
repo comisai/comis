@@ -206,6 +206,25 @@ describe("assembleIncidentReport — request-relevant tool selection", () => {
       }).requestRelevanceHistory,
     ).toEqual(evidence);
   });
+
+  it("surfaces a content-free request clarification on the one-call report", () => {
+    const requestClarification = {
+      reason: "opaque_payload_missing_instruction" as const,
+      inputChars: 43_000,
+    };
+    const report = assembleIncidentReport(
+      makeSignals({ requestClarification } as unknown as Partial<IncidentSignals>),
+      makeMetadata(),
+      null,
+      SESSION_KEY,
+      READ_COUNT,
+    );
+
+    expect(
+      (report as unknown as { requestClarification?: typeof requestClarification })
+        .requestClarification,
+    ).toEqual(requestClarification);
+  });
 });
 
 describe("assembleIncidentReport — queue disposition timeline", () => {
@@ -2188,6 +2207,61 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("reports response drift after a successful delegation receipt", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.delegation_response_grounding_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "delegation_response_ungrounded",
+      detail:
+        "sessions_spawn succeeded, but the final response did not describe the current delegation; "
+        + "the response honesty guard replaced it with a receipt-backed status",
+      suggestedNextSteps: [
+        "inspect the model turn after the successful sessions_spawn receipt",
+        "check recalled context and prompt-skill use for stale task influence",
+        "no spawn retry is required unless the delegated result is still needed",
+      ],
+    });
+  });
+
+  it("ranks a rejected completion route above earlier delegation response drift", async () => {
+    const reader = makeAuditReader(
+      [
+        auditRow("audit", TRACE_ID, {
+          action: "response.delegation_response_grounding_guard",
+          outcome: "denied",
+        }),
+      ],
+      [
+        {
+          traceSchema: "comis-trajectory",
+          type: "subagent.delivery_skipped",
+          seq: 2,
+          traceId: TRACE_ID,
+          data: {
+            runId: "run-route-rejected",
+            reason: "route_validation_failed",
+          },
+        },
+      ],
+    );
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause?.code).toBe("subagent_delivery_skipped");
+    expect(report.likelyRootCause?.detail).toMatch(/route validation failed/i);
+  });
+
   it("names a persistent-action evidence correction as the acute cause", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
@@ -2208,6 +2282,81 @@ describe("assembleIncidentReportFromSources — audit?", () => {
       suggestedNextSteps: [
         "inspect the current tool inventory and action admission for this turn",
         "retry after the required capability can produce current-turn evidence",
+      ],
+    });
+  });
+
+  it("names a missing outbound-audio receipt as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_audio_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_audio_evidence_missing",
+      detail:
+        "the response honesty guard replaced an audio-delivery claim because this "
+        + "execution had no successful current-turn synthesis or trusted completion receipt",
+      suggestedNextSteps: [
+        "inspect tts_synthesize admission and tool results for this turn",
+        "if work was delegated, verify the background completion relay delivered the audio",
+        "retry only after the outbound audio capability can produce a delivery receipt",
+      ],
+    });
+  });
+
+  it("names a missing outbound-image receipt as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_image_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_image_evidence_missing",
+      detail:
+        "the response honesty guard replaced an image-creation claim because this "
+        + "execution had no successful current-turn generation or trusted completion receipt",
+      suggestedNextSteps: [
+        "inspect image_generate admission and tool results for this turn",
+        "if work was delegated, verify the background completion relay delivered the image",
+        "retry only after the image-generation capability can produce a delivery receipt",
+      ],
+    });
+  });
+
+  it("names an unverified outbound-delivery status answer as the acute cause", async () => {
+    const reader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.outbound_delivery_status_evidence_guard",
+        outcome: "denied",
+      }),
+    ]);
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report.likelyRootCause).toEqual({
+      code: "outbound_delivery_status_evidence_missing",
+      detail:
+        "the response honesty guard replaced an affirmative delivery-status answer because "
+        + "the elliptical follow-up had no current delivery or observability receipt",
+      suggestedNextSteps: [
+        "inspect current obs_query and self-delivering media tool results for this turn",
+        "resolve which prior outbound item the follow-up refers to before confirming delivery",
+        "retry status verification instead of relying on historical assistant prose",
       ],
     });
   });

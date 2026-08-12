@@ -21,7 +21,12 @@
 
 import type { MemorySearchResult, ComisLogger } from "@comis/core";
 import { describe, it, expect, vi } from "vitest";
-import { buildRelevanceQuery, scoreRelevance } from "./relevance-scorer.js";
+import {
+  buildRelevanceQuery,
+  isOpaquePayloadWithoutInstruction,
+  isOpaquePayloadWithoutRetrievalTerms,
+  scoreRelevance,
+} from "./relevance-scorer.js";
 import type { FusionLane } from "./fuse.js";
 
 /** A neutral content-free logger; individual tests swap in a spy where they assert. */
@@ -84,6 +89,12 @@ describe("buildRelevanceQuery — rolling ~3-user-turn window + GoalAnchor bias"
     expect(q.terms.length).toBeLessThan(2);
   });
 
+  it("drops an oversized opaque token instead of treating it as retrieval content", () => {
+    const q = buildRelevanceQuery(["x".repeat(43_000)]);
+
+    expect(q).toEqual({ terms: [], degraded: true });
+  });
+
   it("GoalAnchor bias: the GoalAnchor text contributes terms to the relevance query", () => {
     // A low-signal turn alone would degrade; the GoalAnchor lifts it with focus terms.
     const q = buildRelevanceQuery(["yes do that"], "[GoalAnchor: migrate billing invoices to stripe]");
@@ -99,6 +110,67 @@ describe("buildRelevanceQuery — rolling ~3-user-turn window + GoalAnchor bias"
     const a = buildRelevanceQuery(["restart the gateway now"], "[GoalAnchor: fix the deploy]");
     const b = buildRelevanceQuery(["restart the gateway now"], "[GoalAnchor: fix the deploy]");
     expect(a).toEqual(b);
+  });
+});
+
+describe("opaque-payload classification — admission vs recall are separate questions", () => {
+  const blob = "a1B2".repeat(80); // 320 chars, one token, no delimiters
+
+  it("treats a message that is only the payload as instruction-free", () => {
+    expect(isOpaquePayloadWithoutInstruction(blob)).toBe(true);
+    expect(isOpaquePayloadWithoutInstruction(`${blob}\n${blob}`)).toBe(true);
+  });
+
+  // STOPWORDS drops words with no CORPUS signal; it is not an instruction
+  // detector. Reusing it as one refused a plain question about a pasted key
+  // before the model ever saw the turn.
+  it("returns false for a stopword-only question about the payload", () => {
+    expect(isOpaquePayloadWithoutInstruction(`what is this? ${blob}`)).toBe(false);
+    expect(isOpaquePayloadWithoutInstruction(`can you tell me what this is ${blob}`)).toBe(false);
+  });
+
+  it("still withholds recall terms for a request the payload leaves term-free", () => {
+    expect(isOpaquePayloadWithoutRetrievalTerms(`what is this? ${blob}`)).toBe(true);
+    expect(isOpaquePayloadWithoutRetrievalTerms(`decode this certificate ${blob}`)).toBe(false);
+  });
+
+  it("classifies a message with no oversized token as neither", () => {
+    expect(isOpaquePayloadWithoutInstruction("what is this?")).toBe(false);
+    expect(isOpaquePayloadWithoutRetrievalTerms("what is this?")).toBe(false);
+  });
+
+  // Token length is evidence of opacity only for a script that separates words.
+  // A long request in a space-free writing system tokenizes to ONE oversized
+  // token, so the length test alone refused a genuine request before the model
+  // ever saw it — answered by an untranslated input-guard string at that.
+  it("admits space-free prose without a closed script allowlist", () => {
+    for (const request of [
+      "请".repeat(200),
+      "ก".repeat(200),
+      "私".repeat(60) + "の".repeat(80),
+      "ᬓ".repeat(200),
+    ]) {
+      expect(isOpaquePayloadWithoutInstruction(request), request.slice(0, 8))
+        .toBe(false);
+    }
+  });
+
+  it("keeps recall available for admitted space-free prose", () => {
+    for (const request of [
+      "请".repeat(200),
+      "ก".repeat(200),
+      "私".repeat(60) + "の".repeat(80),
+      "ᬓ".repeat(200),
+    ]) {
+      expect(isOpaquePayloadWithoutRetrievalTerms(request), request.slice(0, 8))
+        .toBe(false);
+    }
+  });
+
+  it("still refuses a space-free payload that is not prose", () => {
+    expect(isOpaquePayloadWithoutInstruction("deadbeef".repeat(40))).toBe(true);
+    // A payload with a few decorative prose characters is still a payload.
+    expect(isOpaquePayloadWithoutInstruction(`私${"a1B2".repeat(80)}`)).toBe(true);
   });
 });
 

@@ -319,7 +319,7 @@ export function createAnnouncementDelivery(
         },
         "Completion announcement delivery route mismatch",
       );
-      return ok({ delivered: false, failure: "allocation_blocked" });
+      return ok({ delivered: false, failure: "operation_validation_blocked" });
     }
     const deliveryAuthority = {
       tenantId: callerScope.tenantId,

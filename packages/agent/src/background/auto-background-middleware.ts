@@ -145,6 +145,9 @@ export interface ToolDefinition {
  *     the approval wait into a durable background task would persist that
  *     credential in the task result and completion re-entry before it reaches
  *     the authenticated caller.
+ *   - `web_search` / `web_fetch` — their results are evidence consumed by the
+ *     same turn's grounding and prompt-skill receipt gates. Replacing the result
+ *     with a handoff lets the turn finalize before those gates can inspect it.
  *
  * `exec` is excluded separately (below) for a DIFFERENT reason — it owns its
  * own escalation path, so the generic wrapper would double-promote.
@@ -157,6 +160,8 @@ const NEVER_AUTO_BACKGROUND_TOOLS: ReadonlySet<string> = new Set([
   "video_generate",
   "discover_tools",
   "tokens_manage",
+  "web_search",
+  "web_fetch",
 ]);
 
 export function wrapToolForAutoBackground(

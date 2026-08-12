@@ -1227,6 +1227,10 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       messagesDigest: "d",
       inboundKind: "message",
     },
+    "request:clarification_required": {
+      reason: "opaque_payload_missing_instruction",
+      inputChars: 43_000,
+    },
     "session:started": {
       channelType: "telegram",
       channelId: "c1",
@@ -3026,6 +3030,29 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("request clarification maps its content-free reason and input size", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("request:clarification_required", {
+      agentId: "agent-1",
+      sessionKey: "tenant-a:user_a:test-channel",
+      reason: "opaque_payload_missing_instruction",
+      inputChars: 43_000,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "request.clarification_required",
+      data: {
+        reason: "opaque_payload_missing_instruction",
+        inputChars: 43_000,
+      },
+    });
+  });
+
   it("execution_aborted forwards the perRootBudget limb payload onto the record (the explain spend-verdict's input)", () => {
     // The spend verdict names autonomy.budget.<limb> ONLY when the terminal
     // execution.aborted record carries perRootBudget — a dropped payload here
@@ -4534,7 +4561,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(144);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(145);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -1,7 +1,7 @@
 // explain.mjs — offline IncidentReport read for ONE session/run (the obs ground-truth oracle).
 //
-// Runs `assembleIncidentReportFromSources` off the DEPLOYED dist and prints the diagnostic fields, so you
-// stop hand-writing `node -e 'assembleIncidentReportFromSources(...)'` one-liners — and stop hitting the
+// Runs the CLI's store-backed offline assembler off the DEPLOYED dist and prints the diagnostic fields, so you
+// stop hand-writing incident-assembly one-liners — and stop hitting the
 // three traps that cost cycles:
 //   1. .mjs-vs-.cjs   — the dist index is CJS; a `.mjs` + `require` throws (ESM loader).
 //   2. quote-escaping — the deep `ssh → su - comis -c "node -e '…'"` nesting mangles the session key.
@@ -38,17 +38,23 @@ const depth = rest.find((x) => x === 'summary' || x === 'full') || 'full';
 const flags = new Set(rest.filter((x) => x.startsWith('--')));
 const narrowed = flags.has('--learning') || flags.has('--failures') || flags.has('--budget');
 
-// dynamic import() loads the CJS dist under both layouts; the default-spread covers CJS exports
-// the ESM named-export lexer misses.
-const daemonDist = await import(comisDist('daemon', 'dist/index.js'));
-const { assembleIncidentReportFromSources, makeRealReader } = { ...daemonDist.default, ...daemonDist };
+// Reuse the CLI's canonical offline adapter. It opens memory.db read-only and
+// threads the observability store into the daemon reader, so audit-backed
+// verdicts do not disappear merely because the daemon is unavailable.
+const cliOfflineDist = await import(comisDist("cli", "dist/util/offline-obs.js"));
+const { assembleIncidentReportOffline } = {
+  ...cliOfflineDist.default,
+  ...cliOfflineDist,
+};
+if (typeof assembleIncidentReportOffline !== "function") {
+  throw new Error("deployed CLI offline observability adapter is unavailable");
+}
 const graphRunsDir = resolve(dataDir, 'graph-runs');
 const graphMetadata = resolve(graphRunsDir, ref, '_run-metadata.json');
 const hasTerminalGraphRun =
   graphMetadata.startsWith(`${graphRunsDir}${sep}`) && existsSync(graphMetadata);
 
-assembleIncidentReportFromSources(
-  makeRealReader(dataDir),
+assembleIncidentReportOffline(
   dataDir,
   paramsForExplainRef(ref, depth, hasTerminalGraphRun),
 )

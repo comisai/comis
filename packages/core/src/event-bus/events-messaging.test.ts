@@ -25,10 +25,30 @@ describe("MessagingEvents payload structure", () => {
     expect(source).toContain('| "unrecovered_tool_failure_completion_claim"');
   });
 
-  it("keeps missing runtime self-report evidence in the closed recovery reason union", () => {
-    const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
+  // Each reason below is emitted through the typed bus: the literal must be a
+  // member of the closed recovery-reason union or the payload fails to COMPILE,
+  // and the listener proves the runtime carries it through unchanged.
+  it.each([
+    "missing_runtime_self_report_evidence",
+    "unsupported_runtime_self_report_evidence",
+    "unsupported_outage_receipt_evidence",
+  ] as const)("execution recovery can identify the %s correction", (reason) => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["execution:recovery_attempted"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-self-report-1",
+      reason,
+      succeeded: true,
+      timestamp: Date.now(),
+    };
 
-    expect(source).toContain('| "missing_runtime_self_report_evidence"');
+    bus.on("execution:recovery_attempted", handler);
+    bus.emit("execution:recovery_attempted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(handler.mock.calls[0]![0].reason).toBe(reason);
   });
 
   it("execution recovery can identify a sender-authority grounding correction", () => {
@@ -293,6 +313,7 @@ describe("MessagingEvents payload structure", () => {
       "loop_detected",
       "spend_exceeded",
       "denial_breaker",
+      "caller_cancelled",
     ] as const;
 
     for (const reason of reasons) {
@@ -307,7 +328,7 @@ describe("MessagingEvents payload structure", () => {
       bus.removeAllListeners("execution:aborted");
     }
 
-    expect(handler).toHaveBeenCalledTimes(9);
+    expect(handler).toHaveBeenCalledTimes(10);
     expect(handler.mock.calls[0]![0].reason).toBe("user_stop");
     expect(handler.mock.calls[4]![0].reason).toBe("context_exhausted");
     expect(handler.mock.calls[5]![0].reason).toBe("pipeline_timeout");
@@ -318,6 +339,7 @@ describe("MessagingEvents payload structure", () => {
     // The denial-limit breaker abort (N consecutive floor-blocks tripped
     // the breaker; distinct from circuit_breaker, which is the tool-failure breaker).
     expect(handler.mock.calls[8]![0].reason).toBe("denial_breaker");
+    expect(handler.mock.calls[9]![0].reason).toBe("caller_cancelled");
   });
 
   it("execution:aborted reason stays a CLOSED union (rejects a non-member literal)", () => {

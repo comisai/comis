@@ -56,6 +56,15 @@ export function citationUrlDigest(url: string): string {
   return createHash("sha256").update(url, "utf8").digest("hex");
 }
 
+/** SHA-256 over a canonicalized search query, without retaining the query text. */
+export function webSearchQueryDigest(query: unknown): string | undefined {
+  if (typeof query !== "string") return undefined;
+  const canonical = query.trim().replace(/\s+/gu, " ").toLowerCase();
+  return canonical.length === 0
+    ? undefined
+    : createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
 function rangesFor(pattern: RegExp, text: string): TextRange[] {
   pattern.lastIndex = 0;
   const ranges: TextRange[] = [];
@@ -232,7 +241,13 @@ function collectPlainUrlReplacements(params: {
       pushMatched(verdict.digest, params.state.matchedDigests, params.state.matchedSet);
       continue;
     }
-    replacements.push({ start, end: verdict.removalEnd, text: verdict.removalText });
+    const squareWrapped = params.text.charAt(start - 1) === "["
+      && params.text.charAt(verdict.removalEnd) === "]";
+    replacements.push({
+      start: squareWrapped ? start - 1 : start,
+      end: squareWrapped ? verdict.removalEnd + 1 : verdict.removalEnd,
+      text: squareWrapped ? "" : verdict.removalText,
+    });
     removedCitationCount += 1;
   }
 
@@ -349,6 +364,21 @@ export function enforceCitationEvidence(params: {
     matchedDigests: state.matchedDigests,
     removedCitationCount,
   };
+}
+
+/** Fresh fetch evidence is authoritative; durable receipts fill only an evidence-free follow-up. */
+export function citationEvidenceDigestsForTurn(params: {
+  currentFetchDigests: readonly string[];
+  relayedDigests: readonly string[];
+  historicalDigests: readonly string[];
+}): string[] {
+  const freshDigests = [
+    ...params.currentFetchDigests,
+    ...params.relayedDigests,
+  ];
+  return [...validDigests(
+    freshDigests.length > 0 ? freshDigests : params.historicalDigests,
+  )];
 }
 
 /** Runtime citation receipts from completed earlier turns in this session. */

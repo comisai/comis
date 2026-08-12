@@ -186,6 +186,16 @@ describe("dualImageResult", () => {
     expect(textBlock.text).toContain("Full path:");
   });
 
+  it("tells the model how to deliver the persisted screenshot", () => {
+    const result = dualImageResult("base64data", "image/jpeg", "screenshots/abc.jpg", "/workspace");
+    const textBlock = result.content[0] as { type: string; text: string };
+
+    expect(textBlock.text).toContain("message");
+    expect(textBlock.text).toContain("attach");
+    expect(textBlock.text).toContain("attachment_url");
+    expect(textBlock.text).toContain("screenshots/abc.jpg");
+  });
+
   it("image block contains base64 data and mimeType", () => {
     const result = dualImageResult("base64data", "image/jpeg", "screenshots/abc.jpg", "/workspace");
     const imageBlock = result.content[1] as { type: string; data: string; mimeType: string };
@@ -308,7 +318,7 @@ describe("throwToolError", () => {
 });
 
 describe("readEnumParam", () => {
-  it("returns valid value", () => {
+  it("returns a valid enum value", () => {
     const result = readEnumParam({ action: "add" }, "action", ["add", "remove"]);
     expect(result).toBe("add");
   });

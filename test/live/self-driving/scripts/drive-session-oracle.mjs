@@ -27,6 +27,23 @@ export function outboundVisibleText(outbound) {
   return typeof outbound?.caption === "string" ? outbound.caption : "";
 }
 
+const MEDIA_DELIVERY_LABELS = new Map([
+  ["sendPhoto", "photo"],
+  ["sendDocument", "document"],
+  ["sendAudio", "audio"],
+  ["sendVoice", "voice"],
+  ["sendVideo", "video"],
+  ["sendAnimation", "animation"],
+]);
+
+/** Return comparable visible content, including captionless media deliveries. */
+export function outboundVisibleContent(outbound) {
+  const text = outboundVisibleText(outbound);
+  if (text) return text;
+  const mediaLabel = MEDIA_DELIVERY_LABELS.get(outbound?.method);
+  return mediaLabel === undefined ? "" : `[${mediaLabel} delivered]`;
+}
+
 /**
  * Whether a `✓`/`❌`-led line is a progress FRAME rather than an answer that
  * merely opens with the marker.
@@ -141,8 +158,8 @@ export function findTelegramConversationWireAnswer(outbound, threadId, inboundMe
   for (let index = outbound.length - 1; index >= 0; index -= 1) {
     const item = outbound[index];
     if (!telegramOutboundMatchesThread(item, threadId, inboundMessageId)) continue;
-    const visibleText = outboundVisibleText(item);
-    if (visibleText && !isDriveProgressText(visibleText)) return visibleText;
+    const visibleContent = outboundVisibleContent(item);
+    if (visibleContent && !isDriveProgressText(visibleContent)) return visibleContent;
   }
   return null;
 }
@@ -418,10 +435,59 @@ export function directConversationFinished({
 }
 
 /**
+ * Count logical answers without treating Telegram's transport chunks as
+ * separate async follow-ups.
+ *
+ * Telegram accepts at most 4,096 characters. Formatting and balanced markup
+ * can make a full transport chunk land slightly below that limit. A
+ * substantive record after a near-limit chunk is therefore
+ * part of the same logical answer. A later record after the final short chunk
+ * starts a new answer. This is deliberately conservative: ambiguity extends
+ * the bounded wait instead of manufacturing a follow-up-delivered verdict.
+ */
+export function logicalSubstantiveAnswerCount(outbound) {
+  const nearTelegramLimit = 4_000;
+  const seenMessageIds = new Set();
+  let logicalCount = 0;
+  let previousWasFullTelegramChunk = false;
+
+  for (let index = 0; index < outbound.length; index += 1) {
+    const item = outbound[index];
+    const visibleContent = outboundVisibleContent(item);
+    if (!visibleContent || isDriveProgressText(visibleContent)) continue;
+
+    const messageKey = item?.messageId ?? `missing-${index}`;
+    if (seenMessageIds.has(messageKey)) continue;
+    seenMessageIds.add(messageKey);
+
+    if (!previousWasFullTelegramChunk) logicalCount += 1;
+    previousWasFullTelegramChunk = visibleContent.length >= nearTelegramLimit;
+  }
+
+  return logicalCount;
+}
+
+/**
+ * Stop an opt-in async follow-up wait after one logical follow-up answer or
+ * after the bounded window measured from the launch acknowledgement.
+ */
+export function followupWaitFinished({
+  followupAnswerCount,
+  firstAnswerAtMs,
+  nowMs,
+  waitMs,
+}) {
+  if (followupAnswerCount >= 1) return true;
+  if (typeof firstAnswerAtMs !== "number") return false;
+  return nowMs - firstAnswerAtMs >= waitMs;
+}
+
+/**
  * Has the driven turn actually ENDED, given the trajectory lines appended since the drive began?
  *
  * A terminal record alone is not turn-end: a turn can hand work OFF and finish, and both hand-off
- * paths were observed live on heavy questions.
+ * paths were observed live on heavy questions. A pre-model clarification is independently terminal:
+ * the input guard deliberately emits no model-backed session summary after returning its response.
  *   1. **background task** — the parent's own `session.summary` record carries
  *      `finishReason:"background_pending"` (same line; verified in live trajectories).
  *   2. **sub-agent spawn** — the parent turn finishes cleanly (`endReason:"success"`) while a
@@ -449,6 +515,7 @@ export function trajectoryTurnEnded(lines) {
     else if (
       line.includes('"type":"session.summary"')
       || line.includes('"type":"execution.aborted"')
+      || line.includes('"type":"request.clarification_required"')
     ) {
       if (!line.includes('"finishReason":"background_pending"')) terminal = true;
     }

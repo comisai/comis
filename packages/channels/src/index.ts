@@ -246,7 +246,7 @@ export type { TypingLifecycleController, TypingLifecycleOptions } from "./shared
 // the types and the `createDeliveryService(deps)` factory).
 
 // Voice response pipeline
-export { executeVoiceResponse } from "./shared/voice-response-pipeline.js";
+export { autoVoiceDeliveryActive, executeVoiceResponse } from "./shared/voice-response-pipeline.js";
 export type { VoiceResponsePipelineDeps, VoiceResponseContext, VoiceResponseResult } from "./shared/voice-response-pipeline.js";
 
 // Outbound media handler

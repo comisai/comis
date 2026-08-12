@@ -80,7 +80,11 @@ const AGENT = "default";
 // sessionKey; the trajectory-identity invariant the landed identity fix restored).
 const TURN_TRACE_ID = "trace-turn-abc123";
 const SESSION_ID = "telegram:chat-1:111";
-// The reactor's id (the rig's fixed DM reactor; granted trust >= known in the rig config).
+// The DM user this leg drives: it both SENDS the task and reacts to the reply.
+// The two must be the same id — a DM has exactly one human, and the rig's unmapped
+// defaultTrustLevel:known is inherited only by the conversation PARTICIPANT (the
+// sender the reply was bound to). A reactor who never spoke in the chat is a
+// group-bystander shape no real DM produces, and resolves to "external" (inert).
 const REACTOR_ID = 111;
 const BOT_ID = 1234567;
 
@@ -326,9 +330,13 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the A->B reaction-gated skill-reu
       // ── Session A: a 5+-tool task the agent authors a reply to. waitForReply is
       // the SYNC POINT — the outbound landed, so recordOutboundMessage bound the
       // reply's messageId to the trajectory (the attribution keystone).
-      const inboundId = await r.send(
-        "List the files in the workspace, read each one, count the lines, and write a short summary.md of what you found.",
-      );
+      // Injected AS REACTOR_ID (not the rig's default sender) so the reply is bound
+      // to the very user who reacts below — the single-human DM shape.
+      const inboundId = await r.controlClient.injectMessage({
+        chatId: r.chat.chatId,
+        fromUserId: REACTOR_ID,
+        text: "List the files in the workspace, read each one, count the lines, and write a short summary.md of what you found.",
+      });
       const reply = await r.waitForReply(inboundId, 1_500_000);
       expect(
         reply,
@@ -368,8 +376,16 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the A->B reaction-gated skill-reu
         jobs?: Array<{ name?: string }>;
       };
       const jobNames = (cronList.jobs ?? []).map((j) => j.name).filter((n): n is string => typeof n === "string");
-      const synthesisJob =
-        jobNames.find((n) => /skill\s*synthesis/i.test(n)) ?? "Skill synthesis";
+      // The built-in job that synthesizes learned skills is registered as
+      // "Reflection" (setup-schedulers.ts, action "reflection"). A literal
+      // "Skill synthesis" fallback names no job the daemon has, so cron.run
+      // RPC-throws and the leg dies on the harness rather than on the product.
+      const synthesisJob = jobNames.find((n) => /reflect|skill\s*synthesis/i.test(n));
+      expect(
+        synthesisJob,
+        `FINDING (harness): no reflection/skill-synthesis cron job registered on the rig — cron.list returned [${jobNames.join(", ")}]. The ADMIT half cannot be forced; check the rig's learning/memory toggles.`,
+      ).toBeDefined();
+      if (synthesisJob === undefined) return;
       await rpcRequest(r.gatewayUrl, "cron.run", { jobName: synthesisJob }, r.authToken);
 
       // ── learned_skills (the HONEST-ABSTAIN gate): a keyless model may ABSTAIN at
@@ -404,9 +420,11 @@ describe.skipIf(!isLive)("REACT-03 Stage-C — the A->B reaction-gated skill-reu
       // session's prompt-skills freeze (reflect:admitted -> refresh; no restart
       // needed at HEAD). reset is NOT needed for the rig's single chat — the
       // memory.db persists; an analogous request exercises the reuse path.
-      const inboundB = await r.send(
-        "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
-      );
+      const inboundB = await r.controlClient.injectMessage({
+        chatId: r.chat.chatId,
+        fromUserId: REACTOR_ID,
+        text: "Do the same: list the workspace files, read them, count the lines, and write summary2.md.",
+      });
       const replyB = await r.waitForReply(inboundB, 1_500_000);
       expect(
         replyB,

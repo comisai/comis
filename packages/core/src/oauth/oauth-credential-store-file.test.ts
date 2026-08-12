@@ -14,6 +14,8 @@
  *   5. CRUD operations
  *   6. Atomic-write durability
  *   7. Lock-file path sanitization
+ *   8. Startup stale-.tmp reclamation
+ *   9. Failure diagnosability
  */
 
 import * as fs from "node:fs";
@@ -21,6 +23,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { Result } from "@comis/shared";
+import { err } from "@comis/shared";
 import type { OAuthProfile } from "../ports/oauth-credential-store.js";
 import type { FileLockPort } from "../ports/file-lock.js";
 import { createFileLock } from "../runtime/file-lock.js";
@@ -393,6 +396,111 @@ describe("createOAuthCredentialStoreFile", () => {
       const loaded = unwrap(await store.get("openai-codex:user_a@example.com"));
       expect(loaded).toBeDefined();
       expect(["first-write", "second-write"]).toContain(loaded!.access);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Group 8 — Startup stale-.tmp reclamation
+  //
+  // The factory's hygiene sweep runs fire-and-forget, so it overlaps every
+  // write that starts right after the store is constructed — including a
+  // sibling daemon/CLI process writing into the same data dir. Reclaiming a
+  // temp file whose writer is still running unlinks that writer's rename
+  // source, so the credential write fails ("lock error") and the user is
+  // silently logged out.
+  // -------------------------------------------------------------------------
+
+  describe("startup stale-.tmp reclamation", () => {
+    /**
+     * A PID above Linux's `pid_max` ceiling (2^22) can never name a running
+     * process, so the sweep must treat its leftover as an orphan.
+     */
+    const DEAD_WRITER_PID = 2_147_483_647;
+
+    /**
+     * Barrier for the fire-and-forget sweep: an unattributable leftover is
+     * always reclaimed, so its removal proves the sweep completed.
+     */
+    async function waitForSweep(orphanPath: string): Promise<void> {
+      for (let i = 0; i < 400 && fs.existsSync(orphanPath); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(fs.existsSync(orphanPath)).toBe(false);
+    }
+
+    // Test 8.1 — a live writer's in-flight temp survives the sweep
+    it("keeps a temp file whose writer process is still running", async () => {
+      const orphan = `${tmp}/auth-profiles.json.tmp`;
+      const inFlight = `${tmp}/auth-profiles.json.${process.pid}.a1b2c3.tmp`;
+      fs.writeFileSync(orphan, "{}", { mode: 0o600 });
+      fs.writeFileSync(inFlight, "{}", { mode: 0o600 });
+
+      createOAuthCredentialStoreFile({ dataDir: tmp, fileLock });
+      await waitForSweep(orphan);
+
+      expect(fs.existsSync(inFlight)).toBe(true);
+    });
+
+    // Test 8.2 — hygiene still reclaims what no live writer owns
+    it("reclaims dead-writer, PID-less, pid-0 and out-of-range-PID leftovers, and leaves foreign temps alone", async () => {
+      const orphan = `${tmp}/auth-profiles.json.tmp`;
+      const deadWriter = `${tmp}/auth-profiles.json.${DEAD_WRITER_PID}.d4e5f6.tmp`;
+      // pid 0 addresses the caller's whole process group in kill(2) — it must
+      // never be probed for liveness, and it owns no write.
+      const pidZero = `${tmp}/auth-profiles.json.0.deadbe.tmp`;
+      // Digits that overflow a safe integer name no process either.
+      const pidOverflow = `${tmp}/auth-profiles.json.999999999999999999999.c0ffee.tmp`;
+      const foreign = `${tmp}/other-component.json.${process.pid}.aabbcc.tmp`;
+      for (const p of [orphan, deadWriter, pidZero, pidOverflow, foreign]) {
+        fs.writeFileSync(p, "{}", { mode: 0o600 });
+      }
+
+      createOAuthCredentialStoreFile({ dataDir: tmp, fileLock });
+      await waitForSweep(orphan);
+
+      expect(fs.existsSync(deadWriter)).toBe(false);
+      expect(fs.existsSync(pidZero)).toBe(false);
+      expect(fs.existsSync(pidOverflow)).toBe(false);
+      expect(fs.existsSync(foreign)).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Group 9 — Failure diagnosability
+  // -------------------------------------------------------------------------
+
+  describe("failure diagnosability", () => {
+    /** FileLockPort whose withLock always reports the given underlying cause. */
+    function makeFailingLock(message: string): FileLockPort {
+      return {
+        ...fileLock,
+        withLock: async () => err({ kind: "error" as const, message }),
+      };
+    }
+
+    // Test 9.1
+    it("set() error names the underlying failure, not just the lock kind", async () => {
+      const store = createOAuthCredentialStoreFile({
+        dataDir: tmp,
+        fileLock: makeFailingLock("ENOENT: no such file or directory, rename '…tmp'"),
+      });
+      const result = await store.set("openai-codex:user_a@example.com", makeProfile());
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("ENOENT");
+        expect(result.error.message).toContain("rename");
+      }
+    });
+
+    // Test 9.2
+    it("delete() error names the underlying failure, not just the lock kind", async () => {
+      const store = createOAuthCredentialStoreFile({
+        dataDir: tmp,
+        fileLock: makeFailingLock("EACCES: permission denied, open '…auth-profiles.json'"),
+      });
+      const result = await store.delete("openai-codex:user_a@example.com");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain("EACCES");
     });
   });
 });

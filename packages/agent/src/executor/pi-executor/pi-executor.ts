@@ -264,25 +264,23 @@ function settleExternalExecutionAbort(
 ): void {
   if (state.emitted) return;
   state.emitted = true;
-  result.finishReason = "prompt_timeout";
+  result.finishReason = "cancelled";
   result.response = "The execution was cancelled before it could finish.";
   result.errorContext = {
-    errorType: "PipelineTimeout",
+    errorType: "CallerCancellation",
     retryable: false,
     originalError: "Caller cancelled the agent execution",
   };
   deps.eventBus.emit("execution:aborted", {
     sessionKey,
-    reason: "pipeline_timeout",
+    reason: "caller_cancelled",
     agentId: deps.agentId,
     timestamp: deps.clock.now(),
   });
-  deps.logger.warn({
+  deps.logger.info({
     agentId: deps.agentId,
     sessionKey: formatSessionKey(sessionKey),
     step: "external-abort",
-    errorKind: "timeout" as const,
-    hint: "Inspect the caller deadline or shutdown signal before retrying the execution",
   }, "Agent execution cancelled by caller signal");
 }
 
@@ -1066,7 +1064,8 @@ async function runSessionLocked(
   } else {
     const diagnostics = historyProjection.value.diagnostics;
     const degraded = diagnostics.invalidProvenanceEntries > 0
-      || diagnostics.incompleteProvenanceBatches > 0;
+      || diagnostics.incompleteProvenanceBatches > 0
+      || diagnostics.invalidConversationTextEntries > 0;
     const fields = {
       agentId: deps.agentId,
       step: "inbound-history-projection",
@@ -1086,6 +1085,7 @@ async function runSessionLocked(
       );
     } else if (
       diagnostics.projectedUserMessages > 0
+      || diagnostics.projectedConversationTextMessages > 0
       || diagnostics.omittedLocaleRepairTurns > 0
       || diagnostics.strippedRecallMessages > 0
     ) {
@@ -1180,7 +1180,10 @@ async function runSessionLocked(
   );
   const forwardedContextActive = msg.metadata.isForwarded === true
     || hasRecentForwardedUserTurn(sm.getEntries?.() ?? [], msg.id);
-  const requestRelevanceHistory = describeRecentUserTurnSelection(recentUserTurns);
+  const requestRelevanceHistory = describeRecentUserTurnSelection(
+    recentUserTurns,
+    msg.text,
+  );
 
   // Get or create session-scoped guide delivery tracking.
   // Clear on session reset (isFirstMessageInSession) so guides re-inject.
@@ -3021,6 +3024,10 @@ async function runSessionLocked(
         requestRelevantPromptSkillLocations: deferralResult.requestRelevantPromptSkillLocations,
         requestRelevantPromptSkillWorkflowToolNames:
           deferralResult.requestRelevantPromptSkillWorkflowToolNames,
+        requestRelevantPromptSkillMinDistinctWebFetchUrls:
+          deferralResult.requestRelevantPromptSkillMinDistinctWebFetchUrls,
+        requestRelevantPromptSkillMinDistinctWebSearchQueries:
+          deferralResult.requestRelevantPromptSkillMinDistinctWebSearchQueries,
         requestRelevantPromptSkillWorkflowContext:
           deferralResult.requestRelevantPromptSkillWorkflowContext,
         requestRelevanceHistory,

@@ -24,6 +24,7 @@ const internalFieldNames = new Set([
   "_callerConversationScope",
   "_callerMetadata",
   "_callerSessionKey",
+  "_callerTurnScope",
   "_capabilities",
   "_channelType",
   "_chatType",
@@ -373,6 +374,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._callerSessionKey).toBe("tenant-x:agent:agent-1:user-z:telegram:peer:user-z");
     expect(forwarded._callerConversationScope).toEqual(currentCtx.turnScope?.conversation);
+    expect(forwarded._callerTurnScope).toEqual(currentCtx.turnScope);
     expect(forwarded._deliveryTarget).toEqual({
       conversation: {
         conversationScope: TURN_SCOPE.conversation,
@@ -380,6 +382,22 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       },
       destinationEndpoint: TURN_SCOPE.endpoint,
     });
+    expect(forwarded._callerChannelType).toBe("telegram");
+    expect(forwarded._callerChannelId).toBe("chan-y");
+  });
+
+  it("derives caller channel metadata from trusted turn scope when delivery origin is absent", async () => {
+    currentCtx = inProcessContext();
+    const rpcCall = vi.fn(async () => "ok");
+    const create = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    });
+
+    await create("agent-1")("graph.execute", { nodes: [] });
+
+    const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._callerChannelType).toBe("telegram");
     expect(forwarded._callerChannelId).toBe("chan-y");
   });

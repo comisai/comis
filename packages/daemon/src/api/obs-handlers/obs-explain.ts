@@ -1,32 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * `obs.explain` RPC handler — the IncidentReport assembler.
- *
- * Wires the full pipeline in five linear steps:
- *
- *   1. admin check (defense-in-depth; gateway-router is the primary gate)
- *   2. `stripInternalFields` THEN `ObsExplainContract.request.parse`
- *      (so `_trustLevel` can never be smuggled into the parsed params)
- *   3. resolve — a `traceId` is canonicalized to its `sessionKey` FIRST
- *      ({@link resolveTraceToSession}), so by-trace and by-session share ONE
- *      assembler path (structural identity)
- *   4. read → normalize → assemble → heuristics → bound:
- *        - {@link IncidentSourceReader} reads the four bounded sources
- *        - {@link toIncidentSignals} collapses log + event shapes
- *        - {@link assembleIncidentReport} merges signals + rollup → the report
- *        - {@link rootCause} stamps the deterministic `likelyRootCause`
- *        - {@link boundIncidentReport} enforces the depth budget
- *   5. dev-mode `response.parse` (catches field regressions in dev only)
- *
- * The `incidentReader` dep is an OPTIONAL test seam: production builds
- * {@link makeRealReader} over the real (safePath-guarded) data dir; tests inject
- * a fixture reader. It does NOT enable arbitrary-file reads in production
- * — the dataDir override convention only, like obs-trace.
- *
+ * `obs.explain` IncidentReport assembler and admin RPC handler. Resolves each
+ * reference to one session before bounded read, normalization, assembly, root
+ * cause classification, and response validation. Tests may inject a source
+ * reader; production always uses the safe-path-guarded data directory.
  * @module
  */
-
 import { AuthorizationError } from "../errors.js";
 import * as os from "node:os";
 import {
@@ -58,11 +38,15 @@ import { boundIncidentReport } from "./obs-explain-bound.js";
 import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
 import {
   completionEvidenceGuardVerdict,
+  outboundAudioEvidenceGuardVerdict,
   outboundCompletionEvidenceGuardVerdict,
+  outboundImageEvidenceGuardVerdict,
+  outboundDeliveryStatusEvidenceGuardVerdict,
 } from "./obs-explain-completion-evidence-verdict.js";
-
 const DELEGATION_EVIDENCE_GUARD_ACTION =
   "response.delegation_evidence_guard";
+const DELEGATION_RESPONSE_GROUNDING_GUARD_ACTION =
+  "response.delegation_response_grounding_guard";
 const PERSISTENT_ACTION_EVIDENCE_GUARD_ACTION =
   "response.persistent_action_evidence_guard";
 const DESTRUCTIVE_ACTION_EVIDENCE_GUARD_ACTION =
@@ -74,7 +58,6 @@ const VISION_FALLBACK_GROUNDED_ACTION =
 function defaultDataDir(): string {
   return safePath(os.homedir(), ".comis");
 }
-
 /**
  * Already-validated `obs.explain` params (post `request.parse`). The shared
  * assembler takes this shape DIRECTLY — it performs NO contract parse and NO
@@ -414,9 +397,10 @@ export async function assembleIncidentReportFromSources(
     ? await reader.readTaskCheckLifecycle(params.rootRunId)
     : null;
   const indexedSessionKey = params.graphId !== undefined
-    ? graphTraceId === undefined
-      ? ""
-      : await resolveTraceToSession(dataDir, graphTraceId, params.includeSynthetic)
+    ? graph?.sessionKey
+      ?? (graphTraceId === undefined
+        ? ""
+        : await resolveTraceToSession(dataDir, graphTraceId, params.includeSynthetic))
     : params.rootRunId
     ? await resolveRootRunToSession(dataDir, params.rootRunId, taskCheck)
     : params.traceId
@@ -754,10 +738,12 @@ export async function assembleIncidentReportFromSources(
     report.traceId,
     report.failures,
   );
-  if (delegationEvidenceVerdict !== null) {
+  const completionRouteRejected = report.likelyRootCause?.code === "subagent_delivery_skipped";
+  if (delegationEvidenceVerdict !== null && !completionRouteRejected) {
     // A deterministic response correction is the acute terminal event. Rank it
     // above chronic tool noise so one explain call names the honesty failure
-    // that changed the user-visible outcome.
+    // that changed the user-visible outcome. An authenticated completion route
+    // rejection remains authoritative because it suppressed the later result.
     report.likelyRootCause = delegationEvidenceVerdict;
   }
   const persistentActionEvidenceVerdict =
@@ -770,6 +756,12 @@ export async function assembleIncidentReportFromSources(
   if (persistentActionEvidenceVerdict !== null && !hasStructuredMcpFailure) {
     report.likelyRootCause = persistentActionEvidenceVerdict;
   }
+  // These are response symptoms, ranked delivery > image > audio. A rejected
+  // completion route suppressed the result itself and stays authoritative.
+  const outboundVerdict = outboundDeliveryStatusEvidenceGuardVerdict(auditRows, report.traceId)
+    ?? outboundImageEvidenceGuardVerdict(auditRows, report.traceId)
+    ?? outboundAudioEvidenceGuardVerdict(auditRows, report.traceId);
+  if (outboundVerdict !== null && !completionRouteRejected) report.likelyRootCause = outboundVerdict;
   const destructiveActionEvidenceVerdict = destructiveActionEvidenceGuardVerdict(
     auditRows,
     report.traceId,
@@ -825,6 +817,27 @@ function delegationEvidenceGuardVerdict(
   traceId: string,
   failures: IncidentReport["failures"],
 ): IncidentReport["likelyRootCause"] {
+  if (
+    traceId.length > 0
+    && rows.some(
+      (row) =>
+        row.traceId === traceId
+        && row.action === DELEGATION_RESPONSE_GROUNDING_GUARD_ACTION
+        && row.outcome === "denied",
+    )
+  ) {
+    return {
+      code: "delegation_response_ungrounded",
+      detail:
+        "sessions_spawn succeeded, but the final response did not describe the current delegation; "
+        + "the response honesty guard replaced it with a receipt-backed status",
+      suggestedNextSteps: [
+        "inspect the model turn after the successful sessions_spawn receipt",
+        "check recalled context and prompt-skill use for stale task influence",
+        "no spawn retry is required unless the delegated result is still needed",
+      ],
+    };
+  }
   if (
     traceId.length === 0
     // The guard corrected the response because this concrete spawn failed.

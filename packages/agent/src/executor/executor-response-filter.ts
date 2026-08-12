@@ -34,6 +34,7 @@ import { assertsUnbackedRunIdentifier } from "./fabricated-run-identifier.js";
 // ---------------------------------------------------------------------------
 
 const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
+  " background helper",
   " delegate ",
   " delegation ",
   " ask someone",
@@ -42,7 +43,10 @@ const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
   " get someone",
   " get somebody",
   " get a few people",
+  " get a few separate agents",
   " have another agent",
+  " nested child",
+  " sessions_spawn",
   " use another agent",
   " consult another",
   " bring in another",
@@ -112,6 +116,24 @@ const DELEGATION_SUBJECT_PHRASES = [
   " independent check",
 ];
 
+// A successful spawn receipt exists here, so this set only decides whether the
+// reply DISCLOSES the delegation. It therefore admits the ordinary synonyms a
+// model reaches for ("the helper is now researching X", "handed it off",
+// "running in the background") — otherwise a truthful, substantive answer was
+// discarded for a vocabulary miss rather than for an unsupported claim.
+const GROUNDED_DELEGATION_RESPONSE_PHRASES = [
+  ...DELEGATION_SUBJECT_PHRASES,
+  " launched ",
+  " started ",
+  " helper",
+  " worker",
+  " spawned ",
+  " dispatched ",
+  " handed off",
+  " handed it off",
+  " background",
+];
+
 function normalizedEvidenceText(value: string): string {
   return ` ${value.toLocaleLowerCase().replaceAll("’", "'").trim()} `;
 }
@@ -148,15 +170,20 @@ function containsUnnegatedEvidencePhrase(
 export interface DelegationEvidenceGuardResult {
   response: string;
   corrected: boolean;
-  reason?: "missing_current_turn_spawn";
+  reason?: "missing_current_turn_spawn" | "successful_spawn_response_ungrounded";
 }
 
-/** Recognize the runtime-owned envelope that reports a settled background tool result. */
-export function isTrustedBackgroundCompletionEnvelope(
+/** Recognize runtime-owned envelopes that report settled asynchronous results. */
+export function isTrustedRuntimeCompletionEnvelope(
   message: Pick<NormalizedMessage, "channelType" | "senderId">,
 ): boolean {
-  return message.channelType === "background_task"
-    && message.senderId === "background-task-runner";
+  return (
+    message.channelType === "background_task"
+    && message.senderId === "background-task-runner"
+  ) || (
+    message.channelType === "cross-session"
+    && message.senderId === "cross-session-relay"
+  );
 }
 
 /**
@@ -178,6 +205,7 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
+  verifiedSpawnResponse: string;
 }): DelegationEvidenceGuardResult {
   if (params.runtimeCompletion === true) {
     return { response: params.response, corrected: false };
@@ -213,9 +241,18 @@ export function enforceCurrentTurnDelegationEvidence(params: {
       && toolResult.success
       && toolResult.backgrounded !== true,
   );
-  if (successfulSpawn) return { response: params.response, corrected: false };
-
   const response = normalizedEvidenceText(params.response);
+  if (successfulSpawn) {
+    if (containsEvidencePhrase(response, GROUNDED_DELEGATION_RESPONSE_PHRASES)) {
+      return { response: params.response, corrected: false };
+    }
+    return {
+      response: params.verifiedSpawnResponse,
+      corrected: true,
+      reason: "successful_spawn_response_ungrounded",
+    };
+  }
+
   const claimsDelegation = containsEvidencePhrase(
     response,
     DELEGATION_SUCCESS_CLAIM_PHRASES,
@@ -281,6 +318,9 @@ export {
   enforceAgentUpdateNoOpGrounding,
   enforceSchedulerStateEvidence,
   enforceCompletionEvidence,
+  enforceOutboundAudioEvidence,
+  enforceOutboundImageEvidence,
+  enforceOutboundDeliveryStatusEvidence,
   enforceOngoingWorkEvidence,
   enforceRuntimeSelfReportEvidence,
   enforceSenderAuthorityGrounding,
@@ -291,6 +331,9 @@ export type {
   AgentUpdateNoOpGroundingGuardResult,
   SchedulerStateEvidenceGuardResult,
   CompletionEvidenceGuardResult,
+  OutboundAudioEvidenceGuardResult,
+  OutboundImageEvidenceGuardResult,
+  OutboundDeliveryStatusEvidenceGuardResult,
   OngoingWorkEvidenceGuardResult,
   RuntimeSelfReportEvidenceGuardResult,
   SenderAuthorityGroundingGuardResult,

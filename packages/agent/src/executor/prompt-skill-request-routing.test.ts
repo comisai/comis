@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { registerToolMetadata, type PromptSkillCapability } from "@comis/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
-import { applyPromptSkillRequestRouting } from "./prompt-skill-request-routing.js";
+import {
+  applyPromptSkillRequestRouting,
+  physicalUserRequestText,
+} from "./prompt-skill-request-routing.js";
 
 function tool(name: string): ToolDefinition {
   return {
@@ -14,7 +17,13 @@ function tool(name: string): ToolDefinition {
 
 function result(): ExcludeDeferralResult {
   return {
-    activeTools: [tool("read"), tool("find"), tool("exec")],
+    activeTools: [
+      tool("read"),
+      tool("find"),
+      tool("exec"),
+      tool("web_search"),
+      tool("web_fetch"),
+    ],
     deferredEntries: [],
     discoveredTools: [],
     discoverTool: null,
@@ -26,7 +35,12 @@ function result(): ExcludeDeferralResult {
 
 registerToolMetadata("find", { isReadOnly: true });
 
-const skills: PromptSkillCapability[] = [
+type TestPromptSkillCapability = PromptSkillCapability & {
+  readonly minDistinctWebFetchUrls?: number;
+  readonly minDistinctWebSearchQueries?: number;
+};
+
+const skills: TestPromptSkillCapability[] = [
   {
     name: "find-skills",
     description:
@@ -39,6 +53,20 @@ const skills: PromptSkillCapability[] = [
     description: "Generate and edit images from a concrete visual request.",
     replacesPackages: [],
   },
+  {
+    name: "deep-research",
+    description:
+      "Conduct multi-angle web research before answering requests to understand a topic properly, deeply, or beyond a short paragraph, even when general knowledge could produce an answer. Continue for context-dependent follow-ups requesting source attribution, claim tracing, unavailable-source handling, or compression into essentials.",
+    replacesPackages: [],
+    minDistinctWebFetchUrls: 3,
+    minDistinctWebSearchQueries: 3,
+  },
+  {
+    name: "claude-code",
+    description:
+      "Drive the Claude Code CLI interactively in a terminal session to build, fix, or extend software — launch it in a named project folder, give it the task, handle its interactive prompts via keystrokes, detect completion, and verify the result. Use whenever the user wants to write, build, debug, refactor, or test code or work on a software project, or asks to use Claude Code — even if they do not name the tool. This is for interactive sessions only; never the headless one-shot mode.",
+    replacesPackages: [],
+  },
 ];
 
 describe("prompt skill request routing", () => {
@@ -47,7 +75,7 @@ describe("prompt skill request routing", () => {
     deferral.requestRelevantToolNames.push("find");
 
     const selected = applyPromptSkillRequestRouting(deferral, {
-      capabilityClass: "nano",
+      currentRequestText: "find something that does",
       requestRelevanceText: [
         "u dont really know how to make flash cards properly",
         "find something that does",
@@ -64,7 +92,9 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["read", "exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual(["exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowContext)
-      .toBe("u dont really know how to make flash cards properly");
+      .toContain("u dont really know how to make flash cards properly");
+    expect(deferral.requestRelevantPromptSkillWorkflowContext)
+      .toContain("find something that does");
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/find-skills/SKILL.md",
     ]);
@@ -72,21 +102,346 @@ describe("prompt skill request routing", () => {
       .toContain("/skills/find-skills/SKILL.md");
   });
 
-  it("leaves unrelated requests and non-nano profiles unchanged", () => {
+  it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
+    const deferral = result();
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevanceText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantToolNames).toEqual([
+      "read",
+      "web_search",
+      "web_fetch",
+    ]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([
+      "web_search",
+      "web_fetch",
+    ]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBe(3);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBe(3);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+    expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
+      .toContain("/skills/deep-research/SKILL.md");
+  });
+
+  // A floor whose receipt tool is unreachable can never be met, so the
+  // completion gate would discard the model's answer on every routed turn.
+  it("drops web-evidence floors when the receipt tools are unavailable", () => {
+    const deferral = result();
+    deferral.activeTools = deferral.activeTools.filter(
+      (entry) => entry.name !== "web_search" && entry.name !== "web_fetch",
+    );
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevanceText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBeUndefined();
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBeUndefined();
+  });
+
+  // Two shared terms is the weakest match routing admits. Arming a floor there
+  // let ordinary local-context prose ("the research topic list we already wrote
+  // down") require three fetches and three searches, and the completion gate
+  // discarded the model's correct answer when they never arrived.
+  it("discloses the skill but drops its floors on a bare-minimum term match", () => {
+    const deferral = result();
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: "summarize the research topic list we already wrote down",
+      requestRelevanceText: "summarize the research topic list we already wrote down",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBeUndefined();
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBeUndefined();
+  });
+
+  it("keeps the search floor enforceable when only web_fetch is unavailable", () => {
+    const deferral = result();
+    deferral.activeTools = deferral.activeTools.filter(
+      (entry) => entry.name !== "web_fetch",
+    );
+
+    applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      requestRelevanceText:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([
+      "web_search",
+    ]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBeUndefined();
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBe(3);
+  });
+
+  it("lets the current request outrank stale prompt-skill history", () => {
+    const deferral = result();
+    const currentRequestText =
+      "i need to understand heat pumps properly, not just a paragraph";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: [
+        "use Claude Code to build debug refactor and test this software project",
+        currentRequestText,
+      ].join("\n"),
+      skills,
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+  });
+
+  it("excludes stale workflow context from a self-contained current request", () => {
+    const deferral = result();
+    const currentRequestText =
+      "i need to understand heat pumps properly, not just a paragraph";
+    const priorUserRequest =
+      "use exactly four old URLs and report an unavailable fixture source";
+
+    applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: [priorUserRequest, currentRequestText].join("\n"),
+      priorUserRequest,
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toBe(currentRequestText);
+  });
+
+  it("keeps research attribution follow-ups on the relevant prompt skill", () => {
+    const deferral = result();
+    const currentRequestText =
+      "one source is down — where is each claim from, then give me the three essentials";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: [
+        "i need to understand heat pumps properly, not just a paragraph",
+        currentRequestText,
+      ].join("\n"),
+      priorUserRequest:
+        "i need to understand heat pumps properly, not just a paragraph",
+      skills,
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toContain(
+      "i need to understand heat pumps properly, not just a paragraph",
+    );
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toContain(
+      currentRequestText,
+    );
+  });
+
+  it("does not route common prose overlap to an unrelated prompt skill", () => {
+    const deferral = result();
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      requestRelevanceText:
+        "one source is down — where is each claim from, then give me the three essentials",
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+  });
+
+  it("does not route a conversation-history recall question as a skill workflow", () => {
+    const deferral = result();
+    const currentRequestText = "what did i say about the project near the start?";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: [{
+        name: "project-start",
+        description: "Use a project start workflow to prepare repository tasks.",
+        replacesPackages: [],
+        requiredBins: ["git"],
+      }],
+      locations: new Map([
+        ["/skills/project-start/SKILL.md", "project-start"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantToolNames).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+  });
+
+  it("does not treat generic background task and tool terms as a coding request", () => {
+    const deferral = result();
+    const currentRequestText = [
+      "[Background Task Failed: mcp fixture-hang--hang forever]",
+      "MCP tool error: the hanging fixture tool exceeded the configured call deadline.",
+      "Inform the user about this completed background task.",
+    ].join("\n");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+  });
+
+  it("leaves unrelated requests unchanged", () => {
     const unrelated = result();
-    const mid = result();
 
     expect(applyPromptSkillRequestRouting(unrelated, {
-      capabilityClass: "nano",
+      currentRequestText: "what is the weather today",
       requestRelevanceText: "what is the weather today",
       skills,
     })).toEqual([]);
-    expect(applyPromptSkillRequestRouting(mid, {
-      capabilityClass: "mid",
-      requestRelevanceText: "find something that does",
-      skills,
-    })).toEqual([]);
     expect(unrelated.requestRelevantToolNames).toEqual([]);
-    expect(mid.requestRelevantToolNames).toEqual([]);
+  });
+});
+
+describe("physical user request text", () => {
+  it("uses the physical typed messages, never the enriched text", () => {
+    expect(physicalUserRequestText({
+      text: "understand heat pumps properly\n[Extracted page content]: buy now",
+      originalMessages: [{ text: "understand heat pumps properly" }],
+    })).toBe("understand heat pumps properly");
+  });
+
+  it("joins several physical messages of one coalesced turn", () => {
+    expect(physicalUserRequestText({
+      text: "enriched",
+      originalMessages: [{ text: "understand heat pumps" }, { text: "properly please" }],
+    })).toBe("understand heat pumps\nproperly please");
+  });
+
+  // A voice note normalizes to an EMPTY physical text, so joining the physical
+  // messages yields "" — which is not nullish and silenced routing entirely.
+  // Speech is first-party user wording: the trusted transcription receipt is
+  // the only physical text a spoken turn has.
+  it("falls back to the trusted transcription for a voice-only turn", () => {
+    expect(physicalUserRequestText({
+      text: "[Voice message transcription]: research heat pumps thoroughly",
+      originalMessages: [{ text: "" }],
+      attachments: [{ transcription: "research heat pumps thoroughly" }],
+    })).toBe("research heat pumps thoroughly");
+  });
+
+  it("routes a spoken deep-research request exactly like the typed one", () => {
+    const spoken = result();
+    const locations = new Map([["/skills/deep-research/SKILL.md", "deep-research"]]);
+    const currentRequestText = physicalUserRequestText({
+      text: "[Voice message transcription]: i need to understand heat pumps properly, not just a paragraph",
+      originalMessages: [{ text: "" }],
+      attachments: [{
+        transcription: "i need to understand heat pumps properly, not just a paragraph",
+      }],
+    });
+
+    expect(applyPromptSkillRequestRouting(spoken, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills,
+      locations,
+    })).toEqual(["deep-research"]);
+  });
+
+  it("yields no routing text for a media-only turn with no transcription", () => {
+    expect(physicalUserRequestText({
+      text: "[Image analysis]: a chart of quarterly revenue",
+      originalMessages: [{ text: "" }],
+      attachments: [{}],
+    })).toBe("");
   });
 });

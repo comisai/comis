@@ -31,12 +31,17 @@ import {
   selectExecutionFailureReply,
   selectBackgroundTaskFailedNotice,
   selectDelegationEvidenceMissingReply,
+  selectDelegationEvidenceStartedReply,
   selectPersistentActionEvidenceMissingReply,
+  selectOutboundAudioEvidenceMissingReply,
+  selectOutboundImageEvidenceMissingReply,
+  selectOutboundDeliveryStatusEvidenceMissingReply,
   selectDestructiveActionNotVerifiedReply,
   selectProviderRequiresModelReply,
   selectAgentUpdateNoOpReply,
   selectOngoingWorkEvidenceMissingReply,
   selectRuntimeSelfReportEvidenceMissingReply,
+  selectRuntimeSelfReportEvidenceUnsupportedReply,
   selectSchedulerStateEvidenceMissingReply,
   selectPendingSchedulerConfirmationReply,
   selectCompletionEvidenceMissingReply,
@@ -213,12 +218,44 @@ export function buildDelegationEvidenceMissingReply(
   return selectDelegationEvidenceMissingReply(language, localeCatalog);
 }
 
+/** Receipt-backed replacement when a successful spawn response is unrelated. */
+export function buildDelegationEvidenceStartedReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectDelegationEvidenceStartedReply(language, localeCatalog);
+}
+
 /** Honest replacement when a persistent action lacks current-turn tool proof. */
 export function buildPersistentActionEvidenceMissingReply(
   language?: string,
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectPersistentActionEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when requested audio lacks current-turn delivery proof. */
+export function buildOutboundAudioEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutboundAudioEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when requested image generation lacks current proof. */
+export function buildOutboundImageEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutboundImageEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when delivery status lacks current receipt evidence. */
+export function buildOutboundDeliveryStatusEvidenceMissingReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectOutboundDeliveryStatusEvidenceMissingReply(language, localeCatalog);
 }
 
 /** Honest replacement when a destructive command had no observable effect. */
@@ -261,6 +298,14 @@ export function buildRuntimeSelfReportEvidenceMissingReply(
   localeCatalog?: LocaleCatalog,
 ): string {
   return selectRuntimeSelfReportEvidenceMissingReply(language, localeCatalog);
+}
+
+/** Honest replacement when the current runtime receipt cannot support the claim. */
+export function buildRuntimeSelfReportEvidenceUnsupportedReply(
+  language?: string,
+  localeCatalog?: LocaleCatalog,
+): string {
+  return selectRuntimeSelfReportEvidenceUnsupportedReply(language, localeCatalog);
 }
 
 /** Honest replacement when no current scheduler receipt supports a state claim. */

@@ -130,6 +130,7 @@ agents:
 
 <Warning>
 Setting `enabled: "never"` removes the OS-level filesystem isolation entirely. The exec tool will fall back to its command denylist as the only protection. This is not recommended for production deployments.
+The daemon records this opt-out as a warning-level `config_posture` signal, and `comis system-health` names `skills.execSandbox.enabled` so the relaxed posture cannot appear protected.
 </Warning>
 
 ## System Requirements

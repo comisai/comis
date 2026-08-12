@@ -10,6 +10,7 @@ import {
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
+  webSearchQueryDigest,
 } from "./citation-evidence.js";
 import * as citationEvidenceModule from "./citation-evidence.js";
 import { sanitizeSessionSecrets } from "../session/sanitize-session-secrets.js";
@@ -19,6 +20,12 @@ function urlDigest(url: string): string {
 }
 
 describe("exact citation evidence grounding", () => {
+  it("canonicalizes a search query into a content-free digest", () => {
+    expect(webSearchQueryDigest("  Heat Pump CASE studies  "))
+      .toBe(webSearchQueryDigest("heat pump case studies"));
+    expect(webSearchQueryDigest("   ")).toBeUndefined();
+  });
+
   it("removes a one-character citation mutation that lacks an exact fetch digest", () => {
     const fetched = "https://httpbingo.org/base64/UkVTRUFSQ0hfT1ZFUlJJREVfMjAyNjA4MDQ=";
     const mutated = "https://httpbingo.org/base64/UkVTRUFSQ0hfT1ZFUlJJREVfMjAyNjA4MDE=";
@@ -38,6 +45,20 @@ describe("exact citation evidence grounding", () => {
       removedCitationCount: 1,
     });
     expect(guarded.response).not.toContain(mutated);
+  });
+
+  it("removes an empty citation shell after rejecting an unfetched URL", () => {
+    const fetched = "https://example.com/fetched";
+    const guarded = enforceCitationEvidence({
+      response:
+        `Sources: [https://unverified.example/report] [${fetched}]`,
+      allowedUrlDigests: [urlDigest(fetched)],
+      enabled: true,
+    });
+
+    expect(guarded.response).not.toContain("[]");
+    expect(guarded.response).toContain(`[${fetched}]`);
+    expect(guarded.removedCitationCount).toBe(1);
   });
 
   it("preserves exact fetched citations and a code-formatted unreachable URL", () => {
@@ -193,6 +214,31 @@ describe("exact citation evidence grounding", () => {
         },
       ],
     })).toEqual([digest]);
+  });
+
+  it("uses fresh fetch evidence instead of historical citation receipts", () => {
+    const candidate = (citationEvidenceModule as Record<string, unknown>)
+      .citationEvidenceDigestsForTurn;
+    expect(candidate).toBeTypeOf("function");
+    const selectDigests = candidate as (params: {
+      currentFetchDigests: readonly string[];
+      relayedDigests: readonly string[];
+      historicalDigests: readonly string[];
+    }) => string[];
+    const current = urlDigest("https://example.com/current");
+    const relayed = urlDigest("https://example.com/relayed");
+    const historical = urlDigest("https://example.com/historical");
+
+    expect(selectDigests({
+      currentFetchDigests: [current],
+      relayedDigests: [relayed],
+      historicalDigests: [historical],
+    })).toEqual([current, relayed]);
+    expect(selectDigests({
+      currentFetchDigests: [],
+      relayedDigests: [],
+      historicalDigests: [historical],
+    })).toEqual([historical]);
   });
 
   it("appends a bounded runtime citation receipt to the session journal", () => {
