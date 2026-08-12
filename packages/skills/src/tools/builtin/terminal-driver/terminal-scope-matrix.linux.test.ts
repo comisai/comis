@@ -133,6 +133,7 @@ function buildCellArgs(
     bwrapPath: resolveBwrapPath(),
     workspace: opts.workspace,
     cwd: opts.workspace,
+    executablePath: "/bin/sh",
     home: opts.home,
     dataDir: opts.dataDir,
     systemRoPaths: resolvedSystemRoPaths(),

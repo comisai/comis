@@ -31,6 +31,7 @@ function makeInput(overrides: Partial<ScopeArgsInput> = {}): ScopeArgsInput {
     bwrapPath: "/usr/bin/bwrap",
     workspace: "/ws",
     cwd: "/ws",
+    executablePath: "/opt/operator-tools/bin/worker",
     home: "/home/u",
     dataDir: "/home/u/.comis",
     systemRoPaths: ["/usr", "/bin"],
@@ -294,13 +295,14 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(args).not.toContain("/home/u/.comis");
   });
 
-  it("the carve-out is the LAST mount before the -- terminator", () => {
+  it("the carve-out is the final broad mount before the exact executable bind", () => {
     const args = buildScopeArgs(makeInput());
     const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
     const terminator = args.lastIndexOf("--");
     expect(carveOut).toBeGreaterThanOrEqual(0);
-    // the carve-out tmpfs + its arg sit immediately before "--"
-    expect(carveOut + 2).toBe(terminator);
+    const executableBind = lastIndexOfPair(args, "--ro-bind", "/opt/operator-tools/bin/worker");
+    expect(executableBind).toBeGreaterThan(carveOut);
+    expect(executableBind + 3).toBe(terminator);
   });
 
   it("flagship: at filesystem:full the carve-out index is AFTER the broad host bind", () => {
@@ -315,7 +317,7 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(carveOut).toBeGreaterThan(hostBind);
   });
 
-  it("filesystem:full re-emits --proc/--dev/--tmpfs /tmp AFTER the broad host bind, carve-out still last", () => {
+  it("filesystem:full remounts special filesystems and masks data before the exact executable bind", () => {
     const args = buildScopeArgs(makeInput({ scope: makeScope({ filesystem: "full" }) }));
     const rootBind = indexOfPair(args, "--bind", "/");
     const homeBind = indexOfPair(args, "--bind", "/home/u");
@@ -325,9 +327,11 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(lastIndexOfPair(args, "--proc", "/proc")).toBeGreaterThan(hostBind);
     expect(lastIndexOfPair(args, "--dev", "/dev")).toBeGreaterThan(hostBind);
     expect(lastIndexOfPair(args, "--tmpfs", "/tmp")).toBeGreaterThan(hostBind);
-    // and the carve-out is STILL the last mount
+    // The exact executable is the only later mount; it cannot re-expose the data directory.
     const carveOut = lastIndexOfPair(args, "--tmpfs", "/home/u/.comis");
-    expect(carveOut + 2).toBe(args.lastIndexOf("--"));
+    const executableBind = lastIndexOfPair(args, "--ro-bind", "/opt/operator-tools/bin/worker");
+    expect(executableBind).toBeGreaterThan(carveOut);
+    expect(executableBind + 3).toBe(args.lastIndexOf("--"));
   });
 
   // -- agent-workspace persistence: re-expose the workspace AFTER the carve-out --
@@ -368,10 +372,11 @@ describe("buildScopeArgs — the always-on ~/.comis carve-out", () => {
     expect(reExposesSecret).toBe(false);
   });
 
-  it("the agent-workspace re-bind is the LAST mount before the terminator (wins over the carve-out)", () => {
+  it("the agent-workspace re-bind is the final writable mount before the executable bind", () => {
     const args = buildScopeArgs(makeInput({ workspace: AGENT_WS, cwd: AGENT_WS, dataDir: "/home/u/.comis" }));
     const reBind = lastIndexOfPair(args, "--bind", AGENT_WS);
-    // `--bind src dest` is a TRIPLE, so the terminator sits at reBind + 3.
-    expect(reBind + 3).toBe(args.lastIndexOf("--"));
+    const executableBind = lastIndexOfPair(args, "--ro-bind", "/opt/operator-tools/bin/worker");
+    expect(executableBind).toBeGreaterThan(reBind);
+    expect(executableBind + 3).toBe(args.lastIndexOf("--"));
   });
 });

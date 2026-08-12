@@ -348,6 +348,7 @@ export async function buildSpawnPlan(
     bwrapPath: composers.bwrapPath,
     workspace: input.workspace,
     cwd: input.cwd,
+    executablePath: input.bin,
     home: input.home,
     dataDir: input.dataDir,
     systemRoPaths: input.systemRoPaths,

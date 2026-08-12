@@ -50,6 +50,8 @@ export interface ScopeArgsInput {
   workspace: string;
   /** The `--chdir` target. */
   cwd: string;
+  /** The verified absolute executable path driven inside the jail. */
+  executablePath: string;
   /** Injected `os.homedir()` — TESTABLE (the home bind + operator-relative roots). */
   home: string;
   /** The carve-out target — `os.homedir()/.comis` (non-configurable). */
@@ -205,7 +207,7 @@ function isUnderDir(child: string, parent: string): boolean {
  *    --tmpfs /tmp, <FS binds>, <credentialPaths ro-bind-try>, <uid>,
  *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
  *    <operator ephemeral tmpfs mounts>, <CARVE-OUT --tmpfs <dataDir>>,
- *    <workspace re-bind if under dataDir>, --]
+ *    <workspace re-bind if under dataDir>, <verified executable ro-bind>, --]
  *
  * `--unshare-all` already supplies `--unshare-pid` + `--unshare-user` + ipc/uts/
  * cgroup — no separate `--unshare-pid`. `--new-session` is emitted
@@ -327,6 +329,13 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   if (isUnderDir(input.workspace, input.dataDir)) {
     args.push("--bind", input.workspace, input.workspace);
   }
+
+  // -- Verified executable visibility -- the operator allow entry resolves and
+  //    verifies one canonical host executable before this composer runs. That
+  //    executable may live outside the workspace and system RO roots, so expose
+  //    exactly that file read-only. Keep this mount after every broad bind and
+  //    mask so the child path cannot disappear or become writable through order.
+  args.push("--ro-bind", input.executablePath, input.executablePath);
 
   // The caller appends `bin, ...argv` after the terminator.
   args.push("--");
