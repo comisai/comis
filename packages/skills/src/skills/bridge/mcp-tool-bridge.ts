@@ -448,7 +448,9 @@ export function mcpToolsToAgentTools(
 
         const value: McpToolCallResult = result.value;
 
-        if (privateMetadataBridge !== undefined) {
+        if (privateMetadataBridge !== undefined && value.isError) {
+          privateMetadataBridge.discardCall(privateMetadataCall);
+        } else if (privateMetadataBridge !== undefined) {
           const accepted = await privateMetadataBridge.acceptResultMeta({
             ...privateMetadataCall,
             meta: value.privateMeta,
