@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BG_HELPER = resolve(HERE, "bg.sh");
+const BG_STATE_DIRECTORY = "/tmp";
 const tags: string[] = [];
 const directories: string[] = [];
 
@@ -25,7 +26,7 @@ function uniqueTag(suffix: string): string {
 }
 
 async function waitForCompletion(tag: string): Promise<boolean> {
-  const done = resolve(tmpdir(), `bg-${tag}.done`);
+  const done = resolve(BG_STATE_DIRECTORY, `bg-${tag}.done`);
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (existsSync(done)) return true;
     await new Promise((finish) => setTimeout(finish, 20));
@@ -36,7 +37,7 @@ async function waitForCompletion(tag: string): Promise<boolean> {
 afterEach(() => {
   for (const tag of tags.splice(0)) {
     for (const suffix of ["cmd.sh", "done", "out", "pid"]) {
-      rmSync(resolve(tmpdir(), `bg-${tag}.${suffix}`), { force: true });
+      rmSync(resolve(BG_STATE_DIRECTORY, `bg-${tag}.${suffix}`), { force: true });
     }
   }
   for (const directory of directories.splice(0)) {
@@ -65,8 +66,10 @@ describe("detached live command helper", () => {
     expect(launched.status).toBe(0);
     expect(launched.stdout).toContain("launched detached");
     expect(await waitForCompletion(tag)).toBe(true);
-    expect(readFileSync(resolve(tmpdir(), `bg-${tag}.done`), "utf8").trim()).toBe("0");
-    expect(readFileSync(resolve(tmpdir(), `bg-${tag}.out`), "utf8")).toBe("detached-ok\n");
+    expect(readFileSync(resolve(BG_STATE_DIRECTORY, `bg-${tag}.done`), "utf8").trim()).toBe("0");
+    expect(readFileSync(resolve(BG_STATE_DIRECTORY, `bg-${tag}.out`), "utf8")).toBe(
+      "detached-ok\n",
+    );
   });
 
   it("reports missing process evidence instead of claiming a command is running", () => {
@@ -78,6 +81,6 @@ describe("detached live command helper", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("not running");
-    expect(result.stdout).not.toContain(" running");
+    expect(result.stdout).not.toMatch(/\] running(?:\n|$)/);
   });
 });
