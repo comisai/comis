@@ -153,7 +153,6 @@ import {
 } from "./executor-response-filter.js";
 import { BACKGROUND_POLLER_TOOL } from "../safety/background-failure-attribution.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
-import { recoverFinalResponseLocaleFailure } from "./prompt-runner/response-locale-enforcement.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
@@ -1397,28 +1396,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       },
     });
   }
-  if (
-    activeModelSelfStatus.corrected
-    && recoverFinalResponseLocaleFailure(result, params.responseLocalePolicy)
-  ) {
-    deps.logger.info(
-      {
-        step: "response-locale-recovery",
-        provider: params.provider,
-        modelId: params.modelId,
-        durationMs: 0,
-      },
-      "Final response guard satisfied the captured locale policy",
-    );
-    deps.eventBus.emit("execution:recovery_attempted", {
-      agentId: effectiveAgentId,
-      sessionKey: formattedKey,
-      reason: "locale_fidelity",
-      succeeded: true,
-      timestamp: deps.clock.now(),
-    });
-  }
-
   // Derive effectiveFinishReason BEFORE the bookend log so it is visible there.
   // The bookend must log effectiveFinishReason (not result.finishReason) so that
   // an output_starved turn — which carries result.finishReason="stop" until promoted here —

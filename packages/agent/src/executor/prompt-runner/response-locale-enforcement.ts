@@ -20,12 +20,7 @@ import {
   evaluateResponseLocale,
   type ResponseLocaleQualityFinding,
 } from "../resolve-response-locale-policy.js";
-import {
-  buildResponseLocaleUnavailableReply,
-  catalogFromLocalePacks,
-} from "../degraded-reply.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
-import type { ExecutionResult } from "../types.js";
 import { classifyToolFailureRecovery } from "../../bridge/tool-failure-recovery.js";
 import { unrepairedMismatchHint } from "./locale-mismatch-hint.js";
 import { markAuxiliaryStreamCall } from "../stream-wrappers/auxiliary-stream-call.js";
@@ -325,33 +320,6 @@ function emitLocaleRecovery(params: RunPromptParams, succeeded: boolean): void {
   );
 }
 
-/**
- * Clear a locale-only terminal error when a later deterministic response guard
- * produced a final response that satisfies the same captured policy.
- */
-export function recoverFinalResponseLocaleFailure(
-  result: ExecutionResult,
-  policy: ResponseLocalePolicy,
-): boolean {
-  if (
-    result.finishReason !== "error"
-    || result.terminalErrorKind !== "validation"
-    || result.errorContext?.errorType !== "ResponseLocaleMismatch"
-    || evaluateResponseLocale(policy, result.response) !== undefined
-  ) {
-    return false;
-  }
-  const mutableResult = result as unknown as {
-    finishReason: string;
-    terminalErrorKind?: unknown;
-    errorContext?: unknown;
-  };
-  mutableResult.finishReason = "stop";
-  delete mutableResult.terminalErrorKind;
-  delete mutableResult.errorContext;
-  return true;
-}
-
 /** Apply locale enforcement at the success-path egress boundary. */
 export async function applyResponseLocaleEnforcement(params: RunPromptParams): Promise<void> {
   if (params.responseLocalePolicy === undefined) return;
@@ -481,17 +449,17 @@ export async function applyResponseLocaleEnforcement(params: RunPromptParams): P
     },
     "Response locale remained mismatched after repair",
   );
-  params.result.response = buildResponseLocaleUnavailableReply(
-    params.responseLocalePolicy.locale,
-    catalogFromLocalePacks(params.config.localePacks),
-  );
-  params.result.finishReason = "error";
-  params.result.terminalErrorKind = "validation";
-  params.result.errorContext = {
-    errorType: "ResponseLocaleMismatch",
-    retryable: true,
-    originalError:
-      `Expected ${outcome.value.finalFinding?.expectedScript ?? "requested"} script `
-      + `but repair produced ${outcome.value.finalFinding?.actualScript ?? "an incompatible"} script`,
-  };
+  // The response stays. A wrong script is a presentation defect, not an
+  // execution failure: the model answered the question, in the wrong writing
+  // system. Discarding it for a canned line converted a cosmetic problem into a
+  // total loss of the turn — and the multilingual contract is the opposite,
+  // that every capability degrades to "a working, visible, lower-fidelity
+  // floor" and nothing hard-fails. The three sibling branches above agree; this
+  // one was the outlier. `params.result.response` already carries the best
+  // available text (assigned from the repair outcome), the WARN above names the
+  // resolver tier to check, and `execution:recovery_attempted`
+  // (reason "locale_fidelity", succeeded false) already carries the signal to
+  // the observability surfaces — so nothing is hidden by keeping the answer.
+  params.result.localeQualityFinding = outcome.value.finalFinding
+    ?? params.result.localeQualityFinding;
 }
