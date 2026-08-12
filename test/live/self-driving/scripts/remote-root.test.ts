@@ -935,8 +935,10 @@ describe("local rig mode", () => {
 
   it("passes the selected rig environment into the detached remote emulator", () => {
     const source = readFileSync(DEPLOY_EMULATOR, "utf8");
+    const restart = readFileSync(RESTART_EMULATOR, "utf8");
 
     expect(source).toContain("RIG_ENV='$RIG_ENV' EMU_DIR='$EMU_DIR'");
+    expect(restart).toContain('rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env');
   });
 
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
