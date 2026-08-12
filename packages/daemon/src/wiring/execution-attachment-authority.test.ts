@@ -277,4 +277,45 @@ describe("execution attachment authority coordinator", () => {
     });
     expect(deps.attachments.reconcile).not.toHaveBeenCalled();
   });
+
+  it("reauthorizes a rematerialized socket for the exact active run and lease", async () => {
+    const rematerialized = {
+      ...ATTACHMENT,
+      sourceFilesystemIdentity: { device: 10, inode: 21 },
+      updatedAtMs: 1_800_000_000_100,
+      lastRecoveredAtMs: 1_800_000_000_100,
+    };
+    const deps = makeDeps({
+      nowMs: () => 1_800_000_000_100,
+      runs: {
+        get: vi.fn(async () => ok({
+          managedRunId: ATTACHMENT.managedRunId,
+          workspaceLeaseId: ATTACHMENT.workspaceLeaseId,
+          serviceInstanceId: ATTACHMENT.serviceInstanceId,
+          tenantId: ATTACHMENT.tenantId,
+          agentId: ATTACHMENT.agentId,
+          executionAttachmentIds: [ATTACHMENT.executionAttachmentId],
+        })),
+      } as unknown as ManagedRunStorePort,
+      attachments: {
+        listRecoverable: vi.fn(async () => ok([ATTACHMENT])),
+        reconcile: vi.fn(async () => ok({ kind: "recovered" as const, record: rematerialized })),
+      } as unknown as ExecutionAttachmentPort,
+      validateSource: vi.fn(() => ok({
+        canonicalPath: ATTACHMENT.sourcePath,
+        filesystemType: "socket" as const,
+        filesystemIdentity: rematerialized.sourceFilesystemIdentity,
+      })),
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    await expect(authority.reconcileAll({ limit: 10 })).resolves.toEqual({
+      ok: true,
+      value: { recovered: [ATTACHMENT.executionAttachmentId], preserved: [] },
+    });
+    expect(deps.attachments.reconcile).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      executionAttachmentId: ATTACHMENT.executionAttachmentId,
+      sourceFilesystemIdentity: rematerialized.sourceFilesystemIdentity,
+    }));
+  });
 });

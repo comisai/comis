@@ -338,7 +338,7 @@ describe("SQLite execution attachment persistence", () => {
     expect((await store.get(ATTACHMENT_SCOPE, "execution-attachment_a")).ok).toBe(false);
   });
 
-  it("reconciles exact filesystem identity and revokes idempotently before release", async () => {
+  it("rotates revalidated filesystem identity and revokes idempotently before release", async () => {
     const db = new Database(":memory:");
     initSchema(db, 4);
     await seed(db);
@@ -349,7 +349,16 @@ describe("SQLite execution attachment persistence", () => {
       executionAttachmentId: "execution-attachment_a",
       sourceFilesystemIdentity: { device: 30, inode: 41 },
       recoveredAtMs: NOW_MS + 1,
-    })).toEqual({ ok: true, value: { kind: "identity_mismatch" } });
+    })).toMatchObject({
+      ok: true,
+      value: {
+        kind: "recovered",
+        record: {
+          sourceFilesystemIdentity: { device: 30, inode: 41 },
+          lastRecoveredAtMs: NOW_MS + 1,
+        },
+      },
+    });
     expect(await store.revoke(ATTACHMENT_SCOPE, {
       operationId: "attachment-revoke_a",
       executionAttachmentId: "execution-attachment_a",
