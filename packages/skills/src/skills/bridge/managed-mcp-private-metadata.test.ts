@@ -135,14 +135,18 @@ function makeCall(
 
 function makePreparedMeta(overrides: Record<string, unknown> = {}) {
   return {
-    [MCP_MANAGED_RUN_RESULT_KEY]: {
-      state: "prepared",
-      externalRunRef: "external-run_a",
-      registrationNonce: "registration-nonce_a",
-      expiresAt: new Date(NOW_MS + 60_000).toISOString(),
-      displayLabel: "Synthetic managed run",
-      ...overrides,
-    },
+    [MCP_MANAGED_RUN_RESULT_KEY]: makePreparedResult(overrides),
+  };
+}
+
+function makePreparedResult(overrides: Record<string, unknown> = {}) {
+  return {
+    state: "prepared",
+    externalRunRef: "external-run_a",
+    registrationNonce: "registration-nonce_a",
+    expiresAt: new Date(NOW_MS + 60_000).toISOString(),
+    displayLabel: "Synthetic managed run",
+    ...overrides,
   };
 }
 
@@ -210,6 +214,26 @@ describe("managed MCP private metadata boundary", () => {
         capturedToolIds: ["mcp:fixture-service/prepare_work", "web_search"],
       }),
     }));
+  });
+
+  it("accepts prepared metadata exposed by an enumerable own accessor", async () => {
+    const deps = makeDeps();
+    const bridge = createManagedMcpPrivateMetadataBridge(deps);
+    const call = makeCall();
+    const meta: Record<string, unknown> = {};
+    Object.defineProperty(meta, MCP_MANAGED_RUN_RESULT_KEY, {
+      configurable: false,
+      enumerable: true,
+      get: () => makePreparedResult(),
+    });
+
+    const accepted = await runWithContext(makeContext(), async () => {
+      expect((await bridge.createRequestMeta(call)).ok).toBe(true);
+      return bridge.acceptResultMeta({ ...call, meta });
+    });
+
+    expect(accepted.ok).toBe(true);
+    expect(deps.activatePrepared).toHaveBeenCalledOnce();
   });
 
   it("passes a validated workspace request into managed-run activation", async () => {
