@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 import { getToolMetadata, runWithContext } from "@comis/core";
 import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client/index.js";
 import type { ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
-import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./mcp-tool-bridge.js";
+import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType, type McpPrivateMetadataBridge } from "./mcp-tool-bridge.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -343,6 +343,28 @@ describe("mcpToolsToAgentTools", () => {
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
 
     await expect(tools[0].execute("call-1", {})).rejects.toThrow("Upstream rejected the request");
+  });
+
+  it("preserves a managed starter error without demanding success metadata", async () => {
+    const callTool = vi.fn().mockResolvedValue(ok({
+      content: [{ type: "text", text: "Task preparation was rejected" }],
+      isError: true,
+    }));
+    const privateMetadataBridge: McpPrivateMetadataBridge = {
+      createRequestMeta: vi.fn().mockResolvedValue(ok({ "comis.callContext": {} })),
+      acceptResultMeta: vi.fn().mockResolvedValue(err(new Error("success metadata required"))),
+      discardCall: vi.fn(),
+    };
+    const tools = mcpToolsToAgentTools(
+      [makeTool()], callTool, undefined, undefined, undefined, undefined, undefined,
+      privateMetadataBridge,
+    );
+
+    await expect(tools[0].execute("call-managed-error", {})).rejects.toThrow(
+      "Task preparation was rejected",
+    );
+    expect(privateMetadataBridge.discardCall).toHaveBeenCalledOnce();
+    expect(privateMetadataBridge.acceptResultMeta).not.toHaveBeenCalled();
   });
 
   it("execute() returns fallback text when no text content", async () => {
