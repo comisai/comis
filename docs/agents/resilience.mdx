@@ -191,7 +191,11 @@ persistent dead-letter queue backed by a JSONL file at
   automatically, delivering all queued messages
 - **What the operator sees:** `announcement:dead_lettered` events when entries
   are queued, `announcement:dead_letter_delivered` events when they are
-  successfully delivered on retry
+  successfully delivered on retry, and an INFO log line per entry that clears
+- **File lifetime:** the JSONL is a snapshot of the queue, not an append-only
+  log — it is rewritten on every change and removed once the queue drains. An
+  absent file means nothing is pending, so a quarantine WARN with no file means
+  that quarantine already resolved
 
 The dead-letter queue ensures that transient failures do not cause permanent
 message loss. Even during extended provider outages, announcements are preserved
