@@ -125,7 +125,14 @@ function handleClient(
       logger.warn(
         // `auth` (closed ErrorKind union): a host-not-in-allowlist CONNECT is an
         // authorization denial — the allowlist is the operator's egress policy.
-        { toolName: "terminal_egress_proxy", hint: "egress denied (host not in allowlist)", errorKind: "auth" as const },
+        {
+          toolName: "terminal_egress_proxy",
+          targetHost: target.host,
+          targetPort: target.port,
+          allowedHosts: [...allow].sort(),
+          hint: `Add ${target.host} to the terminal allow entry scope.hosts only if this egress is intended`,
+          errorKind: "auth" as const,
+        },
         "egress CONNECT blocked",
       );
       client.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
