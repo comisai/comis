@@ -15,13 +15,13 @@
  */
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { EgressControlPort } from "@comis/core";
 
-import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitCommonMount, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -118,6 +118,11 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       mkdirSync(workspace, { recursive: true });
       writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
       writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
+      const sourceCommonDir = realpathSync(commonDir);
+      expect(resolveManagedWorkspaceGitCommonMount(workspace)).toEqual({
+        ok: true,
+        value: { sourcePath: sourceCommonDir, targetPath: commonDir },
+      });
 
       const params = {
         bin: "/bin/cat",
@@ -129,7 +134,13 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       } as CreateFrameSpawnParams & { managedWorkspace: true };
       const plan = await planSpawnFromCreateFrame(params, {}, { bwrapPath: "/usr/bin/bwrap" });
 
-      expect(hasBind(plan.argv, "--bind", commonDir, commonDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", sourceCommonDir, commonDir)).toBe(true);
+      const ordinaryPlan = await planSpawnFromCreateFrame(
+        { ...params, managedWorkspace: false },
+        {},
+        { bwrapPath: "/usr/bin/bwrap" },
+      );
+      expect(hasBind(ordinaryPlan.argv, "--bind", sourceCommonDir, commonDir)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

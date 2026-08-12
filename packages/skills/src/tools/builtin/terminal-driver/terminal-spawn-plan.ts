@@ -36,10 +36,11 @@
  */
 
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
-import { resolve as resolvePath, sep as pathSep } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath, sep as pathSep } from "node:path";
 
 import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
@@ -121,6 +122,8 @@ export interface SpawnPlanInput {
   argv: string[];
   /** The session workspace root (always --bind RW). */
   workspace: string;
+  /** Host-resolved shared Git administration for a managed linked worktree. */
+  workspaceGitCommonMount?: ManagedWorkspaceGitMount;
   /** The --chdir target. */
   cwd: string;
   /** `os.homedir()` (injected for testability — the home/credential roots). */
@@ -188,6 +191,21 @@ export class AttachmentSandboxUnavailableError extends Error {
   }
 }
 
+/** Raised when an authority-backed linked worktree has unsafe or unreadable Git administration. */
+export class ManagedWorkspaceGitUnavailableError extends Error {
+  readonly errorKind = "precondition" as const;
+  constructor() {
+    super("managed workspace Git administration is unavailable; recreate the workspace lease from a valid linked Git worktree");
+    this.name = "ManagedWorkspaceGitUnavailableError";
+  }
+}
+
+/** Canonical host source and the exact path recorded in the worktree marker. */
+export interface ManagedWorkspaceGitMount {
+  readonly sourcePath: string;
+  readonly targetPath: string;
+}
+
 /**
  * Raised when the resolved `cwd` (the jail `--chdir` target) is NOT contained by any
  * path the scope binds into the jail — a typed, operator-actionable fail-closed at the
@@ -245,6 +263,60 @@ function isCwdWithinBase(cwd: string, base: string): boolean {
   const rc = resolvePath(cwd);
   const rb = resolvePath(base);
   return rc === rb || rc.startsWith(rb.endsWith(pathSep) ? rb : rb + pathSep);
+}
+
+/**
+ * Resolve the shared Git directory for an authority-backed linked worktree.
+ * A normal in-workspace `.git` directory and a non-Git workspace need no extra
+ * mount. A linked marker is accepted only when its canonical per-worktree
+ * directory is a strict child of both the canonical and marker-addressed common
+ * directory's `worktrees` subtree; malformed or escaped markers fail closed.
+ */
+export function resolveManagedWorkspaceGitCommonMount(
+  workspace: string,
+): Result<ManagedWorkspaceGitMount | undefined, Error> {
+  const resolved = tryCatch(() => {
+    const marker = safePath(workspace, ".git");
+    if (!existsSync(marker)) return undefined;
+    const markerStat = lstatSync(marker);
+    if (markerStat.isDirectory()) return undefined;
+    if (!markerStat.isFile()) throw new Error("managed workspace Git marker is not a regular file");
+
+    const markerText = readFileSync(marker, "utf8");
+    if (markerText.length > 4_096) throw new Error("managed workspace Git marker exceeds the bounded size");
+    const markerMatch = /^gitdir: ([^\r\n]+)\r?\n?$/u.exec(markerText);
+    if (markerMatch === null) throw new Error("managed workspace Git marker is malformed");
+    const gitDirCandidate = isAbsolute(markerMatch[1]!)
+      ? resolvePath(markerMatch[1]!)
+      : resolvePath(workspace, markerMatch[1]!);
+    const gitDir = realpathSync(gitDirCandidate);
+
+    const commonMarker = safePath(gitDir, "commondir");
+    const commonText = readFileSync(commonMarker, "utf8");
+    if (commonText.length > 4_096) throw new Error("managed workspace Git common marker exceeds the bounded size");
+    const commonRelative = commonText.replace(/\r?\n$/u, "");
+    if (commonRelative.length === 0 || commonRelative.includes("\n") || commonRelative.includes("\r")) {
+      throw new Error("managed workspace Git common marker is malformed");
+    }
+    const commonTarget = isAbsolute(commonRelative)
+      ? resolvePath(commonRelative)
+      : resolvePath(gitDirCandidate, commonRelative);
+    const commonDir = realpathSync(commonTarget);
+    const worktreesRoot = safePath(commonDir, "worktrees");
+    const targetWorktreesRoot = resolvePath(commonTarget, "worktrees");
+    if (
+      gitDir === worktreesRoot
+      || !isCwdWithinBase(gitDir, worktreesRoot)
+      || gitDirCandidate === targetWorktreesRoot
+      || !isCwdWithinBase(gitDirCandidate, targetWorktreesRoot)
+    ) {
+      throw new Error("managed workspace Git directory is outside the common worktree administration root");
+    }
+    return isCwdWithinBase(commonTarget, workspace)
+      ? undefined
+      : { sourcePath: commonDir, targetPath: commonTarget };
+  });
+  return resolved.ok ? ok(resolved.value) : err(resolved.error);
 }
 
 /**
@@ -347,6 +419,7 @@ export async function buildSpawnPlan(
     scope,
     bwrapPath: composers.bwrapPath,
     workspace: input.workspace,
+    workspaceGitCommonMount: input.workspaceGitCommonMount,
     cwd: input.cwd,
     executablePath: input.bin,
     home: input.home,
@@ -411,6 +484,8 @@ export interface CreateFrameSpawnParams {
   workspace?: string;
   /** The --chdir target. */
   cwd?: string;
+  /** Server-stamped authority signal; never accepted from terminal tool parameters. */
+  managedWorkspace?: boolean;
   executionAttachments?: readonly ManagedTerminalExecutionAttachment[];
 }
 
@@ -432,12 +507,17 @@ export async function planSpawnFromCreateFrame(
   const home = homedir();
   const scope = params.scope ?? LEAST_PRIVILEGE_SCOPE;
   const workspace = params.workspace ?? home;
+  const gitCommon = params.managedWorkspace === true
+    ? resolveManagedWorkspaceGitCommonMount(workspace)
+    : ok<ManagedWorkspaceGitMount | undefined>(undefined);
+  if (!gitCommon.ok) throw new ManagedWorkspaceGitUnavailableError();
   return buildSpawnPlan(
     {
       scope,
       bin: params.bin,
       argv: params.argv,
       workspace,
+      workspaceGitCommonMount: gitCommon.value,
       cwd: params.cwd ?? workspace,
       home,
       dataDir: safePath(home, ".comis"),

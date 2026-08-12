@@ -356,6 +356,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const executionAttachments = Array.isArray(p["executionAttachments"])
       ? p["executionAttachments"] as ManagedTerminalExecutionAttachment[]
       : undefined;
+    const managedWorkspace = p["managedWorkspace"] === true;
     // The operator-declared allowId (registry-threaded from the create request). It selects the
     // read-side platform profile — by allowId ONLY, never content-sniffed,
     // so the driven program cannot choose its own profile. `undefined` ⇒ the agnostic default.
@@ -429,7 +430,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     let plan;
     try {
       plan = await planSpawnFromCreateFrame(
-        { bin, argv, scope, workspace, cwd, executionAttachments },
+        { bin, argv, scope, workspace, cwd, managedWorkspace, executionAttachments },
         envSnapshot(),
         { ...spawnComposers, bwrapPath: frameBwrapPath, unsafeDisableSandbox: frameUnsafeDisableSandbox },
       );

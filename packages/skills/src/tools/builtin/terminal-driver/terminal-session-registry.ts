@@ -558,6 +558,7 @@ export function createTerminalSessionRegistry(
       scope: req.scope,
       workspace, // the registry-allocated per-session jail dir (or caller override)
       cwd,
+      ...(req.managedBinding === undefined ? {} : { managedWorkspace: true }),
       // The daemon-resolved bwrap path rides the frame for the worker's fail-closed branch (undefined ⇒ no spawn, lost).
       bwrapPath: deps.bwrapPath,
       // The operator jail opt-out rides the frame like bwrapPath (true ⇒ the worker spawns the CLI

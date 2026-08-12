@@ -48,6 +48,8 @@ export interface ScopeArgsInput {
   bwrapPath: string;
   /** The session workspace — always `--bind` RW. */
   workspace: string;
+  /** Host-resolved shared Git administration for an authority-backed linked worktree. */
+  workspaceGitCommonMount?: { sourcePath: string; targetPath: string };
   /** The `--chdir` target. */
   cwd: string;
   /** The verified absolute executable path driven inside the jail. */
@@ -108,6 +110,12 @@ function pushFilesystemBinds(args: string[], input: ScopeArgsInput): void {
   const { scope, workspace, home } = input;
   // The workspace is ALWAYS bound RW (the session's working dir).
   args.push("--bind", workspace, workspace);
+  // A managed linked worktree keeps its object database, refs, and per-worktree
+  // administration outside the checked-out files. The host resolves and validates
+  // this path from the authority-backed workspace; it never comes from tool input.
+  if (input.workspaceGitCommonMount !== undefined) {
+    args.push("--bind", input.workspaceGitCommonMount.sourcePath, input.workspaceGitCommonMount.targetPath);
+  }
 
   switch (scope.filesystem) {
     case "workspace":
