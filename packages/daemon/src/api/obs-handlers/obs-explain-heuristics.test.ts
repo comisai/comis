@@ -1444,6 +1444,19 @@ describe("obs-explain-heuristics", () => {
     expect(rootCause(makeSignals({ recall: allMissRecall }))).toBeNull();
   });
 
+  it("names the terminal failure when a turn died without ever finalizing an activity surface", () => {
+    // Live incident: the turn errored after its response-locale repair failed and the
+    // delivery-queue transition never enqueued, so it ran no tools and painted no
+    // terminal activity pill. endedInTerminalExecutionFailure already counts that
+    // shape as a death, but terminalFailureKind discarded it for want of a failed
+    // finalize — so every named terminal verdict returned null and the incidental
+    // zero-hit recall beside it became the verdict.
+    const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
+
+    expect(r?.code).toBe("execution_terminal_failure");
+    expect(r?.code).not.toBe("recall_miss");
+  });
+
   it("a degraded session where SOME recalls hit does not fire recall_miss", () => {
     const r = rootCause(
       makeSignals({
