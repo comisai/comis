@@ -273,6 +273,20 @@ describe("managed-run report bridge", () => {
     }, { managedRunId: "managed-run_a", limit: 10 })).toEqual({ ok: true, value: [] });
   });
 
+  it("accepts a delayed durable report observed during the managed run", async () => {
+    db.prepare("UPDATE managed_runs SET created_at_ms = ?, updated_at_ms = ? WHERE managed_run_id = ?")
+      .run(NOW_MS - 180_000, NOW_MS - 120_000, "managed-run_a");
+    const delayed = await makeBridge().ingestReport({
+      ...makeInput(),
+      report: { ...makeInput().report, observedAtMs: NOW_MS - 120_000 },
+    });
+
+    expect(delayed).toMatchObject({
+      ok: true,
+      value: { kind: "accepted", report: { observedAtMs: NOW_MS - 120_000 } },
+    });
+  });
+
   it("rejects forged ownership and advisory time before publishing private content", async () => {
     const forged = await makeBridge().ingestReport({
       ...makeInput(),
