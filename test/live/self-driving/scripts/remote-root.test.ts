@@ -909,6 +909,21 @@ describe("local rig mode", () => {
     );
   });
 
+  it("deploys and diagnoses every remote helper inside the selected kit directory", () => {
+    const deployScripts = readFileSync(DEPLOY_SCRIPTS, "utf8");
+    const deployEmulator = readFileSync(DEPLOY_EMULATOR, "utf8");
+    const rigDoctor = readFileSync(RIG_DOCTOR, "utf8");
+
+    expect(deployScripts).toContain("mkdir -p '$KIT_DIR' && tar -xf - -C '$KIT_DIR'");
+    expect(deployScripts).not.toContain('tar -xf - -C /root');
+    expect(deployEmulator).toContain("tar -xf - -C '$KIT_DIR'");
+    expect(deployEmulator).toContain('bash \'$KIT_DIR/restart-emu.sh\'');
+    expect(deployEmulator).toContain("node '$KIT_DIR/wire-emu.mjs'");
+    expect(deployEmulator).toContain("bash '$KIT_DIR/restart-daemon.sh'");
+    expect(rigDoctor).toContain('RIG_HELPER="$KIT_DIR/_rig.sh"');
+    expect(rigDoctor).not.toContain('RIG_HELPER="/root/_rig.sh"');
+  });
+
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
     if (process.platform !== "linux") return;
     const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
