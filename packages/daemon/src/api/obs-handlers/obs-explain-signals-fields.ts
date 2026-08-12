@@ -105,30 +105,34 @@ const CLOSED_ERROR_KINDS: ReadonlySet<string> = new Set<ErrorKind>([
   "sandbox_unavailable",
 ]);
 
-/** Fold one per-execution summary while retaining only its latest locale skip. */
+/** Fold one per-execution summary while retaining only the selected outcome and latest locale skip. */
 export function accumulateSessionSummaryRecord(
   acc: SessionSummaryAccumulator,
   data: Record<string, unknown>,
+  includeOutcome = true,
 ): void {
   const costUsd = asNumber(data.costUsd);
   if (costUsd !== undefined) acc.summaryCostUsd = (acc.summaryCostUsd ?? 0) + costUsd;
   const turnCount = asNumber(data.turnCount);
   if (turnCount !== undefined) acc.summaryTurnCount = (acc.summaryTurnCount ?? 0) + turnCount;
-  const rowEndReason =
+  const explicitEndReason =
     typeof data.endReason === "string" && data.endReason.length > 0
       ? data.endReason
-      : "unknown";
+      : undefined;
   const rowDegraded = data.degraded === true;
-  const currentOutcome = acc.summaryOutcome;
-  if (rowDegraded) {
-    const isPendingContinuation = rowEndReason === "background_pending";
-    if (!isPendingContinuation || currentOutcome?.degraded !== true) {
-      acc.summaryOutcome = { endReason: rowEndReason, degraded: true };
+  if (includeOutcome && (explicitEndReason !== undefined || rowDegraded)) {
+    const rowEndReason = explicitEndReason ?? "unknown";
+    const currentOutcome = acc.summaryOutcome;
+    if (rowDegraded) {
+      const isPendingContinuation = rowEndReason === "background_pending";
+      if (!isPendingContinuation || currentOutcome?.degraded !== true) {
+        acc.summaryOutcome = { endReason: rowEndReason, degraded: true };
+      }
+    } else if (currentOutcome?.endReason === "background_pending") {
+      acc.summaryOutcome = { endReason: rowEndReason, degraded: false };
+    } else if (currentOutcome?.degraded !== true) {
+      acc.summaryOutcome = { endReason: rowEndReason, degraded: false };
     }
-  } else if (currentOutcome?.endReason === "background_pending") {
-    acc.summaryOutcome = { endReason: rowEndReason, degraded: false };
-  } else if (currentOutcome?.degraded !== true) {
-    acc.summaryOutcome = { endReason: rowEndReason, degraded: false };
   }
   const rawErrorKinds = data.topErrorKinds;
   if (

@@ -43,6 +43,7 @@ function handleEventRecord(
   rec: Record<string, unknown>,
   latestPromptSeq: number | undefined,
   previousPromptSeq: number | undefined,
+  outcomeTraceId: string | undefined,
 ): void {
   const type = asString(rec.type) ?? "";
   const data = (rec.data ?? {}) as Record<string, unknown>;
@@ -473,7 +474,12 @@ function handleEventRecord(
     }
     case "session.summary": {
       // Sums cost/turn counts and keeps only this latest summary's locale skip.
-      accumulateSessionSummaryRecord(acc, data);
+      const recordTraceId = asString(rec.traceId);
+      accumulateSessionSummaryRecord(
+        acc,
+        data,
+        outcomeTraceId === undefined || recordTraceId === outcomeTraceId,
+      );
       return;
     }
     case "model.completed": {
@@ -611,6 +617,9 @@ function handleEventRecord(
 export function toIncidentSignals(records: Array<Record<string, unknown>>): IncidentSignals {
   const latestPromptSeq = latestPromptSequence(records);
   const previousPromptSeq = previousPromptSequence(records, latestPromptSeq);
+  const outcomeTraceId = asString([...records].reverse().find(
+    (record) => record.type === "prompt.submitted" && asString(record.traceId) !== undefined,
+  )?.traceId);
   const acc: Acc = {
     toolStats: new Map(),
     failures: [],
@@ -676,7 +685,13 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
         else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
       }
-      handleEventRecord(acc, rec, latestPromptSeq, previousPromptSeq);
+      handleEventRecord(
+        acc,
+        rec,
+        latestPromptSeq,
+        previousPromptSeq,
+        outcomeTraceId,
+      );
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
       // stage records carry toolName + success and previously fell into the
