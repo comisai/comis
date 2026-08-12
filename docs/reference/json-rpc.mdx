@@ -2922,8 +2922,8 @@ Graph execution engine for multi-step agent pipelines (DAGs).
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ nodes: NodeDefinition[], edges: EdgeDefinition[] }` |
-| **Returns** | `{ graphId: string }` |
+| **Parameters** | `{ nodes: NodeDefinition[], label?: string, onFailure?: string, timeoutMs?: number, budget?: object }` -- dependencies come from each node's own `depends_on`, so there is no edge list to supply (an `edges` array is accepted for symmetry with [`graph.save`](#graph-save) but ignored here) |
+| **Returns** | `{ valid: true, nodeCount: number, executionOrder: string[], label?: string, warnings: ValidationIssue[], errors: ValidationIssue[], userVariables: string[] }` -- validation only: nothing runs and **no `graphId` is minted** (ids come from [`graph.execute`](#graph-execute)). `executionOrder` is the topologically sorted node ids, each `ValidationIssue` is `{ nodeId?, type, message, fix }`, and `userVariables` lists the `${VAR}` placeholders found in node tasks |
 
 Each `NodeDefinition` includes `node_id`, `task`, and optional fields: `depends_on`, `agent`, `model`, `timeout_ms`, `max_steps`, `barrier_mode`, `retries`, `type_id`, `type_config`, `context_mode`. When `type_id` is set, `type_config` is validated against the driver's config schema. See [Node Types](/developer-guide/pipelines#node-types) for available types.
 
@@ -3023,7 +3023,6 @@ Returns graph execution status. This method has two response forms depending on 
   "jsonrpc": "2.0",
   "result": {
     "graphId": "abc-123",
-    "label": "Research Pipeline",
     "status": "running",
     "isTerminal": false,
     "executionOrder": ["research", "analyze", "write"],
@@ -3039,7 +3038,7 @@ Returns graph execution status. This method has two response forms depending on 
 ```
 </CodeGroup>
 
-**Without `graphId`** -- Returns a list of all recent graphs with aggregate status, plus live concurrency statistics. Use the optional `recentMinutes` parameter to filter to graphs active within the specified time window.
+**Without `graphId`** -- Returns a summary line per recent graph (`graphId`, `label`, `status`, `startedAt`, and `completedAt` once terminal), plus live concurrency statistics. Per-node state and `stats` come only from the with-`graphId` form above. Use the optional `recentMinutes` parameter to filter to graphs active within the specified time window.
 
 <CodeGroup>
 ```json Request (list all)
@@ -3058,7 +3057,7 @@ Returns graph execution status. This method has two response forms depending on 
         "graphId": "abc-123",
         "label": "Research Pipeline",
         "status": "running",
-        "stats": { "total": 3, "completed": 1, "failed": 0, "skipped": 0, "running": 1, "pending": 1 }
+        "startedAt": 1773313498000
       }
     ],
     "concurrency": {
@@ -3124,30 +3123,30 @@ Cancel a running graph execution. No new nodes are dispatched after the cancella
 
 ### `graph.save`
 
-Save a graph definition under a human-readable name so you can reload it later with `graph.load`. The `graphId` refers to a graph you have already defined with `graph.define`.
+Persist a graph definition under a human-readable label so you can reload it later with [`graph.load`](#graph-load). The nodes are submitted **inline**, in the same `NodeDefinition` shape [`graph.define`](#graph-define) takes, and are validated before they are stored -- there is no save-an-already-defined-graph-by-id form. The raw nodes and edges are persisted verbatim (a loaded graph is re-validated when it is executed).
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string, graphId: string }` |
-| **Returns** | `{ name: string, saved: true }` |
+| **Parameters** | `{ label: string, nodes: NodeDefinition[], id?: string, agentId?: string, edges?: object[], settings?: object }` -- omit `id` to mint a new entry; passing the `id` of an existing entry overwrites it. `agentId` defaults to the daemon's default agent |
+| **Returns** | `{ id: string, saved: true }` -- `id` is the handle to pass to `graph.load` / `graph.delete` |
 
 ### `graph.load`
 
-Load a previously saved named graph definition and return a fresh `graphId` you can execute. This is equivalent to calling `graph.define` with the saved node/edge structure.
+Load a previously saved named graph by its id. The stored entry comes back as-is -- pass its `nodes` to [`graph.execute`](#graph-execute) to run it; loading does not mint a `graphId` or start anything. Legacy `inputFrom` / `inputMapping` fields are stripped from the persisted nodes and edges on load -- use the `{{nodeId.result}}` pattern instead (see [Pipelines](/developer-guide/pipelines)).
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | `{ graphId: string, name: string }` |
+| **Parameters** | `{ id: string }` |
+| **Returns** | The stored entry: `{ id, tenantId, agentId, label, nodes, edges, settings, createdAt, updatedAt }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "graph.load",
-  "params": { "name": "research-pipeline" },
+  "params": { "id": "8f2c1e40-5a7b-4c3d-9e11-2b6a7d4f0c93" },
   "id": 1
 }
 ```
@@ -3155,8 +3154,18 @@ Load a previously saved named graph definition and return a fresh `graphId` you 
 {
   "jsonrpc": "2.0",
   "result": {
-    "graphId": "abc-def-123",
-    "name": "research-pipeline"
+    "id": "8f2c1e40-5a7b-4c3d-9e11-2b6a7d4f0c93",
+    "tenantId": "default",
+    "agentId": "default",
+    "label": "research-pipeline",
+    "nodes": [
+      { "node_id": "research", "task": "Research ${TOPIC}" },
+      { "node_id": "summarize", "task": "Summarize the findings", "depends_on": ["research"] }
+    ],
+    "edges": [],
+    "settings": {},
+    "createdAt": 1773313498000,
+    "updatedAt": 1773313498000
   },
   "id": 1
 }
@@ -3165,54 +3174,59 @@ Load a previously saved named graph definition and return a fresh `graphId` you 
 
 ### `graph.list`
 
-List all saved named graph definitions. Returns the name, creation timestamp, and node count for each entry.
+List the tenant's saved named graphs, most recent first. Each row is a summary -- the full node/edge payload comes from [`graph.load`](#graph-load).
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ limit?: number, offset?: number }` |
+| **Returns** | `{ entries: Array<{ id: string, label: string, nodeCount: number, createdAt: number, updatedAt: number }>, total: number }` -- `total` is the unpaginated count |
+
+### `graph.delete`
+
+Soft-delete a saved named graph definition: the entry stops appearing in `graph.list` and `graph.load` returns "Named graph not found". This only removes the saved definition — it does not affect any in-progress executions or stored run artifacts.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ id: string }` |
+| **Returns** | `{ id: string, deleted: true }` |
+
+### `graph.deleteRun`
+
+Irrecoverably delete one run's directory (`graph-runs/<graphId>/`) and every artifact in it -- the node outputs and the terminal `_run-metadata.json` that [`graph.runDetail`](#graph-rundetail) and `comis explain --graph` read. Saved definitions are untouched.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ graphId: string }` |
+| **Returns** | `{ graphId: string, deleted: true }` |
+
+### `graph.runDetail`
+
+Read one run's per-node outputs and artifacts back from disk, so a run stays inspectable after it has left the coordinator's in-memory retention window.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ graphId: string }` |
+| **Returns** | `{ graphId: string, name: string, status: "running" \| "interrupted" \| "completed" \| "failed" \| "cancelled", date: string, nodes: Array<{ nodeId: string, output: string \| null, artifacts: Array<{ filename: string, content: string }> }> }` -- `output` and each artifact `content` are truncated at 12,000 characters; `date` is the run directory's mtime as an ISO string |
+
+### `graph.runs`
+
+Enumerate the run directories under `graph-runs/`, most recent first. `status` is resolved from the live coordinator when the graph is still tracked, and otherwise from the run's terminal metadata / durable checkpoint on disk -- so a run interrupted by a restart reports `interrupted` rather than a false `completed`.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | None |
-| **Returns** | `{ graphs: Array<{ name: string, createdAt: number, nodeCount: number }> }` |
-
-### `graph.delete`
-
-Delete a saved named graph definition. This only removes the saved definition — it does not affect any in-progress executions or stored run artifacts.
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | `{ name: string, deleted: true }` |
-
-### `graph.deleteRun`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ runId: string }` |
-| **Returns** | Deletion confirmation |
-
-### `graph.runDetail`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ runId: string }` |
-| **Returns** | Detailed run info with per-node state, outputs, and timing |
-
-### `graph.runs`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ limit?: number }` |
-| **Returns** | `{ runs: object[] }` -- recent graph execution history |
+| **Returns** | `{ runs: Array<{ graphId: string, name: string, status: "running" \| "interrupted" \| "completed" \| "failed" \| "cancelled", nodeCount: number, date: string, fileCount: number }> }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "graph.runs",
-  "params": { "limit": 5 },
   "id": 1
 }
 ```
@@ -3221,7 +3235,14 @@ Delete a saved named graph definition. This only removes the saved definition �
   "jsonrpc": "2.0",
   "result": {
     "runs": [
-      { "runId": "run_abc", "graphId": "research-pipeline", "status": "completed", "startedAt": 1773313498000, "durationMs": 45000 }
+      {
+        "graphId": "research-pipeline-1a2b3c",
+        "name": "research",
+        "status": "completed",
+        "nodeCount": 2,
+        "date": "2026-03-12T09:04:58.000Z",
+        "fileCount": 4
+      }
     ]
   },
   "id": 1
