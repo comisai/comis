@@ -287,7 +287,7 @@ describe("managed-run report bridge", () => {
     });
   });
 
-  it("rejects forged ownership and advisory time before publishing private content", async () => {
+  it("rejects forged ownership and advisory time outside the managed-run lifetime", async () => {
     const forged = await makeBridge().ingestReport({
       ...makeInput(),
       serviceInstanceId: "service-instance_b",
@@ -296,12 +296,24 @@ describe("managed-run report bridge", () => {
       ...makeInput(),
       report: { ...makeInput().report, observedAtMs: NOW_MS + 60_001 },
     });
+    const beforeRun = await makeBridge().ingestReport({
+      ...makeInput(),
+      report: {
+        ...makeInput().report,
+        serviceReportId: "service-report_before-run",
+        observedAtMs: NOW_MS - 60_101,
+      },
+    });
 
     expect(forged).toEqual({
       ok: true,
       value: { kind: "rejected", reasonCode: "managed_run_not_found" },
     });
     expect(future).toEqual({
+      ok: true,
+      value: { kind: "rejected", reasonCode: "observed_time_out_of_bounds" },
+    });
+    expect(beforeRun).toEqual({
       ok: true,
       value: { kind: "rejected", reasonCode: "observed_time_out_of_bounds" },
     });

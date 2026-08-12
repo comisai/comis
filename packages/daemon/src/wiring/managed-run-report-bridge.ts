@@ -156,12 +156,6 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
         managedRunId: parsed.data.managedRunId,
       };
       const receivedAtMs = deps.nowMs();
-      if (
-        parsed.data.report.observedAtMs !== undefined
-        && Math.abs(parsed.data.report.observedAtMs - receivedAtMs) > deps.maxObservedClockSkewMs
-      ) {
-        return rejectReport("observed_time_out_of_bounds", identity);
-      }
       const retainedUntilMs = receivedAtMs + deps.retentionMs;
       if (!Number.isSafeInteger(retainedUntilMs) || retainedUntilMs < receivedAtMs) {
         logTransactionFailure(identity, "report-retention");
@@ -178,6 +172,15 @@ export function createManagedRunReportBridge(deps: ManagedRunReportBridgeDeps): 
         return recordResult;
       }
       if (recordResult.value === undefined) return rejectReport("managed_run_not_found", identity);
+      if (
+        parsed.data.report.observedAtMs !== undefined
+        && (
+          parsed.data.report.observedAtMs < recordResult.value.createdAtMs - deps.maxObservedClockSkewMs
+          || parsed.data.report.observedAtMs > receivedAtMs + deps.maxObservedClockSkewMs
+        )
+      ) {
+        return rejectReport("observed_time_out_of_bounds", identity);
+      }
       if (!REPORTABLE_STATUSES.has(recordResult.value.status)) {
         return rejectReport("state_mismatch", identity);
       }
