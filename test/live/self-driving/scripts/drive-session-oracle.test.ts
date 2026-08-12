@@ -16,6 +16,7 @@ import {
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
+  telegramInjectionIdentityError,
   trajectoryTurnEnded,
 } from "./drive-session-oracle.mjs";
 
@@ -63,6 +64,14 @@ describe("opt-in follow-up delivery wait", () => {
 });
 
 describe("drive inbound validation", () => {
+  it("rejects impossible Telegram private-chat sender identities", () => {
+    expect(telegramInjectionIdentityError(678314278, 678314278)).toBeUndefined();
+    expect(telegramInjectionIdentityError(-100678314279, 678314278)).toBeUndefined();
+    expect(telegramInjectionIdentityError(678314279, 678314278)).toBe(
+      "private Telegram chat 678314279 cannot have sender 678314278; use the sender id as the private chat id or a negative group chat id",
+    );
+  });
+
   it("rejects text beyond the deployed normalized-message limit before injection", () => {
     expect(normalizedInboundTextError("x".repeat(65_536), 65_536)).toBeUndefined();
     expect(normalizedInboundTextError("x".repeat(65_537), 65_536)).toBe(
