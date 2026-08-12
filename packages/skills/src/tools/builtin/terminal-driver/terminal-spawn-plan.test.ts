@@ -290,6 +290,35 @@ describe("buildSpawnPlan — operator-declared ephemeral writable paths", () => 
     expect(plan.argv.join(" ")).not.toContain("--tmpfs /home/u/.claude/session-env");
   });
 
+  it("rejects an unavailable ephemeral writable mount before spawning bubblewrap", async () => {
+    const scope = {
+      ...makeScope(),
+      ephemeralWritablePaths: ["/path/that/does/not/exist/comis-ephemeral-runtime"],
+    } as unknown as TerminalScope;
+
+    await expect(buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" })).rejects.toThrow(
+      "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths target is unavailable",
+    );
+  });
+
+  it("rejects a non-directory ephemeral writable mount before spawning bubblewrap", async () => {
+    const root = mkdtempSync(join(tmpdir(), "comis-ephemeral-file-"));
+    const target = join(root, "runtime");
+    writeFileSync(target, "not a directory", { mode: 0o600 });
+    const scope = {
+      ...makeScope(),
+      ephemeralWritablePaths: [target],
+    } as unknown as TerminalScope;
+
+    try {
+      await expect(buildSpawnPlan(makeInput({ scope }), { bwrapPath: "/usr/bin/bwrap" })).rejects.toThrow(
+        "agents.*.skills.terminal.allow[].scope.ephemeralWritablePaths target is unavailable",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("materializes an explicit ephemeral path before the data-directory mask", async () => {
     const scope = {
       ...makeScope(),
