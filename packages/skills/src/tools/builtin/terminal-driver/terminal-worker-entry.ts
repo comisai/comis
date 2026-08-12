@@ -512,7 +512,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
   /** The not-alive minimal `{screen,cursor}` for an absent/gone session. */
   function goneSnapshot(): SendResult {
-    return { screen: "", cursor: { x: 0, y: 0 } };
+    return { screen: "", cursor: { x: 0, y: 0 }, delivered: false };
   }
 
   /**
@@ -545,7 +545,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const startedAt = nowMs();
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
-    if (state === undefined) return goneSnapshot();
+    if (state === undefined || !state.alive) return goneSnapshot();
 
     const keys = Array.isArray(frame.params["keys"]) ? (frame.params["keys"] as string[]) : [];
     // encodeKeyChord throws invalid_value on an unknown key → dispatch's catch (write
@@ -555,7 +555,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
     logInteraction(sessionId, "send_key", startedAt, { keyCount: keys.length });
     await state.writeFlush; // perceive the SETTLED grid (like read), not a mid-parse snapshot
-    return perceptionScreen(state.emu?.snapshot(), state.ring);
+    return { ...perceptionScreen(state.emu?.snapshot(), state.ring), delivered: true };
   }
 
   /**
@@ -568,7 +568,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const startedAt = nowMs();
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
     const state = sessions.get(sessionId);
-    if (state === undefined) return goneSnapshot();
+    if (state === undefined || !state.alive) return goneSnapshot();
 
     const text = typeof frame.params["text"] === "string" ? frame.params["text"] : "";
     const submit = frame.params["submit"] === true;
@@ -592,7 +592,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       bytes: payload.length,
     });
     await state.writeFlush; // perceive the SETTLED grid, not a mid-parse snapshot
-    return perceptionScreen(state.emu?.snapshot(), state.ring);
+    return { ...perceptionScreen(state.emu?.snapshot(), state.ring), delivered: true };
   }
 
   /**

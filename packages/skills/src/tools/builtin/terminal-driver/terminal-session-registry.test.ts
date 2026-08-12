@@ -459,7 +459,7 @@ describe("createTerminalSessionRegistry — everSentText marks a tasked drive", 
   // send_text flips it true; send_key (gate/menu navigation) does NOT count as a task.
   function okSend(req: TerminalRequestFrame): TerminalReplyFrame | undefined {
     if (req.method !== "send_text" && req.method !== "send_key") return undefined;
-    return { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { screen: "ok", cursor: { x: 0, y: 0 } } };
+    return { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { screen: "ok", cursor: { x: 0, y: 0 }, delivered: true } };
   }
   const CREATE_REQ = { allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24 } as const;
 
@@ -1263,7 +1263,7 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
             requestId: req.requestId,
             ok: true,
             // The worker returns a FULL view; the registry resolves only {screen,cursor}.
-            result: { screen: "hello", cursor: { x: 5, y: 0 }, cols: 80, rows: 24, alt: false, alive: true },
+            result: { screen: "hello", cursor: { x: 5, y: 0 }, cols: 80, rows: 24, alt: false, alive: true, delivered: true },
           }
         : undefined,
     );
@@ -1299,7 +1299,7 @@ describe("createTerminalSessionRegistry — sendText forwarding", () => {
             sessionId: req.sessionId,
             requestId: req.requestId,
             ok: true,
-            result: { screen: "x", cursor: { x: 1, y: 0 } },
+            result: { screen: "x", cursor: { x: 1, y: 0 }, delivered: true },
           }
         : undefined,
     );
@@ -1391,7 +1391,7 @@ describe("createTerminalSessionRegistry — sendKey forwarding", () => {
             sessionId: req.sessionId,
             requestId: req.requestId,
             ok: true,
-            result: { screen: "^C", cursor: { x: 0, y: 1 } },
+            result: { screen: "^C", cursor: { x: 0, y: 1 }, delivered: true },
           }
         : undefined,
     );

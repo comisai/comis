@@ -715,11 +715,11 @@ export function createTerminalSessionRegistry(
    * degrades to the empty snapshot, never injects an odd structure).
    */
   function toSendResult(result: unknown): SendResult {
-    const r = (result ?? {}) as { screen?: unknown; cursor?: { x?: unknown; y?: unknown } };
+    const r = (result ?? {}) as { screen?: unknown; cursor?: { x?: unknown; y?: unknown }; delivered?: unknown };
     const screen = typeof r.screen === "string" ? r.screen : "";
     const x = typeof r.cursor?.x === "number" ? r.cursor.x : 0;
     const y = typeof r.cursor?.y === "number" ? r.cursor.y : 0;
-    return { screen, cursor: { x, y } };
+    return { screen, cursor: { x, y }, delivered: r.delivered === true };
   }
 
   /**
@@ -735,9 +735,10 @@ export function createTerminalSessionRegistry(
       // reached no live pane. delivered is left falsy so the audit records "rejected".
       return { screen: "", cursor: { x: 0, y: 0 } };
     }
+    const result = toSendResult(reply.result);
+    if (result.delivered !== true) return result;
     handle.lastActivity = nowMs();
-    // The worker round-tripped an ok reply ⇒ the keystroke WAS forwarded.
-    return { ...toSendResult(reply.result), delivered: true };
+    return result;
   }
 
   async function sendText(

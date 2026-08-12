@@ -213,6 +213,8 @@ export interface CreateResult {
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
+  /** True only when bytes were written to a still-live child backend. */
+  delivered: boolean;
 }
 
 /** The `resize` reply payload (`{ ok }`). */
