@@ -884,7 +884,13 @@ export function createAnnouncementDeadLetterQueue(
         tryCatch(() => onDelivered(idempotencyKey));
       }
       emitDelivered(entry, entry.attemptCount);
-      logger?.debug(
+      // INFO, not DEBUG: this is the resolution half of a condition whose opening
+      // half is a WARN. The dead-letter file is unlinked once the queue drains, so
+      // at the default level a resolved quarantine otherwise leaves the WARN
+      // standing with no trace of its outcome and no file to inspect — which reads
+      // as a lost announcement. Once per resolved entry, so the volume is bounded
+      // by the entries that actually cleared.
+      logger?.info(
         {
           runId: entry.runId,
           attemptCount: entry.attemptCount,
