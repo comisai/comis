@@ -38,9 +38,8 @@ const REVIEWED_ALLOW_ID = "codex-confined";
 const REVIEWED_TOKEN = "wave4-reviewed";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
-const isE0Journey = process.env["COMIS_E0_JOURNEY"] === "1";
 
-const E0_MUTATION_BINDINGS = isE0Journey ? [
+const CURRENT_MUTATION_BINDINGS = [
   {
     toolName: "handback_task",
     behavior: "run_command" as const,
@@ -55,7 +54,7 @@ const E0_MUTATION_BINDINGS = isE0Journey ? [
     actionClassification: "destructive" as const,
     invocationSideEffects: ["task.cleanup"],
   },
-] : [];
+];
 
 export const CONTRIBUTION: CapabilityServiceContributionRegistration = {
   contributionId: "devcrew.wave4.join",
@@ -71,7 +70,7 @@ export const CONTRIBUTION: CapabilityServiceContributionRegistration = {
         actionClassification: "mutate" as const,
         invocationSideEffects: ["task.prepare"],
       },
-      ...E0_MUTATION_BINDINGS,
+      ...CURRENT_MUTATION_BINDINGS,
       ...["list_tasks", "get_task", "explain_task", "get_launch_plan"].map((toolName) => ({
         toolName,
         behavior: "read_only" as const,
@@ -82,16 +81,16 @@ export const CONTRIBUTION: CapabilityServiceContributionRegistration = {
     requestedScopes: [
       "health",
       "report",
-      ...(isE0Journey ? ["evidence" as const] : []),
+      "evidence",
       "workspace_lease",
       "terminal_events",
       "execution_attachment",
     ],
-    evidencePolicies: isE0Journey ? [
+    evidencePolicies: [
       { kind: "candidate_bundle" as const, verificationLevel: "adapter_verified" as const, use: "outcome" as const },
       { kind: "delivery_reference" as const, verificationLevel: "adapter_verified" as const, use: "delivery_reference" as const },
       { kind: "report_artifact" as const, verificationLevel: "adapter_verified" as const, use: "delivery_attachment" as const },
-    ] : [],
+    ],
     dependsOn: [],
   }],
 };
@@ -393,6 +392,24 @@ export function startInstalledService(input: {
   };
 }
 
+async function waitForInstalledService(
+  service: RunningService,
+  operatorSocket: string,
+  mcpSocket: string,
+): Promise<void> {
+  try {
+    await waitForUnixSocket(operatorSocket);
+    await waitForUnixSocket(mcpSocket);
+  } catch (cause) {
+    throw new Error([
+      cause instanceof Error ? cause.message : String(cause),
+      `exit=${String(service.child.exitCode)}`,
+      `signal=${String(service.child.signalCode)}`,
+      `stderr=${service.stderr()}`,
+    ].join("; "));
+  }
+}
+
 export function cli<T>(binary: string, socket: string, args: readonly string[]): T {
   const output = execFileSync(binary, ["--socket", socket, ...args], { encoding: "utf8" });
   return JSON.parse(output) as T;
@@ -520,7 +537,7 @@ export function makeConfig(input: {
         mcp: { enabled: true, allow: { [MCP_SERVER_NAME]: {
           tools: [
             "prepare_task",
-            ...(isE0Journey ? ["handback_task", "cleanup_task"] : []),
+            "handback_task", "cleanup_task",
             "list_tasks", "get_task", "explain_task", "get_launch_plan",
           ],
           classification: "safe",
@@ -558,7 +575,7 @@ export function makeConfig(input: {
         args: ["--socket", input.mcpSocket, "--service-instance", SERVICE_INSTANCE_ID],
         toolAllowlist: [
           "prepare_task",
-          ...(isE0Journey ? ["handback_task", "cleanup_task"] : []),
+          "handback_task", "cleanup_task",
           "list_tasks", "get_task", "explain_task", "get_launch_plan",
         ],
         keepaliveIntervalMs: 0,
@@ -761,9 +778,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
     const credentialFile = join(runDir, "control.credential");
     const configPath = join(scratch, "config.yaml");
     const goDatabase = join(scratch, "go-state", "devcrew.db");
-    const candidateConfig = isE0Journey
-      ? createCandidateConfig(scratch)
-      : undefined;
+    const candidateConfig = createCandidateConfig(scratch);
     writeFileSync(credentialFile, CONTROL_SECRET, { mode: 0o600 });
     chmodSync(credentialFile, 0o600);
 
@@ -788,8 +803,7 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
         credentialFile,
         candidateConfig,
       });
-      await waitForUnixSocket(operatorSocket);
-      await waitForUnixSocket(mcpSocket);
+      await waitForInstalledService(service, operatorSocket, mcpSocket);
       const gatewayPort = await getFreePort();
       writeFileSync(configPath, stringify(makeConfig({
         dataDir: canonicalDataDir,

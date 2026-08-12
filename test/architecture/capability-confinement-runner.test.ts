@@ -93,7 +93,8 @@ describe("capability-service Linux confinement runner", () => {
     expect(journeyGate).toContain("e0-journey.test.ts");
     expect(scenario).toContain("wave4-join.test.js");
     expect(source(joinScenarioPath)).toContain('arguments_.push("--candidate-config", input.candidateConfig)');
-    expect(source(joinScenarioPath)).toContain('...(isE0Journey ? ["evidence" as const] : [])');
+    expect(source(joinScenarioPath)).toContain("const candidateConfig = createCandidateConfig(scratch);");
+    expect(source(joinScenarioPath)).toContain('      "evidence",');
   });
 
   it("drives the complete E0 custody journey after the current join", () => {
