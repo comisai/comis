@@ -451,8 +451,6 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       await candidate.forge.start();
       bindForgeBaseUrl(candidate.configPath, candidate.forge.baseUrl);
       await model.start();
-      service = startService();
-      await waitForInstalledService(service, operatorSocket, mcpSocket);
       const gatewayPort = await getFreePort();
       writeFileSync(configPath, stringify(makeConfig({
         dataDir: canonicalDataDir,
@@ -470,18 +468,31 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
         capabilityClass: "frontier",
       })), { mode: 0o600 });
 
-      const bootDaemon = async (): Promise<{
+      const bootDaemonAndService = async (): Promise<{
         handle: TestDaemonHandle;
+        service: RunningService;
         echo: EchoChannelAdapter;
         channelManager: InjectableChannelManager;
       }> => {
         process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
         process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
-        const handle = await startTestDaemon({
+        const daemonOutcome = startTestDaemon({
           configPath,
           gatewayPort,
           overrides: { capabilityServiceContributions: [CONTRIBUTION] },
-        });
+        }).then((handle) => ({ ok: true as const, handle }), (cause: unknown) => ({
+          ok: false as const,
+          cause,
+        }));
+        await waitForUnixSocket(controlSocket);
+        const runningService = startService();
+        service = runningService;
+        await waitForInstalledService(runningService, operatorSocket, mcpSocket);
+        const outcome = await daemonOutcome;
+        if (!outcome.ok) {
+          throw outcome.cause;
+        }
+        const handle = outcome.handle;
         const echo = new EchoChannelAdapter({ channelId: "echo-main", channelType: "echo" });
         handle.daemon.adapterRegistry.set("echo", echo);
         handle.daemon.deliveryAdapters.set("echo", echo);
@@ -490,11 +501,12 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
         expect(handle.daemon.capabilityServices.runtime.getActiveView().instances).toContainEqual(
           expect.objectContaining({ serviceInstanceId: SERVICE_INSTANCE_ID, state: "active" }),
         );
-        return { handle, echo, channelManager };
+        return { handle, service: runningService, echo, channelManager };
       };
 
-      let boot = await bootDaemon();
+      let boot = await bootDaemonAndService();
       daemon = boot.handle;
+      service = boot.service;
       const handles: string[] = [];
       for (const [shape, deliveryMode] of [["ship", "pull_request"], ["scout", "report"]] as const) {
         let taskHandle = "";
@@ -534,10 +546,9 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
       daemon = undefined;
       await service.stop();
       candidate.forge.releaseChecks();
-      service = startService();
-      await waitForInstalledService(service, operatorSocket, mcpSocket);
-      boot = await bootDaemon();
+      boot = await bootDaemonAndService();
       daemon = boot.handle;
+      service = boot.service;
 
       await pollUntil(
         () => taskState(goDatabase, shipTask) === "delivered"
