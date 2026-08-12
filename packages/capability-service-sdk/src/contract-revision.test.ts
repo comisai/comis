@@ -115,6 +115,7 @@ describe("capability-service execution-attachment contract", () => {
         serviceInstanceId: "service-instance_a",
         requestedScopes: [
           "health",
+          "attention_response",
           "evidence",
           "report",
           "workspace_lease",

@@ -49,7 +49,7 @@ const HandshakeParamsSchema = z.strictObject({
   bundleDigest: BundleDigestSchema,
   operationId: OperationIdSchema,
   serviceInstanceId: ServiceInstanceIdSchema,
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(6),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
 });
 
 export const CapabilityHandshakeRequestSchema = z.strictObject({
@@ -66,7 +66,7 @@ export const CapabilityHandshakeResponseSchema = z.strictObject({
     protocolId: ProtocolIdSchema,
     bundleDigest: BundleDigestSchema,
     serviceInstanceId: ServiceInstanceIdSchema,
-    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(6),
+    activeScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
     limits: CapabilityServiceLimitsSchema,
   }),
 });
@@ -170,6 +170,42 @@ export const CapabilityReportResponseSchema = z.strictObject({
     retainedUntilMs: TimestampMsSchema,
   }),
 });
+
+export const CapabilityReceiveAttentionResponseRequestSchema = z.strictObject({
+  jsonrpc: z.literal("2.0"),
+  id: OperationIdSchema,
+  method: z.literal("managedRuns.receiveAttentionResponse"),
+  params: z.strictObject({
+    operationId: OperationIdSchema,
+    managedRunId: ManagedRunIdSchema,
+    externalKey: z.string().min(1).max(256),
+  }),
+});
+
+const receiveAttentionResponseResultShape = {
+  managedRunId: ManagedRunIdSchema,
+  externalKey: z.string().min(1).max(256),
+};
+
+export const CapabilityReceiveAttentionResponseResponseSchema = z.union([
+  z.strictObject({
+    jsonrpc: z.literal("2.0"),
+    id: OperationIdSchema,
+    result: z.strictObject({
+      ...receiveAttentionResponseResultShape,
+      state: z.literal("pending"),
+    }),
+  }),
+  z.strictObject({
+    jsonrpc: z.literal("2.0"),
+    id: OperationIdSchema,
+    result: z.strictObject({
+      ...receiveAttentionResponseResultShape,
+      state: z.literal("delivered"),
+      response: z.string().min(1).max(CAPABILITY_SERVICE_LIMITS.maxReportBytes),
+    }),
+  }),
+]);
 
 const EvidenceDeliverySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("reference") }),
@@ -305,6 +341,7 @@ export const CapabilityServiceRequestSchema = z.discriminatedUnion("method", [
   CapabilityHandshakeRequestSchema,
   CapabilityHealthRequestSchema,
   CapabilityPutEvidenceRequestSchema,
+  CapabilityReceiveAttentionResponseRequestSchema,
   CapabilityReleaseRequestSchema,
   CapabilityReportRequestSchema,
   CapabilityTerminalEventRequestSchema,
@@ -318,4 +355,5 @@ export type CapabilityReportRequest = z.infer<typeof CapabilityReportRequestSche
 export type CapabilityTerminalEventRequest = z.infer<typeof CapabilityTerminalEventRequestSchema>;
 export type CapabilityHealthRequest = z.infer<typeof CapabilityHealthRequestSchema>;
 export type CapabilityPutEvidenceRequest = z.infer<typeof CapabilityPutEvidenceRequestSchema>;
+export type CapabilityReceiveAttentionResponseRequest = z.infer<typeof CapabilityReceiveAttentionResponseRequestSchema>;
 export type CapabilityReleaseRequest = z.infer<typeof CapabilityReleaseRequestSchema>;

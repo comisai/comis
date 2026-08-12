@@ -20,6 +20,12 @@ bundle digest. The overall digest is SHA-256 over lexically ordered records of
 own `bundleDigest` field is not an artifact and therefore cannot contribute to
 its own digest.
 
+Capability services that request the `attention_response` scope may call
+`managedRuns.receiveAttentionResponse` with an exact managed-run ID and external
+decision key. The response remains `pending` until the owner replies; the first
+successful receive marks the private response delivered and returns it only on
+the authenticated owner-private control connection.
+
 Fixtures carry `__BUNDLE_DIGEST__` where a wire example needs the enclosing
 bundle digest. A fixture host replaces that token with the manifest digest
 before validation or transmission; the committed fixture bytes remain stable

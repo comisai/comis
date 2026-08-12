@@ -3,8 +3,8 @@
 /** Exact lockstep identifier carried by every protocol handshake. */
 export const CAPABILITY_SERVICE_PROTOCOL_ID = "comis.capability-service/1" as const;
 /** Exact digest of the generated protocol artifacts shipped with this SDK release. */
-export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad" as const;
-export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.63" as const;
+export const CAPABILITY_SERVICE_BUNDLE_DIGEST = "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b" as const;
+export const CAPABILITY_SERVICE_GENERATOR_VERSION = "1.0.64" as const;
 
 /** Placeholder resolved from manifest.json before a generated fixture is sent. */
 export const BUNDLE_DIGEST_FIXTURE_TOKEN = "__BUNDLE_DIGEST__" as const;
@@ -15,6 +15,7 @@ export const CAPABILITY_SERVICE_METHODS = [
   "managedRuns.abandon",
   "managedRuns.activate",
   "managedRuns.putEvidence",
+  "managedRuns.receiveAttentionResponse",
   "managedRuns.release",
   "managedRuns.report",
   "managedRuns.terminalEvent",

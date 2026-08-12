@@ -26,6 +26,7 @@ export const ProtocolFixtureTargetSchema = z.enum([
   "handshake-response",
   "health-response",
   "put-evidence-response",
+  "receive-attention-response",
   "release-response",
   "report-response",
   "terminal-event-response",
@@ -74,6 +75,7 @@ const handshakeParams = {
   serviceInstanceId,
   requestedScopes: [
     "health",
+    "attention_response",
     "evidence",
     "report",
     "workspace_lease",
@@ -136,6 +138,7 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
             serviceInstanceId,
             activeScopes: [
               "health",
+              "attention_response",
               "evidence",
               "report",
               "workspace_lease",
@@ -143,6 +146,31 @@ export const PROTOCOL_FIXTURE_SCENARIOS = [
               "execution_attachment",
             ],
             limits: CAPABILITY_SERVICE_LIMITS,
+          },
+        },
+      },
+      {
+        target: "request",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: request("operation_attention_response", "managedRuns.receiveAttentionResponse", {
+          operationId: "operation_attention_response",
+          managedRunId,
+          externalKey: "backend-id-format",
+        }),
+      },
+      {
+        target: "receive-attention-response",
+        expectation: "accept",
+        schemaExpectation: "accept",
+        payload: {
+          jsonrpc: "2.0",
+          id: "operation_attention_response",
+          result: {
+            managedRunId,
+            externalKey: "backend-id-format",
+            state: "delivered",
+            response: "Use monotonic issue-N values.",
           },
         },
       },

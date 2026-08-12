@@ -10,7 +10,7 @@
     },
     {
       "path": "fixtures/digest-mismatch.json",
-      "sha256": "ca1380a47d9106b8f5dd20fecfb6c2456d74b09988769884b9a370b49879f581"
+      "sha256": "1df801bd800b13ff778bd0af957f39b71a537869c104ff308aeb9047d6e130cf"
     },
     {
       "path": "fixtures/invalid.json",
@@ -18,15 +18,15 @@
     },
     {
       "path": "fixtures/unknown-field.json",
-      "sha256": "0e5ef4eaebe0b3c51a042f654a0c5a595a3f3e8700d2a46939f2d1018ca8cd08"
+      "sha256": "0b6b2347b98f78d57e1839fbd1c2105b5dff91e0cb33d3798c4925c055a99b9d"
     },
     {
       "path": "fixtures/valid.json",
-      "sha256": "91616a2b4eae642a394fb99fe4dad5ce446f84c3a14c860c35771b51f1e21ab1"
+      "sha256": "3123f51e0464065bde0adc53fa535538a0f9593d898d316668b434a60f63f8f1"
     },
     {
       "path": "fixtures/version-mismatch.json",
-      "sha256": "15a66b6992aa104abb97501929995dec9d0ea56a3fcc4d6d5fc5f42392eb2c2d"
+      "sha256": "16e4a426dbba0aa48c3f1be91d68dd5a588362f94d9c1c04ac6305723ad8ae3f"
     },
     {
       "path": "schemas/abandon.request.schema.json",
@@ -54,11 +54,11 @@
     },
     {
       "path": "schemas/handshake.request.schema.json",
-      "sha256": "58e85cf54e455a1eb1de884fe023fcf2378112683677089018c1f9be8ac864d0"
+      "sha256": "488998331c6d4996c8f4213dab1f2f01f3857f39cf6d181cf3787d4d5abaef4a"
     },
     {
       "path": "schemas/handshake.response.schema.json",
-      "sha256": "9165f476d03ea40a281a54e07aff28ecde794b133c7db51fa6e5e042c00639f2"
+      "sha256": "af23e33fa0a91065f20a66874fdb34828199a1556db93c305e13a5aa84a6975b"
     },
     {
       "path": "schemas/health.request.schema.json",
@@ -83,6 +83,14 @@
     {
       "path": "schemas/putEvidence.response.schema.json",
       "sha256": "fdfa7cc260ceb54bc087c68df1de4dbc1b3ddcf6bcc929467783d61c793a9f82"
+    },
+    {
+      "path": "schemas/receiveAttentionResponse.request.schema.json",
+      "sha256": "bc63c3ca6896ba6b1eac52eeb882cc85f1253dae6bed40322975bc459dec9dd9"
+    },
+    {
+      "path": "schemas/receiveAttentionResponse.response.schema.json",
+      "sha256": "e3bd5f6af256437ac902739e6915fe5982a7ca6e4cdb343bf2f29db3231cba26"
     },
     {
       "path": "schemas/release.request.schema.json",
@@ -113,7 +121,7 @@
       "sha256": "969254cf38bbb671cd14d0261d3e05384ec86a7aeb565244601591d1b59a7b53"
     }
   ],
-  "bundleDigest": "82297e6ae5ae8e2defb7f10b9962e98a3e86140c3941061584ed713a12a999ad",
+  "bundleDigest": "fff96cf5105d9cda9da5dfd2fbc7e9f15242754f63d7f8155cde4ef874d5c52b",
   "bundleDigestAlgorithm": "sha256 over lexically ordered path, NUL, hash, newline records",
   "errorKinds": [
     "bundle_digest_mismatch",
@@ -195,7 +203,7 @@
   "generator": {
     "command": "pnpm capability-protocol:generate",
     "package": "@comis/capability-service-sdk",
-    "version": "1.0.63"
+    "version": "1.0.64"
   },
   "limits": {
     "maxEvidenceBytes": 1048576,
@@ -308,6 +316,25 @@
       "direction": "service-to-comis",
       "maxRequestBytes": 1441792,
       "maxResponseBytes": 65536,
+      "method": "managedRuns.receiveAttentionResponse",
+      "operationIdRequired": true,
+      "requestSchema": "schemas/receiveAttentionResponse.request.schema.json",
+      "requiredServiceScope": "attention_response",
+      "responseSchema": "schemas/receiveAttentionResponse.response.schema.json",
+      "semanticInvariants": [
+        "operation-id-must-match-envelope-id",
+        "owning-service-instance-only",
+        "external-key-must-name-an-open-attention-request",
+        "private-response-remains-content-store-confined-until-delivery",
+        "identical-receive-replay-returns-the-original-response"
+      ]
+    },
+    {
+      "callerClass": "capability-service",
+      "classification": "mutation",
+      "direction": "service-to-comis",
+      "maxRequestBytes": 1441792,
+      "maxResponseBytes": 65536,
       "method": "managedRuns.release",
       "operationIdRequired": true,
       "requestSchema": "schemas/release.request.schema.json",
@@ -368,6 +395,7 @@
     "managedRuns.abandon",
     "managedRuns.activate",
     "managedRuns.putEvidence",
+    "managedRuns.receiveAttentionResponse",
     "managedRuns.release",
     "managedRuns.report",
     "managedRuns.terminalEvent"

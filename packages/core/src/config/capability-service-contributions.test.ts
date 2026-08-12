@@ -94,6 +94,7 @@ describe("capability-service contribution planning", () => {
         ...makeContribution().serviceDefinitions[0]!,
         requestedScopes: [
           "health",
+          "attention_response",
           "report",
           "workspace_lease",
           "terminal_events",

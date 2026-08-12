@@ -46,6 +46,7 @@
           "protocolId": "comis.capability-service/1",
           "requestedScopes": [
             "health",
+            "attention_response",
             "evidence",
             "report",
             "workspace_lease",
@@ -66,6 +67,7 @@
         "result": {
           "activeScopes": [
             "health",
+            "attention_response",
             "evidence",
             "report",
             "workspace_lease",
@@ -88,6 +90,36 @@
       },
       "schemaExpectation": "accept",
       "target": "handshake-response"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_attention_response",
+        "jsonrpc": "2.0",
+        "method": "managedRuns.receiveAttentionResponse",
+        "params": {
+          "externalKey": "backend-id-format",
+          "managedRunId": "managed-run_a",
+          "operationId": "operation_attention_response"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "request"
+    },
+    {
+      "expectation": "accept",
+      "payload": {
+        "id": "operation_attention_response",
+        "jsonrpc": "2.0",
+        "result": {
+          "externalKey": "backend-id-format",
+          "managedRunId": "managed-run_a",
+          "response": "Use monotonic issue-N values.",
+          "state": "delivered"
+        }
+      },
+      "schemaExpectation": "accept",
+      "target": "receive-attention-response"
     },
     {
       "expectation": "accept",

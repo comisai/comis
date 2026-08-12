@@ -15,6 +15,7 @@
           "protocolId": "comis.capability-service/2",
           "requestedScopes": [
             "health",
+            "attention_response",
             "evidence",
             "report",
             "workspace_lease",

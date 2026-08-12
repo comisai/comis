@@ -28,6 +28,7 @@ function isContributionId(value: string): boolean {
 
 export const CapabilityServiceScopeSchema = z.enum([
   "health",
+  "attention_response",
   "evidence",
   "report",
   "workspace_lease",
@@ -89,7 +90,7 @@ export const CapabilityServiceDefinitionSchema = z.strictObject({
   protocolId: z.literal(CAPABILITY_SERVICE_CONTROL_PROTOCOL),
   mcpServerName: z.string().regex(OPAQUE_ID_PATTERN),
   managedToolBindings: z.array(ManagedToolBindingSchema).max(128),
-  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(6),
+  requestedScopes: z.array(CapabilityServiceScopeSchema).min(1).max(7),
   evidencePolicies: z.array(CapabilityServiceEvidencePolicySchema).max(32),
   dependsOn: z.array(z.string().refine(isContributionId)).max(32),
 }).superRefine((value, ctx) => {

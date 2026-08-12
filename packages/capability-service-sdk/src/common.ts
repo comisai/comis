@@ -50,6 +50,7 @@ export const TimestampMsSchema = z.number().int().nonnegative();
 export const CapabilityServiceMethodSchema = z.enum(CAPABILITY_SERVICE_METHODS);
 export const CapabilityServiceScopeSchema = z.enum([
   "health",
+  "attention_response",
   "evidence",
   "report",
   "workspace_lease",
