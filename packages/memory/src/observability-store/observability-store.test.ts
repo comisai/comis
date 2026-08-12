@@ -267,6 +267,70 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(r.lastTs).toBe(3_000);
   });
 
+  it("a later delivered-with-tool-errors turn does not reclassify an earlier hard failure", () => {
+    // Live on comis-moshe: an 11:22 turn died (endReason "error"), and a 12:36
+    // turn in the SAME chat finished completed_with_tool_errors. `degraded` is
+    // sticky, but the cause is last-degraded-wins, so the soft cause overwrote
+    // the hard one. system-health computes
+    //   hardDegraded = degradedCount - deliveredWithToolErrorsCount
+    // so the session then counted as "the user still got a reply" and the
+    // report went from "1 hard-degraded, 50%" to "0 hard-degraded, 0%" with
+    // nothing fixed — the hard failure was downgraded, not merely hidden.
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      traceId: "trace-hard-failure",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "error" }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      traceId: "trace-soft-degradation",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "completed_with_tool_errors" }),
+    });
+
+    const rollup = store.aggregateSessionsInWindow(0)[0]!;
+
+    expect(rollup.degraded).toBe(true);
+    // The hard cause survives, and with it the trace an operator must open.
+    expect(rollup.endReason).toBe("error");
+    expect(rollup).toHaveProperty("traceId", "trace-hard-failure");
+  });
+
+  it("a later hard failure still replaces an earlier soft degradation", () => {
+    // The precedence is hard-over-soft, not first-wins: a session that ends up
+    // dying must report the death even if it merely limped earlier.
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      traceId: "trace-soft-degradation",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "completed_with_tool_errors" }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s1",
+      traceId: "trace-hard-failure",
+      message: "session:summary",
+      details: summaryDetails({ degraded: true, endReason: "error" }),
+    });
+
+    const rollup = store.aggregateSessionsInWindow(0)[0]!;
+
+    expect(rollup.endReason).toBe("error");
+    expect(rollup).toHaveProperty("traceId", "trace-hard-failure");
+  });
+
   it("retains the trace id of the sticky degraded execution after a clean continuation", () => {
     store.insertDiagnostic({
       timestamp: 1_000,
