@@ -194,6 +194,18 @@ function privateMetaWithinLimit(meta: McpPrivateMeta | undefined): boolean {
     && Buffer.byteLength(serialized.value, "utf8") <= CAPABILITY_SERVICE_LIMITS.maxResponseBytes;
 }
 
+function ownEnumerableValue(
+  record: Readonly<Record<string, unknown>>,
+  key: string,
+): Result<unknown, Error> {
+  const entries = tryCatch(() => Object.entries(record));
+  if (!entries.ok) return err(entries.error);
+  for (const [candidate, value] of entries.value) {
+    if (candidate === key) return ok(value);
+  }
+  return ok(undefined);
+}
+
 async function invoke<T>(
   operation: () => Promise<Result<T, Error>>,
 ): Promise<Result<T, Error>> {
@@ -212,12 +224,14 @@ async function resolveRunHandle(
   if (bound.binding.behavior !== "run_command") return ok(undefined);
   const argument = bound.binding.runHandleArgument;
   const params = input.params;
-  const handle = argument === undefined
+  const handleResult = argument === undefined
     || typeof params !== "object"
     || params === null
     || Array.isArray(params)
-    ? undefined
-    : Object.getOwnPropertyDescriptor(params, argument)?.value;
+    ? ok(undefined)
+    : ownEnumerableValue(params, argument);
+  if (!handleResult.ok) return err(handleResult.error);
+  const handle = handleResult.value;
   if (
     typeof handle !== "string"
     || handle.length === 0
@@ -409,11 +423,11 @@ export function createManagedMcpPrivateMetadataBridge(
     if (!hasPreparedExtension || input.meta === undefined) {
       return rejectCall(deps, input, "managed-run starter omitted its private prepared result");
     }
-    const preparedResult = Object.getOwnPropertyDescriptor(
-      input.meta,
-      MCP_MANAGED_RUN_RESULT_KEY,
-    )?.value;
-    const parsed = McpManagedRunResultSchema.safeParse(preparedResult);
+    const preparedResult = ownEnumerableValue(input.meta, MCP_MANAGED_RUN_RESULT_KEY);
+    if (!preparedResult.ok) {
+      return rejectCall(deps, input, "managed-run prepared result could not be read safely");
+    }
+    const parsed = McpManagedRunResultSchema.safeParse(preparedResult.value);
     if (!parsed.success) {
       return rejectCall(deps, input, "managed-run prepared result failed strict validation");
     }
