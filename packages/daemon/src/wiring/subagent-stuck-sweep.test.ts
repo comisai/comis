@@ -199,3 +199,58 @@ describe("createSubagentActivityTracker", () => {
     expect(tracker.lastActivityFor("a")).toBeUndefined();
   });
 });
+
+describe("a run waiting on its own children is not stuck", () => {
+  // Live: a research sub-agent spawned three children, collected them, spawned
+  // a fourth at 16:57:08, and sat waiting for it. Waiting emits no tool or LLM
+  // progress of its own, so the sweep read 191s of idle and killed the PARENT
+  // at 17:00:24 while its child was still working — discarding the whole tree's
+  // work. A run blocked on delegated work is not stuck; its children carry
+  // their own watchdogs, so a genuinely hung tree still dies at the leaves and
+  // the parent follows once they are gone.
+  const base = { agentId: "default", status: "running", sessionKey: "s", startedAt: 0 };
+
+  it("exempts a parent while a child of it is still running", () => {
+    const sweep = sweepStuckSubAgentRuns({
+      runs: [
+        { ...base, runId: "parent", sessionKey: "parent-key" },
+        { ...base, runId: "child", sessionKey: "child-key", parentRunId: "parent" },
+      ],
+      now: 500_000,
+      stuckKillThresholdMs: 180_000,
+      graphStuckKillThresholdMs: 600_000,
+      // Both look idle: the parent is waiting, the child just started its work.
+      lastActivityFor: () => 0,
+    });
+
+    expect(sweep.kills.map((k) => k.runId)).toEqual(["child"]);
+    expect(sweep.activeSubAgentRuns).toBe(2);
+  });
+
+  it("kills the parent once its children are gone", () => {
+    const sweep = sweepStuckSubAgentRuns({
+      runs: [{ ...base, runId: "parent", sessionKey: "parent-key" }],
+      now: 500_000,
+      stuckKillThresholdMs: 180_000,
+      graphStuckKillThresholdMs: 600_000,
+      lastActivityFor: () => 0,
+    });
+
+    expect(sweep.kills.map((k) => k.runId)).toEqual(["parent"]);
+  });
+
+  it("does not exempt a parent whose only child has already stopped", () => {
+    const sweep = sweepStuckSubAgentRuns({
+      runs: [
+        { ...base, runId: "parent", sessionKey: "parent-key" },
+        { ...base, runId: "child", sessionKey: "child-key", parentRunId: "parent", status: "completed" },
+      ],
+      now: 500_000,
+      stuckKillThresholdMs: 180_000,
+      graphStuckKillThresholdMs: 600_000,
+      lastActivityFor: () => 0,
+    });
+
+    expect(sweep.kills.map((k) => k.runId)).toEqual(["parent"]);
+  });
+});
