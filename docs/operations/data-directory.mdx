@@ -516,6 +516,8 @@ ps -p <PID>                  # check if that PID is running
 
 Stores OAuth profiles (access and refresh tokens) when `security.storage: file` is configured. Each profile is a JSON entry identified by provider and email. The file is written atomically (tmp then rename) with mode `0o600`.
 
+A write interrupted by a crash can leave an `auth-profiles.json.<pid>.<random>.tmp` file behind. The next Comis process to open the store reclaims those leftovers — except when the PID in the name is still running, because that names a write still in progress (a refresh by the daemon while the CLI starts up, for example).
+
 **Written by:** `comis auth login` and the daemon's OAuth refresh path.
 **Safe to delete?** Deleting this file removes all stored OAuth credentials — you will need to re-run `comis auth login` for each provider. Do not delete while the daemon is running.
 **Not present when:** `security.storage: encrypted` (the default) — OAuth profiles are stored in the `oauth_profiles` table inside `secrets.db` instead.
