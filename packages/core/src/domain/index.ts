@@ -292,10 +292,12 @@ export {
   ConversationRefSchema,
   ConversationLocatorSchema,
   ConversationScopeError,
+  DELEGATED_EXECUTION_CHANNEL_TYPE,
   encodeConversationScope,
   createConversationRef,
   createConversationLocator,
   conversationScopeToSessionKey,
+  isDelegatedExecutionEndpoint,
 } from "./conversation-scope.js";
 export type {
   ChannelEndpoint,
