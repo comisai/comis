@@ -52,11 +52,13 @@ describe("detached live command helper", () => {
     directories.push(pathDirectory);
     symlinkSync(realpathSync("/bin/bash"), resolve(pathDirectory, "bash"));
     symlinkSync(realpathSync("/bin/rm"), resolve(pathDirectory, "rm"));
+    symlinkSync(realpathSync("/bin/sleep"), resolve(pathDirectory, "sleep"));
     symlinkSync(realpathSync("/usr/bin/nohup"), resolve(pathDirectory, "nohup"));
+    symlinkSync(realpathSync(process.execPath), resolve(pathDirectory, "node"));
 
     const launched = spawnSync(
       "/bin/bash",
-      [BG_HELPER, tag, "printf 'detached-ok\\n'"],
+      [BG_HELPER, tag, "sleep 1; printf 'detached-ok\\n'"],
       {
         encoding: "utf8",
         env: { ...process.env, PATH: pathDirectory },
@@ -65,6 +67,11 @@ describe("detached live command helper", () => {
 
     expect(launched.status).toBe(0);
     expect(launched.stdout).toContain("launched detached");
+    const pid = readFileSync(resolve(BG_STATE_DIRECTORY, `bg-${tag}.pid`), "utf8").trim();
+    const processGroup = spawnSync("/bin/ps", ["-o", "pgid=", "-p", pid], {
+      encoding: "utf8",
+    }).stdout.trim();
+    expect(processGroup).toBe(pid);
     expect(await waitForCompletion(tag)).toBe(true);
     expect(readFileSync(resolve(BG_STATE_DIRECTORY, `bg-${tag}.done`), "utf8").trim()).toBe("0");
     expect(readFileSync(resolve(BG_STATE_DIRECTORY, `bg-${tag}.out`), "utf8")).toBe(
