@@ -390,13 +390,7 @@ export async function assembleIncidentReportFromSources(
   const traceResolution = params.traceId === undefined
     ? null
     : await resolveTraceReference(dataDir, params.traceId, params.includeSynthetic);
-  // Step 3: canonicalize a traceId OR a rootRunId to its sessionKey FIRST,
-  // so by-trace, by-rootRun, and by-session collapse to one assembler path. The
-  // rootRunId arm is checked FIRST; `sessionKey` is present when both
-  // traceId and rootRunId are absent (the contract .refine guarantees one of the
-  // three). Scheduler task roots first load their durable lifecycle row: it is
-  // both the authoritative root→origin mapping and the report's content-free
-  // delivery evidence.
+  // Canonicalize every reference; scheduler roots first load durable root→origin evidence.
   const taskCheck = params.rootRunId !== undefined && reader.readTaskCheckLifecycle !== undefined
     ? await reader.readTaskCheckLifecycle(params.rootRunId)
     : null;
