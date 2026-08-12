@@ -2,9 +2,10 @@
 /**
  * Static contract for the generated capability-service protocol bundle.
  *
- * The bundle is intentionally independent from the npm umbrella: external
- * services consume release artifacts whose bytes and digest are pinned by the
- * deployment, while the monorepo consumes the Zod source schemas directly.
+ * External services consume release artifacts whose bytes and digest are
+ * pinned by the deployment. The private runtime implementation is also
+ * bundled with the npm umbrella because installed daemon and skills packages
+ * import its validators.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -111,7 +112,7 @@ function requestMethod(payload: unknown): string | undefined {
 }
 
 describe("capability-service protocol bundle contract", () => {
-  it("keeps the external SDK private and outside the npm umbrella", () => {
+  it("keeps the SDK private while bundling its installed runtime", () => {
     expect(existsSync(resolve(SDK_ROOT, "package.json"))).toBe(true);
     const sdk = readJson<{ private?: boolean; files?: string[] }>(resolve(SDK_ROOT, "package.json"));
     const umbrella = readJson<{ bundledDependencies?: string[] }>(
@@ -120,7 +121,7 @@ describe("capability-service protocol bundle contract", () => {
 
     expect(sdk.private).toBe(true);
     expect(sdk.files).toContain("protocol");
-    expect(umbrella.bundledDependencies).not.toContain("@comis/capability-service-sdk");
+    expect(umbrella.bundledDependencies).toContain("@comis/capability-service-sdk");
   });
 
   it("exposes deterministic generation and drift-check commands", () => {
