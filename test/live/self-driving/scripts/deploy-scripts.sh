@@ -111,6 +111,11 @@ export GW_PORT="\${GW_PORT:-$GW_PORT}"
 export COMIS_TRAJECTORY_DIR="\${COMIS_TRAJECTORY_DIR:-${COMIS_TRAJECTORY_DIR:-}}"
 export CHATID="\${CHATID:-$CHATID}"
 export EMU_DIR="\${EMU_DIR:-$EMU_DIR}"
+export KIT_DIR="\${KIT_DIR:-$KIT_DIR}"
+export RIG_ENV="\${RIG_ENV:-$RIG_ENV}"
+export EMU_JSON="\${EMU_JSON:-$EMU_JSON}"
+export EMU_LOG="\${EMU_LOG:-$EMU_LOG}"
+export EMU_TMUX_SESSION="\${EMU_TMUX_SESSION:-$EMU_TMUX_SESSION}"
 export GWTOKEN="\${GWTOKEN:-${rendered_gateway_token:-}}"
 EOF
 
