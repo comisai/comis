@@ -40,6 +40,7 @@ import {
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  telegramInjectionIdentityError,
   trajectoryTurnEnded,
   wireContainsAssistantReply,
   wireQuiescenceFinished,
@@ -122,6 +123,11 @@ if (process.env.INJECT_OPTS) {
 // from the SAME trusted sender = card 2, with SHARED memory + trusted origin + no cross-sender recall
 // pollution / no per-sender priming). Default: fromUserId == chatId.
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
+const injectionIdentityError = telegramInjectionIdentityError(Number(chatId), fromUser);
+if (injectionIdentityError !== undefined) {
+  console.error(`drive.mjs: ${injectionIdentityError}`);
+  process.exit(2);
+}
 // Guard the #2 mis-invocation: a sender the daemon will REFUSE at ingress.
 // `channels.telegram.allowFrom` is an ingress allowlist, so a message from an unlisted sender is
 // dropped before any turn starts. The emulator still accepts the injection and returns an inboundId,

@@ -16,6 +16,15 @@ export function normalizeDriveStdinText(source) {
   return source;
 }
 
+/** Reject emulator-only private-chat shapes that Telegram cannot emit.
+ * A Telegram private chat is the user, so its positive chat id equals the
+ * sender id. Distinct-conversation controls must use a negative group id. */
+export function telegramInjectionIdentityError(chatId, senderId) {
+  return chatId > 0 && chatId !== senderId
+    ? `private Telegram chat ${String(chatId)} cannot have sender ${String(senderId)}; use the sender id as the private chat id or a negative group chat id`
+    : undefined;
+}
+
 /** Return the user-visible prose carried by one outbound wire record.
  * Telegram attachments carry their only prose in `caption`, so treating only
  * `text` as an answer fabricates an empty-final failure after a successful
