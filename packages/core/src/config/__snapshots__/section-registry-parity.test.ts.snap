@@ -7822,7 +7822,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
       "maxPingPongTurns": 3,
       "sandboxNoDowngrade": true,
       "steerInject": false,
-      "subAgentMaxSteps": 50,
+      "subAgentMaxSteps": 300,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
       "subAgentSessionPersistence": true,
@@ -7917,7 +7917,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "type": "boolean"
   },
   {
-    "default": 50,
+    "default": 300,
     "immutable": true,
     "path": "security.agentToAgent.subAgentMaxSteps",
     "type": "integer"
@@ -14803,7 +14803,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxPingPongTurns": 3,
         "sandboxNoDowngrade": true,
         "steerInject": false,
-        "subAgentMaxSteps": 50,
+        "subAgentMaxSteps": 300,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
         "subAgentSessionPersistence": true,
@@ -14886,7 +14886,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "maxPingPongTurns": 3,
       "sandboxNoDowngrade": true,
       "steerInject": false,
-      "subAgentMaxSteps": 50,
+      "subAgentMaxSteps": 300,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
       "subAgentSessionPersistence": true,
@@ -14981,7 +14981,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": 50,
+    "default": 300,
     "immutable": true,
     "path": "security.agentToAgent.subAgentMaxSteps",
     "type": "integer"
@@ -26442,7 +26442,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "maxPingPongTurns": 3,
         "sandboxNoDowngrade": true,
         "steerInject": false,
-        "subAgentMaxSteps": 50,
+        "subAgentMaxSteps": 300,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
         "subAgentSessionPersistence": true,
@@ -26534,7 +26534,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           "type": "boolean"
         },
         "subAgentMaxSteps": {
-          "default": 50,
+          "default": 300,
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
           "type": "integer"
@@ -40220,7 +40220,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "maxPingPongTurns": 3,
           "sandboxNoDowngrade": true,
           "steerInject": false,
-          "subAgentMaxSteps": 50,
+          "subAgentMaxSteps": 300,
           "subAgentMcpTools": "inherit",
           "subAgentRetentionMs": 3600000,
           "subAgentSessionPersistence": true,
@@ -40304,7 +40304,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxPingPongTurns": 3,
             "sandboxNoDowngrade": true,
             "steerInject": false,
-            "subAgentMaxSteps": 50,
+            "subAgentMaxSteps": 300,
             "subAgentMcpTools": "inherit",
             "subAgentRetentionMs": 3600000,
             "subAgentSessionPersistence": true,
@@ -40396,7 +40396,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "boolean"
             },
             "subAgentMaxSteps": {
-              "default": 50,
+              "default": 300,
               "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
               "type": "integer"
