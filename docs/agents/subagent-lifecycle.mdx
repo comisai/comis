@@ -216,6 +216,20 @@ classification. For example, an error-classified failed run is rendered as
 `Failed`, so delivery does not erase the reason recorded by status and
 observability surfaces.
 
+A run that reached the end of its work counts as **delivered**, not halted —
+including one that finished `completed_with_tool_errors`, where some tool call
+failed but the sub-agent still produced an answer. Such a run is announced as
+`Completed (completed_with_tool_errors)`, and its tool failures remain visible
+as degradation on the observability surfaces. Only the genuine halts (the step
+ceiling, the no-progress loop guard, context exhaustion, a budget stop, a hard
+error) are announced as failures.
+
+The sub-agent's output is always rendered as the **result**, never as an error.
+A degraded run that still produced an answer shows that answer, with the
+degradation carried by the status label. The one exception is a run that
+abandoned background work it had launched: there the response cannot be trusted
+as the result, so the failure is reported instead.
+
 ## Objective reinforcement
 
 When a sub-agent's conversation grows long enough to trigger the context

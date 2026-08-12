@@ -42,16 +42,45 @@ export interface SubAgentOutcome {
   readonly missingOutputs: readonly string[];
 }
 
+/**
+ * Finish reasons under which the model reached the end of its work and produced
+ * an answer.
+ *
+ * `completed_with_tool_errors` belongs here: it names a run that COMPLETED, with
+ * some tool call along the way having failed. A child that loses a few fetches
+ * to bot protection, works around them, and reports what it could not verify has
+ * done its job — and the tool errors are already carried as degradation on the
+ * outcome surfaces. Excluding it announced a delivered answer as a halt.
+ *
+ * The genuine halts — the step ceiling, the loop guard, context exhaustion, a
+ * budget stop, a hard error — mean the model never got to deliver, and stay out.
+ */
+const DELIVERED_FINISH_REASONS: ReadonlySet<string> = new Set([
+  "stop",
+  "end_turn",
+  "completed_with_tool_errors",
+]);
+
+/** Whether this finish reason means the model delivered rather than halted. */
+export function isDeliveredFinishReason(finishReason: string | undefined): boolean {
+  return finishReason !== undefined && DELIVERED_FINISH_REASONS.has(finishReason);
+}
+
 export interface ResolveSubAgentOutcomeInput {
-  /** Whether the model's finish reason was a clean stop. */
-  readonly modelStoppedCleanly: boolean;
+  /**
+   * Whether the model reached the end of its work (see
+   * {@link isDeliveredFinishReason}). Named for DELIVERY, not cleanliness: a run
+   * can deliver a complete answer with tool errors behind it, and a field
+   * asserting "stopped cleanly" made that case look like it did not qualify.
+   */
+  readonly modelDelivered: boolean;
   /** Declared `expected_outputs` that post-run validation did not find. */
   readonly missingContractedOutputs: readonly string[];
 }
 
 /** Resolve the terminal outcome from the model's stop and the output contract. */
 export function resolveSubAgentOutcome(input: ResolveSubAgentOutcomeInput): SubAgentOutcome {
-  if (!input.modelStoppedCleanly) {
+  if (!input.modelDelivered) {
     return { success: false, reason: "model_halted", missingOutputs: [] };
   }
   if (input.missingContractedOutputs.length > 0) {
