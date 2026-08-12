@@ -933,6 +933,12 @@ describe("local rig mode", () => {
     expect(rigDoctor).not.toContain('RIG_HELPER="/root/_rig.sh"');
   });
 
+  it("passes the selected rig environment into the detached remote emulator", () => {
+    const source = readFileSync(DEPLOY_EMULATOR, "utf8");
+
+    expect(source).toContain("RIG_ENV='$RIG_ENV' EMU_DIR='$EMU_DIR'");
+  });
+
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
     if (process.platform !== "linux") return;
     const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
