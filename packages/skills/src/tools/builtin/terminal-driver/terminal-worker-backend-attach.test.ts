@@ -136,6 +136,49 @@ describe("attachBackend — unsandboxed durable drives take the tmux backend (se
     expect(state.ring).toContain("[exited]");
   });
 
+  it("retains worker output when the tmux teardown marker spans stream chunks", async () => {
+    let emitData: ((data: string) => void) | undefined;
+    const tmuxHandle: FakePtyLike = {
+      ...fakePty(),
+      onData: (callback) => {
+        emitData = callback;
+      },
+    };
+    const write = vi.fn(async () => {});
+    const state = makeState();
+    state.emu = {
+      write,
+      snapshot: vi.fn(),
+      resize: vi.fn(),
+      hasContentBelowFold: vi.fn(() => false),
+      dispose: vi.fn(),
+      term: {} as SessionEmulator["term"],
+    };
+
+    attachBackend({
+      plan: { bin: "/usr/bin/bwrap", argv: ["--", "/bin/worker"], env: {} },
+      cols: 80,
+      rows: 24,
+      state,
+      loadPty: () => ({ spawn: () => fakePty() }),
+      spawnPipe: () => {
+        throw new Error("pipe not expected");
+      },
+      logger: makeLogger(),
+      requestedBackend: "tmux",
+      loadTmux: { spawn: () => tmuxHandle, reattach: () => undefined },
+      sessionId: "s-split-exit-screen",
+    });
+
+    emitData?.("worker failure detail\r\n\u001b[1;");
+    emitData?.("0r\u001b[H\u001b[2J[exited]\r\n");
+    await state.writeFlush;
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith("worker failure detail\r\n");
+    expect(state.ring).toContain("[exited]");
+  });
+
   it("falls back to PTY when a durable tmux request is unsandboxed but NO tmux loader is wired (tmux-less host)", () => {
     const ptySpawn = vi.fn(() => fakePty());
     const state = makeState();
