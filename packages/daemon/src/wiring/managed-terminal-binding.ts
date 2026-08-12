@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import {
   createConversationRef,
@@ -52,6 +53,10 @@ function validateCurrentWorkspaceLease(record: WorkspaceLeaseRecord): Result<voi
     : err(new Error("workspace lease filesystem identity changed"));
 }
 
+function handleDigest(handle: string): string {
+  return createHash("sha256").update(handle, "utf8").digest("hex");
+}
+
 /** Resolve the complete ALS authority and cross-check it against the registry owner key. */
 export function resolveManagedTerminalOwnerScope(owner: SessionOwner): ManagedRunOwnerScope | undefined {
   const context = tryGetContext();
@@ -87,8 +92,8 @@ export function createManagedTerminalBindingResolver(
     const record = loaded.value;
     if (record === undefined) {
       deps.logger?.warn({
-        managedRunId: input.managedRunId,
-        workspaceLeaseId: input.workspaceLeaseId,
+        requestedManagedRunDigest: handleDigest(input.managedRunId),
+        requestedWorkspaceLeaseDigest: handleDigest(input.workspaceLeaseId),
         tenantId: scope.tenantId,
         agentId: scope.agentId,
         conversationRef: scope.conversationRef,
