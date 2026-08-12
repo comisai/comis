@@ -23,6 +23,7 @@ import type { CapabilityServiceContributionRegistration, NormalizedMessage } fro
 import { startTestDaemon, type TestDaemonHandle } from "../../../support/daemon-harness.js";
 import { createFixtureRepository, waitForUnixSocket } from "../../../support/capability-service-vertical-harness.js";
 import { getFreePort } from "../../../support/free-port.js";
+import { stopManagedChild } from "../../../support/managed-child-process.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../../..");
@@ -380,17 +381,7 @@ export function startInstalledService(input: {
   return {
     child,
     stderr: () => Buffer.concat(stderr).toString("utf8"),
-    stop: async () => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      child.kill("SIGTERM");
-      await Promise.race([
-        new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())),
-        new Promise<void>((resolveTimeout) => setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-          resolveTimeout();
-        }, 3_000)),
-      ]);
-    },
+    stop: () => stopManagedChild(child),
   };
 }
 
