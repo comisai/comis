@@ -114,6 +114,7 @@ export interface ResolvedRequestContext {
 }
 
 /** Complete identity for a freshly-created synthetic request boundary. */
+// @optional-field-count: Request-boundary facets are independently conditional by ingress type, trust resolution, delivery route, model/locale inheritance, learning eligibility, and operator-policy availability; absent fields must remain absent rather than be fabricated for synthetic turns.
 export interface ResolvedRequestContextSeed {
   tenantId: string;
   userId: string;
