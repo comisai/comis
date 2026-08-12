@@ -7,14 +7,14 @@
  * single agent session and prints it as a concise table or as JSON.
  *
  * Usage:
- *   comis explain <sessionKey|traceId|rootRunId|graphId> [--format table|json] [--depth summary|full]
+ *   comis explain <sessionKey|traceId|childRunId|rootRunId|graphId> [--format table|json] [--depth summary|full]
  *
  * Arg routing: a `root-` prefix → {rootRunId} (a
  * governed session, cron, task-check, or spawned root,
  * checked FIRST); else an agent-scoped session key contains ':' →
- * {sessionKey}; a UUID (no ':') → {traceId}. The daemon canonicalizes a traceId
- * and a rootRunId to the run's sessionKey, so all three produce the identical
- * report (and the rootRunId path renders the run's spawn-tree).
+ * {sessionKey}; a UUID (no ':') → {traceId}. The daemon canonicalizes a traceId,
+ * child run id, and rootRunId to the run's sessionKey, so every form produces
+ * the identical report (and the rootRunId path renders the run's spawn-tree).
  *
  * Per the cli-uses-typed-rpc arch invariant: ONLY callTyped is used here —
  * never raw client.call. callTyped runs ObsExplainContract.request.parse on the

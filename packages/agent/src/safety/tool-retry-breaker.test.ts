@@ -136,20 +136,13 @@ describe("tool retry breaker", () => {
         maxConsecutiveErrorPatterns: 100,
         suggestAlternatives: false,
       });
-      const recordWithTransport = breaker.recordResult as unknown as (
-        toolName: string,
-        args: Record<string, unknown>,
-        success: boolean,
-        errorText: string,
-        context: { transportOk: boolean },
-      ) => ReturnType<ToolRetryBreaker["recordResult"]>;
       const denied = JSON.stringify({
         content: [{ type: "text", text: "HTTP 403" }],
         details: { status: 403, error: "HTTP 403" },
       });
 
       for (const path of ["one", "two", "three"]) {
-        recordWithTransport(
+        breaker.recordResult(
           "web_fetch",
           { url: `https://example.com/${path}` },
           false,

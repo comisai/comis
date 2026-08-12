@@ -79,13 +79,24 @@ export interface ToolRetryBreaker {
   /**
    * Record the result of a tool call (success or failure).
    *
+   * A returned logical failure (`transportOk: true`) updates only the
+   * invocation signature and error-pattern state. It does not prove the tool
+   * itself is unavailable, so it cannot contribute to the all-arguments
+   * tool-level block.
+   *
    * Returns a {@link ToolBreakerTransition} ONLY at a tool-wide counter
    * crossing (tool-level total or error-pattern threshold, by EXACT equality)
    * or on a success that recovers a non-zero failure counter; otherwise
    * `undefined`. The breaker emits nothing itself — the bridge consumes this
    * verdict and emits the corresponding events.
    */
-  recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined;
+  recordResult(
+    toolName: string,
+    args: Record<string, unknown>,
+    success: boolean,
+    errorText?: string,
+    context?: Readonly<{ transportOk: boolean }>,
+  ): ToolBreakerTransition | undefined;
   /** Return list of tool names that are fully blocked (tool-level). */
   getBlockedTools(): string[];
   /** Clear all state -- unblock all tools, reset all counters. */
@@ -420,9 +431,18 @@ export function buildBlockReason(
  */
 export function isBreakerBlockMessage(text: string | undefined): boolean {
   if (text === undefined || text.length === 0) return false;
-  if (!text.includes("DO NOT retry this tool. Instead:")) return false;
-  return /Tool "[^"]+" (?:has failed \d+ (?:total|consecutive) times|failed parameter validation \d+ times)/
-    .test(text);
+  let candidate = text;
+  for (let depth = 0; depth <= 2; depth++) {
+    if (
+      candidate.includes("DO NOT retry this tool. Instead:")
+      && /Tool "[^"]+" (?:has failed \d+ (?:total|consecutive) times|failed parameter validation \d+ times)/
+        .test(candidate)
+    ) return true;
+    const peeled = peelEnvelope(candidate);
+    if (peeled === candidate) return false;
+    candidate = peeled;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +542,13 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       return { block: false };
     },
 
-    recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined {
+    recordResult(
+      toolName: string,
+      args: Record<string, unknown>,
+      success: boolean,
+      errorText?: string,
+      context?: Readonly<{ transportOk: boolean }>,
+    ): ToolBreakerTransition | undefined {
       const fp = fingerprint(toolName, args);
 
       if (success) {
@@ -590,21 +616,29 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       sigState.lastError = errorText;
       signatureFailures.set(fp, sigState);
 
-      // Update tool-level total counter
-      const toolState = toolFailures.get(toolName) ?? { count: 0 };
-      toolState.count++;
-      toolState.lastError = errorText;
-      toolFailures.set(toolName, toolState);
+      // Only a call that failed to complete the tool boundary is evidence that
+      // every invocation may be unavailable. A returned logical error remains
+      // protected by the signature and error-pattern counters, but distinct
+      // arguments must remain available.
+      let toolFailureCount = 0;
+      let openedToolLevel = false;
+      if (context?.transportOk !== true) {
+        const toolState = toolFailures.get(toolName) ?? { count: 0 };
+        toolState.count++;
+        toolState.lastError = errorText;
+        toolFailures.set(toolName, toolState);
 
-      // Check if tool-level threshold exceeded. The block stays `>=` (Set.add is
-      // idempotent), but the OPEN transition fires on the EXACT crossing only —
-      // `===` so the bridge emits `tool:breaker_opened` once per open, never on
-      // every later failure (a `>=` verdict would inflate the incident report's
-      // breakerTimeline).
-      if (toolState.count >= maxToolFailures) {
-        blockedTools.add(toolName);
+        // Check if tool-level threshold exceeded. The block stays `>=` (Set.add is
+        // idempotent), but the OPEN transition fires on the EXACT crossing only —
+        // `===` so the bridge emits `tool:breaker_opened` once per open, never on
+        // every later failure (a `>=` verdict would inflate the incident report's
+        // breakerTimeline).
+        if (toolState.count >= maxToolFailures) {
+          blockedTools.add(toolName);
+        }
+        toolFailureCount = toolState.count;
+        openedToolLevel = toolState.count === maxToolFailures;
       }
-      const openedToolLevel = toolState.count === maxToolFailures;
 
       // Update error-pattern tracking
       const patternKey = `${toolName}::err::${errorTag}`;
@@ -632,7 +666,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
           // open as "opened after 1 failure" in the incident report's
           // breakerTimeline.
           consecutiveFailures: openedToolLevel
-            ? toolState.count
+            ? toolFailureCount
             : patternState.consecutiveFailures,
           errorTag,
         };

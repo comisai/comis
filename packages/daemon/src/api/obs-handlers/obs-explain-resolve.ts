@@ -3,7 +3,8 @@
 /**
  * `obs.explain` ref → sessionKey canonicalization (the identity seam).
  *
- * `obs.explain` accepts ONE of a `sessionKey`, a `traceId`, OR a `rootRunId`.
+ * `obs.explain` accepts ONE of a `sessionKey`, a `traceId` or child run id, OR
+ * a `rootRunId`.
  * So a single assembler path runs for all inputs — identity is
  * structural, not parallel code paths — the by-`traceId` and by-`rootRunId`
  * inputs are resolved to their canonical `sessionKey` FIRST, then the rest of
@@ -63,15 +64,16 @@ export function traceIdFromCronRootRun(rootRunId: string): string | undefined {
 }
 
 /**
- * Resolve a `traceId` to its canonical `sessionKey` by scanning the last two
- * days of session-index JSONL files. Returns the FIRST matching row's
- * `sessionKey` (falling back to its `sessionId` when the row predates the
- * `sessionKey` field). Returns `""` when no row matches OR the index files
- * are absent/corrupt — soft-fail, never throws on I/O.
+ * Resolve a `traceId` or child run id to its canonical `sessionKey` by scanning
+ * the last two days of session-index JSONL files. Exact trace matches take
+ * precedence. A child run id falls back to a structurally parsed session key
+ * whose channel is exactly `sub-agent:runtime:<runId>`. Returns `""` when no
+ * row matches OR the index files are absent/corrupt — soft-fail, never throws
+ * on I/O.
  *
  * @param dataDir - data directory containing `logs/session-index.*.jsonl`.
  *   Defaults to `~/.comis` when an empty string is passed.
- * @param traceId - the trace identifier to canonicalize.
+ * @param traceId - the trace or child run identifier to canonicalize.
  * @param includeSynthetic - when `false` (the default), rows stamped
  *   `synthetic === true` (test/harness sessions) are skipped, so a synthetic
  *   row never canonicalizes a traceId for `obs.explain`. Pass `true` to resolve
@@ -84,6 +86,7 @@ export async function resolveTraceToSession(
   includeSynthetic = false,
 ): Promise<string> {
   const base = dataDir.length > 0 ? dataDir : defaultDataDir();
+  let childRunSessionKey = "";
   for (const dayKey of [yesterdayKey(), todayKey()]) {
     const logsDir = safePath(base, "logs");
     const file = safePath(logsDir, `session-index.${dayKey}.jsonl`);
@@ -103,18 +106,25 @@ export async function resolveTraceToSession(
         continue; // Skip malformed JSONL lines per standard convention.
       }
       if (rec.synthetic === true && !includeSynthetic) continue; // test/harness rows excluded by default
-      if (rec.traceId !== traceId) continue;
       // Canonical sessionKey is preferred; fall back to a sessionId-derived
       // key for rows that predate the sessionKey field.
-      if (typeof rec.sessionKey === "string" && rec.sessionKey.length > 0) {
-        return rec.sessionKey;
-      }
-      if (typeof rec.sessionId === "string" && rec.sessionId.length > 0) {
-        return rec.sessionId;
+      const canonicalSessionKey =
+        typeof rec.sessionKey === "string" && rec.sessionKey.length > 0
+          ? rec.sessionKey
+          : typeof rec.sessionId === "string" && rec.sessionId.length > 0
+            ? rec.sessionId
+            : "";
+      if (canonicalSessionKey.length === 0) continue;
+      if (rec.traceId === traceId) return canonicalSessionKey;
+      if (childRunSessionKey.length === 0) {
+        const parsed = parseFormattedSessionKey(canonicalSessionKey);
+        if (parsed?.channelId === `sub-agent:runtime:${traceId}`) {
+          childRunSessionKey = canonicalSessionKey;
+        }
       }
     }
   }
-  return "";
+  return childRunSessionKey;
 }
 
 /**

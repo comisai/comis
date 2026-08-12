@@ -12,6 +12,7 @@
  *
  * These tests pin:
  *   - both 678 traceIds resolve to the one canonical sessionKey (one identity)
+ *   - a child run id resolves through the structurally parsed sub-agent channel
  *   - a `sessionId`-only row (no `sessionKey`) still resolves
  *   - unknown traceId → "" (soft-fail, no throw)
  *   - missing session-index file → "" (soft-fail, no throw)
@@ -176,6 +177,23 @@ describe("resolveTraceToSession", () => {
     const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
 
     expect(resolved).toBe("");
+  });
+
+  it("prefers an exact trace match over an earlier child run fallback", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "child-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+      JSON.stringify({
+        traceId: CHILD_RUN_ID,
+        sessionKey: CANONICAL_SESSION_KEY,
+      }),
+    ]);
+
+    const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toBe(CANONICAL_SESSION_KEY);
   });
 
   it("treats a string 'true' synthetic field as NON-synthetic and still resolves (strict === true)", async () => {
