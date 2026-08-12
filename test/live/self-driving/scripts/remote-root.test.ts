@@ -941,6 +941,14 @@ describe("local rig mode", () => {
     expect(restart).toContain('rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env');
   });
 
+  it("renders every remote emulator isolation coordinate into the selected rig environment", () => {
+    const source = readFileSync(DEPLOY_SCRIPTS, "utf8");
+
+    for (const key of ["KIT_DIR", "RIG_ENV", "EMU_JSON", "EMU_LOG", "EMU_TMUX_SESSION"]) {
+      expect(source).toContain(`export ${key}="` + "\\${" + `${key}:-`);
+    }
+  });
+
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
     if (process.platform !== "linux") return;
     const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
