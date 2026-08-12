@@ -75,7 +75,7 @@ import type {
   SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
-import { liveChildRunIds, selectOrphanedChildRuns } from "./abort-fallout.js";
+import { liveChildRunIds, selectOrphanedChildRuns, MAX_SPAWN_TREE_WALK } from "./abort-fallout.js";
 import {
   classifyAbortReason,
   isSubAgentAbortFinishReason,
@@ -4438,14 +4438,38 @@ function classifyCompletionErrorKind(
    * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
    */
   function killByRootRun(rootRunId: string, opts?: Parameters<typeof killRun>[1]): { killed: number } {
-    let killed = 0;
-    for (const run of runs.values()) {
-      if (
-        run.rootRunId === rootRunId &&
-        (run.status === "running" || run.status === "queued")
-      ) {
-        if (killRun(run.runId, opts).killed) killed++;
+    // Snapshot the live tree before killing anything: killing a parent cascades
+    // to its children (cancelOrphanedChildren), so a direct killRun reaching an
+    // already-cascaded child returns false and would under-report a tree this
+    // call did in fact terminate.
+    const targets = [...runs.values()]
+      .filter((run) =>
+        run.rootRunId === rootRunId
+        && (run.status === "running" || run.status === "queued"))
+      .map((run) => run.runId);
+
+    // Deepest-first, so every child is killed with THIS call's attribution
+    // before its parent's cascade can claim it as a "system" kill. An explicit
+    // operator/parent tree-kill must not reach the failure record as a cascade.
+    const depthOf = (runId: string): number => {
+      let depth = 0;
+      let cursor = runs.get(runId)?.parentRunId;
+      while (cursor !== undefined && depth < MAX_SPAWN_TREE_WALK) {
+        depth++;
+        cursor = runs.get(cursor)?.parentRunId;
       }
+      return depth;
+    };
+    const byDepth = new Map(targets.map((runId) => [runId, depthOf(runId)]));
+    targets.sort((a, b) => (byDepth.get(b) ?? 0) - (byDepth.get(a) ?? 0));
+
+    for (const runId of targets) killRun(runId, opts);
+
+    // Synchronous throughout, so any target no longer live was terminated here.
+    let killed = 0;
+    for (const runId of targets) {
+      const status = runs.get(runId)?.status;
+      if (status !== "running" && status !== "queued") killed++;
     }
     return { killed };
   }

@@ -108,3 +108,9 @@ export function promptTimeoutHint(evidence: AbortEvidence | undefined): string {
 
   return TIMEOUT_KNOB_HINT;
 }
+
+/**
+ * Hard bound on parent-chain walks. Depth is already limited by maxSpawnDepth;
+ * this is the backstop that keeps a corrupt or cyclic parent link from spinning.
+ */
+export const MAX_SPAWN_TREE_WALK = 64;
