@@ -19973,6 +19973,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                         },
                         "type": "array"
                       },
+                      "ephemeralWritablePaths": {
+                        "default": [],
+                        "items": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "filesystem": {
                         "default": "workspace",
                         "enum": [
@@ -20017,6 +20025,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
                       "filesystem",
                       "network",
                       "credentialPaths",
+                      "ephemeralWritablePaths",
                       "uid"
                     ],
                     "type": "object"
@@ -31420,6 +31429,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                               },
                               "type": "array"
                             },
+                            "ephemeralWritablePaths": {
+                              "default": [],
+                              "items": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
                             "filesystem": {
                               "default": "workspace",
                               "enum": [
@@ -31464,6 +31481,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                             "filesystem",
                             "network",
                             "credentialPaths",
+                            "ephemeralWritablePaths",
                             "uid"
                           ],
                           "type": "object"

@@ -67,6 +67,7 @@ function makeDescriptor(overrides: Partial<SessionDescriptor> = {}): SessionDesc
       network: "none",
       uid: "dedicated",
       credentialPaths: [],
+      ephemeralWritablePaths: [],
     },
     ...overrides,
   };
@@ -119,7 +120,7 @@ describe("terminal-session-descriptor-persistence (durable descriptor store, rea
     const descriptor = makeDescriptor({
       allowId: "privileged-cli",
       owner: { agentId: AGENT, sessionKey: "" },
-      scope: { filesystem: "listed-paths", network: "listed-hosts", uid: "dedicated", credentialPaths: ["/x"], paths: ["/p"], hosts: ["h"] },
+      scope: { filesystem: "listed-paths", network: "listed-hosts", uid: "dedicated", credentialPaths: ["/x"], ephemeralWritablePaths: [], paths: ["/p"], hosts: ["h"] },
     });
     createSessionDescriptorStore({ dataDir, agentId: AGENT }).persist(descriptor);
 
