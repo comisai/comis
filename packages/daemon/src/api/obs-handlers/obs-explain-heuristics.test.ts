@@ -1437,6 +1437,18 @@ describe("obs-explain-heuristics", () => {
     expect(result?.code).not.toBe("execution_terminal_failure");
   });
 
+  it("names a terminal execution budget abort without relying on a tool failure", () => {
+    const result = rootCause(makeSignals({
+      endReason: "budget_exceeded",
+      degraded: true,
+      abortReason: "budget_exceeded",
+    }));
+
+    expect(result?.code).toBe("execution_budget_exceeded");
+    expect(result?.detail).toContain("budget_exceeded");
+    expect(result?.suggestedNextSteps.join(" ")).toContain("budget");
+  });
+
   it("a zero-hit recall on a HEALTHY (non-degraded) turn is benign → no verdict", () => {
     // The agent simply didn't need memory. degraded=false must never name a cause.
     expect(rootCause(makeSignals({ endReason: "success", degraded: false, recall: allMissRecall }))).toBeNull();
