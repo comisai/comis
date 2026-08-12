@@ -205,6 +205,26 @@ export function toolReachableGroups(toolName: string): string[] {
 }
 
 /**
+ * Profile names that reach EVERY named tool — the groups a single re-spawn
+ * could actually use.
+ *
+ * A per-tool answer is not composable: recommending the groups for each tool
+ * separately produces a set of directives that contradict each other whenever
+ * the tools do not share a profile, and a caller can only pass one group list.
+ * `'full'` is not a profile key (it is the "no ceiling" sentinel), so it is
+ * never returned here; callers fall back to it when this returns empty.
+ *
+ * @param toolNames - Tools that must all be reachable from the same group
+ * @returns Profile names containing every tool (empty if no single profile does)
+ */
+export function groupsReachingAll(toolNames: readonly string[]): string[] {
+  if (toolNames.length === 0) return [];
+  return Object.entries(SUB_AGENT_TOOL_PROFILES)
+    .filter(([, tools]) => toolNames.every((name) => tools.includes(name)))
+    .map(([profileName]) => profileName);
+}
+
+/**
  * Classification for a single tool that is unreachable by the sub-agent's
  * profile/group ceiling at spawn time.
  */
@@ -225,15 +245,66 @@ export interface UnreachableToolEntry {
  * (@allow-throw boundary in sub-agent-runner.ts). rpc-dispatch.ts converts
  * this to a JSON-RPC error response.
  */
+/**
+ * Render the rejection as ONE coherent instruction.
+ *
+ * Per-tool hints are computed per tool and cannot see each other, so joining
+ * them emits a separate `Re-spawn with tool_groups:[…]` directive for every
+ * tool. A caller passes one group list, so two directives are a contradiction,
+ * and obeying either fails again on the other tool. This is the only place that
+ * sees the whole set, so the combined directive is derived here.
+ *
+ * A denylisted requirement is unfixable by any group, so when one is present no
+ * re-spawn directive is emitted at all — telling a caller to retry a spawn that
+ * cannot succeed is worse than telling it to change the request.
+ */
+function buildUnreachableToolsMessage(tools: readonly UnreachableToolEntry[]): string {
+  const named = tools.map((t) => t.toolName).join(", ");
+  const denied = tools.filter((t) => t.reason === "denylist");
+  const outside = tools.filter((t) => t.reason === "outside_profile");
+  const parts = [`Required tools unreachable: ${named}.`];
+
+  if (denied.length > 0) {
+    parts.push(denied.map((t) => t.hint).join(" "));
+    if (outside.length > 0) {
+      parts.push(
+        `No re-spawn can satisfy this request while ${denied.map((t) => `'${t.toolName}'`).join(", ")} `
+        + `${denied.length === 1 ? "is" : "are"} required — drop `
+        + `${denied.length === 1 ? "it" : "them"} or perform that step in the parent.`,
+      );
+    }
+    return parts.join(" ");
+  }
+
+  const outsideNames = outside.map((t) => t.toolName);
+  const shared = groupsReachingAll(outsideNames);
+  // 'full' is the only ceiling that reaches a tool no profile lists (MCP tools,
+  // and generic tools absent from every profile), so it is the fallback.
+  const suggestion = shared.length > 0 ? shared.join("' | '") : "full";
+  const validGroups = [...Object.keys(SUB_AGENT_TOOL_PROFILES), "full"].join("' | '");
+  parts.push(
+    outsideNames.length === 1
+      ? `Tool '${outsideNames[0]}' is outside this sub-agent's profile.`
+      : `Tools ${outsideNames.map((n) => `'${n}'`).join(", ")} are outside this sub-agent's profile; `
+        + `one re-spawn must reach all of them.`,
+  );
+  parts.push(`Re-spawn with tool_groups:['${suggestion}'].`);
+  parts.push(`Valid groups are '${validGroups}' — any other value is ignored.`);
+  if (outsideNames.some((n) => n.startsWith("mcp__"))) {
+    parts.push(
+      "MCP tool names are resolved from connected servers at runtime, so no narrow profile "
+      + "lists them and 'full' is the only group that reaches them.",
+    );
+  }
+  return parts.join(" ");
+}
+
 export class RequiredToolsUnreachableError extends Error {
   readonly kind = "required_tools_unreachable" as const;
   readonly unreachableTools: UnreachableToolEntry[];
 
   constructor(tools: UnreachableToolEntry[]) {
-    super(
-      `Required tools unreachable: ${tools.map((t) => t.toolName).join(", ")}. ` +
-        tools.map((t) => t.hint).join(" "),
-    );
+    super(buildUnreachableToolsMessage(tools));
     this.unreachableTools = tools;
     this.name = "RequiredToolsUnreachableError";
   }
