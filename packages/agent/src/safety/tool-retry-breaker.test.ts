@@ -1091,8 +1091,12 @@ describe("tool retry breaker", () => {
       expect(reason).not.toMatch(/same error:.*has failed/s);
       expect((reason.match(/appears to be unavailable/g) ?? []).length).toBe(1);
       // The innermost real error survives every round — it is the whole point
-      // of the clause, and it is what got buried.
-      expect(reason).toContain("Redirects are blocked for security");
+      // of the clause, and it is what got displaced. (The clause is capped at
+      // 150 chars, and a long URL eats most of that, so assert on the head of
+      // the real error rather than a phrase past the cut.)
+      expect(reason).toContain("URL redirected");
+      // …and it is the ERROR that survives, never the prior block's prose.
+      expect(reason).not.toContain("DO NOT retry this tool. Instead:\\n");
     });
 
     it("collapses a raw serialized envelope lastError to its inner text", () => {
