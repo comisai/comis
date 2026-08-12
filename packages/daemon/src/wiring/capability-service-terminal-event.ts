@@ -89,7 +89,7 @@ export function createManagedTerminalEventBridge(deps: {
         }, "Managed terminal transition delivery failed");
         return;
       }
-      if (input.transition !== "released") return;
+      if (input.transition !== "exited" && input.transition !== "released") return;
       const released = await fromPromise(deps.store.releaseTerminal(
         { kind: "service", serviceInstanceId: input.serviceInstanceId },
         {
@@ -110,7 +110,7 @@ export function createManagedTerminalEventBridge(deps: {
           terminalSessionId: input.terminalSessionId,
           errorKind: "resource" as const,
           hint: "Reconcile the exact managed run, workspace lease, and terminal binding before retrying cleanup",
-        }, "Managed terminal release was not durably recorded");
+        }, "Managed terminal settlement was not durably recorded");
       }
     },
   };
