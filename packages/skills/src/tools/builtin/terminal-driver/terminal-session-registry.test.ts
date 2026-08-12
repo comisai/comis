@@ -449,6 +449,49 @@ describe("createTerminalSessionRegistry — read round-trip", () => {
       alive: true,
     });
   });
+
+  it("preserves the final bounded screen after the terminal process exits", async () => {
+    const fake = makeFakeWorker((req) => {
+      if (req.method !== "read") return undefined;
+      return {
+        sessionId: req.sessionId,
+        requestId: req.requestId,
+        ok: true,
+        result: {
+          screen: "protected bootstrap failed",
+          cursor: { x: 26, y: 0 },
+          cols: 80,
+          rows: 24,
+          alt: false,
+          alive: false,
+        },
+      };
+    });
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    }, OWNER);
+    const handle = registry.get(sessionId, OWNER);
+    if (handle === undefined) throw new Error("test session handle is missing");
+    handle.status = "exited";
+    handle.exitCode = 1;
+
+    const view = await registry.read(sessionId, OWNER);
+
+    expect(view).toEqual({
+      screen: "protected bootstrap failed",
+      cursor: { x: 26, y: 0 },
+      cols: 80,
+      rows: 24,
+      alt: false,
+      alive: false,
+    });
+    expect(fake.requestFrames.some((frame) => frame.method === "read")).toBe(true);
+  });
 });
 
 describe("createTerminalSessionRegistry — everSentText marks a tasked drive", () => {
