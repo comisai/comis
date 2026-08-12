@@ -49,6 +49,13 @@ describe("capability-service Linux confinement runner", () => {
     expect(runner).not.toMatch(/source=\/[^,]*,target=\/,(?:,|\s)/u);
   });
 
+  it("mounts Codex authentication for every gate that verifies the live CLI", () => {
+    const runner = source(hostRunnerPath);
+
+    expect(runner).toContain('if [[ "${mode}" =~ ^(spike|join|observe|shell)$ && ! -f "${codex_auth_file}" ]]');
+    expect(runner).toContain('if [[ "${mode}" =~ ^(spike|join|observe|shell)$ ]]; then');
+  });
+
   it("materializes linked companion worktrees as disposable standalone authorities", () => {
     const runner = source(hostRunnerPath);
 
