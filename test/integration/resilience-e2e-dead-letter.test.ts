@@ -351,7 +351,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
   // Log level verification for DLQ delivery
   // -------------------------------------------------------------------------
 
-  it("successful DLQ delivery logs at DEBUG level (not ERROR)", async () => {
+  it("successful DLQ delivery logs at INFO level (not ERROR)", async () => {
     const eventBus = new TypedEventBus();
     const logger = createMockLogger();
 
@@ -382,9 +382,13 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
 
     expect(dlq.size()).toBe(0);
 
-    // Verify DEBUG log for successful delivery (not ERROR).
-    // The DLQ uses logger.debug for successful delivery.
-    expect(logger.debug).toHaveBeenCalledWith(
+    // Verify the successful delivery is reported, and is NOT an ERROR — that is
+    // what this test guards. The level is INFO, not DEBUG: a drained quarantine
+    // logged only at DEBUG left a standing WARN with no visible resolution at
+    // the default level, which reads as a lost user announcement when it is the
+    // opposite. Diagnosability must not depend on debug logging having been
+    // enabled before the incident.
+    expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-4" }),
       expect.stringContaining("delivered successfully"),
     );
