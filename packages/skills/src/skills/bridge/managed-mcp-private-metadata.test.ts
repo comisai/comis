@@ -277,7 +277,8 @@ describe("managed MCP private metadata boundary", () => {
   });
 
   it("rejects an attachment request without execution attachment scope", async () => {
-    const deps = makeDeps();
+    const logger = makeLogger();
+    const deps = makeDeps({ logger });
     const bridge = createManagedMcpPrivateMetadataBridge(deps);
     const call = makeCall();
 
@@ -297,6 +298,9 @@ describe("managed MCP private metadata boundary", () => {
 
     expect(accepted.ok).toBe(false);
     expect(deps.activatePrepared).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      rejectionReason: "managed-run attachment request lacks execution attachment scope",
+    }), "Managed MCP private metadata rejected");
   });
 
   it("rejects prepared metadata after active-turn policy ownership changes", async () => {
