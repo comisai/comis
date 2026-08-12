@@ -59,7 +59,16 @@ const SYSTEM_DEGRADED_BY_CAUSE_CAP = 10;
  * hard degraded rate. Mirrors the `completed_with_tool_errors` literal in
  * `END_REASON_MAP` (executor-post-execution.ts); a rename there must update this.
  */
-const DELIVERED_WITH_TOOL_ERRORS_CAUSE = "completed_with_tool_errors";
+/**
+ * The one SOFT degradation cause: the turn errored somewhere but still
+ * delivered a reply. {@link reduceSystemWindow} counts it separately so the
+ * system detector can subtract it out of the hard-degraded rate.
+ *
+ * Exported because the per-session aggregator must not let this cause overwrite
+ * a hard one it already recorded — a downgrade there deletes the session from
+ * the hard count here. The two rules are one invariant and must name one string.
+ */
+export const DELIVERED_WITH_TOOL_ERRORS_CAUSE = "completed_with_tool_errors";
 
 /** The stable bucket for a degraded row whose endReason is missing/blank. */
 const UNKNOWN_CAUSE = "unknown";

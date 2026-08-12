@@ -7,6 +7,7 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createRowMapper } from "../row-mapper.js";
+import { DELIVERED_WITH_TOOL_ERRORS_CAUSE } from "./system-window-rollup.js";
 import {
   diagnosticMapper,
   channelSnapshotMapper,
@@ -336,7 +337,21 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
         typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown";
       if (rowDegraded) {
         const isPendingContinuation = rowEndReason === "background_pending";
-        if (!isPendingContinuation || !acc.degraded) {
+        // A SOFT cause must never overwrite a HARD one. `degraded` is sticky,
+        // but the cause was last-degraded-wins, so a later
+        // `completed_with_tool_errors` turn in the same conversation
+        // reclassified an earlier death as "the user still got a reply" — and
+        // the system detector subtracts exactly that bucket out of its hard
+        // count, so the failure disappeared from the daemon-wide view along
+        // with the traceId needed to open it. Same shape as the
+        // `background_pending` rule beside it: a cause that describes a lesser
+        // state does not get to mask a worse one already recorded.
+        const wouldDowngrade =
+          rowEndReason === DELIVERED_WITH_TOOL_ERRORS_CAUSE
+          && acc.degraded
+          && acc.endReason !== DELIVERED_WITH_TOOL_ERRORS_CAUSE
+          && acc.endReason !== "background_pending";
+        if ((!isPendingContinuation || !acc.degraded) && !wouldDowngrade) {
           acc.endReason = rowEndReason;
           if (r.trace_id.length > 0) acc.traceId = r.trace_id;
         }
