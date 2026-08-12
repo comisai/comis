@@ -205,23 +205,67 @@ export function toolReachableGroups(toolName: string): string[] {
 }
 
 /**
- * Profile names that reach EVERY named tool — the groups a single re-spawn
- * could actually use.
+ * Every ceiling name a caller may pass in `tool_groups`, mapped to the tools it
+ * reaches — the same universe `computeReachableToolNames` validates against.
+ *
+ * `tool_groups` is a free-form string array, and the gate expands BOTH
+ * SUB_AGENT_TOOL_PROFILES and SUB_AGENT_TOOL_GROUPS (bare or `group:`-prefixed).
+ * A suggester that reads only the profile map is therefore blind to every
+ * group-only tool — `web_fetch`, `browser`, `memory_get`, and the whole
+ * `sessions_*` surface — and can offer nothing but `'full'` for them.
+ * Names present in both maps resolve to the union at the gate, so they union here.
+ *
+ * @returns Ceiling name (bare, no `group:` prefix) -> reachable tool names
+ */
+function ceilingCandidates(): Map<string, Set<string>> {
+  const merged = new Map<string, Set<string>>();
+  const add = (name: string, tools: readonly string[]): void => {
+    let reached = merged.get(name);
+    if (reached === undefined) {
+      reached = new Set<string>();
+      merged.set(name, reached);
+    }
+    for (const tool of tools) reached.add(tool);
+  };
+  for (const [profileName, tools] of Object.entries(SUB_AGENT_TOOL_PROFILES)) {
+    add(profileName, tools);
+  }
+  for (const [groupKey, tools] of Object.entries(SUB_AGENT_TOOL_GROUPS)) {
+    add(groupKey.startsWith("group:") ? groupKey.slice("group:".length) : groupKey, tools);
+  }
+  // Denylisted tools are unreachable under every ceiling — mirrors computeReachableToolNames.
+  for (const reached of merged.values()) {
+    for (const denied of SUB_AGENT_TOOL_DENYLIST) reached.delete(denied);
+  }
+  return merged;
+}
+
+/** Ceiling names accepted by `tool_groups`, narrowest first. */
+export function validCeilingNames(): string[] {
+  return [...ceilingCandidates().keys()].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Ceiling names that reach EVERY named tool, narrowest first — the groups a
+ * single re-spawn could actually use.
  *
  * A per-tool answer is not composable: recommending the groups for each tool
  * separately produces a set of directives that contradict each other whenever
- * the tools do not share a profile, and a caller can only pass one group list.
- * `'full'` is not a profile key (it is the "no ceiling" sentinel), so it is
- * never returned here; callers fall back to it when this returns empty.
+ * the tools do not share a ceiling, and a caller can only pass one group list.
+ * Ordering is by reachable-tool count so the caller is offered the least
+ * privilege that satisfies the request; `'full'` is the "no ceiling" sentinel
+ * rather than a name here, so callers fall back to it only when nothing matches.
  *
- * @param toolNames - Tools that must all be reachable from the same group
- * @returns Profile names containing every tool (empty if no single profile does)
+ * @param toolNames - Tools that must all be reachable from the same ceiling
+ * @returns Ceiling names reaching every tool (empty if none does)
  */
 export function groupsReachingAll(toolNames: readonly string[]): string[] {
   if (toolNames.length === 0) return [];
-  return Object.entries(SUB_AGENT_TOOL_PROFILES)
-    .filter(([, tools]) => toolNames.every((name) => tools.includes(name)))
-    .map(([profileName]) => profileName);
+  return [...ceilingCandidates().entries()]
+    .filter(([, reached]) => toolNames.every((name) => reached.has(name)))
+    .sort(([aName, aReached], [bName, bReached]) =>
+      aReached.size - bReached.size || aName.localeCompare(bName))
+    .map(([name]) => name);
 }
 
 /**
@@ -278,10 +322,13 @@ function buildUnreachableToolsMessage(tools: readonly UnreachableToolEntry[]): s
 
   const outsideNames = outside.map((t) => t.toolName);
   const shared = groupsReachingAll(outsideNames);
-  // 'full' is the only ceiling that reaches a tool no profile lists (MCP tools,
-  // and generic tools absent from every profile), so it is the fallback.
-  const suggestion = shared.length > 0 ? shared.join("' | '") : "full";
-  const validGroups = [...Object.keys(SUB_AGENT_TOOL_PROFILES), "full"].join("' | '");
+  // groupsReachingAll is ordered narrowest-first, so the head is the least
+  // privilege that satisfies the request. 'full' is the fallback only for tools
+  // no ceiling lists (MCP tools, resolved from connected servers at runtime) —
+  // suggesting it where a narrow group suffices turns a reachability error into
+  // a privilege escalation.
+  const suggestion = shared.length > 0 ? (shared[0] as string) : "full";
+  const validGroups = [...validCeilingNames(), "full"].join("' | '");
   parts.push(
     outsideNames.length === 1
       ? `Tool '${outsideNames[0]}' is outside this sub-agent's profile.`
