@@ -11921,8 +11921,7 @@ export const CONTRACTS = {
                 "unavailable",
                 "committed",
                 "retained",
-                "failed",
-                "unknown"
+                "failed"
               ]
             },
             "startedAt": {
