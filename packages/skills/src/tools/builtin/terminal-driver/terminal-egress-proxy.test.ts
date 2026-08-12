@@ -120,8 +120,9 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
 
   it("DENY: a CONNECT to a NON-listed host is 403'd and never dials upstream", async () => {
     const dial = vi.fn();
+    const logger = silentLogger();
     const proxy = createTerminalEgressProxy({
-      logger: silentLogger(),
+      logger,
       dialUpstream: dial as never,
       socketDir: tmpdir(),
       genId: () => "deny1",
@@ -134,6 +135,17 @@ describe("createTerminalEgressProxy — host-side no-secret allowlist CONNECT pr
     expect(reply).toMatch(/Forbidden/i);
     // The deny branch MUST NOT dial upstream (no SSRF, no leak).
     expect(dial).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        toolName: "terminal_egress_proxy",
+        targetHost: "evil.example.com",
+        targetPort: 443,
+        allowedHosts: ["api.example.com"],
+        hint: "Add evil.example.com to the terminal allow entry scope.hosts only if this egress is intended",
+        errorKind: "auth",
+      },
+      "egress CONNECT blocked",
+    );
   });
 
   it("NO-SECRET: the proxy injects nothing — the 200 preamble carries no credential header", async () => {
