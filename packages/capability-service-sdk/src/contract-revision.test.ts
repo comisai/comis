@@ -23,6 +23,22 @@ function activateParams(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe("capability-service execution-attachment contract", () => {
+  it("publishes a service-scoped attention response receive method", () => {
+    expect(CAPABILITY_SERVICE_METHODS).toContain("managedRuns.receiveAttentionResponse");
+    expect(CapabilityHandshakeRequestSchema.safeParse({
+      jsonrpc: "2.0",
+      id: "operation_handshake",
+      method: "capabilityServices.handshake",
+      params: {
+        protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
+        bundleDigest: digest,
+        operationId: "operation_handshake",
+        serviceInstanceId: "service-instance_a",
+        requestedScopes: ["health", "attention_response"],
+      },
+    }).success).toBe(true);
+  });
+
   it("accepts exact managed run release requests", () => {
     expect(CAPABILITY_SERVICE_METHODS).toContain("managedRuns.release");
     expect(CapabilityServiceRequestSchema.safeParse({
