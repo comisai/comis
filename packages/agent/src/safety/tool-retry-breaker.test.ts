@@ -129,6 +129,44 @@ describe("tool retry breaker", () => {
       expect(verdict.block).toBe(true);
     });
 
+    it("keeps novel arguments available after invocation-local failures", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 1,
+        maxToolFailures: 3,
+        maxConsecutiveErrorPatterns: 100,
+        suggestAlternatives: false,
+      });
+      const recordWithTransport = breaker.recordResult as unknown as (
+        toolName: string,
+        args: Record<string, unknown>,
+        success: boolean,
+        errorText: string,
+        context: { transportOk: boolean },
+      ) => ReturnType<ToolRetryBreaker["recordResult"]>;
+      const denied = JSON.stringify({
+        content: [{ type: "text", text: "HTTP 403" }],
+        details: { status: 403, error: "HTTP 403" },
+      });
+
+      for (const path of ["one", "two", "three"]) {
+        recordWithTransport(
+          "web_fetch",
+          { url: `https://example.com/${path}` },
+          false,
+          denied,
+          { transportOk: true },
+        );
+      }
+
+      expect(
+        breaker.beforeToolCall("web_fetch", { url: "https://example.com/one" }).block,
+      ).toBe(true);
+      expect(breaker.getBlockedTools()).not.toContain("web_fetch");
+      expect(
+        breaker.beforeToolCall("web_fetch", { url: "https://example.com/novel" }).block,
+      ).toBe(false);
+    });
+
     it("includes tool name and error pattern in block reason", () => {
       const breaker = createBreaker();
       const tool = "mcp__yfinance--get_recs";
@@ -1296,6 +1334,23 @@ describe("isBreakerBlockMessage", () => {
   it("recognizes a parameter-validation block", () => {
     const reason = buildBlockReason("some_tool", 3, "bad args", [], "invalid_params", false);
     expect(isBreakerBlockMessage(reason)).toBe(true);
+  });
+
+  it("recognizes a serialized builtin result that wraps a breaker block", () => {
+    const reason = buildBlockReason(
+      "web_fetch",
+      5,
+      "HTTP 403",
+      [],
+      "http_403",
+      true,
+    );
+    const resultEnvelope = JSON.stringify({
+      content: [{ type: "text", text: reason }],
+      details: {},
+    });
+
+    expect(isBreakerBlockMessage(resultEnvelope)).toBe(true);
   });
 
   it("does NOT match the underlying error the block quotes", () => {

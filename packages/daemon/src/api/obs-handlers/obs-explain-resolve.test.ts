@@ -30,6 +30,9 @@ import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-re
 const TRACE_TURN_1 = "f942d38c-e372-43cc-99f1-ead4f0b8582f";
 const TRACE_TURN_2 = "058db0fe-651f-4362-908f-babd8208afa3";
 const CANONICAL_SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const CHILD_RUN_ID = "32e91601-c71e-4386-bc16-f87867ca6aff";
+const CHILD_SESSION_KEY =
+  `default:agent:default:user_a:sub-agent:runtime:${CHILD_RUN_ID}:peer:user_a`;
 
 function todayKey(): string {
   return systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
@@ -147,6 +150,32 @@ describe("resolveTraceToSession", () => {
     const on = await resolveTraceToSession(dataDir, TRACE_TURN_1, true);
     expect(off).toBe(CANONICAL_SESSION_KEY);
     expect(on).toBe(CANONICAL_SESSION_KEY);
+  });
+
+  it("resolves a sub-agent run identifier from the canonical indexed session key", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "child-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+    ]);
+
+    const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toBe(CHILD_SESSION_KEY);
+  });
+
+  it("does not resolve a run identifier found outside the sub-agent channel", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "other-trace-id",
+        sessionKey: `default:agent:default:user_a:telegram:chat:peer:${CHILD_RUN_ID}`,
+      }),
+    ]);
+
+    const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toBe("");
   });
 
   it("treats a string 'true' synthetic field as NON-synthetic and still resolves (strict === true)", async () => {
