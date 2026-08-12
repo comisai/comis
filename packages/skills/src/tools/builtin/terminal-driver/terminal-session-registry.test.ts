@@ -2694,7 +2694,7 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     expect(onUnrecoverable2).not.toHaveBeenCalled();
   });
 
-  it("preserves a stale managed descriptor when restart liveness cannot be confirmed", () => {
+  it("retains exact dead managed authority until release confirmation", async () => {
     const fake = makeFakeWorker();
     const managed = {
       ...durableDescriptor(),
@@ -2705,11 +2705,22 @@ describe("createTerminalSessionRegistry — recover-on-boot re-attach", () => {
     };
     const store = fakeDescriptorStore([managed]);
 
-    createTerminalSessionRegistry(baseDeps(() => fake.child, {
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, {
       durability: { descriptorStore: store, isTmuxAlive: () => false },
     }));
 
     expect(store.remove).not.toHaveBeenCalled();
+    expect(registry.get("old-sess", DURABLE_OWNER)?.status).toBe("lost");
+    expect(registry.getManagedBinding?.("old-sess")).toEqual({
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      serviceInstanceId: "service-instance_a",
+    });
+    await expect(registry.terminateAndConfirm("old-sess", DURABLE_OWNER)).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(store.remove).toHaveBeenCalledWith("old-sess");
   });
 
   it("preserves an incomplete managed descriptor without re-attaching or claiming recovery", async () => {
