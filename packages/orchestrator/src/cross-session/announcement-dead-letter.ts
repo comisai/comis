@@ -86,11 +86,15 @@ export interface AnnouncementDeadLetterQueue {
   /** Return the current number of entries in the queue. */
   size(): number;
   /**
-   * Every parked announcement, content-free, for operator review. Reads the
-   * in-memory state — which is authoritative, since a persist rewrites the file
-   * from it. Ordered oldest-first so the longest-stuck item leads.
+   * Every parked announcement, content-free, for operator review. Ordered
+   * oldest-first so the longest-stuck item leads.
+   *
+   * ASYNC because the queue loads from disk lazily: a freshly-started daemon
+   * has not drained yet, so a synchronous read of the in-memory lists reports
+   * an empty queue while the JSONL holds a stuck item — precisely the state an
+   * operator runs this to discover. It loads first, then projects.
    */
-  listQuarantined(): readonly QuarantinedAnnouncement[];
+  listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
   /**
    * Record an operator's decision about one parked announcement and drop it.
    *
@@ -991,7 +995,22 @@ export function createAnnouncementDeadLetterQueue(
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
     size: () => entries.length + decisionReservations.length,
-    listQuarantined: () => projectQuarantined(entries, decisionReservations),
+    listQuarantined: () => serialize(async () => {
+      // Load before projecting: the in-memory lists are empty until some
+      // operation has faulted the file in, and `list` is usually the FIRST
+      // thing an operator runs after a restart.
+      const loadedFromDisk = await loadFromDisk();
+      if (!loadedFromDisk.ok) {
+        logger?.warn(
+          {
+            errorKind: "resource" as const,
+            hint: "restore dead-letter storage; the quarantine listing is incomplete",
+          },
+          "Quarantined announcement listing could not read the dead-letter file",
+        );
+      }
+      return projectQuarantined(entries, decisionReservations);
+    }),
     release: (id, outcome) => serialize(() => releaseSerialized(id, outcome)),
   };
 }

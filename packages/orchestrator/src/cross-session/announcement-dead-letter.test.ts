@@ -1718,7 +1718,7 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
       lastError: "outward_operation_unresolved",
     }));
 
-    const rows = queue.listQuarantined();
+    const rows = await queue.listQuarantined();
 
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
@@ -1734,15 +1734,32 @@ describe("AnnouncementDeadLetterQueue operator lever", () => {
     expect(JSON.stringify(row)).not.toContain("the answer the user never saw");
   });
 
+  it("lists entries written by a PREVIOUS process, before any drain has run", async () => {
+    // The queue loads from disk lazily, inside the serialized operations. A
+    // fresh daemon has not drained yet, so an operator running `list` right
+    // after a restart saw an empty queue while the JSONL held a stuck item —
+    // the exact state the command exists to surface. Reproduced live on
+    // comis-moshe against a real parked announcement.
+    const seeded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await seeded.enqueue(makeEntry({ runId: "run-from-a-previous-boot" }));
+
+    // A brand-new queue over the same file: nothing has loaded it yet.
+    const fresh = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    const rows = await fresh.listQuarantined();
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.runId).toBe("run-from-a-previous-boot");
+  });
+
   it("releases a quarantined announcement by id and persists the removal", async () => {
     const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
     await queue.enqueue(makeEntry({ runId: "run-stuck" }));
-    const id = queue.listQuarantined()[0]!.id;
+    const id = (await queue.listQuarantined())[0]!.id;
 
     const released = await queue.release(id, "discarded");
 
     expect(released).toMatchObject({ ok: true, value: true });
-    expect(queue.listQuarantined()).toHaveLength(0);
+    expect(await queue.listQuarantined()).toHaveLength(0);
     expect(queue.size()).toBe(0);
     // Durable: a fresh queue over the same file must not resurrect it.
     const reloaded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });

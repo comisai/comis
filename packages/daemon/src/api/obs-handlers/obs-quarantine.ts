@@ -37,7 +37,7 @@ export function bindObsQuarantineHandlers(deps: ObsHandlerDeps): Record<string, 
       requireAdmin(rawParams);
       ObsQuarantineListContract.request.parse(stripInternalFields(rawParams));
 
-      const rows = deps.deadLetterQueue?.listQuarantined() ?? [];
+      const rows = (await deps.deadLetterQueue?.listQuarantined()) ?? [];
       // The rows are content-free by construction (the port carries
       // `announcementChars`, never the text), so they ride the loose-record
       // wire projection directly — the same narrowing the sibling obs.* reads use.
