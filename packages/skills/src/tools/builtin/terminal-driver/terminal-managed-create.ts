@@ -29,6 +29,7 @@ export function narrowManagedTerminalScope(scope: TerminalScope): TerminalScope 
     filesystem: "workspace",
     network: scope.network,
     credentialPaths: [...scope.credentialPaths],
+    ephemeralWritablePaths: [...scope.ephemeralWritablePaths],
     uid: scope.uid,
     ...(scope.hosts === undefined ? {} : { hosts: scope.hosts }),
   };

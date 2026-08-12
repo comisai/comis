@@ -252,6 +252,7 @@ function isScope(v: unknown): v is TerminalScope {
   const uidOk = s.uid === "dedicated" || s.uid === "daemon";
   if (!fsOk || !netOk || !uidOk) return false;
   if (!Array.isArray(s.credentialPaths) || !s.credentialPaths.every((p) => typeof p === "string")) return false;
+  if (!Array.isArray(s.ephemeralWritablePaths) || !s.ephemeralWritablePaths.every((p) => typeof p === "string" && (p === "~" || p.startsWith("~/") || p.startsWith("/")))) return false;
   if (s.paths !== undefined && !(Array.isArray(s.paths) && s.paths.every((p) => typeof p === "string"))) return false;
   if (s.hosts !== undefined && !(Array.isArray(s.hosts) && s.hosts.every((h) => typeof h === "string"))) return false;
   return true;

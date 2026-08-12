@@ -78,6 +78,7 @@ export const LEAST_PRIVILEGE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
   credentialPaths: [],
+  ephemeralWritablePaths: [],
   uid: "dedicated",
 };
 

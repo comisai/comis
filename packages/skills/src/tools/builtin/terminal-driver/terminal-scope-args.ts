@@ -2,7 +2,7 @@
 // @allow-throw: exhaustiveness guards on the filesystem + network unions; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * buildScopeArgs -- materialize a {@link TerminalScope} into the exact bwrap argv
- * (filesystem/network/uid + credentialPaths + the ~/.comis carve-out).
+ * (filesystem/network/uid + credential paths + explicit ephemeral mounts + the ~/.comis carve-out).
  *
  * This is THE central scope -> jail mapping. It is MODELED on
  * `BwrapProvider.buildArgs` (`sandbox/bwrap-provider.ts:140-224`) but is a
@@ -50,7 +50,7 @@ export interface ScopeArgsInput {
   workspace: string;
   /** The `--chdir` target. */
   cwd: string;
-  /** Injected `os.homedir()` — TESTABLE (the home bind + the ~/.claude/.comis roots). */
+  /** Injected `os.homedir()` — TESTABLE (the home bind + operator-relative roots). */
   home: string;
   /** The carve-out target — `os.homedir()/.comis` (non-configurable). */
   dataDir: string;
@@ -204,7 +204,8 @@ function isUnderDir(child: string, parent: string): boolean {
  *   [bwrapPath, ...systemRO(--ro-bind p p), --proc, --dev, --dev-bind /dev/pts,
  *    --tmpfs /tmp, <FS binds>, <credentialPaths ro-bind-try>, <uid>,
  *    --unshare-all, <network>, --die-with-parent, --new-session, --chdir <cwd>,
- *    <CARVE-OUT --tmpfs <dataDir>>, <workspace re-bind if under dataDir>, --]
+ *    <operator ephemeral tmpfs mounts>, <CARVE-OUT --tmpfs <dataDir>>,
+ *    <workspace re-bind if under dataDir>, --]
  *
  * `--unshare-all` already supplies `--unshare-pid` + `--unshare-user` + ipc/uts/
  * cgroup — no separate `--unshare-pid`. `--new-session` is emitted
@@ -291,38 +292,19 @@ export function buildScopeArgs(input: ScopeArgsInput): string[] {
   }
   args.push("--setenv", "CLAUDE_CODE_BUBBLEWRAP", "1");
 
-  // -- claude session-env carve-out -- a writable tmpfs at <home>/.claude/session-env.
-  //    claude's OWN bash sandbox remounts $HOME read-only IN-PLACE before `mkdir ~/.claude/
-  //    session-env/<id>` (its per-bash-command state) → EROFS on the default durable backend in the
-  //    prod seccomp'd daemon (CLAUDE_CODE_BUBBLEWRAP does NOT suppress that remount there — it only
-  //    appeared to on a non-seccomp socket). A SEPARATE sub-mount survives the in-place parent
-  //    remount, so the mkdir lands on a rw tmpfs → claude's Bash tool runs (live-proven 2026-06-17,
-  //    seccomp'd daemon, `--permission-mode bypassPermissions`). Ephemeral + per-jail; claude's
-  //    creds/config under ~/.claude stay intact (only the transient session-env subdir is the
-  //    tmpfs). Placed BEFORE the ~/.comis mask so that mask + the workspace re-bind stay the LAST
-  //    mounts. Harmless for a non-claude CLI (an unused empty tmpfs at a path it never touches).
-  //
-  //    SKIP it when an operator credentialPath RO-binds the carve-out's PARENT
-  //    (<home>/.claude, or an ancestor like ~): bwrap then cannot mkdir the
-  //    session-env mountpoint inside the read-only subtree and the WHOLE jail
-  //    fails to launch ("Can't mkdir …/.claude/session-env: Read-only file
-  //    system" — live-reproduced on the VPS). A writable subdir cannot exist in a
-  //    RO bind anyway, so the RO-cred operator opt-in takes precedence over the
-  //    carve-out (claude's per-bash session-env then falls back to its own EROFS
-  //    handling, no worse than without the carve-out).
-  const sessionEnvParent = `${input.home}/.claude`;
-  const carveOutParentIsRoBound = input.scope.credentialPaths.some((credPath) => {
-    if (credPath.length === 0) return false;
+  // -- Operator-declared ephemeral writable paths --
+  //    Each mount is a fresh per-jail tmpfs layered after the read-only credential
+  //    binds. Nothing is inferred from a credential path or the selected binary:
+  //    writable state is an explicit operator policy decision. These mounts precede
+  //    the data-directory mask so the non-configurable secret carve-out stays last.
+  for (const writablePath of input.scope.ephemeralWritablePaths) {
     const expanded =
-      credPath === "~"
+      writablePath === "~"
         ? input.home
-        : credPath.startsWith("~/")
-          ? `${input.home}${credPath.slice(1)}`
-          : credPath;
-    return sessionEnvParent === expanded || isUnderDir(sessionEnvParent, expanded);
-  });
-  if (!carveOutParentIsRoBound) {
-    args.push("--tmpfs", `${input.home}/.claude/session-env`);
+        : writablePath.startsWith("~/")
+          ? `${input.home}${writablePath.slice(1)}`
+          : writablePath;
+    args.push("--tmpfs", expanded);
   }
 
   // -- The ~/.comis carve-out LAST -- later bwrap mount wins (the bind-order
