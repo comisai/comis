@@ -930,6 +930,9 @@ describe("local rig mode", () => {
     expect(deployEmulator).toContain("node '$KIT_DIR/wire-emu.mjs'");
     expect(deployEmulator).toContain("bash '$KIT_DIR/restart-daemon.sh'");
     expect(rigDoctor).toContain('RIG_HELPER="$KIT_DIR/_rig.sh"');
+    expect(rigDoctor).toContain(
+      `remote_root "RIG_ENV='$RIG_ENV' node '$KIT_DIR/revoke.mjs'`,
+    );
     expect(rigDoctor).not.toContain('RIG_HELPER="/root/_rig.sh"');
   });
 
