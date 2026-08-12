@@ -59,6 +59,10 @@ const TASK_CORRELATION_ID = "256bb57a-b6c3-46ba-88d3-459c7be29dfe";
 const TASK_SESSION_KEY = "default:agent:default:scheduler-task-check-default:scheduler:task-check:attempt-task-a:peer:scheduler-task-check-default";
 const GRAPH_ID = "5ea53a58-f0fc-4683-b6e6-53b1d828e602";
 const GRAPH_TRACE_ID = "5a6c1d74-da1c-4d09-93c3-33862a076b9b";
+const CHILD_RUN_ID = "32e91601-c71e-4386-bc16-f87867ca6aff";
+const CHILD_TRACE_ID = "f1b3491e-54ae-4aca-bb92-f6dec86a6134";
+const CHILD_SESSION_KEY =
+  `default:agent:default:user_a:sub-agent:runtime:${CHILD_RUN_ID}:peer:user_a`;
 
 // Every temp dir created — torn down in afterEach so no temp tree leaks.
 const tmpDirs: string[] = [];
@@ -100,6 +104,19 @@ function buildNamedAgentSessionFile(workspaceDir: string): string {
     channelId: "678314278",
     peerId: "678314278",
   }, path.join(workspaceDir, "sessions"));
+  fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+  fs.writeFileSync(sessionFile, "", "utf-8");
+  return sessionFile;
+}
+
+function buildChildSessionFile(dataDir: string): string {
+  const sessionFile = sessionKeyToPath({
+    tenantId: "default",
+    agentId: "default",
+    userId: "user_a",
+    channelId: `sub-agent:runtime:${CHILD_RUN_ID}`,
+    peerId: "user_a",
+  }, path.join(dataDir, "workspace", "sessions"));
   fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
   fs.writeFileSync(sessionFile, "", "utf-8");
   return sessionFile;
@@ -230,6 +247,74 @@ function multiExecutionTrajectoryLines(): string {
       },
     },
   ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
+function childRunTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.started",
+      seq: 1,
+      traceId: CHILD_TRACE_ID,
+      data: { channelType: "sub-agent", channelId: `runtime:${CHILD_RUN_ID}` },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "prompt.submitted",
+      seq: 2,
+      traceId: CHILD_TRACE_ID,
+      data: { inboundKind: "message" },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "tool.result",
+      seq: 3,
+      traceId: CHILD_TRACE_ID,
+      data: {
+        toolName: "web_fetch",
+        success: false,
+        classifiedFailureBy: "executor",
+        errorKind: "dependency",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 4,
+      traceId: CHILD_TRACE_ID,
+      data: {
+        degraded: true,
+        turnCount: 1,
+        costUsd: 0.01,
+        toolStats: { web_fetch: { ok: 0, failed: 1 } },
+        breakerTripCount: 0,
+        topErrorKinds: { dependency: 1 },
+        source: "runtime",
+        endReason: "tool_invocation_stall",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
+function writeChildSessionIndex(dataDir: string): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  const dayKey = systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
+  fs.writeFileSync(
+    path.join(logsDir, `session-index.${dayKey}.jsonl`),
+    JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      traceId: CHILD_TRACE_ID,
+      sessionKey: CHILD_SESSION_KEY,
+    }) + "\n",
+    "utf-8",
+  );
 }
 
 function providerIdentityErrorTrajectoryLines(): string {
@@ -657,6 +742,24 @@ function writeIncompleteSkillImportMetadata(sessionFile: string): void {
   );
 }
 
+function writeChildRunMetadata(sessionFile: string): void {
+  const metadataFile = sessionFile.replace(/\.jsonl$/, "_session-metadata.json");
+  fs.writeFileSync(
+    metadataFile,
+    JSON.stringify({
+      traceId: CHILD_TRACE_ID,
+      channel: { type: "sub-agent", id: `runtime:${CHILD_RUN_ID}` },
+      sessionEnd: {
+        type: "session_end",
+        endReason: "tool_invocation_stall",
+        degraded: true,
+        costUsd: 0.01,
+      },
+    }),
+    "utf-8",
+  );
+}
+
 afterEach(() => {
   while (tmpDirs.length > 0) {
     const dir = tmpDirs.pop()!;
@@ -714,6 +817,37 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
       session: sessionFile,
       trajectory: runtimeFile,
     });
+  });
+
+  it("resolves a child run identifier to its traced failure through the real nested layout", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildChildSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, childRunTrajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({
+      sessionFile,
+      sessionId: CHILD_SESSION_KEY,
+      runtimeFile,
+    });
+    writeChildRunMetadata(sessionFile);
+    writeChildSessionIndex(dataDir);
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir),
+      dataDir,
+      { traceId: CHILD_RUN_ID, depth: "summary" },
+    );
+
+    expect(report.sessionKey).toBe(CHILD_SESSION_KEY);
+    expect(report.traceId).toBe(CHILD_TRACE_ID);
+    expect(report.outcome).toEqual({
+      endReason: "tool_invocation_stall",
+      degraded: true,
+      severity: "failed",
+    });
+    expect(report.toolStats.web_fetch).toMatchObject({ ok: 0, failed: 1 });
+    expect(report.coverage?.trajectory).toEqual({ found: true, records: 4 });
+    expect(report.coverage?.rollup).toEqual({ present: false });
   });
 
   it("diagnoses a provider tool-identity rejection from the real nested session layout", async () => {
