@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   createConversationRef,
+  isDelegatedExecutionEndpoint,
   tryGetContext,
   type ConversationRef,
   type ApprovalCallbackOwner,
@@ -73,11 +74,24 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
     || turnScope.conversation.tenantId !== origin.tenantId
     || turnScope.conversation.agentId !== agentId
     || turnScope.principal.principalId !== origin.userId
-    || turnScope.endpoint.channelType !== origin.channelType
-    || turnScope.endpoint.conversationId !== origin.channelId
-    || turnScope.endpoint.threadId !== origin.threadId
   ) {
-    return err(new Error("Approval requires an immutable matching delivery origin"));
+    return err(new Error("Approval requires an immutable delivery origin owned by the turn principal"));
+  }
+
+  // A delegated run executes under a synthetic endpoint while its approval
+  // prompt routes to the requester origin it inherited at spawn; spawn
+  // admission already binds that origin to the caller's authenticated route,
+  // and the tenant/agent/principal checks above bind it to this turn. Every
+  // other turn must approve on the endpoint it arrived on.
+  if (
+    !isDelegatedExecutionEndpoint(turnScope.endpoint)
+    && (
+      turnScope.endpoint.channelType !== origin.channelType
+      || turnScope.endpoint.conversationId !== origin.channelId
+      || turnScope.endpoint.threadId !== origin.threadId
+    )
+  ) {
+    return err(new Error("Approval requires a delivery origin matching the resolved turn endpoint"));
   }
 
   const conversationRef = createConversationRef(turnScope.conversation);

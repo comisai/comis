@@ -13,6 +13,24 @@ export const ChannelEndpointSchema = z.strictObject({
 });
 export type ChannelEndpoint = z.infer<typeof ChannelEndpointSchema>;
 
+/** Channel type minted for a delegated run's synthetic execution endpoint. */
+export const DELEGATED_EXECUTION_CHANNEL_TYPE = "sub-agent";
+
+/**
+ * True when the endpoint is a delegated execution scope rather than a
+ * deliverable channel endpoint.
+ *
+ * A delegated run executes under a synthetic conversation of its own while its
+ * responses, announcements, and approval prompts route to the requester origin
+ * it inherited at spawn. The two routes are authenticated independently and are
+ * intentionally different, so endpoint-vs-origin equality does not hold for
+ * them — callers that compare the pair must exempt delegated endpoints or they
+ * reject every delegated turn.
+ */
+export function isDelegatedExecutionEndpoint(endpoint: ChannelEndpoint): boolean {
+  return endpoint.channelType === DELEGATED_EXECUTION_CHANNEL_TYPE;
+}
+
 export const PrincipalScopeSchema = z.strictObject({
   principalId: z.string().min(1),
 });
