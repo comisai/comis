@@ -22,6 +22,7 @@ export interface ManagedTerminalBindingDeps {
   readonly store: ManagedRunStorePort;
   readonly workspaceLeases: WorkspaceLeasePort;
   readonly nowMs: () => number;
+  readonly logger?: ComisLogger;
   readonly attachments?: ExecutionAttachmentPort;
   readonly validateAttachment?: (record: ExecutionAttachmentRecord) => Result<void, Error>;
   readonly validateLease?: (record: WorkspaceLeaseRecord) => Result<void, Error>;
@@ -84,7 +85,18 @@ export function createManagedTerminalBindingResolver(
     const loaded = await invoke(() => deps.store.get(scope, input.managedRunId));
     if (!loaded.ok) return { kind: "unavailable", reason: "managed_run_store_unavailable" };
     const record = loaded.value;
-    if (record === undefined) return { kind: "rejected", reason: "managed_run_not_found" };
+    if (record === undefined) {
+      deps.logger?.warn({
+        managedRunId: input.managedRunId,
+        workspaceLeaseId: input.workspaceLeaseId,
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        conversationRef: scope.conversationRef,
+        hint: "Compare these requested launch handles with the current capability-service launch plan before retrying the terminal create",
+        errorKind: "precondition" as const,
+      }, "Managed terminal binding could not resolve the requested managed run");
+      return { kind: "rejected", reason: "managed_run_not_found" };
+    }
     if (record.tenantId !== scope.tenantId || record.agentId !== scope.agentId) {
       return { kind: "rejected", reason: "managed_run_scope_mismatch" };
     }
