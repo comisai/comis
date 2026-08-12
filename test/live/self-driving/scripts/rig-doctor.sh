@@ -101,7 +101,7 @@ if [ -n "${GWTOKEN:-}" ] && [ "${boxlen:-0}" -ge 32 ] 2>/dev/null; then
 fi
 
 # THE load-bearing probe: the token the rig helpers actually use must open a live RPC.
-rpc="$(remote_root "node '$KIT_DIR/revoke.mjs' capabilities.introspect 2>/dev/null" | head -c 40)"
+rpc="$(remote_root "RIG_ENV='$RIG_ENV' node '$KIT_DIR/revoke.mjs' capabilities.introspect 2>/dev/null" | head -c 40)"
 case "$rpc" in
 RESULT:*) pass "rpc-token" "capabilities.introspect answers (rig token live)" ;;
 ERROR:*) fail "rpc-token" "RPC rejected — token rotated/wrong? re-run deploy-scripts.sh (auto-fetch), then retry" ;;
