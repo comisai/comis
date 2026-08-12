@@ -21,6 +21,7 @@ import type {
   TmuxBackendLike,
   WorkerLogger,
 } from "./terminal-worker-types.js";
+import type { SessionEmulator } from "./terminal-render.js";
 
 function fakePty(): FakePtyLike {
   return {
@@ -90,6 +91,49 @@ describe("attachBackend — unsandboxed durable drives take the tmux backend (se
     expect(state.backend).toBe("tmux");
     // The scrubbed plan.env is exactly what the tmux backend receives (→ the server + each `-e`).
     expect(tmuxSpawn.mock.calls[0]?.[0]).toMatchObject({ env: scrubbedEnv });
+  });
+
+  it("retains worker output when tmux teardown chrome clears the attached client", async () => {
+    let emitData: ((data: string) => void) | undefined;
+    const tmuxHandle: FakePtyLike = {
+      ...fakePty(),
+      onData: (callback) => {
+        emitData = callback;
+      },
+    };
+    const write = vi.fn(async () => {});
+    const state = makeState();
+    state.emu = {
+      write,
+      snapshot: vi.fn(),
+      resize: vi.fn(),
+      hasContentBelowFold: vi.fn(() => false),
+      dispose: vi.fn(),
+      term: {} as SessionEmulator["term"],
+    };
+
+    attachBackend({
+      plan: { bin: "/usr/bin/bwrap", argv: ["--", "/bin/worker"], env: {} },
+      cols: 80,
+      rows: 24,
+      state,
+      loadPty: () => ({ spawn: () => fakePty() }),
+      spawnPipe: () => {
+        throw new Error("pipe not expected");
+      },
+      logger: makeLogger(),
+      requestedBackend: "tmux",
+      loadTmux: { spawn: () => tmuxHandle, reattach: () => undefined },
+      sessionId: "s-exit-screen",
+    });
+
+    emitData?.("worker failure detail\r\n\u001b[1;0r\u001b[H\u001b[2J[exited]\r\n");
+    emitData?.("\u001b[?1049l");
+    await state.writeFlush;
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith("worker failure detail\r\n");
+    expect(state.ring).toContain("[exited]");
   });
 
   it("falls back to PTY when a durable tmux request is unsandboxed but NO tmux loader is wired (tmux-less host)", () => {
