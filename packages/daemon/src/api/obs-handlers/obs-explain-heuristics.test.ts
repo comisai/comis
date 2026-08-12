@@ -1147,8 +1147,10 @@ describe("obs-explain-heuristics", () => {
 
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
     // Grounded in live Hebrew-language runs where recall silently returned
-    // nothing and comis explain root-caused nothing.
-    const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
+    // nothing and comis explain root-caused nothing. The carrier is a turn that
+    // DELIVERED while degraded — a zero-hit recall degrades an answer, it does
+    // not kill a turn, so a session that died names its death instead.
+    const r = rootCause(makeSignals({ endReason: "success", degraded: true, recall: allMissRecall }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("recall_miss");
     expect(r!.detail).toContain("all 2 recall");
@@ -1240,7 +1242,7 @@ describe("obs-explain-heuristics", () => {
 
   it("recall_miss still fires when no model call was rejected", () => {
     // Regression guard: the new gate must not swallow the genuine recall_miss.
-    const r = rootCause(makeSignals({ endReason: "error", degraded: true, recall: allMissRecall }));
+    const r = rootCause(makeSignals({ endReason: "success", degraded: true, recall: allMissRecall }));
     expect(r!.code).toBe("recall_miss");
   });
 
@@ -1458,14 +1460,17 @@ describe("obs-explain-heuristics", () => {
   });
 
   it("a degraded session where SOME recalls hit does not fire recall_miss", () => {
-    const r = rootCause(
-      makeSignals({
-        endReason: "error",
-        degraded: true,
-        recall: { recalls: 3, zeroHits: 1, lastLanes: 4, lastFinalCount: 5, rerankerAvailable: true },
-      }),
-    );
-    expect(r).toBeNull();
+    const partialHitRecall = {
+      recalls: 3, zeroHits: 1, lastLanes: 4, lastFinalCount: 5, rerankerAvailable: true,
+    };
+    // A turn that DIED names its death; the partial-hit recall is incidental either way.
+    expect(
+      rootCause(makeSignals({ endReason: "error", degraded: true, recall: partialHitRecall }))?.code,
+    ).toBe("execution_terminal_failure");
+    // A turn that survived has nothing to name at all — a partial hit is not a miss.
+    expect(
+      rootCause(makeSignals({ endReason: "success", degraded: true, recall: partialHitRecall })),
+    ).toBeNull();
   });
 
   it("recall_miss yields to the tool-failure catch-all (mutually exclusive — failures present)", () => {
