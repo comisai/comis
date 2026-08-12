@@ -110,12 +110,7 @@ export function classifyAbortReason(
     case "max_steps":
       return {
         category: "step_limit",
-        // `max_steps` is clamped to security.agentToAgent.subAgentMaxSteps at
-        // spawn, so recommending it alone sends a caller to a parameter that
-        // cannot raise the ceiling it just hit. Name the config key that can.
-        hint:
-          "Raise security.agentToAgent.subAgentMaxSteps (a spawn's own max_steps is "
-          + "clamped to it and cannot exceed it), or simplify the task",
+        hint: "Raise security.agentToAgent.subAgentMaxSteps (a spawn's own max_steps is clamped to it), or simplify the task",
         severity: "actionable",
       };
     case "loop_detected":

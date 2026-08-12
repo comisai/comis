@@ -28,7 +28,7 @@ export type {
   DeadLetterEntry,
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
-import { projectQuarantined } from "./announcement-dead-letter-quarantine.js";
+import { projectQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
 import type {
   QuarantinedAnnouncement,
   QuarantineReleaseOutcome,
@@ -942,49 +942,6 @@ export function createAnnouncementDeadLetterQueue(
     }
   }
 
-  /**
-   * Apply an operator decision. Serialized with the drain so a release cannot
-   * interleave with a sweep and resurrect the item from a stale snapshot.
-   */
-  async function releaseSerialized(
-    id: string,
-    outcome: QuarantineReleaseOutcome,
-  ): Promise<Result<boolean, Error>> {
-    const loaded = await loadFromDisk();
-    if (!loaded.ok) return loaded;
-    const entry = entries.find((candidate) => candidate.id === id);
-    const reservation = decisionReservations.find((candidate) => candidate.id === id);
-    if (entry === undefined && reservation === undefined) return ok(false);
-
-    const nextEntries = entries.filter((candidate) => candidate.id !== id);
-    const nextReservations = decisionReservations.filter((candidate) => candidate.id !== id);
-    // Persist BEFORE mutating memory: a failed write must leave the item parked
-    // rather than dropping an undelivered announcement on a storage error.
-    const persisted = await persist(nextEntries, nextReservations);
-    if (!persisted.ok) {
-      logger?.error(
-        {
-          errorKind: "resource" as const,
-          hint: "restore dead-letter storage before releasing; the announcement is still quarantined",
-        },
-        "Quarantined announcement release was not durably persisted",
-      );
-      return persisted;
-    }
-    entries = nextEntries;
-    decisionReservations = nextReservations;
-    logger?.info(
-      {
-        runId: entry?.runId ?? reservation?.runId,
-        kind: entry !== undefined ? "entry" : "parent_decision",
-        outcome,
-        remaining: entries.length + decisionReservations.length,
-      },
-      "Quarantined announcement released by operator decision",
-    );
-    return ok(true);
-  }
-
   return {
     enqueue: (entry) => serialize(() => enqueueDurably(entry)),
     reserveDecision: (entry) => serialize(() => decisionStore.reserve(entry)),
@@ -1011,6 +968,20 @@ export function createAnnouncementDeadLetterQueue(
       }
       return projectQuarantined(entries, decisionReservations);
     }),
-    release: (id, outcome) => serialize(() => releaseSerialized(id, outcome)),
+    release: (id, outcome) => serialize(async () => {
+      const loaded = await loadFromDisk();
+      if (!loaded.ok) return loaded;
+      return releaseQuarantined({
+        id, outcome, entries, reservations: decisionReservations, logger,
+        persist: async (nextEntries, nextReservations) => {
+          const written = await persist(nextEntries, nextReservations);
+          if (written.ok) {
+            entries = [...nextEntries];
+            decisionReservations = [...nextReservations];
+          }
+          return written;
+        },
+      });
+    }),
   };
 }
