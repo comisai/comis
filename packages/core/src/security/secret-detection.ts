@@ -137,12 +137,15 @@ const PLAINTEXT_SECRET_LENGTH_FLOOR = 44;
 const PLAINTEXT_SECRET_ENTROPY_FLOOR = 3.5;
 
 /**
- * Restrict the entropy backstop to credential-body characters. Real credential
- * bodies use alphanumeric characters plus `_ - . +`; source expressions,
- * connection strings, paths, URLs, comma-lists, and sentences contain at least
- * one character outside that set.
+ * Reject the entropy backstop on values carrying a character that never appears
+ * INSIDE an opaque credential body: the URL-/path-/sentence delimiters, plus
+ * the brackets, quotes, and statement punctuation that make a long value a
+ * source expression rather than a credential. An allowlist of
+ * `[A-Za-z0-9_.+-]` would also drop the last-resort net for credentials drawn
+ * from ordinary password punctuation (`! # $ % ^ * ~`), which no labelled-
+ * assignment path covers when the value arrives unlabelled.
  */
-const CREDENTIAL_BODY_RE = /^[A-Za-z0-9_.+-]+$/;
+const NON_CREDENTIAL_STRUCTURE_RE = /[\s:/?&=@,;'"`()[\]{}<>\\|]/;
 
 /** Leading auth-scheme prefix (case-insensitive), stripped before the gate. */
 const AUTH_SCHEME_RE = /^(?:Bearer|Basic|Token|Digest)\s+/i;
@@ -175,7 +178,7 @@ function stripSurroundingQuotes(value: string): string {
  *     short-ambiguous prefixes (hf_, gsk_, npm_, AKID, LTAI, …) require a
  *     minimum body length matching patterns.ts to avoid false-positives on
  *     config keys like npm_config_cache or words like AKIDNEYBEAN.
- *   - delimiter-char short-circuit to false
+ *   - delimiter/structure-char short-circuit to false
  *   - entropy backstop (length >= 44 AND entropy > 3.5)
  */
 export function looksLikeSecretValue(value: string): boolean {
@@ -199,9 +202,10 @@ export function looksLikeSecretValue(value: string): boolean {
     }
   }
 
-  // Entropy backstop only applies to credential-shaped values. In particular,
-  // do not corrupt source expressions that happen to be long and high-entropy.
-  if (!CREDENTIAL_BODY_RE.test(remainder)) return false;
+  // Entropy backstop only applies to credential-shaped values: no URL/path/
+  // sentence delimiters and no source-expression structure. Password
+  // punctuation stays inside the net.
+  if (NON_CREDENTIAL_STRUCTURE_RE.test(remainder)) return false;
   return (
     remainder.length >= PLAINTEXT_SECRET_LENGTH_FLOOR &&
     shannonEntropy(remainder) > PLAINTEXT_SECRET_ENTROPY_FLOOR

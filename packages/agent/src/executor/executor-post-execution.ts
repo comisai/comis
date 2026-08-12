@@ -1757,7 +1757,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       sessionKey: formattedKey,
       reason: unsupportedOutageReceipt
         ? "unsupported_outage_receipt_evidence"
-        : "missing_runtime_self_report_evidence",
+        : unsupportedEvidence
+          ? "unsupported_runtime_self_report_evidence"
+          : "missing_runtime_self_report_evidence",
       succeeded: true,
       traceId: tryGetContext()?.traceId,
       timestamp: deps.clock.now(),

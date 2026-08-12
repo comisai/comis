@@ -176,6 +176,39 @@ describe("prompt skill request routing", () => {
     ).toBeUndefined();
   });
 
+  // Two shared terms is the weakest match routing admits. Arming a floor there
+  // let ordinary local-context prose ("the research topic list we already wrote
+  // down") require three fetches and three searches, and the completion gate
+  // discarded the model's correct answer when they never arrived.
+  it("discloses the skill but drops its floors on a bare-minimum term match", () => {
+    const deferral = result();
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: "summarize the research topic list we already wrote down",
+      requestRelevanceText: "summarize the research topic list we already wrote down",
+      skills,
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/deep-research/SKILL.md",
+    ]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebFetchUrls?: number;
+      }).requestRelevantPromptSkillMinDistinctWebFetchUrls,
+    ).toBeUndefined();
+    expect(
+      (deferral as ExcludeDeferralResult & {
+        requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
+      }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
+    ).toBeUndefined();
+  });
+
   it("keeps the search floor enforceable when only web_fetch is unavailable", () => {
     const deferral = result();
     deferral.activeTools = deferral.activeTools.filter(

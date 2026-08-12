@@ -30,6 +30,7 @@ describe("MessagingEvents payload structure", () => {
   // and the listener proves the runtime carries it through unchanged.
   it.each([
     "missing_runtime_self_report_evidence",
+    "unsupported_runtime_self_report_evidence",
     "unsupported_outage_receipt_evidence",
   ] as const)("execution recovery can identify the %s correction", (reason) => {
     const bus = new TypedEventBus();

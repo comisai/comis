@@ -136,6 +136,15 @@ mutation request -- the user asked the agent to send, post, or schedule
 something a mutating tool performs -- completion is proven by that tool's own
 receipt and the research floors are not applied, because a floor the requested
 action can never satisfy would otherwise discard a correct answer.
+
+Routing a skill and enforcing its floors also use different bars. A skill is
+disclosed to the model on a minimal term overlap with its `description`, which
+costs nothing when the guess is wrong; the floors are armed only when the
+request matches the description **above** that minimum, or names the skill
+outright. A broad description shares its weakest admissible overlap with
+ordinary local-context prose, and arming a completion gate there would discard
+an answer the request never needed sourcing for. Write a narrow, distinctive
+`description` on any skill that declares a floor.
 </Info>
 
 <Info>

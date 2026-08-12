@@ -1194,57 +1194,10 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/preservePartialResponse:/);
   });
 
-  it("source-grep — outbound audio completion requires current delivery evidence", () => {
-    const stripped = readPostExecStripped();
-
-    expect(stripped).toMatch(/enforceOutboundAudioEvidence\(/);
-    expect(stripped).toMatch(/buildOutboundAudioEvidenceMissingReply\(/);
-    expect(stripped).toMatch(/hasTrustedRuntimeActionEvidence\(msg\)/);
-    expect(stripped).toMatch(/response\.outbound_audio_evidence_guard/);
-    expect(stripped).toMatch(
-      /acceptedEvidence:\s*\[\s*"tts_synthesize",\s*"trusted_completion",\s*"configured_voice_route",?\s*\]/,
-    );
-    expect(stripped).not.toMatch(
-      /claimKind:\s*"outbound_audio"[\s\S]{0,180}requiredTool:/,
-    );
-    expect(stripped).toMatch(
-      /outboundAudioEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_audio_evidence"[\s\S]*?succeeded:\s*true/,
-    );
-    expect(stripped.indexOf("enforceOutboundAudioEvidence("))
-      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-  });
-
-  it("source-grep — outbound image completion requires current generation evidence", () => {
-    const stripped = readPostExecStripped();
-
-    expect(stripped).toMatch(/enforceOutboundImageEvidence\(/);
-    expect(stripped).toMatch(/buildOutboundImageEvidenceMissingReply\(/);
-    expect(stripped).toMatch(/response\.outbound_image_evidence_guard/);
-    expect(stripped).toMatch(
-      /acceptedEvidence:\s*\[\s*"image_generate",\s*"message\.attach",\s*"trusted_completion",?\s*\]/,
-    );
-    expect(stripped).not.toMatch(
-      /claimKind:\s*"outbound_image"[\s\S]{0,180}requiredTool:/,
-    );
-    expect(stripped).toMatch(
-      /outboundImageEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_image_evidence"[\s\S]*?succeeded:\s*true/,
-    );
-    expect(stripped.indexOf("enforceOutboundImageEvidence("))
-      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-  });
-
-  it("source-grep — elliptical delivery status requires current receipt evidence", () => {
-    const stripped = readPostExecStripped();
-
-    expect(stripped).toMatch(/enforceOutboundDeliveryStatusEvidence\(/);
-    expect(stripped).toMatch(/buildOutboundDeliveryStatusEvidenceMissingReply\(/);
-    expect(stripped).toMatch(/response\.outbound_delivery_status_evidence_guard/);
-    expect(stripped).toMatch(
-      /outboundDeliveryStatusEvidence\.corrected[\s\S]*?emit\(\s*"execution:recovery_attempted"[\s\S]*?reason:\s*"missing_outbound_delivery_status_evidence"[\s\S]*?succeeded:\s*true/,
-    );
-    expect(stripped.indexOf("enforceOutboundDeliveryStatusEvidence("))
-      .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-  });
+  // The outbound audio / image / delivery-status guards are proven by driving
+  // execute() in pi-executor.test.ts ("outbound artifact claims are grounded
+  // before the reply is delivered"): those probes assert the delivered reply and
+  // the emitted audit + recovery events, which a source grep cannot.
 
   it("source-grep — scheduler state claims require current cron evidence before delivery", () => {
     const stripped = readPostExecStripped();
