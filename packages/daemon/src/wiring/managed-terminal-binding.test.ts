@@ -4,7 +4,7 @@ import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@comis/shared";
-import type { ManagedRunStorePort, WorkspaceLeasePort } from "@comis/core";
+import type { ComisLogger, ManagedRunStorePort, WorkspaceLeasePort } from "@comis/core";
 
 import { createManagedTerminalBindingResolver } from "./managed-terminal-binding.js";
 
@@ -18,6 +18,32 @@ const SCOPE = {
 };
 
 describe("managed terminal binding authority", () => {
+  it("identifies the requested handles when a managed run cannot be resolved", async () => {
+    const logger = { warn: vi.fn() } as unknown as ComisLogger;
+    const resolver = createManagedTerminalBindingResolver({
+      store: { get: vi.fn(async () => ok(undefined)) } as unknown as ManagedRunStorePort,
+      workspaceLeases: { get: vi.fn() } as unknown as WorkspaceLeasePort,
+      nowMs: () => 1700,
+      logger,
+      resolveOwnerScope: () => SCOPE,
+    });
+
+    await expect(resolver.resolve({
+      managedRunId: "managed-run_missing",
+      workspaceLeaseId: "workspace-lease_missing",
+      owner: OWNER,
+    })).resolves.toEqual({ kind: "rejected", reason: "managed_run_not_found" });
+    expect(logger.warn).toHaveBeenCalledWith({
+      managedRunId: "managed-run_missing",
+      workspaceLeaseId: "workspace-lease_missing",
+      tenantId: "tenant_a",
+      agentId: "agent_a",
+      conversationRef: "cv_owner",
+      hint: "Compare these requested launch handles with the current capability-service launch plan before retrying the terminal create",
+      errorKind: "precondition",
+    }, "Managed terminal binding could not resolve the requested managed run");
+  });
+
   it("resolves the exact run and active lease then binds the terminal in the same owner scope", async () => {
     const record = {
       managedRunId: "managed-run_a",
