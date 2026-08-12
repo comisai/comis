@@ -334,13 +334,24 @@ describe("tree-wide spawn ceiling — driven through the REAL session.spawn path
     const c1 = await h.spawnViaHandler({ task: "c1", callerConversationScope: parentRun.conversationScope });
     const c2 = await h.spawnViaHandler({ task: "c2", callerConversationScope: parentRun.conversationScope });
 
-    const killed = h.subAgentRunner.killByRootRun(parentRoot);
+    const killed = h.subAgentRunner.killByRootRun(parentRoot, { killedBy: "operator" });
 
     // The whole tree (parent + 2 children) is reached — not just the parent.
     expect(killed.killed).toBe(3);
     expect(h.subAgentRunner.getRunStatus(parent.runId)?.status).toBe("failed");
     expect(h.subAgentRunner.getRunStatus(c1.runId)?.status).toBe("failed");
     expect(h.subAgentRunner.getRunStatus(c2.runId)?.status).toBe("failed");
+
+    // An explicit tree-kill owns its attribution end to end. Killing the parent
+    // first would let the orphan cascade claim the children as "system" kills,
+    // which is the misattribution the killedBy union exists to prevent — so the
+    // tree is killed deepest-first.
+    for (const child of [c1, c2]) {
+      const summary = h.subAgentRunner.getRunStatus(child.runId)?.completion?.summary;
+      expect(summary, `child ${child.runId} was cascaded, not operator-killed`)
+        .toContain("operator");
+      expect(summary).not.toContain("its parent run ended");
+    }
   });
 
   it("(d) a completed run RELEASES its slot so a later spawn on the same root is re-admitted", async () => {
