@@ -1685,3 +1685,78 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(dlq.size()).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The operator lever. A quarantined announcement is held BY DESIGN — nothing
+// drains it, because retrying risks a duplicate delivery. Live on comis-moshe a
+// governed entry sat unresolved for 45 minutes, re-warning every 5, and the
+// only way to clear it was to stop the daemon and delete the JSONL by hand: the
+// in-memory queue is authoritative and rewrites the file on the next persist,
+// so editing it under a running daemon is silently undone. A condition the
+// runtime knows about and offers no lever for is not finished.
+// ---------------------------------------------------------------------------
+describe("AnnouncementDeadLetterQueue operator lever", () => {
+  let tmpDir: string;
+  let filePath: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "dlq-operator-"));
+    filePath = join(tmpDir, "dead-letters.jsonl");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists a quarantined announcement by id without exposing its text", async () => {
+    const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await queue.enqueue(makeEntry({
+      runId: "run-stuck",
+      channelType: "telegram",
+      channelId: "678314278",
+      announcementText: "the answer the user never saw",
+      lastError: "outward_operation_unresolved",
+    }));
+
+    const rows = queue.listQuarantined();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(row.runId).toBe("run-stuck");
+    expect(row.channelType).toBe("telegram");
+    expect(row.channelId).toBe("678314278");
+    expect(row.lastError).toBe("outward_operation_unresolved");
+    expect(row.kind).toBe("entry");
+    expect(typeof row.id).toBe("string");
+    // The operator needs to know there IS content and how much, never the
+    // content itself: this row rides an admin RPC and a terminal.
+    expect(row.announcementChars).toBe("the answer the user never saw".length);
+    expect(JSON.stringify(row)).not.toContain("the answer the user never saw");
+  });
+
+  it("releases a quarantined announcement by id and persists the removal", async () => {
+    const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await queue.enqueue(makeEntry({ runId: "run-stuck" }));
+    const id = queue.listQuarantined()[0]!.id;
+
+    const released = await queue.release(id, "discarded");
+
+    expect(released).toMatchObject({ ok: true, value: true });
+    expect(queue.listQuarantined()).toHaveLength(0);
+    expect(queue.size()).toBe(0);
+    // Durable: a fresh queue over the same file must not resurrect it.
+    const reloaded = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await reloaded.drain(vi.fn().mockResolvedValue(true));
+    expect(reloaded.size()).toBe(0);
+  });
+
+  it("reports an unknown id as not released rather than failing the call", async () => {
+    const queue = createAnnouncementDeadLetterQueue({ filePath, eventBus: createMockEventBus() });
+    await queue.enqueue(makeEntry({ runId: "run-stuck" }));
+
+    const released = await queue.release("no-such-id", "discarded");
+
+    expect(released).toMatchObject({ ok: true, value: false });
+    expect(queue.size()).toBe(1);
+  });
+});
