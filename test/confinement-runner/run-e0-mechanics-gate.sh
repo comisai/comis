@@ -8,7 +8,7 @@ readonly COMIS_COPY="${RUNNER_ROOT}/comis"
 readonly MECHANICS_ROOT="${RUNNER_ROOT}/e0-mechanics"
 readonly DEV_CREW_COPY="${MECHANICS_ROOT}/go-source"
 readonly DEV_CREW_BIN="${MECHANICS_ROOT}/bin"
-readonly DEV_CREW_COMMIT="2b7ab8c351b45e145722ae4d2970e8eb8b880cb5"
+readonly DEV_CREW_COMMIT="5d91a37846c214646f264fedf7d57aa6d1f0a0dd"
 readonly LIVE_TEST=test/live/scenarios/capability-service/e0-mechanics.test.ts
 
 if [[ "$(id -u)" -eq 0 || "$(uname -s)" != "Linux" ]]; then
