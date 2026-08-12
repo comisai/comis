@@ -405,6 +405,9 @@ importers:
       '@comis/agent':
         specifier: workspace:*
         version: link:../agent
+      '@comis/capability-service-sdk':
+        specifier: workspace:*
+        version: link:../capability-service-sdk
       '@comis/channels':
         specifier: workspace:*
         version: link:../channels
