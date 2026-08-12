@@ -11,6 +11,15 @@ export interface StepCounter {
   getCount(): number;
   /** Return the configured step ceiling. */
   getLimit?(): number;
+  /**
+   * The config key or tool parameter that set this ceiling.
+   *
+   * Travels with the counter because only its creator knows which knob won: a
+   * delegated run is bounded by `security.agentToAgent.subAgentMaxSteps`, a
+   * top-level turn by `agents.<id>.maxSteps`. Guessing from the agent id names
+   * the wrong key and sends operators to a setting with no effect.
+   */
+  getBindingKnob?(): string;
 }
 
 /** Default maximum steps if not specified */
@@ -24,8 +33,13 @@ const DEFAULT_MAX_STEPS = 50;
  * should stop processing.
  *
  * @param maxSteps - Maximum allowed steps before halting (default: 50)
+ * @param bindingKnob - The config key/parameter that set `maxSteps`, reported
+ *   verbatim when the ceiling stops a run.
  */
-export function createStepCounter(maxSteps: number = DEFAULT_MAX_STEPS): StepCounter {
+export function createStepCounter(
+  maxSteps: number = DEFAULT_MAX_STEPS,
+  bindingKnob?: string,
+): StepCounter {
   let count = 0;
 
   return {
@@ -41,6 +55,8 @@ export function createStepCounter(maxSteps: number = DEFAULT_MAX_STEPS): StepCou
     reset(): void {
       count = 0;
     },
+
+    ...(bindingKnob === undefined ? {} : { getBindingKnob: (): string => bindingKnob }),
 
     getCount(): number {
       return count;

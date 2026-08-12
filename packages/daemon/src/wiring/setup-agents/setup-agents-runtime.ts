@@ -155,7 +155,7 @@ export async function setupSingleAgent(
   const circuitBreaker = createCircuitBreaker(effectiveConfig.circuitBreaker, deps.clock);
   const budgetGuard = createBudgetGuard(effectiveConfig.budgets);
   const costTracker = createCostTracker();
-  const stepCounter = createStepCounter(effectiveConfig.maxSteps);
+  const stepCounter = createStepCounter(effectiveConfig.maxSteps, `agents.${agentId}.maxSteps`);
 
   // Per-agent scoped secret manager (credential isolation)
   const agentSecrets = effectiveConfig.secrets ?? { allow: [] };

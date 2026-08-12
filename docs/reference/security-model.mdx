@@ -881,7 +881,7 @@ Top-level `security` configuration.
 | `agentToAgent.allowAgents` | `string[]` | `[]` | Allowed agent IDs for sub-agent spawning (empty = allow all) |
 | `agentToAgent.subAgentRetentionMs` | `number` | `3600000` (1 hour) | Retention period for completed sub-agent sessions |
 | `agentToAgent.waitTimeoutMs` | `number` | `60000` (60s) | Default timeout for wait mode |
-| `agentToAgent.subAgentMaxSteps` | `number` | `50` | Default max steps for sub-agent execution |
+| `agentToAgent.subAgentMaxSteps` | `number` | `50` | Ceiling on tool-execution steps for a sub-agent run. A spawn's own `max_steps` is **clamped to this value** and cannot exceed it, so this is the only setting that raises the limit. Research-style delegations that search and fetch repeatedly will hit 50 — raise it for those deployments. Not to be confused with `agents.<id>.maxSteps`, which governs top-level turns only |
 | `agentToAgent.subAgentToolGroups` | `string[]` | `["coding"]` | Default tool profile groups for sub-agents |
 | `agentToAgent.subAgentMcpTools` | `"inherit"` \| `"none"` | `"inherit"` | MCP tool inheritance policy for sub-agents |
 

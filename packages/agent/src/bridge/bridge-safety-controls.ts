@@ -46,12 +46,31 @@ export interface AbortRedirectDetails {
   stepLimit?: StepLimitDetails;
 }
 
+/**
+ * Where a run's step ceiling came from, when it is not the agent's own setting.
+ *
+ * A delegated run is governed by `security.agentToAgent.subAgentMaxSteps` (or by
+ * the `max_steps` its caller passed), NOT by `agents.<id>.maxSteps` — those are
+ * different keys with different defaults. Naming the agent setting for a
+ * sub-agent sends an operator to raise a knob that has no effect on the run that
+ * stopped, so the provenance travels with the counter rather than being guessed
+ * from the agent id. Mirrors `describeTimeoutKnob`, which already threads the
+ * timeout's source for exactly this reason.
+ */
+export interface StepLimitProvenance {
+  /** The config key or tool parameter that set the ceiling. */
+  readonly bindingKnob: string;
+}
+
 export function resolveStepLimitDetails(
   stepCounter: StepCounter,
   agentId: string,
+  provenance?: StepLimitProvenance,
 ): StepLimitDetails {
   return {
-    bindingKnob: `agents.${agentId}.maxSteps`,
+    bindingKnob: provenance?.bindingKnob
+      ?? stepCounter.getBindingKnob?.()
+      ?? `agents.${agentId}.maxSteps`,
     stepsExecuted: stepCounter.getCount(),
     cap: stepCounter.getLimit?.() ?? stepCounter.getCount(),
   };
