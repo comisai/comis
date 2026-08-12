@@ -1674,7 +1674,7 @@ describe("setupCrossSession", () => {
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task", 10);
 
-      expect(mockCreateStepCounter).toHaveBeenCalledWith(MIN_SUB_AGENT_STEPS);
+      expect(mockCreateStepCounter).toHaveBeenCalledWith(MIN_SUB_AGENT_STEPS, "sessions_spawn(max_steps)");
     });
 
     it("preserves max_steps at or above MIN_SUB_AGENT_STEPS", async () => {
@@ -1700,7 +1700,7 @@ describe("setupCrossSession", () => {
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task", 40);
 
-      expect(mockCreateStepCounter).toHaveBeenCalledWith(40);
+      expect(mockCreateStepCounter).toHaveBeenCalledWith(40, "sessions_spawn(max_steps)");
     });
 
     it("uses config default when no max_steps provided (still subject to floor)", async () => {
@@ -1727,7 +1727,7 @@ describe("setupCrossSession", () => {
       await executeAgent("agent-2", sessionKey, "task");
 
       // Config default is 50, which is above floor of 30
-      expect(mockCreateStepCounter).toHaveBeenCalledWith(50);
+      expect(mockCreateStepCounter).toHaveBeenCalledWith(50, "security.agentToAgent.subAgentMaxSteps");
     });
 
     it("floor applies even when config default is below MIN_SUB_AGENT_STEPS", async () => {
@@ -1774,7 +1774,7 @@ describe("setupCrossSession", () => {
       await executeAgent("agent-2", sessionKey, "task");
 
       // Config default is 15, below floor -- should be raised to MIN_SUB_AGENT_STEPS (30)
-      expect(mockCreateStepCounter).toHaveBeenCalledWith(MIN_SUB_AGENT_STEPS);
+      expect(mockCreateStepCounter).toHaveBeenCalledWith(MIN_SUB_AGENT_STEPS, "security.agentToAgent.subAgentMaxSteps");
     });
   });
 

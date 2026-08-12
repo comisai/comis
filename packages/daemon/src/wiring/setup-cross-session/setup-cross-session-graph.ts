@@ -82,7 +82,14 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       MIN_SUB_AGENT_STEPS,
       maxSteps !== undefined ? Math.min(maxSteps, configMaxSteps) : configMaxSteps,
     );
-    const freshStepCounter = createStepCounter(effectiveMaxSteps);
+    // Name the ceiling that actually bound. A caller's `max_steps` is clamped to
+    // the config value above, so it only binds when it is the LOWER of the two —
+    // recommending it when config is the binding cap sends the caller to a knob
+    // that cannot raise anything.
+    const stepLimitKnob = maxSteps !== undefined && maxSteps < configMaxSteps
+      ? "sessions_spawn(max_steps)"
+      : "security.agentToAgent.subAgentMaxSteps";
+    const freshStepCounter = createStepCounter(effectiveMaxSteps, stepLimitKnob);
 
     // Read spawn packet fields from session metadata
     const formattedKey = formatSessionKey(sessionKey);
