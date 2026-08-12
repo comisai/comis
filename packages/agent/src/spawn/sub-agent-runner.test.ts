@@ -5677,6 +5677,67 @@ describe("spawn required_tools gate", () => {
     expect(runner.listRuns(60)).toHaveLength(0);
   });
 
+  it("gives ONE re-spawn group that reaches every unreachable tool, not one per tool", () => {
+    // Live on comis-moshe: a spawn needing web_search + web_fetch was told
+    // "Re-spawn with tool_groups:['cron-minimal']" AND "Re-spawn with
+    // tool_groups:['full']" in the same message. web_search is in
+    // 'cron-minimal', web_fetch is in no profile at all, so 'cron-minimal'
+    // cannot satisfy the pair — the caller obeyed and failed identically twice.
+    const runner = createSubAgentRunner(deps);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["minimal"],
+        requiredTools: ["web_search", "web_fetch"],
+        reachableToolNames: new Set(["read", "write"]),
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const message = (caughtErr as RequiredToolsUnreachableError).message;
+
+    // Exactly one actionable re-spawn directive, and it must name a group that
+    // reaches BOTH tools. Only 'full' does.
+    const directives = message.match(/Re-spawn with tool_groups:\[[^\]]*\]/g) ?? [];
+    expect(directives).toHaveLength(1);
+    expect(directives[0]).toContain("full");
+    expect(directives[0]).not.toContain("cron-minimal");
+    // Both tool names are still named, so the caller knows what drove it.
+    expect(message).toContain("web_search");
+    expect(message).toContain("web_fetch");
+  });
+
+  it("says no re-spawn can help when a required tool is denied to all sub-agents", () => {
+    // A denylisted tool is unfixable by any group. Pairing it with a merely
+    // out-of-profile tool must not emit a re-spawn directive that would fail
+    // again on the denied one.
+    const runner = createSubAgentRunner(deps);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["minimal"],
+        requiredTools: ["gateway", "web_search"],
+        reachableToolNames: new Set(["read", "write"]),
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const message = (caughtErr as RequiredToolsUnreachableError).message;
+    expect(message).toMatch(/denied to ALL sub-agents/i);
+    // No re-spawn directive can satisfy a denylisted requirement.
+    expect(message.match(/Re-spawn with tool_groups:\[[^\]]*\]/g) ?? []).toHaveLength(0);
+  });
+
   it("spawn with requiredTools=['gateway'] throws RequiredToolsUnreachableError with denylist reason", () => {
     // 'gateway' is in SUB_AGENT_TOOL_DENYLIST — denied to ALL sub-agents.
     const runner = createSubAgentRunner(deps);
