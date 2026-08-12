@@ -103,7 +103,8 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const updateAttachment = db.prepare(`
-    UPDATE execution_attachments SET state = ?, updated_at_ms = ?,
+    UPDATE execution_attachments SET source_filesystem_device = ?,
+      source_filesystem_inode = ?, state = ?, updated_at_ms = ?,
       last_recovered_at_ms = ?, revoked_at_ms = ?, revocation_reason = ?
     WHERE execution_attachment_id = ?
   `);
@@ -140,6 +141,8 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
     const parsed = parseExecutionAttachmentRecord(record);
     if (!parsed.ok) return err(new Error(parsed.error.message));
     const updated = updateAttachment.run(
+      record.sourceFilesystemIdentity.device,
+      record.sourceFilesystemIdentity.inode,
       record.state,
       record.updatedAtMs,
       record.lastRecoveredAtMs ?? null,
@@ -261,13 +264,13 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
         : ok({ kind: "replay_conflict" });
     }
     if (current.value.state !== "active") return ok({ kind: "state_mismatch" });
-    if (
-      current.value.sourceFilesystemIdentity.device !== input.sourceFilesystemIdentity.device
-      || current.value.sourceFilesystemIdentity.inode !== input.sourceFilesystemIdentity.inode
-    ) return ok({ kind: "identity_mismatch" });
+    const authorized = authorityMatches(current.value);
+    if (!authorized.ok) return authorized;
+    if (!authorized.value) return ok({ kind: "authority_mismatch" });
     if (input.recoveredAtMs < current.value.updatedAtMs) return err(new Error("execution attachment recovery time cannot move backward"));
     const next: ExecutionAttachmentRecord = {
       ...current.value,
+      sourceFilesystemIdentity: input.sourceFilesystemIdentity,
       updatedAtMs: input.recoveredAtMs,
       lastRecoveredAtMs: input.recoveredAtMs,
     };

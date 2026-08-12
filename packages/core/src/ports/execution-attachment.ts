@@ -48,8 +48,8 @@ export type ExecutionAttachmentReconcileOutcome =
   | { readonly kind: "identical_replay"; readonly record: ExecutionAttachmentRecord }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
+  | { readonly kind: "authority_mismatch" }
   | { readonly kind: "state_mismatch" }
-  | { readonly kind: "identity_mismatch" }
   | { readonly kind: "replay_conflict" };
 
 export interface ExecutionAttachmentRecoveryScanInput {
