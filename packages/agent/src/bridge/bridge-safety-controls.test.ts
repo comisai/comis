@@ -11,7 +11,8 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SessionKey, TypedEventBus, ComisLogger } from "@comis/core";
 
-import { checkLoopLimit, emitLoopAbort, emitStepLimitAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
+import { checkLoopLimit, emitLoopAbort, emitStepLimitAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort, resolveStepLimitDetails } from "./bridge-safety-controls.js";
+import { createStepCounter } from "../executor/step-counter.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { SpendGateOutcome } from "../budget/budget-guard.js";
 import { SpendError, type SpendWarn } from "../budget/spend-accumulator.js";
@@ -435,5 +436,45 @@ describe("emitSpendAbort", () => {
     const logger = makeLogger();
     emitSpendAbort({ eventBus, sessionKey: testSessionKey, agentId: "agent-a", logger });
     expect((logger.warn as ReturnType<typeof vi.fn>).mock.calls[0][0].hint).toMatch(/observability\.spend/);
+  });
+});
+
+describe("resolveStepLimitDetails — the knob it names must be the one that bound", () => {
+  // Live: a deep-research sub-agent ran 18 searches and 21 fetches, hit the
+  // ceiling at step 51, and told the operator:
+  //   "I stopped after 51 tool-execution steps because agents.default.maxSteps=50.
+  //    Simplify the workflow or increase agents.default.maxSteps before retrying."
+  // `agents.default.maxSteps` defaults to 150 and does not govern sub-agents at
+  // all. The ceiling that actually bound was
+  // `security.agentToAgent.subAgentMaxSteps` (default 50), so an operator who
+  // followed the guidance would raise a setting with no effect and hit the same
+  // wall. Naming the WRONG knob is worse than naming none.
+  it("names the sub-agent ceiling when a delegated run is what hit the limit", () => {
+    const counter = createStepCounter(50);
+    for (let i = 0; i < 50; i++) counter.increment();
+
+    const details = resolveStepLimitDetails(counter, "default", {
+      bindingKnob: "security.agentToAgent.subAgentMaxSteps",
+    });
+
+    expect(details.bindingKnob).toBe("security.agentToAgent.subAgentMaxSteps");
+    expect(details.cap).toBe(50);
+    expect(details.stepsExecuted).toBe(50);
+  });
+
+  it("names the caller's own override when the spawn passed max_steps", () => {
+    const counter = createStepCounter(20);
+    const details = resolveStepLimitDetails(counter, "default", {
+      bindingKnob: "sessions_spawn(max_steps)",
+    });
+
+    expect(details.bindingKnob).toBe("sessions_spawn(max_steps)");
+  });
+
+  it("still names the agent setting for an ordinary top-level turn", () => {
+    // Regression guard: the default path is unchanged.
+    const counter = createStepCounter(150);
+    expect(resolveStepLimitDetails(counter, "researcher").bindingKnob)
+      .toBe("agents.researcher.maxSteps");
   });
 });
