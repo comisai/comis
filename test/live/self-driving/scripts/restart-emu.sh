@@ -32,7 +32,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   echo "missing $HERE/_rig.sh — re-run deploy-scripts.sh (the kit ships as a unit)" >&2
   exit 2
 }
-rig_load_env "$HERE/.live-env" "$HERE/.rig-env" /root/comis-rig.env
+rig_load_env "$HERE/.live-env" "${RIG_ENV:-}" "$HERE/.rig-env" /root/comis-rig.env
 if rig_is_local; then
   # tsx from the workspace (a devDependency of this repo) — never assume a global install locally.
   if command -v tsx >/dev/null 2>&1; then TSX="tsx"; else TSX="pnpm -s exec tsx"; fi
