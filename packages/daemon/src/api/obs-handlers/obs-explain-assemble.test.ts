@@ -2573,6 +2573,106 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     });
   });
 
+  it("preserves a terminal route stall above its downstream completion correction", async () => {
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 1,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: {
+          requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+          responseLocaleSource: "unset",
+          responseLocaleEnforced: false,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: { toolName: "mcp__records--summary", success: true },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 3,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "request_tool_nudge",
+          succeeded: true,
+          groundedResponseBeforeRecovery: true,
+          groundedResponsePreserved: true,
+          successfulReceiptsOutsideRoute: 17,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 4,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "unrecovered_tool_failure_completion_claim",
+          succeeded: true,
+        },
+      },
+    ];
+    const baseReader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.completion_evidence_guard",
+        outcome: "denied",
+      }),
+    ], records);
+    const reader: IncidentSourceReader = {
+      ...baseReader,
+      async readSessionMetadata() {
+        return makeMetadata({
+          sessionEnd: {
+            type: "session_end",
+            timestamp: "2026-08-13T14:04:00.000Z",
+            endReason: "tool_invocation_stall",
+            durationMs: 650_000,
+            totalTokens: 1_950_000,
+            degraded: true,
+            costUsd: 2.23,
+            toolStats: { "mcp__records--summary": { ok: 1, failed: 0 } },
+            breakerTripCount: 0,
+            topErrorKinds: {},
+          },
+        });
+      },
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report).toMatchObject({
+      outcome: { endReason: "tool_invocation_stall", degraded: true },
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      toolStats: { "mcp__records--summary": { ok: 1, failed: 0 } },
+      recoveries: {
+        total: 2,
+        byReason: {
+          request_tool_nudge: 1,
+          unrecovered_tool_failure_completion_claim: 1,
+        },
+        groundedResponseBeforeRecoveryCount: 1,
+        groundedResponsePreservedCount: 1,
+        successfulReceiptsOutsideRoute: 17,
+      },
+    });
+    expect(report.likelyRootCause?.code).toBe("tool_invocation_stall");
+    expect(report.likelyRootCause?.detail).toMatch(
+      /completed current-turn invocations.*later workflow requirement remained incomplete/iu,
+    );
+  });
+
   it("names a pre-send completion-evidence block as the acute cause", async () => {
     const reader = makeAuditReader([
       auditRow("audit", TRACE_ID, {
