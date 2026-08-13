@@ -210,7 +210,7 @@ describe("managed-run activation restart recovery", () => {
       makeRecord("managed-run_corrupt", "service-instance_a", "descriptor_corrupt"),
     ];
     for (const record of records) expect((await firstStore.create(record)).ok).toBe(true);
-    const workspaceIdentity = statSync(workspaceDirectory);
+    const workspaceIdentity = statSync(workspaceDirectory, { bigint: true });
     const firstWorkspaceLeases = createSqliteWorkspaceLeaseStore(firstDb);
     expect((await firstWorkspaceLeases.create({
       schemaVersion: 1,
@@ -220,7 +220,11 @@ describe("managed-run activation restart recovery", () => {
       tenantId: "tenant_a",
       agentId: "agent_a",
       canonicalPath: workspaceDirectory,
-      filesystemIdentity: { device: workspaceIdentity.dev, inode: workspaceIdentity.ino },
+      filesystemIdentity: {
+        device: Number(workspaceIdentity.dev),
+        inode: Number(workspaceIdentity.ino),
+        birthtimeNs: workspaceIdentity.birthtimeNs.toString(),
+      },
       state: "active",
       createdAtMs: NOW_MS - 10_000,
       updatedAtMs: NOW_MS - 10_000,

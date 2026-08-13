@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { lstatSync, realpathSync, type Stats } from "node:fs";
+import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
 import { isAbsolute, normalize, parse, relative, sep } from "node:path";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import type { ExecutionAttachmentFilesystemIdentity } from "@comis/core";
@@ -23,11 +23,16 @@ function isWithin(path: string, root: string): boolean {
 }
 
 function inspectCanonicalPath(path: string): Result<{
-  readonly stat: Stats;
+  readonly stat: BigIntStats;
   readonly canonical: string;
 }, Error> {
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- callers admit only absolute normalized paths before this filesystem boundary
-  const inspected = tryCatch(() => ({ stat: lstatSync(path), canonical: realpathSync(path) }));
+  const inspected = tryCatch(() => {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- callers admit only absolute normalized paths before this filesystem boundary
+    const stat = lstatSync(path, { bigint: true });
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonical equality rejects paths that redirect outside their admitted runtime root
+    const canonical = realpathSync(path);
+    return { stat, canonical };
+  });
   return inspected.ok ? ok(inspected.value) : err(inspected.error);
 }
 
@@ -73,12 +78,21 @@ export function validateExecutionAttachmentPath(input: ExecutionAttachmentPathIn
     ) continue;
     const root = canonicalDirectory(configuredRoot);
     if (!root.ok || !isWithin(source.value.canonical, root.value)) continue;
+    const maximumSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+    if (
+      source.value.stat.dev < 0n
+      || source.value.stat.dev > maximumSafeInteger
+      || source.value.stat.ino < 0n
+      || source.value.stat.ino > maximumSafeInteger
+      || source.value.stat.birthtimeNs <= 0n
+    ) return err(new Error("execution attachment filesystem identity is outside the supported range"));
     return ok({
       canonicalPath: source.value.canonical,
       filesystemType: "socket",
       filesystemIdentity: {
-        device: source.value.stat.dev,
-        inode: source.value.stat.ino,
+        device: Number(source.value.stat.dev),
+        inode: Number(source.value.stat.ino),
+        birthtimeNs: source.value.stat.birthtimeNs.toString(),
       },
     });
   }

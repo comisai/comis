@@ -93,7 +93,7 @@ function makeLease(overrides: Partial<WorkspaceLeaseRecord> = {}): WorkspaceLeas
     tenantId: "tenant_a",
     agentId: "agent_a",
     canonicalPath: "/srv/comis-workspaces/task-a",
-    filesystemIdentity: { device: 10, inode: 20 },
+    filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
     state: "active",
     createdAtMs: NOW_MS,
     updatedAtMs: NOW_MS,
@@ -180,7 +180,7 @@ describe("SQLite workspace lease persistence", () => {
     const recovered = {
       operationId: "recover_a",
       workspaceLeaseId: "workspace-lease_a",
-      filesystemIdentity: { device: 10, inode: 20 },
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
       recoveredAtMs: NOW_MS + 20,
     };
 
@@ -195,7 +195,12 @@ describe("SQLite workspace lease persistence", () => {
     expect(await store.reconcile(LEASE_SCOPE, {
       ...recovered,
       operationId: "recover_changed",
-      filesystemIdentity: { device: 10, inode: 21 },
+      filesystemIdentity: { device: 10, inode: 21, birthtimeNs: "100" },
+    })).toEqual({ ok: true, value: { kind: "identity_mismatch" } });
+    expect(await store.reconcile(LEASE_SCOPE, {
+      ...recovered,
+      operationId: "recover_reused_inode",
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "101" },
     })).toEqual({ ok: true, value: { kind: "identity_mismatch" } });
     db.close();
   });
@@ -269,7 +274,7 @@ describe("SQLite workspace lease persistence", () => {
     const recovered = {
       operationId: "recover_a",
       workspaceLeaseId: "workspace-lease_a",
-      filesystemIdentity: { device: 10, inode: 20 },
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
       recoveredAtMs: NOW_MS + 1,
     };
 
@@ -361,7 +366,7 @@ describe("SQLite workspace lease persistence", () => {
     await expect(store.reconcile(LEASE_SCOPE, {
       operationId: "recover_a",
       workspaceLeaseId: "workspace-lease_a",
-      filesystemIdentity: { device: 10, inode: 20 },
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
       recoveredAtMs: NOW_MS + 1,
     })).resolves.toMatchObject({ ok: false });
     await expect(store.create(makeLease({ workspaceLeaseId: "workspace-lease_b" })))
@@ -388,7 +393,7 @@ describe("SQLite workspace lease persistence", () => {
     const recovered = {
       operationId: "recover_a",
       workspaceLeaseId: "workspace-lease_a",
-      filesystemIdentity: { device: 10, inode: 20 },
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
       recoveredAtMs: NOW_MS + 1,
     };
     expect((await store.reconcile(LEASE_SCOPE, recovered)).ok).toBe(true);
@@ -438,7 +443,7 @@ describe("SQLite workspace lease persistence", () => {
     await expect(store.reconcile(LEASE_SCOPE, {
       operationId: "recover_a",
       workspaceLeaseId: "workspace-lease_a",
-      filesystemIdentity: { device: 10, inode: 20 },
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
       recoveredAtMs: NOW_MS + 1,
     })).resolves.toMatchObject({
       ok: false,

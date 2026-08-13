@@ -20,7 +20,7 @@ function makeRecord(overrides: Partial<ExecutionAttachmentRecord> = {}): Executi
     kind: "unix_socket",
     sourcePath: "/srv/capability-runtime/service-a/worker.sock",
     sourceFilesystemType: "socket",
-    sourceFilesystemIdentity: { device: 10, inode: 20 },
+    sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
     targetName: `attachment-${"a".repeat(32)}.sock`,
     access: "connect_only",
     state: "active",

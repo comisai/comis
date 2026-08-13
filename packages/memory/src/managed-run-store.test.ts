@@ -162,6 +162,26 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     db.close();
   });
 
+  it("rejects authority tables that omit filesystem creation identities", () => {
+    for (const fixture of [
+      {
+        table: "workspace_leases",
+        missing: "filesystem_birthtime_ns",
+      },
+      {
+        table: "execution_attachments",
+        missing: "source_filesystem_birthtime_ns",
+      },
+    ] as const) {
+      const incompatibleDb = new Database(":memory:");
+      incompatibleDb.exec(`CREATE TABLE ${fixture.table} (record_id TEXT)`);
+      expect(() => ensureManagedRunTables(incompatibleDb)).toThrow(
+        `${fixture.table} database schema is incompatible: missing ${fixture.missing}`,
+      );
+      incompatibleDb.close();
+    }
+  });
+
   it("appends immutable evidence and resolves only exact owner-scoped references", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);

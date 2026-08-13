@@ -33,7 +33,7 @@ function inspectDirectory(path: string, label: string): Result<{
   }
   const inspected = tryCatch(() => {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- caller-supplied path is inspected without following its final component before authority is granted
-    const stat = lstatSync(path);
+    const stat = lstatSync(path, { bigint: true });
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- canonical comparison rejects every symlinked component before the path is authorized
     const canonicalPath = realpathSync(path);
     return { stat, canonicalPath };
@@ -48,15 +48,25 @@ function inspectDirectory(path: string, label: string): Result<{
   }
   const device = inspected.value.stat.dev;
   const inode = inspected.value.stat.ino;
+  const birthtimeNs = inspected.value.stat.birthtimeNs;
+  const maximumSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
   if (
-    !Number.isSafeInteger(device)
-    || device < 0
-    || !Number.isSafeInteger(inode)
-    || inode < 0
+    device < 0n
+    || device > maximumSafeInteger
+    || inode < 0n
+    || inode > maximumSafeInteger
+    || birthtimeNs <= 0n
   ) {
     return err(new Error(`${label} filesystem identity is outside the supported range`));
   }
-  return ok({ canonicalPath: path, filesystemIdentity: { device, inode } });
+  return ok({
+    canonicalPath: path,
+    filesystemIdentity: {
+      device: Number(device),
+      inode: Number(inode),
+      birthtimeNs: birthtimeNs.toString(),
+    },
+  });
 }
 
 /** Resolve exact workspace authority without following symlinks or broadening roots. */

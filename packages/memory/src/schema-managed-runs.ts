@@ -18,6 +18,9 @@ const REQUIRED_MANAGED_RUN_COLUMNS = [
   "last_reduced_report_sequence",
 ] as const;
 
+const REQUIRED_WORKSPACE_LEASE_COLUMNS = ["filesystem_birthtime_ns"] as const;
+const REQUIRED_EXECUTION_ATTACHMENT_COLUMNS = ["source_filesystem_birthtime_ns"] as const;
+
 /** Create the content-free managed-run authority, report, claim, and replay tables. */
 export function ensureManagedRunTables(db: Database.Database): void {
   const existing = db.prepare(
@@ -32,6 +35,38 @@ export function ensureManagedRunTables(db: Database.Database): void {
     if (missing.length > 0) {
       throw new Error(
         `managed_runs database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
+      );
+    }
+  }
+
+  const existingWorkspaceLeases = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workspace_leases'",
+  ).get() !== undefined;
+  if (existingWorkspaceLeases) {
+    const columns = new Set(requireTableInfoRows(
+      db.prepare("PRAGMA table_info(workspace_leases)").all(),
+      "workspace_leases",
+    ).map((row) => row.name));
+    const missing = REQUIRED_WORKSPACE_LEASE_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(
+        `workspace_leases database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
+      );
+    }
+  }
+
+  const existingExecutionAttachments = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_attachments'",
+  ).get() !== undefined;
+  if (existingExecutionAttachments) {
+    const columns = new Set(requireTableInfoRows(
+      db.prepare("PRAGMA table_info(execution_attachments)").all(),
+      "execution_attachments",
+    ).map((row) => row.name));
+    const missing = REQUIRED_EXECUTION_ATTACHMENT_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(
+        `execution_attachments database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
       );
     }
   }
@@ -100,6 +135,11 @@ export function ensureManagedRunTables(db: Database.Database): void {
       canonical_path TEXT NOT NULL,
       filesystem_device INTEGER NOT NULL CHECK(filesystem_device >= 0),
       filesystem_inode INTEGER NOT NULL CHECK(filesystem_inode >= 0),
+      filesystem_birthtime_ns TEXT NOT NULL CHECK(
+        length(filesystem_birthtime_ns) BETWEEN 1 AND 20
+        AND filesystem_birthtime_ns NOT GLOB '*[^0-9]*'
+        AND substr(filesystem_birthtime_ns, 1, 1) <> '0'
+      ),
       state TEXT NOT NULL CHECK(state IN ('active','released')),
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
@@ -123,6 +163,11 @@ export function ensureManagedRunTables(db: Database.Database): void {
       source_filesystem_type TEXT NOT NULL CHECK(source_filesystem_type = 'socket'),
       source_filesystem_device INTEGER NOT NULL CHECK(source_filesystem_device >= 0),
       source_filesystem_inode INTEGER NOT NULL CHECK(source_filesystem_inode >= 0),
+      source_filesystem_birthtime_ns TEXT NOT NULL CHECK(
+        length(source_filesystem_birthtime_ns) BETWEEN 1 AND 20
+        AND source_filesystem_birthtime_ns NOT GLOB '*[^0-9]*'
+        AND substr(source_filesystem_birthtime_ns, 1, 1) <> '0'
+      ),
       target_name TEXT NOT NULL,
       access TEXT NOT NULL CHECK(access = 'connect_only'),
       state TEXT NOT NULL CHECK(state IN ('active','revoked')),

@@ -9,6 +9,7 @@ const TimestampMsSchema = z.number().int().nonnegative();
 export const WorkspaceLeaseFilesystemIdentitySchema = z.strictObject({
   device: z.number().int().nonnegative().safe(),
   inode: z.number().int().nonnegative().safe(),
+  birthtimeNs: z.string().max(20).regex(/^[1-9][0-9]*$/u),
 });
 
 export const WorkspaceLeaseDispositionSchema = z.enum(["reap_safe", "preserve"]);

@@ -14,6 +14,7 @@ export const ExecutionAttachmentDbRowSchema = z.strictObject({
   source_filesystem_type: z.string(),
   source_filesystem_device: z.number().int(),
   source_filesystem_inode: z.number().int(),
+  source_filesystem_birthtime_ns: z.string().max(20).regex(/^[1-9][0-9]*$/u),
   target_name: z.string(),
   access: z.string(),
   state: z.string(),

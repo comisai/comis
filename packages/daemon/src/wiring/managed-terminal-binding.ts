@@ -38,7 +38,7 @@ async function invoke<T>(operation: () => Promise<Result<T, Error>>): Promise<Re
 function validateCurrentWorkspaceLease(record: WorkspaceLeaseRecord): Result<void, Error> {
   const inspected = tryCatch(() => {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- the stored canonical lease path is re-proven without following its final component before terminal binding
-    const stat = lstatSync(record.canonicalPath);
+    const stat = lstatSync(record.canonicalPath, { bigint: true });
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- equality with the stored canonical lease path rejects any newly symlinked component
     const canonicalPath = realpathSync(record.canonicalPath);
     return { stat, canonicalPath };
@@ -47,8 +47,9 @@ function validateCurrentWorkspaceLease(record: WorkspaceLeaseRecord): Result<voi
   return !inspected.value.stat.isSymbolicLink()
     && inspected.value.stat.isDirectory()
     && inspected.value.canonicalPath === record.canonicalPath
-    && inspected.value.stat.dev === record.filesystemIdentity.device
-    && inspected.value.stat.ino === record.filesystemIdentity.inode
+    && inspected.value.stat.dev === BigInt(record.filesystemIdentity.device)
+    && inspected.value.stat.ino === BigInt(record.filesystemIdentity.inode)
+    && inspected.value.stat.birthtimeNs.toString() === record.filesystemIdentity.birthtimeNs
     ? ok(undefined)
     : err(new Error("workspace lease filesystem identity changed"));
 }

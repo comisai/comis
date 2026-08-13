@@ -17,7 +17,7 @@ function makeRecord(overrides: Partial<WorkspaceLeaseRecord> = {}): WorkspaceLea
     tenantId: "tenant_a",
     agentId: "agent_a",
     canonicalPath: "/srv/comis-workspaces/task-a",
-    filesystemIdentity: { device: 10, inode: 20 },
+    filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
     state: "active",
     createdAtMs: NOW_MS,
     updatedAtMs: NOW_MS,
@@ -52,7 +52,10 @@ describe("workspace lease authority record", () => {
 
   it("rejects identity, identifier, and timestamp corruption", () => {
     expect(WorkspaceLeaseRecordSchema.safeParse(makeRecord({
-      filesystemIdentity: { device: -1, inode: 20 },
+      filesystemIdentity: { device: -1, inode: 20, birthtimeNs: "100" },
+    })).success).toBe(false);
+    expect(WorkspaceLeaseRecordSchema.safeParse(makeRecord({
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "0" },
     })).success).toBe(false);
     expect(parseWorkspaceLeaseRecord(makeRecord({ workspaceLeaseId: "contains spaces" })).ok)
       .toBe(false);

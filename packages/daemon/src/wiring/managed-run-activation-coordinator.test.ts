@@ -420,7 +420,11 @@ describe("managed-run two-phase activation", () => {
         value: {
           canonicalPath: workspaceDirectory,
           state: "active",
-          filesystemIdentity: { device: expect.any(Number), inode: expect.any(Number) },
+          filesystemIdentity: {
+            device: expect.any(Number),
+            inode: expect.any(Number),
+            birthtimeNs: expect.stringMatching(/^[1-9][0-9]*$/u),
+          },
         },
       });
       return ok({
@@ -663,7 +667,7 @@ describe("managed-run two-phase activation", () => {
         kind: "unix_socket" as const,
         sourcePath: "/srv/runtime/release.sock",
         sourceFilesystemType: "socket" as const,
-        sourceFilesystemIdentity: { device: 10, inode: 20 },
+        sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
         targetName: `attachment-${"a".repeat(32)}.sock`,
         access: "connect_only" as const,
         state: "active" as const,

@@ -28,7 +28,7 @@ const ATTACHMENT = {
   kind: "unix_socket" as const,
   sourcePath: "/srv/runtime/service-a/run-a.sock",
   sourceFilesystemType: "socket" as const,
-  sourceFilesystemIdentity: { device: 10, inode: 20 },
+  sourceFilesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
   targetName: `attachment-${"a".repeat(32)}.sock`,
   access: "connect_only" as const,
   state: "active" as const,
@@ -81,7 +81,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     validateSource: vi.fn(() => ok({
       canonicalPath: "/srv/runtime/service-a/run-a.sock",
       filesystemType: "socket" as const,
-      filesystemIdentity: { device: 10, inode: 20 },
+      filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
     })),
     ...overrides,
   };
@@ -188,6 +188,22 @@ describe("execution attachment authority coordinator", () => {
     });
   });
 
+  it("rejects a socket replacement that reuses its device and inode", () => {
+    const deps = makeDeps({
+      validateSource: vi.fn(() => ok({
+        canonicalPath: ATTACHMENT.sourcePath,
+        filesystemType: "socket" as const,
+        filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "101" },
+      })),
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    expect(authority.validateActive(ATTACHMENT)).toMatchObject({
+      ok: false,
+      error: { message: "execution attachment filesystem identity changed" },
+    });
+  });
+
   it("revokes a created attachment if durable run binding is refused", async () => {
     const deps = makeDeps({
       runs: {
@@ -281,7 +297,7 @@ describe("execution attachment authority coordinator", () => {
   it("reauthorizes a rematerialized socket for the exact active run and lease", async () => {
     const rematerialized = {
       ...ATTACHMENT,
-      sourceFilesystemIdentity: { device: 10, inode: 21 },
+      sourceFilesystemIdentity: { device: 10, inode: 21, birthtimeNs: "101" },
       updatedAtMs: 1_800_000_000_100,
       lastRecoveredAtMs: 1_800_000_000_100,
     };

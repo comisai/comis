@@ -171,6 +171,7 @@ export async function ensurePreparedWorkspaceLease(
       || existing.value.canonicalPath !== authority.canonicalPath
       || existing.value.filesystemIdentity.device !== authority.filesystemIdentity.device
       || existing.value.filesystemIdentity.inode !== authority.filesystemIdentity.inode
+      || existing.value.filesystemIdentity.birthtimeNs !== authority.filesystemIdentity.birthtimeNs
     ) {
       return err(new Error("durable workspace lease no longer matches filesystem authority"));
     }

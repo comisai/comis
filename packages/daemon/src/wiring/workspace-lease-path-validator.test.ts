@@ -48,6 +48,7 @@ describe("workspace lease path validation", () => {
         filesystemIdentity: {
           device: expect.any(Number),
           inode: expect.any(Number),
+          birthtimeNs: expect.stringMatching(/^[1-9][0-9]*$/u),
         },
       },
     });

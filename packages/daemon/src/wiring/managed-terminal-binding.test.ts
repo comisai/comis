@@ -141,7 +141,7 @@ describe("managed terminal binding authority", () => {
     const sibling = join(scratch, "sibling");
     mkdirSync(workspace, { mode: 0o700 });
     mkdirSync(sibling, { mode: 0o700 });
-    const original = lstatSync(workspace);
+    const original = lstatSync(workspace, { bigint: true });
     const record = {
       managedRunId: "managed-run_a",
       workspaceLeaseId: "workspace-lease_a",
@@ -166,7 +166,11 @@ describe("managed terminal binding authority", () => {
             tenantId: "tenant_a",
             agentId: "agent_a",
             canonicalPath: workspace,
-            filesystemIdentity: { device: original.dev, inode: original.ino },
+            filesystemIdentity: {
+              device: Number(original.dev),
+              inode: Number(original.ino),
+              birthtimeNs: original.birthtimeNs.toString(),
+            },
             state: "active",
             createdAtMs: 1,
             updatedAtMs: 1,

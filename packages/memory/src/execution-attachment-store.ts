@@ -52,6 +52,7 @@ function rowToRecord(row: ExecutionAttachmentDbRow): Result<ExecutionAttachmentR
     sourceFilesystemIdentity: {
       device: row.source_filesystem_device,
       inode: row.source_filesystem_inode,
+      birthtimeNs: row.source_filesystem_birthtime_ns,
     },
     targetName: row.target_name,
     access: row.access,
@@ -98,13 +99,15 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
       schema_version, execution_attachment_id, managed_run_id, workspace_lease_id,
       service_instance_id, tenant_id, agent_id, kind, source_path,
       source_filesystem_type, source_filesystem_device, source_filesystem_inode,
+      source_filesystem_birthtime_ns,
       target_name, access, state, created_at_ms, updated_at_ms,
       last_recovered_at_ms, revoked_at_ms, revocation_reason
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const updateAttachment = db.prepare(`
     UPDATE execution_attachments SET source_filesystem_device = ?,
-      source_filesystem_inode = ?, state = ?, updated_at_ms = ?,
+      source_filesystem_inode = ?, source_filesystem_birthtime_ns = ?,
+      state = ?, updated_at_ms = ?,
       last_recovered_at_ms = ?, revoked_at_ms = ?, revocation_reason = ?
     WHERE execution_attachment_id = ?
   `);
@@ -143,6 +146,7 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
     const updated = updateAttachment.run(
       record.sourceFilesystemIdentity.device,
       record.sourceFilesystemIdentity.inode,
+      record.sourceFilesystemIdentity.birthtimeNs,
       record.state,
       record.updatedAtMs,
       record.lastRecoveredAtMs ?? null,
@@ -210,6 +214,7 @@ export function createSqliteExecutionAttachmentStore(db: Database.Database): Exe
       parsed.value.sourceFilesystemType,
       parsed.value.sourceFilesystemIdentity.device,
       parsed.value.sourceFilesystemIdentity.inode,
+      parsed.value.sourceFilesystemIdentity.birthtimeNs,
       parsed.value.targetName,
       parsed.value.access,
       parsed.value.state,

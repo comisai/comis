@@ -11,6 +11,7 @@ export const WorkspaceLeaseDbRowSchema = z.strictObject({
   canonical_path: z.string(),
   filesystem_device: z.number().int(),
   filesystem_inode: z.number().int(),
+  filesystem_birthtime_ns: z.string().max(20).regex(/^[1-9][0-9]*$/u),
   state: z.string(),
   created_at_ms: z.number().int(),
   updated_at_ms: z.number().int(),

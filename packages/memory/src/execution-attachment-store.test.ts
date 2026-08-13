@@ -97,7 +97,7 @@ function makeLease(): WorkspaceLeaseRecord {
     tenantId: "tenant_a",
     agentId: "agent_a",
     canonicalPath: "/srv/comis-workspaces/task-a",
-    filesystemIdentity: { device: 10, inode: 20 },
+    filesystemIdentity: { device: 10, inode: 20, birthtimeNs: "100" },
     state: "active",
     createdAtMs: NOW_MS,
     updatedAtMs: NOW_MS,
@@ -116,7 +116,7 @@ function makeAttachment(overrides: Partial<ExecutionAttachmentRecord> = {}): Exe
     kind: "unix_socket",
     sourcePath: "/srv/capability-runtime/service-a/worker.sock",
     sourceFilesystemType: "socket",
-    sourceFilesystemIdentity: { device: 30, inode: 40 },
+    sourceFilesystemIdentity: { device: 30, inode: 40, birthtimeNs: "200" },
     targetName: `attachment-${"a".repeat(32)}.sock`,
     access: "connect_only",
     state: "active",
@@ -265,7 +265,7 @@ describe("SQLite execution attachment persistence", () => {
     const reconcileInput = {
       operationId: "attachment-reconcile_success",
       executionAttachmentId: "execution-attachment_a",
-      sourceFilesystemIdentity: { device: 30, inode: 40 },
+      sourceFilesystemIdentity: { device: 30, inode: 40, birthtimeNs: "200" },
       recoveredAtMs: NOW_MS + 1,
     };
 
@@ -347,14 +347,14 @@ describe("SQLite execution attachment persistence", () => {
     expect(await store.reconcile(ATTACHMENT_SCOPE, {
       operationId: "attachment-reconcile_a",
       executionAttachmentId: "execution-attachment_a",
-      sourceFilesystemIdentity: { device: 30, inode: 41 },
+      sourceFilesystemIdentity: { device: 30, inode: 41, birthtimeNs: "201" },
       recoveredAtMs: NOW_MS + 1,
     })).toMatchObject({
       ok: true,
       value: {
         kind: "recovered",
         record: {
-          sourceFilesystemIdentity: { device: 30, inode: 41 },
+          sourceFilesystemIdentity: { device: 30, inode: 41, birthtimeNs: "201" },
           lastRecoveredAtMs: NOW_MS + 1,
         },
       },

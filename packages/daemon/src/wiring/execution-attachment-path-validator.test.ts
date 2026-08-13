@@ -54,7 +54,11 @@ describe("execution attachment source path validation", () => {
       value: {
         canonicalPath: layout.socketPath,
         filesystemType: "socket",
-        filesystemIdentity: { device: expect.any(Number), inode: expect.any(Number) },
+        filesystemIdentity: {
+          device: expect.any(Number),
+          inode: expect.any(Number),
+          birthtimeNs: expect.stringMatching(/^[1-9][0-9]*$/u),
+        },
       },
     });
   });

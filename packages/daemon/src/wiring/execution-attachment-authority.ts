@@ -107,6 +107,7 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
     if (!source.ok) return source;
     return source.value.filesystemIdentity.device === record.sourceFilesystemIdentity.device
       && source.value.filesystemIdentity.inode === record.sourceFilesystemIdentity.inode
+      && source.value.filesystemIdentity.birthtimeNs === record.sourceFilesystemIdentity.birthtimeNs
       ? ok(undefined)
       : err(new Error("execution attachment filesystem identity changed"));
   }
@@ -293,7 +294,7 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
         continue;
       }
       const reconciled = await invoke(deps.attachments.reconcile(attachmentScope(record), {
-        operationId: `attachment-recover-${digest("attachment-recover", `${record.executionAttachmentId}\0${source.value.filesystemIdentity.device}\0${source.value.filesystemIdentity.inode}`).slice(0, 48)}`,
+        operationId: `attachment-recover-${digest("attachment-recover", `${record.executionAttachmentId}\0${source.value.filesystemIdentity.device}\0${source.value.filesystemIdentity.inode}\0${source.value.filesystemIdentity.birthtimeNs}`).slice(0, 48)}`,
         executionAttachmentId: record.executionAttachmentId,
         sourceFilesystemIdentity: source.value.filesystemIdentity,
         recoveredAtMs: deps.nowMs(),

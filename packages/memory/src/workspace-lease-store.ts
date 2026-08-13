@@ -46,6 +46,7 @@ function rowToRecord(row: WorkspaceLeaseDbRow): Result<WorkspaceLeaseRecord, Err
     filesystemIdentity: {
       device: row.filesystem_device,
       inode: row.filesystem_inode,
+      birthtimeNs: row.filesystem_birthtime_ns,
     },
     state: row.state,
     createdAtMs: row.created_at_ms,
@@ -82,9 +83,10 @@ export function createSqliteWorkspaceLeaseStore(db: Database.Database): Workspac
     INSERT INTO workspace_leases (
       schema_version, workspace_lease_id, managed_run_id, service_instance_id,
       tenant_id, agent_id, canonical_path, filesystem_device, filesystem_inode,
+      filesystem_birthtime_ns,
       state, created_at_ms, updated_at_ms, last_recovered_at_ms,
       released_at_ms, release_disposition
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const updateLease = db.prepare(`
     UPDATE workspace_leases SET
@@ -176,6 +178,7 @@ export function createSqliteWorkspaceLeaseStore(db: Database.Database): Workspac
       parsed.value.canonicalPath,
       parsed.value.filesystemIdentity.device,
       parsed.value.filesystemIdentity.inode,
+      parsed.value.filesystemIdentity.birthtimeNs,
       parsed.value.state,
       parsed.value.createdAtMs,
       parsed.value.updatedAtMs,
@@ -254,6 +257,7 @@ export function createSqliteWorkspaceLeaseStore(db: Database.Database): Workspac
     if (
       current.value.filesystemIdentity.device !== input.filesystemIdentity.device
       || current.value.filesystemIdentity.inode !== input.filesystemIdentity.inode
+      || current.value.filesystemIdentity.birthtimeNs !== input.filesystemIdentity.birthtimeNs
     ) return ok({ kind: "identity_mismatch" });
     if (input.recoveredAtMs < current.value.updatedAtMs) {
       return err(new Error("workspace lease recovery time cannot move backward"));
