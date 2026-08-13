@@ -118,6 +118,7 @@ import { createContextWindowGuard } from "../../safety/context-window-guard.js";
 import { composeStreamWrappers } from "../stream-wrappers/index.js";
 import { setupStreamWrappers } from "../executor-stream-setup.js";
 import type { DiscoveryTracker } from "../discovery-tracker.js";
+import { DEFERRAL_STUB_MARKER } from "../tool-deferral.js";
 import { applyCommandDirectives } from "../executor-command-handlers.js";
 import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
@@ -2149,8 +2150,16 @@ async function runSessionLocked(
 
     let injectedCount = 0;
     for (const name of sideEffects.discoveredTools) {
-      // Skip if already in the live tools array
-      if (contextTools.some((t: { name: string }) => t.name === name)) continue;
+      const existingIndex = contextTools.findIndex(
+        (tool: { name: string }) => tool.name === name,
+      );
+      const existingTool = existingIndex >= 0 ? contextTools[existingIndex] : undefined;
+      const existingIsStub = (
+        existingTool as unknown as Record<string, unknown> | undefined
+      )?.[DEFERRAL_STUB_MARKER] === true;
+      // An active full tool wins. A same-name auto-discovery stub is only a
+      // placeholder and must be replaced with the discovered full schema.
+      if (existingIndex >= 0 && !existingIsStub) continue;
 
       // Look up the full ToolDefinition from deferralResult.deferredEntries
       const entry = deferralResult.deferredEntries.find(e => e.name === name);
@@ -2169,7 +2178,7 @@ async function runSessionLocked(
       // as the session-start wrapper so the "once per session" contract
       // holds whether the tool arrives initially or via discover_tools.
       const original = entry.original;
-      contextTools.push({
+      const activatedTool = {
         name: original.name,
         label: (original as unknown as Record<string, unknown>).label as string | undefined,
         description: original.description,
@@ -2192,7 +2201,12 @@ async function runSessionLocked(
             toolParams: params as Record<string, unknown>,
           });
         },
-      } as unknown as (typeof contextTools)[0]);
+      } as unknown as (typeof contextTools)[0];
+      if (existingIndex >= 0) {
+        contextTools[existingIndex] = activatedTool;
+      } else {
+        contextTools.push(activatedTool);
+      }
       injectedCount++;
     }
 
@@ -2215,7 +2229,7 @@ async function runSessionLocked(
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
     resolvedModel, capabilityClass, modelProfile, executionOverrides,
-    deferralResult, systemPromptBlocks: effectiveSystemPromptBlocks, agentId,
+    deferralResult, discoveryTracker, systemPromptBlocks: effectiveSystemPromptBlocks, agentId,
     // Forward the cache-trace recorder so the wrapper chain
     // can include the cache-trace `stream:context` emit. When the
     // recorder is null (disabled), setupStreamWrappers skips the wrapper.
