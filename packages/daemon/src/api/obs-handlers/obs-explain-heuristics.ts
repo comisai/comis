@@ -24,10 +24,7 @@ import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-exp
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict, subagentWaitDeadlineOverlapVerdict } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
-import {
-  backgroundPendingVerdict,
-  backgroundRecoveryVerdict,
-} from "./obs-explain-background-pending-verdict.js";
+import { backgroundPendingVerdict, backgroundRecoveryVerdict } from "./obs-explain-background-pending-verdict.js";
 import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
 import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
 import {
@@ -43,10 +40,7 @@ import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicte
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
 import { toolAuthorizationDeniedVerdict } from "./obs-explain-authorization-verdict.js";
-import {
-  nodeBudgetExceededVerdict,
-  spawnCeilingVerdict,
-} from "./obs-explain-spawn-ceiling-verdict.js";
+import { nodeBudgetExceededVerdict, spawnCeilingVerdict } from "./obs-explain-spawn-ceiling-verdict.js";
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
 // ---------------------------------------------------------------------------

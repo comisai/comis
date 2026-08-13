@@ -176,13 +176,8 @@ export async function callTool(
   // -- NOT err(...) -- so the LLM sees a normal-shape tool result with
   // a readable hint and can self-correct.
   //
-  // When status === "open" AND cooldown elapsed, transition to "half-open"
-  // and fall through. A serialized queue admits one probe at a time; a
-  // parallel-capable server may have several calls share the half-open state.
-  //
-  // Parallel-capable servers share this per-server breaker state. Queue
-  // contention is refused before the SDK request and does not advance it;
-  // successful calls reset the shared state.
+  // After cooldown, serialized queues admit one half-open probe while parallel
+  // servers share the breaker. Pre-request queue refusals do not advance it.
   const breaker = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
   if (breaker.status === "open") {
     const elapsed = systemNowMs() - breaker.openedAtMs;
@@ -220,12 +215,9 @@ export async function callTool(
     // request, so the SDK budget is what is LEFT of the caller's deadline.
     const waitedMs = systemNowMs() - callStartedAtMs;
     const remainingMs = state.options.callToolTimeoutMs - waitedMs;
-    // Clamp by the configured deadline so a deliberately shorter deadline does not
-    // refuse every call before issuance.
+    // A deliberately short deadline must not refuse every call before issuance.
     const viableFloorMs = Math.min(MIN_VIABLE_CALL_BUDGET_MS, state.options.callToolTimeoutMs);
-    // At or below the floor, any non-zero wait makes `remainingMs < viableFloorMs`.
-    // Use the operator's budget as the only bar there, so an empty-queue 1ms wait is
-    // not misreported as concurrency contention.
+    // Below the floor, use the operator budget so a 1ms wait is not misclassified.
     const floorApplies = viableFloorMs < state.options.callToolTimeoutMs;
     if (floorApplies ? remainingMs < viableFloorMs : remainingMs <= 0) {
       // Issuing here would burn a slot on a request that cannot finish in time and would

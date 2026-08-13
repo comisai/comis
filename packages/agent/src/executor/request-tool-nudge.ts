@@ -18,6 +18,7 @@ import {
 } from "./continuation-turn.js";
 import type { ProviderDispatchGuard } from "./provider-dispatch.js";
 import { isRuntimeSelfReportRequest } from "./response-grounding.js";
+import { isDiscoveryControlToolName } from "./tool-deferral.js";
 
 export interface RequestToolNudgeOutcome {
   fired: boolean;
@@ -75,13 +76,9 @@ const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
 const MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS = 3;
 const MAX_OBSERVABLE_RECEIPT_COUNT = 10_000;
-const RECOVERY_CONTROL_TOOL_NAMES = new Set([
-  "discover_tools",
-  "tool_search_tool_regex",
-]);
 
 export function isRecoveryEvidenceToolName(toolName: string): boolean {
-  return !RECOVERY_CONTROL_TOOL_NAMES.has(toolName);
+  return !isDiscoveryControlToolName(toolName);
 }
 
 interface WebFetchReceiptRecord {

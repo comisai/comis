@@ -6,11 +6,7 @@
  * @module
  */
 import { fingerprint, type IncidentSignals } from "@comis/core";
-import {
-  asString, asNumber,
-  relativizeDiskPath, previewAndDigest, applyMediaRecord,
-  accumulateSessionSummaryRecord, currentTurnBreakerOpenedTool, latestPromptSequence,
-} from "./obs-explain-signals-fields.js";
+import { asString, asNumber, relativizeDiskPath, previewAndDigest, applyMediaRecord, accumulateSessionSummaryRecord, currentTurnBreakerOpenedTool, latestPromptSequence } from "./obs-explain-signals-fields.js";
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord,
   accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,

@@ -5,12 +5,7 @@ import type { ErrorKind } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
 import { runContinuationTurn } from "../continuation-turn.js";
-import {
-  scanWithOutputGuard,
-  recoverEmptyFinalResponse,
-  extractExecutionPlan,
-  surfaceDiscardedPreToolUrl,
-} from "../executor-response-filter.js";
+import { scanWithOutputGuard, recoverEmptyFinalResponse, extractExecutionPlan, surfaceDiscardedPreToolUrl } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
 import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, isRecoveryEvidenceToolName, runRequestToolNudge } from "../request-tool-nudge.js";
@@ -390,7 +385,6 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
   }
 }
 
-/** Narrate-without-emit nudge step — separated like the post-batch step. */
 async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
   const { session, agentId, result, deps } = params;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -405,29 +399,22 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     currentSuccessfulDelegationCount: () => Number((params.bridge.getResult().toolExecResults ?? []).some(
       (record) => record.toolName === "sessions_spawn" && record.success && record.backgrounded !== true,
     )),
-    guardProviderDispatch: resolveProviderDispatchGuard(
-      params.executionOverrides?.onProviderStart,
-    ),
+    guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
   });
   if (outcome.recovered && outcome.response) {
     result.response = outcome.response;
   }
   if (outcome.fired) {
-    // Stash for the post-execution chokepoint: an unrecovered fire promotes
-    // the clean would-be terminal to narration_stall (the soft-false-clean fix).
     result.narrateNudge = { fired: true, recovered: outcome.recovered };
   }
 }
 
-/** Bounded recovery when request-matched procedure or tool evidence is missing. */
 async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
   const { session, agentId, result, deps } = params;
   if (result.narrateNudge?.fired === true) return;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sessionMessages: unknown[] = (session as any).messages ?? [];
-  const successfulDiscoveredEvidenceToolNames = (
-    params.bridge.getResult().toolExecResults ?? []
-  ).filter(
+  const successfulDiscoveredEvidenceToolNames = (params.bridge.getResult().toolExecResults ?? []).filter(
     (record) => record.success
       && record.backgrounded !== true
       && isRecoveryEvidenceToolName(record.toolName)
@@ -495,9 +482,7 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     clock: deps.clock,
     agentId,
     getVisibleAssistantText,
-    guardProviderDispatch: resolveProviderDispatchGuard(
-      params.executionOverrides?.onProviderStart,
-    ),
+    guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
   });
   if (outcome.recovered && outcome.response) {
     result.response = outcome.response;

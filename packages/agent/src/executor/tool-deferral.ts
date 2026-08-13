@@ -242,6 +242,15 @@ export const CORE_TOOLS = new Set([
  */
 export const SMALL_CLASS_ORCHESTRATION_TOOLS = new Set(["pipeline"]);
 
+const DISCOVERY_CONTROL_TOOL_NAMES = new Set([
+  "discover_tools",
+  "tool_search_tool_regex",
+]);
+
+export function isDiscoveryControlToolName(toolName: string): boolean {
+  return DISCOVERY_CONTROL_TOOL_NAMES.has(toolName);
+}
+
 function normalizedToolReference(value: string): string {
   return value.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
 }
