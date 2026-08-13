@@ -25,6 +25,16 @@ export function telegramInjectionIdentityError(chatId, senderId) {
     : undefined;
 }
 
+/** Reject group drives whose chat shape cannot exist in the selected emulator.
+ * Standalone group chats must be created at emulator launch; the control API
+ * cannot promote an arbitrary negative chat id into a Telegram group. */
+export function telegramEmulatorChatError(chatId, registeredGroups) {
+  if (chatId >= 0) return undefined;
+  return Array.isArray(registeredGroups) && registeredGroups.includes(chatId)
+    ? undefined
+    : `Telegram group chat ${String(chatId)} is not registered in emulator wiring; restart the emulator with EMU_GROUPS before driving it`;
+}
+
 /** Return the user-visible prose carried by one outbound wire record.
  * Telegram attachments carry their only prose in `caption`, so treating only
  * `text` as an answer fabricates an empty-final failure after a successful
