@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   emitObservationalEventSafely,
   reduceManagedRunState,
+  toSafeErrorLogString,
   wrapExternalContent,
   type ComisLogger,
   type CapabilityServiceEvidencePolicy,
@@ -348,10 +349,11 @@ export function createManagedRunContinuationCoordinator(
         durationMs: Math.max(0, deps.nowMs() - startedAtMs),
         timestamp: deps.nowMs(),
       });
-      if (executionFailed) {
+      if (execution !== undefined && !execution.ok) {
         log.warn({
           managedRunId,
           serviceInstanceId: record.serviceInstanceId,
+          err: toSafeErrorLogString(execution.error),
           hint: "Inspect the managed-run continuation execution and retry after its exact policy, tools, and delivery dependencies are available",
           errorKind: "dependency" as const,
         }, "Managed-run continuation failed closed");
