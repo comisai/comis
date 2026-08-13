@@ -45,7 +45,7 @@ export function groundedResponseReplacementVerdict(
     code: "recovery_replaced_grounded_response",
     detail:
       `${String(groundedBefore - groundedPreserved)} grounded response(s) backed by `
-      + `${String(outsideRoute)} successful receipt(s) outside the selected workflow `
+      + `${String(outsideRoute)} successful receipt(s) outside the selected workflow route `
       + "were replaced by request-tool recovery",
     suggestedNextSteps: [
       "inspect request-relevant tool routing and the request_tool_nudge handoff",
