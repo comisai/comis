@@ -1716,6 +1716,71 @@ describe("assembleIncidentReport — recovery attempts", () => {
     const report = assembleIncidentReport(toIncidentSignals([]), makeMetadata(), null, SESSION_KEY, 0);
     expect(report.recoveries).toBeUndefined();
   });
+
+  it("diagnoses a clean recovery that replaced a grounded response from tools outside its route", async () => {
+    const baseReader = makeAuditReader([], [
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "request_tool_nudge",
+          succeeded: true,
+          groundedResponseBeforeRecovery: true,
+          groundedResponsePreserved: false,
+          successfulReceiptsOutsideRoute: 1,
+        },
+      },
+    ]);
+    const reader: IncidentSourceReader = {
+      ...baseReader,
+      async readSessionMetadata() {
+        return makeMetadata({
+          sessionEnd: {
+            type: "session_end",
+            timestamp: "2026-08-13T14:04:00.000Z",
+            endReason: "success",
+            durationMs: 650_000,
+            totalTokens: 1_950_000,
+            degraded: false,
+            costUsd: 2.23,
+            toolStats: {
+              "mcp__records--summary": { ok: 1, failed: 0 },
+            },
+            breakerTripCount: 0,
+            topErrorKinds: {},
+          },
+        });
+      },
+    };
+
+    const report = await assembleIncidentReportFromSources(
+      reader,
+      "/fake/.comis",
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+
+    expect(report.outcome).toMatchObject({
+      endReason: "success",
+      degraded: false,
+      severity: "ok",
+    });
+    expect(report.recoveries as Record<string, unknown>).toMatchObject({
+      total: 1,
+      succeeded: 1,
+      byReason: { request_tool_nudge: 1 },
+      groundedResponseBeforeRecoveryCount: 1,
+      groundedResponsePreservedCount: 0,
+      successfulReceiptsOutsideRoute: 1,
+    });
+    expect(report.likelyRootCause?.code).toBe(
+      "recovery_replaced_grounded_response",
+    );
+    expect(report.likelyRootCause?.detail).toMatch(
+      /grounded response.*outside.*route.*replaced/iu,
+    );
+  });
 });
 
 describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {

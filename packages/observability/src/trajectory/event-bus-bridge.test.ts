@@ -3179,6 +3179,32 @@ describe("queue + execution + sender bridge", () => {
     expect(data.agentId).toBeUndefined();
   });
 
+  it("execution recovery preserves content-free grounded-response handoff evidence", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:recovery_attempted", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      reason: "request_tool_nudge",
+      succeeded: true,
+      groundedResponseBeforeRecovery: true,
+      groundedResponsePreserved: false,
+      successfulReceiptsOutsideRoute: 2,
+      timestamp: Date.now(),
+    } as any);
+
+    const data = recorder.calls[0]?.data as Record<string, unknown>;
+    expect(data).toMatchObject({
+      reason: "request_tool_nudge",
+      succeeded: true,
+      groundedResponseBeforeRecovery: true,
+      groundedResponsePreserved: false,
+      successfulReceiptsOutsideRoute: 2,
+    });
+  });
+
   it("delivery_aborted maps to delivery.aborted carrying chunk counts + the abort reason", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

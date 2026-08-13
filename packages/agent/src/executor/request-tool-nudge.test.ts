@@ -582,6 +582,31 @@ describe("runRequestToolNudge", () => {
     );
   });
 
+  it("reports whether request-tool recovery preserved grounded evidence outside its route", async () => {
+    const { deps } = makePromptSkillNarrationScenario({
+      groundedAnswer: "The connected records support a current finding.",
+      terminalNarration: "General research supplies additional context.",
+    });
+    deps.currentSuccessfulNonWorkflowToolCount = (toolNames) =>
+      toolNames === undefined ? 1 : 0;
+
+    await runRequestToolNudge(deps);
+
+    const eventBus = deps.eventBus as unknown as {
+      emitSafely: ReturnType<typeof vi.fn>;
+    };
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
+      "execution:recovery_attempted",
+      expect.objectContaining({
+        reason: "request_tool_nudge",
+        succeeded: true,
+        groundedResponseBeforeRecovery: true,
+        groundedResponsePreserved: true,
+        successfulReceiptsOutsideRoute: 1,
+      }),
+    );
+  });
+
   it("keeps terminal narration alone without a successful non-workflow receipt", async () => {
     const terminalNarration = "The current workflow evidence is bounded.";
     const { deps } = makePromptSkillNarrationScenario({
