@@ -18,6 +18,8 @@ export interface OrphanCandidateRun {
   readonly runId: string;
   readonly status: string;
   readonly parentRunId?: string;
+  readonly announceChannelType?: string;
+  readonly announceChannelId?: string;
 }
 
 /** Statuses from which a run can still be cancelled. */
@@ -26,9 +28,10 @@ const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set(["running", "queued"])
 /**
  * Child runs to cancel when `parentRunId` reaches a terminal state.
  *
- * A parent that ends abnormally can never consume what its children return, so
- * every still-live child is burning tokens for a result with no reader. In the
- * incident one such orphan ran 46s past its dead parent and spent $1.80.
+ * A parent that ends abnormally cannot consume an unrouted child's result, so
+ * that child would continue working without a reader. A child with a complete
+ * announcement route still has an independently authenticated consumer and is
+ * not an orphan merely because its parent ended.
  *
  * A parent that completes CLEANLY is left alone: background delegation is a
  * legitimate pattern, and a child announcing to its own channel is expected to
@@ -45,7 +48,14 @@ export function selectOrphanedChildRuns(
   runs: Iterable<OrphanCandidateRun>,
 ): string[] {
   if (parentEndReason === "completed") return [];
-  return liveChildRunIds(parentRunId, runs);
+  const orphaned: string[] = [];
+  for (const run of runs) {
+    if (run.parentRunId !== parentRunId) continue;
+    if (!CANCELLABLE_STATUSES.has(run.status)) continue;
+    if (run.announceChannelType && run.announceChannelId) continue;
+    orphaned.push(run.runId);
+  }
+  return orphaned;
 }
 
 /**
