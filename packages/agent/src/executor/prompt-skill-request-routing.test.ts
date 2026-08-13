@@ -288,6 +288,49 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
   });
 
+  it("keeps coordinated web exclusions from arming research floors", () => {
+    const excluded = result();
+    const excludedRequest = [
+      "Conduct deep research to understand the connected records properly.",
+      "Work directly and do not delegate or use web research or prior reports.",
+    ].join(" ");
+
+    expect(applyPromptSkillRequestRouting(excluded, {
+      currentRequestText: excludedRequest,
+      requestRelevanceText: excludedRequest,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    })).toEqual(["deep-research"]);
+    expect(excluded.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(excluded.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(excluded.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(excluded.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
+    expect(excluded.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
+    expect(excluded.requestRelevantToolNames).toEqual(["read"]);
+
+    const permitted = result();
+    const permittedRequest = [
+      "Conduct deep research to understand the connected records properly.",
+      "Work directly and use web research instead of prior reports.",
+    ].join(" ");
+
+    applyPromptSkillRequestRouting(permitted, {
+      currentRequestText: permittedRequest,
+      requestRelevanceText: permittedRequest,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+    expect(permitted.requestRelevantPromptSkillNames).toEqual(["deep-research"]);
+    expect(permitted.requestRelevantPromptSkillWorkflowToolNames).toEqual([
+      "web_search",
+      "web_fetch",
+    ]);
+  });
+
   // A floor whose receipt tool is unreachable can never be met, so the
   // completion gate would discard the model's answer on every routed turn.
   it("drops web-evidence floors when the receipt tools are unavailable", () => {
