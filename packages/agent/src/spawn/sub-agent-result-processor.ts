@@ -92,7 +92,6 @@ export function isSubAgentAbortFinishReason(finishReason: string): boolean {
       return true;
   }
 }
-
 /**
  * Classify a sub-agent abort reason from finishReason and optional error context.
  * Maps supported finish reasons to specific abort categories with remediation
@@ -971,8 +970,7 @@ async function deliverFailureNotificationOnce(
     return Promise.reject(sendErr);
   }
 
-  // Mark delivered only after a confirmed true result. Both sinks resolve to
-  // the same bounded set in production.
+  // Mark delivered only after a confirmed true result; both sinks resolve to the same bounded set.
   if (announceKey) {
     deps.batcher?.markDelivered(announceKey);
     deps.deliveryDedup?.mark(announceKey);

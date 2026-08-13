@@ -8,7 +8,6 @@ export type {
   AgentExecutor,
   ExecutionResult,
   ExecutionOverrides,
-  ExecutionStepLimitDetails,
 } from "./executor/types.js";
 export {
   createContinuationExecutionEngine,

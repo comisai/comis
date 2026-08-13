@@ -979,11 +979,9 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  //  N) fresh_tail_origin_lost — DEAD LAST. A context-shaping advisory, not a
-  //     terminal cause: every acute verdict above out-ranks it.
+  // N) fresh_tail_origin_lost — DEAD LAST; every acute verdict above outranks this advisory.
   freshTailOriginLostVerdict,
 ];
-
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
 export function rootCause(s: IncidentSignals): RootCause | null {
   const schedulerResponseReplaced =

@@ -42,6 +42,7 @@ export interface ExecutionStepLimitDetails {
 }
 
 /** Fields shared by every settled agent execution result. */
+// @optional-field-count: independently emitted evidence is absent when its execution subsystem did not run.
 export interface ExecutionResultBase {
   response: string;
   sessionKey: SessionKey;

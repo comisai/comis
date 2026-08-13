@@ -36,7 +36,7 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 }
 
 describe("obs-explain-heuristics", () => {
-  it("identifies scheduler evidence replacement as the delivered-response cause", () => {
+  it("returns scheduler evidence replacement as the delivered-response cause", () => {
     const result = rootCause(makeSignals({
       endReason: "success",
       degraded: false,
