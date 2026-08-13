@@ -39,6 +39,7 @@ describe("obs-explain-heuristics", () => {
   it("identifies scheduler evidence replacement as the delivered-response cause", () => {
     const result = rootCause(makeSignals({
       endReason: "success",
+      degraded: false,
       recoveries: {
         total: 1,
         succeeded: 1,
