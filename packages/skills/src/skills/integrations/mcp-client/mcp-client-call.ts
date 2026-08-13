@@ -177,10 +177,12 @@ export async function callTool(
   // a readable hint and can self-correct.
   //
   // When status === "open" AND cooldown elapsed, transition to "half-open"
-  // and fall through (one probe attempt allowed).
+  // and fall through. A serialized queue admits one probe at a time; a
+  // parallel-capable server may have several calls share the half-open state.
   //
-  // Revisit if supportsParallelToolCalls lands -- today stdio concurrency = 1
-  // makes per-call breaker semantics straightforward.
+  // Parallel-capable servers share this per-server breaker state. Queue
+  // contention is refused before the SDK request and does not advance it;
+  // successful calls reset the shared state.
   const breaker = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
   if (breaker.status === "open") {
     const elapsed = systemNowMs() - breaker.openedAtMs;

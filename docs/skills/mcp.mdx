@@ -89,10 +89,13 @@ and prefer a pinned package or executable from its publisher.
 | `http` | Remote Streamable HTTP server | `url` | 4 |
 | `sse` | Remote server that only supports legacy SSE | `url` | 4 |
 
-`maxConcurrency` overrides the transport default. For stdio, keep the default
-unless the server explicitly supports parallel tool calls. Comis can infer
-`stdio` from `command` or `http` from `url` when `transport` is omitted, but
-setting it explicitly makes shared configuration easier to review.
+`maxConcurrency` overrides the transport default. For stdio,
+`supportsParallelToolCalls: true` opts into an implicit concurrency of 4 when
+`maxConcurrency` is omitted; otherwise stdio remains serialized at 1. Keep it
+serialized unless the server explicitly supports parallel calls. Both fields
+stay attached to the persisted server entry across `comis mcp reconnect`.
+Comis can infer `stdio` from `command` or `http` from `url` when `transport` is
+omitted, but setting it explicitly makes shared configuration easier to review.
 
 ### Remote server example
 

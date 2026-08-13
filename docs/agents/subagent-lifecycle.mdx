@@ -355,16 +355,20 @@ returned by `session.run_status` and `subagent.wait`:
 | `killed` | The sub-agent was force-terminated. The kill is attributed via `killedBy` (`parent` \| `health_monitor` \| `operator` \| `system`) on the failure record, the `subagent:killed` event, and the run status the parent polls -- a daemon health-monitor stuck-kill (no observed tool/LLM progress past `stuckKillThresholdMs`) never reads as a parent kill, and it delivers an LLM-free failure notification to the announce channel |
 | `watchdog_timeout` | The sub-agent exceeded its wall-clock timeout and was force-failed by the watchdog timer. See [Resilience](/agents/resilience#sub-agent-watchdog). |
 
-### Orphaned children are cancelled with their parent
+### Unrouted children are cancelled with their parent
 
 When a run reaches a terminal state **abnormally** -- any end reason other than
-`completed` -- every child it spawned that is still `running` or `queued` is
-killed with `killedBy: "system"`, and the failure notification names the cause
+`completed` -- each child it spawned that is still `running` or `queued` is
+checked for an independently authenticated completion route. A child with both
+announcement-route coordinates continues and can still deliver its result; the
+parent trajectory records that preservation as bounded identifiers plus the
+closed reason `announcement_route`. A child without that route is killed with
+`killedBy: "system"`, and the failure notification names the cause
 (`its parent run ended (<endReason>) with no reader left for this result`).
 
-A parent that ends abnormally can never consume what its children return, so
-without the cascade they keep spending tokens on a result nobody will read. The
-cascade walks the spawn tree once per node, bounded by `maxSpawnDepth`.
+The cascade therefore stops only work whose parent was its last reader. It
+walks the spawn tree once per node, bounded by `maxSpawnDepth`, while routed
+children remain independently deliverable.
 
 A **cleanly completed** parent cancels nothing. Background delegation is a
 supported pattern: a child that announces to its own channel is expected to

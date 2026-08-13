@@ -1892,6 +1892,8 @@ External service integrations for search, MCP servers, media processing, and aut
 | `url` | `string (URL)` | _(unset)_ | URL for HTTP or SSE transport |
 | `env` | `Record<string, string>` | _(unset)_ | Environment variables for stdio process |
 | `enabled` | `boolean` | `true` | Whether this server is enabled |
+| `maxConcurrency` | `number` | transport default | Positive integer overriding the per-server tool-call concurrency. The transport defaults are 1 for stdio and 4 for HTTP/SSE. |
+| `supportsParallelToolCalls` | `boolean` | `false` | For stdio only, opt into an implicit concurrency of 4 when `maxConcurrency` is omitted. Ignored for HTTP/SSE, whose default is already 4. |
 
 **Media (integrations.media)** -- contains nested sub-schemas for all media processing:
 
