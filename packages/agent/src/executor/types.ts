@@ -42,6 +42,18 @@ export interface ExecutionStepLimitDetails {
 }
 
 /** Fields shared by every settled agent execution result. */
+// @optional-field-count: 13 — ExecutionResultBase is the settled-execution
+// evidence record, and each `?` field is a fact ONE mechanism produces only when
+// that mechanism actually engaged: workspacePolicyHash (immutable-workspace turns),
+// finalResponseSuppressedBy (an exact-route delivery made the model's response
+// redundant), localeQualityFinding/responseLocaleRepairSkipped (locale repair ran
+// or was declined), sessionTokensUsed (the SDK reported cumulative stats),
+// stepLimit (a step ceiling actually bound the run), toolCallHistory,
+// narrateNudge/requestToolNudge (a nudge fired), errorContext (the run failed),
+// and budgetMetrics (the budget path resolved). They are not a cluster-split
+// candidate: every consumer reads this as ONE settled result, and absence is
+// load-bearing — an absent field means "that mechanism did not engage" and must
+// never be fabricated as a zero/empty value to satisfy a required shape.
 export interface ExecutionResultBase {
   response: string;
   sessionKey: SessionKey;
