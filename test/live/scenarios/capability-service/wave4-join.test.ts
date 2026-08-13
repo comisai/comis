@@ -81,6 +81,7 @@ export const CONTRIBUTION: CapabilityServiceContributionRegistration = {
     ],
     requestedScopes: [
       "health",
+      "attention_response",
       "report",
       "evidence",
       "workspace_lease",
@@ -357,7 +358,7 @@ export function startInstalledService(input: {
     "--repository-id", "fixture-repository",
     "--repository-primary", input.repository.primary,
     "--worktree-root", input.repository.worktreeRoot,
-    "--repository-default-branch", "master",
+    "--repository-default-branch", input.repository.defaultBranch,
     "--comis-socket", input.controlSocket,
     "--comis-credential-file", input.credentialFile,
     "--comis-handshake-operation", "wave4-handshake-operation",

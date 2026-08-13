@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -58,6 +59,36 @@ interface InjectableChannelManager {
 interface PullTruth {
   readonly number: number;
   readonly branch: string;
+}
+
+function attachmentDiagnostic(databasePath: string, runtimeRoot: string, dataDir: string): string {
+  const db = new Database(databasePath, { readonly: true });
+  try {
+    const row = db.prepare("SELECT handle FROM tasks ORDER BY created_at DESC LIMIT 1").get() as
+      | { handle: string }
+      | undefined;
+    if (row === undefined) return "attachment diagnostic: no durable task exists";
+    const sourcePath = join(runtimeRoot, row.handle, "attachment.sock");
+    if (!existsSync(sourcePath)) {
+      return `attachment diagnostic: source is absent; runtimeRoot=${runtimeRoot}; dataDir=${dataDir}`;
+    }
+    const stat = lstatSync(sourcePath, { bigint: true });
+    return `attachment diagnostic: ${JSON.stringify({
+      runtimeRoot,
+      runtimeRootCanonical: realpathSync(runtimeRoot),
+      dataDir,
+      dataDirCanonical: realpathSync(dataDir),
+      sourcePath,
+      sourceCanonical: realpathSync(sourcePath),
+      isSocket: stat.isSocket(),
+      isSymbolicLink: stat.isSymbolicLink(),
+      device: stat.dev.toString(),
+      inode: stat.ino.toString(),
+      birthtimeNs: stat.birthtimeNs.toString(),
+    })}`;
+  } finally {
+    db.close();
+  }
 }
 
 class DeterministicForgeServer {
@@ -524,7 +555,7 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
           },
           capture: (text) => { taskHandle = /task-[a-f0-9]{24}/u.exec(text)?.[0] ?? ""; },
         }]);
-        expect(taskHandle).toMatch(/^task-[a-f0-9]{24}$/u);
+        expect(taskHandle, attachmentDiagnostic(goDatabase, runtimeRoot, canonicalDataDir)).toMatch(/^task-[a-f0-9]{24}$/u);
         handles.push(taskHandle);
       }
       const [shipTask, scoutTask] = handles as [string, string];

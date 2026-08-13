@@ -152,6 +152,28 @@ describe("execution attachment authority coordinator", () => {
     expect(deps.attachments.create).not.toHaveBeenCalled();
   });
 
+  it("logs the content-free filesystem reason when a new attachment source is rejected", async () => {
+    const deps = makeDeps({
+      validateSource: vi.fn(() => err(new Error("execution attachment source is outside the capability-service runtime roots"))),
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    const result = await authority.create({
+      operationId: "operation_attachment_rejected_source",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
+      sourcePath: "/srv/runtime/service-a/run-a.sock",
+      owner: OWNER,
+    });
+
+    expect(result).toEqual({ ok: true, value: { kind: "rejected", reason: "source_rejected" } });
+    expect(deps.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      errorKind: "validation",
+      failureCause: "execution attachment source is outside the capability-service runtime roots",
+    }), "Execution attachment source was rejected");
+  });
+
   it("revalidates a replayed attachment before returning its durable handles", async () => {
     const deps = makeDeps({
       runs: {
