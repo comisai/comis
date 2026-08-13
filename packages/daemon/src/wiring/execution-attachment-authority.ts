@@ -150,6 +150,7 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
         deps.logger.warn({
           managedRunId: input.managedRunId,
           serviceInstanceId: instance.serviceInstanceId,
+          failureCause: active.error.message,
           errorKind: "validation" as const,
           hint: "Restore the original canonical Unix socket under allowedRuntimeRoots or abandon the preparation",
         }, "Replayed execution attachment source was rejected");
@@ -171,6 +172,7 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
       deps.logger.warn({
         managedRunId: input.managedRunId,
         serviceInstanceId: instance.serviceInstanceId,
+        failureCause: source.error.message,
         errorKind: "validation" as const,
         hint: "Use a real canonical Unix socket under the instance allowedRuntimeRoots; control and Comis data sockets are forbidden",
       }, "Execution attachment source was rejected");
