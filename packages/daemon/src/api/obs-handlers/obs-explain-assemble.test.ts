@@ -1814,6 +1814,34 @@ describe("assembleIncidentReport — recovery attempts", () => {
   });
 });
 
+describe("assembleIncidentReport — discovery activation", () => {
+  it("surfaces content-free activation counts on the incident report", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "tool.discovery_activation",
+      seq: 1,
+      sessionKey: SESSION_KEY,
+      data: {
+        displayedCount: 4,
+        activatedCount: 2,
+        replacedCount: 1,
+        skippedCount: 1,
+        failedCount: 2,
+      },
+    }]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+
+    expect((report as unknown as { discoveryActivation?: Record<string, number> }).discoveryActivation)
+      .toEqual({
+        displayedCount: 4,
+        activatedCount: 2,
+        replacedCount: 1,
+        skippedCount: 1,
+        failedCount: 2,
+      });
+  });
+});
+
 describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {
   // "What did the user actually see this turn?" — the terminal pill state and
   // any never-sent blocks. Observed live: explain claimed 2 dispatched

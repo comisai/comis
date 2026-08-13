@@ -141,6 +141,53 @@ describe("loop-detected trajectory normalization", () => {
   });
 });
 
+describe("discovery activation trajectory normalization", () => {
+  it("aggregates displayed and provider-activated disposition counts", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.discovery_activation",
+        seq: 18,
+        data: {
+          displayedCount: 2,
+          activatedCount: 1,
+          replacedCount: 1,
+          skippedCount: 0,
+          failedCount: 1,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.discovery_activation",
+        seq: 19,
+        data: {
+          displayedCount: 1,
+          activatedCount: 1,
+          replacedCount: 0,
+          skippedCount: 1,
+          failedCount: 0,
+        },
+      },
+    ]) as IncidentSignals & {
+      discoveryActivation?: {
+        displayedCount: number;
+        activatedCount: number;
+        replacedCount: number;
+        skippedCount: number;
+        failedCount: number;
+      };
+    };
+
+    expect(signals.discoveryActivation).toEqual({
+      displayedCount: 3,
+      activatedCount: 2,
+      replacedCount: 1,
+      skippedCount: 1,
+      failedCount: 1,
+    });
+  });
+});
+
 describe("MCP queue contention trajectory normalization", () => {
   it("retains breaker-neutral classification and queue timing in explain failures", () => {
     const signals = toIncidentSignals([{

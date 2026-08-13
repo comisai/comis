@@ -1196,6 +1196,57 @@ describe("obs-explain-heuristics", () => {
     expect(r?.detail).not.toMatch(/recall miss/i);
   });
 
+  it("diagnoses discovered tools only when provider activation is lower", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: false,
+    }) as IncidentSignals & {
+      discoveryActivation: {
+        displayedCount: number;
+        activatedCount: number;
+        replacedCount: number;
+        skippedCount: number;
+        failedCount: number;
+      };
+    };
+    signals.discoveryActivation = {
+      displayedCount: 6,
+      activatedCount: 0,
+      replacedCount: 0,
+      skippedCount: 6,
+      failedCount: 0,
+    };
+
+    const r = rootCause(signals);
+
+    expect(r?.code).toBe("discovered_tool_not_activated");
+    expect(r?.detail).toMatch(/displayed=6.*activated=0.*replaced=0.*skipped=6.*failed=0/iu);
+  });
+
+  it("does not diagnose discovery activation when displayed tools reached the provider", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: false,
+    }) as IncidentSignals & {
+      discoveryActivation: {
+        displayedCount: number;
+        activatedCount: number;
+        replacedCount: number;
+        skippedCount: number;
+        failedCount: number;
+      };
+    };
+    signals.discoveryActivation = {
+      displayedCount: 6,
+      activatedCount: 6,
+      replacedCount: 6,
+      skippedCount: 0,
+      failedCount: 0,
+    };
+
+    expect(rootCause(signals)).toBeNull();
+  });
+
   it("ranks a hard provider rejection above an incidental zero-hit recall", () => {
     // The production shape: every LLM call rejected with the same deterministic
     // category, on a fresh install whose empty memory store makes EVERY recall

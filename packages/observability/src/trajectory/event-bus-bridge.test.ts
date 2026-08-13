@@ -3257,6 +3257,43 @@ describe("queue + execution + sender bridge", () => {
     });
   });
 
+  it("discovery activation preserves only bounded disposition counts", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    const emit = bus.emit.bind(bus) as unknown as (
+      event: string,
+      payload: Record<string, unknown>,
+    ) => boolean;
+    emit("tool:discovery_activation", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      displayedCount: 3,
+      activatedCount: 1,
+      replacedCount: 1,
+      skippedCount: 1,
+      failedCount: 1,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "tool.discovery_activation",
+      data: {
+        displayedCount: 3,
+        activatedCount: 1,
+        replacedCount: 1,
+        skippedCount: 1,
+        failedCount: 1,
+      },
+    });
+    expect(recorder.calls[0]?.data).not.toHaveProperty("agentId");
+    expect(recorder.calls[0]?.data).not.toHaveProperty("sessionKey");
+    expect(recorder.calls[0]?.data).not.toHaveProperty("traceId");
+  });
+
   it("delivery_aborted maps to delivery.aborted carrying chunk counts + the abort reason", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

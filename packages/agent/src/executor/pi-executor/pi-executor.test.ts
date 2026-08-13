@@ -6822,6 +6822,11 @@ describe("PiExecutor", () => {
         context: { tools: liveTools },
       });
 
+      const activationEventsBeforeProvider = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.filter(([event]) => event === "tool:discovery_activation");
+      expect(activationEventsBeforeProvider).toHaveLength(0);
+
       const activatedTools = liveTools.filter(tool => tool.name === summaryTool.name);
       expect(activatedTools).toHaveLength(1);
       expect(activatedTools[0]).not.toBe(originalStub);
@@ -6855,6 +6860,18 @@ describe("PiExecutor", () => {
       );
 
       expect(providerSummary?.function?.parameters).toEqual(summaryTool.parameters);
+      const activationEvents = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.filter(([event]) => event === "tool:discovery_activation");
+      expect(activationEvents).toHaveLength(1);
+      expect(activationEvents[0]?.[1]).toMatchObject({
+        displayedCount: 1,
+        activatedCount: 1,
+        replacedCount: 1,
+        skippedCount: 0,
+        failedCount: 0,
+      });
+      expect(JSON.stringify(activationEvents[0]?.[1])).not.toContain("summaryTool");
     });
 
     it("keeps an already active discovered tool unchanged", async () => {
