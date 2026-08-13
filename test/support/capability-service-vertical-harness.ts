@@ -560,6 +560,7 @@ export class FixtureModelServer {
 
 export interface RunningFixtureService {
   readonly process: ChildProcess;
+  readonly runtimeRoot: string;
   readonly stderr: () => string;
   stop(): Promise<void>;
 }
@@ -614,6 +615,7 @@ export function startFixtureService(input: {
   child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
   return Object.freeze({
     process: child,
+    runtimeRoot,
     stderr: () => Buffer.concat(stderrChunks).toString("utf8"),
     stop: async () => {
       if (child.exitCode !== null || child.signalCode !== null) return;

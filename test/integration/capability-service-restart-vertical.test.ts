@@ -150,6 +150,7 @@ function makeConfig(input: {
   readonly mcpProxySocket: string;
   readonly controlSocket: string;
   readonly workspaceRoot: string;
+  readonly runtimeRoot: string;
 }): Record<string, unknown> {
   return {
     tenantId: "test",
@@ -269,7 +270,7 @@ function makeConfig(input: {
         },
         allowedAgents: ["default"],
         allowedWorkspaceRoots: [input.workspaceRoot],
-        allowedRuntimeRoots: [],
+        allowedRuntimeRoots: [input.runtimeRoot],
       }],
     },
   };
@@ -344,6 +345,7 @@ describe("restart-injected capability-service vertical join", () => {
         mcpProxySocket,
         controlSocket,
         workspaceRoot: repository.worktreeRoot,
+        runtimeRoot: service.runtimeRoot,
       })), { mode: 0o600 });
       process.env[CONTROL_SECRET_NAME] = CONTROL_SECRET;
       process.env[PROVIDER_SECRET_NAME] = "fixture-provider-key";
