@@ -16,6 +16,7 @@ import {
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
+  telegramEmulatorChatError,
   telegramInjectionIdentityError,
   trajectoryTurnEnded,
 } from "./drive-session-oracle.mjs";
@@ -64,6 +65,14 @@ describe("opt-in follow-up delivery wait", () => {
 });
 
 describe("drive inbound validation", () => {
+  it("rejects group drives that the emulator did not register", () => {
+    expect(telegramEmulatorChatError(-100678314279, [])).toBe(
+      "Telegram group chat -100678314279 is not registered in emulator wiring; restart the emulator with EMU_GROUPS before driving it",
+    );
+    expect(telegramEmulatorChatError(-100678314279, [-100678314279])).toBeUndefined();
+    expect(telegramEmulatorChatError(678314278, [])).toBeUndefined();
+  });
+
   it("rejects impossible Telegram private-chat sender identities", () => {
     expect(telegramInjectionIdentityError(678314278, 678314278)).toBeUndefined();
     expect(telegramInjectionIdentityError(-100678314279, 678314278)).toBeUndefined();
