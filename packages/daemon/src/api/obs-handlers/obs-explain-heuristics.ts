@@ -986,7 +986,13 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
 export function rootCause(s: IncidentSignals): RootCause | null {
-  if (s.endReason === "success" && s.degraded === false) return null;
+  const schedulerResponseReplaced =
+    (s.recoveries?.byReason.missing_scheduler_state_evidence ?? 0) > 0;
+  if (
+    s.endReason === "success"
+    && s.degraded === false
+    && !schedulerResponseReplaced
+  ) return null;
   for (const h of HEURISTICS) {
     const r = h(s);
     if (r !== null) return r;
