@@ -1849,6 +1849,46 @@ describe("discover_tools -- structured search", () => {
     expect(text).toContain('"name":"mcp__slack__send"');
   });
 
+  it("exact callable suffix outranks a stronger semantic neighbor", async () => {
+    const logger = createMockLogger();
+    const exact = {
+      ...makeMcpTool("mcp__records--speed_offenders"),
+      description: "Return threshold exceptions",
+    } as unknown as ToolDefinition;
+    const semanticNeighbor = {
+      ...makeMcpTool("mcp__records--trips_over_speeding"),
+      description: "Use speed_offenders evidence to rank speed_offenders exceptions and speed_offenders trends",
+    } as unknown as ToolDefinition;
+    const tools = [makeTool("read"), exact, semanticNeighbor];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      toolNames: tools.map((tool) => tool.name),
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    const exactResult = await result.discoverTool!.execute!("call-exact-suffix", {
+      query: "speed_offenders",
+    });
+    const exactText = (exactResult.content[0] as { text: string }).text;
+    const exactSideEffects = (exactResult as unknown as {
+      sideEffects: { discoveredTools: string[] };
+    }).sideEffects;
+
+    expect(exactText).toContain('"name":"mcp__records--speed_offenders"');
+    expect(exactText).not.toContain('"name":"mcp__records--trips_over_speeding"');
+    expect(exactSideEffects.discoveredTools).toEqual(["mcp__records--speed_offenders"]);
+
+    const partialResult = await result.discoverTool!.execute!("call-partial-suffix", {
+      query: "offenders",
+    });
+    const partialSideEffects = (partialResult as unknown as {
+      sideEffects: { discoveredTools: string[] };
+    }).sideEffects;
+
+    expect(partialSideEffects.discoveredTools).toContain("mcp__records--trips_over_speeding");
+  });
+
   it("MCP prefix match returns all matching tools", async () => {
     const { discoverTool } = setupMcpDiscovery(MCP_TOOLS);
     const searchResult = await discoverTool.execute!("call-1", {
