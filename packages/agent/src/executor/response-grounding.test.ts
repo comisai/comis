@@ -521,6 +521,17 @@ describe("response grounding module", () => {
     })).toEqual({ response, corrected: false });
   });
 
+  it("does not combine unrelated run confirmation and first-person prose into scheduler state", () => {
+    const response =
+      "Prepared the task. Managed run confirmed. I am not claiming delivery from terminal output.";
+
+    expect(schedulerStateEvidenceGuard()({
+      response,
+      toolExecResults: [],
+      honestResponse: "I could not verify the scheduled job.",
+    })).toEqual({ response, corrected: false });
+  });
+
   it("uses the latest agent-update receipt as the no-op authority", () => {
     const honestResponse =
       "No configuration change was needed. This agent already uses provider_a / model_a.";
