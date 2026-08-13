@@ -116,6 +116,7 @@ vi.mock("@comis/skills", () => ({
   },
   TOOL_GROUPS: {
     "group:coding": ["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"],
+    "group:browser": ["browser"],
   },
 }));
 
@@ -608,6 +609,41 @@ describe("setupTools", () => {
     const toolNames = tools.map((t: any) => t.name);
     expect(toolNames).toContain("browser");
     expect(mockCreateBrowserTool).toHaveBeenCalled();
+  });
+
+  it("keeps a browser-group child isolated in its effective workspace", async () => {
+    const deps = createMinimalDeps({
+      agents: {
+        "agent-1": {
+          skills: {
+            builtinTools: { browser: true, exec: false, process: false },
+            toolPolicy: { profile: "default" },
+            discoveryPaths: [],
+            execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+          },
+        } as any,
+      },
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1", {
+      toolGroups: ["browser"],
+      workspacePath: "/workspace/isolated-child",
+      securityBoundary: {
+        hiddenPaths: ["/workspace/agent-1/sessions"],
+        requireSandboxedExecution: true,
+      },
+    } as never);
+
+    const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+    expect(tools.map((entry: { name: string }) => entry.name)).toContain("browser");
+    expect(mockCreateMediaPersistenceService).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceDir: "/workspace/isolated-child" }),
+    );
+    expect(mockCreateBrowserTool).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceDir: "/workspace/isolated-child" }),
+    );
   });
 
   it("excludes browser tool when builtinTools.browser is false", async () => {
