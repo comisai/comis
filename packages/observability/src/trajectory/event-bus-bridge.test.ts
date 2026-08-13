@@ -3052,6 +3052,36 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("execution_aborted retains bounded duplicate and stagnation evidence for explain", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+    const loopEvidence = {
+      lastNoProgressKind: "identical_success",
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1",
+      reason: "loop_detected",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+      loopEvidence,
+    } as unknown as EventMap["execution:aborted"]);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "execution.aborted",
+      data: { reason: "loop_detected", loopEvidence },
+    });
+    expect(JSON.stringify(recorder.calls[0])).not.toContain("page_number");
+    expect(JSON.stringify(recorder.calls[0])).not.toContain("same-result");
+  });
+
   it("request clarification maps its content-free reason and input size", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();

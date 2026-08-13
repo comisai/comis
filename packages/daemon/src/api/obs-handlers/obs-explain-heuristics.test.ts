@@ -1161,6 +1161,41 @@ describe("obs-explain-heuristics", () => {
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
   });
 
+  it("ranks a no-progress loop above an incidental recall miss with bounded evidence", () => {
+    const signals = makeSignals({
+      endReason: "loop_detected",
+      degraded: true,
+      abortReason: "loop_detected",
+      recall: allMissRecall,
+    }) as IncidentSignals & {
+      loopEvidence?: {
+        lastNoProgressKind: "identical_success";
+        repeatedToolName: string;
+        consecutiveNoProgress: number;
+        threshold: number;
+        duplicateCallCount: number;
+        stagnantResultCount: number;
+      };
+    };
+    signals.loopEvidence = {
+      lastNoProgressKind: "identical_success",
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+
+    const r = rootCause(signals);
+
+    expect(r?.code).toBe("execution_no_progress_loop");
+    expect(r?.detail).toContain("mcp__records--list_current");
+    expect(r?.detail).toContain("6 consecutive no-progress");
+    expect(r?.detail).toContain("6 duplicate");
+    expect(r?.detail).toContain("6 stagnant");
+    expect(r?.detail).not.toMatch(/recall miss/i);
+  });
+
   it("ranks a hard provider rejection above an incidental zero-hit recall", () => {
     // The production shape: every LLM call rejected with the same deterministic
     // category, on a fresh install whose empty memory store makes EVERY recall

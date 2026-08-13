@@ -116,6 +116,31 @@ describe("provider breaker trajectory normalization", () => {
   });
 });
 
+describe("loop-detected trajectory normalization", () => {
+  it("retains bounded duplicate and stagnation evidence from the abort record", () => {
+    const loopEvidence = {
+      lastNoProgressKind: "identical_success" as const,
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "execution.aborted",
+      seq: 18,
+      data: {
+        reason: "loop_detected",
+        loopEvidence,
+      },
+    }]) as IncidentSignals & { loopEvidence?: typeof loopEvidence };
+
+    expect(signals.abortReason).toBe("loop_detected");
+    expect(signals.loopEvidence).toEqual(loopEvidence);
+  });
+});
+
 describe("MCP queue contention trajectory normalization", () => {
   it("retains breaker-neutral classification and queue timing in explain failures", () => {
     const signals = toIncidentSignals([{

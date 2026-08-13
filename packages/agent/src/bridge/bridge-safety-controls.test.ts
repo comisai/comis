@@ -55,6 +55,37 @@ describe("checkLoopLimit", () => {
 });
 
 describe("emitLoopAbort", () => {
+  it("emits the detector's bounded no-progress evidence without arguments or results", () => {
+    const eventBus = makeEventBus();
+    const logger = makeLogger();
+    const loopEvidence = {
+      lastNoProgressKind: "identical_success" as const,
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+
+    emitLoopAbort({
+      eventBus,
+      sessionKey: testSessionKey,
+      agentId: "agent-a",
+      logger,
+      turnLoopDetector: {
+        shouldBreakLoop: () => true,
+        getLoopEvidence: () => loopEvidence,
+      },
+    } as unknown as Parameters<typeof emitLoopAbort>[0]);
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "execution:aborted",
+      expect.objectContaining({ loopEvidence }),
+    );
+    expect(JSON.stringify(vi.mocked(eventBus.emit).mock.calls)).not.toContain("page_number");
+    expect(JSON.stringify(vi.mocked(eventBus.emit).mock.calls)).not.toContain("same-result");
+  });
+
   it("emits execution:aborted with reason loop_detected", () => {
     const eventBus = makeEventBus();
     const logger = makeLogger();
