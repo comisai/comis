@@ -18,7 +18,7 @@ export interface FixtureRepository {
   readonly approvedRoot: string;
   readonly primary: string;
   readonly worktreeRoot: string;
-  readonly workspace: string;
+  readonly defaultBranch: string;
   readonly baseRevision: string;
   readonly gitExecutable: string;
 }
@@ -171,23 +171,80 @@ export function createFixtureRepository(root: string): FixtureRepository {
   );
   const runGit = (cwd: string, args: readonly string[]): string =>
     execFileSync(gitExecutable, args, { cwd, encoding: "utf8" }).trim();
-  runGit(primary, ["init"]);
+  const defaultBranch = "main";
+  runGit(primary, ["init", "--initial-branch", defaultBranch]);
   runGit(primary, ["config", "user.name", "Capability Fixture"]);
   runGit(primary, ["config", "user.email", "fixture@example.invalid"]);
   writeFixtureFile(fixtureChildPath(primary, "README.md"), "capability fixture\n");
   runGit(primary, ["add", "README.md"]);
   runGit(primary, ["commit", "-m", "fixture"]);
   const baseRevision = runGit(primary, ["rev-parse", "HEAD"]);
-  const workspace = fixtureChildPath(worktreeRoot, "managed-fixture");
-  runGit(primary, ["worktree", "add", "-b", "managed-fixture", workspace, baseRevision]);
   return Object.freeze({
     approvedRoot: canonicalFixturePath(approvedRoot),
     primary: canonicalFixturePath(primary),
     worktreeRoot: canonicalFixturePath(worktreeRoot),
-    workspace: canonicalFixturePath(workspace),
+    defaultBranch,
     baseRevision,
     gitExecutable,
   });
+}
+
+function createServiceCandidateConfig(root: string): string {
+  const configRoot = fixtureChildPath(root, "config");
+  const credentialRoot = fixtureChildPath(root, "forge-credentials");
+  ensureFixtureDirectory(configRoot);
+  ensureFixtureDirectory(credentialRoot);
+  const readCredential = fixtureChildPath(configRoot, "forge-read.credential");
+  const pushCredential = fixtureChildPath(configRoot, "forge-push.credential");
+  writeFixtureFile(readCredential, "fixture-forge-read-credential");
+  writeFixtureFile(pushCredential, "fixture-forge-push-credential");
+  const trueExecutable = canonicalFixturePath(
+    execFileSync("which", ["true"], { encoding: "utf8" }).trim(),
+  );
+  const configPath = fixtureChildPath(configRoot, "candidate.json");
+  writeFixtureFile(configPath, JSON.stringify({
+    programs: [{ id: "repo-check", executable: trueExecutable }],
+    profiles: [{
+      id: "go-default",
+      localChecks: [{
+        id: "unit",
+        programId: "repo-check",
+        arguments: [{ kind: "literal", value: "--version" }],
+        timeout: "1m",
+        required: true,
+      }],
+      forgeChecks: [],
+      artifactRules: [{
+        kind: "regular_file",
+        relativePath: "report.md",
+        mediaType: "text/markdown",
+        maxBytes: 65_536,
+      }],
+      evidenceTtl: "24h",
+    }],
+    maxOutputBytes: 65_536,
+    pollInterval: "25ms",
+    forge: {
+      apiBaseUrl: "http://127.0.0.1:1",
+      owner: "fixture-owner",
+      repository: "fixture-repository",
+      remoteUrl: `file://${fixtureChildPath(root, "fixture-remote.git")}`,
+      readCredentialFile: readCredential,
+      pushCredentialFile: pushCredential,
+      credentialDirectory: credentialRoot,
+      localFixtureRemoteRoot: root,
+    },
+  }));
+  return configPath;
+}
+
+function createCodexFixtureExecutable(root: string): string {
+  const binRoot = fixtureChildPath(root, "bin");
+  ensureFixtureDirectory(binRoot);
+  const executable = fixtureChildPath(binRoot, "codex");
+  writeFixtureFile(executable, "#!/bin/sh\nprintf 'codex-cli 0.147.0\\n'\n");
+  setFixturePathMode(executable, 0o700);
+  return canonicalFixturePath(executable);
 }
 
 /** Delay one committed PrepareTask response so the Go facade must reconcile by operation ID. */
@@ -519,23 +576,39 @@ export function startFixtureService(input: {
 }): RunningFixtureService {
   const databasePath = validateFixturePath(input.databasePath);
   ensureFixtureDirectory(dirname(databasePath));
+  const serviceRoot = canonicalFixturePath(dirname(databasePath));
+  const runtimeRoot = fixtureChildPath(serviceRoot, "runtime");
+  ensureFixtureDirectory(runtimeRoot);
+  const codexExecutable = createCodexFixtureExecutable(serviceRoot);
+  const candidateConfig = createServiceCandidateConfig(serviceRoot);
   const child = spawn(input.binary, [
     "--database", databasePath,
     "--socket", input.operatorSocket,
     "--mcp-socket", input.mcpSocket,
+    "--runtime-root", runtimeRoot,
     "--service-instance", input.serviceInstanceId,
     "--git-executable", input.repository.gitExecutable,
     "--approved-root", input.repository.approvedRoot,
     "--repository-id", "fixture-repository",
     "--repository-primary", input.repository.primary,
     "--worktree-root", input.repository.worktreeRoot,
-    "--workspace-root", input.repository.workspace,
+    "--repository-default-branch", input.repository.defaultBranch,
     "--comis-socket", input.controlSocket,
     "--comis-credential-file", input.credentialFile,
     "--comis-handshake-operation", "fixture-handshake-operation",
     "--preparation-ttl", "10m",
+    "--codex-profile", "codex-reviewed",
+    "--codex-executable", codexExecutable,
+    "--codex-version", "codex-cli 0.147.0",
+    "--codex-model", "gpt-5.5-codex",
+    "--codex-effort", "high",
+    "--codex-terminal-allow-entry", "codex-confined",
+    "--codex-network", "restricted",
+    "--codex-concurrency", "1",
+    "--candidate-config", candidateConfig,
     "--fixture-worker",
     "--fixture-decision", "use the bounded fixture choice",
+    "--fixture-artifact", "report.md",
   ], { stdio: ["ignore", "ignore", "pipe"] });
   const stderrChunks: Buffer[] = [];
   child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));

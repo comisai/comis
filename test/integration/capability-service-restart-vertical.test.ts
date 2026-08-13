@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { stringify } from "yaml";
@@ -60,15 +60,41 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
         actionClassification: "mutate",
         invocationSideEffects: Object.freeze(["task.prepare"]),
       },
-      ...["list_tasks", "get_task", "explain_task"].map((toolName) => Object.freeze({
+      {
+        toolName: "handback_task",
+        behavior: "run_command",
+        runHandleArgument: "taskHandle",
+        actionClassification: "mutate",
+        invocationSideEffects: Object.freeze(["task.handback"]),
+      },
+      {
+        toolName: "cleanup_task",
+        behavior: "run_command",
+        runHandleArgument: "taskHandle",
+        actionClassification: "destructive",
+        invocationSideEffects: Object.freeze(["task.cleanup"]),
+      },
+      ...["list_tasks", "get_task", "explain_task", "get_launch_plan"].map((toolName) => Object.freeze({
         toolName,
         behavior: "read_only" as const,
         actionClassification: "read" as const,
         invocationSideEffects: Object.freeze([]),
       })),
     ]),
-    requestedScopes: Object.freeze(["health", "report"]),
-    evidencePolicies: Object.freeze([]),
+    requestedScopes: Object.freeze([
+      "health",
+      "attention_response",
+      "evidence",
+      "report",
+      "workspace_lease",
+      "terminal_events",
+      "execution_attachment",
+    ]),
+    evidencePolicies: Object.freeze([
+      { kind: "candidate_bundle", verificationLevel: "adapter_verified", use: "outcome" },
+      { kind: "delivery_reference", verificationLevel: "adapter_verified", use: "delivery_reference" },
+      { kind: "report_artifact", verificationLevel: "adapter_verified", use: "delivery_attachment" },
+    ]),
     dependsOn: Object.freeze([]),
   }]),
 });
@@ -506,7 +532,11 @@ describe("restart-injected capability-service vertical join", () => {
         const lease = db.prepare("SELECT * FROM workspace_leases WHERE managed_run_id = ?")
           .get(run.managed_run_id) as { canonical_path: string; workspace_lease_id: string };
         expect(lease.workspace_lease_id).toBe(run.workspace_lease_id);
-        expect(lease.canonical_path).toBe(repository.workspace);
+        const relativeWorkspace = relative(repository.worktreeRoot, lease.canonical_path);
+        expect(relativeWorkspace).not.toBe("");
+        expect(relativeWorkspace).not.toBe("..");
+        expect(relativeWorkspace.startsWith(`..${sep}`)).toBe(false);
+        expect(realpathSync(lease.canonical_path)).toBe(lease.canonical_path);
         expect(db.prepare("SELECT COUNT(*) AS count FROM managed_run_reports WHERE managed_run_id = ?")
           .get(run.managed_run_id)).toEqual({ count: 4 });
         const ledgerRows = db.prepare("SELECT * FROM outward_send_ledger WHERE root_run_id = ?")
