@@ -133,6 +133,8 @@ describe("prompt skill request routing", () => {
     });
 
     expect(selected).toEqual(["find-skills"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(deferral.requestRelevantPromptSkillWorkflowContext).toBeUndefined();
     expect(deferral.requestRelevantToolNames).toEqual(["browser", "read"]);
@@ -172,6 +174,7 @@ describe("prompt skill request routing", () => {
         requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
       }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
     ).toBe(3);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["deep-research"]);
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/deep-research/SKILL.md",
     ]);
@@ -229,9 +232,10 @@ describe("prompt skill request routing", () => {
     });
 
     expect(selected).toEqual(["deep-research"]);
-    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
-      "/skills/deep-research/SKILL.md",
-    ]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
+      .toContain("/skills/deep-research/SKILL.md");
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(
       (deferral as ExcludeDeferralResult & {
