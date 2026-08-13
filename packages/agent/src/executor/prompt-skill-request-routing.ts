@@ -186,8 +186,6 @@ export function applyPromptSkillRequestRouting(
     return [];
   }
 
-  deferral.requestRelevantPromptSkillNames = selected;
-  deferral.requestRelevantPromptSkillLocations = selectedLocations;
   const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
   // Required workflows are only enforceable when the current request matched the
@@ -198,6 +196,10 @@ export function applyPromptSkillRequestRouting(
   // end the turn with the model's reply thrown away.
   const workflowEnforceable =
     (selectedEntries[0]?.currentScore ?? 0) >= MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS;
+  if (workflowEnforceable) {
+    deferral.requestRelevantPromptSkillNames = selected;
+    deferral.requestRelevantPromptSkillLocations = selectedLocations;
+  }
   const minDistinctWebFetchUrls =
     workflowEnforceable && availableToolNames.has("web_fetch")
       ? selectedSkills[0]?.minDistinctWebFetchUrls
