@@ -62,7 +62,7 @@ the final repository gate:
 ```text
 pnpm capability-protocol:check
 pnpm build
-pnpm lint
+pnpm lint:security
 pnpm test:architecture
 pnpm validate
 ```
@@ -74,13 +74,13 @@ required GitHub checks on the exact sealed head.
 ## Protected manifest handoff
 
 Prepare both tasks from the original Telegram conversation and stop before worker
-launch. The operator then copies `test/live/manifest.example.json` from the
-companion repository to an owner-private location and fills it with the resulting
-task handles, managed-run references, original/newer chat IDs, human sender ID,
-origin explain reference, fixed operation IDs, isolated unit names, exact
-executable/data paths, and required check names. This is deployment wiring, not
-task supervision. After the protected workflow starts, all supervision is through
-Telegram.
+launch. The operator then copies the manifest example shipped by the checked-out
+DevCrew companion repository to an owner-private location and fills it with the
+resulting task handles, managed-run references, original/newer chat IDs, human
+sender ID, origin explain reference, fixed operation IDs, isolated unit names,
+exact executable/data paths, and required check names. This is deployment wiring,
+not task supervision. After the protected workflow starts, all supervision is
+through Telegram.
 
 Predeclare and use the manifest's stable operation IDs for the one reconciliation,
 one handback, and two cleanup calls. Operation identity is not authority: the

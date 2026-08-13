@@ -119,6 +119,9 @@ describe("generic runtime specialization boundary", () => {
     const serviceCommandToken = "dev" + "crew";
     const violations = scannedFiles()
       .filter((file) => relative(REPO_ROOT, file).startsWith("packages/"))
+      // Opt-in prompt skills are the sanctioned specialization boundary. Their
+      // advisory procedures are shipped as data and never execute in the kernel.
+      .filter((file) => !relative(REPO_ROOT, file).startsWith("packages/daemon/bundled-skills/"))
       .filter((file) => !file.endsWith(".test.ts"))
       .filter((file) => readFileSync(file, "utf8").toLowerCase().includes(serviceCommandToken));
 
