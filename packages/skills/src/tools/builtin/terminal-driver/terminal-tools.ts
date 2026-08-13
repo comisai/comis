@@ -44,6 +44,7 @@ export type {
 } from "./terminal-events-attention.js";
 import { shouldPromoteDrive, emitDrivePromoted, resolveDriveMode, type DriveMode } from "./terminal-drive-promote.js";
 import { boundedReadDigest, READ_DIGEST_BYTE_CAP, type DriveReadMode } from "./terminal-read-digest.js";
+import { createOutputCleaner } from "../output-cleaner.js";
 import { matchAllowEntry, buildDirectSpawn, allowedCommandNames, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SessionCaps } from "./terminal-caps.js";
 import { enforceSendCapsThenAudit, readDimension } from "./terminal-send-guards.js";
@@ -676,12 +677,26 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       // leaked token never reaches the agent/the wrap), THEN wrap as untrusted external content.
       const { text: redacted, redactions } = scrubSecretsFromText(digest.screen);
       const wrappedScreen = wrapExternalContent(redacted, { source: "unknown" });
+      let wrappedExitTail: string | undefined;
+      let exitTailRedactions = 0;
+      if (view.exitTail !== undefined) {
+        const cleaner = createOutputCleaner();
+        const cleaned = cleaner.process(Buffer.from(view.exitTail, "utf8")) + cleaner.flush();
+        const scrubbed = scrubSecretsFromText(cleaned);
+        exitTailRedactions = scrubbed.redactions;
+        wrappedExitTail = wrapExternalContent(scrubbed.text, { source: "unknown" });
+      }
       deps.logger.debug(
-        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, truncated: digest.truncated, step: "read" },
+        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions: redactions + exitTailRedactions, truncated: digest.truncated, step: "read" },
         "terminal session read",
       );
       const breadcrumb = digest.truncations !== undefined ? { truncated: digest.truncated, truncations: digest.truncations } : { truncated: digest.truncated };
-      return jsonResult({ ...view, screen: wrappedScreen, ...breadcrumb });
+      return jsonResult({
+        ...view,
+        screen: wrappedScreen,
+        ...(wrappedExitTail === undefined ? {} : { exitTail: wrappedExitTail }),
+        ...breadcrumb,
+      });
     },
   };
 }

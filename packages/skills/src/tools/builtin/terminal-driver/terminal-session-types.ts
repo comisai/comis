@@ -171,6 +171,10 @@ export interface TerminalView {
   rows: number;
   alt: boolean;
   alive: boolean;
+  /** The driven process exit code, present when the backend reported one. */
+  exitCode?: number;
+  /** Bounded terminal output tail retained after exit; the tool layer cleans, redacts, and wraps it. */
+  exitTail?: string;
   /** The per-read screen-diff vs the prior read. ADDITIVE: present when an emulator snapshot exists; the not-found/degraded early returns omit it. */
   diff?: SnapshotDiff;
 }

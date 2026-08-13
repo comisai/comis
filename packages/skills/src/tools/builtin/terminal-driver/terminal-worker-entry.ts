@@ -499,6 +499,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       cols: state.cols,
       rows: state.rows,
       alive: state.alive,
+      exitCode: state.exitCode,
     });
     // Screen-diff: compare to the prior snapshot, attach the diff, store the
     // new one as lastSnapshot. Only when an emulator snapshot exists (the diff is
