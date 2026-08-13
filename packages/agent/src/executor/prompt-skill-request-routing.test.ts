@@ -210,6 +210,32 @@ describe("prompt skill request routing", () => {
       .toContain("/skills/deep-research/SKILL.md");
   });
 
+  it("does not enforce web evidence when the current request excludes web sources", () => {
+    const deferral = result();
+    const currentRequestText = [
+      "Yahoo Finance evidence research for MSFT using the connected yfinance MCP.",
+      "Retrieve the current quote, history, key statistics, financials, earnings,",
+      "and recommendations. State data timestamps, separate retrieved values from",
+      "interpretation, and report unavailable datasets honestly. Do not use web sources.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
+  });
+
   // A floor whose receipt tool is unreachable can never be met, so the
   // completion gate would discard the model's answer on every routed turn.
   it("drops web-evidence floors when the receipt tools are unavailable", () => {
