@@ -116,6 +116,42 @@ describe("provider breaker trajectory normalization", () => {
   });
 });
 
+describe("MCP queue contention trajectory normalization", () => {
+  it("retains breaker-neutral classification and queue timing in explain failures", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "tool.result",
+      seq: 14,
+      data: {
+        toolName: "mcp__records--summary",
+        toolCallId: "tc-mcp-queue-contention",
+        durationMs: 119750,
+        success: false,
+        errorKind: "resource",
+        classifiedFailureBy: "runtime_guard",
+        transportOk: false,
+        matchedRule: "mcp_queue_contention",
+        failureCode: "mcp_queue_contention",
+        resultDigest: "abc123def456",
+        resultBytes: 180,
+        errorMessage:
+          "[mcp_queue_contention] never ran: waited 119750ms for a concurrency slot, "
+          + "leaving 250ms of its 120000ms call deadline",
+      },
+    }]);
+
+    expect(signals.failures).toContainEqual(expect.objectContaining({
+      toolName: "mcp__records--summary",
+      classifiedFailureBy: "runtime_guard",
+      transportOk: false,
+      errorKind: "resource",
+      matchedRule: "mcp_queue_contention",
+      failureCode: "mcp_queue_contention",
+      errorPreview: expect.stringMatching(/119750ms.*250ms.*120000ms/iu),
+    }));
+  });
+});
+
 describe("request clarification trajectory normalization", () => {
   it("retains the latest content-free clarification reason", () => {
     const signals = toIncidentSignals([{

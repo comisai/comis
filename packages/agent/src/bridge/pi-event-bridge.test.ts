@@ -1666,6 +1666,51 @@ describe("createPiEventBridge", () => {
         expect(recordResult).not.toHaveBeenCalled();
       });
 
+      it("classifies MCP queue contention as a breaker-neutral resource guard with timing evidence", () => {
+        const recordResult = vi.fn();
+        deps = createMockDeps({
+          toolRetryBreaker: {
+            beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+            recordResult,
+            getBlockedTools: vi.fn().mockReturnValue([]),
+            reset: vi.fn(),
+          } as any,
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = {
+          content: [{
+            type: "text",
+            text:
+              "MCP tool error: [mcp_queue_contention] MCP tool \"summary\" on server "
+              + "\"records\" never ran: it waited 119750ms for a concurrency slot, "
+              + "leaving 250ms of its 120000ms call deadline.",
+          }],
+          details: {},
+        };
+
+        listener(makeToolExecutionEndEvent(
+          "mcp__records--summary",
+          "tc-mcp-queue-contention",
+          true,
+          result,
+        ) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("mcp__records--summary");
+        expect(endEmit?.[1]).toMatchObject({
+          success: false,
+          errorKind: "resource",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "mcp_queue_contention",
+          failureCode: "mcp_queue_contention",
+          transportOk: false,
+        });
+        expect(endEmit?.[1].errorMessage).toContain("119750ms");
+        expect(endEmit?.[1].errorMessage).toContain("250ms");
+        expect(endEmit?.[1].errorMessage).toContain("120000ms");
+        expect(warn?.[0].hint).toMatch(/maxConcurrency|fewer callers/iu);
+        expect(recordResult).not.toHaveBeenCalled();
+      });
+
       it("classifies rejected background admission as a resource guard with the binding limit", () => {
         const recordResult = vi.fn();
         deps = createMockDeps({

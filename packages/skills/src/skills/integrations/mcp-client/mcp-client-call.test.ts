@@ -450,6 +450,14 @@ describe("call deadline covers the queue wait", () => {
     // And it must state the budget floor the remainder fell under — without it, a
     // refusal that still had deadline left reads as a self-contradiction.
     expect(message).toMatch(/\d+ms a request needs to be worth issuing/);
+    expect(secondResult.error).toMatchObject({
+      code: "mcp_queue_contention",
+      configKey: `integrations.mcp.servers.${serverName}.maxConcurrency`,
+      configuredMs: state.options.callToolTimeoutMs,
+      queueWaitedMs: expect.any(Number),
+      requestBudgetMs: expect.any(Number),
+      minViableMs: expect.any(Number),
+    });
     // And it must NOT have issued a doomed request against an already-blown budget.
     const calls = (state.connections.get(serverName)?.client.callTool as ReturnType<typeof vi.fn>)
       .mock.calls;
