@@ -10,6 +10,7 @@
  */
 
 import type { IncidentSignals } from "@comis/core";
+import { extractMcpServerName } from "@comis/shared";
 import {
   BREAKER_N,
   CONTEXT_BLOAT_MIN_OFFLOADS,
@@ -309,6 +310,33 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // A terminal trust or approval denial is authoritative and must not be
   // hidden by the generic tool-error catch-all or retained breaker noise.
   toolAuthorizationDeniedVerdict,
+
+  // Queue exhaustion happens inside Comis before an MCP request is issued.
+  // It is breaker-neutral and must outrank a later server-reported failure,
+  // which may come from unrelated work in the same explained window.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.matchedRule === "mcp_queue_contention"
+        || candidate.failureCode === "mcp_queue_contention",
+    );
+    if (failure === undefined) return null;
+    const serverName = extractMcpServerName(failure.toolName);
+    const binding = serverName === undefined
+      ? "integrations.mcp.servers.<server>.maxConcurrency"
+      : `integrations.mcp.servers.${serverName}.maxConcurrency`;
+    return {
+      code: "mcp_queue_contention",
+      detail:
+        `${failure.toolName} encountered a breaker-neutral local queue refusal at ${binding}; `
+        + "the MCP server was never asked",
+      suggestedNextSteps: [
+        `retry after the calls ahead of ${failure.toolName} drain; this local refusal is transient`,
+        `reduce concurrent calls to this server, or raise ${binding} only when the server supports parallel tool calls`,
+        "for a stdio server, set supportsParallelToolCalls: true before raising its concurrency above 1",
+      ],
+    };
+  },
 
   // A structured MCP machine code is the provider's concrete failure verdict.
   // It is upstream of retry-breaker and response-honesty symptoms.
