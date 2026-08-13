@@ -103,6 +103,7 @@ class DeterministicForgeServer {
   constructor(
     readonly gitExecutable: string,
     readonly remote: string,
+    readonly baseBranch: string,
   ) {
     this.checkGate = new Promise<void>((resolve) => {
       this.releaseCheckGate = resolve;
@@ -156,7 +157,7 @@ class DeterministicForgeServer {
     if (request.method === "POST" && url.pathname === `${prefix}/pulls`) {
       const body = await this.readJSON(request);
       const branch = typeof body["head"] === "string" ? body["head"] : "";
-      if (!branch.startsWith("devcrew/")) {
+      if (!branch.startsWith("devcrew/") || body["base"] !== this.baseBranch) {
         this.json(response, { error: "invalid head" }, 422);
         return;
       }
@@ -174,7 +175,7 @@ class DeterministicForgeServer {
         state: "open",
         html_url: "https://github.com/fixture-owner/fixture-repository/pull/1",
         head: { sha: head, ref: this.pull.branch },
-        base: { ref: "master" },
+        base: { ref: this.baseBranch },
       });
       return;
     }
@@ -214,7 +215,7 @@ function createCandidateFixture(
   const configPath = join(forgeRoot, "candidate.json");
   mkdirSync(credentialDirectory, { recursive: true, mode: 0o700 });
   execFileSync(repository.gitExecutable, ["init", "--bare", remote], { stdio: "pipe" });
-  const forge = new DeterministicForgeServer(repository.gitExecutable, remote);
+  const forge = new DeterministicForgeServer(repository.gitExecutable, remote, repository.defaultBranch);
   writeFileSync(readCredentialFile, "e0_read_identity", { mode: 0o600 });
   writeFileSync(pushCredentialFile, "e0_push_identity", { mode: 0o600 });
   writeFileSync(configPath, JSON.stringify({
@@ -555,7 +556,10 @@ describe.skipIf(!isMechanicsGate)("deterministic E0 production mechanics", () =>
           },
           capture: (text) => { taskHandle = /task-[a-f0-9]{24}/u.exec(text)?.[0] ?? ""; },
         }]);
-        expect(taskHandle, attachmentDiagnostic(goDatabase, runtimeRoot, canonicalDataDir)).toMatch(/^task-[a-f0-9]{24}$/u);
+        expect(
+          taskHandle,
+          `${attachmentDiagnostic(goDatabase, runtimeRoot, canonicalDataDir)}; service=${service?.stderr() ?? ""}`,
+        ).toMatch(/^task-[a-f0-9]{24}$/u);
         handles.push(taskHandle);
       }
       const [shipTask, scoutTask] = handles as [string, string];
