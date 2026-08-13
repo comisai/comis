@@ -2604,6 +2604,23 @@ describe("createTerminalWorker — status frame (classifier single-homed in the 
     expect(view.exitCode).toBe(7);
   });
 
+  it("an exited session read retains bounded raw exit evidence and the exit code", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit(`before-exit ${"x".repeat(10_000)}\nreporter binding rejected\n`);
+    rec.emitExit({ exitCode: 17 });
+    await flushEmulator();
+
+    const reply = await worker.handle(readFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as { alive: boolean; exitCode?: number; exitTail?: string };
+    expect(view.alive).toBe(false);
+    expect(view.exitCode).toBe(17);
+    expect(view.exitTail).toContain("reporter binding rejected");
+    expect(view.exitTail?.length).toBeLessThanOrEqual(8192);
+  });
+
   it("an ABSENT session → status degrades to the safe total default (state:'exited', confidence:'high', reason:'exited')", async () => {
     // handleStatus has its OWN absent-session degrade (separate from statusReplyFromState):
     // a `status` frame for an unknown session id is gone → `exited`. The widened

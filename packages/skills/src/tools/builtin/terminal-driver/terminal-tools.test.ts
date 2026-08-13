@@ -1108,6 +1108,32 @@ describe("terminal-tools — the read tool delegates to boundedReadDigest", () =
     expect(view.screen, "the wrap (prompt-injection defense) must be preserved").toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
   });
 
+  it("an exited terminal tail is bounded, ANSI-cleaned, redacted, and wrapped", async () => {
+    const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+    const registry = makeFakeRegistry({
+      readImpl: async () => ({
+        screen: "[exited]",
+        cursor: { x: 0, y: 0 },
+        cols: 80,
+        rows: 24,
+        alt: false,
+        alive: false,
+        exitCode: 1,
+        exitTail: `\u001b[31mreporter failed ${secret}\u001b[0m`,
+      } as unknown as TerminalView),
+    });
+    const tool = createTerminalSessionReadTool(baseDeps(registry));
+
+    const result = await tool.execute("call-1", { sessionId: "sess-1" });
+    const view = result.details as TerminalView & { exitCode?: number; exitTail?: string };
+    expect(view.exitCode).toBe(1);
+    expect(view.exitTail).toContain("reporter failed");
+    expect(view.exitTail).not.toContain(secret);
+    expect(view.exitTail).not.toContain("\u001b");
+    expect(view.exitTail).toContain("[REDACTED]");
+    expect(view.exitTail).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+  });
+
   it("the read-tool description names the digest default", () => {
     const registry = makeFakeRegistry();
     const tool = createTerminalSessionReadTool(baseDeps(registry));
