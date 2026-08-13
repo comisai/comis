@@ -57,6 +57,7 @@ export class McpCallQueueContentionError extends Error {
   constructor(
     message: string,
     serverName: string,
+    readonly configuredConcurrency: number,
     readonly configuredMs: number,
     readonly queueWaitedMs: number,
     readonly minViableMs: number,
@@ -130,6 +131,7 @@ export function emitMcpBreakerOpened(
  *
  * @param serverName - the MCP server whose queue the call waited in.
  * @param toolName - the qualified tool name that never got issued.
+ * @param configuredConcurrency - the resolved concurrency of the queue that refused the call.
  * @param timeoutMs - the resolved `integrations.mcp.callToolTimeoutMs`.
  * @param waitedMs - how long the call actually waited for a concurrency slot.
  * @param minViableMs - the budget floor the remainder fell under ({@link MIN_VIABLE_CALL_BUDGET_MS},
@@ -139,12 +141,17 @@ export function emitMcpBreakerOpened(
 export function mcpCallQueueExhaustedHint(
   serverName: string,
   toolName: string,
+  configuredConcurrency: number,
   timeoutMs: number,
   waitedMs: number,
   minViableMs: number,
 ): string {
   const remainingMs = Math.max(0, timeoutMs - waitedMs);
+  const concurrencyKey =
+    `integrations.mcp.servers.${serverName}.maxConcurrency`;
   return (
+    `${concurrencyKey}=${configuredConcurrency}; queueWaitedMs=${waitedMs}; ` +
+    `requestBudgetMs=${remainingMs}; configuredMs=${timeoutMs}; minViableMs=${minViableMs}. ` +
     `MCP tool "${toolName}" on server "${serverName}" never ran: it waited ${waitedMs}ms for a ` +
     `concurrency slot, leaving ${remainingMs}ms of its ${timeoutMs}ms call deadline ` +
     `(\`integrations.mcp.callToolTimeoutMs\`) — under the ${minViableMs}ms a request needs to be ` +
@@ -152,7 +159,7 @@ export function mcpCallQueueExhaustedHint(
     "between callers, NOT a slow server or an over-broad request — narrowing the arguments will " +
     "not help. Unlike a deadline expiry this is not deterministic: the same call can succeed once " +
     "the calls ahead of it drain, so a retry is reasonable. To fix it for good, raise " +
-    `\`maxConcurrency\` on this server's \`integrations.mcp.servers\` entry (for a stdio server also ` +
+    `\`${concurrencyKey}\` above ${configuredConcurrency} (for a stdio server also ` +
     "set `supportsParallelToolCalls: true`, since stdio stays serialized at concurrency 1), or have " +
     "fewer callers hit this server at once."
   );

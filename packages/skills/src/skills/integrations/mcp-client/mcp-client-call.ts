@@ -237,6 +237,7 @@ export async function callTool(
       const queueHint = mcpCallQueueExhaustedHint(
         serverName,
         toolName,
+        queue.concurrency,
         state.options.callToolTimeoutMs,
         waitedMs,
         viableFloorMs,
@@ -248,6 +249,7 @@ export async function callTool(
           waitedMs,
           remainingMs,
           viableFloorMs,
+          configuredConcurrency: queue.concurrency,
           timeoutMs: state.options.callToolTimeoutMs,
           hint: queueHint,
           errorKind: "resource" as const,
@@ -258,6 +260,7 @@ export async function callTool(
       return err(new McpCallQueueContentionError(
         queueHint,
         serverName,
+        queue.concurrency,
         state.options.callToolTimeoutMs,
         waitedMs,
         viableFloorMs,
