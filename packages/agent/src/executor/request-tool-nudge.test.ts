@@ -498,6 +498,67 @@ describe("runRequestToolNudge", () => {
     });
   });
 
+  it("preserves a receipt-grounded answer when prompt-skill narration adds a terminal caveat", async () => {
+    let successfulWorkflowToolCount = 0;
+    let distinctWebFetchUrlCount = 0;
+    const groundedAnswer = [
+      "The connected operational dataset covers every active unit.",
+      "The strongest current finding is a concentrated idle-time cluster.",
+    ].join("\n");
+    const terminalCaveat =
+      "Historical maintenance evidence remains unavailable.";
+    const prompt = vi.fn(async () => {
+      if (prompt.mock.calls.length === 1) {
+        successfulWorkflowToolCount = 1;
+        distinctWebFetchUrlCount = 1;
+      }
+    });
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "review the connected operational dataset and report useful findings",
+      requestRelevantToolNames: ["read", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 1,
+      messages: [
+        {
+          role: "user",
+          content:
+            "review the connected operational dataset and report useful findings",
+        },
+        {
+          role: "toolResult",
+          toolName: "test_read_only_tool",
+          isError: false,
+          content: [{ type: "text", text: "current bounded dataset receipt" }],
+        },
+        { role: "assistant", content: groundedAnswer },
+      ],
+      session: { prompt },
+      currentSuccessfulToolCount: () => successfulWorkflowToolCount,
+      currentDistinctSuccessfulWebFetchUrlCount: () => distinctWebFetchUrlCount,
+      getVisibleAssistantText: () =>
+        prompt.mock.calls.length === 0 ? groundedAnswer : terminalCaveat,
+      currentSuccessfulNonWorkflowToolCount: () => 1,
+    } as unknown as Partial<RunRequestToolNudgeDeps>);
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({
+      fired: true,
+      recovered: true,
+      outcome: "recovered",
+    });
+    expect(outcome.response).toContain(groundedAnswer);
+    expect(outcome.response).toContain(terminalCaveat);
+    expect(outcome.response?.indexOf(groundedAnswer)).toBeLessThan(
+      outcome.response?.indexOf(terminalCaveat) ?? -1,
+    );
+  });
+
   it("runs one continuation when nano repeats an earlier answer instead of calling a matched mutating tool", async () => {
     const deps = makeDeps();
 
