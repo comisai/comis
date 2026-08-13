@@ -252,7 +252,15 @@ function makeConfig(input: {
             "--service-instance", SERVICE_INSTANCE_ID,
             "--pid-log", input.launcherPidLog,
           ],
-          toolAllowlist: ["prepare_task", "list_tasks", "get_task", "explain_task"],
+          toolAllowlist: [
+            "prepare_task",
+            "handback_task",
+            "cleanup_task",
+            "list_tasks",
+            "get_task",
+            "explain_task",
+            "get_launch_plan",
+          ],
           keepaliveIntervalMs: 0,
         }],
       },
@@ -426,7 +434,15 @@ describe("restart-injected capability-service vertical join", () => {
             typeof tool.callableName === "string" ? [tool.callableName] : []
           )) ?? [];
           return status.status === "connected"
-            && ["prepare_task", "list_tasks", "get_task", "explain_task"]
+            && [
+              "prepare_task",
+              "handback_task",
+              "cleanup_task",
+              "list_tasks",
+              "get_task",
+              "explain_task",
+              "get_launch_plan",
+            ]
               .every((name) => names.includes(name));
         } catch {
           return false;
