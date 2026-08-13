@@ -239,10 +239,11 @@ describe("prompt skill request routing", () => {
   it.each([
     "Do not web_search and do not switch URLs.",
     "Use only the connected yfinance MCP—no web sources—for this research.",
+    "Do not browse, fetch, or spawn anything else.",
   ])("recognizes a direct web evidence exclusion: %s", (constraint) => {
     const deferral = result();
     const currentRequestText = [
-      "Research the source thoroughly and report its current evidence.",
+      "Conduct deep research to understand this source properly and report its evidence.",
       constraint,
     ].join(" ");
 
