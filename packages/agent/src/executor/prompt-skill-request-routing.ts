@@ -27,6 +27,8 @@ const PRIOR_REQUEST_REFERENCE_PATTERN =
   /\b(?:again|continue|earlier|former|it|its|latter|one|ones|previous|same|something|that|them|these|this|those)\b/iu;
 const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
+const WEB_EVIDENCE_EXCLUSION_PATTERN =
+  /\b(?:(?:do\s+not|don't|never)\s+(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -80,7 +82,7 @@ function routingIntentText(text: string): string {
   return text
     .replace(/`[^`\n]+`/gu, " ")
     .replace(
-      /(^|[\s,:=(\[])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
+      /(^|[\s,:=([])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
       "$1",
     );
 }
@@ -204,8 +206,17 @@ export function applyPromptSkillRequestRouting(
   // floor leaves the completion gate permanently unsatisfiable, and arming any
   // workflow on incidental description overlap discards a correct answer; both
   // end the turn with the model's reply thrown away.
+  const selectedRequiresWebEvidence = selectedSkills.some(
+    (skill) => skill.minDistinctWebFetchUrls !== undefined
+      || skill.minDistinctWebSearchQueries !== undefined,
+  );
+  // Prompt skills are advisory procedures, so their evidence floors cannot
+  // override an explicit current-turn constraint against that evidence source.
+  // Keep the route visible on `read`, but do not make it a completion gate.
   const workflowEnforceable =
-    (selectedEntries[0]?.currentScore ?? 0) >= MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS;
+    (selectedEntries[0]?.currentScore ?? 0) >= MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS
+    && !(selectedRequiresWebEvidence
+      && WEB_EVIDENCE_EXCLUSION_PATTERN.test(input.currentRequestText));
   if (workflowEnforceable) {
     deferral.requestRelevantPromptSkillNames = selected;
     deferral.requestRelevantPromptSkillLocations = selectedLocations;
