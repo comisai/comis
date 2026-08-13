@@ -366,15 +366,14 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   /** Per-agent MediaPersistenceService for browser screenshot persistence. */
   const screenshotPersistenceServices = new Map<string, MediaPersistenceService>();
 
-  function getOrCreateScreenshotPersistence(agentId: string): MediaPersistenceService {
-    let svc = screenshotPersistenceServices.get(agentId);
+  function getOrCreateScreenshotPersistence(workspaceDir: string): MediaPersistenceService {
+    let svc = screenshotPersistenceServices.get(workspaceDir);
     if (!svc) {
-      const wsDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
       svc = createMediaPersistenceService({
-        workspaceDir: wsDir,
+        workspaceDir,
         logger: skillsLogger,
       });
-      screenshotPersistenceServices.set(agentId, svc);
+      screenshotPersistenceServices.set(workspaceDir, svc);
     }
     return svc;
   }
@@ -618,7 +617,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           }
         },
         browserSanitizeImage: sanitizeImageForApi,
-        browserPersistMedia: getOrCreateScreenshotPersistence(agentId),
+        browserPersistMedia: getOrCreateScreenshotPersistence(agentWorkspaceDir),
         browserWorkspaceDir: agentWorkspaceDir,
       };
 
@@ -636,9 +635,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         })
         .map((d) => d.build(ctx))
         .filter((t): t is PlatformTool => t !== undefined);
-      if (securityBoundary !== undefined) {
-        tools = tools.filter((tool) => tool.name !== "browser");
-      }
 
       // HOISTED so BOTH the exec tool and the dag-gated ctx_* wiring (below) reuse
       // the ONE ALS-resolved session tool-results resolver.

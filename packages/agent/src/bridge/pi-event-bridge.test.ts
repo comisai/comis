@@ -1946,12 +1946,22 @@ describe("createPiEventBridge", () => {
 
     it("when stepCounter.shouldHalt() returns true, calls onAbort and sets finishReason to max_steps", () => {
       (deps.stepCounter.shouldHalt as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      (deps.stepCounter.getCount as ReturnType<typeof vi.fn>).mockReturnValue(30);
+      deps.stepCounter.getLimit = vi.fn().mockReturnValue(30);
+      deps.stepCounter.getBindingKnob = vi.fn().mockReturnValue("sessions_spawn(max_steps)");
       const { listener, getResult } = createPiEventBridge(deps);
 
       listener(makeToolExecutionEndEvent("bash") as any);
 
       expect(deps.onAbort).toHaveBeenCalledTimes(1);
-      expect(getResult().finishReason).toBe("max_steps");
+      expect(getResult()).toMatchObject({
+        finishReason: "max_steps",
+        stepLimit: {
+          bindingKnob: "sessions_spawn(max_steps)",
+          cap: 30,
+          stepsExecuted: 30,
+        },
+      });
     });
 
     it("does not call onAbort twice when already aborted", () => {

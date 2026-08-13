@@ -121,7 +121,11 @@ import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // classifyIntent(msg.text) so the daemon write-back records the per-intent usefulness bucket.
 import { classifyIntent } from "../rag/query-understanding.js";
 import { getWorkspaceStatus } from "@comis/core";
-import type { ExecutionResult, ExecutionOverrides } from "./types.js";
+import type {
+  ExecutionResult,
+  ExecutionOverrides,
+  ExecutionStepLimitDetails,
+} from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
@@ -165,6 +169,7 @@ import {
 import {
   appendCitationEvidenceRecord,
   citationEvidenceDigestsForTurn,
+  citationEvidenceDigestsToPersist,
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
@@ -187,6 +192,8 @@ export interface PostExecutionBridgeResult {
   tokensUsed?: { input: number; output: number; total: number; cacheRead?: number; cacheWrite?: number };
   cost?: { total: number; cacheSaved?: number; ghostCostUsd?: number; timedOutRequests?: number };
   stepsExecuted?: number;
+  /** Exact ceiling provenance retained when the bridge stops at max steps. */
+  stepLimit?: ExecutionStepLimitDetails;
   llmCalls?: number;
   toolCallHistory?: string[];
   finishReason?: ExecutionResult["finishReason"];
@@ -1270,6 +1277,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   result.tokensUsed = bridgeResult.tokensUsed ?? result.tokensUsed;
   result.cost = bridgeResult.cost ?? result.cost;
   result.stepsExecuted = bridgeResult.stepsExecuted ?? result.stepsExecuted;
+  result.stepLimit = bridgeResult.stepLimit;
   result.llmCalls = bridgeResult.llmCalls ?? result.llmCalls;
   result.toolCallHistory = bridgeResult.toolCallHistory;
   if (bridgeResult.finishReason && bridgeResult.finishReason !== "stop") {
@@ -2628,12 +2636,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  if (citationGrounding.matchedDigests.length > 0) {
+  const citationDigestsToPersist = citationEvidenceDigestsToPersist({
+    currentFetchDigests,
+    relayedDigests: relayedCitationEvidence?.urlDigests ?? [],
+    matchedDigests: citationGrounding.matchedDigests,
+  });
+  if (citationDigestsToPersist.length > 0) {
     const journalStartedAt = deps.clock.now();
     const citationReceipt = appendCitationEvidenceRecord({
       sessionManager: sm,
       sourceMessageId: msg.id,
-      urlDigests: citationGrounding.matchedDigests,
+      urlDigests: citationDigestsToPersist,
     });
     const durationMs = Math.max(0, deps.clock.now() - journalStartedAt);
     if (!citationReceipt.ok) {
@@ -2662,7 +2675,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         {
           step: "citation-evidence-persistence",
           durationMs,
-          citationCount: citationGrounding.matchedDigests.length,
+          citationCount: citationDigestsToPersist.length,
         },
         "Citation evidence persisted",
       );

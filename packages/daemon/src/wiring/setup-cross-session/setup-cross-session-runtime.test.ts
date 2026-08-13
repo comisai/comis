@@ -1651,6 +1651,43 @@ describe("setupCrossSession", () => {
   // -------------------------------------------------------------------------
 
   describe("sub-agent max_steps floor", () => {
+    it("retains the executor step-limit provenance for completion reporting", async () => {
+      const setupCrossSession = await getSetupCrossSession();
+      const mockExecutor = {
+        execute: vi.fn(async () => ({
+          response: "Partial",
+          tokensUsed: { total: 100 },
+          cost: { total: 0.01 },
+          finishReason: "max_steps",
+          stepsExecuted: 30,
+          stepLimit: {
+            bindingKnob: "sessions_spawn(max_steps)",
+            cap: 30,
+            stepsExecuted: 30,
+          },
+        })),
+      };
+      const deps = createMinimalDeps({
+        getExecutor: vi.fn(() => mockExecutor),
+      });
+      setupCrossSession(deps);
+
+      const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+      const executeAgent = getExecuteAgent(runnerArgs);
+      const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
+
+      const result = await executeAgent("agent-2", sessionKey, "task", 30);
+
+      expect(result).toMatchObject({
+        finishReason: "max_steps",
+        stepLimit: {
+          bindingKnob: "sessions_spawn(max_steps)",
+          cap: 30,
+          stepsExecuted: 30,
+        },
+      });
+    });
+
     it("raises max_steps below MIN_SUB_AGENT_STEPS to the floor", async () => {
       const setupCrossSession = await getSetupCrossSession();
       const mockExecutor = {

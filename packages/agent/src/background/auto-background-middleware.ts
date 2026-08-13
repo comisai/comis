@@ -202,6 +202,14 @@ export function wrapToolForAutoBackground(
   return {
     ...tool,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
+      // A scheduler occurrence has one immutable terminal ledger record and
+      // delivers only the response produced by that occurrence. Promoting a
+      // tool would let the ledger close before its completion re-enters, so
+      // scheduled work must await its configured turn timeout in the foreground.
+      if (tryGetContext()?.channelType === "scheduler") {
+        return await origExecute(toolCallId, params, signal, onUpdate, ctx);
+      }
+
       // Create child AbortController linked to parent signal
       const ac = new AbortController();
       if (signal) {

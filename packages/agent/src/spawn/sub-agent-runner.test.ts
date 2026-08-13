@@ -4183,7 +4183,7 @@ describe("abort wiring in spawn", () => {
   });
 
   // completion with max_steps includes abort in announcement
-  it("completion with max_steps includes abort in announcement", async () => {
+  it("completion with max_steps names the exact binding limit in its announcement", async () => {
     const onEnded = vi.fn().mockResolvedValue(undefined);
     const cast = vi.fn().mockReturnValue("contradictory completed announcement");
     deps.lifecycleHooks = {
@@ -4207,7 +4207,12 @@ describe("abort wiring in spawn", () => {
       cost: { total: 0.3 },
       finishReason: "max_steps",
       stepsExecuted: 50,
-    });
+      stepLimit: {
+        bindingKnob: "sessions_spawn(max_steps)",
+        cap: 50,
+        stepsExecuted: 50,
+      },
+    } as unknown as Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>);
 
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
@@ -4222,6 +4227,8 @@ describe("abort wiring in spawn", () => {
     expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
     const text = vi.mocked(deps.sendToChannel).mock.calls[0]![2];
     expect(text).toContain("Abort: step_limit");
+    expect(text).toContain("Increase sessions_spawn(max_steps) above 50");
+    expect(text).not.toContain("security.agentToAgent.subAgentMaxSteps");
     expect(text).toContain("Status: Failed");
     expect(text).not.toContain("Status: Completed");
     expect(cast).not.toHaveBeenCalled();

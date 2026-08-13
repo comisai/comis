@@ -4,7 +4,12 @@
  */
 
 // Executor types
-export type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "./executor/types.js";
+export type {
+  AgentExecutor,
+  ExecutionResult,
+  ExecutionOverrides,
+  ExecutionStepLimitDetails,
+} from "./executor/types.js";
 export {
   createContinuationExecutionEngine,
   createContinuationRequestContext,
