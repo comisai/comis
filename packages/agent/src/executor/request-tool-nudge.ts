@@ -50,6 +50,8 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantPromptSkillWorkflowContext?: string;
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: (toolNames?: readonly string[]) => number;
+  /** Successful current-turn receipts outside the routed prompt-skill workflow. */
+  currentSuccessfulNonWorkflowToolCount: () => number;
   currentDistinctSuccessfulWebFetchUrlCount?: () => number;
   currentDistinctSuccessfulWebSearchQueryCount?: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -396,6 +398,19 @@ function buildPromptSkillResultNarrationDirective(receipts?: string): string {
   ].join("\n");
 }
 
+function preserveReceiptGroundedAnswer(
+  groundedAnswer: string,
+  terminalNarration: string,
+): string {
+  const grounded = groundedAnswer.trim();
+  const terminal = terminalNarration.trim();
+  if (grounded.length === 0) return terminal;
+  if (terminal.length === 0) return grounded;
+  if (terminal.includes(grounded)) return terminal;
+  if (grounded.includes(terminal)) return grounded;
+  return `${grounded}\n\n${terminal}`;
+}
+
 export async function runRequestToolNudge(
   deps: RunRequestToolNudgeDeps,
 ): Promise<RequestToolNudgeOutcome> {
@@ -579,6 +594,10 @@ export async function runRequestToolNudge(
     "Request-tool nudge firing",
   );
 
+  const receiptGroundedResponseBefore =
+    deps.currentSuccessfulNonWorkflowToolCount() > 0
+      ? deps.getVisibleAssistantText(deps.session)
+      : "";
   const successfulToolCountBefore = successfulCount();
   const continuationOptions = (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
     ? undefined
@@ -671,11 +690,13 @@ export async function runRequestToolNudge(
     && (!webEvidenceGateActive
       ? successfulCount() > successfulToolCountBefore
       : webEvidenceSatisfied());
+  let promptSkillResultNarrated = false;
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
     && promptSkillWorkflowCompleted
   ) {
+    promptSkillResultNarrated = true;
     logger.info(
       {
         submodule: SUBMODULE,
@@ -723,7 +744,13 @@ export async function runRequestToolNudge(
     };
   }
 
-  const response = deps.getVisibleAssistantText(deps.session);
+  const terminalResponse = deps.getVisibleAssistantText(deps.session);
+  const response = promptSkillResultNarrated
+    ? preserveReceiptGroundedAnswer(
+        receiptGroundedResponseBefore,
+        terminalResponse,
+      )
+    : terminalResponse;
   const successfulToolCountAfter = successfulCount();
   const procedureCompletionProvable = (
     promptSkillProcedureProven() || evidenceGatedWorkflowCompleted

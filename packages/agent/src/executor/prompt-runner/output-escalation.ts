@@ -457,6 +457,20 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
         (record) => record.success && relevantNames.has(record.toolName),
       ).length;
     },
+    currentSuccessfulNonWorkflowToolCount: () => {
+      const workflowNames = new Set([
+        ...(params.requestRelevantPromptSkillWorkflowToolNames ?? []),
+        ...((params.requestRelevantPromptSkillLocations?.length ?? 0) > 0
+          ? ["read"]
+          : []),
+      ]);
+      return (params.bridge.getResult().toolExecResults ?? []).filter(
+        (record) =>
+          record.success
+          && record.backgrounded !== true
+          && !workflowNames.has(record.toolName),
+      ).length;
+    },
     currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(
       params.bridge.getResult().toolExecResults ?? [],
     ),
