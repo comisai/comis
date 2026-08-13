@@ -75,6 +75,16 @@ function terms(text: string): Set<string> {
   );
 }
 
+/** Exclude quoted payloads and code literals from the caller's own skill intent. */
+function routingIntentText(text: string): string {
+  return text
+    .replace(/`[^`\n]+`/gu, " ")
+    .replace(
+      /(^|[\s,:=(\[])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
+      "$1",
+    );
+}
+
 /** Retain preceding context only when the current wording refers back to it. */
 function workflowContext(
   currentRequestText: string,
@@ -143,9 +153,9 @@ export function applyPromptSkillRequestRouting(
   // memory recall. Lexical overlap must not turn it into a task procedure.
   if (CONVERSATION_HISTORY_RECALL_PATTERN.test(input.currentRequestText)) return [];
   const currentText = input.currentRequestText.toLocaleLowerCase();
-  const currentTerms = terms(currentText);
+  const currentTerms = terms(routingIntentText(currentText));
   const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
-  const relevanceTerms = terms(relevanceText);
+  const relevanceTerms = terms(routingIntentText(relevanceText));
   const selectedEntries = input.skills
     .map((skill) => ({
       skill,
