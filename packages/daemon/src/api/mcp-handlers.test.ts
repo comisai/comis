@@ -1930,7 +1930,7 @@ describe("MCP RPC Handlers", () => {
     // entry rewritten WITHOUT the allowlist, so on the next daemon restart
     // ALL tools from that server surface to the agent — bypassing the filter.
     // -----------------------------------------------------------------------
-    it("retains toolAllowlist/toolBlocklist/enableResources/enablePrompts/supportsParallelToolCalls + positive idleTtlMs from the prior persisted entry on the persisted patch (security regression)", async () => {
+    it("retains tool filters, parallel settings, and positive idle TTL from the prior persisted entry on the persisted patch", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("guarded", [])));
       const { persistDeps, container } = makePersistDeps([
         {
@@ -1946,6 +1946,7 @@ describe("MCP RPC Handlers", () => {
           enableResources: false,
           enablePrompts: false,
           supportsParallelToolCalls: true,
+          maxConcurrency: 6,
           idleTtlMs: 300_000,
           // auth/oauth are config-only on mcp.connect too —
           // dropping them on persist downgrades the server to no-auth.
@@ -1981,6 +1982,7 @@ describe("MCP RPC Handlers", () => {
       expect(persisted.enablePrompts).toBe(false);
       // Parallel-calls opt-in must survive.
       expect(persisted.supportsParallelToolCalls).toBe(true);
+      expect(persisted.maxConcurrency).toBe(6);
       // Positive idleTtlMs must be preserved, NOT reset to 0.
       expect(persisted.idleTtlMs).toBe(300_000);
       // auth/oauth must survive the persist rewrite.
@@ -2273,6 +2275,40 @@ describe("MCP RPC Handlers", () => {
 
       const callArg = (manager.connect as any).mock.calls[0][0];
       expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
+    });
+
+    it("forwards maxConcurrency with supportsParallelToolCalls from the persisted entry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("reports", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "reports",
+          transport: "stdio",
+          command: "npx",
+          enabled: true,
+          supportsParallelToolCalls: true,
+          maxConcurrency: 6,
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "reports",
+        transport: "stdio",
+        command: "npx",
+      });
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "reports",
+          supportsParallelToolCalls: true,
+          maxConcurrency: 6,
+        }),
+      );
     });
   });
 

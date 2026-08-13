@@ -1716,6 +1716,130 @@ describe("assembleIncidentReport — recovery attempts", () => {
     const report = assembleIncidentReport(toIncidentSignals([]), makeMetadata(), null, SESSION_KEY, 0);
     expect(report.recoveries).toBeUndefined();
   });
+
+  it("diagnoses a clean recovery that replaced a grounded response from tools outside its route", async () => {
+    const baseReader = makeAuditReader([], [
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "request_tool_nudge",
+          succeeded: true,
+          groundedResponseBeforeRecovery: true,
+          groundedResponsePreserved: false,
+          successfulReceiptsOutsideRoute: 1,
+        },
+      },
+    ]);
+    const reader: IncidentSourceReader = {
+      ...baseReader,
+      async readSessionMetadata() {
+        return makeMetadata({
+          sessionEnd: {
+            type: "session_end",
+            timestamp: "2026-08-13T14:04:00.000Z",
+            endReason: "success",
+            durationMs: 650_000,
+            totalTokens: 1_950_000,
+            degraded: false,
+            costUsd: 2.23,
+            toolStats: {
+              "mcp__records--summary": { ok: 1, failed: 0 },
+            },
+            breakerTripCount: 0,
+            topErrorKinds: {},
+          },
+        });
+      },
+    };
+
+    const report = await assembleIncidentReportFromSources(
+      reader,
+      "/fake/.comis",
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+
+    expect(report.outcome).toMatchObject({
+      endReason: "success",
+      degraded: false,
+      severity: "ok",
+    });
+    expect(report.recoveries as Record<string, unknown>).toMatchObject({
+      total: 1,
+      succeeded: 1,
+      byReason: { request_tool_nudge: 1 },
+      groundedResponseBeforeRecoveryCount: 1,
+      groundedResponsePreservedCount: 0,
+      successfulReceiptsOutsideRoute: 1,
+    });
+    expect(report.likelyRootCause?.code).toBe(
+      "recovery_replaced_grounded_response",
+    );
+    expect(report.likelyRootCause?.detail).toMatch(
+      /grounded response.*outside.*route.*replaced/iu,
+    );
+  });
+
+  it("does not diagnose replacement when recovery preserved the grounded response", async () => {
+    const reader = makeAuditReader([], [
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "request_tool_nudge",
+          succeeded: true,
+          groundedResponseBeforeRecovery: true,
+          groundedResponsePreserved: true,
+          successfulReceiptsOutsideRoute: 1,
+        },
+      },
+    ]);
+
+    const report = await assembleIncidentReportFromSources(
+      reader,
+      "/fake/.comis",
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+
+    expect(report.recoveries).toMatchObject({
+      groundedResponseBeforeRecoveryCount: 1,
+      groundedResponsePreservedCount: 1,
+      successfulReceiptsOutsideRoute: 1,
+    });
+    expect(report.likelyRootCause).toBeNull();
+  });
+});
+
+describe("assembleIncidentReport — discovery activation", () => {
+  it("surfaces content-free activation counts on the incident report", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "tool.discovery_activation",
+      seq: 1,
+      sessionKey: SESSION_KEY,
+      data: {
+        displayedCount: 4,
+        activatedCount: 2,
+        replacedCount: 1,
+        skippedCount: 1,
+        failedCount: 2,
+      },
+    }]);
+    const report = assembleIncidentReport(signals, makeMetadata(), null, SESSION_KEY, 1);
+
+    expect((report as unknown as { discoveryActivation?: Record<string, number> }).discoveryActivation)
+      .toEqual({
+        displayedCount: 4,
+        activatedCount: 2,
+        replacedCount: 1,
+        skippedCount: 1,
+        failedCount: 2,
+      });
+  });
 });
 
 describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {
@@ -2447,6 +2571,106 @@ describe("assembleIncidentReportFromSources — audit?", () => {
         "retry verification before treating the requested result as complete",
       ],
     });
+  });
+
+  it("preserves a terminal route stall above its downstream completion correction", async () => {
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "prompt.submitted",
+        seq: 1,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: {
+          requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+          responseLocaleSource: "unset",
+          responseLocaleEnforced: false,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.result",
+        seq: 2,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: { toolName: "mcp__records--summary", success: true },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 3,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "request_tool_nudge",
+          succeeded: true,
+          groundedResponseBeforeRecovery: true,
+          groundedResponsePreserved: true,
+          successfulReceiptsOutsideRoute: 17,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 4,
+        traceId: TRACE_ID,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "unrecovered_tool_failure_completion_claim",
+          succeeded: true,
+        },
+      },
+    ];
+    const baseReader = makeAuditReader([
+      auditRow("audit", TRACE_ID, {
+        action: "response.completion_evidence_guard",
+        outcome: "denied",
+      }),
+    ], records);
+    const reader: IncidentSourceReader = {
+      ...baseReader,
+      async readSessionMetadata() {
+        return makeMetadata({
+          sessionEnd: {
+            type: "session_end",
+            timestamp: "2026-08-13T14:04:00.000Z",
+            endReason: "tool_invocation_stall",
+            durationMs: 650_000,
+            totalTokens: 1_950_000,
+            degraded: true,
+            costUsd: 2.23,
+            toolStats: { "mcp__records--summary": { ok: 1, failed: 0 } },
+            breakerTripCount: 0,
+            topErrorKinds: {},
+          },
+        });
+      },
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, "/fake/.comis", {
+      sessionKey: SESSION_KEY,
+      depth: "summary",
+    });
+
+    expect(report).toMatchObject({
+      outcome: { endReason: "tool_invocation_stall", degraded: true },
+      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      toolStats: { "mcp__records--summary": { ok: 1, failed: 0 } },
+      recoveries: {
+        total: 2,
+        byReason: {
+          request_tool_nudge: 1,
+          unrecovered_tool_failure_completion_claim: 1,
+        },
+        groundedResponseBeforeRecoveryCount: 1,
+        groundedResponsePreservedCount: 1,
+        successfulReceiptsOutsideRoute: 17,
+      },
+    });
+    expect(report.likelyRootCause?.code).toBe("tool_invocation_stall");
+    expect(report.likelyRootCause?.detail).toMatch(
+      /completed current-turn invocations.*later workflow requirement remained incomplete/iu,
+    );
   });
 
   it("names a pre-send completion-evidence block as the acute cause", async () => {

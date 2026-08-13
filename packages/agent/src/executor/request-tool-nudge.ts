@@ -18,6 +18,7 @@ import {
 } from "./continuation-turn.js";
 import type { ProviderDispatchGuard } from "./provider-dispatch.js";
 import { isRuntimeSelfReportRequest } from "./response-grounding.js";
+import { isDiscoveryControlToolName } from "./tool-deferral.js";
 
 export interface RequestToolNudgeOutcome {
   fired: boolean;
@@ -50,6 +51,10 @@ export interface RunRequestToolNudgeDeps {
   requestRelevantPromptSkillWorkflowContext?: string;
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: (toolNames?: readonly string[]) => number;
+  /** Successful current-turn receipts outside the routed prompt-skill workflow. */
+  currentSuccessfulNonWorkflowToolCount: (
+    toolNames?: readonly string[],
+  ) => number;
   currentDistinctSuccessfulWebFetchUrlCount?: () => number;
   currentDistinctSuccessfulWebSearchQueryCount?: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -70,6 +75,11 @@ const SUBMODULE = "executor.request-tool-nudge";
 const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
 const MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS = 3;
+const MAX_OBSERVABLE_RECEIPT_COUNT = 10_000;
+
+export function isRecoveryEvidenceToolName(toolName: string): boolean {
+  return !isDiscoveryControlToolName(toolName);
+}
 
 interface WebFetchReceiptRecord {
   readonly toolName: string;
@@ -376,7 +386,11 @@ function buildPromptSkillWorkflowDirective(
   ].join("\n");
 }
 
-function buildPromptSkillResultNarrationDirective(receipts?: string): string {
+function buildPromptSkillResultNarrationDirective(
+  receipts?: string,
+  receiptGroundedDraft?: string,
+): string {
+  const boundedDraft = receiptGroundedDraft?.trim().slice(0, MAX_WORKFLOW_RECEIPT_CHARS);
   return [
     "[comis: continuation — narrate the completed prompt skill workflow]",
     "A required prompt-skill workflow tool succeeded in this turn.",
@@ -386,6 +400,16 @@ function buildPromptSkillResultNarrationDirective(receipts?: string): string {
     "Do not carry an earlier failure or unavailable-source claim into this answer; mention one only when a current-turn tool receipt records it, using its exact identifier.",
     "Copy every citation URL verbatim from a successful current-turn web_fetch receipt's URL: line.",
     "Do not substitute a canonical, related, search-result, or earlier URL; omit a claim when no successful receipt supports it.",
+    ...(boundedDraft
+      ? [
+          "Reconcile the earlier receipt-grounded draft with the completed workflow. Retain its supported conclusions, replace conflicting claims, and omit anything the combined receipts do not support.",
+          "The bounded earlier receipt-grounded draft is:",
+          wrapExternalContent(scrubSecretsFromText(boundedDraft).text, {
+            source: "unknown",
+            includeWarning: true,
+          }),
+        ]
+      : []),
     ...(receipts
       ? [
           "The bounded current-turn workflow receipts are:",
@@ -537,6 +561,13 @@ export async function runRequestToolNudge(
     !promptSkillGatesApply || promptSkillProcedureLoaded();
   const webEvidenceProven = () => !promptSkillGatesApply || webEvidenceSatisfied();
   const webEvidenceGateActive = promptSkillGatesApply && webEvidenceGateConfigured;
+  const evidenceToolNames = recoveryToolNames.filter(isRecoveryEvidenceToolName);
+  const successfulNonWorkflowToolCount =
+    deps.currentSuccessfulNonWorkflowToolCount(evidenceToolNames);
+  const successfulReceiptsOutsideRoute = Math.min(
+    MAX_OBSERVABLE_RECEIPT_COUNT,
+    Math.max(0, Math.trunc(successfulNonWorkflowToolCount)),
+  );
   if (
     successfulCount() > 0
     && webEvidenceProven()
@@ -579,6 +610,12 @@ export async function runRequestToolNudge(
     "Request-tool nudge firing",
   );
 
+  const receiptGroundedResponseBefore =
+    successfulNonWorkflowToolCount > 0
+      ? deps.getVisibleAssistantText(deps.session)
+      : "";
+  const groundedResponseBeforeRecovery =
+    receiptGroundedResponseBefore.trim().length > 0;
   const successfulToolCountBefore = successfulCount();
   const continuationOptions = (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
     ? undefined
@@ -671,11 +708,13 @@ export async function runRequestToolNudge(
     && (!webEvidenceGateActive
       ? successfulCount() > successfulToolCountBefore
       : webEvidenceSatisfied());
+  let promptSkillResultNarrated = false;
   if (
     continuation.ok
     && promptSkillWorkflowTools.length > 0
     && promptSkillWorkflowCompleted
   ) {
+    promptSkillResultNarrated = true;
     logger.info(
       {
         submodule: SUBMODULE,
@@ -689,6 +728,7 @@ export async function runRequestToolNudge(
       deps.session,
       buildPromptSkillResultNarrationDirective(
         currentWorkflowToolReceipts(deps.messages, promptSkillWorkflowTools),
+        receiptGroundedResponseBefore,
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: [] },
@@ -713,6 +753,9 @@ export async function runRequestToolNudge(
       sessionKey,
       reason: "request_tool_nudge",
       succeeded: false,
+      groundedResponseBeforeRecovery,
+      groundedResponsePreserved: groundedResponseBeforeRecovery,
+      successfulReceiptsOutsideRoute,
       timestamp: clock.now(),
     });
     return {
@@ -723,7 +766,8 @@ export async function runRequestToolNudge(
     };
   }
 
-  const response = deps.getVisibleAssistantText(deps.session);
+  const terminalResponse = deps.getVisibleAssistantText(deps.session);
+  const response = terminalResponse;
   const successfulToolCountAfter = successfulCount();
   const procedureCompletionProvable = (
     promptSkillProcedureProven() || evidenceGatedWorkflowCompleted
@@ -742,6 +786,14 @@ export async function runRequestToolNudge(
     )
     && response.trim().length > 0
     && procedureCompletionProvable;
+  const groundedResponsePreserved = groundedResponseBeforeRecovery
+    && (
+      !recovered
+      || (
+        promptSkillResultNarrated
+        && response.includes(receiptGroundedResponseBefore.trim())
+      )
+    );
   logger.info(
     {
       submodule: SUBMODULE,
@@ -764,6 +816,9 @@ export async function runRequestToolNudge(
     sessionKey,
     reason: "request_tool_nudge",
     succeeded: recovered,
+    groundedResponseBeforeRecovery,
+    groundedResponsePreserved,
+    successfulReceiptsOutsideRoute,
     timestamp: clock.now(),
   });
   return recovered

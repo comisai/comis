@@ -14,6 +14,23 @@ const OUTBOUND_IMAGE_EVIDENCE_GUARD_ACTION =
 const OUTBOUND_DELIVERY_STATUS_EVIDENCE_GUARD_ACTION =
   "response.outbound_delivery_status_evidence_guard";
 
+/** Keep a proven grounded route stall above its downstream response correction. */
+export function completionEvidenceGuardShouldOverride(
+  report: IncidentReport,
+): boolean {
+  const recoveries = report.recoveries;
+  const groundedBefore = recoveries?.groundedResponseBeforeRecoveryCount ?? 0;
+  return !(
+    report.likelyRootCause?.code === "tool_invocation_stall"
+    && report.outcome.endReason === "tool_invocation_stall"
+    && (report.requestRelevantToolNames?.length ?? 0) > 0
+    && (recoveries?.byReason.request_tool_nudge ?? 0) > 0
+    && groundedBefore > 0
+    && (recoveries?.groundedResponsePreservedCount ?? 0) >= groundedBefore
+    && (recoveries?.successfulReceiptsOutsideRoute ?? 0) > 0
+  );
+}
+
 /** Name the response correction while preserving failed-tool details in the report. */
 export function completionEvidenceGuardVerdict(
   rows: ReadonlyArray<Record<string, unknown>>,

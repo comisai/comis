@@ -659,6 +659,70 @@ describe("createSubAgentRunner", () => {
     expect(runner.getRunStatus(runId)?.status).toBe("running");
   });
 
+  it("snapshots only the active owner wait before abort releases its claim", async () => {
+    let resolveParent!: (
+      value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>,
+    ) => void;
+    vi.mocked(deps.executeAgent).mockImplementation((_agentId, _sessionKey, _conversation, task) =>
+      task === "parent task"
+        ? new Promise((resolve) => {
+            resolveParent = resolve;
+          })
+        : new Promise(() => {})
+    );
+    const runner = createSubAgentRunner(deps);
+    const parentRunId = runner.spawn({ task: "parent task", agentId: "default" });
+    await vi.advanceTimersByTimeAsync(0);
+    const parentSessionKey = runner.getRunStatus(parentRunId)?.sessionKey;
+    if (parentSessionKey === undefined) throw new Error("expected parent session");
+    const awaitedChildRunId = runner.spawn({
+      task: "awaited child",
+      agentId: "default",
+      parentRunId,
+      callerSessionKey: parentSessionKey,
+    });
+    const asynchronousChildRunId = runner.spawn({
+      task: "asynchronous child",
+      agentId: "default",
+      parentRunId,
+      callerSessionKey: parentSessionKey,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const controller = new AbortController();
+    const waitWithAnnouncementClaim = runner.waitForCompletions as unknown as (
+      runIds: readonly string[],
+      timeoutMs: number,
+      signal: AbortSignal | undefined,
+      announcementConsumerSessionKey: string,
+    ) => ReturnType<typeof runner.waitForCompletions>;
+    const waiting = waitWithAnnouncementClaim(
+      [awaitedChildRunId],
+      60_000,
+      controller.signal,
+      parentSessionKey,
+    );
+
+    controller.abort();
+    await expect(waiting).resolves.toEqual([{
+      runId: awaitedChildRunId,
+      status: "cancelled",
+    }]);
+    resolveParent({
+      response: "",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "prompt_timeout",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const parent = runner.getRunStatus(parentRunId);
+    expect(parent?.status).toBe("failed");
+    if (parent?.status !== "failed") return;
+    expect(parent.completion.summary).toContain(awaitedChildRunId);
+    expect(parent.completion.summary).not.toContain(asynchronousChildRunId);
+  });
+
   it("mixed completion waits preserve completed results and time out only pending children", async () => {
     let resolveSecond!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
     vi.mocked(deps.executeAgent)
@@ -1056,6 +1120,51 @@ describe("createSubAgentRunner", () => {
         tokensUsed: 200,
         cost: 0.02,
       }),
+    );
+  });
+
+  it("emits routed-child preservation when an abnormal parent end leaves delivery valid", () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+    const parentRunId = runner.spawn({ task: "parent", agentId: "parent" });
+    const parentSessionKey = runner.getRunStatus(parentRunId)?.sessionKey;
+    const callerConversation = createTestConversation({
+      agentId: "parent",
+      channelType: "gateway",
+      conversationId: "conversation_a",
+    });
+    const childRunId = runner.spawn({
+      task: "child",
+      agentId: "child",
+      parentRunId,
+      callerType: "control-plane",
+      callerAgentId: "parent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      announceChannelType: "gateway",
+      announceChannelId: "conversation_a",
+      requesterOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "gateway",
+        channelId: "conversation_a",
+      },
+    });
+
+    expect(runner.killRun(parentRunId, { killedBy: "system", reason: "test timeout" }).killed)
+      .toBe(true);
+
+    expect(runner.getRunStatus(childRunId)?.status).toBe("running");
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "subagent:routed_child_preserved",
+      {
+        parentRunId,
+        childRunId,
+        sessionKey: parentSessionKey,
+        reason: "announcement_route",
+        timestamp: expect.any(Number),
+      },
     );
   });
 

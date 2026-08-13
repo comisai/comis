@@ -34,6 +34,7 @@ import { parseQualifiedName } from "./mcp-client-types.js";
 import {
   MIN_VIABLE_CALL_BUDGET_MS,
   McpCallDeadlineError,
+  McpCallQueueContentionError,
   emitMcpBreakerOpened,
   mcpCallQueueExhaustedHint,
   mcpCallTimeoutHint,
@@ -175,11 +176,8 @@ export async function callTool(
   // -- NOT err(...) -- so the LLM sees a normal-shape tool result with
   // a readable hint and can self-correct.
   //
-  // When status === "open" AND cooldown elapsed, transition to "half-open"
-  // and fall through (one probe attempt allowed).
-  //
-  // Revisit if supportsParallelToolCalls lands -- today stdio concurrency = 1
-  // makes per-call breaker semantics straightforward.
+  // After cooldown, serialized queues admit one half-open probe while parallel
+  // servers share the breaker. Pre-request queue refusals do not advance it.
   const breaker = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
   if (breaker.status === "open") {
     const elapsed = systemNowMs() - breaker.openedAtMs;
@@ -217,28 +215,21 @@ export async function callTool(
     // request, so the SDK budget is what is LEFT of the caller's deadline.
     const waitedMs = systemNowMs() - callStartedAtMs;
     const remainingMs = state.options.callToolTimeoutMs - waitedMs;
-    // Clamp the viability floor by the configured deadline: an operator who sets a
-    // deadline below the floor has chosen that, and must not have every call refused
-    // before it is issued.
+    // A deliberately short deadline must not refuse every call before issuance.
     const viableFloorMs = Math.min(MIN_VIABLE_CALL_BUDGET_MS, state.options.callToolTimeoutMs);
-    // The clamp alone does not deliver that: at or below the floor it pins
-    // viableFloorMs to the deadline ITSELF, so `remainingMs < viableFloorMs` holds for
-    // ANY non-zero wait. A call that waited 1ms on an EMPTY queue was refused and told
-    // to raise `maxConcurrency` for contention that never happened — and whether it
-    // was refused came down to whether the queue drain landed on the same millisecond
-    // as entry. Once the deadline is at/below the floor the operator's own budget is
-    // the only bar left, so only an exhausted one is non-viable.
+    // Below the floor, use the operator budget so a 1ms wait is not misclassified.
     const floorApplies = viableFloorMs < state.options.callToolTimeoutMs;
     if (floorApplies ? remainingMs < viableFloorMs : remainingMs <= 0) {
       // Issuing here would burn a slot on a request that cannot finish in time and would
       // then surface as a plain deadline expiry — telling the agent to narrow a request
       // scope that was never the problem. Blame contention explicitly instead.
       const queueHint = mcpCallQueueExhaustedHint(
-        serverName,
-        toolName,
+        serverName, toolName, queue.concurrency,
         state.options.callToolTimeoutMs,
-        waitedMs,
-        viableFloorMs,
+        waitedMs, viableFloorMs,
+        config?.transport === "stdio"
+          && config.maxConcurrency === undefined
+          && config.supportsParallelToolCalls !== true,
       );
       logger.warn(
         {
@@ -247,6 +238,7 @@ export async function callTool(
           waitedMs,
           remainingMs,
           viableFloorMs,
+          configuredConcurrency: queue.concurrency,
           timeoutMs: state.options.callToolTimeoutMs,
           hint: queueHint,
           errorKind: "resource" as const,
@@ -254,7 +246,14 @@ export async function callTool(
         },
         "MCP call deadline consumed by the per-server queue wait before the request was issued",
       );
-      return err(new Error(queueHint));
+      return err(new McpCallQueueContentionError(
+        queueHint,
+        serverName,
+        queue.concurrency,
+        state.options.callToolTimeoutMs,
+        waitedMs,
+        viableFloorMs,
+      ));
     }
 
     try {

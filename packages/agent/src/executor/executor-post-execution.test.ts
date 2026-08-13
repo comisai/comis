@@ -1192,7 +1192,7 @@ describe("tool-failure endReason and notice", () => {
     );
     expect(stripped.indexOf("enforceCompletionEvidence("))
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
-    expect(stripped).toMatch(/getToolMetadata\([^)]*\)\?\.isReadOnly\s*===\s*true/);
+    expect(stripped).toMatch(/isReadOnlyTool\([^)]*\)/);
     expect(stripped).toMatch(/preservePartialResponse:/);
   });
 

@@ -124,6 +124,26 @@ export const executionDependencyFailureVerdict = (s: IncidentSignals): RecallVer
   };
 };
 
+/** A detector-owned no-progress abort is acute and outranks incidental recall evidence. */
+export const executionNoProgressLoopVerdict = (s: IncidentSignals): RecallVerdict | null => {
+  if (s.endReason !== "loop_detected" && s.abortReason !== "loop_detected") return null;
+  const evidence = s.loopEvidence;
+  const detail = evidence === undefined
+    ? "the execution stopped after its no-progress loop governor fired; bounded detector evidence was unavailable"
+    : `${evidence.repeatedToolName ?? "a tool"} produced ${evidence.consecutiveNoProgress} consecutive no-progress steps `
+      + `(${evidence.duplicateCallCount} duplicate calls, ${evidence.stagnantResultCount} stagnant results; `
+      + `threshold=${evidence.threshold})`;
+  return {
+    code: "execution_no_progress_loop",
+    detail,
+    suggestedNextSteps: [
+      "review the bounded loop evidence in this verdict before retrying",
+      "advance the cursor, change the tool input, or choose a different capability after an unchanged result",
+      "do not increase the step limit until the repeated call can make observable progress",
+    ],
+  };
+};
+
 /**
  * Every REMAINING terminal execution failure kind. Ranked below the specific
  * terminal causes (drive/orchestrate) so specific-over-generic holds, and above the

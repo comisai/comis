@@ -22,6 +22,7 @@ import type {
 } from "./incident-report-sections.js";
 import type { ResponseLocaleRepairSkipped } from "../domain/response-locale-policy.js";
 import type { ErrorKind } from "../logging/log-fields.js";
+import type { LoopEvidence } from "../event-bus/events-messaging.js";
 
 /**
  * A single normalized failure entry the assembler emits (and the bounding
@@ -63,7 +64,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 30 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 33 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -190,6 +191,21 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Last parent-routed synchronous wait outcome, with pre/post-policy budgets. */
+  subagentWait?: {
+    parentRunId?: string;
+    childRunId: string;
+    status: "completed" | "timeout" | "cancelled" | "denied_unknown";
+    requestedTimeoutMs: number;
+    effectiveTimeoutMs: number;
+    durationMs: number;
+  };
+  /** Last child preserved after abnormal parent termination because delivery remains routed. */
+  routedChildPreserved?: {
+    parentRunId: string;
+    childRunId: string;
+    reason: "announcement_route";
+  };
   /** Child runs that returned before their auto-backgrounded process sessions
    * reached terminal state. Folded from
    * `subagent.background_processes_abandoned`; counts and run ids only. */
@@ -343,6 +359,8 @@ export interface IncidentSignals {
    * despite the trajectory carrying the limb.
    */
   abortReason?: string;
+  /** Bounded content-free evidence from the loop detector that emitted the abort. */
+  loopEvidence?: LoopEvidence;
   /**
    * The report's authoritative `outcome.degraded` flag (derived by the
    * assembler from the closed HARD_FAILURE/DEGRADED end-reason sets), threaded by
@@ -493,12 +511,27 @@ export interface IncidentSignals {
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /**
-   * Runtime-recovery fold from `execution.recovery_attempted` and
+   * Selected-turn runtime-recovery fold from `execution.recovery_attempted` and
    * `execution.replay_recovered` records: total + succeeded tally + per-reason
    * counts. Includes model re-entry and deterministic response-grounding
    * corrections. Absent ⇒ no recovery attempts.
    */
-  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
+  recoveries?: {
+    total: number;
+    succeeded: number;
+    byReason: Record<string, number>;
+    groundedResponseBeforeRecoveryCount?: number;
+    groundedResponsePreservedCount?: number;
+    successfulReceiptsOutsideRoute?: number;
+  };
+  /** Selected-turn counts-only deferred-tool reconciliation outcomes. */
+  discoveryActivation?: {
+    displayedCount: number;
+    activatedCount: number;
+    replacedCount: number;
+    skippedCount: number;
+    failedCount: number;
+  };
   /**
    * Σ of the session's `session.summary` records' `turnCount` — the
    * trajectory-derived turn total, preferred for `timing.turnCount` over the

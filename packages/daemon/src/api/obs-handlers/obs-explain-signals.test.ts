@@ -116,6 +116,137 @@ describe("provider breaker trajectory normalization", () => {
   });
 });
 
+describe("loop-detected trajectory normalization", () => {
+  it("retains bounded duplicate and stagnation evidence from the abort record", () => {
+    const loopEvidence = {
+      lastNoProgressKind: "identical_success" as const,
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "execution.aborted",
+      seq: 18,
+      data: {
+        reason: "loop_detected",
+        loopEvidence,
+      },
+    }]) as IncidentSignals & { loopEvidence?: typeof loopEvidence };
+
+    expect(signals.abortReason).toBe("loop_detected");
+    expect(signals.loopEvidence).toEqual(loopEvidence);
+  });
+});
+
+describe("discovery activation trajectory normalization", () => {
+  it("aggregates displayed and provider-activated disposition counts", () => {
+    const signals = toIncidentSignals([
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.discovery_activation",
+        seq: 18,
+        data: {
+          displayedCount: 2,
+          activatedCount: 1,
+          replacedCount: 1,
+          skippedCount: 0,
+          failedCount: 1,
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        type: "tool.discovery_activation",
+        seq: 19,
+        data: {
+          displayedCount: 1,
+          activatedCount: 1,
+          replacedCount: 0,
+          skippedCount: 1,
+          failedCount: 0,
+        },
+      },
+    ]) as IncidentSignals & {
+      discoveryActivation?: {
+        displayedCount: number;
+        activatedCount: number;
+        replacedCount: number;
+        skippedCount: number;
+        failedCount: number;
+      };
+    };
+
+    expect(signals.discoveryActivation).toEqual({
+      displayedCount: 3,
+      activatedCount: 2,
+      replacedCount: 1,
+      skippedCount: 1,
+      failedCount: 1,
+    });
+  });
+
+  it("excludes recovery and activation evidence from earlier turns", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {}),
+      event("execution.recovery_attempted", 2, {
+        reason: "request_tool_nudge",
+        succeeded: true,
+        groundedResponseBeforeRecovery: true,
+        groundedResponsePreserved: false,
+      }),
+      event("tool.discovery_activation", 3, {
+        displayedCount: 2,
+        activatedCount: 0,
+        replacedCount: 0,
+        skippedCount: 2,
+        failedCount: 0,
+      }),
+      event("prompt.submitted", 4, {}),
+    ]);
+
+    expect(signals.recoveries).toBeUndefined();
+    expect(signals.discoveryActivation).toBeUndefined();
+  });
+});
+
+describe("MCP queue contention trajectory normalization", () => {
+  it("retains breaker-neutral classification and queue timing in explain failures", () => {
+    const signals = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "tool.result",
+      seq: 14,
+      data: {
+        toolName: "mcp__records--summary",
+        toolCallId: "tc-mcp-queue-contention",
+        durationMs: 119750,
+        success: false,
+        errorKind: "resource",
+        classifiedFailureBy: "runtime_guard",
+        transportOk: false,
+        matchedRule: "mcp_queue_contention",
+        failureCode: "mcp_queue_contention",
+        resultDigest: "abc123def456",
+        resultBytes: 180,
+        errorMessage:
+          "[mcp_queue_contention] never ran: waited 119750ms for a concurrency slot, "
+          + "leaving 250ms of its 120000ms call deadline",
+      },
+    }]);
+
+    expect(signals.failures).toContainEqual(expect.objectContaining({
+      toolName: "mcp__records--summary",
+      classifiedFailureBy: "runtime_guard",
+      transportOk: false,
+      errorKind: "resource",
+      matchedRule: "mcp_queue_contention",
+      failureCode: "mcp_queue_contention",
+      errorPreview: expect.stringMatching(/119750ms.*250ms.*120000ms/iu),
+    }));
+  });
+});
+
 describe("request clarification trajectory normalization", () => {
   it("retains the latest content-free clarification reason", () => {
     const signals = toIncidentSignals([{
@@ -1310,9 +1441,13 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
 
   it("folds a failed child observed by a synchronous parent wait", () => {
     const s = toIncidentSignals([
-      event("subagent.wait_completed", 1, {
+      event("subagent.wait_finished", 1, {
         runId: "run-waited",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 12_000,
       }),
     ]);
 
@@ -1334,9 +1469,13 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
         tokensUsed: 2_500,
         costUsd: 0.04,
       }),
-      event("subagent.wait_completed", 2, {
+      event("subagent.wait_finished", 2, {
         runId: "run-shared",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 12_000,
       }),
     ]);
 
@@ -1954,6 +2093,36 @@ describe("toolStats fidelity", () => {
     ]);
   });
 
+  it("retains MCP background queue diagnostics as a bounded failure preview", () => {
+    const s = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "background_task.failed",
+      seq: 1,
+      data: {
+        taskId: "task-mcp-queue",
+        toolName: "mcp__reports--queued_lookup",
+        errorKind: "resource",
+        failureCode: "mcp_queue_contention",
+        failureConfigKey: "integrations.mcp.servers[].maxConcurrency",
+        failureServerName: "reports",
+        failureConfiguredConcurrency: 2,
+        failureConfiguredMs: 120_000,
+        failureQueueWaitedMs: 119_800,
+        failureRequestBudgetMs: 200,
+        failureMinViableMs: 250,
+      },
+    }]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp__reports--queued_lookup",
+        failureCode: "mcp_queue_contention",
+        errorPreview:
+          "integrations.mcp.servers[].maxConcurrency; serverName=reports; maxConcurrency=2; queueWaitedMs=119800; requestBudgetMs=200; configuredMs=120000; minViableMs=250",
+      }),
+    ]);
+  });
+
   it("retains background hard-duration diagnostics as a bounded failure preview", () => {
     const s = toIncidentSignals([
       {
@@ -2178,6 +2347,113 @@ describe("toolSchemaUnsupported derivation", () => {
 // ---------------------------------------------------------------------------
 
 describe("promptTimeout derivation", () => {
+  it("explains a cancelled parent wait and preserved routed child from one trajectory", () => {
+    const s = toIncidentSignals([
+      event("subagent.wait_finished", 1, {
+        parentRunId: "run-parent",
+        runId: "run-child",
+        status: "cancelled",
+        requestedTimeoutMs: 300_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 58_000,
+      }),
+      event("subagent.routed_child_preserved", 2, {
+        parentRunId: "run-parent",
+        childRunId: "run-child",
+        reason: "announcement_route",
+      }),
+      event("execution.prompt_timeout", 3, {
+        timeoutMs: 180_000,
+        durationMs: 185_000,
+        limit: "stall",
+        source: "agent_config",
+        bindingKnob: "agents.worker.promptTimeout.promptTimeoutMs",
+        stallBudgetMs: 180_000,
+      }),
+    ]);
+    const incident = s as IncidentSignals & {
+      subagentWait: {
+        parentRunId: string;
+        childRunId: string;
+        status: string;
+        requestedTimeoutMs: number;
+        effectiveTimeoutMs: number;
+        durationMs: number;
+      };
+      routedChildPreserved: {
+        parentRunId: string;
+        childRunId: string;
+        reason: string;
+      };
+    };
+
+    expect(incident.subagentWait).toEqual({
+      parentRunId: "run-parent",
+      childRunId: "run-child",
+      status: "cancelled",
+      requestedTimeoutMs: 300_000,
+      effectiveTimeoutMs: 60_000,
+      durationMs: 58_000,
+    });
+    expect(incident.routedChildPreserved).toEqual({
+      parentRunId: "run-parent",
+      childRunId: "run-child",
+      reason: "announcement_route",
+    });
+
+    const cause = rootCause({ ...incident, endReason: "timeout", agentId: "worker" });
+    expect(cause?.code).toBe("subagent_wait_deadline_overlap");
+    expect(cause?.detail).toContain("run-parent");
+    expect(cause?.detail).toContain("run-child");
+    expect(cause?.detail).toContain("requested 300000ms");
+    expect(cause?.detail).toContain("effective 60000ms");
+    expect(cause?.detail).toContain("preserved");
+  });
+
+  it("keeps the current timeout when another waited child completed", () => {
+    const s = toIncidentSignals([
+      event("prompt.submitted", 1, {}),
+      event("subagent.wait_finished", 2, {
+        parentRunId: "old-parent",
+        runId: "old-child",
+        status: "timeout",
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 30_000,
+        durationMs: 30_000,
+      }),
+      event("subagent.routed_child_preserved", 3, {
+        parentRunId: "old-parent",
+        childRunId: "old-child",
+        reason: "announcement_route",
+      }),
+      event("prompt.submitted", 4, {}),
+      event("subagent.wait_finished", 5, {
+        parentRunId: "current-parent",
+        runId: "timed-child",
+        status: "timeout",
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 10_000,
+        durationMs: 10_000,
+      }),
+      event("subagent.wait_finished", 6, {
+        parentRunId: "current-parent",
+        runId: "completed-child",
+        status: "completed",
+        success: true,
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 10_000,
+        durationMs: 5_000,
+      }),
+    ]);
+
+    expect(s.subagentWait).toMatchObject({
+      parentRunId: "current-parent",
+      childRunId: "timed-child",
+      status: "timeout",
+    });
+    expect(s.routedChildPreserved).toBeUndefined();
+  });
+
   it("an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {
     const s = toIncidentSignals([
       event("execution.prompt_timeout", 9, {

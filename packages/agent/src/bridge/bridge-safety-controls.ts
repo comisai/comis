@@ -14,7 +14,7 @@
  * @module
  */
 
-import type { SessionKey, TypedEventBus } from "@comis/core";
+import type { LoopEvidence, SessionKey, TypedEventBus } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import type { ExecutionBudgetWindow, SpendGateOutcome } from "../budget/budget-guard.js";
@@ -144,6 +144,8 @@ export function emitStepLimitAbort(
 export interface LoopStateReporter {
   /** True once the no-progress / empty-turn thresholds break the turn early. */
   shouldBreakLoop(): boolean;
+  /** Detector-owned content-free evidence, when the reporter supports it. */
+  getLoopEvidence?(): LoopEvidence;
 }
 
 /**
@@ -180,14 +182,17 @@ export function emitLoopAbort(
     agentId: string;
     logger: ComisLogger;
     onAbort?: () => void;
+    turnLoopDetector?: LoopStateReporter;
   },
 ): void {
   deps.onAbort?.();
+  const loopEvidence = deps.turnLoopDetector?.getLoopEvidence?.();
   deps.eventBus.emit("execution:aborted", {
     sessionKey: deps.sessionKey,
     reason: "loop_detected",
     agentId: deps.agentId,
     timestamp: systemNowMs(),
+    ...(loopEvidence !== undefined ? { loopEvidence } : {}),
   });
   deps.logger.warn(
     {

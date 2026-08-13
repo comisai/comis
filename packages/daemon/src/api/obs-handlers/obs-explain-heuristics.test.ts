@@ -1145,6 +1145,51 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/skill routing|workflow requirement/iu);
   });
 
+  it("ranks terminal delivery failure above grounded-response replacement", () => {
+    const r = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      deliveryDispatch: {
+        channelType: "telegram",
+        status: "failure",
+        totalChunks: 2,
+        deliveredChunks: 0,
+        failedChunks: 2,
+        errorKind: "platform",
+      },
+      recoveries: {
+        total: 1,
+        succeeded: 1,
+        byReason: { request_tool_nudge: 1 },
+        groundedResponseBeforeRecoveryCount: 1,
+        groundedResponsePreservedCount: 0,
+        successfulReceiptsOutsideRoute: 1,
+      },
+    }));
+
+    expect(r?.code).toBe("delivery_failed");
+  });
+
+  it("ranks provider rejection above discovery activation mismatch", () => {
+    const r = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      modelErrors: {
+        total: 1,
+        byCategory: { model_capability_unsupported: 1 },
+      },
+      discoveryActivation: {
+        displayedCount: 2,
+        activatedCount: 0,
+        replacedCount: 0,
+        skippedCount: 2,
+        failedCount: 0,
+      },
+    }));
+
+    expect(r?.code).toBe("provider_rejected_request");
+  });
+
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
     // Grounded in live Hebrew-language runs where recall silently returned
     // nothing and comis explain root-caused nothing. The carrier is a turn that
@@ -1159,6 +1204,99 @@ describe("obs-explain-heuristics", () => {
     // Points at the two real gaps from the live runs: scope + non-Latin lanes.
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/scope/i);
     expect(r!.suggestedNextSteps.join(" ")).toMatch(/trigram|non-Latin/i);
+  });
+
+  it("ranks a no-progress loop above an incidental recall miss with bounded evidence", () => {
+    const signals = makeSignals({
+      endReason: "loop_detected",
+      degraded: true,
+      abortReason: "loop_detected",
+      recall: allMissRecall,
+    }) as IncidentSignals & {
+      loopEvidence?: {
+        lastNoProgressKind: "identical_success";
+        repeatedToolName: string;
+        consecutiveNoProgress: number;
+        threshold: number;
+        duplicateCallCount: number;
+        stagnantResultCount: number;
+      };
+    };
+    signals.loopEvidence = {
+      lastNoProgressKind: "identical_success",
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+    signals.discoveryActivation = {
+      displayedCount: 2,
+      activatedCount: 0,
+      replacedCount: 0,
+      skippedCount: 2,
+      failedCount: 0,
+    };
+
+    const r = rootCause(signals);
+
+    expect(r?.code).toBe("execution_no_progress_loop");
+    expect(r?.detail).toContain("mcp__records--list_current");
+    expect(r?.detail).toContain("6 consecutive no-progress");
+    expect(r?.detail).toContain("6 duplicate");
+    expect(r?.detail).toContain("6 stagnant");
+    expect(r?.detail).not.toMatch(/recall miss/i);
+  });
+
+  it("diagnoses discovered tools only when provider activation is lower", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: false,
+    }) as IncidentSignals & {
+      discoveryActivation: {
+        displayedCount: number;
+        activatedCount: number;
+        replacedCount: number;
+        skippedCount: number;
+        failedCount: number;
+      };
+    };
+    signals.discoveryActivation = {
+      displayedCount: 6,
+      activatedCount: 0,
+      replacedCount: 0,
+      skippedCount: 6,
+      failedCount: 0,
+    };
+
+    const r = rootCause(signals);
+
+    expect(r?.code).toBe("discovered_tool_not_activated");
+    expect(r?.detail).toMatch(/displayed=6.*activated=0.*replaced=0.*skipped=6.*failed=0/iu);
+  });
+
+  it("does not diagnose discovery activation when displayed tools reached the provider", () => {
+    const signals = makeSignals({
+      endReason: "success",
+      degraded: false,
+    }) as IncidentSignals & {
+      discoveryActivation: {
+        displayedCount: number;
+        activatedCount: number;
+        replacedCount: number;
+        skippedCount: number;
+        failedCount: number;
+      };
+    };
+    signals.discoveryActivation = {
+      displayedCount: 6,
+      activatedCount: 6,
+      replacedCount: 6,
+      skippedCount: 0,
+      failedCount: 0,
+    };
+
+    expect(rootCause(signals)).toBeNull();
   });
 
   it("ranks a hard provider rejection above an incidental zero-hit recall", () => {
@@ -2278,6 +2416,63 @@ describe("prompt_timeout terminal verdict", () => {
     expect(r?.detail).toContain("queueWaitedMs=110025");
     expect(r?.suggestedNextSteps.join(" ")).toContain("maxConcurrency");
   });
+
+  it.each([
+    {
+      identityField: "matchedRule",
+      identity: { matchedRule: "mcp_queue_contention" },
+    },
+    {
+      identityField: "failureCode",
+      identity: { failureCode: "mcp_queue_contention" },
+    },
+  ] as const)(
+    "prioritizes breaker-neutral MCP queue contention identified by $identityField over a later server failure",
+    ({ identity }) => {
+      const r = rootCause(
+        makeSignals({
+          failures: [
+            {
+              seq: 14,
+              toolName: "mcp__reports--summary",
+              classifiedFailureBy: "runtime_guard",
+              transportOk: false,
+              errorKind: "resource",
+              resultDigest: "queue-refusal",
+              resultBytes: 180,
+              errorPreview:
+                "integrations.mcp.servers[] entry named \"reports\" has maxConcurrency=1; queueWaitedMs=119750; requestBudgetMs=250; configuredMs=120000",
+              ...identity,
+            },
+            {
+              seq: 15,
+              toolName: "mcp__catalog--lookup",
+              classifiedFailureBy: "mcp_classifier",
+              transportOk: true,
+              errorKind: "dependency",
+              failureCode: "report_temporarily_unavailable",
+              resultDigest: "server-failure",
+              resultBytes: 80,
+              errorPreview: "bounded structured server failure",
+            },
+          ],
+        }),
+      );
+
+      expect(r?.code).toBe("mcp_queue_contention");
+      expect(r?.detail).toContain(
+        "integrations.mcp.servers[] entry named \"reports\" has maxConcurrency=1",
+      );
+      expect(r?.detail).toContain("queueWaitedMs=119750");
+      expect(r?.detail).toContain("requestBudgetMs=250");
+      expect(r?.detail).toContain("configuredMs=120000");
+      expect(r?.detail).toContain("breaker-neutral local queue refusal");
+      expect(r?.detail).toContain("server was never asked");
+      expect(r?.suggestedNextSteps.join(" ")).toContain(
+        "integrations.mcp.servers[] entry named \"reports\"",
+      );
+    },
+  );
 
   it("a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (no tool failure required)", () => {
     const r = rootCause(

@@ -6,11 +6,7 @@
  * @module
  */
 import { fingerprint, type IncidentSignals } from "@comis/core";
-import {
-  asString, asNumber,
-  relativizeDiskPath, previewAndDigest, applyMediaRecord,
-  accumulateSessionSummaryRecord, currentTurnBreakerOpenedTool, latestPromptSequence,
-} from "./obs-explain-signals-fields.js";
+import { asString, asNumber, relativizeDiskPath, previewAndDigest, applyMediaRecord, accumulateSessionSummaryRecord, currentTurnBreakerOpenedTool, latestPromptSequence } from "./obs-explain-signals-fields.js";
 import {
   accumulateLearningRecord, accumulateSkillInvokedRecord, accumulateSkillUsedRecord, accumulateSkillSurfacedRecord,
   accumulateReflectFunnelRecord, accumulateSkillTransitionRecord, accumulateMemoryFailureRecord,
@@ -21,11 +17,11 @@ import {
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
-import { accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { accumulateDiscoveryActivation, accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
-import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js";
+import { accumulateSubagentIncidentRecord, selectedSubagentWaitSignals } from "./obs-explain-subagent-fold.js";
 import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
@@ -35,7 +31,6 @@ function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
   return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
-// ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
 function handleEventRecord(
@@ -187,6 +182,8 @@ function handleEventRecord(
       return;
     }
     case "subagent.killed":
+    case "subagent.wait_finished":
+    case "subagent.routed_child_preserved":
     case "subagent.background_processes_abandoned":
     case "subagent.delivery_skipped": {
       accumulateSubagentIncidentRecord(acc, type, data, isCurrentTurn);
@@ -313,7 +310,6 @@ function handleEventRecord(
       accumulateSubAgentSpawnedRecord(acc.spawnNodesByLease, data);
       return;
     case "subagent.completed":
-    case "subagent.wait_completed":
       accumulateSubAgentCompletedRecord(acc, data, isCurrentTurn);
       return;
     case "capability.audited":
@@ -451,18 +447,40 @@ function handleEventRecord(
       return;
     }
     case "execution.recovery_attempted": {
+      if (!isCurrentTurn) return;
       // Fold model re-entry and deterministic response-grounding recoveries
       // into counts by reason plus a succeeded tally.
       const reason = asString(data.reason) ?? "unknown";
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
       if (data.succeeded === true) prev.succeeded += 1;
+      if (typeof data.groundedResponseBeforeRecovery === "boolean") {
+        prev.groundedResponseBeforeRecoveryCount =
+          (prev.groundedResponseBeforeRecoveryCount ?? 0)
+          + (data.groundedResponseBeforeRecovery ? 1 : 0);
+      }
+      if (typeof data.groundedResponsePreserved === "boolean") {
+        prev.groundedResponsePreservedCount =
+          (prev.groundedResponsePreservedCount ?? 0)
+          + (data.groundedResponsePreserved ? 1 : 0);
+      }
+      const outsideRoute = asNumber(data.successfulReceiptsOutsideRoute);
+      if (outsideRoute !== undefined) {
+        prev.successfulReceiptsOutsideRoute =
+          (prev.successfulReceiptsOutsideRoute ?? 0)
+          + Math.max(0, Math.trunc(outsideRoute));
+      }
       // eslint-disable-next-line security/detect-object-injection -- reason is a closed enum from the recovery emitter
       prev.byReason[reason] = (prev.byReason[reason] ?? 0) + 1;
       acc.recoveries = prev;
       return;
     }
+    case "tool.discovery_activation":
+      if (!isCurrentTurn) return;
+      accumulateDiscoveryActivation(acc, data);
+      return;
     case "execution.replay_recovered": {
+      if (!isCurrentTurn) return;
       // Count this signed-replay outcome with the other model re-entry recoveries.
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
@@ -537,6 +555,33 @@ function handleEventRecord(
         const cap = asNumber(step.cap);
         if (bindingKnob !== undefined && stepsExecuted !== undefined && cap !== undefined) {
           acc.stepLimit = { bindingKnob, stepsExecuted, cap };
+        }
+      }
+      const loop = (data as { loopEvidence?: Record<string, unknown> }).loopEvidence;
+      if (loop && typeof loop === "object") {
+        const kind = asString(loop.lastNoProgressKind);
+        const repeatedToolName = asString(loop.repeatedToolName);
+        const consecutiveNoProgress = asNumber(loop.consecutiveNoProgress);
+        const threshold = asNumber(loop.threshold);
+        const duplicateCallCount = asNumber(loop.duplicateCallCount);
+        const stagnantResultCount = asNumber(loop.stagnantResultCount);
+        const validKind = kind === undefined
+          || kind === "cached_read"
+          || kind === "failed_call"
+          || kind === "identical_success";
+        const validCounts = consecutiveNoProgress !== undefined && consecutiveNoProgress >= 0
+          && threshold !== undefined && threshold > 0
+          && duplicateCallCount !== undefined && duplicateCallCount >= 0
+          && stagnantResultCount !== undefined && stagnantResultCount >= 0;
+        if (validKind && validCounts) {
+          acc.loopEvidence = {
+            ...(kind !== undefined ? { lastNoProgressKind: kind } : {}),
+            ...(repeatedToolName !== undefined ? { repeatedToolName } : {}),
+            consecutiveNoProgress,
+            threshold,
+            duplicateCallCount,
+            stagnantResultCount,
+          };
         }
       }
       return;
@@ -645,6 +690,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     subagentBackgroundProcessesAbandonedCount: 0,
     subagentDeliverySkippedCount: 0,
     subagentCompletedRunIds: new Set(),
+    subagentWaitsByRoute: new Map(),
+    routedChildrenByRoute: new Map(),
     subagentCompletedCount: 0,
     subagentFailedCount: 0,
     backgroundRecoveryRetryCount: 0,
@@ -716,6 +763,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ? acc.promptTraceIds.size
     : acc.toolTraceIds.size;
   const breakerOpenedTool = currentTurnBreakerOpenedTool(records, acc.breakerEvents, acc.breakerOpenedTool);
+  const subagentWaitSignals = selectedSubagentWaitSignals(acc);
   return {
     sessionKey: acc.sessionKey,
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
@@ -857,7 +905,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
+    ...(acc.discoveryActivation !== undefined ? { discoveryActivation: acc.discoveryActivation } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
+    ...(acc.loopEvidence !== undefined ? { loopEvidence: acc.loopEvidence } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a
     // reader does not misread a multi-turn count as this-turn. Absent for a 1-turn session.
@@ -901,6 +951,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           },
         }
       : {}),
+    ...subagentWaitSignals,
     ...(acc.subagentBackgroundProcessesAbandonedCount > 0
       && acc.subagentBackgroundProcessesAbandonedLastRunId !== undefined
       ? {

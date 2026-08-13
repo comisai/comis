@@ -204,6 +204,8 @@ export interface Acc {
   perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
   /** Exact configured step ceiling from the terminal max-steps abort. */
   stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
+  /** Bounded content-free evidence from the loop detector's terminal abort. */
+  loopEvidence?: IncidentSignals["loopEvidence"];
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
   turnFinalized?: {
@@ -232,11 +234,20 @@ export interface Acc {
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
   /** Bounded platform response IDs from `delivery.reply_bound` records. */
   deliveryMessageIds: string[];
-  /** Runtime-recovery fold from `execution.recovery_attempted` and
+  /** Selected-turn runtime-recovery fold from `execution.recovery_attempted` and
    *  `execution.replay_recovered` records: model re-entries and deterministic
    *  response corrections, summarized as total + succeeded tally + per-reason
-   *  counts. */
-  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
+   *  counts. Optional handoff counters are present only for records carrying
+   *  the newer content-free request-tool evidence. */
+  recoveries?: {
+    total: number;
+    succeeded: number;
+    byReason: Record<string, number>;
+    groundedResponseBeforeRecoveryCount?: number;
+    groundedResponsePreservedCount?: number;
+    successfulReceiptsOutsideRoute?: number;
+  };
+  discoveryActivation?: NonNullable<IncidentSignals["discoveryActivation"]>;
   /** Σ of the session's `session.summary` records' costUsd (one record per
    *  execution) — the trajectory-derived session cost the assembler prefers
    *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */
@@ -313,6 +324,8 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  subagentWaitsByRoute: Map<string, NonNullable<IncidentSignals["subagentWait"]>>;
+  routedChildrenByRoute: Map<string, NonNullable<IncidentSignals["routedChildPreserved"]>>;
   subagentBackgroundProcessesAbandonedCount: number;
   subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;
@@ -343,6 +356,21 @@ export interface Acc {
   mediaAttachmentRejections: NonNullable<
     IncidentSignals["mediaAttachmentRejections"]
   >;
+}
+
+/** Accumulate one content-free discovery-to-activation reconciliation receipt. */
+export function accumulateDiscoveryActivation(acc: Acc, data: Record<string, unknown>): void {
+  const previous = acc.discoveryActivation ?? {
+    displayedCount: 0, activatedCount: 0, replacedCount: 0, skippedCount: 0, failedCount: 0,
+  };
+  const count = (value: unknown): number => Math.max(0, Math.trunc(asNumber(value) ?? 0));
+  acc.discoveryActivation = {
+    displayedCount: previous.displayedCount + count(data.displayedCount),
+    activatedCount: previous.activatedCount + count(data.activatedCount),
+    replacedCount: previous.replacedCount + count(data.replacedCount),
+    skippedCount: previous.skippedCount + count(data.skippedCount),
+    failedCount: previous.failedCount + count(data.failedCount),
+  };
 }
 
 /**

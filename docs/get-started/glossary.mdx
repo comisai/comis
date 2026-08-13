@@ -328,7 +328,7 @@ Agent-level rules that control which registered tools an agent may use. Profiles
 
 ## Tool Deferral
 
-A cache optimization strategy where MCP server tools are deferred from the initial tool registration and only included in the prompt when the agent has recently used them. By keeping rarely-used MCP tools out of the system prompt, tool deferral reduces the prompt size and improves cache hit rates. Tools from the same MCP server are grouped together, and a brief preamble replaces the full tool definitions until the agent requests them. See [MCP Integration](/skills/mcp).
+A prompt-cache optimization that keeps cold tool schemas out of the initial request until `discover_tools` selects them. See [Prompt Caching: Deferral](/agents/cache#deferral) for the current selection and activation contract.
 
 ## Trust Level
 

@@ -59,6 +59,8 @@ describe("RequestContext", () => {
       expect(Reflect.set(result.value, "agentId", "agent-2")).toBe(false);
       expect(Reflect.set(result.value, "resolvedLanguage", "en")).toBe(true);
       expect(result.value.resolvedLanguage).toBe("en");
+      expect(Reflect.set(result.value, "subagentWaitProgressBudgetMs", 10_000)).toBe(true);
+      expect(result.value.subagentWaitProgressBudgetMs).toBe(10_000);
     });
 
     it("carries and locks a trusted root run identity on a synthetic boundary", () => {
@@ -1041,6 +1043,22 @@ describe("RequestContext", () => {
         (getContext() as Record<string, unknown>).resolvedLanguage = "ar";
         expect(tryGetContext()?.resolvedLanguage).toBe("ar");
       });
+    });
+  });
+
+  describe("subagent wait progress budget", () => {
+    it("keeps the active execution progress budget mutable in context", () => {
+      const result = RequestContextSchema.safeParse({
+        tenantId: "default",
+        traceId: "40000000-0000-4000-8000-000000000004",
+        startedAt: 1,
+        subagentWaitProgressBudgetMs: 10_000,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.subagentWaitProgressBudgetMs).toBe(10_000);
+      }
     });
   });
 

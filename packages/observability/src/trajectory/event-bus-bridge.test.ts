@@ -1146,6 +1146,10 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "tool:executed": { toolName: "x", toolCallId: "tc-1", durationMs: 1, success: true, timestamp: 0 },
     "tool:timeout": { toolName: "x", toolCallId: "tc-1", timeoutMs: 1000, timestamp: 0 },
     "tool:policy_filtered": { profile: "default", filtered: ["tool-a"] },
+    "tool:discovery_activation": {
+      displayedCount: 1, activatedCount: 1, replacedCount: 1,
+      skippedCount: 0, failedCount: 0, timestamp: 0,
+    },
     "tool:breaker_opened": { toolName: "x", consecutiveFailures: 5, errorTag: "spawn_enoent", reason: "tool_failure_threshold", seq: 1, timestamp: 0 },
     "tool:breaker_reset": { toolName: "x", reason: "success", seq: 1, timestamp: 0 },
     "tool:result_offloaded": { toolName: "x", toolCallId: "tc-1", originalChars: 42_000, diskPathRel: "tool-results/tc-1.json", timestamp: 0 },
@@ -2089,10 +2093,15 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       cost: 0.04,
       timestamp: 0,
     },
-    "session:sub_agent_wait_completed": {
+    "session:sub_agent_wait_finished": {
       runId: "run-child-1",
       parentSessionKey: "parent-session",
+      parentRunId: "run-parent-1",
+      status: "completed",
       success: false,
+      requestedTimeoutMs: 300_000,
+      effectiveTimeoutMs: 60_000,
+      durationMs: 59_000,
       timestamp: 0,
     },
     // Counts/ids + the closed-union mode only — the correlation
@@ -2113,6 +2122,13 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
       runtimeMs: 186_592,
       idleMs: 186_592,
       thresholdMs: 180_000,
+      timestamp: 0,
+    },
+    "subagent:routed_child_preserved": {
+      parentRunId: "run-parent-1",
+      childRunId: "run-child-1",
+      sessionKey: "parent-session",
+      reason: "announcement_route",
       timestamp: 0,
     },
     "subagent:background_processes_abandoned": {
@@ -2506,21 +2522,31 @@ describe("TRAJECTORY_BRIDGE_MAPPING -- direct sub-agent spawn topology", () => {
     });
 
     (bus.emit as unknown as (name: string, payload: Record<string, unknown>) => void)(
-      "session:sub_agent_wait_completed",
+      "session:sub_agent_wait_finished",
       {
         runId: "run-child-1",
         parentSessionKey: "parent-session",
+        parentRunId: "run-parent-1",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 300_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 59_000,
         timestamp: 1000,
       },
     );
 
     expect(recorder.calls).toHaveLength(1);
     expect(recorder.calls[0]).toMatchObject({
-      type: "subagent.wait_completed",
+      type: "subagent.wait_finished",
       data: {
         runId: "run-child-1",
+        parentRunId: "run-parent-1",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 300_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 59_000,
       },
     });
     expect(recorder.calls[0]!.data).not.toHaveProperty("parentSessionKey");
@@ -3030,6 +3056,36 @@ describe("queue + execution + sender bridge", () => {
     expect(data.timestamp).toBeUndefined();
   });
 
+  it("execution_aborted retains bounded duplicate and stagnation evidence for explain", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+    const loopEvidence = {
+      lastNoProgressKind: "identical_success",
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    };
+
+    bus.emit("execution:aborted", {
+      sessionKey: "t1:u1:c1",
+      reason: "loop_detected",
+      agentId: "agent-1",
+      timestamp: Date.now(),
+      loopEvidence,
+    } as unknown as EventMap["execution:aborted"]);
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "execution.aborted",
+      data: { reason: "loop_detected", loopEvidence },
+    });
+    expect(JSON.stringify(recorder.calls[0])).not.toContain("page_number");
+    expect(JSON.stringify(recorder.calls[0])).not.toContain("same-result");
+  });
+
   it("request clarification maps its content-free reason and input size", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
@@ -3177,6 +3233,69 @@ describe("queue + execution + sender bridge", () => {
     // Correlation keys stripped (envelope-only invariant).
     expect(data.sessionKey).toBeUndefined();
     expect(data.agentId).toBeUndefined();
+  });
+
+  it("execution recovery preserves content-free grounded-response handoff evidence", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    bus.emit("execution:recovery_attempted", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      reason: "request_tool_nudge",
+      succeeded: true,
+      groundedResponseBeforeRecovery: true,
+      groundedResponsePreserved: false,
+      successfulReceiptsOutsideRoute: 2,
+      timestamp: Date.now(),
+    } as any);
+
+    const data = recorder.calls[0]?.data as Record<string, unknown>;
+    expect(data).toMatchObject({
+      reason: "request_tool_nudge",
+      succeeded: true,
+      groundedResponseBeforeRecovery: true,
+      groundedResponsePreserved: false,
+      successfulReceiptsOutsideRoute: 2,
+    });
+  });
+
+  it("discovery activation preserves only bounded disposition counts", () => {
+    const bus = makeBus();
+    const recorder = createCaptureRecorder();
+    attachTrajectoryToEventBus({ eventBus: bus, recorder });
+
+    const emit = bus.emit.bind(bus) as unknown as (
+      event: string,
+      payload: Record<string, unknown>,
+    ) => boolean;
+    emit("tool:discovery_activation", {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      displayedCount: 3,
+      activatedCount: 1,
+      replacedCount: 1,
+      skippedCount: 1,
+      failedCount: 1,
+      timestamp: Date.now(),
+    });
+
+    expect(recorder.calls).toHaveLength(1);
+    expect(recorder.calls[0]).toMatchObject({
+      type: "tool.discovery_activation",
+      data: {
+        displayedCount: 3,
+        activatedCount: 1,
+        replacedCount: 1,
+        skippedCount: 1,
+        failedCount: 1,
+      },
+    });
+    expect(recorder.calls[0]?.data).not.toHaveProperty("agentId");
+    expect(recorder.calls[0]?.data).not.toHaveProperty("sessionKey");
+    expect(recorder.calls[0]?.data).not.toHaveProperty("traceId");
   });
 
   it("delivery_aborted maps to delivery.aborted carrying chunk counts + the abort reason", () => {
@@ -4561,7 +4680,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(145);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(147);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

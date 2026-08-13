@@ -82,6 +82,8 @@ export interface RunPromptParams {
   dynamicPreamble: string | undefined;
   /** Active tools selected specifically because they match the current request. */
   requestRelevantToolNames?: readonly string[];
+  /** Whether a deferred tool has been explicitly activated in this session. */
+  isDeferredToolDiscovered?: (toolName: string) => boolean;
   /** Prompt skills selected as the procedural route for the current request. */
   requestRelevantPromptSkillNames?: readonly string[];
   /** Trusted registry locations for request-relevant prompt skills. */

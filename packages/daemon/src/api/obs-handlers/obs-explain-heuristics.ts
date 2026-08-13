@@ -8,8 +8,8 @@
  * terminal causes remain last. Frozen cost and breaker fixtures pin that order.
  * @module
  */
-
 import type { IncidentSignals } from "@comis/core";
+import { extractMcpServerName } from "@comis/shared";
 import {
   BREAKER_N,
   CONTEXT_BLOAT_MIN_OFFLOADS,
@@ -22,35 +22,28 @@ import {
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
-import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js";
+import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict, subagentWaitDeadlineOverlapVerdict } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
-import {
-  backgroundPendingVerdict,
-  backgroundRecoveryVerdict,
-} from "./obs-explain-background-pending-verdict.js";
+import { backgroundPendingVerdict, backgroundRecoveryVerdict } from "./obs-explain-background-pending-verdict.js";
 import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
 import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection-verdict.js"; // provider_rejected_request verdict (sibling — subdir cap)
 import {
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionNoProgressLoopVerdict,
   executionTerminalFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
-import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
+import { discoveredToolNotActivatedVerdict, groundedResponseReplacementVerdict, toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
 import { deliveryFailedVerdict } from "./obs-explain-delivery-verdict.js";
 import { toolAuthorizationDeniedVerdict } from "./obs-explain-authorization-verdict.js";
-import {
-  nodeBudgetExceededVerdict,
-  spawnCeilingVerdict,
-} from "./obs-explain-spawn-ceiling-verdict.js";
-
+import { nodeBudgetExceededVerdict, spawnCeilingVerdict } from "./obs-explain-spawn-ceiling-verdict.js";
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
 // ---------------------------------------------------------------------------
-
 /**
  * A deterministic root-cause verdict. Shape-identical to
  * `IncidentReport.likelyRootCause` so the handler can assign it directly.
@@ -309,6 +302,29 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // A terminal trust or approval denial is authoritative and must not be
   // hidden by the generic tool-error catch-all or retained breaker noise.
   toolAuthorizationDeniedVerdict,
+
+  // Local queue exhaustion outranks unrelated later server failures in the window.
+  (s) => {
+    const failure = s.failures.find((candidate) => candidate.matchedRule === "mcp_queue_contention"
+      || candidate.failureCode === "mcp_queue_contention");
+    if (failure === undefined) return null;
+    const serverName = extractMcpServerName(failure.toolName);
+    const binding = `integrations.mcp.servers[] entry named ${JSON.stringify(serverName ?? "<server>")} has maxConcurrency`;
+    const diagnostics = /maxConcurrency=(\d+);\s*queueWaitedMs=(\d+);\s*requestBudgetMs=(\d+);\s*configuredMs=(\d+)/u.exec(failure.errorPreview);
+    const bindingValue = diagnostics?.[1];
+    const timingDetail = diagnostics === null ? ""
+      : `; queueWaitedMs=${diagnostics[2]}; requestBudgetMs=${diagnostics[3]}; configuredMs=${diagnostics[4]}`;
+    const configuredBinding = bindingValue === undefined ? binding : `${binding}=${bindingValue}`;
+    return {
+      code: "mcp_queue_contention",
+      detail: `${failure.toolName} encountered a breaker-neutral local queue refusal at ${configuredBinding}${timingDetail}; the MCP server was never asked`,
+      suggestedNextSteps: [
+        `retry after the calls ahead of ${failure.toolName} drain; this local refusal is transient`,
+        `reduce concurrent calls to this server, or raise ${binding} only when the server supports parallel tool calls`,
+        "inspect the named server entry before changing its concurrency policy",
+      ],
+    };
+  },
 
   // A structured MCP machine code is the provider's concrete failure verdict.
   // It is upstream of retry-breaker and response-honesty symptoms.
@@ -685,7 +701,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 9) prompt_timeout (the NAMED terminal latency cause).
+  subagentWaitDeadlineOverlapVerdict,
   //    Keyed on the metadata-derived endReason (END_REASON_MAP prompt_timeout →
   //    "timeout"), NOT a tool failure — sits BELOW the tool-failure
   //    rules: a session that died on a prompt timeout with CLEAN tools would
@@ -791,6 +807,9 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     obs-explain-recall-verdict.ts module doc).
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionNoProgressLoopVerdict,
+  groundedResponseReplacementVerdict,
+  discoveredToolNotActivatedVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
@@ -958,15 +977,17 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
-
   //  N) fresh_tail_origin_lost — DEAD LAST. A context-shaping advisory, not a
   //     terminal cause: every acute verdict above out-ranks it.
   freshTailOriginLostVerdict,
 ];
-
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
 export function rootCause(s: IncidentSignals): RootCause | null {
-  if (s.endReason === "success" && s.degraded === false) return null;
+  if (s.endReason === "success" && s.degraded === false) {
+    const replacement = groundedResponseReplacementVerdict(s);
+    if (replacement !== null) return replacement;
+    return discoveredToolNotActivatedVerdict(s);
+  }
   for (const h of HEURISTICS) {
     const r = h(s);
     if (r !== null) return r;

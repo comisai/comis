@@ -7,6 +7,54 @@ interface RootCause {
   suggestedNextSteps: string[];
 }
 
+/** Diagnose an explicit displayed-to-activated deferred-tool mismatch. */
+export function discoveredToolNotActivatedVerdict(
+  signals: IncidentSignals,
+): RootCause | null {
+  if (signals.endReason !== "success") return null;
+  const activation = signals.discoveryActivation;
+  if (activation === undefined || activation.displayedCount <= activation.activatedCount) {
+    return null;
+  }
+  return {
+    code: "discovered_tool_not_activated",
+    detail:
+      `deferred tool activation mismatch: displayed=${String(activation.displayedCount)}, `
+      + `activated=${String(activation.activatedCount)}, replaced=${String(activation.replacedCount)}, `
+      + `skipped=${String(activation.skippedCount)}, failed=${String(activation.failedCount)}`,
+    suggestedNextSteps: [
+      "inspect the discovery activation record beside the discover_tools result",
+      "verify displayed deferred tools replace placeholders in the live callable set",
+      "obs.explain depth=full",
+    ],
+  };
+}
+
+/** Diagnose a user-visible recovery handoff that discarded grounded evidence. */
+export function groundedResponseReplacementVerdict(
+  signals: IncidentSignals,
+): RootCause | null {
+  if (signals.endReason !== "success") return null;
+  const groundedBefore =
+    signals.recoveries?.groundedResponseBeforeRecoveryCount ?? 0;
+  const groundedPreserved =
+    signals.recoveries?.groundedResponsePreservedCount ?? 0;
+  if (groundedBefore <= groundedPreserved) return null;
+  const outsideRoute = signals.recoveries?.successfulReceiptsOutsideRoute ?? 0;
+  return {
+    code: "recovery_replaced_grounded_response",
+    detail:
+      `${String(groundedBefore - groundedPreserved)} grounded response(s) backed by `
+      + `${String(outsideRoute)} successful receipt(s) outside the selected workflow route `
+      + "were replaced by request-tool recovery",
+    suggestedNextSteps: [
+      "inspect request-relevant tool routing and the request_tool_nudge handoff",
+      "confirm the terminal response preserves the receipt-grounded pre-recovery answer",
+      "obs.explain depth=full",
+    ],
+  };
+}
+
 /** Explain a terminal turn whose required tool-backed action or workflow
  * evidence remained incomplete. This acute execution outcome outranks
  * incidental recall misses from the same turn. */

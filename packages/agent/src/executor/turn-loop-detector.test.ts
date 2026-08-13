@@ -14,6 +14,41 @@ import { describe, it, expect } from "vitest";
 import { createTurnLoopDetector } from "./turn-loop-detector.js";
 
 describe("createTurnLoopDetector", () => {
+  it("reports bounded content-free evidence for an identical successful-call loop", () => {
+    const detector = createTurnLoopDetector();
+    for (let i = 0; i < 10; i++) {
+      detector.recordCall(
+        "mcp__records--list_current",
+        { page_number: 1, page_size: 10 },
+        { content: "same-result", isError: false },
+      );
+    }
+
+    const evidence = (
+      detector as unknown as {
+        getLoopEvidence(): {
+          lastNoProgressKind: string;
+          repeatedToolName: string;
+          consecutiveNoProgress: number;
+          threshold: number;
+          duplicateCallCount: number;
+          stagnantResultCount: number;
+        };
+      }
+    ).getLoopEvidence();
+
+    expect(evidence).toEqual({
+      lastNoProgressKind: "identical_success",
+      repeatedToolName: "mcp__records--list_current",
+      consecutiveNoProgress: 6,
+      threshold: 6,
+      duplicateCallCount: 6,
+      stagnantResultCount: 6,
+    });
+    expect(JSON.stringify(evidence)).not.toContain("page_number");
+    expect(JSON.stringify(evidence)).not.toContain("same-result");
+  });
+
   it("short-circuits an identical idempotent read to the cached result with a one-line steer", () => {
     const detector = createTurnLoopDetector();
     const result1 = { content: [{ type: "text", text: "file body" }] };

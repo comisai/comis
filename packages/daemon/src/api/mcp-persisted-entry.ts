@@ -2,13 +2,9 @@
 /**
  * Build the persisted `McpServerEntry` for the `mcp.connect` RPC handler.
  *
- * Extracted from `mcp-handlers.ts` to keep that leaf under the 800-line
- * per-file cap AND — more importantly — to give a SINGLE SOURCE OF TRUTH for
- * "which per-server fields flow through to persistence". That exact concern
- * was missed twice in a row (an earlier change dropped the tool filters /
- * resources-prompts opt-outs from the runtime config; another dropped
- * them — plus supportsParallelToolCalls — from the PERSISTED entry, a security
- * regression). Co-locating the construction here makes the field set auditable
+ * This helper keeps `mcp-handlers.ts` under the 800-line per-file cap and is
+ * the single source of truth for which per-server fields flow through to
+ * persistence. Co-locating the construction here makes the field set auditable
  * in one place.
  *
  * The split between the runtime `McpServerConfig` (built inline in the handler,
@@ -19,12 +15,11 @@
  * schema-validated `McpServerEntry` shape.
  *
  * **Reconnect invariant:** mcp.connect has NO RPC params for the config-only fields
- * (toolAllowlist, toolBlocklist, enableResources, enablePrompts,
- * supportsParallelToolCalls, idleTtlMs). Their only source on a reconnect /
- * re-add is the existing persisted entry — so they are conditionally spread
- * from `persistedEntry` here. Dropping toolAllowlist/toolBlocklist on persist
- * is a security regression: the operator-configured tool filter survives the
- * runtime session but is gone on the next daemon restart, surfacing ALL tools.
+ * (`toolAllowlist`, `toolBlocklist`, `enableResources`, `enablePrompts`,
+ * `maxConcurrency`, `supportsParallelToolCalls`, and `idleTtlMs`). Their only
+ * source on a reconnect or re-add is the existing persisted entry, so they are
+ * conditionally spread from `persistedEntry` here. Dropping a tool filter on
+ * persist exposes tools that the operator excluded after the next restart.
  *
  * @module
  */
@@ -136,6 +131,7 @@ export function buildPersistedMcpEntry(input: BuildPersistedMcpEntryInput): McpS
     ...(persistedEntry?.toolBlocklist !== undefined && { toolBlocklist: persistedEntry.toolBlocklist }),
     ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
     ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
+    ...(persistedEntry?.maxConcurrency !== undefined && { maxConcurrency: persistedEntry.maxConcurrency }),
     ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
     // Bundle provenance + archive. INPUT-DRIVEN (NOT carried from persistedEntry)
     // -- a no-marker reconnect from a manual mcp.connect explicitly clears

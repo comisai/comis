@@ -129,6 +129,8 @@ for both. A gate is enforced only when the tool that mints its receipts is
 available to the agent for that turn: with `web_fetch` unavailable the
 fetch gate is dropped, with `web_search` unavailable the search gate is
 dropped, and a floor no reachable tool can satisfy never discards the reply.
+An explicit current request not to use web search or fetch also leaves the
+corresponding floor unarmed.
 
 The floors describe how a **research-shaped** request is answered, so routing
 the skill is not by itself enough to arm them. When the same turn is a
@@ -136,6 +138,14 @@ mutation request -- the user asked the agent to send, post, or schedule
 something a mutating tool performs -- completion is proven by that tool's own
 receipt and the research floors are not applied, because a floor the requested
 action can never satisfy would otherwise discard a correct answer.
+
+A successful request-relevant MCP receipt outside the skill's generic
+`read`/web workflow also proves that the connected capability was used. The
+runtime does not force that generic workflow after the specialized tool has
+already produced evidence. If a bounded workflow recovery was already in
+progress, a pre-recovery answer backed by a successful non-workflow receipt is
+preserved alongside the terminal narration or limitation; without such a
+receipt, an ungrounded draft is not preserved.
 
 Routing a skill and enforcing its floors also use different bars. A skill is
 disclosed to the model on a minimal term overlap with its `description`, which

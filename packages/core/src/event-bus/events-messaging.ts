@@ -12,6 +12,26 @@ import type {
   SubAgentLifecycleEndedEvent,
 } from "../domain/subagent-context-types.js";
 
+/** Closed cause of the most recent no-progress step in a detected loop. */
+export type LoopNoProgressKind =
+  | "cached_read"
+  | "failed_call"
+  | "identical_success";
+
+/**
+ * Fixed-shape, content-free evidence captured by the authoritative per-turn
+ * loop detector. Counts saturate at `threshold`; arguments and results never
+ * cross the event boundary.
+ */
+export interface LoopEvidence {
+  lastNoProgressKind?: LoopNoProgressKind;
+  repeatedToolName?: string;
+  consecutiveNoProgress: number;
+  threshold: number;
+  duplicateCallCount: number;
+  stagnantResultCount: number;
+}
+
 /**
  * MessagingEvents: Message lifecycle, session, compaction, context, response, and command events.
  *
@@ -145,12 +165,19 @@ export interface MessagingEvents {
     failedBackgroundProcesses?: number;
   };
 
-  /** A synchronous parent wait observed a child's terminal outcome. */
-  "session:sub_agent_wait_completed": {
+  /** A synchronous parent wait finished for one requested child. */
+  "session:sub_agent_wait_finished": {
     runId: string;
     /** Routes the observation to the active waiting parent trajectory. */
     parentSessionKey: string;
-    success: boolean;
+    /** Active parent run identity when the waiter itself is a sub-agent. */
+    parentRunId?: string;
+    status: "completed" | "timeout" | "cancelled" | "denied_unknown";
+    /** Retained only for completed results so failed completions remain distinct. */
+    success?: boolean;
+    requestedTimeoutMs: number;
+    effectiveTimeoutMs: number;
+    durationMs: number;
     timestamp: number;
   };
 
@@ -668,6 +695,8 @@ export interface MessagingEvents {
     perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
     /** Exact agent step ceiling that stopped this execution. */
     stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
+    /** Bounded detector-owned evidence for a no-progress loop. */
+    loopEvidence?: LoopEvidence;
   };
 
   /** Budget trajectory warning: approaching token budget exhaustion */
@@ -777,7 +806,10 @@ export interface MessagingEvents {
    *  the comparative-latency or provider-billed-cost claim. Collapsing it into
    *  `missing_runtime_self_report_evidence` sent operators to check obs_query
    *  admission for a turn where obs_query worked.
-   *  Content-free: a closed reason + a boolean. */
+   *  Request-tool recovery also carries optional content-free handoff facts:
+   *  whether a receipt-grounded response existed before recovery, whether it
+   *  survived the result handoff, and a bounded count of successful receipts
+   *  outside the routed recovery tools. */
   "execution:recovery_attempted": {
     agentId: string;
     sessionKey: string;
@@ -803,6 +835,9 @@ export interface MessagingEvents {
       | "missing_outbound_delivery_status_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
+    groundedResponseBeforeRecovery?: boolean;
+    groundedResponsePreserved?: boolean;
+    successfulReceiptsOutsideRoute?: number;
     timestamp: number;
   };
 
