@@ -382,6 +382,7 @@ import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../sessi
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { INTERACTIVE_SILENT_FAILURE_RESPONSE } from "../prompt-runner/interactive-silent-recovery.js";
+import { DEFERRAL_STUB_MARKER } from "../tool-deferral.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -6753,6 +6754,145 @@ describe("PiExecutor", () => {
         }),
         expect.stringContaining("Mid-turn tool injection"),
       );
+    });
+
+    it("activates a discovered deferred stub in the next provider payload", async () => {
+      const summaryTool = {
+        name: "mcp__records--summary",
+        label: "Record Summary",
+        description: "Return the current record summary",
+        parameters: {
+          type: "object",
+          properties: { scope: { type: "string" } },
+          required: ["scope"],
+          additionalProperties: false,
+        },
+        execute: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "summary" }],
+          isError: false,
+        }),
+      };
+      const deps = createMockDeps({
+        customTools: [summaryTool] as any,
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai", id: "gpt-4o" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const openaiConfig = {
+        ...testConfig,
+        provider: "openai",
+        model: "gpt-4o",
+        deferredTools: { alwaysDefer: [summaryTool.name] },
+      } as PerAgentConfig;
+      const executor = createPiExecutor(openaiConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const sessionOptions = (createAgentSession as Mock).mock.calls.at(-1)![0];
+      const liveTools = sessionOptions.customTools as Array<Record<string, any>>;
+      const originalStub = liveTools.find(tool => tool.name === summaryTool.name);
+      expect(originalStub?.[DEFERRAL_STUB_MARKER]).toBe(true);
+      expect(originalStub?.parameters).toEqual({
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+      });
+
+      const discoverTool = liveTools.find(tool => tool.name === "discover_tools");
+      const discoveryResult = await discoverTool.execute(
+        "discover-summary",
+        { query: "summary" },
+        undefined,
+        vi.fn(),
+        undefined,
+      );
+      expect(discoveryResult.sideEffects.discoveredTools).toContain(summaryTool.name);
+
+      await mockSession.agent.afterToolCall({
+        toolCall: { name: "discover_tools" },
+        args: { query: "summary" },
+        result: discoveryResult,
+        isError: false,
+        context: { tools: liveTools },
+      });
+
+      const activatedTools = liveTools.filter(tool => tool.name === summaryTool.name);
+      expect(activatedTools).toHaveLength(1);
+      expect(activatedTools[0]).not.toBe(originalStub);
+      expect(activatedTools[0]?.[DEFERRAL_STUB_MARKER]).not.toBe(true);
+      expect(activatedTools[0]?.parameters).toEqual(summaryTool.parameters);
+
+      mockSession.agent.streamFunction(
+        { provider: "openai" } as any,
+        { systemPrompt: "test", messages: [], tools: liveTools } as any,
+        {},
+      );
+      const providerOptions = mockStreamFn.mock.calls.at(-1)![2] as Record<string, unknown>;
+      const onPayload = providerOptions.onPayload as (
+        payload: unknown,
+        model: unknown,
+      ) => Promise<Record<string, unknown>>;
+      const payload = {
+        tools: liveTools.map(tool => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          },
+        })),
+      };
+      const filteredPayload = await onPayload(payload, { provider: "openai" });
+      const providerTools = filteredPayload.tools as Array<Record<string, any>>;
+      const providerSummary = providerTools.find(
+        tool => tool.function?.name === summaryTool.name,
+      );
+
+      expect(providerSummary?.function?.parameters).toEqual(summaryTool.parameters);
+    });
+
+    it("keeps an already active discovered tool unchanged", async () => {
+      const deps = createMockDeps({
+        customTools: [{
+          name: "mcp__records--active_summary",
+          label: "Active Summary",
+          description: "Return an active summary",
+          parameters: { type: "object", properties: {} },
+          execute: vi.fn(),
+        }] as any,
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai", id: "gpt-4o" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const executor = createPiExecutor({
+        ...testConfig,
+        provider: "openai",
+        model: "gpt-4o",
+      } as PerAgentConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const activeTool = {
+        name: "mcp__records--active_summary",
+        description: "Already active",
+        parameters: { type: "object", properties: { current: { type: "boolean" } } },
+        execute: vi.fn(),
+      };
+      const liveTools = [activeTool];
+      await mockSession.agent.afterToolCall({
+        toolCall: { name: "discover_tools" },
+        args: { query: "active summary" },
+        result: { sideEffects: { discoveredTools: [activeTool.name] } },
+        isError: false,
+        context: { tools: liveTools },
+      });
+
+      expect(liveTools).toEqual([activeTool]);
+      expect(liveTools[0]).toBe(activeTool);
     });
 
     it("does NOT skip mid-turn tool injection for Anthropic providers", async () => {
