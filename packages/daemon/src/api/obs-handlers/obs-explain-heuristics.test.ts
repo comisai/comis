@@ -2279,6 +2279,60 @@ describe("prompt_timeout terminal verdict", () => {
     expect(r?.suggestedNextSteps.join(" ")).toContain("maxConcurrency");
   });
 
+  it.each([
+    {
+      identityField: "matchedRule",
+      identity: { matchedRule: "mcp_queue_contention" },
+    },
+    {
+      identityField: "failureCode",
+      identity: { failureCode: "mcp_queue_contention" },
+    },
+  ] as const)(
+    "prioritizes breaker-neutral MCP queue contention identified by $identityField over a later server failure",
+    ({ identity }) => {
+      const r = rootCause(
+        makeSignals({
+          failures: [
+            {
+              seq: 14,
+              toolName: "mcp__reports--summary",
+              classifiedFailureBy: "runtime_guard",
+              transportOk: false,
+              errorKind: "resource",
+              resultDigest: "queue-refusal",
+              resultBytes: 180,
+              errorPreview:
+                "waited 119750ms for a concurrency slot; requestBudgetMs=250; configuredMs=120000",
+              ...identity,
+            },
+            {
+              seq: 15,
+              toolName: "mcp__catalog--lookup",
+              classifiedFailureBy: "mcp_classifier",
+              transportOk: true,
+              errorKind: "dependency",
+              failureCode: "report_temporarily_unavailable",
+              resultDigest: "server-failure",
+              resultBytes: 80,
+              errorPreview: "bounded structured server failure",
+            },
+          ],
+        }),
+      );
+
+      expect(r?.code).toBe("mcp_queue_contention");
+      expect(r?.detail).toContain(
+        "integrations.mcp.servers.reports.maxConcurrency",
+      );
+      expect(r?.detail).toContain("breaker-neutral local queue refusal");
+      expect(r?.detail).toContain("server was never asked");
+      expect(r?.suggestedNextSteps.join(" ")).toContain(
+        "integrations.mcp.servers.reports.maxConcurrency",
+      );
+    },
+  );
+
   it("a timeout-heavy session with CLEAN tools gets the prompt_timeout verdict (no tool failure required)", () => {
     const r = rootCause(
       makeSignals({
