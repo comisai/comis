@@ -295,7 +295,16 @@ describe("restart-injected capability-service vertical join", () => {
         controlSocket: controlProxySocket,
         credentialFile,
       });
-      await waitForUnixSocket(directMcpSocket);
+      try {
+        await waitForUnixSocket(directMcpSocket);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        const stderr = service.stderr().trim() || "<empty>";
+        throw new Error(
+          `${message}; fixtureExitCode=${service.process.exitCode ?? "running"}; fixtureStderr=${stderr}`,
+          { cause },
+        );
+      }
       await waitForUnixSocket(operatorSocket);
       await localProxy.start();
 
