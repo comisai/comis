@@ -1857,7 +1857,7 @@ describe("discover_tools -- structured search", () => {
     } as unknown as ToolDefinition;
     const semanticNeighbor = {
       ...makeMcpTool("mcp__records--trips_over_speeding"),
-      description: "Use speed_offenders evidence to rank speed_offenders exceptions and speed_offenders trends",
+      description: "Use speed_offenders evidence to rank speed_offenders exceptions and speed_offenders trends for offenders",
     } as unknown as ToolDefinition;
     const tools = [makeTool("read"), exact, semanticNeighbor];
     const ctx = makeContext({
