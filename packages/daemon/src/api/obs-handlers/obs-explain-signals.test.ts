@@ -2214,6 +2214,69 @@ describe("toolSchemaUnsupported derivation", () => {
 // ---------------------------------------------------------------------------
 
 describe("promptTimeout derivation", () => {
+  it("explains a cancelled parent wait and preserved routed child from one trajectory", () => {
+    const s = toIncidentSignals([
+      event("subagent.wait_finished", 1, {
+        parentRunId: "run-parent",
+        runId: "run-child",
+        status: "cancelled",
+        requestedTimeoutMs: 300_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 58_000,
+      }),
+      event("subagent.routed_child_preserved", 2, {
+        parentRunId: "run-parent",
+        childRunId: "run-child",
+        reason: "announcement_route",
+      }),
+      event("execution.prompt_timeout", 3, {
+        timeoutMs: 180_000,
+        durationMs: 185_000,
+        limit: "stall",
+        source: "agent_config",
+        bindingKnob: "agents.worker.promptTimeout.promptTimeoutMs",
+        stallBudgetMs: 180_000,
+      }),
+    ]);
+    const incident = s as IncidentSignals & {
+      subagentWait: {
+        parentRunId: string;
+        childRunId: string;
+        status: string;
+        requestedTimeoutMs: number;
+        effectiveTimeoutMs: number;
+        durationMs: number;
+      };
+      routedChildPreserved: {
+        parentRunId: string;
+        childRunId: string;
+        reason: string;
+      };
+    };
+
+    expect(incident.subagentWait).toEqual({
+      parentRunId: "run-parent",
+      childRunId: "run-child",
+      status: "cancelled",
+      requestedTimeoutMs: 300_000,
+      effectiveTimeoutMs: 60_000,
+      durationMs: 58_000,
+    });
+    expect(incident.routedChildPreserved).toEqual({
+      parentRunId: "run-parent",
+      childRunId: "run-child",
+      reason: "announcement_route",
+    });
+
+    const cause = rootCause({ ...incident, endReason: "timeout", agentId: "worker" });
+    expect(cause?.code).toBe("subagent_wait_deadline_overlap");
+    expect(cause?.detail).toContain("run-parent");
+    expect(cause?.detail).toContain("run-child");
+    expect(cause?.detail).toContain("requested 300000ms");
+    expect(cause?.detail).toContain("effective 60000ms");
+    expect(cause?.detail).toContain("preserved");
+  });
+
   it("an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {
     const s = toIncidentSignals([
       event("execution.prompt_timeout", 9, {

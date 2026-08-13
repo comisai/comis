@@ -85,6 +85,17 @@ describe("promptTimeoutHint", () => {
     expect(promptTimeoutHint({ awaitedChildRunIds: ["child-a"] })).toContain("child-a");
   });
 
+  it("keeps the parent deadline binding when a routed child can announce independently", () => {
+    const hint = promptTimeoutHint({
+      awaitedChildRunIds: ["child-a"],
+      routedChildRunIds: ["child-a"],
+    } as never);
+
+    expect(hint).toContain("parent deadline was binding");
+    expect(hint).toContain("continue and announce independently");
+    expect(hint).not.toContain("own deadline is not the binding constraint");
+  });
+
   it("keeps the timeout-knob hint when the run genuinely just ran long", () => {
     const hint = promptTimeoutHint(undefined);
 

@@ -45,6 +45,51 @@ describe("translateOrchestrationPayload — direct sub-agent topology", () => {
     expect(data.parentSessionKey).toBeUndefined();
     expect(data.timestamp).toBeUndefined();
   });
+
+  it("retains only wait-budget and parent-child identity fields for a cancelled wait", () => {
+    const data = translateOrchestrationPayload(
+      "session:sub_agent_wait_finished" as OrchestrationBridgedEventName,
+      {
+        parentSessionKey: "default:agent:parent-session",
+        parentRunId: "run-parent",
+        runId: "run-child",
+        status: "cancelled",
+        requestedTimeoutMs: 300_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 58_000,
+        timestamp: 1_717_171_720,
+      },
+    );
+
+    expect(data).toEqual({
+      parentRunId: "run-parent",
+      runId: "run-child",
+      status: "cancelled",
+      requestedTimeoutMs: 300_000,
+      effectiveTimeoutMs: 60_000,
+      durationMs: 58_000,
+    });
+  });
+
+  it("retains only routed-child preservation causality", () => {
+    const data = translateOrchestrationPayload(
+      "subagent:routed_child_preserved" as OrchestrationBridgedEventName,
+      {
+        sessionKey: "default:agent:parent-session",
+        parentRunId: "run-parent",
+        childRunId: "run-child",
+        reason: "announcement_route",
+        task: "sensitive task body",
+        timestamp: 1_717_171_721,
+      },
+    );
+
+    expect(data).toEqual({
+      parentRunId: "run-parent",
+      childRunId: "run-child",
+      reason: "announcement_route",
+    });
+  });
 });
 
 describe("translateOrchestrationPayload — capability:audited (content-free)", () => {
