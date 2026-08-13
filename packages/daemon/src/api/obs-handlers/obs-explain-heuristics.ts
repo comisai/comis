@@ -410,6 +410,24 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // outranks retained breaker noise from earlier turns.
   toolInvocationStallVerdict,
 
+  // A scheduler-state grounding recovery changes the delivered response after
+  // model execution. Surface that delivery cause directly so an operator does
+  // not have to compare the session transcript with raw trajectory records.
+  (s) => {
+    if ((s.recoveries?.byReason.missing_scheduler_state_evidence ?? 0) === 0) return null;
+    return {
+      code: "scheduler_state_evidence_grounding",
+      detail:
+        "the scheduler-state evidence guard replaced the model response because no successful "
+        + "current-turn cron receipt supported the detected claim",
+      suggestedNextSteps: [
+        "compare the original session response with the delivered message to confirm the deterministic replacement",
+        "inspect the response-grounding scheduler claim matcher when the original response contains no reminder or scheduled-job claim",
+        "use a successful current-turn cron list or status receipt before affirming mutable scheduler state",
+      ],
+    };
+  },
+
   backgroundHardTimeoutVerdict, // runtime hard limit causes any breaker it trips
 
   // A model-provider circuit breaker is independent of the per-tool retry
