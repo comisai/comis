@@ -169,6 +169,7 @@ import {
 import {
   appendCitationEvidenceRecord,
   citationEvidenceDigestsForTurn,
+  citationEvidenceDigestsToPersist,
   enforceCitationEvidence,
   historicalCitationDigests,
   isCitationSourceRequest,
@@ -2635,12 +2636,17 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  if (citationGrounding.matchedDigests.length > 0) {
+  const citationDigestsToPersist = citationEvidenceDigestsToPersist({
+    currentFetchDigests,
+    relayedDigests: relayedCitationEvidence?.urlDigests ?? [],
+    matchedDigests: citationGrounding.matchedDigests,
+  });
+  if (citationDigestsToPersist.length > 0) {
     const journalStartedAt = deps.clock.now();
     const citationReceipt = appendCitationEvidenceRecord({
       sessionManager: sm,
       sourceMessageId: msg.id,
-      urlDigests: citationGrounding.matchedDigests,
+      urlDigests: citationDigestsToPersist,
     });
     const durationMs = Math.max(0, deps.clock.now() - journalStartedAt);
     if (!citationReceipt.ok) {
@@ -2669,7 +2675,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         {
           step: "citation-evidence-persistence",
           durationMs,
-          citationCount: citationGrounding.matchedDigests.length,
+          citationCount: citationDigestsToPersist.length,
         },
         "Citation evidence persisted",
       );

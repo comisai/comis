@@ -1130,6 +1130,8 @@ describe("tool-failure endReason and notice", () => {
       .toBeLessThan(stripped.indexOf("synchronizeFinalAssistantResponse("));
     expect(stripped.indexOf("synchronizeFinalAssistantResponse("))
       .toBeLessThan(stripped.indexOf("appendCitationEvidenceRecord("));
+    expect(stripped).toMatch(/citationEvidenceDigestsToPersist\(\{/);
+    expect(stripped).toMatch(/relayedDigests:\s*relayedCitationEvidence\?\.urlDigests/);
     expect(stripped).toMatch(/response\.citation_evidence_persistence/);
   });
 

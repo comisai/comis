@@ -381,6 +381,19 @@ export function citationEvidenceDigestsForTurn(params: {
   )];
 }
 
+/** Trusted current-turn receipts that remain usable by a later source request. */
+export function citationEvidenceDigestsToPersist(params: {
+  currentFetchDigests: readonly string[];
+  relayedDigests: readonly string[];
+  matchedDigests: readonly string[];
+}): string[] {
+  return [...validDigests([
+    ...params.currentFetchDigests,
+    ...params.relayedDigests,
+    ...params.matchedDigests,
+  ])].slice(0, 100);
+}
+
 /** Runtime citation receipts from completed earlier turns in this session. */
 export function historicalCitationDigests(
   sessionManager: Pick<SessionManager, "getEntries"> | unknown,
