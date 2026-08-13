@@ -1582,6 +1582,15 @@ describe("createPiEventBridge", () => {
             return false;
           },
         });
+        const recordResult = vi.fn();
+        deps = createMockDeps({
+          toolRetryBreaker: {
+            beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+            recordResult,
+            getBlockedTools: vi.fn().mockReturnValue([]),
+            reset: vi.fn(),
+          } as any,
+        });
         const { listener } = createPiEventBridge(deps);
         // status:500 → genuine failure; isError=false (SDK said ok, detector flips).
         const result = { status: 500, body: "Internal Server Error" };
@@ -1598,6 +1607,13 @@ describe("createPiEventBridge", () => {
         expect(warn![0].classifiedFailureBy).toBe("failure_detector");
         expect(warn![0].httpStatus).toBe(500);
         expect(warn![0].matchedToken).toBe("500");
+        expect(recordResult).toHaveBeenCalledWith(
+          "test_web_fetch_p1c",
+          {},
+          false,
+          expect.any(String),
+          { transportOk: true },
+        );
       });
 
       it("classifier overlap — SDK isError on an MCP-namespaced tool → classifiedFailureBy:'mcp_classifier' (NOT sdk_iserror), transportOk:false", () => {

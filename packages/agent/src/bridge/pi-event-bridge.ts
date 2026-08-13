@@ -1517,6 +1517,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               (sanitizedArgs ?? {}) as Record<string, unknown>,
               toolSuccess,
               errorText,
+              { transportOk },
             );
             if (transition) {
               // Count of tools executed so far this execution — the monotonic
