@@ -13065,6 +13065,21 @@ export const CONTRACTS = {
               "additionalProperties": {
                 "type": "number"
               }
+            },
+            "groundedResponseBeforeRecoveryCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "groundedResponsePreservedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "successfulReceiptsOutsideRoute": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
