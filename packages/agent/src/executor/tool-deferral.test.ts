@@ -2163,6 +2163,28 @@ describe("discover_tools -- server-level activation", () => {
     const discoveredNames = execResult.sideEffects.discoveredTools as string[];
     expect(discoveredNames).toContain("mcp__yfinance--get_chart");
   });
+
+  it("keeps callable discovery side effects identical to the schemas shown to the model", async () => {
+    const tools = [
+      makeTool("mcp__records--list_current"),
+      makeTool("mcp__records--summarize_current"),
+      makeTool("mcp__records--audit_current"),
+    ];
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map((tool) => tool.name) });
+    const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
+
+    const raw = await result.discoverTool!.execute!("call-1", {
+      query: "mcp__records--list_current",
+    });
+    const response = raw as unknown as {
+      content: Array<{ type: "text"; text: string }>;
+      sideEffects: { discoveredTools: string[] };
+    };
+    const shownNames = [...response.content[0]!.text.matchAll(/"name":"([^"]+)"/g)]
+      .map((match) => match[1]);
+
+    expect(response.sideEffects.discoveredTools).toEqual(shownNames);
+  });
 });
 
 // ---------------------------------------------------------------------------
