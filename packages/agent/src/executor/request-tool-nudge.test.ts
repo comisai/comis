@@ -697,6 +697,9 @@ describe("runRequestToolNudge", () => {
       sessionKey: "default:agent:default:user_a:telegram:peer:user_a",
       reason: "request_tool_nudge",
       succeeded: true,
+      groundedResponseBeforeRecovery: false,
+      groundedResponsePreserved: false,
+      successfulReceiptsOutsideRoute: 0,
       timestamp: 123,
     });
   });

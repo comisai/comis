@@ -74,6 +74,7 @@ const SUBMODULE = "executor.request-tool-nudge";
 const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
 const MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS = 3;
+const MAX_OBSERVABLE_RECEIPT_COUNT = 10_000;
 
 interface WebFetchReceiptRecord {
   readonly toolName: string;
@@ -556,6 +557,16 @@ export async function runRequestToolNudge(
   const webEvidenceGateActive = promptSkillGatesApply && webEvidenceGateConfigured;
   const successfulNonWorkflowToolCount =
     deps.currentSuccessfulNonWorkflowToolCount();
+  const successfulReceiptsOutsideRoute = Math.min(
+    MAX_OBSERVABLE_RECEIPT_COUNT,
+    Math.max(
+      0,
+      Math.trunc(
+        successfulNonWorkflowToolCount
+          - deps.currentSuccessfulNonWorkflowToolCount(recoveryToolNames),
+      ),
+    ),
+  );
   const specializedNonWorkflowToolNames = recoveryToolNames.filter(
     (toolName) =>
       extractMcpServerName(toolName) !== undefined
@@ -616,6 +627,8 @@ export async function runRequestToolNudge(
     successfulNonWorkflowToolCount > 0
       ? deps.getVisibleAssistantText(deps.session)
       : "";
+  const groundedResponseBeforeRecovery =
+    receiptGroundedResponseBefore.trim().length > 0;
   const successfulToolCountBefore = successfulCount();
   const continuationOptions = (deps.requestRelevantPromptSkillNames?.length ?? 0) > 0
     ? undefined
@@ -752,6 +765,9 @@ export async function runRequestToolNudge(
       sessionKey,
       reason: "request_tool_nudge",
       succeeded: false,
+      groundedResponseBeforeRecovery,
+      groundedResponsePreserved: groundedResponseBeforeRecovery,
+      successfulReceiptsOutsideRoute,
       timestamp: clock.now(),
     });
     return {
@@ -787,6 +803,11 @@ export async function runRequestToolNudge(
     )
     && response.trim().length > 0
     && procedureCompletionProvable;
+  const groundedResponsePreserved = groundedResponseBeforeRecovery
+    && (
+      !recovered
+      || response.includes(receiptGroundedResponseBefore.trim())
+    );
   logger.info(
     {
       submodule: SUBMODULE,
@@ -809,6 +830,9 @@ export async function runRequestToolNudge(
     sessionKey,
     reason: "request_tool_nudge",
     succeeded: recovered,
+    groundedResponseBeforeRecovery,
+    groundedResponsePreserved,
+    successfulReceiptsOutsideRoute,
     timestamp: clock.now(),
   });
   return recovered

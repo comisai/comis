@@ -457,6 +457,22 @@ function handleEventRecord(
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
       if (data.succeeded === true) prev.succeeded += 1;
+      if (typeof data.groundedResponseBeforeRecovery === "boolean") {
+        prev.groundedResponseBeforeRecoveryCount =
+          (prev.groundedResponseBeforeRecoveryCount ?? 0)
+          + (data.groundedResponseBeforeRecovery ? 1 : 0);
+      }
+      if (typeof data.groundedResponsePreserved === "boolean") {
+        prev.groundedResponsePreservedCount =
+          (prev.groundedResponsePreservedCount ?? 0)
+          + (data.groundedResponsePreserved ? 1 : 0);
+      }
+      const outsideRoute = asNumber(data.successfulReceiptsOutsideRoute);
+      if (outsideRoute !== undefined) {
+        prev.successfulReceiptsOutsideRoute =
+          (prev.successfulReceiptsOutsideRoute ?? 0)
+          + Math.max(0, Math.trunc(outsideRoute));
+      }
       // eslint-disable-next-line security/detect-object-injection -- reason is a closed enum from the recovery emitter
       prev.byReason[reason] = (prev.byReason[reason] ?? 0) + 1;
       acc.recoveries = prev;

@@ -581,10 +581,19 @@ export function translatePayload(
       };
 
         case "execution:recovery_attempted":
-      // Closed recovery reason + a boolean — content-free.
+      // Closed recovery reason, booleans, and a bounded receipt count — content-free.
       return {
         reason: payload.reason,
         succeeded: payload.succeeded,
+        ...(payload.groundedResponseBeforeRecovery !== undefined
+          ? { groundedResponseBeforeRecovery: payload.groundedResponseBeforeRecovery }
+          : {}),
+        ...(payload.groundedResponsePreserved !== undefined
+          ? { groundedResponsePreserved: payload.groundedResponsePreserved }
+          : {}),
+        ...(payload.successfulReceiptsOutsideRoute !== undefined
+          ? { successfulReceiptsOutsideRoute: payload.successfulReceiptsOutsideRoute }
+          : {}),
       };
 
     case "execution:signed_replay_recovered":

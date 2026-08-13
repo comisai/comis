@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Output-size escalation policy and success-path response processing. */
-import {
-  classifyToolInvocationMutation,
-  formatSessionKey,
-  toSafeErrorLogString,
-} from "@comis/core";
+import { classifyToolInvocationMutation, formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";

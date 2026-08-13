@@ -682,6 +682,9 @@ export const IncidentReportSchema = z.object({
       total: z.number(),
       succeeded: z.number(),
       byReason: z.record(z.string(), z.number()),
+      groundedResponseBeforeRecoveryCount: z.number().int().nonnegative().optional(),
+      groundedResponsePreservedCount: z.number().int().nonnegative().optional(),
+      successfulReceiptsOutsideRoute: z.number().int().nonnegative().optional(),
     })
     .optional(),
   /** Protected background-continuation recovery failures associated with this

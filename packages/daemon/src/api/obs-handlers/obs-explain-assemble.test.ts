@@ -1781,6 +1781,37 @@ describe("assembleIncidentReport — recovery attempts", () => {
       /grounded response.*outside.*route.*replaced/iu,
     );
   });
+
+  it("does not diagnose replacement when recovery preserved the grounded response", async () => {
+    const reader = makeAuditReader([], [
+      {
+        traceSchema: "comis-trajectory",
+        type: "execution.recovery_attempted",
+        seq: 1,
+        sessionKey: SESSION_KEY,
+        data: {
+          reason: "request_tool_nudge",
+          succeeded: true,
+          groundedResponseBeforeRecovery: true,
+          groundedResponsePreserved: true,
+          successfulReceiptsOutsideRoute: 1,
+        },
+      },
+    ]);
+
+    const report = await assembleIncidentReportFromSources(
+      reader,
+      "/fake/.comis",
+      { sessionKey: SESSION_KEY, depth: "summary" },
+    );
+
+    expect(report.recoveries).toMatchObject({
+      groundedResponseBeforeRecoveryCount: 1,
+      groundedResponsePreservedCount: 1,
+      successfulReceiptsOutsideRoute: 1,
+    });
+    expect(report.likelyRootCause).toBeNull();
+  });
 });
 
 describe("assembleIncidentReport — user surface (activity finalize + skipped delivery)", () => {

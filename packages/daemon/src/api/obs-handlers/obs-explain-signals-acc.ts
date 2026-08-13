@@ -235,8 +235,16 @@ export interface Acc {
   /** Runtime-recovery fold from `execution.recovery_attempted` and
    *  `execution.replay_recovered` records: model re-entries and deterministic
    *  response corrections, summarized as total + succeeded tally + per-reason
-   *  counts. */
-  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
+   *  counts. Optional handoff counters are present only for records carrying
+   *  the newer content-free request-tool evidence. */
+  recoveries?: {
+    total: number;
+    succeeded: number;
+    byReason: Record<string, number>;
+    groundedResponseBeforeRecoveryCount?: number;
+    groundedResponsePreservedCount?: number;
+    successfulReceiptsOutsideRoute?: number;
+  };
   /** Σ of the session's `session.summary` records' costUsd (one record per
    *  execution) — the trajectory-derived session cost the assembler prefers
    *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */

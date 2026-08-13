@@ -777,7 +777,10 @@ export interface MessagingEvents {
    *  the comparative-latency or provider-billed-cost claim. Collapsing it into
    *  `missing_runtime_self_report_evidence` sent operators to check obs_query
    *  admission for a turn where obs_query worked.
-   *  Content-free: a closed reason + a boolean. */
+   *  Request-tool recovery also carries optional content-free handoff facts:
+   *  whether a receipt-grounded response existed before recovery, whether it
+   *  survived the result handoff, and a bounded count of successful receipts
+   *  outside the routed recovery tools. */
   "execution:recovery_attempted": {
     agentId: string;
     sessionKey: string;
@@ -803,6 +806,9 @@ export interface MessagingEvents {
       | "missing_outbound_delivery_status_evidence"
       | "unrecovered_tool_failure_completion_claim";
     succeeded: boolean;
+    groundedResponseBeforeRecovery?: boolean;
+    groundedResponsePreserved?: boolean;
+    successfulReceiptsOutsideRoute?: number;
     timestamp: number;
   };
 

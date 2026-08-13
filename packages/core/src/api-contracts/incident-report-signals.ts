@@ -498,7 +498,14 @@ export interface IncidentSignals {
    * counts. Includes model re-entry and deterministic response-grounding
    * corrections. Absent ⇒ no recovery attempts.
    */
-  recoveries?: { total: number; succeeded: number; byReason: Record<string, number> };
+  recoveries?: {
+    total: number;
+    succeeded: number;
+    byReason: Record<string, number>;
+    groundedResponseBeforeRecoveryCount?: number;
+    groundedResponsePreservedCount?: number;
+    successfulReceiptsOutsideRoute?: number;
+  };
   /**
    * Σ of the session's `session.summary` records' `turnCount` — the
    * trajectory-derived turn total, preferred for `timing.turnCount` over the

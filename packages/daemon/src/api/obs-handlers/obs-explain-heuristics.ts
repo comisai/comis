@@ -8,7 +8,6 @@
  * terminal causes remain last. Frozen cost and breaker fixtures pin that order.
  * @module
  */
-
 import type { IncidentSignals } from "@comis/core";
 import { extractMcpServerName } from "@comis/shared";
 import {
@@ -37,7 +36,7 @@ import {
   executionTerminalFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
-import { toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
+import { groundedResponseReplacementVerdict, toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
@@ -987,9 +986,10 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     terminal cause: every acute verdict above out-ranks it.
   freshTailOriginLostVerdict,
 ];
-
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
 export function rootCause(s: IncidentSignals): RootCause | null {
+  const replacement = groundedResponseReplacementVerdict(s);
+  if (replacement !== null) return replacement;
   if (s.endReason === "success" && s.degraded === false) return null;
   for (const h of HEURISTICS) {
     const r = h(s);
