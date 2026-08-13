@@ -1849,7 +1849,7 @@ describe("discover_tools -- structured search", () => {
     expect(text).toContain('"name":"mcp__slack__send"');
   });
 
-  it("exact callable suffix outranks a stronger semantic neighbor", async () => {
+  it("returns an exact callable suffix before a stronger semantic neighbor", async () => {
     const logger = createMockLogger();
     const exact = {
       ...makeMcpTool("mcp__records--speed_offenders"),
