@@ -681,6 +681,7 @@ function buildTracingLoggerOverride(opts: {
         {
           name: loggerOpts.name,
           level: loggerOpts.level ?? "debug",
+          customLevels: { audit: 35 },
           timestamp: pino.stdTimeFunctions.isoTime,
           formatters: {
             level(label: string, number: number) {
