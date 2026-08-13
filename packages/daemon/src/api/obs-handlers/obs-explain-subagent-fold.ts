@@ -3,6 +3,7 @@
 
 import { asNumber, asString } from "./obs-explain-signals-fields.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
+import { accumulateSubAgentCompletedRecord } from "./obs-explain-signal-folds.js";
 
 export function accumulateSubagentIncidentRecord(
   acc: Acc,
@@ -10,6 +11,52 @@ export function accumulateSubagentIncidentRecord(
   data: Record<string, unknown>,
   isCurrentTurn: boolean,
 ): void {
+  if (type === "subagent.wait_finished") {
+    const childRunId = asString(data.runId);
+    const parentRunId = asString(data.parentRunId);
+    const status = asString(data.status);
+    const requestedTimeoutMs = asNumber(data.requestedTimeoutMs);
+    const effectiveTimeoutMs = asNumber(data.effectiveTimeoutMs);
+    const durationMs = asNumber(data.durationMs);
+    if (
+      childRunId !== undefined
+      && (status === "completed" || status === "timeout"
+        || status === "cancelled" || status === "denied_unknown")
+      && requestedTimeoutMs !== undefined
+      && effectiveTimeoutMs !== undefined
+      && durationMs !== undefined
+    ) {
+      acc.subagentWait = {
+        ...(parentRunId !== undefined ? { parentRunId } : {}),
+        childRunId,
+        status,
+        requestedTimeoutMs,
+        effectiveTimeoutMs,
+        durationMs,
+      };
+      if (status === "completed" && typeof data.success === "boolean") {
+        accumulateSubAgentCompletedRecord(
+          acc,
+          { runId: childRunId, success: data.success },
+          isCurrentTurn,
+        );
+      }
+    }
+    return;
+  }
+  if (type === "subagent.routed_child_preserved") {
+    const parentRunId = asString(data.parentRunId);
+    const childRunId = asString(data.childRunId);
+    const reason = asString(data.reason);
+    if (
+      parentRunId !== undefined
+      && childRunId !== undefined
+      && reason === "announcement_route"
+    ) {
+      acc.routedChildPreserved = { parentRunId, childRunId, reason };
+    }
+    return;
+  }
   if (type === "subagent.killed") {
     const killedBy = asString(data.killedBy);
     if (killedBy === undefined) return;

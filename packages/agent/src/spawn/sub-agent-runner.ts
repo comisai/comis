@@ -1243,11 +1243,10 @@ function classifyCompletionErrorKind(
   /**
    * Cancel children left without a consumer by an abnormally-terminated parent.
    *
-   * A parent that ends abnormally can never read what its children return, so
-   * every still-live child burns tokens for a result nobody will see. Observed
-   * live: a parent timed out at 17:28:46 and two orphans ran on to 17:29:12 and
-   * 17:29:31, the latter alone spending 1.33M tokens / $1.80 after its reader
-   * was already gone.
+   * A route-less child has no remaining consumer after an abnormal parent end
+   * and is cancelled. A child with a complete authenticated announcement route
+   * remains deliverable, so it continues and the preservation is recorded on
+   * the parent trajectory.
    *
    * Recursion terminates: each killRun re-enters terminalizeRun for the child,
    * which returns early once that child is terminal, so the cascade walks the
@@ -1257,7 +1256,23 @@ function classifyCompletionErrorKind(
    * legitimate pattern and its children are expected to outlive the turn.
    */
   function cancelOrphanedChildren(parentRunId: string, parentEndReason: string): void {
+    if (parentEndReason === "completed") return;
+    const liveChildIds = liveChildRunIds(parentRunId, runs.values());
     const orphaned = selectOrphanedChildRuns(parentRunId, parentEndReason, runs.values());
+    const orphanedSet = new Set(orphaned);
+    const parent = runs.get(parentRunId);
+    if (parent !== undefined) {
+      for (const childRunId of liveChildIds) {
+        if (orphanedSet.has(childRunId)) continue;
+        deps.eventBus.emit("subagent:routed_child_preserved", {
+          parentRunId,
+          childRunId,
+          sessionKey: parent.sessionKey,
+          reason: "announcement_route",
+          timestamp: deps.clock.now(),
+        });
+      }
+    }
     for (const childRunId of orphaned) {
       killRun(childRunId, {
         killedBy: "system",
@@ -3328,12 +3343,18 @@ function classifyCompletionErrorKind(
           try {
             // Live children at the abort are exactly what the run was awaiting,
             // so a timeout hint can name them instead of the timeout knob.
+            const awaitedChildRunIds = liveChildRunIds(runId, runs.values());
+            const routedChildRunIds = awaitedChildRunIds.filter((childRunId) => {
+              const child = runs.get(childRunId);
+              return Boolean(child?.announceChannelType && child.announceChannelId);
+            });
             abortClassification = classifyAbortReason(
               result.finishReason,
               undefined,
               undefined,
               {
-                awaitedChildRunIds: liveChildRunIds(runId, runs.values()),
+                awaitedChildRunIds,
+                routedChildRunIds,
                 ...(result.stepLimit === undefined ? {} : { stepLimit: result.stepLimit }),
               },
             );

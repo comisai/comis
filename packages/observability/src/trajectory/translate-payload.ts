@@ -323,9 +323,10 @@ export function translatePayload(
     case "graph:synthesized_from_intent":
     case "session:sub_agent_spawned":
     case "session:sub_agent_completed":
-    case "session:sub_agent_wait_completed":
+    case "session:sub_agent_wait_finished":
     case "subagent:steered":
     case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
+    case "subagent:routed_child_preserved":
     case "subagent:background_processes_abandoned":
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":

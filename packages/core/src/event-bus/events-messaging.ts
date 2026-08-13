@@ -145,12 +145,19 @@ export interface MessagingEvents {
     failedBackgroundProcesses?: number;
   };
 
-  /** A synchronous parent wait observed a child's terminal outcome. */
-  "session:sub_agent_wait_completed": {
+  /** A synchronous parent wait finished for one requested child. */
+  "session:sub_agent_wait_finished": {
     runId: string;
     /** Routes the observation to the active waiting parent trajectory. */
     parentSessionKey: string;
-    success: boolean;
+    /** Active parent run identity when the waiter itself is a sub-agent. */
+    parentRunId?: string;
+    status: "completed" | "timeout" | "cancelled" | "denied_unknown";
+    /** Retained only for completed results so failed completions remain distinct. */
+    success?: boolean;
+    requestedTimeoutMs: number;
+    effectiveTimeoutMs: number;
+    durationMs: number;
     timestamp: number;
   };
 

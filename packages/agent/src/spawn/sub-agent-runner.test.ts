@@ -1059,6 +1059,35 @@ describe("createSubAgentRunner", () => {
     );
   });
 
+  it("emits routed-child preservation when an abnormal parent end leaves delivery valid", () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+    const parentRunId = runner.spawn({ task: "parent", agentId: "parent" });
+    const parentSessionKey = runner.getRunStatus(parentRunId)?.sessionKey;
+    const childRunId = runner.spawn({
+      task: "child",
+      agentId: "child",
+      parentRunId,
+      announceChannelType: "gateway",
+      announceChannelId: "conversation_a",
+    });
+
+    expect(runner.killRun(parentRunId, { killedBy: "system", reason: "test timeout" }).killed)
+      .toBe(true);
+
+    expect(runner.getRunStatus(childRunId)?.status).toBe("running");
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "subagent:routed_child_preserved",
+      {
+        parentRunId,
+        childRunId,
+        sessionKey: parentSessionKey,
+        reason: "announcement_route",
+        timestamp: expect.any(Number),
+      },
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Completion event has success:false for abnormal finishReason
   // -----------------------------------------------------------------------

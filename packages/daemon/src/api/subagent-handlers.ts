@@ -142,6 +142,17 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       const params = SubagentWaitContract.request.parse(stripInternalFields(rawParams));
       const timeoutMs = params.timeoutMs
         ?? Math.min(deps.securityConfig.agentToAgent?.waitTimeoutMs ?? 60_000, 300_000);
+      const rawRequestedTimeoutMs = rawParams._subagentWaitRequestedTimeoutMs;
+      if (
+        rawRequestedTimeoutMs !== undefined
+        && (typeof rawRequestedTimeoutMs !== "number"
+          || !Number.isInteger(rawRequestedTimeoutMs)
+          || rawRequestedTimeoutMs < 0
+          || rawRequestedTimeoutMs > 300_000)
+      ) {
+        throw new AuthorizationError("Sub-agent wait timeout provenance is invalid");
+      }
+      const requestedTimeoutMs = rawRequestedTimeoutMs ?? timeoutMs;
 
       const requestedRunIds = params.runIds !== undefined
         ? [...new Set(params.runIds)]
@@ -179,23 +190,32 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
             waitOwnerSessionKey,
           )
         : [];
-      if (waitOwnerSessionKey !== undefined) {
-        for (const entry of waited) {
-          if (entry.status !== "completed") continue;
-          deps.eventBus?.emit("session:sub_agent_wait_completed", {
-            runId: entry.runId,
-            parentSessionKey: waitOwnerSessionKey,
-            success: entry.completion.endReason === "completed",
-            timestamp: systemNowMs(),
-          });
-        }
-      }
       const waitedByRunId = new Map(waited.map((entry) => [entry.runId, entry]));
       const results = requestedRunIds.map((runId) => (
         deniedRunIds.has(runId)
           ? { runId, status: "denied_unknown" as const }
           : waitedByRunId.get(runId) ?? { runId, status: "denied_unknown" as const }
       ));
+      const completedAtMs = systemNowMs();
+      const durationMs = completedAtMs - startedAtMs;
+      if (waitOwnerSessionKey !== undefined) {
+        const parentRunId = deps.subAgentRunner.getRunBySessionKey(waitOwnerSessionKey)?.runId;
+        for (const entry of results) {
+          deps.eventBus?.emit("session:sub_agent_wait_finished", {
+            runId: entry.runId,
+            parentSessionKey: waitOwnerSessionKey,
+            ...(parentRunId !== undefined ? { parentRunId } : {}),
+            status: entry.status,
+            ...(entry.status === "completed"
+              ? { success: entry.completion.endReason === "completed" }
+              : {}),
+            requestedTimeoutMs,
+            effectiveTimeoutMs: timeoutMs,
+            durationMs,
+            timestamp: completedAtMs,
+          });
+        }
+      }
       const result = { results };
       deps.logger?.info(
         {
@@ -205,7 +225,9 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
           timeoutCount: results.filter((entry) => entry.status === "timeout").length,
           deniedUnknownCount: results.filter((entry) => entry.status === "denied_unknown").length,
           cancelledCount: results.filter((entry) => entry.status === "cancelled").length,
-          durationMs: systemNowMs() - startedAtMs,
+          durationMs,
+          requestedTimeoutMs,
+          effectiveTimeoutMs: timeoutMs,
         },
         "Sub-agent completion wait finished",
       );

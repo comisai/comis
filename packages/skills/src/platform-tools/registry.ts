@@ -111,6 +111,7 @@ export type RpcCall = (
     discoveredDeferredTools?: readonly string[];
     outwardOperationId?: string;
     signal?: AbortSignal;
+    subagentWaitRequestedTimeoutMs?: number;
   },
 ) => Promise<unknown>;
 

@@ -63,7 +63,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 30 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 32 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -190,6 +190,21 @@ export interface IncidentSignals {
    *  autonomous stuck-kill — the child's own rollup can still read success when
    *  the kill races completion. Absent (never `{}`) when no kill fired. */
   subagentKilled?: { killedBy: string; runtimeMs?: number; idleMs?: number; thresholdMs?: number };
+  /** Last parent-routed synchronous wait outcome, with pre/post-policy budgets. */
+  subagentWait?: {
+    parentRunId?: string;
+    childRunId: string;
+    status: "completed" | "timeout" | "cancelled" | "denied_unknown";
+    requestedTimeoutMs: number;
+    effectiveTimeoutMs: number;
+    durationMs: number;
+  };
+  /** Last child preserved after abnormal parent termination because delivery remains routed. */
+  routedChildPreserved?: {
+    parentRunId: string;
+    childRunId: string;
+    reason: "announcement_route";
+  };
   /** Child runs that returned before their auto-backgrounded process sessions
    * reached terminal state. Folded from
    * `subagent.background_processes_abandoned`; counts and run ids only. */

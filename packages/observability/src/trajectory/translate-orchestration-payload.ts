@@ -25,13 +25,14 @@ export type OrchestrationBridgedEventName =
   | "graph:synthesized_from_intent"
   | "session:sub_agent_spawned"
   | "session:sub_agent_completed"
-  | "session:sub_agent_wait_completed"
+  | "session:sub_agent_wait_finished"
   | "subagent:steered"
   // An attributed sub-agent kill (parent / health_monitor / operator /
   // system) — bridged so a killed child's own trajectory names WHO killed it
   // and the idle/threshold numbers. Content-free: runId + closed killedBy +
   // numbers ONLY (the free-text reason never crosses the bus).
   | "subagent:killed"
+  | "subagent:routed_child_preserved"
   | "subagent:background_processes_abandoned"
   // Three sub-agent-lifecycle
   // events bridged for per-session `comis explain` visibility (the subagent:steered
@@ -99,10 +100,15 @@ export function translateOrchestrationPayload(
         failedBackgroundProcesses: payload.failedBackgroundProcesses,
       };
 
-    case "session:sub_agent_wait_completed":
+    case "session:sub_agent_wait_finished":
       return {
         runId: payload.runId,
-        success: payload.success,
+        ...(payload.parentRunId !== undefined ? { parentRunId: payload.parentRunId } : {}),
+        status: payload.status,
+        ...(payload.success !== undefined ? { success: payload.success } : {}),
+        requestedTimeoutMs: payload.requestedTimeoutMs,
+        effectiveTimeoutMs: payload.effectiveTimeoutMs,
+        durationMs: payload.durationMs,
       };
 
     case "subagent:steered":
@@ -120,6 +126,13 @@ export function translateOrchestrationPayload(
         runtimeMs: payload.runtimeMs,
         idleMs: payload.idleMs,
         thresholdMs: payload.thresholdMs,
+      };
+
+    case "subagent:routed_child_preserved":
+      return {
+        parentRunId: payload.parentRunId,
+        childRunId: payload.childRunId,
+        reason: payload.reason,
       };
 
     case "subagent:background_processes_abandoned":

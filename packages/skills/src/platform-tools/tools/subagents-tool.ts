@@ -178,6 +178,7 @@ export function createSubagentsTool(
           const effectiveTimeoutMs = options.waitHeartbeatMs === undefined
             ? requestedTimeoutMs
             : Math.min(requestedTimeoutMs ?? options.waitHeartbeatMs, options.waitHeartbeatMs);
+          const observableRequestedTimeoutMs = requestedTimeoutMs ?? effectiveTimeoutMs;
           const waitParams = {
             ...(runIds ? { runIds: [...new Set(runIds)] } : {}),
             ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs } : {}),
@@ -186,10 +187,15 @@ export function createSubagentsTool(
             toolName: "subagents",
             action: "wait",
             requestedCount: runIds?.length ?? 0,
-            requestedTimeoutMs,
+            requestedTimeoutMs: observableRequestedTimeoutMs,
             effectiveTimeoutMs,
           }, "Subagent completion wait started");
-          const result = await rpcCall("subagent.wait", waitParams, { signal });
+          const result = await rpcCall("subagent.wait", waitParams, {
+            signal,
+            ...(observableRequestedTimeoutMs !== undefined
+              ? { subagentWaitRequestedTimeoutMs: observableRequestedTimeoutMs }
+              : {}),
+          });
           return jsonResult(frameWaitCompletionSummaries(result));
         }
 

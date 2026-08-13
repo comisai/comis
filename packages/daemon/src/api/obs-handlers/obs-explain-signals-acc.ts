@@ -321,6 +321,8 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  subagentWait?: NonNullable<IncidentSignals["subagentWait"]>;
+  routedChildPreserved?: NonNullable<IncidentSignals["routedChildPreserved"]>;
   subagentBackgroundProcessesAbandonedCount: number;
   subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;

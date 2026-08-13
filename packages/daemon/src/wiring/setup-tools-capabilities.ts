@@ -110,6 +110,7 @@ export function makeCreateAgentRpcCall(
       : attenuateCaps(capabilityCeiling, resolved.capabilities);
     return async (method, params, metadata) => {
       const outwardOperationId = metadata?.outwardOperationId;
+      const subagentWaitRequestedTimeoutMs = metadata?.subagentWaitRequestedTimeoutMs;
       if (
         outwardOperationId !== undefined
         && (outwardOperationId.length === 0 || outwardOperationId.length > 256)
@@ -117,6 +118,14 @@ export function makeCreateAgentRpcCall(
         return Promise.reject(
           new Error("outward operation identity must contain 1 to 256 characters"),
         );
+      }
+      if (
+        subagentWaitRequestedTimeoutMs !== undefined
+        && (!Number.isInteger(subagentWaitRequestedTimeoutMs)
+          || subagentWaitRequestedTimeoutMs < 0
+          || subagentWaitRequestedTimeoutMs > 300_000)
+      ) {
+        return Promise.reject(new Error("sub-agent wait timeout provenance must be between 0 and 300000 milliseconds"));
       }
       const ctx = tryGetContext();
       // Only the framework scope resolved for this exact agent may supply
@@ -254,6 +263,9 @@ export function makeCreateAgentRpcCall(
         ...(callerChannelType !== undefined && { _callerChannelType: callerChannelType }),
         ...(callerChannelId !== undefined && { _callerChannelId: callerChannelId }),
         ...(rootRunId !== undefined && { _rootRunId: rootRunId }),
+        ...(subagentWaitRequestedTimeoutMs !== undefined && {
+          _subagentWaitRequestedTimeoutMs: subagentWaitRequestedTimeoutMs,
+        }),
         ...(outwardOperationId !== undefined && { _outwardOperationId: outwardOperationId }),
         ...(outwardStepIndex !== undefined && { _outwardStepIndex: outwardStepIndex }),
       });

@@ -35,6 +35,38 @@ import type { IncidentSignals } from "@comis/core";
 /** Structural twin of `obs-explain-heuristics.RootCause` (kept local — no import cycle). */
 type SubagentKilledVerdict = { code: string; detail: string; suggestedNextSteps: string[] };
 
+/** A parent timeout overlapped a bounded child wait; report whether delivery survived. */
+export function subagentWaitDeadlineOverlapVerdict(
+  s: IncidentSignals,
+): SubagentKilledVerdict | null {
+  if (s.endReason !== "timeout") return null;
+  const wait = s.subagentWait;
+  if (wait === undefined || (wait.status !== "cancelled" && wait.status !== "timeout")) {
+    return null;
+  }
+  const preserved = s.routedChildPreserved;
+  const sameChildPreserved = preserved !== undefined
+    && preserved.childRunId === wait.childRunId
+    && (wait.parentRunId === undefined || preserved.parentRunId === wait.parentRunId);
+  const parentRunId = wait.parentRunId ?? "unknown-parent";
+  return {
+    code: "subagent_wait_deadline_overlap",
+    detail:
+      `parent run ${parentRunId} wait for child ${wait.childRunId} ended ${wait.status} after ${String(wait.durationMs)}ms; `
+      + `requested ${String(wait.requestedTimeoutMs)}ms, effective ${String(wait.effectiveTimeoutMs)}ms; `
+      + (sameChildPreserved
+        ? "the routed child was preserved for independent announcement"
+        : "no routed-child preservation record was captured"),
+    suggestedNextSteps: [
+      `run comis explain "${wait.childRunId}" --depth full to inspect the continuing child`,
+      "keep each subagents.wait interval below the prompt progress budget so the parent can process the timeout result",
+      sameChildPreserved
+        ? "wait for the preserved child's independent completion announcement"
+        : "verify the child has an authenticated announcement route before relying on background completion",
+    ],
+  };
+}
+
 /** A direct child terminal failure is acute parent-session degradation. */
 export function subagentFailedVerdict(
   s: IncidentSignals,

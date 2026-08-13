@@ -87,7 +87,10 @@ describe("subagents tool", () => {
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
       { runIds: ["run-1", "run-2"], timeoutMs: 20_000 },
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        subagentWaitRequestedTimeoutMs: 20_000,
+      },
     );
     const parsed = parseResult(result) as {
       results: Array<{ completion: { summary: string } }>;
@@ -118,7 +121,10 @@ describe("subagents tool", () => {
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
       { timeoutMs: 60_000 },
-      { signal: undefined },
+      {
+        signal: undefined,
+        subagentWaitRequestedTimeoutMs: 300_000,
+      },
     );
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -131,14 +137,25 @@ describe("subagents tool", () => {
 
   it("bounds a default wait at the prompt-derived progress heartbeat", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
-    const tool = createSubagentsTool(mockRpcCall, undefined, { waitHeartbeatMs: 45_000 });
+    const logger = { debug: vi.fn(), info: vi.fn() };
+    const tool = createSubagentsTool(mockRpcCall, logger, { waitHeartbeatMs: 45_000 });
 
     await tool.execute("call-wait-default-capped", { action: "wait" } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
       { timeoutMs: 45_000 },
-      { signal: undefined },
+      {
+        signal: undefined,
+        subagentWaitRequestedTimeoutMs: 45_000,
+      },
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedTimeoutMs: 45_000,
+        effectiveTimeoutMs: 45_000,
+      }),
+      "Subagent completion wait started",
     );
   });
 

@@ -53,7 +53,7 @@ describe("stripInternalFields()", () => {
   });
 
   it("exposes every dispatcher-injected internal field name in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(27);
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(28);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -94,6 +94,12 @@ describe("stripInternalFields()", () => {
     const result = stripInternalFields({ _outwardOperationId: "forged-operation", foo: 1 });
     expect(result).toEqual({ foo: 1 });
     expect(result._outwardOperationId).toBeUndefined();
+  });
+
+  it("strips forged sub-agent wait timeout provenance", () => {
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_subagentWaitRequestedTimeoutMs");
+    const result = stripInternalFields({ _subagentWaitRequestedTimeoutMs: 300_000, foo: 1 });
+    expect(result).toEqual({ foo: 1 });
   });
 
   it("includes `_autonomyMode` and strips a forged inbound value", () => {

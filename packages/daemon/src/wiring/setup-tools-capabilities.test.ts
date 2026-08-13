@@ -36,6 +36,7 @@ const internalFieldNames = new Set([
   "_outwardOperationId",
   "_rootRunId",
   "_sessionKey",
+  "_subagentWaitRequestedTimeoutMs",
   "_tenantId",
   "_traceId",
   "_trustLevel",
@@ -137,6 +138,26 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
 
     const forwarded = rpcCall.mock.calls[0]![1] as Record<string, unknown>;
     expect(forwarded._abortSignal).toBe(controller.signal);
+  });
+
+  it("re-injects trusted wait-timeout provenance after stripping a forged parameter", async () => {
+    currentCtx = inProcessContext();
+    const rpcCall = vi.fn(async () => "ok");
+    const agentRpc = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    })("agent-1");
+
+    await agentRpc(
+      "subagent.wait",
+      { _subagentWaitRequestedTimeoutMs: 1 },
+      { subagentWaitRequestedTimeoutMs: 300_000 },
+    );
+
+    expect(rpcCall.mock.calls[0]![1]).toEqual(expect.objectContaining({
+      _subagentWaitRequestedTimeoutMs: 300_000,
+    }));
   });
 
   it("re-injects trusted parent discovery metadata after stripping forged params", async () => {

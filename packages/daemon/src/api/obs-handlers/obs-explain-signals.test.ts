@@ -1346,9 +1346,13 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
 
   it("folds a failed child observed by a synchronous parent wait", () => {
     const s = toIncidentSignals([
-      event("subagent.wait_completed", 1, {
+      event("subagent.wait_finished", 1, {
         runId: "run-waited",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 12_000,
       }),
     ]);
 
@@ -1370,9 +1374,13 @@ describe("toIncidentSignals — direct sub-agent spawn-tree leaves", () => {
         tokensUsed: 2_500,
         costUsd: 0.04,
       }),
-      event("subagent.wait_completed", 2, {
+      event("subagent.wait_finished", 2, {
         runId: "run-shared",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 60_000,
+        durationMs: 12_000,
       }),
     ]);
 

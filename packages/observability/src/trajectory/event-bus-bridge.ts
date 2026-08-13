@@ -155,7 +155,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // A synchronous wait completes in the active parent turn. Keep this
   // observation distinct from the child's lifecycle transition so downstream
   // consumers can diagnose the waiting trace without replaying lifecycle work.
-  "session:sub_agent_wait_completed": "subagent.wait_completed",
+  "session:sub_agent_wait_finished": "subagent.wait_finished",
 
   // A running sub-agent was steered IN-FLIGHT (a
   // high-priority message injected at the child's next step boundary, transcript
@@ -186,6 +186,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // (translate-orchestration-payload.ts): runId + closed killedBy + numbers
   // ONLY — the free-text kill reason never crosses the bus.
   "subagent:killed": "subagent.killed",
+  "subagent:routed_child_preserved": "subagent.routed_child_preserved",
   "subagent:background_processes_abandoned": "subagent.background_processes_abandoned",
   "subagent:delivery_deadlettered": "subagent.delivery_deadlettered",
   // The self-healing transient RETRY

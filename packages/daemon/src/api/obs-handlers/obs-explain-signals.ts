@@ -187,6 +187,8 @@ function handleEventRecord(
       return;
     }
     case "subagent.killed":
+    case "subagent.wait_finished":
+    case "subagent.routed_child_preserved":
     case "subagent.background_processes_abandoned":
     case "subagent.delivery_skipped": {
       accumulateSubagentIncidentRecord(acc, type, data, isCurrentTurn);
@@ -313,7 +315,6 @@ function handleEventRecord(
       accumulateSubAgentSpawnedRecord(acc.spawnNodesByLease, data);
       return;
     case "subagent.completed":
-    case "subagent.wait_completed":
       accumulateSubAgentCompletedRecord(acc, data, isCurrentTurn);
       return;
     case "capability.audited":
@@ -916,6 +917,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
           },
         }
+      : {}),
+    ...(acc.subagentWait !== undefined ? { subagentWait: acc.subagentWait } : {}),
+    ...(acc.routedChildPreserved !== undefined
+      ? { routedChildPreserved: acc.routedChildPreserved }
       : {}),
     ...(acc.subagentBackgroundProcessesAbandonedCount > 0
       && acc.subagentBackgroundProcessesAbandonedLastRunId !== undefined

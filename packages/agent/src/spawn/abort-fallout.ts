@@ -86,6 +86,8 @@ export function liveChildRunIds(
 export interface AbortEvidence {
   /** Child runs still being awaited at the deadline. */
   readonly awaitedChildRunIds?: readonly string[];
+  /** Awaited children that retain an authenticated independent announcement route. */
+  readonly routedChildRunIds?: readonly string[];
   /** Authoritative step ceiling retained by the executor on a max-steps halt. */
   readonly stepLimit?: {
     readonly bindingKnob: string;
@@ -102,11 +104,9 @@ const TIMEOUT_KNOB_HINT =
  * Remediation hint for a `prompt_timeout` abort, branched by what the run was
  * actually doing when the clock ran out.
  *
- * The unbranched hint names the timeout knob for every timeout. When the run was
- * blocked on children that were themselves doomed, raising that knob buys more
- * waiting — and its "reduce the task scope" clause is a diagnosis the agent then
- * relays to the user as its own, which is how a tool-reachability failure got
- * reported as "the scope was too broad for one run".
+ * A wait may overlap the parent deadline even when a routed child can continue
+ * independently. The hint distinguishes that case from a run whose own model
+ * execution simply exceeded its operation timeout.
  *
  * @param evidence - Delegation state at the deadline; undefined when unknown
  * @returns The hint text for the prompt_timeout classification
@@ -115,11 +115,16 @@ export function promptTimeoutHint(evidence: AbortEvidence | undefined): string {
   const awaited = evidence?.awaitedChildRunIds ?? [];
   if (awaited.length > 0) {
     const first = awaited[0] as string;
+    const routed = evidence?.routedChildRunIds ?? [];
+    const routedGuidance = routed.length > 0
+      ? ` ${routed.length === 1 ? "The routed child will" : "The routed children will"} `
+        + "continue and announce independently."
+      : " Children without an independent announcement route are cancelled with the parent.";
     return `This run timed out while awaiting ${awaited.length} delegated `
-      + `${awaited.length === 1 ? "child" : "children"}, so its own deadline is not the `
-      + "binding constraint — the children are. Inspect them first "
-      + `(comis explain "${first}") and fix their abort reason; raising the parent timeout `
-      + "only buys more waiting.";
+      + `${awaited.length === 1 ? "child" : "children"}; the parent deadline was binding.`
+      + routedGuidance
+      + ` Inspect the first child (comis explain "${first}") and keep each wait interval `
+      + "below the prompt progress budget so the parent can process the result.";
   }
 
   return TIMEOUT_KNOB_HINT;
