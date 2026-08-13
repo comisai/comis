@@ -180,6 +180,34 @@ describe("wrapToolForAutoBackground", () => {
     expect(manager.getAllTasks()).toHaveLength(0);
   });
 
+  it("keeps slow scheduler tools in the foreground until the occurrence is terminal", async () => {
+    const promoteSpy = vi.spyOn(manager, "promote");
+    const tool = createMockTool({
+      resolveAfterMs: config.autoBackgroundMs + 50,
+      result: toolOk("scheduler-result"),
+    });
+    const wrapped = wrapToolForAutoBackground(
+      tool,
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+    );
+
+    const result = await runWithContext({
+      tenantId: "default",
+      userId: "scheduler-user",
+      agentId: "agent-1",
+      sessionKey: "default:agent-1:scheduler:job-a",
+      traceId: "10000000-0000-4000-8000-000000000002",
+      startedAt: 1,
+      trustLevel: "user",
+      channelType: "scheduler",
+    }, () => wrapped.execute("call-scheduler", {}, undefined, undefined, undefined));
+
+    expect((result.content[0] as { text: string }).text).toBe("scheduler-result");
+    expect(promoteSpy).not.toHaveBeenCalled();
+  });
+
   it("returns a well-formed AgentToolResult placeholder when tool exceeds timeout", async () => {
     const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("slow-result") });
     const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));

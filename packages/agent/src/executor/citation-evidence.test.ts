@@ -241,6 +241,25 @@ describe("exact citation evidence grounding", () => {
     })).toEqual([historical]);
   });
 
+  it("retains trusted relay digests when the immediate reply cites none", () => {
+    const candidate = (citationEvidenceModule as Record<string, unknown>)
+      .citationEvidenceDigestsToPersist;
+    expect(candidate).toBeTypeOf("function");
+    const selectDigests = candidate as (params: {
+      currentFetchDigests: readonly string[];
+      relayedDigests: readonly string[];
+      matchedDigests: readonly string[];
+    }) => string[];
+    const current = urlDigest("https://example.com/current");
+    const relayed = urlDigest("https://example.com/relayed");
+
+    expect(selectDigests({
+      currentFetchDigests: [current],
+      relayedDigests: [relayed],
+      matchedDigests: [],
+    })).toEqual([current, relayed]);
+  });
+
   it("appends a bounded runtime citation receipt to the session journal", () => {
     const candidate = (citationEvidenceModule as Record<string, unknown>)
       .appendCitationEvidenceRecord;
