@@ -5,6 +5,7 @@ import { createServer as createNetServer, createConnection, type Server as NetSe
 import {
   chmodSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -27,6 +28,11 @@ export interface LocalRequestRecord {
   readonly method: string;
   readonly operationId: string;
   readonly targetOperationId?: string;
+  responseStatus?: string;
+  responseCommand?: string;
+  responseErrorCode?: string;
+  responseErrorMessage?: string;
+  responseErrorHint?: string;
 }
 
 export interface ModelRequestRecord {
@@ -198,18 +204,18 @@ function createServiceCandidateConfig(root: string): string {
   const pushCredential = fixtureChildPath(configRoot, "forge-push.credential");
   writeFixtureFile(readCredential, "fixture-forge-read-credential");
   writeFixtureFile(pushCredential, "fixture-forge-push-credential");
-  const trueExecutable = canonicalFixturePath(
-    execFileSync("which", ["true"], { encoding: "utf8" }).trim(),
+  const validationExecutable = canonicalFixturePath(
+    execFileSync("which", ["sleep"], { encoding: "utf8" }).trim(),
   );
   const configPath = fixtureChildPath(configRoot, "candidate.json");
   writeFixtureFile(configPath, JSON.stringify({
-    programs: [{ id: "repo-check", executable: trueExecutable }],
+    programs: [{ id: "repo-check", executable: validationExecutable }],
     profiles: [{
       id: "go-default",
       localChecks: [{
         id: "unit",
         programId: "repo-check",
-        arguments: [{ kind: "literal", value: "--version" }],
+        arguments: [{ kind: "literal", value: "0.2" }],
         timeout: "1m",
         required: true,
       }],
@@ -266,11 +272,18 @@ export class LocalDeadlineProxy {
   }
 
   async waitForReconciliation(timeoutMs = 15_000): Promise<void> {
-    await waitUntil(() => {
-      const methods = this.records.map((record) => record.method);
-      return methods.filter((method) => method === "PrepareTask").length >= 2
-        && methods.includes("GetOperation");
-    }, timeoutMs, "local operation reconciliation");
+    try {
+      await waitUntil(() => {
+        const methods = this.records.map((record) => record.method);
+        return methods.filter((method) => method === "PrepareTask").length >= 2
+          && methods.includes("GetOperation");
+      }, timeoutMs, "local operation reconciliation");
+    } catch (cause) {
+      throw new Error(
+        `local operation reconciliation timed out; requests=${JSON.stringify(this.records)}`,
+        { cause },
+      );
+    }
   }
 
   async close(): Promise<void> {
@@ -287,17 +300,28 @@ export class LocalDeadlineProxy {
       };
       const method = request.method ?? "";
       const operationId = request.operationId ?? "";
-      this.records.push({
+      const record: LocalRequestRecord = {
         method,
         operationId,
         ...(request.payload?.operationId === undefined
           ? {}
           : { targetOperationId: request.payload.operationId }),
-      });
+      };
+      this.records.push(record);
       const target = createConnection(this.targetPath);
       target.on("error", () => client.destroy());
       target.once("connect", () => target.write(requestLine));
       collectOneLine(target, (responseLine) => {
+        const response = JSON.parse(responseLine.toString("utf8")) as {
+          status?: string;
+          error?: { code?: string; message?: string; hint?: string };
+          result?: { command?: string };
+        };
+        record.responseStatus = response.status;
+        record.responseCommand = response.result?.command;
+        record.responseErrorCode = response.error?.code;
+        record.responseErrorMessage = response.error?.message;
+        record.responseErrorHint = response.error?.hint;
         const delayed = method === "PrepareTask" && !this.firstPrepareDelayed;
         if (delayed) this.firstPrepareDelayed = true;
         const send = (): void => {
@@ -319,6 +343,7 @@ interface HeldReport {
 
 /** Transparent control relay that can retain the first durable report across a daemon restart. */
 export class RestartControlProxy {
+  readonly records: Array<{ method: string }> = [];
   private readonly server: NetServer;
   private readonly sockets = new Set<Socket>();
   private held: HeldReport | undefined;
@@ -333,7 +358,14 @@ export class RestartControlProxy {
   }
 
   async waitForHeldReport(timeoutMs = 15_000): Promise<void> {
-    await waitUntil(() => this.held !== undefined, timeoutMs, "held capability-service report");
+    try {
+      await waitUntil(() => this.held !== undefined, timeoutMs, "held capability-service report");
+    } catch (cause) {
+      throw new Error(
+        `held capability-service report timed out; control=${JSON.stringify(this.records)}`,
+        { cause },
+      );
+    }
   }
 
   releaseReports(): void {
@@ -382,6 +414,8 @@ export class RestartControlProxy {
           const line = buffered.subarray(0, newline + 1);
           buffered = buffered.subarray(newline + 1);
           const parsed = JSON.parse(line.toString("utf8")) as { method?: string };
+          const record = { method: parsed.method ?? "" };
+          this.records.push(record);
           if (
             this.holdReports
             && parsed.method === "managedRuns.report"
@@ -578,8 +612,10 @@ export function startFixtureService(input: {
   const databasePath = validateFixturePath(input.databasePath);
   ensureFixtureDirectory(dirname(databasePath));
   const serviceRoot = canonicalFixturePath(dirname(databasePath));
-  const runtimeRoot = fixtureChildPath(serviceRoot, "runtime");
-  ensureFixtureDirectory(runtimeRoot);
+  const shortRuntimeParent = canonicalFixturePath("/tmp");
+  const runtimeRoot = canonicalFixturePath(mkdtempSync(
+    fixtureChildPath(shortRuntimeParent, "cvr-"),
+  ));
   const codexExecutable = createCodexFixtureExecutable(serviceRoot);
   const candidateConfig = createServiceCandidateConfig(serviceRoot);
   const child = spawn(input.binary, [
@@ -613,19 +649,24 @@ export function startFixtureService(input: {
   ], { stdio: ["ignore", "ignore", "pipe"] });
   const stderrChunks: Buffer[] = [];
   child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+  let stopped = false;
   return Object.freeze({
     process: child,
     runtimeRoot,
     stderr: () => Buffer.concat(stderrChunks).toString("utf8"),
     stop: async () => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      child.kill("SIGTERM");
-      const stopped = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-      const forced = new Promise<void>((resolve) => setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-        resolve();
-      }, 3_000));
-      await Promise.race([stopped, forced]);
+      if (stopped) return;
+      stopped = true;
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+        const forced = new Promise<void>((resolve) => setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          resolve();
+        }, 3_000));
+        await Promise.race([exited, forced]);
+      }
+      rmSync(runtimeRoot, { recursive: true, force: true });
     },
   });
 }

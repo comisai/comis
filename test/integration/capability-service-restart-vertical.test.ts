@@ -387,7 +387,28 @@ describe("restart-injected capability-service vertical join", () => {
         `START_MANAGED_FIXTURE BASE_REVISION=${repository.baseRevision}`,
       ));
       await localProxy.waitForReconciliation();
-      await controlProxy.waitForHeldReport();
+      try {
+        await controlProxy.waitForHeldReport();
+      } catch (cause) {
+        const fixtureDb = new Database(goDatabase, { readonly: true });
+        try {
+          const taskState = fixtureDb.prepare(
+            "SELECT handle, state, managed_run_id, workspace_lease_id FROM tasks ORDER BY handle",
+          ).all();
+          const reportState = fixtureDb.prepare(
+            "SELECT kind, COUNT(*) AS count FROM reports GROUP BY kind ORDER BY kind",
+          ).all();
+          const processState = fixtureDb.prepare(
+            "SELECT state, pid, executable_label, exit_code FROM validation_processes ORDER BY operation_id",
+          ).all();
+          throw new Error(
+            `initial report unavailable; tasks=${JSON.stringify(taskState)}; reports=${JSON.stringify(reportState)}; processes=${JSON.stringify(processState)}; fixtureExit=${service.process.exitCode ?? "running"}; fixtureStderr=${service.stderr().trim() || "<empty>"}`,
+            { cause },
+          );
+        } finally {
+          fixtureDb.close();
+        }
+      }
       expect(activated).toHaveLength(1);
       await pollUntil(() => firstEcho.getSentMessages().some((message) => (
         message.channelId === "conversation-origin"
@@ -422,7 +443,19 @@ describe("restart-injected capability-service vertical join", () => {
       secondDaemon.daemon.container.eventBus.on("managed_run:report_accepted", (event) => reports.push(event));
       secondDaemon.daemon.container.eventBus.on("managed_run:continuation_completed", (event) => continuations.push(event));
       secondDaemon.daemon.container.eventBus.on("tool:executed", (event) => secondToolEvents.push(event));
-      await controlProxy.waitForHeldReport();
+      try {
+        await controlProxy.waitForHeldReport();
+      } catch (cause) {
+        const fixtureDb = new Database(goDatabase, { readonly: true });
+        const processState = fixtureDb.prepare(
+          "SELECT state, pid, executable_label, exit_code FROM validation_processes ORDER BY operation_id",
+        ).all();
+        fixtureDb.close();
+        throw new Error(
+          `replacement report unavailable; processes=${JSON.stringify(processState)}; fixtureExit=${service.process.exitCode ?? "running"}; fixtureStderr=${service.stderr().trim() || "<empty>"}`,
+          { cause },
+        );
+      }
       await pollUntil(
         () => readLauncherPids(launcherPidLog).length > launcherPidsAfterFirstStop.length,
         10_000,
