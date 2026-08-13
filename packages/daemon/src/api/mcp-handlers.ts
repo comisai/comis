@@ -372,13 +372,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs,
         // Forward config-only fields from the persisted entry (mcp.connect has
         // no CLI params for them) — else a reconnect drops idle eviction /
-        // tool filtering / resources-prompts / parallel-calls opt-ins.
+        // tool filtering / resources-prompts / concurrency settings.
         // idleTtlMs only when >0 (0 ⇒ disabled, per startIdleTicker opt-in).
         ...(persistedEntry?.idleTtlMs !== undefined && persistedEntry.idleTtlMs > 0 && { idleTtlMs: persistedEntry.idleTtlMs }),
         ...(persistedEntry?.toolAllowlist !== undefined && { toolAllowlist: persistedEntry.toolAllowlist }),
         ...(persistedEntry?.toolBlocklist !== undefined && { toolBlocklist: persistedEntry.toolBlocklist }),
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
+        ...(persistedEntry?.maxConcurrency !== undefined && { maxConcurrency: persistedEntry.maxConcurrency }),
         ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
         // Forward auth to the runtime config. The contract's auth field is
         // `"headers" | "oauth"` (RPC-layer scheme); the persisted config's
