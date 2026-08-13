@@ -4,7 +4,12 @@
  */
 
 // Executor types
-export type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "./executor/types.js";
+export type {
+  AgentExecutor,
+  ExecutionResult,
+  ExecutionOverrides,
+  ExecutionStepLimitDetails,
+} from "./executor/types.js";
 export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
 export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";
 export { replaceContextStoreHistory } from "./session/context-history-replacement.js";

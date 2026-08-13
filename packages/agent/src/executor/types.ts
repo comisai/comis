@@ -33,6 +33,14 @@ import type { Result } from "@comis/shared";
 // Public types
 // ---------------------------------------------------------------------------
 
+/** Authoritative step ceiling that stopped an execution. */
+export interface ExecutionStepLimitDetails {
+  /** The config key or tool parameter that set the ceiling. */
+  readonly bindingKnob: string;
+  readonly stepsExecuted: number;
+  readonly cap: number;
+}
+
 /** Fields shared by every settled agent execution result. */
 export interface ExecutionResultBase {
   response: string;
@@ -76,6 +84,8 @@ export interface ExecutionResultBase {
     executionCacheSavedUsd?: number;
   };
   stepsExecuted: number;
+  /** Present when `finishReason:"max_steps"` identifies the exact binding ceiling. */
+  stepLimit?: ExecutionStepLimitDetails;
   llmCalls: number;
   // prompt_timeout is the PromptTimeoutError terminal —
   // END_REASON_MAP translates it to endReason timeout (the named cause).

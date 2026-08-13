@@ -465,6 +465,12 @@ export interface SubAgentRunnerDeps {
     cost: { total: number; cacheSaved?: number };
     finishReason: string;
     stepsExecuted: number;
+    /** Authoritative ceiling provenance for a max-steps terminal. */
+    stepLimit?: {
+      readonly bindingKnob: string;
+      readonly stepsExecuted: number;
+      readonly cap: number;
+    };
     toolCallHistory?: string[];
     /** Actual jailed execution root used to resolve expected output paths. */
     workspaceDir?: string;
@@ -3326,7 +3332,10 @@ function classifyCompletionErrorKind(
               result.finishReason,
               undefined,
               undefined,
-              { awaitedChildRunIds: liveChildRunIds(runId, runs.values()) },
+              {
+                awaitedChildRunIds: liveChildRunIds(runId, runs.values()),
+                ...(result.stepLimit === undefined ? {} : { stepLimit: result.stepLimit }),
+              },
             );
           } catch { /* classification must never block */ }
         }

@@ -3347,7 +3347,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     }
   };
 
-  const getResult = () => buildBridgeResult(m, deps.stepCounter.getCount());
+  const getResult = () => ({
+    ...buildBridgeResult(m, deps.stepCounter.getCount()),
+    ...(m.finishReason === "max_steps"
+      ? { stepLimit: resolveStepLimitDetails(deps.stepCounter, deps.agentId) }
+      : {}),
+  });
 
   const markDeferredWork = (): void => {
     m.sideEffectSummary.deferredWorkCapabilityInvoked = true;

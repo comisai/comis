@@ -544,6 +544,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       cost: result.cost,
       finishReason: result.finishReason,
       stepsExecuted: result.stepsExecuted,
+      ...(result.stepLimit === undefined ? {} : { stepLimit: result.stepLimit }),
       toolCallHistory: result.toolCallHistory, workspaceDir: effectiveWorkspaceDir,
       ...(result.terminalErrorKind === undefined
         ? {}
