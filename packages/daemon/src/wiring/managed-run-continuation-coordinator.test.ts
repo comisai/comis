@@ -15,7 +15,7 @@ import {
   type ManagedRunReportIndex,
   type ManagedRunStorePort,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import {
   createManagedRunContinuationCoalescer,
   createManagedRunContinuationCoordinator,
@@ -29,9 +29,10 @@ const NOW_MS = 1_800_000_000_000;
 
 function makeLogger() {
   const child = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-  return {
+  const logger = {
     info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn(() => child),
   } as unknown as import("@comis/core").ComisLogger;
+  return { logger, child };
 }
 
 function makeRecord(overrides: Partial<ManagedRunRecord> = {}): ManagedRunRecord {
@@ -197,6 +198,7 @@ function makeCoordinator(overrides: {
     )),
   } as unknown as ManagedRunContentPort;
   const execute = vi.fn(overrides.execute ?? (async () => ok({ deliveryState: "verified" as const })));
+  const { logger, child: childLogger } = makeLogger();
   const coordinator = createManagedRunContinuationCoordinator({
     store,
     contentStore,
@@ -206,9 +208,9 @@ function makeCoordinator(overrides: {
     claimTtlMs: 60_000,
     resolveEvidencePolicies: () => overrides.evidencePolicies ?? [],
     eventBus: new TypedEventBus(),
-    logger: makeLogger(),
+    logger,
   });
-  return { coordinator, store, contentStore, execute, commitReducedState, markContinuationOutcome };
+  return { coordinator, store, contentStore, execute, commitReducedState, markContinuationOutcome, childLogger };
 }
 
 describe("managed-run continuation coordination", () => {
@@ -318,6 +320,21 @@ describe("managed-run continuation coordination", () => {
       status: "unknown",
       statusReason: "required_evidence_invalid",
     }));
+  });
+
+  it("logs the safe continuation execution failure cause", async () => {
+    const setup = makeCoordinator({
+      execute: async () => err(new Error("continuation provider unavailable")),
+    });
+
+    const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
+
+    expect(result.ok).toBe(true);
+    expect(setup.childLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      managedRunId: "managed-run-a",
+      err: "continuation provider unavailable",
+      errorKind: "dependency",
+    }), "Managed-run continuation failed closed");
   });
 
   it("folds concurrent notifications into at most one follow-up execution per run", async () => {
