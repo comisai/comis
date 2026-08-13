@@ -343,12 +343,16 @@ vi.mock("../../envelope/message-envelope.js", () => ({
   wrapInEnvelope: mockWrapInEnvelope,
 }));
 
-// Mock tool-parallelism module -- passthrough so existing tests are unaffected
-vi.mock("../tool-parallelism.js", () => ({
-  createMutationSerializer: vi.fn().mockReturnValue((tools: unknown[]) => tools),
-  isReadOnlyTool: vi.fn().mockReturnValue(false),
-  isConcurrencySafe: vi.fn().mockReturnValue(false),
-}));
+// Keep the authoritative read-only classifier while bypassing serializer
+// wrapping so executor tests remain focused on their own behavior.
+vi.mock("../tool-parallelism.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../tool-parallelism.js")>();
+  return {
+    ...actual,
+    createMutationSerializer: vi.fn().mockReturnValue((tools: unknown[]) => tools),
+    isConcurrencySafe: vi.fn().mockReturnValue(false),
+  };
+});
 
 // Mock node:fs -- appendFileSync, statSync, renameSync, unlinkSync for JSONL trace verification
 vi.mock("node:fs", async (importOriginal) => {
@@ -6925,6 +6929,102 @@ describe("PiExecutor", () => {
         (args: unknown[]) => typeof args[1] === "string" && args[1].includes("Skipped mid-turn injection"),
       );
       expect(skipCalls).toHaveLength(0);
+    });
+  });
+
+  describe("partial response preservation after tool failures", () => {
+    const partialReport =
+      "Research complete. The retrieved records agree that current storage is origin-scoped.";
+
+    function setBridgeReceipts(params: {
+      failedTool: string;
+      includeSuccessfulRead?: boolean;
+    }): void {
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.01 },
+        stepsExecuted: 3,
+        llmCalls: 1,
+        finishReason: "stop",
+        failedTools: [params.failedTool],
+        toolExecResults: [
+          ...(params.includeSuccessfulRead === false ? [] : [{
+            toolName: "mcp__records--summary",
+            success: true,
+            durationMs: 4,
+            invocationSequence: 0,
+          }]),
+          {
+            toolName: params.failedTool,
+            success: false,
+            durationMs: 3,
+            invocationSequence: 1,
+            errorKind: "dependency" as const,
+          },
+        ],
+      });
+    }
+
+    it("preserves a grounded partial report after an unrelated dynamic MCP probe fails", async () => {
+      const failedProbe = "mcp__records--optional_probe";
+      setMockAssistantText(partialReport);
+      setBridgeReceipts({ failedTool: failedProbe });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.response).toContain("Treat the result below as partial");
+      expect(result.response).toContain(partialReport);
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "response.completion_evidence_guard",
+          metadata: expect.objectContaining({
+            responseDisposition: "prefixed_partial",
+            unrecoveredToolFailureCount: 1,
+          }),
+        }),
+      );
+    });
+
+    it("replaces the report when explicit metadata classifies the failed MCP tool as mutating", async () => {
+      const failedMutation = "mcp__records--update_state_strict_test";
+      registerToolMetadata(failedMutation, { isReadOnly: false });
+      setMockAssistantText(partialReport);
+      setBridgeReceipts({ failedTool: failedMutation });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.response).not.toContain(partialReport);
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "response.completion_evidence_guard",
+          metadata: expect.objectContaining({ responseDisposition: "replaced" }),
+        }),
+      );
+    });
+
+    it("replaces the report when no successful read-only receipt exists", async () => {
+      const failedProbe = "mcp__records--only_failed_probe";
+      setMockAssistantText(partialReport);
+      setBridgeReceipts({ failedTool: failedProbe, includeSuccessfulRead: false });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.response).not.toContain(partialReport);
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "response.completion_evidence_guard",
+          metadata: expect.objectContaining({ responseDisposition: "replaced" }),
+        }),
+      );
     });
   });
 
