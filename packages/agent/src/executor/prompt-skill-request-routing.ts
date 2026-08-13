@@ -28,7 +28,7 @@ const PRIOR_REQUEST_REFERENCE_PATTERN =
 const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
-  /\b(?:(?:do\s+not|don't|never)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:web\s+(?:search|fetch)|web_search|web_fetch))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
+  /\b(?:(?:do\s+not|don't|never)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
