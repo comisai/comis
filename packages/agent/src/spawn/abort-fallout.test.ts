@@ -44,6 +44,22 @@ describe("selectOrphanedChildRuns", () => {
       expect(selectOrphanedChildRuns("parent", endReason, runs).length, endReason).toBe(2);
     }
   });
+
+  it("preserves a routed child while cancelling a child with no announcement route", () => {
+    const routedAndUnrouted = [
+      {
+        runId: "routed-child",
+        status: "running",
+        parentRunId: "parent",
+        announceChannelType: "gateway",
+        announceChannelId: "conversation_a",
+      },
+      { runId: "unrouted-child", status: "running", parentRunId: "parent" },
+    ];
+
+    expect(selectOrphanedChildRuns("parent", "timeout", routedAndUnrouted))
+      .toEqual(["unrouted-child"]);
+  });
 });
 
 /**
