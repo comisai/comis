@@ -91,6 +91,8 @@ Your main configuration file. The daemon reads it at every startup. You edit thi
 
 A copy of `config.yaml` snapshotted after every successful daemon startup. If the daemon crashes on boot, this file lets you roll back.
 
+Before copying, the daemon refuses configurations containing plaintext secrets. Valid 64-hex SHA-256 pins under `agents.*.skills.terminal.allow[].match.hash` are integrity metadata rather than credentials, so they remain in the recovery snapshot; secret-shaped or malformed values in the same field are still rejected.
+
 **Written by:** the daemon automatically, after logging "Comis daemon started".
 **Safe to delete?** Yes. The next successful start re-creates it. You lose the ability to roll back until then.
 

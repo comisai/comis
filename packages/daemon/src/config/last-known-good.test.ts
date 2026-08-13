@@ -351,6 +351,32 @@ describe("last-known-good config", () => {
       expect(readFileSync(result.path, "utf-8")).toBe(configWithIntegrityPin);
     });
 
+    it("still refuses a secret-shaped terminal hash value that is not SHA-256", () => {
+      const configWithSecret = yamlStringify({
+        agents: {
+          default: {
+            skills: {
+              terminal: {
+                allow: [{
+                  id: "invalid-pin",
+                  match: {
+                    path: "/usr/bin/example",
+                    hash: "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                  },
+                }],
+              },
+            },
+          },
+        },
+      });
+      writeFileSync(configPath, configWithSecret);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(false);
+      expect(existsSync(result.path)).toBe(false);
+    });
+
     it("returns { saved: false } when source config contains plaintext Authorization header secret", () => {
       const configWithSecret = yamlStringify({
         integrations: {

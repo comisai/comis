@@ -28,6 +28,51 @@ import { withAuditHookSync } from "./audit-hook.js";
 
 /** Suffix appended to the config filename for the last-known-good snapshot. */
 const LKG_SUFFIX = ".last-good.yaml";
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/iu;
+
+interface ConfigNode {
+  readonly agents?: unknown;
+  readonly skills?: unknown;
+  readonly terminal?: unknown;
+  readonly allow?: unknown;
+  readonly match?: unknown;
+  hash?: unknown;
+}
+
+function configNode(value: unknown): ConfigNode | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as ConfigNode
+    : undefined;
+}
+
+/**
+ * Mask only schema-defined terminal executable SHA-256 pins for the validation scan.
+ *
+ * A digest has the same entropy profile as a credential, but it is public integrity
+ * metadata and must survive in the snapshot. Non-hex or wrong-length values remain
+ * unmasked so a secret placed in the permissive string field is still rejected.
+ * The source object and copied YAML are never modified.
+ */
+function maskTerminalIntegrityPins(source: unknown): unknown {
+  const masked = structuredClone(source);
+  const agents = configNode(masked)?.agents;
+  if (agents === null || typeof agents !== "object" || Array.isArray(agents)) return masked;
+
+  for (const agent of Object.values(agents)) {
+    const skills = configNode(configNode(agent)?.skills);
+    const terminal = configNode(skills?.terminal);
+    const allow = terminal?.allow;
+    if (!Array.isArray(allow)) continue;
+
+    for (const entry of allow) {
+      const match = configNode(configNode(entry)?.match);
+      if (typeof match?.hash === "string" && SHA256_HEX_PATTERN.test(match.hash)) {
+        match.hash = "";
+      }
+    }
+  }
+  return masked;
+}
 
 /**
  * Derive the last-known-good path from a config path.
@@ -73,7 +118,7 @@ export function saveLastKnownGood(
   // `cp config.last-good.yaml config.yaml`.
   try {
     const sourceObj = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
-    if (scanForSecrets(sourceObj).length > 0) {
+    if (scanForSecrets(maskTerminalIntegrityPins(sourceObj)).length > 0) {
       // Emit WARN so operators know the LKG snapshot was skipped and why.
       // The secret path is included as context but the VALUE is never logged.
       logger?.warn(
