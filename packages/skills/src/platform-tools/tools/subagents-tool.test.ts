@@ -107,7 +107,8 @@ describe("subagents tool", () => {
 
   it("caps an explicit wait at the prompt-derived progress heartbeat", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
-    const tool = createSubagentsTool(mockRpcCall, undefined, { waitHeartbeatMs: 60_000 });
+    const logger = { debug: vi.fn(), info: vi.fn() };
+    const tool = createSubagentsTool(mockRpcCall, logger, { waitHeartbeatMs: 60_000 });
 
     await tool.execute("call-wait-capped", {
       action: "wait",
@@ -117,6 +118,26 @@ describe("subagents tool", () => {
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
       { timeoutMs: 60_000 },
+      { signal: undefined },
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedTimeoutMs: 300_000,
+        effectiveTimeoutMs: 60_000,
+      }),
+      "Subagent completion wait started",
+    );
+  });
+
+  it("bounds a default wait at the prompt-derived progress heartbeat", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
+    const tool = createSubagentsTool(mockRpcCall, undefined, { waitHeartbeatMs: 45_000 });
+
+    await tool.execute("call-wait-default-capped", { action: "wait" } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith(
+      "subagent.wait",
+      { timeoutMs: 45_000 },
       { signal: undefined },
     );
   });

@@ -264,7 +264,9 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
     {
       name: "subagents",
       category: "agent",
-      build: (ctx) => createSubagentsTool(ctx.rpcCall as never, ctx.skillsLogger),
+      build: (ctx) => createSubagentsTool(ctx.rpcCall as never, ctx.skillsLogger, {
+        waitHeartbeatMs: ctx.backgroundTaskWaitHeartbeatMs,
+      }),
     },
 
     // ---- background ----
