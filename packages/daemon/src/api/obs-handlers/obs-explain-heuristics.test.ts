@@ -36,6 +36,28 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 }
 
 describe("obs-explain-heuristics", () => {
+  it("identifies scheduler evidence replacement as the delivered-response cause", () => {
+    const result = rootCause(makeSignals({
+      endReason: "success",
+      recoveries: {
+        total: 1,
+        succeeded: 1,
+        byReason: { missing_scheduler_state_evidence: 1 },
+      },
+    }));
+
+    expect(result).toEqual({
+      code: "scheduler_state_evidence_grounding",
+      detail:
+        "the scheduler-state evidence guard replaced the model response because no successful current-turn cron receipt supported the detected claim",
+      suggestedNextSteps: [
+        "compare the original session response with the delivered message to confirm the deterministic replacement",
+        "inspect the response-grounding scheduler claim matcher when the original response contains no reminder or scheduled-job claim",
+        "use a successful current-turn cron list or status receipt before affirming mutable scheduler state",
+      ],
+    });
+  });
+
   it("prefers an MCP credential failure code over its downstream breaker symptom", () => {
     const r = rootCause(
       makeSignals({
