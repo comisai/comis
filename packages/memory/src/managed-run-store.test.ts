@@ -776,6 +776,59 @@ describe("createSqliteManagedRunStore durable state machine", () => {
     })).value?.kind).toBe("cursor_mismatch");
   });
 
+  it("settles a failed reduced interval without immediate replay", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord())).ok).toBe(true);
+    await activate(store);
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput())).ok).toBe(true);
+    const claim = {
+      managedRunId: "managed-run_a",
+      claimId: "continuation-claim_failed_interval",
+      throughReportSequence: 1,
+      claimedAtMs: 1_800_000_000_200,
+      expiresAtMs: 1_800_000_060_200,
+    };
+    expect((await store.claimContinuation(OWNER_SCOPE, claim)).value?.kind).toBe("claimed");
+    expect((await store.commitReducedState(OWNER_SCOPE, {
+      managedRunId: claim.managedRunId,
+      claimId: claim.claimId,
+      throughReportSequence: claim.throughReportSequence,
+      status: "unknown",
+      statusReason: "service_state_unavailable",
+      committedAtMs: 1_800_000_000_300,
+    })).value?.kind).toBe("updated");
+    expect((await store.markContinuationOutcome(OWNER_SCOPE, {
+      managedRunId: claim.managedRunId,
+      claimId: claim.claimId,
+      outcome: "failed",
+      recordedAtMs: 1_800_000_000_400,
+    })).value?.kind).toBe("updated");
+    expect(await store.get(OWNER_SCOPE, claim.managedRunId)).toMatchObject({
+      ok: true,
+      value: {
+        lastAcceptedReportSequence: 1,
+        lastReducedReportSequence: 1,
+        pendingContinuation: false,
+        status: "unknown",
+      },
+    });
+
+    expect((await store.appendReportAndAdvanceAcceptedCursor(SERVICE_SCOPE, reportInput({
+      serviceReportId: "service-report_after_failure",
+      contentRef: "report-content_after_failure",
+      contentHash: "e".repeat(64),
+      receivedAtMs: 1_800_000_000_500,
+      retainedUntilMs: 1_802_592_000_500,
+    }))).value?.kind).toBe("accepted");
+    expect((await store.claimContinuation(OWNER_SCOPE, {
+      ...claim,
+      claimId: "continuation-claim_after_failure",
+      throughReportSequence: 2,
+      claimedAtMs: 1_800_000_000_600,
+      expiresAtMs: 1_800_000_060_600,
+    })).value?.kind).toBe("claimed");
+  });
+
   it("validates terminal and workspace binding ownership before durable mutation", async () => {
     const store = createSqliteManagedRunStore(db);
     expect((await store.create(makeRecord())).ok).toBe(true);
