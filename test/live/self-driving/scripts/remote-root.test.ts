@@ -737,6 +737,53 @@ describe("local rig mode", () => {
     expect(probe.stdout.trim()).toBe("selected|48");
   });
 
+  it("resolves the selected remote gateway secret ahead of a stale rendered token", () => {
+    const directory = makeCanonicalTempDirectory("comis-remote-rpc-secret-");
+    const data = resolve(directory, "isolated-data");
+    const packageRoot = resolve(directory, "installed-comis");
+    const cliPath = resolve(packageRoot, "node_modules/@comis/cli/dist/cli.js");
+    mkdirSync(dirname(cliPath), { recursive: true });
+    mkdirSync(data, { recursive: true });
+    writeFileSync(
+      cliPath,
+      [
+        "#!/usr/bin/env node",
+        'if (process.argv.slice(2).join(" ") !== "secrets get --offline COMIS_GATEWAY_TOKEN") process.exit(2);',
+        `process.stdout.write(${JSON.stringify("a".repeat(48))});`,
+      ].join("\n"),
+    );
+
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          `const { ensureRpcEnv } = await import(${JSON.stringify(pathToFileURL(RIG_NODE_HELPER).href)});`,
+          "ensureRpcEnv();",
+          "const resolved = process.env.COMIS_GATEWAY_TOKEN ?? '';",
+          "console.log(`${resolved === process.env.GWTOKEN ? 'stale' : 'selected'}|${resolved.length}`);",
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          RIG_MODE: "remote",
+          RIG_ENV: resolve(directory, "selected.rig-env"),
+          COMIS_DATA_DIR: data,
+          COMIS_CONFIG_PATHS: resolve(data, "config.yaml"),
+          PKG: packageRoot,
+          GWTOKEN: "f".repeat(48),
+          COMIS_GATEWAY_TOKEN: "",
+        },
+      },
+    );
+
+    expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
+    expect(probe.stdout.trim()).toBe("selected|48");
+  });
+
   it("validates the authoritative config before any local rig mutation", () => {
     const source = readFileSync(LOCAL_UP, "utf8");
     const configGuard = source.indexOf('node "$HERE/local-config.mjs" validate');
