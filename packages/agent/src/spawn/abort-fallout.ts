@@ -72,10 +72,16 @@ export function liveChildRunIds(
   return live;
 }
 
-/** What a timed-out run was doing when its deadline fired. */
+/** Authoritative runtime facts that choose an abort's remediation hint. */
 export interface AbortEvidence {
   /** Child runs still being awaited at the deadline. */
   readonly awaitedChildRunIds?: readonly string[];
+  /** Authoritative step ceiling retained by the executor on a max-steps halt. */
+  readonly stepLimit?: {
+    readonly bindingKnob: string;
+    readonly stepsExecuted: number;
+    readonly cap: number;
+  };
 }
 
 const TIMEOUT_KNOB_HINT =

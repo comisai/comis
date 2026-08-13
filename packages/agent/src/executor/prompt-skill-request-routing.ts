@@ -12,20 +12,23 @@ const MIN_SHARED_TERMS = 2;
 /**
  * Disclosure and ENFORCEMENT are separate decisions. Routing at
  * `MIN_SHARED_TERMS` only decorates the read tool with a skill location, which
- * costs nothing when the guess is wrong. A skill's web-evidence floor is a
- * completion REQUIREMENT: unmet receipts end the turn as a tool-invocation
- * stall and the model's answer is discarded. A broad description ("understand",
- * "explain", "reports", "documentation", …) shares the bare two-term minimum
- * with ordinary local-context prose, so that weakest admissible signal must not
- * arm a destructive floor — above it, the request is speaking the skill's own
- * vocabulary, and naming the skill outright always clears it.
+ * costs nothing when the guess is wrong. A skill's required binary workflow or
+ * web-evidence floor is a completion REQUIREMENT: unmet receipts end the turn as
+ * a tool-invocation stall and the model's answer is discarded. A broad
+ * description ("understand", "explain", "reports", "documentation", …) shares
+ * the bare two-term minimum with ordinary local-context prose, so that weakest
+ * admissible signal must not arm a destructive workflow — above it, the request
+ * is speaking the skill's own vocabulary, and naming the skill outright always
+ * clears it.
  */
-const MIN_EVIDENCE_FLOOR_SHARED_TERMS = MIN_SHARED_TERMS + 1;
+const MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS = MIN_SHARED_TERMS + 1;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
 const PRIOR_REQUEST_REFERENCE_PATTERN =
   /\b(?:again|continue|earlier|former|it|its|latter|one|ones|previous|same|something|that|them|these|this|those)\b/iu;
 const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
+const WEB_EVIDENCE_EXCLUSION_PATTERN =
+  /\b(?:(?:do\s+not|don't|never)\s+(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -72,6 +75,16 @@ function terms(text: string): Set<string> {
     text.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)
       ?.filter((term) => term.length >= 3 && !ROUTING_STOPWORDS.has(term)) ?? [],
   );
+}
+
+/** Exclude quoted payloads and code literals from the caller's own skill intent. */
+function routingIntentText(text: string): string {
+  return text
+    .replace(/`[^`\n]+`/gu, " ")
+    .replace(
+      /(^|[\s,:=([])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
+      "$1",
+    );
 }
 
 /** Retain preceding context only when the current wording refers back to it. */
@@ -142,9 +155,9 @@ export function applyPromptSkillRequestRouting(
   // memory recall. Lexical overlap must not turn it into a task procedure.
   if (CONVERSATION_HISTORY_RECALL_PATTERN.test(input.currentRequestText)) return [];
   const currentText = input.currentRequestText.toLocaleLowerCase();
-  const currentTerms = terms(currentText);
+  const currentTerms = terms(routingIntentText(currentText));
   const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
-  const relevanceTerms = terms(relevanceText);
+  const relevanceTerms = terms(routingIntentText(relevanceText));
   const selectedEntries = input.skills
     .map((skill) => ({
       skill,
@@ -185,31 +198,42 @@ export function applyPromptSkillRequestRouting(
     return [];
   }
 
-  deferral.requestRelevantPromptSkillNames = selected;
-  deferral.requestRelevantPromptSkillLocations = selectedLocations;
   const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
-  // An evidence floor is only enforceable when the tool that mints its receipts
-  // is actually reachable this turn AND the current request matched the skill
-  // above the bare disclosure minimum. Declaring an unreachable floor leaves the
-  // completion gate permanently unsatisfiable, and arming one on incidental
-  // description overlap discards a correct answer; both end the turn with the
-  // model's reply thrown away.
-  const evidenceFloorsEnforceable =
-    (selectedEntries[0]?.currentScore ?? 0) >= MIN_EVIDENCE_FLOOR_SHARED_TERMS;
+  // Required workflows are only enforceable when the current request matched the
+  // skill above the bare disclosure minimum. Evidence floors additionally need
+  // the tool that mints their receipts to be reachable. Declaring an unreachable
+  // floor leaves the completion gate permanently unsatisfiable, and arming any
+  // workflow on incidental description overlap discards a correct answer; both
+  // end the turn with the model's reply thrown away.
+  const selectedRequiresWebEvidence = selectedSkills.some(
+    (skill) => skill.minDistinctWebFetchUrls !== undefined
+      || skill.minDistinctWebSearchQueries !== undefined,
+  );
+  // Prompt skills are advisory procedures, so their evidence floors cannot
+  // override an explicit current-turn constraint against that evidence source.
+  // Keep the route visible on `read`, but do not make it a completion gate.
+  const workflowEnforceable =
+    (selectedEntries[0]?.currentScore ?? 0) >= MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS
+    && !(selectedRequiresWebEvidence
+      && WEB_EVIDENCE_EXCLUSION_PATTERN.test(input.currentRequestText));
+  if (workflowEnforceable) {
+    deferral.requestRelevantPromptSkillNames = selected;
+    deferral.requestRelevantPromptSkillLocations = selectedLocations;
+  }
   const minDistinctWebFetchUrls =
-    evidenceFloorsEnforceable && availableToolNames.has("web_fetch")
+    workflowEnforceable && availableToolNames.has("web_fetch")
       ? selectedSkills[0]?.minDistinctWebFetchUrls
       : undefined;
   const minDistinctWebSearchQueries =
-    evidenceFloorsEnforceable && availableToolNames.has("web_search")
+    workflowEnforceable && availableToolNames.has("web_search")
       ? selectedSkills[0]?.minDistinctWebSearchQueries
       : undefined;
   const receiptToolNames = [...new Set([
     ...(minDistinctWebFetchUrls === undefined ? [] : ["web_search", "web_fetch"]),
     ...(minDistinctWebSearchQueries === undefined ? [] : ["web_search"]),
   ])].filter((name) => availableToolNames.has(name));
-  const binaryWorkflowToolNames = selectedSkills.some(
+  const binaryWorkflowToolNames = workflowEnforceable && selectedSkills.some(
     (skill) => (skill.requiredBins?.length ?? 0) > 0,
   )
     && allTools.some((tool) => tool.name === "exec")

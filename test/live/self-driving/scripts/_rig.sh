@@ -432,7 +432,25 @@ rig_daemon_pid() {
     fi
     return 0
   fi
-  pgrep -f "^node .*daemon\.js" 2>/dev/null | head -1
+  # Production units commonly exec an absolute Node path (`/usr/bin/node …`),
+  # so a `^node` process-name probe reports an active systemd daemon as absent.
+  # Prefer the selected unit's authoritative MainPID and validate that it is a
+  # daemon process; retain a path-tolerant fallback for non-systemd rigs.
+  if command -v systemctl >/dev/null 2>&1 && [ -n "${SERVICE:-}" ]; then
+    local _systemd_pid
+    _systemd_pid="$(systemctl show -p MainPID --value "$SERVICE" 2>/dev/null)"
+    case "$_systemd_pid" in
+    '' | 0 | *[!0-9]*) ;;
+    *)
+      if kill -0 "$_systemd_pid" 2>/dev/null \
+        && ps -o command= -p "$_systemd_pid" 2>/dev/null | grep -E '(^|/)node .*daemon\.js' >/dev/null; then
+        printf '%s' "$_systemd_pid"
+        return 0
+      fi
+      ;;
+    esac
+  fi
+  pgrep -f '(^|/)node .*daemon\.js' 2>/dev/null | head -1
 }
 
 # The selected emulator pid, or empty. The wiring path is scoped per local DATA root, so this never

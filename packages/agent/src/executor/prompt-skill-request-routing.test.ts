@@ -34,6 +34,7 @@ function result(): ExcludeDeferralResult {
 }
 
 registerToolMetadata("find", { isReadOnly: true });
+registerToolMetadata("browser", { isReadOnly: true });
 
 type TestPromptSkillCapability = PromptSkillCapability & {
   readonly minDistinctWebFetchUrls?: number;
@@ -102,6 +103,71 @@ describe("prompt skill request routing", () => {
       .toContain("/skills/find-skills/SKILL.md");
   });
 
+  it("does not enforce a binary workflow from incidental skill overlap", () => {
+    const deferral = result();
+    deferral.requestRelevantToolNames.push("browser");
+    const browserRequest = [
+      "Use the browser tool to open https://example.com, navigate to it, take a snapshot,",
+      "and reply with the exact page title plus whether the snapshot succeeded.",
+      "Do not use web_fetch for this preflight.",
+    ].join(" ");
+    const catalogSkill: PromptSkillCapability = {
+      name: "find-skills",
+      description:
+        "MANDATORY: For requests asking whether a skill or specialized capability exists, "
+        + "load this skill and run its catalog workflow before answering. This includes "
+        + "elliptical follow-ups such as 'find something that does' when the preceding turn "
+        + "names the task. Do not answer from general capabilities, search workspace filenames, "
+        + "or use generic web search.",
+      replacesPackages: [],
+      requiredBins: ["git"],
+    };
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: browserRequest,
+      requestRelevanceText: browserRequest,
+      skills: [catalogSkill],
+      locations: new Map([
+        ["/skills/find-skills/SKILL.md", "find-skills"],
+      ]),
+    });
+
+    expect(selected).toEqual(["find-skills"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["browser", "read"]);
+  });
+
+  it("does not enforce a parent skill from a quoted child task", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Delegation reachability test. Use sessions_spawn to start a child whose task is:",
+      "'Use web_search and web_fetch to retrieve the title of https://example.com and report it.'",
+      "On the first spawn deliberately set tool_groups to ['coding'] and required_tools to",
+      "['web_search','web_fetch']. Quote the rejection exactly once. Then follow its re-spawn",
+      "directive, wait for the child to finish, and report both attempts.",
+      "Do not substitute your own research.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn", "read"]);
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
@@ -136,11 +202,38 @@ describe("prompt skill request routing", () => {
         requestRelevantPromptSkillMinDistinctWebSearchQueries?: number;
       }).requestRelevantPromptSkillMinDistinctWebSearchQueries,
     ).toBe(3);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["deep-research"]);
     expect(deferral.requestRelevantPromptSkillLocations).toEqual([
       "/skills/deep-research/SKILL.md",
     ]);
     expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
       .toContain("/skills/deep-research/SKILL.md");
+  });
+
+  it("does not enforce web evidence when the current request excludes web sources", () => {
+    const deferral = result();
+    const currentRequestText = [
+      "Yahoo Finance evidence research for MSFT using the connected yfinance MCP.",
+      "Retrieve the current quote, history, key statistics, financials, earnings,",
+      "and recommendations. State data timestamps, separate retrieved values from",
+      "interpretation, and report unavailable datasets honestly. Do not use web sources.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
   });
 
   // A floor whose receipt tool is unreachable can never be met, so the
@@ -193,9 +286,10 @@ describe("prompt skill request routing", () => {
     });
 
     expect(selected).toEqual(["deep-research"]);
-    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
-      "/skills/deep-research/SKILL.md",
-    ]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
+      .toContain("/skills/deep-research/SKILL.md");
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(
       (deferral as ExcludeDeferralResult & {

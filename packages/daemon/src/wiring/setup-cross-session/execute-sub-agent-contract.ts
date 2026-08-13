@@ -74,4 +74,4 @@ export type ExecuteSubAgentFn = (
   providerLifecycle?: {
     onProviderStart(): Result<void, Error>;
   },
-) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind" | "errorContext"> & { workspaceDir: string }>;
+) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "stepLimit" | "toolCallHistory" | "terminalErrorKind" | "errorContext"> & { workspaceDir: string }>;

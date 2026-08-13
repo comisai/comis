@@ -112,7 +112,9 @@ export function classifyAbortReason(
     case "max_steps":
       return {
         category: "step_limit",
-        hint: "Raise security.agentToAgent.subAgentMaxSteps (a spawn's own max_steps is clamped to it), or simplify the task",
+        hint: evidence?.stepLimit === undefined
+          ? "Inspect comis explain <runId> for the binding max_steps limit, then increase that exact knob or simplify the task"
+          : `Increase ${evidence.stepLimit.bindingKnob} above ${String(evidence.stepLimit.cap)}, or simplify the task`,
         severity: "actionable",
       };
     case "loop_detected":
