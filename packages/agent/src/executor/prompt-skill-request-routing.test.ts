@@ -34,6 +34,7 @@ function result(): ExcludeDeferralResult {
 }
 
 registerToolMetadata("find", { isReadOnly: true });
+registerToolMetadata("browser", { isReadOnly: true });
 
 type TestPromptSkillCapability = PromptSkillCapability & {
   readonly minDistinctWebFetchUrls?: number;
@@ -100,6 +101,41 @@ describe("prompt skill request routing", () => {
     ]);
     expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
       .toContain("/skills/find-skills/SKILL.md");
+  });
+
+  it("does not enforce a binary workflow from incidental skill overlap", () => {
+    const deferral = result();
+    deferral.requestRelevantToolNames.push("browser");
+    const browserRequest = [
+      "Use the browser tool to open https://example.com, navigate to it, take a snapshot,",
+      "and reply with the exact page title plus whether the snapshot succeeded.",
+      "Do not use web_fetch for this preflight.",
+    ].join(" ");
+    const catalogSkill: PromptSkillCapability = {
+      name: "find-skills",
+      description:
+        "MANDATORY: For requests asking whether a skill or specialized capability exists, "
+        + "load this skill and run its catalog workflow before answering. This includes "
+        + "elliptical follow-ups such as 'find something that does' when the preceding turn "
+        + "names the task. Do not answer from general capabilities, search workspace filenames, "
+        + "or use generic web search.",
+      replacesPackages: [],
+      requiredBins: ["git"],
+    };
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: browserRequest,
+      requestRelevanceText: browserRequest,
+      skills: [catalogSkill],
+      locations: new Map([
+        ["/skills/find-skills/SKILL.md", "find-skills"],
+      ]),
+    });
+
+    expect(selected).toEqual(["find-skills"]);
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillWorkflowContext).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["browser", "read"]);
   });
 
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
