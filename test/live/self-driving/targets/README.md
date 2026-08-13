@@ -19,6 +19,8 @@ Runtime-contract and worked-example targets:
 - `MEMORY-LEARNING-STRESS-CATALOG.md` — neutral memory and learning workloads.
 - `adaptive-threat-hunting.md` — learning-loop stress over a security-ops workload.
 - `deep-research-delegation-stress.md` — background-task and sub-agent lifecycle stress over a fan-out research workload: ceilings, a waiting parent, partial source failure, delivery uncertainty.
+- `devcrew-fullstack-developer.md` — compact Comis + `comis-dev-crew` E0 acceptance over one backend lane, one frontend lane, and one scout.
+- `devcrew-multi-project-development.md` — comprehensive Comis + `comis-dev-crew` portfolio campaign on the `comis-dev` box: four monorepo projects, eight mixed development tasks, bounded Codex/Claude concurrency, failure injection, cross-candidate integration, verified PR handoff, and safe cleanup.
 
 Pinned marathon campaigns (multi-day, whole-system drives from one deployment corner each):
 
