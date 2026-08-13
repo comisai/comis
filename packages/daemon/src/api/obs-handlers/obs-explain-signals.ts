@@ -556,6 +556,33 @@ function handleEventRecord(
           acc.stepLimit = { bindingKnob, stepsExecuted, cap };
         }
       }
+      const loop = (data as { loopEvidence?: Record<string, unknown> }).loopEvidence;
+      if (loop && typeof loop === "object") {
+        const kind = asString(loop.lastNoProgressKind);
+        const repeatedToolName = asString(loop.repeatedToolName);
+        const consecutiveNoProgress = asNumber(loop.consecutiveNoProgress);
+        const threshold = asNumber(loop.threshold);
+        const duplicateCallCount = asNumber(loop.duplicateCallCount);
+        const stagnantResultCount = asNumber(loop.stagnantResultCount);
+        const validKind = kind === undefined
+          || kind === "cached_read"
+          || kind === "failed_call"
+          || kind === "identical_success";
+        const validCounts = consecutiveNoProgress !== undefined && consecutiveNoProgress >= 0
+          && threshold !== undefined && threshold > 0
+          && duplicateCallCount !== undefined && duplicateCallCount >= 0
+          && stagnantResultCount !== undefined && stagnantResultCount >= 0;
+        if (validKind && validCounts) {
+          acc.loopEvidence = {
+            ...(kind !== undefined ? { lastNoProgressKind: kind } : {}),
+            ...(repeatedToolName !== undefined ? { repeatedToolName } : {}),
+            consecutiveNoProgress,
+            threshold,
+            duplicateCallCount,
+            stagnantResultCount,
+          };
+        }
+      }
       return;
     }
     // Fold learning-family records → the learning block —
@@ -875,6 +902,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
+    ...(acc.loopEvidence !== undefined ? { loopEvidence: acc.loopEvidence } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a
     // reader does not misread a multi-turn count as this-turn. Absent for a 1-turn session.

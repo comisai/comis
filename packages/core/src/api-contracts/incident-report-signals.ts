@@ -22,6 +22,7 @@ import type {
 } from "./incident-report-sections.js";
 import type { ResponseLocaleRepairSkipped } from "../domain/response-locale-policy.js";
 import type { ErrorKind } from "../logging/log-fields.js";
+import type { LoopEvidence } from "../event-bus/events-messaging.js";
 
 /**
  * A single normalized failure entry the assembler emits (and the bounding
@@ -63,7 +64,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 32 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 33 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -358,6 +359,8 @@ export interface IncidentSignals {
    * despite the trajectory carrying the limb.
    */
   abortReason?: string;
+  /** Bounded content-free evidence from the loop detector that emitted the abort. */
+  loopEvidence?: LoopEvidence;
   /**
    * The report's authoritative `outcome.degraded` flag (derived by the
    * assembler from the closed HARD_FAILURE/DEGRADED end-reason sets), threaded by

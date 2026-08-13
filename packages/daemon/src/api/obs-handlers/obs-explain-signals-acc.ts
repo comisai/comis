@@ -204,6 +204,8 @@ export interface Acc {
   perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
   /** Exact configured step ceiling from the terminal max-steps abort. */
   stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
+  /** Bounded content-free evidence from the loop detector's terminal abort. */
+  loopEvidence?: IncidentSignals["loopEvidence"];
   /** The LAST `activity.turn_finalized` record — the terminal user-surface
    *  state (strategy + effective outcome + reclassified flag). Content-free. */
   turnFinalized?: {

@@ -33,6 +33,7 @@ import { providerRejectedRequestVerdict } from "./obs-explain-provider-rejection
 import {
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionNoProgressLoopVerdict,
   executionTerminalFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
@@ -46,11 +47,9 @@ import {
   nodeBudgetExceededVerdict,
   spawnCeilingVerdict,
 } from "./obs-explain-spawn-ceiling-verdict.js";
-
 // ---------------------------------------------------------------------------
 // Public shape: matches IncidentReport.likelyRootCause 1:1.
 // ---------------------------------------------------------------------------
-
 /**
  * A deterministic root-cause verdict. Shape-identical to
  * `IncidentReport.likelyRootCause` so the handler can assign it directly.
@@ -814,6 +813,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     obs-explain-recall-verdict.ts module doc).
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
+  executionNoProgressLoopVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened

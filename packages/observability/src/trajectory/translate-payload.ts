@@ -550,6 +550,7 @@ export function translatePayload(
         // limb/unit strings + 2 numbers) so `explain` names the exact tripped knob.
         ...(payload.perRootBudget !== undefined ? { perRootBudget: payload.perRootBudget } : {}),
         ...(payload.stepLimit !== undefined ? { stepLimit: payload.stepLimit } : {}),
+        ...(payload.loopEvidence !== undefined ? { loopEvidence: payload.loopEvidence } : {}),
       };
 
     case "execution:budget_warning":

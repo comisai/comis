@@ -12,6 +12,26 @@ import type {
   SubAgentLifecycleEndedEvent,
 } from "../domain/subagent-context-types.js";
 
+/** Closed cause of the most recent no-progress step in a detected loop. */
+export type LoopNoProgressKind =
+  | "cached_read"
+  | "failed_call"
+  | "identical_success";
+
+/**
+ * Fixed-shape, content-free evidence captured by the authoritative per-turn
+ * loop detector. Counts saturate at `threshold`; arguments and results never
+ * cross the event boundary.
+ */
+export interface LoopEvidence {
+  lastNoProgressKind?: LoopNoProgressKind;
+  repeatedToolName?: string;
+  consecutiveNoProgress: number;
+  threshold: number;
+  duplicateCallCount: number;
+  stagnantResultCount: number;
+}
+
 /**
  * MessagingEvents: Message lifecycle, session, compaction, context, response, and command events.
  *
@@ -675,6 +695,8 @@ export interface MessagingEvents {
     perRootBudget?: { limb: string; spent: number; attempted?: number; cap: number; unit: string };
     /** Exact agent step ceiling that stopped this execution. */
     stepLimit?: { bindingKnob: string; stepsExecuted: number; cap: number };
+    /** Bounded detector-owned evidence for a no-progress loop. */
+    loopEvidence?: LoopEvidence;
   };
 
   /** Budget trajectory warning: approaching token budget exhaustion */

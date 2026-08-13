@@ -5,6 +5,8 @@ export { TypedEventBus, emitObservationalEventSafely } from "../event-bus/index.
 export type {
   EventHandler,
   EventMap,
+  LoopEvidence,
+  LoopNoProgressKind,
   MessagingEvents,
   AgentEvents,
   // ModelEvents (model:*/provider:* lifecycle) lives in its own domain file but

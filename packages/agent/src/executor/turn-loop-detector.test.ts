@@ -16,7 +16,7 @@ import { createTurnLoopDetector } from "./turn-loop-detector.js";
 describe("createTurnLoopDetector", () => {
   it("reports bounded content-free evidence for an identical successful-call loop", () => {
     const detector = createTurnLoopDetector();
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 10; i++) {
       detector.recordCall(
         "mcp__records--list_current",
         { page_number: 1, page_size: 10 },
