@@ -244,6 +244,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "delivery.aborted",
   "activity.turn_finalized",
   "execution.recovery_attempted",
+  "tool.discovery_activation",
 
   // Lifecycle envelopes. Direct-emit by the agent executor — NOT via the
   // EventBus bridge.

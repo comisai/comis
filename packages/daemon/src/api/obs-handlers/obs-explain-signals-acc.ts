@@ -247,6 +247,7 @@ export interface Acc {
     groundedResponsePreservedCount?: number;
     successfulReceiptsOutsideRoute?: number;
   };
+  discoveryActivation?: NonNullable<IncidentSignals["discoveryActivation"]>;
   /** Σ of the session's `session.summary` records' costUsd (one record per
    *  execution) — the trajectory-derived session cost the assembler prefers
    *  over the last-write-wins sessionEnd rollup. Absent ⇒ no summary records. */
@@ -355,6 +356,21 @@ export interface Acc {
   mediaAttachmentRejections: NonNullable<
     IncidentSignals["mediaAttachmentRejections"]
   >;
+}
+
+/** Accumulate one content-free discovery-to-activation reconciliation receipt. */
+export function accumulateDiscoveryActivation(acc: Acc, data: Record<string, unknown>): void {
+  const previous = acc.discoveryActivation ?? {
+    displayedCount: 0, activatedCount: 0, replacedCount: 0, skippedCount: 0, failedCount: 0,
+  };
+  const count = (value: unknown): number => Math.max(0, Math.trunc(asNumber(value) ?? 0));
+  acc.discoveryActivation = {
+    displayedCount: previous.displayedCount + count(data.displayedCount),
+    activatedCount: previous.activatedCount + count(data.activatedCount),
+    replacedCount: previous.replacedCount + count(data.replacedCount),
+    skippedCount: previous.skippedCount + count(data.skippedCount),
+    failedCount: previous.failedCount + count(data.failedCount),
+  };
 }
 
 /**

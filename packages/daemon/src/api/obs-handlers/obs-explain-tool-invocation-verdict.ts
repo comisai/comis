@@ -7,6 +7,28 @@ interface RootCause {
   suggestedNextSteps: string[];
 }
 
+/** Diagnose an explicit displayed-to-activated deferred-tool mismatch. */
+export function discoveredToolNotActivatedVerdict(
+  signals: IncidentSignals,
+): RootCause | null {
+  const activation = signals.discoveryActivation;
+  if (activation === undefined || activation.displayedCount <= activation.activatedCount) {
+    return null;
+  }
+  return {
+    code: "discovered_tool_not_activated",
+    detail:
+      `deferred tool activation mismatch: displayed=${String(activation.displayedCount)}, `
+      + `activated=${String(activation.activatedCount)}, replaced=${String(activation.replacedCount)}, `
+      + `skipped=${String(activation.skippedCount)}, failed=${String(activation.failedCount)}`,
+    suggestedNextSteps: [
+      "inspect the discovery activation record beside the discover_tools result",
+      "verify displayed deferred tools replace placeholders in the live callable set",
+      "obs.explain depth=full",
+    ],
+  };
+}
+
 /** Diagnose a user-visible recovery handoff that discarded grounded evidence. */
 export function groundedResponseReplacementVerdict(
   signals: IncidentSignals,

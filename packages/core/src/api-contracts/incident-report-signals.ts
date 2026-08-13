@@ -524,6 +524,14 @@ export interface IncidentSignals {
     groundedResponsePreservedCount?: number;
     successfulReceiptsOutsideRoute?: number;
   };
+  /** Counts-only deferred-tool reconciliation outcomes. */
+  discoveryActivation?: {
+    displayedCount: number;
+    activatedCount: number;
+    replacedCount: number;
+    skippedCount: number;
+    failedCount: number;
+  };
   /**
    * Σ of the session's `session.summary` records' `turnCount` — the
    * trajectory-derived turn total, preferred for `timing.turnCount` over the

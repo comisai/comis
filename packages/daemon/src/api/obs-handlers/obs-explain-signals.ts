@@ -21,7 +21,7 @@ import {
   accumulateContextRecord, accumulatePromptRequestRecord, parsePromptTimeoutRecord, parseWakeGateRecord,
   readSkillAvailability,
 } from "./obs-explain-signal-folds.js";
-import { accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
+import { accumulateDiscoveryActivation, accumulateOauthRefreshFailure, ensureTool, handleLogRecord, summarizeToolStats, type Acc } from "./obs-explain-signals-acc.js";
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
@@ -35,7 +35,6 @@ function nonnegativeInteger(value: unknown): number {
   const parsed = asNumber(value);
   return parsed !== undefined && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
-// ---------------------------------------------------------------------------
 // Per-shape record handlers.
 // ---------------------------------------------------------------------------
 function handleEventRecord(
@@ -479,6 +478,9 @@ function handleEventRecord(
       acc.recoveries = prev;
       return;
     }
+    case "tool.discovery_activation":
+      accumulateDiscoveryActivation(acc, data);
+      return;
     case "execution.replay_recovered": {
       // Count this signed-replay outcome with the other model re-entry recoveries.
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
@@ -901,6 +903,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
+    ...(acc.discoveryActivation !== undefined ? { discoveryActivation: acc.discoveryActivation } : {}),
     ...(acc.abortReason !== undefined ? { abortReason: acc.abortReason } : {}),
     ...(acc.loopEvidence !== undefined ? { loopEvidence: acc.loopEvidence } : {}),
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats

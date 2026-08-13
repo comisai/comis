@@ -1146,6 +1146,10 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "tool:executed": { toolName: "x", toolCallId: "tc-1", durationMs: 1, success: true, timestamp: 0 },
     "tool:timeout": { toolName: "x", toolCallId: "tc-1", timeoutMs: 1000, timestamp: 0 },
     "tool:policy_filtered": { profile: "default", filtered: ["tool-a"] },
+    "tool:discovery_activation": {
+      displayedCount: 1, activatedCount: 1, replacedCount: 1,
+      skippedCount: 0, failedCount: 0, timestamp: 0,
+    },
     "tool:breaker_opened": { toolName: "x", consecutiveFailures: 5, errorTag: "spawn_enoent", reason: "tool_failure_threshold", seq: 1, timestamp: 0 },
     "tool:breaker_reset": { toolName: "x", reason: "success", seq: 1, timestamp: 0 },
     "tool:result_offloaded": { toolName: "x", toolCallId: "tc-1", originalChars: 42_000, diskPathRel: "tool-results/tc-1.json", timestamp: 0 },
@@ -4676,7 +4680,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(146);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(147);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -37,7 +37,7 @@ import {
   executionTerminalFailureVerdict,
   recallMissVerdict,
 } from "./obs-explain-recall-verdict.js"; // terminal execution / recall verdicts (sibling — subdir cap)
-import { groundedResponseReplacementVerdict, toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
+import { discoveredToolNotActivatedVerdict, groundedResponseReplacementVerdict, toolInvocationStallVerdict } from "./obs-explain-tool-invocation-verdict.js";
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
 import { orchestrateFailedVerdict } from "./obs-explain-orchestrate-verdict.js"; // failed orchestrate run (sibling — subdir cap)
@@ -981,7 +981,6 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       ],
     };
   },
-
   //  N) fresh_tail_origin_lost — DEAD LAST. A context-shaping advisory, not a
   //     terminal cause: every acute verdict above out-ranks it.
   freshTailOriginLostVerdict,
@@ -990,6 +989,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 export function rootCause(s: IncidentSignals): RootCause | null {
   const replacement = groundedResponseReplacementVerdict(s);
   if (replacement !== null) return replacement;
+  const activation = discoveredToolNotActivatedVerdict(s); if (activation !== null) return activation;
   if (s.endReason === "success" && s.degraded === false) return null;
   for (const h of HEURISTICS) {
     const r = h(s);

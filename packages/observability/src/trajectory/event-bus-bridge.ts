@@ -55,6 +55,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "tool:executed": "tool.result",
   "tool:timeout": "tool.timeout",
   "tool:policy_filtered": "tool.policy_filtered",
+  "tool:discovery_activation": "tool.discovery_activation",
   // Breaker transitions.
   "tool:breaker_opened": "tool.breaker_opened",
   "tool:breaker_reset": "tool.breaker_reset",

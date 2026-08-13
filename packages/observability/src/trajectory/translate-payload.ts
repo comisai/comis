@@ -20,7 +20,6 @@
  *
  * @module
  */
-
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
 import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
@@ -33,7 +32,6 @@ import { translateVoicePayload } from "./translate-voice-payload.js";
 import { translateSessionSummaryPayload } from "./translate-session-summary.js";
 import { translatePromptPayload } from "./translate-prompt-payload.js";
 import { translateBackgroundTaskPayload } from "./translate-background-task-payload.js";
-
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
  *
@@ -46,7 +44,6 @@ export function translatePayload(
   rawPayload: unknown,
 ): Record<string, unknown> {
   const payload = rawPayload as Record<string, unknown>;
-
   switch (eventName) {
     case "tool:started":
       return {
@@ -598,6 +595,9 @@ export function translatePayload(
           : {}),
       };
 
+    case "tool:discovery_activation":
+      return { displayedCount: payload.displayedCount, activatedCount: payload.activatedCount,
+        replacedCount: payload.replacedCount, skippedCount: payload.skippedCount, failedCount: payload.failedCount };
     case "execution:signed_replay_recovered":
       return {
         blocksRemoved: payload.blocksRemoved,

@@ -687,6 +687,16 @@ export const IncidentReportSchema = z.object({
       successfulReceiptsOutsideRoute: z.number().int().nonnegative().optional(),
     })
     .optional(),
+  /** Counts-only deferred-tool reconciliation outcomes. */
+  discoveryActivation: z
+    .object({
+      displayedCount: z.number().int().nonnegative(),
+      activatedCount: z.number().int().nonnegative(),
+      replacedCount: z.number().int().nonnegative(),
+      skippedCount: z.number().int().nonnegative(),
+      failedCount: z.number().int().nonnegative(),
+    })
+    .optional(),
   /** Protected background-continuation recovery failures associated with this
    *  session. Content-free counts and stable identifiers only. */
   backgroundRecovery: z

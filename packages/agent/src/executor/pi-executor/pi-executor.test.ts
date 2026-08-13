@@ -6822,10 +6822,10 @@ describe("PiExecutor", () => {
         context: { tools: liveTools },
       });
 
-      const activationEventsBeforeProvider = (
+      const activationEventsAfterReconciliation = (
         deps.eventBus.emitSafely as unknown as Mock
       ).mock.calls.filter(([event]) => event === "tool:discovery_activation");
-      expect(activationEventsBeforeProvider).toHaveLength(0);
+      expect(activationEventsAfterReconciliation).toHaveLength(1);
 
       const activatedTools = liveTools.filter(tool => tool.name === summaryTool.name);
       expect(activatedTools).toHaveLength(1);
@@ -6914,6 +6914,16 @@ describe("PiExecutor", () => {
 
       expect(liveTools).toEqual([activeTool]);
       expect(liveTools[0]).toBe(activeTool);
+      const activationEvent = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.find(([event]) => event === "tool:discovery_activation");
+      expect(activationEvent?.[1]).toMatchObject({
+        displayedCount: 1,
+        activatedCount: 1,
+        replacedCount: 0,
+        skippedCount: 1,
+        failedCount: 0,
+      });
     });
 
     it("does NOT skip mid-turn tool injection for Anthropic providers", async () => {
@@ -6940,6 +6950,17 @@ describe("PiExecutor", () => {
       };
 
       await afterToolCall(mockCtx);
+
+      const activationEvent = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.find(([event]) => event === "tool:discovery_activation");
+      expect(activationEvent?.[1]).toMatchObject({
+        displayedCount: 1,
+        activatedCount: 0,
+        replacedCount: 0,
+        skippedCount: 0,
+        failedCount: 1,
+      });
 
       // The skip debug log should NOT have been emitted (handler proceeds past guard)
       const skipCalls = (deps.logger.debug as Mock).mock.calls.filter(

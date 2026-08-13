@@ -2146,10 +2146,21 @@ async function runSessionLocked(
       { discoveredTools?: string[] } | undefined;
     if (!sideEffects?.discoveredTools?.length) return alternative?.override;
 
-    if (!contextTools) return alternative?.override;
+    const displayedTools = [...new Set(
+      sideEffects.discoveredTools.filter((name) => typeof name === "string" && name.length > 0),
+    )];
+    if (displayedTools.length === 0) return alternative?.override;
 
     let injectedCount = 0;
-    for (const name of sideEffects.discoveredTools) {
+    let activatedCount = 0;
+    let replacedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+    for (const name of displayedTools) {
+      if (!contextTools) {
+        failedCount++;
+        continue;
+      }
       const existingIndex = contextTools.findIndex(
         (tool: { name: string }) => tool.name === name,
       );
@@ -2159,11 +2170,18 @@ async function runSessionLocked(
       )?.[DEFERRAL_STUB_MARKER] === true;
       // An active full tool wins. A same-name auto-discovery stub is only a
       // placeholder and must be replaced with the discovered full schema.
-      if (existingIndex >= 0 && !existingIsStub) continue;
+      if (existingIndex >= 0 && !existingIsStub) {
+        activatedCount++;
+        skippedCount++;
+        continue;
+      }
 
       // Look up the full ToolDefinition from deferralResult.deferredEntries
       const entry = deferralResult.deferredEntries.find(e => e.name === name);
-      if (!entry) continue;
+      if (!entry) {
+        failedCount++;
+        continue;
+      }
 
       // Create AgentTool-compatible wrapper and push into the live array.
       // The agentic loop's currentContext.tools is this same array reference,
@@ -2204,10 +2222,12 @@ async function runSessionLocked(
       } as unknown as (typeof contextTools)[0];
       if (existingIndex >= 0) {
         contextTools[existingIndex] = activatedTool;
+        replacedCount++;
       } else {
         contextTools.push(activatedTool);
       }
       injectedCount++;
+      activatedCount++;
     }
 
     if (injectedCount > 0) {
@@ -2216,6 +2236,23 @@ async function runSessionLocked(
         "Mid-turn tool injection -- discovered tools added to live agentic loop",
       );
     }
+
+    const traceId = tryGetContext()?.traceId;
+    emitObservationalEventSafely(
+      { eventBus: deps.eventBus, logger: deps.logger },
+      "tool:discovery_activation",
+      {
+        agentId: agentId ?? config.name,
+        sessionKey: formattedKey,
+        ...(traceId !== undefined ? { traceId } : {}),
+        displayedCount: displayedTools.length,
+        activatedCount,
+        replacedCount,
+        skippedCount,
+        failedCount,
+        timestamp: deps.clock.now(),
+      },
+    );
 
     return alternative?.override;
   };

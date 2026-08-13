@@ -186,6 +186,20 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  /** Counts-only outcome of reconciling displayed deferred tools with the live
+   * callable set. No schemas, arguments, results, or descriptions cross this boundary. */
+  "tool:discovery_activation": {
+    agentId: string;
+    sessionKey: string;
+    traceId?: string;
+    displayedCount: number;
+    activatedCount: number;
+    replacedCount: number;
+    skippedCount: number;
+    failedCount: number;
+    timestamp: number;
+  };
+
   /**
    * Circuit breaker opened for a tool (tool-level total OR error-pattern
    * threshold crossed). Fired by the bridge exactly at the counter
