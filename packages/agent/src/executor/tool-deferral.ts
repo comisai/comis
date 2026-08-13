@@ -1672,7 +1672,7 @@ function findActiveToolMatches(query: string, activeToolNames: ReadonlySet<strin
 
 /**
  * Format matched tool definitions as a `<functions>` block with full JSON schemas,
- * applying server-expansion and co-discovery.
+ * applying explicit co-discovery.
  *
  * Extracted from the inline block in `createDiscoverTool.execute()` so the two
  * return paths (structured + BM25) share one formatter.
@@ -1687,21 +1687,6 @@ function formatDiscoveryResponse(
   sideEffects: { discoveredTools: string[] };
 } {
   const discoveredNames = matches.map(m => m.name);
-
-  // Server-level activation: expand to all tools from same MCP server(s)
-  const serverNames = new Set<string>();
-  for (const name of discoveredNames) {
-    const server = extractMcpServerName(name);
-    if (server) serverNames.add(server);
-  }
-  if (serverNames.size > 0) {
-    for (const entry of deferredEntries) {
-      const server = extractMcpServerName(entry.name);
-      if (server && serverNames.has(server) && !discoveredNames.includes(entry.name)) {
-        discoveredNames.push(entry.name);
-      }
-    }
-  }
 
   // Co-discovery: expand to related tools via ComisToolMetadata.coDiscoverWith
   const coDiscoveryNames: string[] = [];
