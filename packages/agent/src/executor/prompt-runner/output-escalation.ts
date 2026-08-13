@@ -439,60 +439,42 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     requestRelevantPromptSkillWorkflowToolNames: params.requestRelevantPromptSkillWorkflowToolNames ?? [],
     requestRelevantPromptSkillMinDistinctWebFetchUrls: params.requestRelevantPromptSkillMinDistinctWebFetchUrls, requestRelevantPromptSkillMinDistinctWebSearchQueries: params.requestRelevantPromptSkillMinDistinctWebSearchQueries,
     requestRelevantPromptSkillWorkflowContext: params.requestRelevantPromptSkillWorkflowContext,
-    currentSuccessfulMutationCount: () =>
-      (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) =>
-          record.success
-          && classifyToolInvocationMutation(
-            record.toolName,
-            record.action === undefined ? {} : { action: record.action },
-          ) === "mutating",
-      ).length,
+    currentSuccessfulMutationCount: () => (params.bridge.getResult().toolExecResults ?? [])
+      .filter((record) => record.success && classifyToolInvocationMutation(
+        record.toolName,
+        record.action === undefined ? {} : { action: record.action },
+      ) === "mutating").length,
     currentSuccessfulToolCount: (toolNames) => {
-      const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0
-        ? params.requestRelevantPromptSkillWorkflowToolNames
-        : params.requestRelevantToolNames;
+      const completionNames = (params.requestRelevantPromptSkillWorkflowToolNames?.length ?? 0) > 0 ? params.requestRelevantPromptSkillWorkflowToolNames : params.requestRelevantToolNames;
       const relevantNames = new Set(toolNames ?? completionNames ?? []);
-      return (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) => record.success && relevantNames.has(record.toolName),
-      ).length;
+      return (params.bridge.getResult().toolExecResults ?? [])
+        .filter((record) => record.success && relevantNames.has(record.toolName)).length;
     },
     currentSuccessfulNonWorkflowToolCount: (toolNames) => {
-      const relevantNames = new Set(
-        toolNames ?? params.requestRelevantToolNames ?? [],
-      );
+      const relevantNames = new Set(toolNames ?? params.requestRelevantToolNames ?? []);
       const workflowNames = new Set([
         ...(params.requestRelevantPromptSkillWorkflowToolNames ?? []),
-        ...((params.requestRelevantPromptSkillLocations?.length ?? 0) > 0
-          ? ["read"]
-          : []),
+        ...((params.requestRelevantPromptSkillLocations?.length ?? 0) > 0 ? ["read"] : []),
       ]);
       return (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) =>
-          record.success
-          && record.backgrounded !== true
-          && relevantNames.has(record.toolName)
-          && !workflowNames.has(record.toolName),
+        (record) => record.success && record.backgrounded !== true
+          && relevantNames.has(record.toolName) && !workflowNames.has(record.toolName),
       ).length;
     },
-    currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(
-      params.bridge.getResult().toolExecResults ?? [],
-    ),
+    currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(params.bridge.getResult().toolExecResults ?? []),
     currentDistinctSuccessfulWebSearchQueryCount: () => countDistinctSuccessfulWebSearchQueries(params.bridge.getResult().toolExecResults ?? []),
     currentDeferredWorkCount: () => {
       const relevantNames = new Set(params.requestRelevantToolNames ?? []);
-      return (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) => record.backgrounded === true && relevantNames.has(record.toolName),
-      ).length;
+      return (params.bridge.getResult().toolExecResults ?? [])
+        .filter((record) => record.backgrounded === true && relevantNames.has(record.toolName))
+        .length;
     },
     currentTerminalDenialCount: () => {
       const relevantNames = new Set(params.requestRelevantToolNames ?? []);
-      return (params.bridge.getResult().toolExecResults ?? []).filter(
-        (record) =>
-          !record.success
-          && record.failureCode === "permission_denied"
-          && relevantNames.has(record.toolName),
-      ).length;
+      return (params.bridge.getResult().toolExecResults ?? [])
+        .filter((record) => !record.success && record.failureCode === "permission_denied"
+          && relevantNames.has(record.toolName))
+        .length;
     },
     logger: deps.logger,
     eventBus: deps.eventBus,

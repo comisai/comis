@@ -311,34 +311,21 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // hidden by the generic tool-error catch-all or retained breaker noise.
   toolAuthorizationDeniedVerdict,
 
-  // Queue exhaustion happens inside Comis before an MCP request is issued.
-  // It is breaker-neutral and must outrank a later server-reported failure,
-  // which may come from unrelated work in the same explained window.
+  // Local queue exhaustion outranks unrelated later server failures in the window.
   (s) => {
-    const failure = s.failures.find(
-      (candidate) =>
-        candidate.matchedRule === "mcp_queue_contention"
-        || candidate.failureCode === "mcp_queue_contention",
-    );
+    const failure = s.failures.find((candidate) => candidate.matchedRule === "mcp_queue_contention"
+      || candidate.failureCode === "mcp_queue_contention");
     if (failure === undefined) return null;
     const serverName = extractMcpServerName(failure.toolName);
-    const binding = serverName === undefined
-      ? "integrations.mcp.servers.<server>.maxConcurrency"
-      : `integrations.mcp.servers.${serverName}.maxConcurrency`;
-    const diagnostics = /maxConcurrency=(\d+);\s*queueWaitedMs=(\d+);\s*requestBudgetMs=(\d+);\s*configuredMs=(\d+)/u
-      .exec(failure.errorPreview);
+    const binding = `integrations.mcp.servers.${serverName ?? "<server>"}.maxConcurrency`;
+    const diagnostics = /maxConcurrency=(\d+);\s*queueWaitedMs=(\d+);\s*requestBudgetMs=(\d+);\s*configuredMs=(\d+)/u.exec(failure.errorPreview);
     const bindingValue = diagnostics?.[1];
-    const timingDetail = diagnostics === null
-      ? ""
+    const timingDetail = diagnostics === null ? ""
       : `; queueWaitedMs=${diagnostics[2]}; requestBudgetMs=${diagnostics[3]}; configuredMs=${diagnostics[4]}`;
-    const configuredBinding = bindingValue === undefined
-      ? binding
-      : `${binding}=${bindingValue}`;
+    const configuredBinding = bindingValue === undefined ? binding : `${binding}=${bindingValue}`;
     return {
       code: "mcp_queue_contention",
-      detail:
-        `${failure.toolName} encountered a breaker-neutral local queue refusal at ${configuredBinding}${timingDetail}; `
-        + "the MCP server was never asked",
+      detail: `${failure.toolName} encountered a breaker-neutral local queue refusal at ${configuredBinding}${timingDetail}; the MCP server was never asked`,
       suggestedNextSteps: [
         `retry after the calls ahead of ${failure.toolName} drain; this local refusal is transient`,
         `reduce concurrent calls to this server, or raise ${binding} only when the server supports parallel tool calls`,

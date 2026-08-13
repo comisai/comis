@@ -218,29 +218,21 @@ export async function callTool(
     // request, so the SDK budget is what is LEFT of the caller's deadline.
     const waitedMs = systemNowMs() - callStartedAtMs;
     const remainingMs = state.options.callToolTimeoutMs - waitedMs;
-    // Clamp the viability floor by the configured deadline: an operator who sets a
-    // deadline below the floor has chosen that, and must not have every call refused
-    // before it is issued.
+    // Clamp by the configured deadline so a deliberately shorter deadline does not
+    // refuse every call before issuance.
     const viableFloorMs = Math.min(MIN_VIABLE_CALL_BUDGET_MS, state.options.callToolTimeoutMs);
-    // The clamp alone does not deliver that: at or below the floor it pins
-    // viableFloorMs to the deadline ITSELF, so `remainingMs < viableFloorMs` holds for
-    // ANY non-zero wait. A call that waited 1ms on an EMPTY queue was refused and told
-    // to raise `maxConcurrency` for contention that never happened — and whether it
-    // was refused came down to whether the queue drain landed on the same millisecond
-    // as entry. Once the deadline is at/below the floor the operator's own budget is
-    // the only bar left, so only an exhausted one is non-viable.
+    // At or below the floor, any non-zero wait makes `remainingMs < viableFloorMs`.
+    // Use the operator's budget as the only bar there, so an empty-queue 1ms wait is
+    // not misreported as concurrency contention.
     const floorApplies = viableFloorMs < state.options.callToolTimeoutMs;
     if (floorApplies ? remainingMs < viableFloorMs : remainingMs <= 0) {
       // Issuing here would burn a slot on a request that cannot finish in time and would
       // then surface as a plain deadline expiry — telling the agent to narrow a request
       // scope that was never the problem. Blame contention explicitly instead.
       const queueHint = mcpCallQueueExhaustedHint(
-        serverName,
-        toolName,
-        queue.concurrency,
+        serverName, toolName, queue.concurrency,
         state.options.callToolTimeoutMs,
-        waitedMs,
-        viableFloorMs,
+        waitedMs, viableFloorMs,
       );
       logger.warn(
         {
