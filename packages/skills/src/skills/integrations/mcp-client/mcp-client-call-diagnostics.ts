@@ -48,6 +48,26 @@ export class McpCallDeadlineError extends Error {
   }
 }
 
+/** Typed local refusal when the per-server queue consumes the call budget. */
+export class McpCallQueueContentionError extends Error {
+  readonly code = "mcp_queue_contention" as const;
+  readonly configKey: string;
+  readonly requestBudgetMs: number;
+
+  constructor(
+    message: string,
+    serverName: string,
+    readonly configuredMs: number,
+    readonly queueWaitedMs: number,
+    readonly minViableMs: number,
+  ) {
+    super(`[mcp_queue_contention] ${message}`);
+    this.name = "McpCallQueueContentionError";
+    this.configKey = `integrations.mcp.servers.${serverName}.maxConcurrency`;
+    this.requestBudgetMs = Math.max(0, configuredMs - queueWaitedMs);
+  }
+}
+
 /**
  * Coarse, allowlisted classification of what tripped the breaker. Deliberately a fixed
  * vocabulary rather than anything derived from the error body: this rides an event onto the

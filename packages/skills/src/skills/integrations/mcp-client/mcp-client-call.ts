@@ -34,6 +34,7 @@ import { parseQualifiedName } from "./mcp-client-types.js";
 import {
   MIN_VIABLE_CALL_BUDGET_MS,
   McpCallDeadlineError,
+  McpCallQueueContentionError,
   emitMcpBreakerOpened,
   mcpCallQueueExhaustedHint,
   mcpCallTimeoutHint,
@@ -254,7 +255,13 @@ export async function callTool(
         },
         "MCP call deadline consumed by the per-server queue wait before the request was issued",
       );
-      return err(new Error(queueHint));
+      return err(new McpCallQueueContentionError(
+        queueHint,
+        serverName,
+        state.options.callToolTimeoutMs,
+        waitedMs,
+        viableFloorMs,
+      ));
     }
 
     try {
