@@ -447,12 +447,16 @@ describe("call deadline covers the queue wait", () => {
     // Must blame contention, not the server's speed, and name the knob that fixes it.
     expect(message).toMatch(/queue|contention|concurren/i);
     expect(message).toContain("maxConcurrency");
+    expect(message).toContain(
+      `integrations.mcp.servers.${serverName}.maxConcurrency=1`,
+    );
     // And it must state the budget floor the remainder fell under — without it, a
     // refusal that still had deadline left reads as a self-contradiction.
     expect(message).toMatch(/\d+ms a request needs to be worth issuing/);
     expect(secondResult.error).toMatchObject({
       code: "mcp_queue_contention",
       configKey: `integrations.mcp.servers.${serverName}.maxConcurrency`,
+      configuredConcurrency: 1,
       configuredMs: state.options.callToolTimeoutMs,
       queueWaitedMs: expect.any(Number),
       requestBudgetMs: expect.any(Number),

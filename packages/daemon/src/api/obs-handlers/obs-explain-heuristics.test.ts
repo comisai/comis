@@ -2303,7 +2303,7 @@ describe("prompt_timeout terminal verdict", () => {
               resultDigest: "queue-refusal",
               resultBytes: 180,
               errorPreview:
-                "waited 119750ms for a concurrency slot; requestBudgetMs=250; configuredMs=120000",
+                "integrations.mcp.servers.reports.maxConcurrency=1; queueWaitedMs=119750; requestBudgetMs=250; configuredMs=120000",
               ...identity,
             },
             {
@@ -2323,8 +2323,11 @@ describe("prompt_timeout terminal verdict", () => {
 
       expect(r?.code).toBe("mcp_queue_contention");
       expect(r?.detail).toContain(
-        "integrations.mcp.servers.reports.maxConcurrency",
+        "integrations.mcp.servers.reports.maxConcurrency=1",
       );
+      expect(r?.detail).toContain("queueWaitedMs=119750");
+      expect(r?.detail).toContain("requestBudgetMs=250");
+      expect(r?.detail).toContain("configuredMs=120000");
       expect(r?.detail).toContain("breaker-neutral local queue refusal");
       expect(r?.detail).toContain("server was never asked");
       expect(r?.suggestedNextSteps.join(" ")).toContain(
