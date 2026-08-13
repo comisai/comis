@@ -42,6 +42,13 @@ const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
 
 const CURRENT_MUTATION_BINDINGS = [
   {
+    toolName: "reconcile_task",
+    behavior: "run_command" as const,
+    runHandleArgument: "taskHandle",
+    actionClassification: "mutate" as const,
+    invocationSideEffects: ["task.reconcile"],
+  },
+  {
     toolName: "handback_task",
     behavior: "run_command" as const,
     runHandleArgument: "taskHandle",
@@ -531,7 +538,7 @@ export function makeConfig(input: {
         mcp: { enabled: true, allow: { [MCP_SERVER_NAME]: {
           tools: [
             "prepare_task",
-            "handback_task", "cleanup_task",
+            "reconcile_task", "handback_task", "cleanup_task",
             "list_tasks", "get_task", "explain_task", "get_launch_plan",
           ],
           classification: "safe",
@@ -569,7 +576,7 @@ export function makeConfig(input: {
         args: ["--socket", input.mcpSocket, "--service-instance", SERVICE_INSTANCE_ID],
         toolAllowlist: [
           "prepare_task",
-          "handback_task", "cleanup_task",
+          "reconcile_task", "handback_task", "cleanup_task",
           "list_tasks", "get_task", "explain_task", "get_launch_plan",
         ],
         keepaliveIntervalMs: 0,

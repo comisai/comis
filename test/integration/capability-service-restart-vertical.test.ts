@@ -61,6 +61,13 @@ const CONTRIBUTION: CapabilityServiceContributionRegistration = Object.freeze({
         invocationSideEffects: Object.freeze(["task.prepare"]),
       },
       {
+        toolName: "reconcile_task",
+        behavior: "run_command",
+        runHandleArgument: "taskHandle",
+        actionClassification: "mutate",
+        invocationSideEffects: Object.freeze(["task.reconcile"]),
+      },
+      {
         toolName: "handback_task",
         behavior: "run_command",
         runHandleArgument: "taskHandle",
@@ -254,6 +261,7 @@ function makeConfig(input: {
           ],
           toolAllowlist: [
             "prepare_task",
+            "reconcile_task",
             "handback_task",
             "cleanup_task",
             "list_tasks",
@@ -436,6 +444,7 @@ describe("restart-injected capability-service vertical join", () => {
           return status.status === "connected"
             && [
               "prepare_task",
+              "reconcile_task",
               "handback_task",
               "cleanup_task",
               "list_tasks",

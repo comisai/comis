@@ -36,7 +36,7 @@ The scenario tests the product boundary rather than working around it:
   and Claude Code adapters, worker reports and decisions, candidate validation, forge truth, durable
   delivery evidence, handback, and cleanup.
 - The liaison uses `prepare_task`, `get_launch_plan`, `list_tasks`, `get_task`, `explain_task`,
-  `handback_task`, and `cleanup_task`. It never constructs a DevCrew command line, opens the DevCrew
+  `reconcile_task`, `handback_task`, and `cleanup_task`. It never constructs a DevCrew command line, opens the DevCrew
   database, invents task state from worker prose, or treats terminal exit as success.
 
 ## Fixed rig and authority boundary
@@ -400,7 +400,7 @@ test command/result digests.
 
 ## Broad surface and fifth-axis sweep
 
-- DevCrew MCP/CLI parity: all seven MCP tools and service/doctor/status/fleet/task/operation reads
+- DevCrew MCP/CLI parity: all eight MCP tools and service/doctor/status/fleet/task/operation reads
   agree on versioned projections, state, source, confidence, freshness, and side-effect class.
 - Comis: capability activation/health, managed-run reports/evidence/release, attention resolution,
   workspace leases, execution attachments, managed terminals, exact-origin continuation, delivery

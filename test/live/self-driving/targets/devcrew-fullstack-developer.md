@@ -101,6 +101,7 @@ worker cannot select a validation executable or shell fragment.
 | INT-1 | E0 developer intervention | One worker reaches a safe paused state; the developer changes that task root directly; `validate-developer-work` captures the new head/dirty posture and invalidates stale evidence. |
 | INT-2 | Sibling independence | During pause, direct edit, handback, and revalidation of one task, the sibling terminal remains listed and continues reporting. |
 | CAND-1 | Candidate-state honesty | Coding-CLI or terminal exit never selects delivered/success. Only candidate report plus validation and forge/artifact evidence can advance. |
+| REC-1 | Unknown-task recovery | A clean non-base candidate whose terminal exited without a candidate report is reason-coded by `explain_task`, approved through the normal mutation path, and advanced by `reconcile_task` without a synthetic report or changed report cursor. Dirty, missing, base-equal, divergent, active, or mismatched authority refuses and preserves the task. |
 | VAL-1 | Fixed local validation | Reviewed backend and frontend checks pass on their candidate heads; the combined read-only harness proves API/UI interoperability and curl returns 200. |
 | FORGE-1 | Verified ship delivery | Exactly two pull requests exist for the exact task branches/heads; required checks are current and green; delivery references match forge truth. No merge occurs. |
 | SCOUT-1 | Verified report delivery | One bounded regular `report.md` is hashed, archived, and delivered once as the scout attachment. |
@@ -122,7 +123,8 @@ worker cannot select a validation executable or shell fragment.
 4. Make a second emulator chat the most recent conversation without giving it task authority.
 5. Deliver and answer one keyed worker decision from the origin chat; require worker resolution.
 6. Pause the frontend lane, edit its worktree directly, and hand back for revalidation while the
-   backend lane remains live.
+   backend lane remains live. Separately exit one clean coding worker without a candidate report,
+   inspect its reason, and approve `reconcile_task` before normal validation resumes.
 7. Run fixed local checks and the read-only combined full-stack oracle. Hold forge checks, restart
    Comis and DevCrew, then release them.
 8. Reconcile exactly two current pull requests and one scout attachment against GitHub, Git, the
@@ -157,7 +159,7 @@ the operator separately authorizes that exact row.
 
 | posture | positive | negative/control |
 |---|---|---|
-| Capability service | Enabled with exact bundle/service instance and seven contributed MCP tools | Disabled or missing allow entry: no tools activate and no private metadata leaks into model-visible output. |
+| Capability service | Enabled with exact bundle/service instance and eight contributed MCP tools | Disabled or missing allow entry: no tools activate and no private metadata leaks into model-visible output. |
 | Prompt skill | Explicitly installed and allowlisted only for liaison | Removed from liaison or requested by control agent: not selected and no authority changes. |
 | Worker profile | Exact Codex and Claude profiles resolve independently | Missing, wrong-version, unauthenticated, unsupported shape, or unknown lifecycle signal is reason-coded; no vendor/profile fallback. |
 | Terminal allow entry | Exact command/profile/run/lease/attachment binding | Raw command/path/env override, wrong allow ID, or altered binding is refused. |
@@ -167,11 +169,11 @@ the operator separately authorizes that exact row.
 
 ## Broad surface sweep
 
-- DevCrew MCP: `prepare_task`, `handback_task`, `cleanup_task`, `list_tasks`, `get_task`,
+- DevCrew MCP: `prepare_task`, `reconcile_task`, `handback_task`, `cleanup_task`, `list_tasks`, `get_task`,
   `explain_task`, `get_launch_plan`; strict schemas, side-effect classes, metadata privacy, and
   idempotency.
 - DevCrew CLI: service/doctor/fleet/task list/show/explain/launch-plan/operation plus prepare,
-  handback, and cleanup JSON paths. CLI and MCP shared commands must agree.
+  reconcile, handback, and cleanup JSON paths. CLI and MCP shared commands must agree.
 - Comis: capability-service health/activation/report/evidence/release, workspace leases, execution
   attachments, managed terminal create/list/kill, attention resolution, exact-origin continuation,
   delivery mirror, managed-run explanation, and system health.

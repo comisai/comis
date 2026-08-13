@@ -162,6 +162,27 @@ describe("seedBundledSkills — auto-scan + version-aware seeding of ALL bundled
     expect(parsed.value.comis?.["min-distinct-web-search-queries"]).toBe(3);
   });
 
+  it("ships the opt-in DevCrew recovery procedure through the strict skill parser", () => {
+    const repositoryRoot = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../..",
+    );
+    const manifest = readFileSync(
+      resolve(repositoryRoot, "skills/dev-crew/SKILL.md"),
+      "utf8",
+    );
+
+    const parsed = parseSkillManifest(manifest);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.name).toBe("dev-crew");
+    expect(parsed.value.comis?.requires).toEqual({ bins: [], env: [] });
+    expect(manifest).toMatch(/terminal_exited_without_candidate_evidence[\s\S]*reconcile_task/u);
+    expect(manifest).toMatch(/workspace_not_recoverable[\s\S]*prepare a replacement/iu);
+    expect(manifest).toMatch(/Never construct a\s+`devcrew` command/iu);
+  });
+
   it("downloads a generated chart into an ESM workspace without host renderers", () => {
     const repositoryRoot = resolve(
       dirname(fileURLToPath(import.meta.url)),
