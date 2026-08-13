@@ -491,7 +491,9 @@ Because it carries the gateway token, the handle is written with mode `0o600` (o
 
 ### `dead-letters.jsonl`
 
-Append-only JSONL of announcement-delivery failures that exhausted in-process retries (channel down, bot blocked, etc.). The delivery system replays these on provider recovery and expires entries after one hour. Only created when at least one announcement has been dead-lettered.
+A JSONL **snapshot** of announcement-delivery failures that exhausted in-process retries (channel down, bot blocked, etc.), plus any parked parent-decision reservations. The delivery system replays these on provider recovery and expires entries after one hour.
+
+The file tracks the queue rather than accumulating: every change rewrites it atomically, and it is **removed** as soon as the queue drains to zero. It therefore exists only while something is actually pending — if the daemon logged a quarantine WARN and this file is absent, the quarantine has since **resolved**, not vanished. Look for the matching resolution line (`Committed dead-letter operation removed without replay`, or `Dead-letter entry delivered successfully`) rather than treating the announcement as lost.
 
 **Written by:** the announcement delivery subsystem.
 **Safe to delete?** Yes. Pending re-deliveries are dropped; entries auto-expire after one hour anyway.

@@ -413,36 +413,7 @@ describe("applyResponseLocaleEnforcement", () => {
     expect(providerOptions[Symbol.for("comis.auxiliary-stream-call")]).toBe(true);
   });
 
-  it("recovers the locale terminal error when a later deterministic guard satisfies the policy", () => {
-    const candidate = (
-      responseLocaleEnforcement as Record<string, unknown>
-    ).recoverFinalResponseLocaleFailure;
-    expect(candidate).toBeTypeOf("function");
-    const result: Record<string, unknown> = {
-      response: "openai / gpt-4.1-nano",
-      finishReason: "error",
-      terminalErrorKind: "validation",
-      errorContext: {
-        errorType: "ResponseLocaleMismatch",
-        retryable: true,
-      },
-    };
-
-    const recovered = (candidate as (
-      result: Record<string, unknown>,
-      policy: ResponseLocalePolicy,
-    ) => boolean)(result, LATIN_POLICY);
-
-    expect(recovered).toBe(true);
-    expect(result).toMatchObject({
-      response: "openai / gpt-4.1-nano",
-      finishReason: "stop",
-    });
-    expect(result).not.toHaveProperty("terminalErrorKind");
-    expect(result).not.toHaveProperty("errorContext");
-  });
-
-  it("fails visibly when the bounded repair still violates the enforced current-request script", async () => {
+  it("delivers the answer, degraded, when the bounded repair still violates the enforced script", async () => {
     const eventBus = new TypedEventBus();
     const logger = {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
@@ -476,16 +447,18 @@ describe("applyResponseLocaleEnforcement", () => {
 
     await applyResponseLocaleEnforcement(params);
 
-    expect(result).toMatchObject({
-      response:
-        "I couldn't produce a response in the language and writing system requested for this message. Please retry or select a model that supports it.",
-      finishReason: "error",
-      terminalErrorKind: "validation",
-      errorContext: {
-        errorType: "ResponseLocaleMismatch",
-        retryable: true,
-      },
-    });
+    // A wrong SCRIPT is a presentation defect, not an execution failure. The
+    // multilingual contract is that "every non-Latin capability has a working,
+    // visible, lower-fidelity floor — nothing hard-fails", and the three sibling
+    // branches here (repair errored, repair dropped literals, repair succeeded)
+    // all preserve the response and return. Only this one discarded the model's
+    // answer for a canned line and marked the turn terminal. Live on
+    // comis-moshe it killed two turns in one day and was the sole cause of every
+    // hard failure in the window; the user got a runtime-generated reply in
+    // place of a usable answer.
+    expect(result).toMatchObject({ response: hebrew, finishReason: "stop" });
+    expect(result).not.toHaveProperty("terminalErrorKind");
+    expect(result).not.toHaveProperty("errorContext");
     expect(session.prompt).not.toHaveBeenCalled();
     expect(JSON.stringify(session.streamFunction.mock.calls[0]?.[1]))
       .toContain("what model are u actually using now");

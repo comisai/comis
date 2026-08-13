@@ -49,8 +49,19 @@ const AgentToAgentBaseSchema = z.strictObject({
     subAgentRetentionMs: z.number().int().positive().default(3_600_000),
     /** Default timeout for wait mode in ms (default 60 seconds) */
     waitTimeoutMs: z.number().int().positive().default(60_000),
-    /** Default max steps for sub-agent execution (hard cap per-spawn overrides cannot exceed) */
-    subAgentMaxSteps: z.number().int().positive().default(50),
+    /**
+     * Tool-execution step ceiling for a sub-agent run, and a hard cap: a spawn's
+     * own `max_steps` is clamped to this value and can only lower it.
+     *
+     * 300 because delegated research is step-hungry in a way single-answer work
+     * is not — a multi-source investigation spends a step per search and per
+     * fetch, and the previous ceiling of 50 stopped one mid-flight after 18
+     * searches and 21 fetches, discarding the whole run. This bounds runaway
+     * loops; it is not a cost control (`observability.spend` and the token
+     * budget are), so it is set where honest work fits rather than at the
+     * cheapest value that usually suffices.
+     */
+    subAgentMaxSteps: z.number().int().positive().default(300),
     /** Default tool profile groups for sub-agent tool assembly */
     subAgentToolGroups: z.array(z.enum(["minimal", "coding", "messaging", "supervisor", "full"])).default(["coding"]),
     /** MCP tool inheritance policy for sub-agents: "inherit" passes MCP tools, "none" excludes them */

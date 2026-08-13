@@ -46,8 +46,8 @@ describe("observability-domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("OBSERVABILITY_CONTRACTS has exactly 29 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
+  it("OBSERVABILITY_CONTRACTS has exactly 31 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(31);
   });
 
   it("all contracts are admin-scoped EXCEPT the agent self-observability pair", () => {
@@ -90,6 +90,9 @@ describe("observability-domain contracts", () => {
       // Incident-report assembler.
       "obs.explain",
       "obs.getCacheStats",
+      // The operator lever over quarantined announcements (admin-only).
+      "obs.quarantine.list",
+      "obs.quarantine.release",
       "obs.reset",
       "obs.reset.table",
       // Live spend snapshot the kill-switch enforces.
@@ -914,8 +917,8 @@ describe("ObsTrace contracts", () => {
     ).not.toThrow();
   });
 
-  it("OBSERVABILITY_CONTRACTS has exactly 29 entries", () => {
-    expect(OBSERVABILITY_CONTRACTS.length).toBe(29);
+  it("OBSERVABILITY_CONTRACTS has exactly 31 entries", () => {
+    expect(OBSERVABILITY_CONTRACTS.length).toBe(31);
   });
 
   it("OBSERVABILITY_CONTRACTS includes each obs.trace contract exactly once by method name", () => {

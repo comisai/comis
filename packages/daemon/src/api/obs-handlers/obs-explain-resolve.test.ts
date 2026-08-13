@@ -12,6 +12,7 @@
  *
  * These tests pin:
  *   - both 678 traceIds resolve to the one canonical sessionKey (one identity)
+ *   - a child run id resolves through the structurally parsed sub-agent channel
  *   - a `sessionId`-only row (no `sessionKey`) still resolves
  *   - unknown traceId → "" (soft-fail, no throw)
  *   - missing session-index file → "" (soft-fail, no throw)
@@ -24,12 +25,19 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { systemDateFrom, systemNowMs } from "@comis/core";
-import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-resolve.js";
+import {
+  resolveRootRunToSession,
+  resolveTraceReference,
+  resolveTraceToSession,
+} from "./obs-explain-resolve.js";
 
 // The 678 fixture's two traceIds and the single canonical sessionKey.
 const TRACE_TURN_1 = "f942d38c-e372-43cc-99f1-ead4f0b8582f";
 const TRACE_TURN_2 = "058db0fe-651f-4362-908f-babd8208afa3";
 const CANONICAL_SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const CHILD_RUN_ID = "32e91601-c71e-4386-bc16-f87867ca6aff";
+const CHILD_SESSION_KEY =
+  `default:agent:default:user_a:sub-agent:runtime:${CHILD_RUN_ID}:peer:user_a`;
 
 function todayKey(): string {
   return systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
@@ -147,6 +155,65 @@ describe("resolveTraceToSession", () => {
     const on = await resolveTraceToSession(dataDir, TRACE_TURN_1, true);
     expect(off).toBe(CANONICAL_SESSION_KEY);
     expect(on).toBe(CANONICAL_SESSION_KEY);
+  });
+
+  it("resolves a sub-agent run identifier from the canonical indexed session key", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "child-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+    ]);
+
+    const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toBe(CHILD_SESSION_KEY);
+  });
+
+  it("preserves the indexed execution trace when resolving a sub-agent run identifier", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "child-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+    ]);
+
+    const resolved = await resolveTraceReference(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toEqual({
+      sessionKey: CHILD_SESSION_KEY,
+      traceId: "child-trace-id",
+    });
+  });
+
+  it("does not resolve a run identifier found outside the sub-agent channel", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "other-trace-id",
+        sessionKey: `default:agent:default:user_a:telegram:chat:peer:${CHILD_RUN_ID}`,
+      }),
+    ]);
+
+    const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toBe("");
+  });
+
+  it("prefers an exact trace match over an earlier child run fallback", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceId: "child-trace-id",
+        sessionKey: CHILD_SESSION_KEY,
+      }),
+      JSON.stringify({
+        traceId: CHILD_RUN_ID,
+        sessionKey: CANONICAL_SESSION_KEY,
+      }),
+    ]);
+
+    const resolved = await resolveTraceToSession(dataDir, CHILD_RUN_ID);
+
+    expect(resolved).toBe(CANONICAL_SESSION_KEY);
   });
 
   it("treats a string 'true' synthetic field as NON-synthetic and still resolves (strict === true)", async () => {

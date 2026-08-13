@@ -56,8 +56,20 @@ export type { SystemHealthReport } from "./system-health-report.js";
 // re-export the contract + schema so the `@comis/core` public surface + the
 // registered RPC set carry them (the ObsSystemHealthContract precedent).
 import { ObsAuditQueryContract } from "./audit-query.js";
+import {
+  ObsQuarantineListContract,
+  ObsQuarantineReleaseContract,
+} from "./announcement-quarantine.js";
 export { ObsAuditQueryContract } from "./audit-query.js";
 export type { AuditEventRowWire, AuditQueryResponse } from "./audit-query.js";
+// The quarantined-announcement operator lever (list + release) lives in the
+// sibling `announcement-quarantine.ts`. Same admin-only, deny-by-origin shape
+// as the audit read above.
+export {
+  ObsQuarantineListContract,
+  ObsQuarantineReleaseContract,
+} from "./announcement-quarantine.js";
+export type { QuarantinedAnnouncementWire } from "./announcement-quarantine.js";
 // The five obs.billing.* contracts (+ their BillingSnapshot response schema)
 // live in the sibling `observability-billing.ts` (file-size split). Import for
 // the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
@@ -755,6 +767,8 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsBillingTotalContract,
   ObsBillingUsage24hContract,
   ObsAuditQueryContract,
+  ObsQuarantineListContract,
+  ObsQuarantineReleaseContract,
   ObsCacheBreaksByReasonContract,
   ObsCacheStatsWindowContract,
   ObsChannelsAllContract,

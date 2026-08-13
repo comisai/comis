@@ -43,6 +43,7 @@ export { assembleSystemHealthReport } from "./system-health.js";
 // createObsHandlers below (no separate MCP closure — the audit query is an
 // admin-RPC-only read surface, not an operator-allowlisted MCP tool).
 export { bindObsAuditHandlers } from "./obs-audit.js";
+export { bindObsQuarantineHandlers } from "./obs-quarantine.js";
 
 // The obs.cacheBreaks.byReason binder. Re-exported for symmetry
 // with the other obs-handler slices; the daemon composition root spreads it into
@@ -64,6 +65,7 @@ import { bindObsTraceHandlers } from "./obs-trace.js";
 import { bindObsExplainHandlers } from "./obs-explain.js";
 import { bindSystemHealthHandlers } from "./system-health.js";
 import { bindObsAuditHandlers } from "./obs-audit.js";
+import { bindObsQuarantineHandlers } from "./obs-quarantine.js";
 import { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
 import { bindObsSpendHandlers } from "./obs-spend.js";
 
@@ -85,6 +87,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
     ...bindObsExplainHandlers(deps),
     ...bindSystemHealthHandlers(deps),
     ...bindObsAuditHandlers(deps),
+    ...bindObsQuarantineHandlers(deps),
     ...bindObsCacheBreaksHandlers(deps),
     ...bindObsSpendHandlers(deps),
   };

@@ -150,9 +150,18 @@ export function buildAnnouncementMessage(params: {
     announcementVerb = "completed";
   }
 
-  const resultText = params.status === "completed"
-    ? (params.response ?? "No output")
-    : `Error: ${params.error ?? "Unknown error"}`;
+  // A response is the run's OUTPUT, never its error — even on the failed path.
+  // The failed branch used to render whatever it was handed as `Error: …`, and
+  // its caller falls back to the child's own response when it has no failure
+  // string, so a complete answer was published to the user prefixed "Error:".
+  // Prefer a real response wherever one exists; the status label above already
+  // carries the degradation, so nothing is hidden by showing the work.
+  const response = params.response?.trim();
+  const resultText = response !== undefined && response.length > 0
+    ? params.response ?? ""
+    : params.status === "completed"
+      ? "No output"
+      : `Error: ${params.error ?? "Unknown error"}`;
   let validationLine = "";
   if (params.validation && params.validation.length > 0) {
     const verified = params.validation.filter((result) => result.exists).length;

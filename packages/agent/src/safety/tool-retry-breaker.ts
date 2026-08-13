@@ -79,13 +79,24 @@ export interface ToolRetryBreaker {
   /**
    * Record the result of a tool call (success or failure).
    *
+   * A returned logical failure (`transportOk: true`) updates only the
+   * invocation signature and error-pattern state. It does not prove the tool
+   * itself is unavailable, so it cannot contribute to the all-arguments
+   * tool-level block.
+   *
    * Returns a {@link ToolBreakerTransition} ONLY at a tool-wide counter
    * crossing (tool-level total or error-pattern threshold, by EXACT equality)
    * or on a success that recovers a non-zero failure counter; otherwise
    * `undefined`. The breaker emits nothing itself — the bridge consumes this
    * verdict and emits the corresponding events.
    */
-  recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined;
+  recordResult(
+    toolName: string,
+    args: Record<string, unknown>,
+    success: boolean,
+    errorText?: string,
+    context?: Readonly<{ transportOk: boolean }>,
+  ): ToolBreakerTransition | undefined;
   /** Return list of tool names that are fully blocked (tool-level). */
   getBlockedTools(): string[];
   /** Clear all state -- unblock all tools, reset all counters. */
@@ -158,6 +169,14 @@ export function extractErrorTag(errorText: string): string {
  * Handles both raw JSON envelopes and the breaker's own serialized block
  * message (which starts with prose then embeds the next envelope in quotes).
  */
+/**
+ * Peel depth bound. One nesting level is two layers (the block prose, then the
+ * tool-result envelope inside it), so this leaves headroom for a value that
+ * arrived already nested while still terminating on adversarial input. The loop
+ * breaks at the fixpoint, so the bound is a backstop, not the usual exit.
+ */
+const MAX_ENVELOPE_PEEL_DEPTH = 6;
+
 function peelEnvelope(text: string): string {
   const external = unwrapExternalContent(text);
   if (external !== null) {
@@ -183,22 +202,34 @@ function peelEnvelope(text: string): string {
   }
 
   // Shape B: breaker block message — starts with a prose prefix that
-  // embeds the next envelope in quotes:
+  // embeds the next envelope as a JSON string literal:
   //   `Tool "exec" has failed 2 consecutive times with the same error:
   //    "{\"content\":[...]}". This tool appears to be unavailable. ...`
-  // Peel the quoted JSON substring, if present.
-  const quotedStart = text.indexOf('same error: "');
-  const contentStart = quotedStart === -1 ? -1 : quotedStart + 'same error: "'.length;
-  const quotedEnd = contentStart === -1 ? -1 : text.indexOf('". ', contentStart);
-  if (quotedEnd !== -1) {
-    // The captured group is JSON with escaped quotes. Unescape by parsing
-    // the outer quoted string as JSON (wrap in extra quotes so JSON.parse
-    // handles the escapes).
-    try {
-      const inner = JSON.parse(`"${text.slice(contentStart, quotedEnd)}"`) as string;
-      return inner;
-    } catch {
-      // Fall through — return prefix + match unchanged.
+  // Scan to the closing UNESCAPED quote rather than the first `". ` run:
+  // the embedded error is real error text, so it routinely contains both
+  // (a JSON body, an HTML attribute, a sentence). Terminating on the first
+  // `". ` cut mid-literal, the parse below then threw, nothing peeled, and
+  // the next round embedded this whole message — the recursive nesting.
+  const marker = 'same error: "';
+  const markerAt = text.indexOf(marker);
+  if (markerAt !== -1) {
+    const contentStart = markerAt + marker.length;
+    let cursor = contentStart;
+    while (cursor < text.length) {
+      const ch = text[cursor];
+      if (ch === "\\") {
+        cursor += 2;
+        continue;
+      }
+      if (ch === '"') break;
+      cursor += 1;
+    }
+    if (cursor < text.length) {
+      try {
+        return JSON.parse(`"${text.slice(contentStart, cursor)}"`) as string;
+      } catch {
+        // Fall through — return the text unchanged.
+      }
     }
   }
 
@@ -384,14 +415,24 @@ export function buildBlockReason(
   // never embeds a prior `appears to be unavailable` clause.
   let peeledError = lastError;
   if (peeledError !== undefined) {
-    for (let depth = 0; depth < 2; depth++) {
+    for (let depth = 0; depth < MAX_ENVELOPE_PEEL_DEPTH; depth++) {
       const peeled = peelEnvelope(peeledError);
       if (peeled === peeledError) break;
       peeledError = peeled;
     }
+    // Structural backstop for the INVARIANT. Peeling is a parse and a parse can
+    // fail; when it does, embedding the value nests the whole prior block
+    // message instead of the error it was meant to quote — and because the
+    // clause is truncated, four rounds of that displaced the real error
+    // completely, leaving only recursive prose. A clause we cannot collapse is
+    // worth less than no clause: the count and the tool name still carry.
+    if (isBreakerBlockMessage(peeledError)) peeledError = undefined;
   }
   const errorClause = peeledError
-    ? ` with the same error: "${peeledError.slice(0, 150)}"`
+    // Embed as a JSON string literal so the quotes inside real error text are
+    // escaped — peelEnvelope parses this back, and the raw embed it replaces
+    // is what made that parse throw.
+    ? ` with the same error: ${JSON.stringify(peeledError.slice(0, 150))}`
     : "";
   const header = errorTag && isParameterValidationTag(errorTag)
     ? `Tool "${toolName}" failed parameter validation ${count} times (same args). Fix the arguments before retrying.`
@@ -420,9 +461,18 @@ export function buildBlockReason(
  */
 export function isBreakerBlockMessage(text: string | undefined): boolean {
   if (text === undefined || text.length === 0) return false;
-  if (!text.includes("DO NOT retry this tool. Instead:")) return false;
-  return /Tool "[^"]+" (?:has failed \d+ (?:total|consecutive) times|failed parameter validation \d+ times)/
-    .test(text);
+  let candidate = text;
+  for (let depth = 0; depth <= 2; depth++) {
+    if (
+      candidate.includes("DO NOT retry this tool. Instead:")
+      && /Tool "[^"]+" (?:has failed \d+ (?:total|consecutive) times|failed parameter validation \d+ times)/
+        .test(candidate)
+    ) return true;
+    const peeled = peelEnvelope(candidate);
+    if (peeled === candidate) return false;
+    candidate = peeled;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +572,13 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       return { block: false };
     },
 
-    recordResult(toolName: string, args: Record<string, unknown>, success: boolean, errorText?: string): ToolBreakerTransition | undefined {
+    recordResult(
+      toolName: string,
+      args: Record<string, unknown>,
+      success: boolean,
+      errorText?: string,
+      context?: Readonly<{ transportOk: boolean }>,
+    ): ToolBreakerTransition | undefined {
       const fp = fingerprint(toolName, args);
 
       if (success) {
@@ -590,21 +646,29 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
       sigState.lastError = errorText;
       signatureFailures.set(fp, sigState);
 
-      // Update tool-level total counter
-      const toolState = toolFailures.get(toolName) ?? { count: 0 };
-      toolState.count++;
-      toolState.lastError = errorText;
-      toolFailures.set(toolName, toolState);
+      // Only a call that failed to complete the tool boundary is evidence that
+      // every invocation may be unavailable. A returned logical error remains
+      // protected by the signature and error-pattern counters, but distinct
+      // arguments must remain available.
+      let toolFailureCount = 0;
+      let openedToolLevel = false;
+      if (context?.transportOk !== true) {
+        const toolState = toolFailures.get(toolName) ?? { count: 0 };
+        toolState.count++;
+        toolState.lastError = errorText;
+        toolFailures.set(toolName, toolState);
 
-      // Check if tool-level threshold exceeded. The block stays `>=` (Set.add is
-      // idempotent), but the OPEN transition fires on the EXACT crossing only —
-      // `===` so the bridge emits `tool:breaker_opened` once per open, never on
-      // every later failure (a `>=` verdict would inflate the incident report's
-      // breakerTimeline).
-      if (toolState.count >= maxToolFailures) {
-        blockedTools.add(toolName);
+        // Check if tool-level threshold exceeded. The block stays `>=` (Set.add is
+        // idempotent), but the OPEN transition fires on the EXACT crossing only —
+        // `===` so the bridge emits `tool:breaker_opened` once per open, never on
+        // every later failure (a `>=` verdict would inflate the incident report's
+        // breakerTimeline).
+        if (toolState.count >= maxToolFailures) {
+          blockedTools.add(toolName);
+        }
+        toolFailureCount = toolState.count;
+        openedToolLevel = toolState.count === maxToolFailures;
       }
-      const openedToolLevel = toolState.count === maxToolFailures;
 
       // Update error-pattern tracking
       const patternKey = `${toolName}::err::${errorTag}`;
@@ -632,7 +696,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
           // open as "opened after 1 failure" in the incident report's
           // breakerTimeline.
           consecutiveFailures: openedToolLevel
-            ? toolState.count
+            ? toolFailureCount
             : patternState.consecutiveFailures,
           errorTag,
         };

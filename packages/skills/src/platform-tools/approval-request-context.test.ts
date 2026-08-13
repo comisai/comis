@@ -172,4 +172,79 @@ describe("resolveApprovalRequestContext", () => {
 
     expect(result.ok).toBe(false);
   });
+
+  describe("delegated execution turns", () => {
+    const DELEGATED_ENDPOINT = {
+      channelType: "sub-agent",
+      channelInstanceId: "runtime",
+      conversationId: "run-1",
+      conversationKind: "direct" as const,
+    };
+
+    function makeDelegatedTurnScope(principalId: string): ResolvedTurnScope {
+      return {
+        conversation: {
+          tenantId: "default",
+          agentId: "resolved-agent",
+          partition: {
+            kind: "endpoint-conversation-principal",
+            endpoint: DELEGATED_ENDPOINT,
+            principalId,
+          },
+        },
+        principal: { principalId },
+        endpoint: DELEGATED_ENDPOINT,
+      };
+    }
+
+    it("routes the approval callback to the inherited requester origin", () => {
+      const result = runWithContext(
+        makeContext({
+          sessionKey: "default:agent:resolved-agent:human-user:sub-agent:runtime:run-1:peer:human-user",
+          turnScope: makeDelegatedTurnScope("principal-human-user"),
+        }),
+        resolveApprovalRequestContext,
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          resolvingPrincipalId: "principal-human-user",
+          callbackOwner: {
+            tenantId: "default",
+            userId: "principal-human-user",
+            channelType: "telegram",
+            channelKey: "chat-1",
+            threadId: "thread-1",
+          },
+        },
+      });
+    });
+
+    it("fails closed when the delegated turn principal does not own the delivery origin", () => {
+      const result = runWithContext(
+        makeContext({
+          turnScope: makeDelegatedTurnScope("principal-other-user"),
+        }),
+        resolveApprovalRequestContext,
+      );
+
+      expect(result.ok).toBe(false);
+    });
+
+    it("fails closed when the delegated turn executes outside the delivery origin tenant", () => {
+      const foreignTenantScope = makeDelegatedTurnScope("principal-human-user");
+      const result = runWithContext(
+        makeContext({
+          turnScope: {
+            ...foreignTenantScope,
+            conversation: { ...foreignTenantScope.conversation, tenantId: "other-tenant" },
+          },
+        }),
+        resolveApprovalRequestContext,
+      );
+
+      expect(result.ok).toBe(false);
+    });
+  });
 });

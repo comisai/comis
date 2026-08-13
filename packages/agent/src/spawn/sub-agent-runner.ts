@@ -20,6 +20,7 @@ import {
   createResolvedRequestContext,
   runWithContext,
   tryGetContext,
+  DELEGATED_EXECUTION_CHANNEL_TYPE,
   type SessionKey,
   type ConversationLocator,
   type ConversationRef,
@@ -74,6 +75,7 @@ import type {
   SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
+import { liveChildRunIds, selectOrphanedChildRuns, MAX_SPAWN_TREE_WALK } from "./abort-fallout.js";
 import {
   classifyAbortReason,
   isSubAgentAbortFinishReason,
@@ -88,7 +90,7 @@ import {
   type ValidationResult,
 } from "./sub-agent-result-processor.js";
 import { buildHaltedAccount } from "./halted-account.js";
-import { resolveSubAgentOutcome } from "./sub-agent-outcome.js";
+import { isDeliveredFinishReason, resolveSubAgentOutcome } from "./sub-agent-outcome.js";
 import { comparePosture, SandboxDowngradeError, type SandboxPosture } from "./sandbox-posture.js";
 import { steerRun as steerRunHelper, type SteerRunDeps, type SteerableRun } from "./steer-run.js";
 import type { RunHandle } from "../executor/active-run-registry.js";
@@ -163,7 +165,7 @@ function createSubAgentConversation(
     partition: {
       kind: "endpoint-conversation-principal",
       endpoint: {
-        channelType: "sub-agent",
+        channelType: DELEGATED_EXECUTION_CHANNEL_TYPE,
         channelInstanceId: "runtime",
         conversationId: runId,
         conversationKind: "direct",
@@ -276,6 +278,9 @@ interface SubAgentRunCommon {
   /** Announce channel ID for failure notifications (stored at spawn for ghost sweep access). */
   announceChannelId?: string;
   /** Graph ID for kill cascade routing. */
+  /** Immediate in-process parent run, persisted so the health monitor can see
+   *  the spawn tree: a run waiting on a live child is not stalled. */
+  parentRunId?: string;
   graphId?: string;
   /** Graph node ID for kill cascade routing. */
   nodeId?: string;
@@ -1225,7 +1230,34 @@ function classifyCompletionErrorKind(
     }
     removeDedupEntry(terminal);
     completionDeferreds.get(runId)?.resolve(completion);
+    cancelOrphanedChildren(runId, completion.endReason);
     return terminal;
+  }
+
+  /**
+   * Cancel children left without a consumer by an abnormally-terminated parent.
+   *
+   * A parent that ends abnormally can never read what its children return, so
+   * every still-live child burns tokens for a result nobody will see. Observed
+   * live: a parent timed out at 17:28:46 and two orphans ran on to 17:29:12 and
+   * 17:29:31, the latter alone spending 1.33M tokens / $1.80 after its reader
+   * was already gone.
+   *
+   * Recursion terminates: each killRun re-enters terminalizeRun for the child,
+   * which returns early once that child is terminal, so the cascade walks the
+   * spawn tree at most once per node and is bounded by maxSpawnDepth.
+   *
+   * A cleanly-completed parent cascades nothing — background delegation is a
+   * legitimate pattern and its children are expected to outlive the turn.
+   */
+  function cancelOrphanedChildren(parentRunId: string, parentEndReason: string): void {
+    const orphaned = selectOrphanedChildRuns(parentRunId, parentEndReason, runs.values());
+    for (const childRunId of orphaned) {
+      killRun(childRunId, {
+        killedBy: "system",
+        reason: `its parent run ended (${parentEndReason}) with no reader left for this result`,
+      });
+    }
   }
 
   function waitForCompletion(runId: string): Promise<SubAgentCompletion> | undefined {
@@ -2598,6 +2630,10 @@ function classifyCompletionErrorKind(
           runId: queuedRunId,
           status: "queued",
           agentId: params.agentId,
+          // Persisted, not merely emitted: the health monitor reads the run
+          // records to see the spawn tree, and without this a parent waiting on
+          // a child is indistinguishable from a stalled one.
+          ...(params.parentRunId !== undefined ? { parentRunId: params.parentRunId } : {}),
           trustLevel: acceptedTrustLevel,
           task: params.task,
           sessionKey: queuedDisplay.formatted,
@@ -2763,6 +2799,9 @@ function classifyCompletionErrorKind(
     const startedAt = clock.now();
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
+      // See the queued path above — the stuck sweep needs the parent link on
+      // the record, not just on the spawn event.
+      ...(params.parentRunId !== undefined ? { parentRunId: params.parentRunId } : {}),
       trustLevel: acceptedTrustLevel,
       task: params.task, sessionKey: runDisplay.formatted,
       conversationScope: runConversation.conversationScope,
@@ -3190,8 +3229,7 @@ function classifyCompletionErrorKind(
         if (deliverySuppressedRunIds.has(runId)) return;
 
         const providerCompletedAt = clock.now();
-        const modelStoppedCleanly =
-          result.finishReason === "stop" || result.finishReason === "end_turn";
+        const modelDelivered = isDeliveredFinishReason(result.finishReason);
 
         // Output-contract validation. Hoisted ABOVE the outcome derivation (it used to run
         // several hundred lines below, purely as a WARN) because a clean model stop is not the
@@ -3258,7 +3296,7 @@ function classifyCompletionErrorKind(
         }
 
         const subAgentOutcome = resolveSubAgentOutcome({
-          modelStoppedCleanly,
+          modelDelivered,
           missingContractedOutputs,
         });
         // Two INDEPENDENT reasons a run is not a success, and a run can hit
@@ -3282,7 +3320,14 @@ function classifyCompletionErrorKind(
         let abortClassification: AbortClassification | undefined;
         if (isSubAgentAbortFinishReason(result.finishReason)) {
           try {
-            abortClassification = classifyAbortReason(result.finishReason);
+            // Live children at the abort are exactly what the run was awaiting,
+            // so a timeout hint can name them instead of the timeout knob.
+            abortClassification = classifyAbortReason(
+              result.finishReason,
+              undefined,
+              undefined,
+              { awaitedChildRunIds: liveChildRunIds(runId, runs.values()) },
+            );
           } catch { /* classification must never block */ }
         }
 
@@ -3608,16 +3653,20 @@ function classifyCompletionErrorKind(
               announcementText = buildAnnouncementMessage({
                 task: params.task,
                 status: isSuccess ? "completed" : "failed",
-                ...(isSuccess
-                  ? {
+                // The child's output is its RESPONSE on both paths. Only a
+                // genuine failure string belongs in `error`: abandoned
+                // background work is the one case where the response cannot be
+                // trusted as the result, because the child reported done while
+                // work it launched was still running. Everywhere else the run
+                // produced something and the reader must see it as output —
+                // routing it through `error` published a complete answer to the
+                // user prefixed "Error:".
+                ...(backgroundProcessFailure !== undefined
+                  ? { error: backgroundProcessFailure }
+                  : {
                       response: condensedResult
                         ? `${condensedResult.result.summary}${fullResultLine}`
                         : sanitizeAssistantResponse(result.response),
-                    }
-                  : {
-                      error: backgroundProcessFailure ?? (condensedResult
-                        ? `${condensedResult.result.summary}${fullResultLine}`
-                        : sanitizeAssistantResponse(result.response)),
                     }),
                 runtimeMs,
                 stepsExecuted: result.stepsExecuted,
@@ -4336,9 +4385,13 @@ function classifyCompletionErrorKind(
         callerSessionKey: run.callerSessionKey,  // shared dedup key
         callerConversation: run.callerConversation,
         destinationEndpoint: run.callerEndpoint,
+        // A bare "(system)" names the actor but not the cause; when the caller
+        // supplied a reason it is the only thing here that tells the reader why.
         detail: killedBy === "health_monitor"
           ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
-          : `The background task was stopped (${killedBy}).`,
+          : opts?.reason !== undefined
+            ? `The background task was stopped: ${opts.reason}.`
+            : `The background task was stopped (${killedBy}).`,
       }, deps));
     }
 
@@ -4385,14 +4438,38 @@ function classifyCompletionErrorKind(
    * drives; this helper itself raises nothing (the raw-throw.test.ts gate).
    */
   function killByRootRun(rootRunId: string, opts?: Parameters<typeof killRun>[1]): { killed: number } {
-    let killed = 0;
-    for (const run of runs.values()) {
-      if (
-        run.rootRunId === rootRunId &&
-        (run.status === "running" || run.status === "queued")
-      ) {
-        if (killRun(run.runId, opts).killed) killed++;
+    // Snapshot the live tree before killing anything: killing a parent cascades
+    // to its children (cancelOrphanedChildren), so a direct killRun reaching an
+    // already-cascaded child returns false and would under-report a tree this
+    // call did in fact terminate.
+    const targets = [...runs.values()]
+      .filter((run) =>
+        run.rootRunId === rootRunId
+        && (run.status === "running" || run.status === "queued"))
+      .map((run) => run.runId);
+
+    // Deepest-first, so every child is killed with THIS call's attribution
+    // before its parent's cascade can claim it as a "system" kill. An explicit
+    // operator/parent tree-kill must not reach the failure record as a cascade.
+    const depthOf = (runId: string): number => {
+      let depth = 0;
+      let cursor = runs.get(runId)?.parentRunId;
+      while (cursor !== undefined && depth < MAX_SPAWN_TREE_WALK) {
+        depth++;
+        cursor = runs.get(cursor)?.parentRunId;
       }
+      return depth;
+    };
+    const byDepth = new Map(targets.map((runId) => [runId, depthOf(runId)]));
+    targets.sort((a, b) => (byDepth.get(b) ?? 0) - (byDepth.get(a) ?? 0));
+
+    for (const runId of targets) killRun(runId, opts);
+
+    // Synchronous throughout, so any target no longer live was terminated here.
+    let killed = 0;
+    for (const runId of targets) {
+      const status = runs.get(runId)?.status;
+      if (status !== "running" && status !== "queued") killed++;
     }
     return { killed };
   }

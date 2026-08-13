@@ -765,6 +765,11 @@ export interface ObservabilityApiDeps {
     perAgent: ReadonlyMap<string, number>; perTenant: ReadonlyMap<string, number>; global: number;
     ceilings: { perAgentUsd: number | null; perTenantUsd: number | null; daemonGlobalUsd: number | null };
   };
+  /** The live announcement dead-letter queue — the operator lever surface for
+   *  `obs.quarantine.*`. The RUNNING queue is authoritative: it rewrites the
+   *  JSONL from memory on each persist, so the daemon is the only place a
+   *  release can be applied while it is up. Absent ⇒ honest empty. @optional-field */
+  deadLetterQueue?: import("@comis/orchestrator").AnnouncementDeadLetterQueue;
   // Observability persistence deps
   obsStore?: import("@comis/memory").ObservabilityStore;
   obsPersistence?: Pick<

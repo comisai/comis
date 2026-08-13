@@ -18,6 +18,7 @@ Runtime-contract and worked-example targets:
 - `EXAMPLE-autonomous-trading-system.md` — a worked autonomous multi-cron system build.
 - `MEMORY-LEARNING-STRESS-CATALOG.md` — neutral memory and learning workloads.
 - `adaptive-threat-hunting.md` — learning-loop stress over a security-ops workload.
+- `deep-research-delegation-stress.md` — background-task and sub-agent lifecycle stress over a fan-out research workload: ceilings, a waiting parent, partial source failure, delivery uncertainty.
 
 Pinned marathon campaigns (multi-day, whole-system drives from one deployment corner each):
 

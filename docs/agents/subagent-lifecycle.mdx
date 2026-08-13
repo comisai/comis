@@ -216,6 +216,20 @@ classification. For example, an error-classified failed run is rendered as
 `Failed`, so delivery does not erase the reason recorded by status and
 observability surfaces.
 
+A run that reached the end of its work counts as **delivered**, not halted —
+including one that finished `completed_with_tool_errors`, where some tool call
+failed but the sub-agent still produced an answer. Such a run is announced as
+`Completed (completed_with_tool_errors)`, and its tool failures remain visible
+as degradation on the observability surfaces. Only the genuine halts (the step
+ceiling, the no-progress loop guard, context exhaustion, a budget stop, a hard
+error) are announced as failures.
+
+The sub-agent's output is always rendered as the **result**, never as an error.
+A degraded run that still produced an answer shows that answer, with the
+degradation carried by the status label. The one exception is a run that
+abandoned background work it had launched: there the response cannot be trusted
+as the result, so the failure is reported instead.
+
 ## Objective reinforcement
 
 When a sub-agent's conversation grows long enough to trigger the context
@@ -273,7 +287,7 @@ security:
   agentToAgent:
     enabled: true
     allowAgents: ["coder", "researcher"]
-    subAgentMaxSteps: 50
+    subAgentMaxSteps: 300
     subAgentToolGroups: ["coding"]
     subagentContext:
       # -- Spawn limits --
@@ -340,6 +354,22 @@ returned by `session.run_status` and `subagent.wait`:
 | `failed` | An unrecoverable error occurred during execution |
 | `killed` | The sub-agent was force-terminated. The kill is attributed via `killedBy` (`parent` \| `health_monitor` \| `operator` \| `system`) on the failure record, the `subagent:killed` event, and the run status the parent polls -- a daemon health-monitor stuck-kill (no observed tool/LLM progress past `stuckKillThresholdMs`) never reads as a parent kill, and it delivers an LLM-free failure notification to the announce channel |
 | `watchdog_timeout` | The sub-agent exceeded its wall-clock timeout and was force-failed by the watchdog timer. See [Resilience](/agents/resilience#sub-agent-watchdog). |
+
+### Orphaned children are cancelled with their parent
+
+When a run reaches a terminal state **abnormally** -- any end reason other than
+`completed` -- every child it spawned that is still `running` or `queued` is
+killed with `killedBy: "system"`, and the failure notification names the cause
+(`its parent run ended (<endReason>) with no reader left for this result`).
+
+A parent that ends abnormally can never consume what its children return, so
+without the cascade they keep spending tokens on a result nobody will read. The
+cascade walks the spawn tree once per node, bounded by `maxSpawnDepth`.
+
+A **cleanly completed** parent cancels nothing. Background delegation is a
+supported pattern: a child that announces to its own channel is expected to
+outlive the turn that spawned it.
+
 | `ghost_sweep` | The sub-agent was stuck in "running" state past the grace period and was force-failed by the periodic ghost sweep. See [Resilience](/agents/resilience#ghost-sweep). |
 
 `swept` is reserved for result-file retention cleanup after `resultRetentionMs`;

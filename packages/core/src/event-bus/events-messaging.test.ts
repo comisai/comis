@@ -975,7 +975,7 @@ describe("Config nesting integration", () => {
     const config = SecurityConfigSchema.parse({});
     expect(config.agentToAgent.enabled).toBe(true);
     expect(config.agentToAgent.maxPingPongTurns).toBe(3);
-    expect(config.agentToAgent.subAgentMaxSteps).toBe(50);
+    expect(config.agentToAgent.subAgentMaxSteps).toBe(300);
     expect(config.agentToAgent.subAgentMcpTools).toBe("inherit");
   });
 

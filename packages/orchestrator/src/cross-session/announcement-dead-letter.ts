@@ -28,6 +28,15 @@ export type {
   DeadLetterEntry,
   ParentDecisionReservation,
 } from "./announcement-dead-letter-file.js";
+import { projectQuarantined, releaseQuarantined } from "./announcement-dead-letter-quarantine.js";
+import type {
+  QuarantinedAnnouncement,
+  QuarantineReleaseOutcome,
+} from "./announcement-dead-letter-quarantine.js";
+export type {
+  QuarantinedAnnouncement,
+  QuarantineReleaseOutcome,
+} from "./announcement-dead-letter-quarantine.js";
 
 /** Minimal structural logger accepted from the daemon composition root. */
 export interface AnnouncementLogger {
@@ -76,6 +85,32 @@ export interface AnnouncementDeadLetterQueue {
   ): Promise<void>;
   /** Return the current number of entries in the queue. */
   size(): number;
+  /**
+   * Every parked announcement, content-free, for operator review. Ordered
+   * oldest-first so the longest-stuck item leads.
+   *
+   * ASYNC because the queue loads from disk lazily: a freshly-started daemon
+   * has not drained yet, so a synchronous read of the in-memory lists reports
+   * an empty queue while the JSONL holds a stuck item — precisely the state an
+   * operator runs this to discover. It loads first, then projects.
+   */
+  listQuarantined(): Promise<readonly QuarantinedAnnouncement[]>;
+  /**
+   * Record an operator's decision about one parked announcement and drop it.
+   *
+   * `delivered` — the reader already has it (verified out of band); `discarded`
+   * — it is not worth sending. Both remove the item: the queue's job is to hold
+   * an undecided announcement, and a decided one is finished either way. The
+   * distinction rides the audit trail, not the queue.
+   *
+   * Resolves `false` for an unknown id rather than failing — releasing the same
+   * id twice is an operator retrying, not an error. Persists before mutating
+   * the in-memory state, so a failed write leaves the item parked.
+   */
+  release(
+    id: string,
+    outcome: QuarantineReleaseOutcome,
+  ): Promise<Result<boolean, Error>>;
 }
 
 /** Configuration options for the dead-letter queue factory. */
@@ -884,7 +919,13 @@ export function createAnnouncementDeadLetterQueue(
         tryCatch(() => onDelivered(idempotencyKey));
       }
       emitDelivered(entry, entry.attemptCount);
-      logger?.debug(
+      // INFO, not DEBUG: this is the resolution half of a condition whose opening
+      // half is a WARN. The dead-letter file is unlinked once the queue drains, so
+      // at the default level a resolved quarantine otherwise leaves the WARN
+      // standing with no trace of its outcome and no file to inspect — which reads
+      // as a lost announcement. Once per resolved entry, so the volume is bounded
+      // by the entries that actually cleared.
+      logger?.info(
         {
           runId: entry.runId,
           attemptCount: entry.attemptCount,
@@ -911,5 +952,36 @@ export function createAnnouncementDeadLetterQueue(
     drain: (sendToChannel, onDelivered) =>
       serialize(() => drainSerialized(sendToChannel, onDelivered)),
     size: () => entries.length + decisionReservations.length,
+    listQuarantined: () => serialize(async () => {
+      // Load before projecting: the in-memory lists are empty until some
+      // operation has faulted the file in, and `list` is usually the FIRST
+      // thing an operator runs after a restart.
+      const loadedFromDisk = await loadFromDisk();
+      if (!loadedFromDisk.ok) {
+        logger?.warn(
+          {
+            errorKind: "resource" as const,
+            hint: "restore dead-letter storage; the quarantine listing is incomplete",
+          },
+          "Quarantined announcement listing could not read the dead-letter file",
+        );
+      }
+      return projectQuarantined(entries, decisionReservations);
+    }),
+    release: (id, outcome) => serialize(async () => {
+      const loaded = await loadFromDisk();
+      if (!loaded.ok) return loaded;
+      return releaseQuarantined({
+        id, outcome, entries, reservations: decisionReservations, logger,
+        persist: async (nextEntries, nextReservations) => {
+          const written = await persist(nextEntries, nextReservations);
+          if (written.ok) {
+            entries = [...nextEntries];
+            decisionReservations = [...nextReservations];
+          }
+          return written;
+        },
+      });
+    }),
   };
 }

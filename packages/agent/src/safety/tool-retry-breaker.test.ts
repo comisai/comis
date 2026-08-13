@@ -129,6 +129,37 @@ describe("tool retry breaker", () => {
       expect(verdict.block).toBe(true);
     });
 
+    it("keeps novel arguments available after invocation-local failures", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 1,
+        maxToolFailures: 3,
+        maxConsecutiveErrorPatterns: 100,
+        suggestAlternatives: false,
+      });
+      const denied = JSON.stringify({
+        content: [{ type: "text", text: "HTTP 403" }],
+        details: { status: 403, error: "HTTP 403" },
+      });
+
+      for (const path of ["one", "two", "three"]) {
+        breaker.recordResult(
+          "web_fetch",
+          { url: `https://example.com/${path}` },
+          false,
+          denied,
+          { transportOk: true },
+        );
+      }
+
+      expect(
+        breaker.beforeToolCall("web_fetch", { url: "https://example.com/one" }).block,
+      ).toBe(true);
+      expect(breaker.getBlockedTools()).not.toContain("web_fetch");
+      expect(
+        breaker.beforeToolCall("web_fetch", { url: "https://example.com/novel" }).block,
+      ).toBe(false);
+    });
+
     it("includes tool name and error pattern in block reason", () => {
       const breaker = createBreaker();
       const tool = "mcp__yfinance--get_recs";
@@ -1060,6 +1091,45 @@ describe("tool retry breaker", () => {
       expect(reason).toContain("upstream 503 from provider");
     });
 
+    it("holds the no-nesting invariant when its OWN output is fed back, round after round", () => {
+      // The case above hand-escapes its fixture, so it exercises the peel but
+      // never the round trip: the builder embeds lastError RAW while the peeler
+      // parses it as a JSON-escaped string, so a real envelope (every exec and
+      // web_fetch failure is one) fails to peel and each retry adds a layer.
+      // Live on comis-moshe: "failed 13 total times with the same error:
+      // \"…failed 12 total times…\"" — 552 bytes with the real error buried.
+      // The inner text is itself JSON, so it CONTAINS QUOTES — which is what
+      // breaks the round trip. Every real web_fetch/exec failure looks like this.
+      const envelope = JSON.stringify({
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            url: "https://www.tamir-group.co.il/solution/subaru-forester-2020",
+            error: "URL redirected to a different location. Redirects are blocked for security.",
+          }, null, 2),
+        }],
+        details: {},
+      });
+
+      let reason = buildBlockReason("web_fetch", 11, envelope, [], "dependency", true);
+      // Each later turn feeds the PREVIOUS block message back in as lastError —
+      // exactly what the live retry loop does.
+      for (const count of [12, 13, 14]) {
+        reason = buildBlockReason("web_fetch", count, reason, [], "dependency", true);
+      }
+
+      expect((reason.match(/has failed/g) ?? []).length).toBe(1);
+      expect(reason).not.toMatch(/same error:.*has failed/s);
+      expect((reason.match(/appears to be unavailable/g) ?? []).length).toBe(1);
+      // The innermost real error survives every round — it is the whole point
+      // of the clause, and it is what got displaced. (The clause is capped at
+      // 150 chars, and a long URL eats most of that, so assert on the head of
+      // the real error rather than a phrase past the cut.)
+      expect(reason).toContain("URL redirected");
+      // …and it is the ERROR that survives, never the prior block's prose.
+      expect(reason).not.toContain("DO NOT retry this tool. Instead:\\n");
+    });
+
     it("collapses a raw serialized envelope lastError to its inner text", () => {
       const envelope = JSON.stringify({
         content: [{ type: "text", text: "[permission_denied] EPERM: operation not permitted" }],
@@ -1296,6 +1366,23 @@ describe("isBreakerBlockMessage", () => {
   it("recognizes a parameter-validation block", () => {
     const reason = buildBlockReason("some_tool", 3, "bad args", [], "invalid_params", false);
     expect(isBreakerBlockMessage(reason)).toBe(true);
+  });
+
+  it("recognizes a serialized builtin result that wraps a breaker block", () => {
+    const reason = buildBlockReason(
+      "web_fetch",
+      5,
+      "HTTP 403",
+      [],
+      "http_403",
+      true,
+    );
+    const resultEnvelope = JSON.stringify({
+      content: [{ type: "text", text: reason }],
+      details: {},
+    });
+
+    expect(isBreakerBlockMessage(resultEnvelope)).toBe(true);
   });
 
   it("does NOT match the underlying error the block quotes", () => {

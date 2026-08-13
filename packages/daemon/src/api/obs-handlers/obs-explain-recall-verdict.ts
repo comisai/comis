@@ -85,7 +85,6 @@ const terminalFailureKind = (s: IncidentSignals): string | undefined => {
     s.turnFinalized?.outcome === "failure" ? s.turnFinalized.errorKind : undefined;
   if (finalizedKind !== undefined) return finalizedKind;
   if ((s.summaryTopErrorKinds?.auth ?? 0) > 0 || s.turnFinalized?.errorKind === "auth") return "auth";
-  if (s.turnFinalized?.outcome !== "failure") return undefined;
   return "unclassified";
 };
 
@@ -151,15 +150,29 @@ export const executionTerminalFailureVerdict = (s: IncidentSignals): RecallVerdi
   if (kind === undefined || kind === "auth" || kind === "dependency") return null;
   const reason = s.turnFinalized?.reason;
   const reasonClause = reason !== undefined && reason.length > 0 ? ` (${reason})` : "";
+  // A death that never reached the activity surface leaves no pill to quote, so say
+  // that instead of claiming a finalize that never happened — the absent finalize is
+  // itself the lead: the turn died before or inside its own delivery path.
+  const finalized = s.turnFinalized?.outcome === "failure";
+  const detail = finalized
+    ? `the turn finalized as a terminal ${kind} failure${reasonClause} — the execution died `
+      + "with no tool failure to attribute it to"
+    : `the turn ended with ${s.endReason ?? "a terminal failure"} and never finalized an activity `
+      + "surface — the execution died with no tool failure to attribute it to";
   return {
     code: "execution_terminal_failure",
-    detail:
-      `the turn finalized as a terminal ${kind} failure${reasonClause} — the execution died `
-      + "with no tool failure to attribute it to",
-    suggestedNextSteps: [
-      `obs.explain depth=full for the terminal execution records behind the ${kind} failure`,
-      "run comis system-health --since 1 to see whether the same errorKind recurs across sessions",
-    ],
+    detail,
+    suggestedNextSteps: finalized
+      ? [
+          `obs.explain depth=full for the terminal execution records behind the ${kind} failure`,
+          "run comis system-health --since 1 to see whether the same errorKind recurs across sessions",
+        ]
+      : [
+          "inspect the response-locale repair and delivery-queue transition for this traceId — "
+            + "a turn that never finalized usually died in its own delivery path",
+          "obs.explain depth=full for the terminal execution records",
+          "run comis system-health --since 1 to see whether the same end reason recurs across sessions",
+        ],
   };
 };
 
@@ -169,8 +182,12 @@ export const recallMissVerdict = (s: IncidentSignals): RecallVerdict | null => {
   if (s.recall.recalls === 0 || s.recall.zeroHits < s.recall.recalls) return null;
   if (s.failures.length > 0) return null;
   if (s.degraded !== true) return null;
-  // A terminal failure pill is the cause; the zero-hit recall beside it is incidental.
-  if (s.turnFinalized?.outcome === "failure") return null;
+  // A session that died in the execution lifecycle is the cause; the zero-hit recall
+  // beside it is incidental. Defer to the SAME predicate the terminal verdicts key on,
+  // so no death can be claimed here and named there — or, as the live incident showed,
+  // claimed here and named nowhere. A death that reaches the finalize surface and one
+  // that never gets there are the same death.
+  if (endedInTerminalExecutionFailure(s)) return null;
   return {
     code: "recall_miss",
     detail:

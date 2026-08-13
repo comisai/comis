@@ -13299,6 +13299,85 @@
       "admin"
     ]
   },
+  "obs.quarantine.list": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "total": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "rows",
+        "total"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.quarantine.release": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "delivered",
+            "discarded"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean"
+        },
+        "remaining": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "released",
+        "remaining"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "obs.reset": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

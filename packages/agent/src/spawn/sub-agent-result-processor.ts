@@ -15,6 +15,7 @@
 
 import type { RootRunIdResolver } from "@comis/core";
 import { resolveReservationRoot } from "./reservation-root.js";
+import { promptTimeoutHint, type AbortEvidence } from "./abort-fallout.js";
 import {
   conversationScopeToSessionKey,
   safePath,
@@ -100,17 +101,18 @@ export function isSubAgentAbortFinishReason(finishReason: string): boolean {
  * @param finishReason - The finishReason from ExecutionResult or error context
  * @param errorMessage - Optional error message for pattern matching (error finishReason)
  * @param errorCause - Optional error.cause message for deeper stack trace investigation
- */
+ * @param evidence - Delegation state; branches the prompt_timeout hint (abort-fallout.ts) */
 export function classifyAbortReason(
   finishReason: string,
   errorMessage?: string,
   errorCause?: string,
+  evidence?: AbortEvidence,
 ): AbortClassification {
   switch (finishReason) {
     case "max_steps":
       return {
         category: "step_limit",
-        hint: "Increase max_steps in sessions_spawn or simplify the task",
+        hint: "Raise security.agentToAgent.subAgentMaxSteps (a spawn's own max_steps is clamped to it), or simplify the task",
         severity: "actionable",
       };
     case "loop_detected":
@@ -155,9 +157,7 @@ export function classifyAbortReason(
     case "prompt_timeout":
       return {
         category: "prompt_timeout",
-        hint:
-          "Increase agents.<id>.operationModels.subagent.timeout or reduce the task scope; "
-          + "the subagent operation timeout overrides agents.<id>.promptTimeout.promptTimeoutMs",
+        hint: promptTimeoutHint(evidence),
         severity: "actionable",
       };
     case "provider_degraded":
