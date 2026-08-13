@@ -66,6 +66,11 @@ non-`comis` `SERVICE` values so it cannot fall back to an everyday installation:
 | `EMU_DIR` | `/root/comis-emu` | emulator tree on the box |
 | `MODELS`/`PRIMARY` | — | the model list + restore-target for `models-sweep.sh` |
 
+RPC helpers resolve gateway authentication as explicit `COMIS_GATEWAY_TOKEN` → the encrypted secret in
+the selected `DATA`/config store → `GWTOKEN` fallback. This means a stale rendered `GWTOKEN` cannot make
+a helper authenticate against the wrong rig; the fallback remains available while a store is being
+bootstrapped.
+
 The two provider-risk variables are intentionally absent from this reusable table: the risk declaration
 belongs on a specific command, and the operator acknowledgement must never become ambient campaign state.
 
