@@ -2105,6 +2105,40 @@ describe("createTerminalSessionRegistry — fd3 events-push reader (no poll)", (
     expect(registry.get(sessionId, OWNER)?.status).toBe("running");
   });
 
+  it("retires a durable reattach descriptor when fd3 reports that the session exited", async () => {
+    const fake = makeFd3DrivableWorker();
+    const store = fakeDescriptorStore();
+    const onTerminalEvent = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        durability: { descriptorStore: store },
+        onTerminalEvent,
+      }),
+    );
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      durable: true,
+    }, OWNER);
+    expect(store.recover()).toHaveLength(1);
+
+    fake.emitFd3(
+      encodeFrame({ sessionId, event: "terminal:session_state", payload: { state: "exited" } }),
+    );
+
+    expect(onTerminalEvent).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId,
+      event: "terminal:session_state",
+      payload: { state: "exited" },
+    }));
+    expect(registry.get(sessionId, OWNER)?.status).toBe("exited");
+    expect(store.remove).toHaveBeenCalledWith(sessionId);
+    expect(store.recover()).toHaveLength(0);
+  });
+
   it("a corrupt (non-JSON) fd3 byte does NOT crash the daemon — WARN errorKind:'validation', drop the worker, never rethrow", async () => {
     const fake = makeFd3DrivableWorker();
     const logger = makeLogger();
