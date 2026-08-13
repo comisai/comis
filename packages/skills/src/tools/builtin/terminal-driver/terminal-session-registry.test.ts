@@ -2974,8 +2974,9 @@ describe("createTerminalSessionRegistry — cleanup PRESERVES a durable session 
     const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { durability: { descriptorStore: store, isTmuxAlive: () => true } }));
     await registry.create({ allowId: "bash", bin: "/bin/bash", argv: [], cols: 80, rows: 24, durable: true }, DURABLE_OWNER);
     await registry.cleanup();
+    fake.emitClose(0);
     expect(fake.requestFrames.filter((f) => f.method === "kill"), "a durable session's tmux must NOT be killed on a graceful cleanup").toHaveLength(0);
-    expect(store.remove, "the durable descriptor must be PRESERVED on cleanup (recover-on-boot needs it)").not.toHaveBeenCalled();
+    expect(store.remove, "the durable descriptor must be PRESERVED after the worker closes (recover-on-boot needs it)").not.toHaveBeenCalled();
   });
 
   it("a graceful cleanup STILL evicts a non-durable session (kill frame sent) — floor unchanged", async () => {

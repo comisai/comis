@@ -382,6 +382,23 @@ export function createTerminalSessionRegistry(
   const staysRecoverable = (handle: SessionHandle): boolean => durableStaysRecoverable(handle, isTmuxAliveOrDead);
   const markRunningSessionsLost = (): void => durableMarkLost(sessions, isTmuxAliveOrDead);
 
+  const handleTerminalEvent = (frame: TerminalEventFrame): void => {
+    const payload = frame.payload as { state?: unknown } | undefined;
+    if (frame.event === "terminal:session_state" && payload?.state === "exited") {
+      const handle = sessions.get(frame.sessionId);
+      // A real per-session fd3 exit arrives while this handle is still running. A
+      // worker-process close first flips every handle to exited, then sends the same
+      // content-free lifecycle shape; preserve durable descriptors in that case so a
+      // graceful daemon restart can reattach the surviving tmux session.
+      if (handle?.status === "running") {
+        handle.status = "exited";
+        handle.lastActivity = nowMs();
+        if (handle.durable === true) deps.durability?.descriptorStore?.remove(frame.sessionId);
+      }
+    }
+    deps.onTerminalEvent?.(frame);
+  };
+
   /**
    * Ensure a live worker handle, spawning + supervising one if absent. The
    * crash handlers flip this worker's sessions to `lost`/`exited` and clear the
@@ -404,7 +421,7 @@ export function createTerminalSessionRegistry(
       logger,
       markRunningSessionsLost,
       clearWorker,
-      onTerminalEvent: deps.onTerminalEvent,
+      onTerminalEvent: handleTerminalEvent,
     });
 
     return child;
