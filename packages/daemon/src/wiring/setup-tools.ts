@@ -627,7 +627,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // the first pair drops descriptors whose runtime predicate or capability
       // requirement fails; the final filter drops `undefined` build-returns.
       type PlatformTool = ReturnType<PlatformToolProvider>[number];
-      let tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
+      const tools: ReturnType<PlatformToolProvider> = PLATFORM_TOOL_REGISTRY
         .filter((d) => !d.conditional || d.conditional(ctx))
         .filter((d) => {
           const requiredCapability = PLATFORM_TOOL_CAPABILITY_REQUIREMENTS.get(d.name);
