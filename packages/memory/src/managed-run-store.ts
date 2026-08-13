@@ -679,11 +679,22 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     if (input.recordedAtMs < current.value.updatedAtMs) {
       return err(new Error("managed-run continuation outcome time cannot move backward"));
     }
+    const pendingContinuation = (() => {
+      switch (input.outcome) {
+        case "completed":
+        case "failed":
+          return current.value.lastAcceptedReportSequence > current.value.lastReducedReportSequence;
+        case "abandoned":
+          return true;
+        default: {
+          const exhaustive: never = input.outcome;
+          return exhaustive;
+        }
+      }
+    })();
     const next: ManagedRunRecord = {
       ...current.value,
-      pendingContinuation: input.outcome === "completed"
-        ? current.value.lastAcceptedReportSequence > current.value.lastReducedReportSequence
-        : true,
+      pendingContinuation,
       updatedAtMs: input.recordedAtMs,
     };
     const persisted = persistMutable(next);

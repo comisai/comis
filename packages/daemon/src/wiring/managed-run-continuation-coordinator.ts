@@ -354,7 +354,7 @@ export function createManagedRunContinuationCoordinator(
           managedRunId,
           serviceInstanceId: record.serviceInstanceId,
           err: toSafeErrorLogString(execution.error),
-          hint: "Inspect the managed-run continuation execution and retry after its exact policy, tools, and delivery dependencies are available",
+          hint: "Inspect the managed-run continuation execution; the reduced interval remains unknown and a newly accepted report will schedule the next continuation",
           errorKind: "dependency" as const,
         }, "Managed-run continuation failed closed");
       }

@@ -281,7 +281,11 @@ describe("managed-run continuation coordination", () => {
 
     const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual(ok({
+      kind: "processed",
+      throughReportSequence: 2,
+      pendingAfterCurrent: false,
+    }));
     expect(setup.store.listEvidenceByRefs).toHaveBeenCalledWith(ownerScope(), {
       managedRunId: "managed-run-a",
       evidenceRefs: ["evidence-outcome", "evidence-delivery"],
@@ -329,7 +333,11 @@ describe("managed-run continuation coordination", () => {
 
     const result = await setup.coordinator.process(ownerScope(), "managed-run-a");
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual(ok({
+      kind: "processed",
+      throughReportSequence: 2,
+      pendingAfterCurrent: false,
+    }));
     expect(setup.childLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
       managedRunId: "managed-run-a",
       err: "continuation provider unavailable",

@@ -130,6 +130,12 @@ Never commit `.env` to version control. It contains unencrypted credentials. Com
 
 The main SQLite database. It stores conversation sessions, long-term memory entries, delivery queue state, observability rows, DAG context engine tables, embedding cache, and more. This is the most important file in the data directory.
 
+Capability-service managed runs also keep content-free report cursors and
+continuation claims here. A continuation execution failure reduces its exact
+accepted report interval to `unknown` and settles that interval without immediate
+replay. A later accepted report advances the cursor and schedules the next
+continuation; an abandoned claim remains recoverable after restart.
+
 The observability rows live in the `obs_diagnostics` table, grouped by a `category` label. Among them, `model_health` is a one-shot diagnostic recorded once per boot that captures the daemon's load-level recall signals — whether an embedding provider is available, whether the GGUF reranker loaded, and whether the reranker model is present on disk. It carries booleans only (no model paths, no secrets) and lets the system health lens explain why recall was degraded on a given daemon without grepping the log.
 
 `config_posture` is likewise a one-shot snapshot recorded once per boot, capturing the daemon's security posture — whether the gateway is running without TLS, the per-family **counts** of stranded secrets (credentials left in the inactive store that the active `security.storage` mode cannot reach), and a canary-fallback aggregate (how many agents fall back to deterministic canary tokens because `CANARY_SECRET` is unset). It records counts and closed labels only — **never a secret value** — so the system health lens can surface a TLS-off / stranded-secret / canary posture without opening the log.
