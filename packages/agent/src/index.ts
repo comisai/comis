@@ -8,7 +8,6 @@ export type {
   AgentExecutor,
   ExecutionResult,
   ExecutionOverrides,
-  ExecutionStepLimitDetails,
 } from "./executor/types.js";
 export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
 export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";

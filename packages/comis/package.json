@@ -1,6 +1,6 @@
 {
   "name": "comisai",
-  "version": "1.0.60",
+  "version": "1.0.61",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Open-source security-first runtime for AI agents that learn and act across sessions.",
