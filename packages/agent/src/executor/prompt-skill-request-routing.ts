@@ -12,15 +12,16 @@ const MIN_SHARED_TERMS = 2;
 /**
  * Disclosure and ENFORCEMENT are separate decisions. Routing at
  * `MIN_SHARED_TERMS` only decorates the read tool with a skill location, which
- * costs nothing when the guess is wrong. A skill's web-evidence floor is a
- * completion REQUIREMENT: unmet receipts end the turn as a tool-invocation
- * stall and the model's answer is discarded. A broad description ("understand",
- * "explain", "reports", "documentation", …) shares the bare two-term minimum
- * with ordinary local-context prose, so that weakest admissible signal must not
- * arm a destructive floor — above it, the request is speaking the skill's own
- * vocabulary, and naming the skill outright always clears it.
+ * costs nothing when the guess is wrong. A skill's required binary workflow or
+ * web-evidence floor is a completion REQUIREMENT: unmet receipts end the turn as
+ * a tool-invocation stall and the model's answer is discarded. A broad
+ * description ("understand", "explain", "reports", "documentation", …) shares
+ * the bare two-term minimum with ordinary local-context prose, so that weakest
+ * admissible signal must not arm a destructive workflow — above it, the request
+ * is speaking the skill's own vocabulary, and naming the skill outright always
+ * clears it.
  */
-const MIN_EVIDENCE_FLOOR_SHARED_TERMS = MIN_SHARED_TERMS + 1;
+const MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS = MIN_SHARED_TERMS + 1;
 const MAX_WORKFLOW_CONTEXT_CHARS = 600;
 const PRIOR_REQUEST_REFERENCE_PATTERN =
   /\b(?:again|continue|earlier|former|it|its|latter|one|ones|previous|same|something|that|them|these|this|those)\b/iu;
@@ -189,27 +190,27 @@ export function applyPromptSkillRequestRouting(
   deferral.requestRelevantPromptSkillLocations = selectedLocations;
   const allTools = [...deferral.activeTools, ...deferral.discoveredTools];
   const availableToolNames = new Set(allTools.map((tool) => tool.name));
-  // An evidence floor is only enforceable when the tool that mints its receipts
-  // is actually reachable this turn AND the current request matched the skill
-  // above the bare disclosure minimum. Declaring an unreachable floor leaves the
-  // completion gate permanently unsatisfiable, and arming one on incidental
-  // description overlap discards a correct answer; both end the turn with the
-  // model's reply thrown away.
-  const evidenceFloorsEnforceable =
-    (selectedEntries[0]?.currentScore ?? 0) >= MIN_EVIDENCE_FLOOR_SHARED_TERMS;
+  // Required workflows are only enforceable when the current request matched the
+  // skill above the bare disclosure minimum. Evidence floors additionally need
+  // the tool that mints their receipts to be reachable. Declaring an unreachable
+  // floor leaves the completion gate permanently unsatisfiable, and arming any
+  // workflow on incidental description overlap discards a correct answer; both
+  // end the turn with the model's reply thrown away.
+  const workflowEnforceable =
+    (selectedEntries[0]?.currentScore ?? 0) >= MIN_WORKFLOW_ENFORCEMENT_SHARED_TERMS;
   const minDistinctWebFetchUrls =
-    evidenceFloorsEnforceable && availableToolNames.has("web_fetch")
+    workflowEnforceable && availableToolNames.has("web_fetch")
       ? selectedSkills[0]?.minDistinctWebFetchUrls
       : undefined;
   const minDistinctWebSearchQueries =
-    evidenceFloorsEnforceable && availableToolNames.has("web_search")
+    workflowEnforceable && availableToolNames.has("web_search")
       ? selectedSkills[0]?.minDistinctWebSearchQueries
       : undefined;
   const receiptToolNames = [...new Set([
     ...(minDistinctWebFetchUrls === undefined ? [] : ["web_search", "web_fetch"]),
     ...(minDistinctWebSearchQueries === undefined ? [] : ["web_search"]),
   ])].filter((name) => availableToolNames.has(name));
-  const binaryWorkflowToolNames = selectedSkills.some(
+  const binaryWorkflowToolNames = workflowEnforceable && selectedSkills.some(
     (skill) => (skill.requiredBins?.length ?? 0) > 0,
   )
     && allTools.some((tool) => tool.name === "exec")
