@@ -140,6 +140,34 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["browser", "read"]);
   });
 
+  it("does not enforce a parent skill from a quoted child task", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Delegation reachability test. Use sessions_spawn to start a child whose task is:",
+      "'Use web_search and web_fetch to retrieve the title of https://example.com and report it.'",
+      "On the first spawn deliberately set tool_groups to ['coding'] and required_tools to",
+      "['web_search','web_fetch']. Quote the rejection exactly once. Then follow its re-spawn",
+      "directive, wait for the child to finish, and report both attempts.",
+      "Do not substitute your own research.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn", "read"]);
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
