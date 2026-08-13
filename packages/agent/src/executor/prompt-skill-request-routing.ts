@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
-  getToolMetadata,
   scrubSecretsFromText,
   type PromptSkillCapability,
 } from "@comis/core";
@@ -251,13 +250,8 @@ export function applyPromptSkillRequestRouting(
   if (workflowToolNames.length > 0 && context !== undefined) {
     deferral.requestRelevantPromptSkillWorkflowContext = context;
   }
-  const mutationToolNames = workflowToolNames.length > 0
-    ? deferral.requestRelevantToolNames.filter(
-        (toolName) => getToolMetadata(toolName)?.isReadOnly === false,
-      )
-    : deferral.requestRelevantToolNames;
   deferral.requestRelevantToolNames = [...new Set([
-    ...mutationToolNames,
+    ...deferral.requestRelevantToolNames,
     "read",
     ...workflowToolNames,
   ])];

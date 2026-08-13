@@ -51,7 +51,9 @@ export interface RunRequestToolNudgeDeps {
   currentSuccessfulMutationCount: () => number;
   currentSuccessfulToolCount: (toolNames?: readonly string[]) => number;
   /** Successful current-turn receipts outside the routed prompt-skill workflow. */
-  currentSuccessfulNonWorkflowToolCount: () => number;
+  currentSuccessfulNonWorkflowToolCount: (
+    toolNames?: readonly string[],
+  ) => number;
   currentDistinctSuccessfulWebFetchUrlCount?: () => number;
   currentDistinctSuccessfulWebSearchQueryCount?: () => number;
   /** Accepted non-terminal handoffs for tools matched to this request. */
@@ -552,10 +554,26 @@ export async function runRequestToolNudge(
     !promptSkillGatesApply || promptSkillProcedureLoaded();
   const webEvidenceProven = () => !promptSkillGatesApply || webEvidenceSatisfied();
   const webEvidenceGateActive = promptSkillGatesApply && webEvidenceGateConfigured;
+  const successfulNonWorkflowToolCount =
+    deps.currentSuccessfulNonWorkflowToolCount();
+  const specializedNonWorkflowToolNames = recoveryToolNames.filter(
+    (toolName) =>
+      extractMcpServerName(toolName) !== undefined
+      && !(deps.requestRelevantPromptSkillWorkflowToolNames ?? []).includes(toolName),
+  );
+  const successfulSpecializedNonWorkflowToolCount =
+    specializedNonWorkflowToolNames.length === 0
+      ? 0
+      : deps.currentSuccessfulNonWorkflowToolCount(
+          specializedNonWorkflowToolNames,
+        );
   if (
-    successfulCount() > 0
-    && webEvidenceProven()
-    && promptSkillProcedureProven()
+    successfulSpecializedNonWorkflowToolCount > 0
+    || (
+      successfulCount() > 0
+      && webEvidenceProven()
+      && promptSkillProcedureProven()
+    )
   ) {
     return {
       fired: false,
@@ -595,7 +613,7 @@ export async function runRequestToolNudge(
   );
 
   const receiptGroundedResponseBefore =
-    deps.currentSuccessfulNonWorkflowToolCount() > 0
+    successfulNonWorkflowToolCount > 0
       ? deps.getVisibleAssistantText(deps.session)
       : "";
   const successfulToolCountBefore = successfulCount();
