@@ -595,6 +595,32 @@ describe("runRequestToolNudge", () => {
     expect(outcome.response).toBe(terminalNarration);
   });
 
+  it("does not make a prompt-skill workflow mandatory after a specialized receipt succeeds", async () => {
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText:
+        "review the current connected records and produce a deeply attributed report",
+      requestRelevantToolNames: [
+        "mcp__records--summary",
+        "read",
+        "web_search",
+        "web_fetch",
+      ],
+      requestRelevantPromptSkillNames: ["deep-research"],
+      requestRelevantPromptSkillLocations: ["/skills/deep-research/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
+      requestRelevantPromptSkillMinDistinctWebFetchUrls: 3,
+      requestRelevantPromptSkillMinDistinctWebSearchQueries: 3,
+      currentSuccessfulToolCount: () => 0,
+      currentSuccessfulNonWorkflowToolCount: () => 1,
+    });
+
+    const outcome = await runRequestToolNudge(deps);
+
+    expect(deps.session.prompt).not.toHaveBeenCalled();
+    expect(outcome.outcome).toBe("tool_already_succeeded");
+  });
+
   it("keeps terminal narration alone when the receipt-grounded answer is empty", async () => {
     const terminalNarration = "The current workflow evidence is bounded.";
     const { deps } = makePromptSkillNarrationScenario({
