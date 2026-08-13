@@ -5777,6 +5777,11 @@ restart_service_if_running() {
     if [[ "${COMIS_REEXEC:-0}" == "1" ]]; then
         return 0
     fi
+    # An unmanaged install must not act on a machine-wide service merely
+    # because one exists. The selected service mode owns restart authority.
+    if [[ "${RESOLVED_SERVICE_MANAGER:-none}" == "none" || "${NO_SERVICE_START:-0}" == "1" ]]; then
+        return 0
+    fi
     local active
     active="$(detect_active_service_manager)"
     case "$active" in
