@@ -234,7 +234,7 @@ export interface Acc {
   deliveryDispatch?: IncidentSignals["deliveryDispatch"];
   /** Bounded platform response IDs from `delivery.reply_bound` records. */
   deliveryMessageIds: string[];
-  /** Runtime-recovery fold from `execution.recovery_attempted` and
+  /** Selected-turn runtime-recovery fold from `execution.recovery_attempted` and
    *  `execution.replay_recovered` records: model re-entries and deterministic
    *  response corrections, summarized as total + succeeded tally + per-reason
    *  counts. Optional handoff counters are present only for records carrying
@@ -324,8 +324,8 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
-  subagentWait?: NonNullable<IncidentSignals["subagentWait"]>;
-  routedChildPreserved?: NonNullable<IncidentSignals["routedChildPreserved"]>;
+  subagentWaitsByRoute: Map<string, NonNullable<IncidentSignals["subagentWait"]>>;
+  routedChildrenByRoute: Map<string, NonNullable<IncidentSignals["routedChildPreserved"]>>;
   subagentBackgroundProcessesAbandonedCount: number;
   subagentBackgroundProcessesAbandonedLastRunId?: string;
   subagentDeliverySkippedCount: number;

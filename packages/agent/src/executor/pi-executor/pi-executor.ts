@@ -123,7 +123,6 @@ import { applyCommandDirectives } from "../executor-command-handlers.js";
 import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { appendExecutionResultJournal } from "../../session/execution-result-journal.js";
-import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import {
   postExecution,
   shouldRunContextStorePasses,
@@ -170,7 +169,12 @@ import { clearSessionBlockStability } from "../block-stability-tracker.js";
 import { wrapToolForAutoBackground } from "../../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
-import { applyMutationSerializer } from "../executor-tool-pipeline.js";
+import {
+  applyMutationSerializer,
+  applyPersistedReactiveStrip,
+  applyProviderNormalization,
+  applySchemasPruning,
+} from "../executor-tool-pipeline.js";
 import { OPERATION_TIMEOUT_DEFAULTS } from "../../model/operation-model-defaults.js";
 import type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "../types.js";
 import { randomUUID } from "node:crypto";
@@ -496,6 +500,13 @@ export function createPiExecutor(
           minTokensOverrideRef,
         },
       );
+      const executionContext = tryGetContext();
+      if (executionContext) {
+        executionContext.subagentWaitProgressBudgetMs = Math.min(
+          300_000,
+          Math.max(1, Math.floor(effectiveTimeout.promptTimeoutMs / 3)),
+        );
+      }
       const activeStepCounter = executionOverrides?.stepCounter ?? deps.stepCounter;
       activeStepCounter.reset();
       // A per-spawn tokenBudget becomes THIS execution's effective
@@ -2183,42 +2194,40 @@ async function runSessionLocked(
         continue;
       }
 
-      // Create AgentTool-compatible wrapper and push into the live array.
-      // The agentic loop's currentContext.tools is this same array reference,
-      // so pushed tools are immediately findable by agent-loop.js prepareToolCall().
-      //
-      // IMPORTANT: the execute() closure routes the result through
-      // wrapToolResultWithGuide so deferred tools (agents_manage,
-      // sessions_spawn, MCP tools, ...) receive their TOOL_GUIDES entry
-      // on first successful call. The session-start createJitGuideWrapper
-      // only wrapped tools present then; without this, discovered tools
-      // silently skipped their guides. Uses the same deliveredGuides Set
-      // as the session-start wrapper so the "once per session" contract
-      // holds whether the tool arrives initially or via discover_tools.
-      const original = entry.original;
+      const wrappedStub = existingTool ?? mergedCustomTools.find(
+        (tool) => tool.name === name
+          && (tool as unknown as Record<string, unknown>)[DEFERRAL_STUB_MARKER] === true,
+      );
+      if (wrappedStub === undefined) {
+        failedCount++;
+        continue;
+      }
+      let processedActivationTools = applySchemasPruning({
+        tools: [entry.original],
+        capabilityClass,
+        logger: deps.logger,
+      });
+      if (resolvedModel) {
+        processedActivationTools = applyProviderNormalization({
+          tools: processedActivationTools,
+          provider: resolvedModel.provider,
+          modelId: resolvedModel.id,
+          compat: modelCompat,
+          gbnfConstrain: deps.getGbnfConstrain?.() ?? false,
+        });
+      }
+      processedActivationTools = applyPersistedReactiveStrip({
+        tools: processedActivationTools,
+        sessionKey: formattedKey,
+      });
+      const processedActivationTool = processedActivationTools[0];
+      if (processedActivationTool === undefined) {
+        failedCount++;
+        continue;
+      }
       const activatedTool = {
-        name: original.name,
-        label: (original as unknown as Record<string, unknown>).label as string | undefined,
-        description: original.description,
-        parameters: original.parameters,
-        execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown) => {
-          const res = await original.execute(
-            toolCallId,
-            params as Record<string, unknown>,
-            signal,
-            onUpdate as Parameters<typeof original.execute>[3],
-            undefined as unknown as Parameters<typeof original.execute>[4],
-          );
-          return wrapToolResultWithGuide(original.name, res, deliveredGuides, deps.logger, {
-            // Any first tool result carries the delegation policy when spawning is
-            // reachable, so the model does not have to spawn in order to learn
-            // that it can.
-            delegationAvailable: contextTools.some(
-              (t) => (t as { name?: string }).name === "sessions_spawn",
-            ),
-            toolParams: params as Record<string, unknown>,
-          });
-        },
+        ...processedActivationTool,
+        execute: wrappedStub.execute,
       } as unknown as (typeof contextTools)[0];
       if (existingIndex >= 0) {
         contextTools[existingIndex] = activatedTool;
@@ -3071,6 +3080,7 @@ async function runSessionLocked(
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy,
         requestRelevantToolNames: deferralResult.requestRelevantToolNames,
+        isDeferredToolDiscovered: (toolName) => discoveryTracker.isDiscovered(toolName),
         requestRelevantPromptSkillNames: deferralResult.requestRelevantPromptSkillNames,
         requestRelevantPromptSkillLocations: deferralResult.requestRelevantPromptSkillLocations,
         requestRelevantPromptSkillWorkflowToolNames:

@@ -39,6 +39,7 @@ export interface RpcCallMetadata {
   signal?: AbortSignal;
   /** Model-requested wait duration before platform policy applies its cap. */
   subagentWaitRequestedTimeoutMs?: number;
+  subagentWaitProgressBudgetMs?: number;
 }
 
 export type RpcCall = (

@@ -51,12 +51,12 @@ export class McpCallDeadlineError extends Error {
 /** Typed local refusal when the per-server queue consumes the call budget. */
 export class McpCallQueueContentionError extends Error {
   readonly code = "mcp_queue_contention" as const;
-  readonly configKey: string;
+  readonly configKey = "integrations.mcp.servers[].maxConcurrency" as const;
   readonly requestBudgetMs: number;
 
   constructor(
     message: string,
-    serverName: string,
+    readonly serverName: string,
     readonly configuredConcurrency: number,
     readonly configuredMs: number,
     readonly queueWaitedMs: number,
@@ -64,7 +64,6 @@ export class McpCallQueueContentionError extends Error {
   ) {
     super(`[mcp_queue_contention] ${message}`);
     this.name = "McpCallQueueContentionError";
-    this.configKey = `integrations.mcp.servers.${serverName}.maxConcurrency`;
     this.requestBudgetMs = Math.max(0, configuredMs - queueWaitedMs);
   }
 }
@@ -145,12 +144,13 @@ export function mcpCallQueueExhaustedHint(
   timeoutMs: number,
   waitedMs: number,
   minViableMs: number,
+  implicitStdioConcurrency: boolean,
 ): string {
   const remainingMs = Math.max(0, timeoutMs - waitedMs);
-  const concurrencyKey =
-    `integrations.mcp.servers.${serverName}.maxConcurrency`;
+  const concurrencyEntry =
+    `integrations.mcp.servers[] entry named ${JSON.stringify(serverName)}`;
   return (
-    `${concurrencyKey}=${configuredConcurrency}; queueWaitedMs=${waitedMs}; ` +
+    `${concurrencyEntry} has maxConcurrency=${configuredConcurrency}; queueWaitedMs=${waitedMs}; ` +
     `requestBudgetMs=${remainingMs}; configuredMs=${timeoutMs}; minViableMs=${minViableMs}. ` +
     `MCP tool "${toolName}" on server "${serverName}" never ran: it waited ${waitedMs}ms for a ` +
     `concurrency slot, leaving ${remainingMs}ms of its ${timeoutMs}ms call deadline ` +
@@ -159,8 +159,11 @@ export function mcpCallQueueExhaustedHint(
     "between callers, NOT a slow server or an over-broad request — narrowing the arguments will " +
     "not help. Unlike a deadline expiry this is not deterministic: the same call can succeed once " +
     "the calls ahead of it drain, so a retry is reasonable. To fix it for good, raise " +
-    `\`${concurrencyKey}\` above ${configuredConcurrency} (for a stdio server also ` +
-    "set `supportsParallelToolCalls: true`, since stdio stays serialized at concurrency 1), or have " +
+    `\`maxConcurrency\` above ${configuredConcurrency} on ${concurrencyEntry}` +
+    (implicitStdioConcurrency
+      ? " or set `supportsParallelToolCalls: true` to opt into the implicit stdio concurrency default"
+      : "") +
+    ", or have " +
     "fewer callers hit this server at once."
   );
 }

@@ -27,6 +27,7 @@ import type {
 import type { CircuitState } from "./mcp-client-types.js";
 import type { RefreshResult } from "./oauth/refresh-deduper.js";
 import { callTool } from "./mcp-client-call.js";
+import { mcpCallQueueExhaustedHint } from "./mcp-client-call-diagnostics.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -169,6 +170,20 @@ describe("R8 needs_reauth", () => {
     expect(result2.value.content[0]?.text).toMatch(/^\[needs_reauth\]/);
     expect(result2.value.content[0]?.text).not.toMatch(/^\[server_unavailable\]/);
     expect(result2.value.isError).toBe(true);
+  });
+});
+
+describe("MCP queue contention guidance", () => {
+  it("mentions stdio opt-in only for implicit concurrency", () => {
+    const implicit = mcpCallQueueExhaustedHint(
+      "records", "summary", 1, 120_000, 119_800, 250, true,
+    );
+    const explicit = mcpCallQueueExhaustedHint(
+      "records", "summary", 1, 120_000, 119_800, 250, false,
+    );
+
+    expect(implicit).toContain("supportsParallelToolCalls");
+    expect(explicit).not.toContain("supportsParallelToolCalls");
   });
 });
 
@@ -435,6 +450,13 @@ describe("call deadline covers the queue wait", () => {
         : Promise.resolve({ content: [{ type: "text", text: "{}" }] });
     });
     state.options = { ...state.options, callToolTimeoutMs: 200 };
+    state.serverConfigs.set(serverName, {
+      name: serverName,
+      transport: "stdio",
+      command: "test-command",
+      enabled: true,
+      maxConcurrency: 1,
+    });
 
     const first = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
     const second = callTool(state, deps, `mcp:${serverName}/slow_report`, {});
@@ -447,15 +469,15 @@ describe("call deadline covers the queue wait", () => {
     // Must blame contention, not the server's speed, and name the knob that fixes it.
     expect(message).toMatch(/queue|contention|concurren/i);
     expect(message).toContain("maxConcurrency");
-    expect(message).toContain(
-      `integrations.mcp.servers.${serverName}.maxConcurrency=1`,
-    );
+    expect(message).toContain(`entry named \"${serverName}\" has maxConcurrency=1`);
+    expect(message).not.toContain("supportsParallelToolCalls");
     // And it must state the budget floor the remainder fell under — without it, a
     // refusal that still had deadline left reads as a self-contradiction.
     expect(message).toMatch(/\d+ms a request needs to be worth issuing/);
     expect(secondResult.error).toMatchObject({
       code: "mcp_queue_contention",
-      configKey: `integrations.mcp.servers.${serverName}.maxConcurrency`,
+      configKey: "integrations.mcp.servers[].maxConcurrency",
+      serverName,
       configuredConcurrency: 1,
       configuredMs: state.options.callToolTimeoutMs,
       queueWaitedMs: expect.any(Number),

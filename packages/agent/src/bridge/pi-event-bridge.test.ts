@@ -1681,9 +1681,11 @@ describe("createPiEventBridge", () => {
           content: [{
             type: "text",
             text:
-              "MCP tool error: [mcp_queue_contention] MCP tool \"summary\" on server "
-              + "\"records\" never ran: it waited 119750ms for a concurrency slot, "
-              + "leaving 250ms of its 120000ms call deadline.",
+              "MCP tool error: [mcp_queue_contention] integrations.mcp.servers[] entry "
+              + "named \"records\" has maxConcurrency=1; queueWaitedMs=119750; "
+              + "requestBudgetMs=250; configuredMs=120000; minViableMs=250. MCP tool "
+              + "\"summary\" on server \"records\" never ran: it waited 119750ms for a "
+              + "concurrency slot, leaving 250ms of its 120000ms call deadline.",
           }],
           details: {},
         };

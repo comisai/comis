@@ -53,7 +53,7 @@ describe("stripInternalFields()", () => {
   });
 
   it("exposes every dispatcher-injected internal field name in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(28);
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(29);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -98,7 +98,12 @@ describe("stripInternalFields()", () => {
 
   it("strips forged sub-agent wait timeout provenance", () => {
     expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_subagentWaitRequestedTimeoutMs");
-    const result = stripInternalFields({ _subagentWaitRequestedTimeoutMs: 300_000, foo: 1 });
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_subagentWaitProgressBudgetMs");
+    const result = stripInternalFields({
+      _subagentWaitRequestedTimeoutMs: 300_000,
+      _subagentWaitProgressBudgetMs: 60_000,
+      foo: 1,
+    });
     expect(result).toEqual({ foo: 1 });
   });
 

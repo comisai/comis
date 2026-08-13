@@ -13,7 +13,8 @@ import {
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { runNarrateNudge } from "../narrate-nudge.js";
-import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, runRequestToolNudge } from "../request-tool-nudge.js";
+import { countDistinctSuccessfulWebFetchUrls, countDistinctSuccessfulWebSearchQueries, isRecoveryEvidenceToolName, runRequestToolNudge } from "../request-tool-nudge.js";
+import { isReadOnlyTool } from "../tool-parallelism.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -424,12 +425,25 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
   if (result.narrateNudge?.fired === true) return;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sessionMessages: unknown[] = (session as any).messages ?? [];
+  const successfulDiscoveredEvidenceToolNames = (
+    params.bridge.getResult().toolExecResults ?? []
+  ).filter(
+    (record) => record.success
+      && record.backgrounded !== true
+      && isRecoveryEvidenceToolName(record.toolName)
+      && isReadOnlyTool(record.toolName)
+      && params.isDeferredToolDiscovered?.(record.toolName) === true,
+  ).map((record) => record.toolName);
+  const recoveryRelevantToolNames = [...new Set([
+    ...(params.requestRelevantToolNames ?? []),
+    ...successfulDiscoveredEvidenceToolNames,
+  ])];
   const outcome = await runRequestToolNudge({
     session,
     requestText: params.msg.originalMessages?.map((message) => message.text).join("\n") ?? params.msg.text,
     messages: sessionMessages,
     capabilityClass: params.modelProfile?.capabilityClass,
-    requestRelevantToolNames: params.requestRelevantToolNames ?? [],
+    requestRelevantToolNames: recoveryRelevantToolNames,
     requestRelevantPromptSkillNames: params.requestRelevantPromptSkillNames ?? [],
     requestRelevantPromptSkillLocations: params.requestRelevantPromptSkillLocations ?? [],
     requestRelevantPromptSkillWorkflowToolNames: params.requestRelevantPromptSkillWorkflowToolNames ?? [],
@@ -454,6 +468,8 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
       ]);
       return (params.bridge.getResult().toolExecResults ?? []).filter(
         (record) => record.success && record.backgrounded !== true
+          && isRecoveryEvidenceToolName(record.toolName)
+          && isReadOnlyTool(record.toolName)
           && (relevantNames === undefined || relevantNames.has(record.toolName))
           && !workflowNames.has(record.toolName),
       ).length;
@@ -461,13 +477,13 @@ async function runRequestToolNudgeStep(params: RunPromptParams): Promise<void> {
     currentDistinctSuccessfulWebFetchUrlCount: () => countDistinctSuccessfulWebFetchUrls(params.bridge.getResult().toolExecResults ?? []),
     currentDistinctSuccessfulWebSearchQueryCount: () => countDistinctSuccessfulWebSearchQueries(params.bridge.getResult().toolExecResults ?? []),
     currentDeferredWorkCount: () => {
-      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      const relevantNames = new Set(recoveryRelevantToolNames);
       return (params.bridge.getResult().toolExecResults ?? [])
         .filter((record) => record.backgrounded === true && relevantNames.has(record.toolName))
         .length;
     },
     currentTerminalDenialCount: () => {
-      const relevantNames = new Set(params.requestRelevantToolNames ?? []);
+      const relevantNames = new Set(recoveryRelevantToolNames);
       return (params.bridge.getResult().toolExecResults ?? [])
         .filter((record) => !record.success && record.failureCode === "permission_denied"
           && relevantNames.has(record.toolName))

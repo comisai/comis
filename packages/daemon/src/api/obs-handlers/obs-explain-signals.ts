@@ -25,7 +25,7 @@ import { accumulateDiscoveryActivation, accumulateOauthRefreshFailure, ensureToo
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound } from "./obs-explain-delivery-fold.js";
-import { accumulateSubagentIncidentRecord } from "./obs-explain-subagent-fold.js";
+import { accumulateSubagentIncidentRecord, selectedSubagentWaitSignals } from "./obs-explain-subagent-fold.js";
 import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
 /** Minimum same-tool failures with a success for content-heuristic misclassification. */
 const MISCLASS_N = 2;
@@ -451,6 +451,7 @@ function handleEventRecord(
       return;
     }
     case "execution.recovery_attempted": {
+      if (!isCurrentTurn) return;
       // Fold model re-entry and deterministic response-grounding recoveries
       // into counts by reason plus a succeeded tally.
       const reason = asString(data.reason) ?? "unknown";
@@ -479,9 +480,11 @@ function handleEventRecord(
       return;
     }
     case "tool.discovery_activation":
+      if (!isCurrentTurn) return;
       accumulateDiscoveryActivation(acc, data);
       return;
     case "execution.replay_recovered": {
+      if (!isCurrentTurn) return;
       // Count this signed-replay outcome with the other model re-entry recoveries.
       const prev = acc.recoveries ?? { total: 0, succeeded: 0, byReason: {} };
       prev.total += 1;
@@ -691,6 +694,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     subagentBackgroundProcessesAbandonedCount: 0,
     subagentDeliverySkippedCount: 0,
     subagentCompletedRunIds: new Set(),
+    subagentWaitsByRoute: new Map(),
+    routedChildrenByRoute: new Map(),
     subagentCompletedCount: 0,
     subagentFailedCount: 0,
     backgroundRecoveryRetryCount: 0,
@@ -762,6 +767,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ? acc.promptTraceIds.size
     : acc.toolTraceIds.size;
   const breakerOpenedTool = currentTurnBreakerOpenedTool(records, acc.breakerEvents, acc.breakerOpenedTool);
+  const subagentWaitSignals = selectedSubagentWaitSignals(acc);
   return {
     sessionKey: acc.sessionKey,
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
@@ -949,10 +955,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
           },
         }
       : {}),
-    ...(acc.subagentWait !== undefined ? { subagentWait: acc.subagentWait } : {}),
-    ...(acc.routedChildPreserved !== undefined
-      ? { routedChildPreserved: acc.routedChildPreserved }
-      : {}),
+    ...subagentWaitSignals,
     ...(acc.subagentBackgroundProcessesAbandonedCount > 0
       && acc.subagentBackgroundProcessesAbandonedLastRunId !== undefined
       ? {

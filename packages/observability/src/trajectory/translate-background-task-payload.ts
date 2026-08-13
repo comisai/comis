@@ -13,6 +13,38 @@ function translateFailureDiagnostic(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
   const diagnostic = value as Record<string, unknown>;
   if (
+    diagnostic.kind === "mcp_queue_contention"
+    && diagnostic.configKey === "integrations.mcp.servers[].maxConcurrency"
+    && typeof diagnostic.serverName === "string"
+    && diagnostic.serverName.length > 0
+    && diagnostic.serverName.length <= 128
+    && typeof diagnostic.configuredConcurrency === "number"
+    && Number.isInteger(diagnostic.configuredConcurrency)
+    && diagnostic.configuredConcurrency > 0
+    && typeof diagnostic.configuredMs === "number"
+    && Number.isFinite(diagnostic.configuredMs)
+    && diagnostic.configuredMs >= 0
+    && typeof diagnostic.queueWaitedMs === "number"
+    && Number.isFinite(diagnostic.queueWaitedMs)
+    && diagnostic.queueWaitedMs >= 0
+    && typeof diagnostic.requestBudgetMs === "number"
+    && Number.isFinite(diagnostic.requestBudgetMs)
+    && diagnostic.requestBudgetMs >= 0
+    && typeof diagnostic.minViableMs === "number"
+    && Number.isFinite(diagnostic.minViableMs)
+    && diagnostic.minViableMs >= 0
+  ) {
+    return {
+      failureConfigKey: diagnostic.configKey,
+      failureServerName: diagnostic.serverName,
+      failureConfiguredConcurrency: diagnostic.configuredConcurrency,
+      failureConfiguredMs: diagnostic.configuredMs,
+      failureQueueWaitedMs: diagnostic.queueWaitedMs,
+      failureRequestBudgetMs: diagnostic.requestBudgetMs,
+      failureMinViableMs: diagnostic.minViableMs,
+    };
+  }
+  if (
     diagnostic.kind === "background_hard_timeout_exceeded"
     && typeof diagnostic.configKey === "string"
     && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(diagnostic.configKey)
@@ -80,6 +112,7 @@ export function translateBackgroundTaskPayload(
         ...(payload.failureCode === "skill_import_incomplete"
           || payload.failureCode === "mcp_connection_details_missing"
           || payload.failureCode === "mcp_secret_reference_missing"
+          || payload.failureCode === "mcp_queue_contention"
           || payload.failureCode === "mcp_call_deadline_exceeded"
           || payload.failureCode === "background_hard_timeout_exceeded"
           ? { failureCode: payload.failureCode }

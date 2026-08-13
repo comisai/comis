@@ -233,6 +233,9 @@ export async function callTool(
         serverName, toolName, queue.concurrency,
         state.options.callToolTimeoutMs,
         waitedMs, viableFloorMs,
+        config?.transport === "stdio"
+          && config.maxConcurrency === undefined
+          && config.supportsParallelToolCalls !== true,
       );
       logger.warn(
         {

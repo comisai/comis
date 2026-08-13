@@ -111,6 +111,7 @@ export function makeCreateAgentRpcCall(
     return async (method, params, metadata) => {
       const outwardOperationId = metadata?.outwardOperationId;
       const subagentWaitRequestedTimeoutMs = metadata?.subagentWaitRequestedTimeoutMs;
+      const subagentWaitProgressBudgetMs = metadata?.subagentWaitProgressBudgetMs;
       if (
         outwardOperationId !== undefined
         && (outwardOperationId.length === 0 || outwardOperationId.length > 256)
@@ -126,6 +127,14 @@ export function makeCreateAgentRpcCall(
           || subagentWaitRequestedTimeoutMs > 300_000)
       ) {
         return Promise.reject(new Error("sub-agent wait timeout provenance must be between 0 and 300000 milliseconds"));
+      }
+      if (
+        subagentWaitProgressBudgetMs !== undefined
+        && (!Number.isInteger(subagentWaitProgressBudgetMs)
+          || subagentWaitProgressBudgetMs < 1
+          || subagentWaitProgressBudgetMs > 300_000)
+      ) {
+        return Promise.reject(new Error("sub-agent wait progress budget must be between 1 and 300000 milliseconds"));
       }
       const ctx = tryGetContext();
       // Only the framework scope resolved for this exact agent may supply
@@ -265,6 +274,9 @@ export function makeCreateAgentRpcCall(
         ...(rootRunId !== undefined && { _rootRunId: rootRunId }),
         ...(subagentWaitRequestedTimeoutMs !== undefined && {
           _subagentWaitRequestedTimeoutMs: subagentWaitRequestedTimeoutMs,
+        }),
+        ...(subagentWaitProgressBudgetMs !== undefined && {
+          _subagentWaitProgressBudgetMs: subagentWaitProgressBudgetMs,
         }),
         ...(outwardOperationId !== undefined && { _outwardOperationId: outwardOperationId }),
         ...(outwardStepIndex !== undefined && { _outwardStepIndex: outwardStepIndex }),

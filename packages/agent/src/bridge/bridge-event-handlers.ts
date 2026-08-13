@@ -53,7 +53,8 @@ export type RuntimeToolGuard =
 
 const STEP_LIMIT_TOOL_GUARD = /\bstep limit reached\b.*\bblocking tool execution\b/i;
 const BACKGROUND_TASK_CAPACITY_GUARD = /\[background_capacity\]\s+background task capacity reached:/i;
-const MCP_QUEUE_CONTENTION_GUARD = /\[mcp_queue_contention\]\s+mcp tool\b/i;
+const MCP_QUEUE_CONTENTION_GUARD =
+  /\[mcp_queue_contention\]\s+integrations\.mcp\.servers\[\]\s+entry\b.*\bmcp tool\b/i;
 const SPAWN_CEILING_GUARD = /\[spawn_ceiling\]\s+sub-agent spawn rejected:/i;
 
 /** Identify failures produced by the local execution guard before the tool boundary. */

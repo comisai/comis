@@ -11,6 +11,7 @@ interface RootCause {
 export function discoveredToolNotActivatedVerdict(
   signals: IncidentSignals,
 ): RootCause | null {
+  if (signals.endReason !== "success") return null;
   const activation = signals.discoveryActivation;
   if (activation === undefined || activation.displayedCount <= activation.activatedCount) {
     return null;
@@ -33,6 +34,7 @@ export function discoveredToolNotActivatedVerdict(
 export function groundedResponseReplacementVerdict(
   signals: IncidentSignals,
 ): RootCause | null {
+  if (signals.endReason !== "success") return null;
   const groundedBefore =
     signals.recoveries?.groundedResponseBeforeRecoveryCount ?? 0;
   const groundedPreserved =
@@ -43,7 +45,7 @@ export function groundedResponseReplacementVerdict(
     code: "recovery_replaced_grounded_response",
     detail:
       `${String(groundedBefore - groundedPreserved)} grounded response(s) backed by `
-      + `${String(outsideRoute)} successful receipt(s) outside the routed recovery tools `
+      + `${String(outsideRoute)} successful receipt(s) outside the selected workflow `
       + "were replaced by request-tool recovery",
     suggestedNextSteps: [
       "inspect request-relevant tool routing and the request_tool_nudge handoff",

@@ -315,7 +315,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       || candidate.failureCode === "mcp_queue_contention");
     if (failure === undefined) return null;
     const serverName = extractMcpServerName(failure.toolName);
-    const binding = `integrations.mcp.servers.${serverName ?? "<server>"}.maxConcurrency`;
+    const binding = `integrations.mcp.servers[] entry named ${JSON.stringify(serverName ?? "<server>")} has maxConcurrency`;
     const diagnostics = /maxConcurrency=(\d+);\s*queueWaitedMs=(\d+);\s*requestBudgetMs=(\d+);\s*configuredMs=(\d+)/u.exec(failure.errorPreview);
     const bindingValue = diagnostics?.[1];
     const timingDetail = diagnostics === null ? ""
@@ -327,7 +327,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
       suggestedNextSteps: [
         `retry after the calls ahead of ${failure.toolName} drain; this local refusal is transient`,
         `reduce concurrent calls to this server, or raise ${binding} only when the server supports parallel tool calls`,
-        "for a stdio server, set supportsParallelToolCalls: true before raising its concurrency above 1",
+        "inspect the named server entry before changing its concurrency policy",
       ],
     };
   },
@@ -814,6 +814,8 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   executionAuthFailureVerdict,
   executionDependencyFailureVerdict,
   executionNoProgressLoopVerdict,
+  groundedResponseReplacementVerdict,
+  discoveredToolNotActivatedVerdict,
   recallMissVerdict,
 
   // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
@@ -987,10 +989,11 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
 ];
 /** Run the ordered registry; first non-null `RootCause` wins, else `null` (clean session). */
 export function rootCause(s: IncidentSignals): RootCause | null {
-  const replacement = groundedResponseReplacementVerdict(s);
-  if (replacement !== null) return replacement;
-  const activation = discoveredToolNotActivatedVerdict(s); if (activation !== null) return activation;
-  if (s.endReason === "success" && s.degraded === false) return null;
+  if (s.endReason === "success" && s.degraded === false) {
+    const replacement = groundedResponseReplacementVerdict(s);
+    if (replacement !== null) return replacement;
+    return discoveredToolNotActivatedVerdict(s);
+  }
   for (const h of HEURISTICS) {
     const r = h(s);
     if (r !== null) return r;

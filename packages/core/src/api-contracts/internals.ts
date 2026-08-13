@@ -73,6 +73,7 @@ export const INTERNAL_FIELD_NAMES = [
   // trusted agent RPC factory injects this from tool-call metadata after
   // stripping forged inbound fields; the wait handler uses it only for
   // content-free requested-vs-effective diagnostics.
+  "_subagentWaitProgressBudgetMs",
   "_subagentWaitRequestedTimeoutMs",
   "_tenantId",
   "_traceId",

@@ -23,11 +23,22 @@ export const BackgroundTaskFailureCodeSchema = z.enum([
   "skill_import_incomplete",
   "mcp_connection_details_missing",
   "mcp_secret_reference_missing",
+  "mcp_queue_contention",
   "mcp_call_deadline_exceeded",
   "background_hard_timeout_exceeded",
   "mutation_not_persisted",
 ]) satisfies z.ZodType<BackgroundTaskFailureCode>;
 export const BackgroundTaskFailureDiagnosticSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("mcp_queue_contention"),
+    configKey: z.literal("integrations.mcp.servers[].maxConcurrency"),
+    serverName: z.string().min(1).max(128),
+    configuredConcurrency: z.number().int().positive(),
+    configuredMs: z.number().finite().nonnegative(),
+    queueWaitedMs: z.number().finite().nonnegative(),
+    requestBudgetMs: z.number().finite().nonnegative(),
+    minViableMs: z.number().finite().nonnegative(),
+  }),
   z.strictObject({
     kind: z.literal("mcp_call_deadline_exceeded"),
     configKey: z.literal("integrations.mcp.callToolTimeoutMs"),

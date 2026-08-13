@@ -5,6 +5,28 @@ import { asNumber, asString } from "./obs-explain-signals-fields.js";
 import type { Acc } from "./obs-explain-signals-acc.js";
 import { accumulateSubAgentCompletedRecord } from "./obs-explain-signal-folds.js";
 
+function subagentRouteKey(parentRunId: string | undefined, childRunId: string): string {
+  return `${parentRunId ?? ""}:${childRunId}`;
+}
+
+export function selectedSubagentWaitSignals(acc: Acc): {
+  subagentWait?: NonNullable<import("@comis/core").IncidentSignals["subagentWait"]>;
+  routedChildPreserved?: NonNullable<import("@comis/core").IncidentSignals["routedChildPreserved"]>;
+} {
+  const waits = [...acc.subagentWaitsByRoute.values()];
+  const subagentWait = waits.find((wait) => wait.status === "timeout" || wait.status === "cancelled")
+    ?? waits.find((wait) => wait.status === "denied_unknown")
+    ?? waits.at(-1);
+  if (subagentWait === undefined) return {};
+  const routedChildPreserved = acc.routedChildrenByRoute.get(
+    subagentRouteKey(subagentWait.parentRunId, subagentWait.childRunId),
+  );
+  return {
+    subagentWait,
+    ...(routedChildPreserved !== undefined ? { routedChildPreserved } : {}),
+  };
+}
+
 export function accumulateSubagentIncidentRecord(
   acc: Acc,
   type: string,
@@ -12,6 +34,7 @@ export function accumulateSubagentIncidentRecord(
   isCurrentTurn: boolean,
 ): void {
   if (type === "subagent.wait_finished") {
+    if (!isCurrentTurn) return;
     const childRunId = asString(data.runId);
     const parentRunId = asString(data.parentRunId);
     const status = asString(data.status);
@@ -26,7 +49,7 @@ export function accumulateSubagentIncidentRecord(
       && effectiveTimeoutMs !== undefined
       && durationMs !== undefined
     ) {
-      acc.subagentWait = {
+      const wait: NonNullable<import("@comis/core").IncidentSignals["subagentWait"]> = {
         ...(parentRunId !== undefined ? { parentRunId } : {}),
         childRunId,
         status,
@@ -34,6 +57,10 @@ export function accumulateSubagentIncidentRecord(
         effectiveTimeoutMs,
         durationMs,
       };
+      acc.subagentWaitsByRoute.set(
+        subagentRouteKey(parentRunId, childRunId),
+        wait,
+      );
       if (status === "completed" && typeof data.success === "boolean") {
         accumulateSubAgentCompletedRecord(
           acc,
@@ -45,6 +72,7 @@ export function accumulateSubagentIncidentRecord(
     return;
   }
   if (type === "subagent.routed_child_preserved") {
+    if (!isCurrentTurn) return;
     const parentRunId = asString(data.parentRunId);
     const childRunId = asString(data.childRunId);
     const reason = asString(data.reason);
@@ -53,7 +81,10 @@ export function accumulateSubagentIncidentRecord(
       && childRunId !== undefined
       && reason === "announcement_route"
     ) {
-      acc.routedChildPreserved = { parentRunId, childRunId, reason };
+      acc.routedChildrenByRoute.set(
+        subagentRouteKey(parentRunId, childRunId),
+        { parentRunId, childRunId, reason },
+      );
     }
     return;
   }

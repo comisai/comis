@@ -1,6 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { selectOrphanedChildRuns, liveChildRunIds, promptTimeoutHint } from "./abort-fallout.js";
+import {
+  conversationScopeToSessionKey,
+  createConversationRef,
+  formatSessionKey,
+  type ConversationScope,
+} from "@comis/core";
+import {
+  activelyAwaitedChildRunIds,
+  selectOrphanedChildRuns,
+  liveChildRunIds,
+  promptTimeoutHint,
+} from "./abort-fallout.js";
+
+function routedAuthority() {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "bot-a",
+    conversationId: "conversation_a",
+    conversationKind: "direct" as const,
+  };
+  const scope: ConversationScope = {
+    tenantId: "default",
+    agentId: "parent-agent",
+    partition: { kind: "principal", principalId: "user_a" },
+  };
+  const conversationRef = createConversationRef(scope);
+  const sessionKey = conversationScopeToSessionKey(scope);
+  if (!conversationRef.ok || !sessionKey.ok) throw new Error("test route invalid");
+  return {
+    announceChannelType: endpoint.channelType,
+    announceChannelId: endpoint.conversationId,
+    requesterOrigin: {
+      tenantId: "default",
+      userId: "user_a",
+      channelType: endpoint.channelType,
+      channelId: endpoint.conversationId,
+    },
+    callerAgentId: scope.agentId,
+    callerSessionKey: formatSessionKey(sessionKey.value),
+    callerConversation: { conversationScope: scope, conversationRef: conversationRef.value },
+    callerEndpoint: endpoint,
+  };
+}
 
 /**
  * Live incident: a delegated market scan timed out at 241s. Its parent run died
@@ -45,20 +87,37 @@ describe("selectOrphanedChildRuns", () => {
     }
   });
 
-  it("preserves a routed child while cancelling a child with no announcement route", () => {
+  it("preserves only a child with authenticated independent route authority", () => {
     const routedAndUnrouted = [
       {
         runId: "routed-child",
         status: "running",
         parentRunId: "parent",
-        announceChannelType: "gateway",
-        announceChannelId: "conversation_a",
+        ...routedAuthority(),
       },
       { runId: "unrouted-child", status: "running", parentRunId: "parent" },
     ];
 
     expect(selectOrphanedChildRuns("parent", "timeout", routedAndUnrouted))
       .toEqual(["unrouted-child"]);
+  });
+
+  it("cancels a nested child whose caller endpoint is synthetic", () => {
+    const nested = {
+      runId: "nested-child",
+      status: "running",
+      parentRunId: "parent",
+      ...routedAuthority(),
+      callerEndpoint: {
+        channelType: "sub-agent",
+        channelInstanceId: "runtime",
+        conversationId: "run-parent",
+        conversationKind: "direct" as const,
+      },
+    };
+
+    expect(selectOrphanedChildRuns("parent", "timeout", [nested]))
+      .toEqual(["nested-child"]);
   });
 });
 
@@ -117,5 +176,15 @@ describe("liveChildRunIds", () => {
     ];
 
     expect(liveChildRunIds("p", runs)).toEqual(selectOrphanedChildRuns("p", "timeout", runs));
+  });
+
+  it("labels only live children with active wait claims as awaited", () => {
+    const runs = [
+      { runId: "awaited", status: "running", parentRunId: "p" },
+      { runId: "asynchronous", status: "running", parentRunId: "p" },
+    ];
+
+    expect(activelyAwaitedChildRunIds("p", runs, (runId) => runId === "awaited"))
+      .toEqual(["awaited"]);
   });
 });

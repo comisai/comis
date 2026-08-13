@@ -140,8 +140,22 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
         throw new AuthorizationError("Sub-agent wait cancellation authority is invalid");
       }
       const params = SubagentWaitContract.request.parse(stripInternalFields(rawParams));
-      const timeoutMs = params.timeoutMs
+      const requestedByParamsMs = params.timeoutMs
         ?? Math.min(deps.securityConfig.agentToAgent?.waitTimeoutMs ?? 60_000, 300_000);
+      const rawProgressBudgetMs = rawParams._subagentWaitProgressBudgetMs;
+      if (
+        rawProgressBudgetMs !== undefined
+        && (typeof rawProgressBudgetMs !== "number"
+          || !Number.isInteger(rawProgressBudgetMs)
+          || rawProgressBudgetMs < 1
+          || rawProgressBudgetMs > 300_000)
+      ) {
+        throw new AuthorizationError("Sub-agent wait progress budget is invalid");
+      }
+      const timeoutMs = Math.min(
+        requestedByParamsMs,
+        rawProgressBudgetMs ?? requestedByParamsMs,
+      );
       const rawRequestedTimeoutMs = rawParams._subagentWaitRequestedTimeoutMs;
       if (
         rawRequestedTimeoutMs !== undefined
@@ -152,7 +166,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       ) {
         throw new AuthorizationError("Sub-agent wait timeout provenance is invalid");
       }
-      const requestedTimeoutMs = rawRequestedTimeoutMs ?? timeoutMs;
+      const requestedTimeoutMs = rawRequestedTimeoutMs ?? requestedByParamsMs;
 
       const requestedRunIds = params.runIds !== undefined
         ? [...new Set(params.runIds)]

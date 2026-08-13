@@ -76,6 +76,10 @@ registerToolMetadata("obs_query", {
   isReadOnly: true,
 });
 
+registerToolMetadata("discover_tools", {
+  isReadOnly: true,
+});
+
 registerToolMetadata("web_search", {
   isReadOnly: true,
 });
@@ -102,7 +106,7 @@ function makePromptSkillNarrationScenario(options: {
   let successfulWorkflowToolCount = 0;
   let distinctWebFetchUrlCount = 0;
   const nonWorkflowReceiptCount = options.nonWorkflowReceiptCount ?? 1;
-  const prompt = vi.fn(async () => {
+  const prompt = vi.fn(async (_instruction?: string) => {
     if (prompt.mock.calls.length === 1) {
       successfulWorkflowToolCount = 1;
       distinctWebFetchUrlCount = 1;
@@ -114,7 +118,7 @@ function makePromptSkillNarrationScenario(options: {
       capabilityClass: "frontier",
       requestText:
         "review the connected operational dataset and report useful findings",
-      requestRelevantToolNames: ["read", "web_fetch"],
+      requestRelevantToolNames: ["test_read_only_tool", "read", "web_fetch"],
       requestRelevantPromptSkillNames: ["research-skill"],
       requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
       requestRelevantPromptSkillWorkflowToolNames: ["web_fetch"],
@@ -137,7 +141,10 @@ function makePromptSkillNarrationScenario(options: {
       ],
       session: { prompt },
       currentSuccessfulToolCount: () => successfulWorkflowToolCount,
-      currentSuccessfulNonWorkflowToolCount: () => nonWorkflowReceiptCount,
+      currentSuccessfulNonWorkflowToolCount: (toolNames) =>
+        toolNames === undefined || toolNames.includes("test_read_only_tool")
+          ? nonWorkflowReceiptCount
+          : 0,
       currentDistinctSuccessfulWebFetchUrlCount: () => distinctWebFetchUrlCount,
       getVisibleAssistantText: () =>
         prompt.mock.calls.length === 0
@@ -555,7 +562,7 @@ describe("runRequestToolNudge", () => {
     });
   });
 
-  it("preserves a receipt-grounded answer when prompt-skill narration adds a terminal caveat", async () => {
+  it("reconciles a receipt-grounded draft into one terminal narration", async () => {
     const groundedAnswer = [
       "The connected operational dataset covers every active unit.",
       "The strongest current finding is a concentrated idle-time cluster.",
@@ -575,20 +582,26 @@ describe("runRequestToolNudge", () => {
       recovered: true,
       outcome: "recovered",
     });
-    expect(outcome.response).toContain(groundedAnswer);
-    expect(outcome.response).toContain(terminalCaveat);
-    expect(outcome.response?.indexOf(groundedAnswer)).toBeLessThan(
-      outcome.response?.indexOf(terminalCaveat) ?? -1,
+    expect(outcome.response).toBe(terminalCaveat);
+    expect(prompt.mock.calls[1]?.[0]).toContain(groundedAnswer);
+    expect(prompt.mock.calls[1]?.[0]).toMatch(/reconcile.*replace conflicting claims/iu);
+    const eventBus = deps.eventBus as unknown as {
+      emitSafely: ReturnType<typeof vi.fn>;
+    };
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
+      "execution:recovery_attempted",
+      expect.objectContaining({ groundedResponsePreserved: false }),
     );
   });
 
   it("reports whether request-tool recovery preserved grounded evidence outside its route", async () => {
+    const groundedAnswer = "The connected records support a current finding.";
     const { deps } = makePromptSkillNarrationScenario({
-      groundedAnswer: "The connected records support a current finding.",
-      terminalNarration: "General research supplies additional context.",
+      groundedAnswer,
+      terminalNarration: `${groundedAnswer}\nGeneral research supplies additional context.`,
     });
     deps.currentSuccessfulNonWorkflowToolCount = (toolNames) =>
-      toolNames === undefined ? 1 : 0;
+      toolNames?.includes("test_read_only_tool") ? 1 : 0;
 
     await runRequestToolNudge(deps);
 
@@ -620,7 +633,37 @@ describe("runRequestToolNudge", () => {
     expect(outcome.response).toBe(terminalNarration);
   });
 
-  it("does not make a prompt-skill workflow mandatory after a specialized receipt succeeds", async () => {
+  it("does not ground an earlier draft on a discovery control receipt", async () => {
+    const deps = makeDeps({
+      capabilityClass: "frontier",
+      requestText: "review the connected records with the required research procedure",
+      requestRelevantToolNames: ["discover_tools", "read", "web_fetch"],
+      requestRelevantPromptSkillNames: ["research-skill"],
+      requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
+      requestRelevantPromptSkillWorkflowToolNames: ["web_fetch"],
+      messages: [
+        { role: "user", content: "review the connected records" },
+        { role: "assistant", content: "An unsupported market claim." },
+      ],
+      currentSuccessfulNonWorkflowToolCount: (toolNames) =>
+        toolNames?.includes("discover_tools") === true ? 1 : 0,
+    });
+
+    await runRequestToolNudge(deps);
+
+    const eventBus = deps.eventBus as unknown as {
+      emitSafely: ReturnType<typeof vi.fn>;
+    };
+    expect(eventBus.emitSafely).toHaveBeenCalledWith(
+      "execution:recovery_attempted",
+      expect.objectContaining({
+        groundedResponseBeforeRecovery: false,
+        successfulReceiptsOutsideRoute: 0,
+      }),
+    );
+  });
+
+  it("does not let a specialized receipt bypass a prompt-skill workflow", async () => {
     const deps = makeDeps({
       capabilityClass: "frontier",
       requestText:
@@ -642,8 +685,8 @@ describe("runRequestToolNudge", () => {
 
     const outcome = await runRequestToolNudge(deps);
 
-    expect(deps.session.prompt).not.toHaveBeenCalled();
-    expect(outcome.outcome).toBe("tool_already_succeeded");
+    expect(deps.session.prompt).toHaveBeenCalled();
+    expect(outcome.outcome).not.toBe("tool_already_succeeded");
   });
 
   it("keeps terminal narration alone when the receipt-grounded answer is empty", async () => {
@@ -658,7 +701,7 @@ describe("runRequestToolNudge", () => {
     expect(outcome.response).toBe(terminalNarration);
   });
 
-  it("does not duplicate a grounded answer already included in terminal narration", async () => {
+  it("returns terminal narration without deterministic draft concatenation", async () => {
     const groundedAnswer = "The current receipt proves the bounded result.";
     const terminalNarration = `${groundedAnswer}\n\nOne evidence source remains unavailable.`;
     const { deps } = makePromptSkillNarrationScenario({

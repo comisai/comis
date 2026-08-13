@@ -29,10 +29,46 @@ function failureDiagnostic(error: unknown): BackgroundTaskFailureDiagnostic | un
       code?: unknown;
       configKey?: unknown;
       configuredMs?: unknown;
+      configuredConcurrency?: unknown;
       queueWaitedMs?: unknown;
       requestBudgetMs?: unknown;
+      minViableMs?: unknown;
+      serverName?: unknown;
       cause?: unknown;
     };
+    if (
+      candidate.code === "mcp_queue_contention"
+      && candidate.configKey === "integrations.mcp.servers[].maxConcurrency"
+      && typeof candidate.serverName === "string"
+      && candidate.serverName.length > 0
+      && candidate.serverName.length <= 128
+      && typeof candidate.configuredConcurrency === "number"
+      && Number.isInteger(candidate.configuredConcurrency)
+      && candidate.configuredConcurrency > 0
+      && typeof candidate.configuredMs === "number"
+      && Number.isFinite(candidate.configuredMs)
+      && candidate.configuredMs >= 0
+      && typeof candidate.queueWaitedMs === "number"
+      && Number.isFinite(candidate.queueWaitedMs)
+      && candidate.queueWaitedMs >= 0
+      && typeof candidate.requestBudgetMs === "number"
+      && Number.isFinite(candidate.requestBudgetMs)
+      && candidate.requestBudgetMs >= 0
+      && typeof candidate.minViableMs === "number"
+      && Number.isFinite(candidate.minViableMs)
+      && candidate.minViableMs >= 0
+    ) {
+      return {
+        kind: candidate.code,
+        configKey: candidate.configKey,
+        serverName: candidate.serverName,
+        configuredConcurrency: candidate.configuredConcurrency,
+        configuredMs: candidate.configuredMs,
+        queueWaitedMs: candidate.queueWaitedMs,
+        requestBudgetMs: candidate.requestBudgetMs,
+        minViableMs: candidate.minViableMs,
+      };
+    }
     if (
       candidate.code === "background_hard_timeout_exceeded"
       && typeof candidate.configKey === "string"

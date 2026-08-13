@@ -393,6 +393,46 @@ describe("translatePayload — T2.2 background_task lifecycle (F9: now visible o
     expect(JSON.stringify(data)).not.toContain("sensitive context");
   });
 
+  it("failed: retains typed MCP queue diagnostics without its error body", () => {
+    const data = translatePayload("background_task:failed", {
+      agentId: "a1",
+      taskId: "t-queue",
+      toolName: "mcp__reports--queued_lookup",
+      error: "queue body containing sensitive context",
+      errorKind: "resource",
+      failureCode: "mcp_queue_contention",
+      failureDiagnostic: {
+        kind: "mcp_queue_contention",
+        configKey: "integrations.mcp.servers[].maxConcurrency",
+        serverName: "reports",
+        configuredConcurrency: 2,
+        configuredMs: 120_000,
+        queueWaitedMs: 119_800,
+        requestBudgetMs: 200,
+        minViableMs: 250,
+      },
+      durationMs: 119_800,
+      origin: { agentId: "a1", sessionKey: "k" },
+      timestamp: 302,
+    } as never);
+
+    expect(data).toEqual({
+      taskId: "t-queue",
+      toolName: "mcp__reports--queued_lookup",
+      durationMs: 119_800,
+      errorKind: "resource",
+      failureCode: "mcp_queue_contention",
+      failureConfigKey: "integrations.mcp.servers[].maxConcurrency",
+      failureServerName: "reports",
+      failureConfiguredConcurrency: 2,
+      failureConfiguredMs: 120_000,
+      failureQueueWaitedMs: 119_800,
+      failureRequestBudgetMs: 200,
+      failureMinViableMs: 250,
+    });
+    expect(JSON.stringify(data)).not.toContain("sensitive context");
+  });
+
   it("failed: retains the background hard-duration key and configured limit", () => {
     const data = translatePayload("background_task:failed", {
       agentId: "agent-1",

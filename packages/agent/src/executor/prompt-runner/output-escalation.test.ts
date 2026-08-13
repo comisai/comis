@@ -328,9 +328,13 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
     });
   });
 
-  it("preserves a grounded answer when a dynamically discovered MCP tool succeeded", async () => {
+  it("reconciles a grounded answer when a dynamically discovered MCP tool succeeded", async () => {
     const groundedAnswer = "The connected records show a concentrated idle-time cluster.";
-    const terminalNarration = "General research supports reducing sustained idling.";
+    const terminalNarration = [
+      groundedAnswer,
+      "Priority 1: reduce sustained idling in the affected units.",
+      "Limitation: historical maintenance records were unavailable.",
+    ].join("\n\n");
     const toolExecResults: Array<{
       toolName: string;
       success: boolean;
@@ -442,7 +446,13 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       executionId: "execution-a",
       resolvedModel: { id: "test-model" },
       mergedCustomTools: [],
-      requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantToolNames: [
+        "read",
+        "web_search",
+        "web_fetch",
+      ],
+      isDeferredToolDiscovered: (toolName: string) =>
+        toolName === "mcp__records--summary",
       requestRelevantPromptSkillNames: ["research-skill"],
       requestRelevantPromptSkillLocations: ["/skills/research-skill/SKILL.md"],
       requestRelevantPromptSkillWorkflowToolNames: ["web_search", "web_fetch"],
@@ -494,13 +504,18 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       .toEqual({
         fired: true,
         recovered: true,
-        matchedToolNames: ["read", "web_search", "web_fetch"],
+        matchedToolNames: [
+          "read",
+          "web_search",
+          "web_fetch",
+          "mcp__records--summary",
+        ],
       });
     expect((params as { result: { response: string } }).result.response)
-      .toContain(groundedAnswer);
-    expect((params as { result: { response: string } }).result.response)
-      .toContain(terminalNarration);
+      .toBe(terminalNarration);
+    expect(prompt.mock.calls[1]?.[0]).toContain(groundedAnswer);
   });
+
 });
 
 describe("output-escalation.ts — dependency direction", () => {

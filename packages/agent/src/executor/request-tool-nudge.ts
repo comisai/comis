@@ -75,6 +75,14 @@ const MAX_RECOVERY_GUIDANCE_CHARS = 800;
 const MAX_WORKFLOW_RECEIPT_CHARS = 3_000;
 const MAX_PROMPT_SKILL_WORKFLOW_CONTINUATIONS = 3;
 const MAX_OBSERVABLE_RECEIPT_COUNT = 10_000;
+const RECOVERY_CONTROL_TOOL_NAMES = new Set([
+  "discover_tools",
+  "tool_search_tool_regex",
+]);
+
+export function isRecoveryEvidenceToolName(toolName: string): boolean {
+  return !RECOVERY_CONTROL_TOOL_NAMES.has(toolName);
+}
 
 interface WebFetchReceiptRecord {
   readonly toolName: string;
@@ -381,7 +389,11 @@ function buildPromptSkillWorkflowDirective(
   ].join("\n");
 }
 
-function buildPromptSkillResultNarrationDirective(receipts?: string): string {
+function buildPromptSkillResultNarrationDirective(
+  receipts?: string,
+  receiptGroundedDraft?: string,
+): string {
+  const boundedDraft = receiptGroundedDraft?.trim().slice(0, MAX_WORKFLOW_RECEIPT_CHARS);
   return [
     "[comis: continuation — narrate the completed prompt skill workflow]",
     "A required prompt-skill workflow tool succeeded in this turn.",
@@ -391,6 +403,16 @@ function buildPromptSkillResultNarrationDirective(receipts?: string): string {
     "Do not carry an earlier failure or unavailable-source claim into this answer; mention one only when a current-turn tool receipt records it, using its exact identifier.",
     "Copy every citation URL verbatim from a successful current-turn web_fetch receipt's URL: line.",
     "Do not substitute a canonical, related, search-result, or earlier URL; omit a claim when no successful receipt supports it.",
+    ...(boundedDraft
+      ? [
+          "Reconcile the earlier receipt-grounded draft with the completed workflow. Retain its supported conclusions, replace conflicting claims, and omit anything the combined receipts do not support.",
+          "The bounded earlier receipt-grounded draft is:",
+          wrapExternalContent(scrubSecretsFromText(boundedDraft).text, {
+            source: "unknown",
+            includeWarning: true,
+          }),
+        ]
+      : []),
     ...(receipts
       ? [
           "The bounded current-turn workflow receipts are:",
@@ -399,19 +421,6 @@ function buildPromptSkillResultNarrationDirective(receipts?: string): string {
       : []),
     "Do not invoke another tool, ask for context already supplied, or replace a specific result with a generic capability.",
   ].join("\n");
-}
-
-function preserveReceiptGroundedAnswer(
-  groundedAnswer: string,
-  terminalNarration: string,
-): string {
-  const grounded = groundedAnswer.trim();
-  const terminal = terminalNarration.trim();
-  if (grounded.length === 0) return terminal;
-  if (terminal.length === 0) return grounded;
-  if (terminal.includes(grounded)) return terminal;
-  if (grounded.includes(terminal)) return grounded;
-  return `${grounded}\n\n${terminal}`;
 }
 
 export async function runRequestToolNudge(
@@ -555,36 +564,17 @@ export async function runRequestToolNudge(
     !promptSkillGatesApply || promptSkillProcedureLoaded();
   const webEvidenceProven = () => !promptSkillGatesApply || webEvidenceSatisfied();
   const webEvidenceGateActive = promptSkillGatesApply && webEvidenceGateConfigured;
+  const evidenceToolNames = recoveryToolNames.filter(isRecoveryEvidenceToolName);
   const successfulNonWorkflowToolCount =
-    deps.currentSuccessfulNonWorkflowToolCount();
+    deps.currentSuccessfulNonWorkflowToolCount(evidenceToolNames);
   const successfulReceiptsOutsideRoute = Math.min(
     MAX_OBSERVABLE_RECEIPT_COUNT,
-    Math.max(
-      0,
-      Math.trunc(
-        successfulNonWorkflowToolCount
-          - deps.currentSuccessfulNonWorkflowToolCount(recoveryToolNames),
-      ),
-    ),
+    Math.max(0, Math.trunc(successfulNonWorkflowToolCount)),
   );
-  const specializedNonWorkflowToolNames = recoveryToolNames.filter(
-    (toolName) =>
-      extractMcpServerName(toolName) !== undefined
-      && !(deps.requestRelevantPromptSkillWorkflowToolNames ?? []).includes(toolName),
-  );
-  const successfulSpecializedNonWorkflowToolCount =
-    specializedNonWorkflowToolNames.length === 0
-      ? 0
-      : deps.currentSuccessfulNonWorkflowToolCount(
-          specializedNonWorkflowToolNames,
-        );
   if (
-    successfulSpecializedNonWorkflowToolCount > 0
-    || (
-      successfulCount() > 0
-      && webEvidenceProven()
-      && promptSkillProcedureProven()
-    )
+    successfulCount() > 0
+    && webEvidenceProven()
+    && promptSkillProcedureProven()
   ) {
     return {
       fired: false,
@@ -741,6 +731,7 @@ export async function runRequestToolNudge(
       deps.session,
       buildPromptSkillResultNarrationDirective(
         currentWorkflowToolReceipts(deps.messages, promptSkillWorkflowTools),
+        receiptGroundedResponseBefore,
       ),
       deps.guardProviderDispatch,
       { restrictToToolNames: [] },
@@ -779,12 +770,7 @@ export async function runRequestToolNudge(
   }
 
   const terminalResponse = deps.getVisibleAssistantText(deps.session);
-  const response = promptSkillResultNarrated
-    ? preserveReceiptGroundedAnswer(
-        receiptGroundedResponseBefore,
-        terminalResponse,
-      )
-    : terminalResponse;
+  const response = terminalResponse;
   const successfulToolCountAfter = successfulCount();
   const procedureCompletionProvable = (
     promptSkillProcedureProven() || evidenceGatedWorkflowCompleted
@@ -806,7 +792,10 @@ export async function runRequestToolNudge(
   const groundedResponsePreserved = groundedResponseBeforeRecovery
     && (
       !recovered
-      || response.includes(receiptGroundedResponseBefore.trim())
+      || (
+        promptSkillResultNarrated
+        && response.includes(receiptGroundedResponseBefore.trim())
+      )
     );
   logger.info(
     {

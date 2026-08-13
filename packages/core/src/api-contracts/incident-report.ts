@@ -671,12 +671,12 @@ export const IncidentReportSchema = z.object({
       messageIds: z.array(z.string()).max(100),
     })
     .optional(),
-  /** Runtime recovery attempts folded from the session's
+  /** Runtime recovery attempts folded from the selected turn's
    *  `execution.recovery_attempted` and `execution.replay_recovered` records —
    *  model re-entries and deterministic response-grounding corrections that
    *  would otherwise be log-only.
    *  `total` attempts, `succeeded` count, and per-reason counts.
-   *  Absent ⇒ no recovery attempts this session. */
+   *  Absent ⇒ no recovery attempts in the selected turn. */
   recoveries: z
     .object({
       total: z.number(),
@@ -687,7 +687,7 @@ export const IncidentReportSchema = z.object({
       successfulReceiptsOutsideRoute: z.number().int().nonnegative().optional(),
     })
     .optional(),
-  /** Counts-only deferred-tool reconciliation outcomes. */
+  /** Selected-turn counts-only deferred-tool reconciliation outcomes. */
   discoveryActivation: z
     .object({
       displayedCount: z.number().int().nonnegative(),

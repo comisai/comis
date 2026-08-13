@@ -186,6 +186,29 @@ describe("discovery activation trajectory normalization", () => {
       failedCount: 1,
     });
   });
+
+  it("excludes recovery and activation evidence from earlier turns", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {}),
+      event("execution.recovery_attempted", 2, {
+        reason: "request_tool_nudge",
+        succeeded: true,
+        groundedResponseBeforeRecovery: true,
+        groundedResponsePreserved: false,
+      }),
+      event("tool.discovery_activation", 3, {
+        displayedCount: 2,
+        activatedCount: 0,
+        replacedCount: 0,
+        skippedCount: 2,
+        failedCount: 0,
+      }),
+      event("prompt.submitted", 4, {}),
+    ]);
+
+    expect(signals.recoveries).toBeUndefined();
+    expect(signals.discoveryActivation).toBeUndefined();
+  });
 });
 
 describe("MCP queue contention trajectory normalization", () => {
@@ -2070,6 +2093,36 @@ describe("toolStats fidelity", () => {
     ]);
   });
 
+  it("retains MCP background queue diagnostics as a bounded failure preview", () => {
+    const s = toIncidentSignals([{
+      traceSchema: "comis-trajectory",
+      type: "background_task.failed",
+      seq: 1,
+      data: {
+        taskId: "task-mcp-queue",
+        toolName: "mcp__reports--queued_lookup",
+        errorKind: "resource",
+        failureCode: "mcp_queue_contention",
+        failureConfigKey: "integrations.mcp.servers[].maxConcurrency",
+        failureServerName: "reports",
+        failureConfiguredConcurrency: 2,
+        failureConfiguredMs: 120_000,
+        failureQueueWaitedMs: 119_800,
+        failureRequestBudgetMs: 200,
+        failureMinViableMs: 250,
+      },
+    }]);
+
+    expect(s.failures).toEqual([
+      expect.objectContaining({
+        toolName: "mcp__reports--queued_lookup",
+        failureCode: "mcp_queue_contention",
+        errorPreview:
+          "integrations.mcp.servers[].maxConcurrency; serverName=reports; maxConcurrency=2; queueWaitedMs=119800; requestBudgetMs=200; configuredMs=120000; minViableMs=250",
+      }),
+    ]);
+  });
+
   it("retains background hard-duration diagnostics as a bounded failure preview", () => {
     const s = toIncidentSignals([
       {
@@ -2355,6 +2408,50 @@ describe("promptTimeout derivation", () => {
     expect(cause?.detail).toContain("requested 300000ms");
     expect(cause?.detail).toContain("effective 60000ms");
     expect(cause?.detail).toContain("preserved");
+  });
+
+  it("keeps the current timeout when another waited child completed", () => {
+    const s = toIncidentSignals([
+      event("prompt.submitted", 1, {}),
+      event("subagent.wait_finished", 2, {
+        parentRunId: "old-parent",
+        runId: "old-child",
+        status: "timeout",
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 30_000,
+        durationMs: 30_000,
+      }),
+      event("subagent.routed_child_preserved", 3, {
+        parentRunId: "old-parent",
+        childRunId: "old-child",
+        reason: "announcement_route",
+      }),
+      event("prompt.submitted", 4, {}),
+      event("subagent.wait_finished", 5, {
+        parentRunId: "current-parent",
+        runId: "timed-child",
+        status: "timeout",
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 10_000,
+        durationMs: 10_000,
+      }),
+      event("subagent.wait_finished", 6, {
+        parentRunId: "current-parent",
+        runId: "completed-child",
+        status: "completed",
+        success: true,
+        requestedTimeoutMs: 60_000,
+        effectiveTimeoutMs: 10_000,
+        durationMs: 5_000,
+      }),
+    ]);
+
+    expect(s.subagentWait).toMatchObject({
+      parentRunId: "current-parent",
+      childRunId: "timed-child",
+      status: "timeout",
+    });
+    expect(s.routedChildPreserved).toBeUndefined();
   });
 
   it("an execution.prompt_timeout record with the full field set survives onto signals.promptTimeout", () => {

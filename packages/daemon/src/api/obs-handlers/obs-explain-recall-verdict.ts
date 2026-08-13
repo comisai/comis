@@ -137,7 +137,7 @@ export const executionNoProgressLoopVerdict = (s: IncidentSignals): RecallVerdic
     code: "execution_no_progress_loop",
     detail,
     suggestedNextSteps: [
-      "inspect execution.aborted.loopEvidence in obs.explain depth=full before retrying",
+      "review the bounded loop evidence in this verdict before retrying",
       "advance the cursor, change the tool input, or choose a different capability after an unchanged result",
       "do not increase the step limit until the repeated call can make observable progress",
     ],

@@ -259,6 +259,35 @@ describe("createSubagentHandlers", () => {
     });
   });
 
+  it("caps the security default at the active execution progress budget", async () => {
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
+      runId: "run-1",
+      status: "timeout",
+    }]);
+
+    await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerSessionKey: "default:user1:channel1",
+      _callerConversationScope: CALLER_SCOPE,
+      _subagentWaitProgressBudgetMs: 10_000,
+    });
+
+    expect(deps.subAgentRunner.waitForCompletions).toHaveBeenCalledWith(
+      ["run-1"],
+      10_000,
+      undefined,
+      "default:user1:channel1",
+    );
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_wait_finished",
+      expect.objectContaining({
+        runId: "run-1",
+        requestedTimeoutMs: 30_000,
+        effectiveTimeoutMs: 10_000,
+      }),
+    );
+  });
+
   it("agent wait emits the terminal child outcome on the waiting turn", async () => {
     vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
       runId: "run-1",

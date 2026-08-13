@@ -40,6 +40,7 @@ interface ParallelismLogger {
 export function isReadOnlyTool(name: string, _logger?: ParallelismLogger): boolean {
   // Priority 1: explicit metadata declaration
   const meta = getToolMetadata(name);
+  if (meta?.externalMutationHint === true) return false;
   if (meta?.isReadOnly !== undefined) return meta.isReadOnly;
 
   // Priority 2: MCP heuristic (MCP servers manage their own state)

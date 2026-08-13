@@ -112,6 +112,7 @@ export type RpcCall = (
     outwardOperationId?: string;
     signal?: AbortSignal;
     subagentWaitRequestedTimeoutMs?: number;
+    subagentWaitProgressBudgetMs?: number;
   },
 ) => Promise<unknown>;
 
@@ -165,6 +166,7 @@ export interface PlatformToolBuildContext {
   readonly backgroundTaskManager?: unknown;
   /** Progress heartbeat derived from the owning agent's prompt stall budget. */
   readonly backgroundTaskWaitHeartbeatMs?: number;
+  readonly getSubagentWaitProgressBudgetMs?: () => number | undefined;
   /** Per-agent tool capability port (resolved via daemon's deps map). */
   readonly toolCapabilityPort?: unknown;
   /** `browser` tool's conditional predicate. */
@@ -266,7 +268,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "subagents",
       category: "agent",
       build: (ctx) => createSubagentsTool(ctx.rpcCall as never, ctx.skillsLogger, {
-        waitHeartbeatMs: ctx.backgroundTaskWaitHeartbeatMs,
+        getWaitProgressBudgetMs: ctx.getSubagentWaitProgressBudgetMs,
       }),
     },
 

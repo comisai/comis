@@ -6767,8 +6767,11 @@ describe("PiExecutor", () => {
         description: "Return the current record summary",
         parameters: {
           type: "object",
-          properties: { scope: { type: "string" } },
-          required: ["scope"],
+          properties: {
+            scope: { type: "string" },
+            filters: { type: "array", items: { type: "string" } },
+          },
+          required: ["scope", "filters"],
           additionalProperties: false,
         },
         execute: vi.fn().mockResolvedValue({
@@ -6832,6 +6835,11 @@ describe("PiExecutor", () => {
       expect(activatedTools[0]).not.toBe(originalStub);
       expect(activatedTools[0]?.[DEFERRAL_STUB_MARKER]).not.toBe(true);
       expect(activatedTools[0]?.parameters).toEqual(summaryTool.parameters);
+      expect(activatedTools[0]?.execute).toBe(originalStub.execute);
+      expect(activatedTools[0]?.prepareArguments({
+        scope: "active",
+        filters: '["idle"]',
+      })).toEqual({ scope: "active", filters: ["idle"] });
 
       mockSession.agent.streamFunction(
         { provider: "openai" } as any,
@@ -7298,6 +7306,41 @@ describe("ExcludeDeferralResult wiring", () => {
         expect((currentCtx as Record<string, unknown>).resolvedModel).toBe(
           "anthropic:claude-sonnet-4-5-20250929",
         );
+        expect(currentCtx?.subagentWaitProgressBudgetMs).toBe(60_000);
+      });
+    });
+
+    it("derives the subagent wait progress budget from the active operation timeout", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: testSessionKey.tenantId,
+        userId: "u1",
+        sessionKey: formatSessionKey(testSessionKey),
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+      };
+
+      await runWithContext(ctx, async () => {
+        await executor.execute(
+          testMessage,
+          testSessionKey,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            operationType: "subagent",
+            promptTimeout: {
+              promptTimeoutMs: 30_000,
+              retryPromptTimeoutMs: 30_000,
+              source: "operation_explicit",
+            },
+          },
+        );
+        expect(tryGetContext()?.subagentWaitProgressBudgetMs).toBe(10_000);
       });
     });
 

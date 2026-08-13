@@ -511,7 +511,7 @@ export interface IncidentSignals {
    */
   deliveryAborts?: { events: number; chunksNotSent: number };
   /**
-   * Runtime-recovery fold from `execution.recovery_attempted` and
+   * Selected-turn runtime-recovery fold from `execution.recovery_attempted` and
    * `execution.replay_recovered` records: total + succeeded tally + per-reason
    * counts. Includes model re-entry and deterministic response-grounding
    * corrections. Absent ⇒ no recovery attempts.
@@ -524,7 +524,7 @@ export interface IncidentSignals {
     groundedResponsePreservedCount?: number;
     successfulReceiptsOutsideRoute?: number;
   };
-  /** Counts-only deferred-tool reconciliation outcomes. */
+  /** Selected-turn counts-only deferred-tool reconciliation outcomes. */
   discoveryActivation?: {
     displayedCount: number;
     activatedCount: number;

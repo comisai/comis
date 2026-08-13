@@ -37,6 +37,7 @@ const internalFieldNames = new Set([
   "_rootRunId",
   "_sessionKey",
   "_subagentWaitRequestedTimeoutMs",
+  "_subagentWaitProgressBudgetMs",
   "_tenantId",
   "_traceId",
   "_trustLevel",
@@ -140,7 +141,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(forwarded._abortSignal).toBe(controller.signal);
   });
 
-  it("re-injects trusted wait-timeout provenance after stripping a forged parameter", async () => {
+  it("re-injects trusted wait budgets after stripping forged parameters", async () => {
     currentCtx = inProcessContext();
     const rpcCall = vi.fn(async () => "ok");
     const agentRpc = makeCreateAgentRpcCall({
@@ -151,12 +152,19 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
 
     await agentRpc(
       "subagent.wait",
-      { _subagentWaitRequestedTimeoutMs: 1 },
-      { subagentWaitRequestedTimeoutMs: 300_000 },
+      {
+        _subagentWaitRequestedTimeoutMs: 1,
+        _subagentWaitProgressBudgetMs: 1,
+      },
+      {
+        subagentWaitRequestedTimeoutMs: 300_000,
+        subagentWaitProgressBudgetMs: 60_000,
+      },
     );
 
     expect(rpcCall.mock.calls[0]![1]).toEqual(expect.objectContaining({
       _subagentWaitRequestedTimeoutMs: 300_000,
+      _subagentWaitProgressBudgetMs: 60_000,
     }));
   });
 

@@ -1145,6 +1145,51 @@ describe("obs-explain-heuristics", () => {
     expect(r?.suggestedNextSteps.join(" ")).toMatch(/skill routing|workflow requirement/iu);
   });
 
+  it("ranks terminal delivery failure above grounded-response replacement", () => {
+    const r = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      deliveryDispatch: {
+        channelType: "telegram",
+        status: "failure",
+        totalChunks: 2,
+        deliveredChunks: 0,
+        failedChunks: 2,
+        errorKind: "platform",
+      },
+      recoveries: {
+        total: 1,
+        succeeded: 1,
+        byReason: { request_tool_nudge: 1 },
+        groundedResponseBeforeRecoveryCount: 1,
+        groundedResponsePreservedCount: 0,
+        successfulReceiptsOutsideRoute: 1,
+      },
+    }));
+
+    expect(r?.code).toBe("delivery_failed");
+  });
+
+  it("ranks provider rejection above discovery activation mismatch", () => {
+    const r = rootCause(makeSignals({
+      endReason: "error",
+      degraded: true,
+      modelErrors: {
+        total: 1,
+        byCategory: { model_capability_unsupported: 1 },
+      },
+      discoveryActivation: {
+        displayedCount: 2,
+        activatedCount: 0,
+        replacedCount: 0,
+        skippedCount: 2,
+        failedCount: 0,
+      },
+    }));
+
+    expect(r?.code).toBe("provider_rejected_request");
+  });
+
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
     // Grounded in live Hebrew-language runs where recall silently returned
     // nothing and comis explain root-caused nothing. The carrier is a turn that
@@ -1184,6 +1229,13 @@ describe("obs-explain-heuristics", () => {
       threshold: 6,
       duplicateCallCount: 6,
       stagnantResultCount: 6,
+    };
+    signals.discoveryActivation = {
+      displayedCount: 2,
+      activatedCount: 0,
+      replacedCount: 0,
+      skippedCount: 2,
+      failedCount: 0,
     };
 
     const r = rootCause(signals);
@@ -2389,7 +2441,7 @@ describe("prompt_timeout terminal verdict", () => {
               resultDigest: "queue-refusal",
               resultBytes: 180,
               errorPreview:
-                "integrations.mcp.servers.reports.maxConcurrency=1; queueWaitedMs=119750; requestBudgetMs=250; configuredMs=120000",
+                "integrations.mcp.servers[] entry named \"reports\" has maxConcurrency=1; queueWaitedMs=119750; requestBudgetMs=250; configuredMs=120000",
               ...identity,
             },
             {
@@ -2409,7 +2461,7 @@ describe("prompt_timeout terminal verdict", () => {
 
       expect(r?.code).toBe("mcp_queue_contention");
       expect(r?.detail).toContain(
-        "integrations.mcp.servers.reports.maxConcurrency=1",
+        "integrations.mcp.servers[] entry named \"reports\" has maxConcurrency=1",
       );
       expect(r?.detail).toContain("queueWaitedMs=119750");
       expect(r?.detail).toContain("requestBudgetMs=250");
@@ -2417,7 +2469,7 @@ describe("prompt_timeout terminal verdict", () => {
       expect(r?.detail).toContain("breaker-neutral local queue refusal");
       expect(r?.detail).toContain("server was never asked");
       expect(r?.suggestedNextSteps.join(" ")).toContain(
-        "integrations.mcp.servers.reports.maxConcurrency",
+        "integrations.mcp.servers[] entry named \"reports\"",
       );
     },
   );

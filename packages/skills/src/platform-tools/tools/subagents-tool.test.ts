@@ -108,10 +108,12 @@ describe("subagents tool", () => {
     expect(mockRpcCall).toHaveBeenCalledWith("subagent.wait", {}, { signal: undefined });
   });
 
-  it("caps an explicit wait at the prompt-derived progress heartbeat", async () => {
+  it("forwards an explicit wait with the current progress budget", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
     const logger = { debug: vi.fn(), info: vi.fn() };
-    const tool = createSubagentsTool(mockRpcCall, logger, { waitHeartbeatMs: 60_000 });
+    const tool = createSubagentsTool(mockRpcCall, logger, {
+      getWaitProgressBudgetMs: () => 60_000,
+    });
 
     await tool.execute("call-wait-capped", {
       action: "wait",
@@ -120,40 +122,43 @@ describe("subagents tool", () => {
 
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
-      { timeoutMs: 60_000 },
+      { timeoutMs: 300_000 },
       {
         signal: undefined,
         subagentWaitRequestedTimeoutMs: 300_000,
+        subagentWaitProgressBudgetMs: 60_000,
       },
     );
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
         requestedTimeoutMs: 300_000,
-        effectiveTimeoutMs: 60_000,
+        progressBudgetMs: 60_000,
       }),
       "Subagent completion wait started",
     );
   });
 
-  it("bounds a default wait at the prompt-derived progress heartbeat", async () => {
+  it("keeps omitted wait provenance separate from the progress budget", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
     const logger = { debug: vi.fn(), info: vi.fn() };
-    const tool = createSubagentsTool(mockRpcCall, logger, { waitHeartbeatMs: 45_000 });
+    const tool = createSubagentsTool(mockRpcCall, logger, {
+      getWaitProgressBudgetMs: () => 45_000,
+    });
 
     await tool.execute("call-wait-default-capped", { action: "wait" } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
-      { timeoutMs: 45_000 },
+      {},
       {
         signal: undefined,
-        subagentWaitRequestedTimeoutMs: 45_000,
+        subagentWaitProgressBudgetMs: 45_000,
       },
     );
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
-        requestedTimeoutMs: 45_000,
-        effectiveTimeoutMs: 45_000,
+        requestedTimeoutMs: undefined,
+        progressBudgetMs: 45_000,
       }),
       "Subagent completion wait started",
     );
