@@ -342,7 +342,9 @@ async function processSuccessPath(
   }
 }
 
-/** Post-batch continuation step — separated so the success-path body stays focused. */
+/** Shared delegation receipt reader for post-batch and narration recovery. */
+const successfulDelegationCount = (params: RunPromptParams): number =>
+  Number((params.bridge.getResult().toolExecResults ?? []).some((record) => record.toolName === "sessions_spawn" && record.success));
 async function runPostBatchContinuationStep(params: RunPromptParams): Promise<void> {
   const { session, config, agentId, result, deps } = params;
   const continuationConfig = config.contextEngine?.postBatchContinuation
@@ -359,11 +361,7 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     guardProviderDispatch: resolveProviderDispatchGuard(
       params.executionOverrides?.onProviderStart,
     ),
-    currentSuccessfulDelegationCount: () => Number(
-      (params.bridge.getResult().toolExecResults ?? []).some(
-        (record) => record.toolName === "sessions_spawn" && record.success,
-      ),
-    ),
+    currentSuccessfulDelegationCount: () => successfulDelegationCount(params),
   });
   if (continuationResult.ok) {
     const v = continuationResult.value;
@@ -373,8 +371,7 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     // Stash outcome metrics for executor-post-execution.ts to emit in the
     // Execution complete log.
     result.continuationMetrics = {
-      fired: v.outcome !== "no_match"
-        && v.outcome !== "disabled"
+      fired: v.outcome !== "no_match" && v.outcome !== "disabled"
         && v.outcome !== "delegation_accepted",
       attempts: v.attempts,
       outcome: v.outcome,
@@ -403,9 +400,7 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     logger: deps.logger,
     agentId,
     getVisibleAssistantText,
-    currentSuccessfulDelegationCount: () => Number((params.bridge.getResult().toolExecResults ?? []).some(
-      (record) => record.toolName === "sessions_spawn" && record.success,
-    )),
+    currentSuccessfulDelegationCount: () => successfulDelegationCount(params),
     guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
   });
   if (outcome.recovered && outcome.response) {
