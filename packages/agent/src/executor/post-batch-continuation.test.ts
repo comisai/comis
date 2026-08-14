@@ -160,6 +160,51 @@ describe("runPostBatchContinuation", () => {
     expect(directive).toContain("agents_manage");
   });
 
+  it("does not continue an empty turn after a background delegation was accepted", async () => {
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "start the helper" }] },
+      {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "spawn-1",
+          name: "sessions_spawn",
+          arguments: { task: "bounded task", async: true },
+        }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "spawn-1",
+        toolName: "sessions_spawn",
+        content: [{ type: "text", text: "accepted" }],
+        isError: false,
+      },
+      { role: "assistant", content: [] },
+    ];
+    const session = makeSession(messages, ["Background task started."]);
+
+    const result = await runPostBatchContinuation({
+      session,
+      messages: session.messages,
+      config: { enabled: true, maxRetries: 2 },
+      logger: mockLogger(),
+      getVisibleAssistantText,
+      guardProviderDispatch: allowProviderDispatch,
+      currentSuccessfulDelegationCount: () => 1,
+    } as unknown as Parameters<typeof runPostBatchContinuation>[0]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      recovered: false,
+      attempts: 0,
+      outcome: "delegation_accepted",
+      priorToolCallCount: 1,
+      priorToolNames: ["sessions_spawn"],
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
   it("fires after a FAILED tool batch (is_error=true)", async () => {
     const messages = emptyAfterToolBatch(2, /* isError */ true);
     const session = makeSession(messages, ["The 2 calls failed; aborting."]);
