@@ -195,6 +195,42 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
+  it("does not route multi-sentence child instructions as a parent skill workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Use exactly one background sub-agent via sessions_spawn.",
+      "In the operator workspace, have the child read the exact file .workspace-state.json and report its version value and number of top-level properties.",
+      "Then have it attempt exactly one read of the exact absent file missing-bg-probe.txt; it must not search for or substitute another file.",
+      "Require the exact marker BGSAFE in the child result.",
+      "Do not calculate the answer yourself.",
+      "Launch it, then notify me naturally when the child finishes.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: [{
+        name: "find-skills",
+        description:
+          "MANDATORY: For requests asking whether a skill or specialized capability exists, "
+          + "load this skill and run its catalog workflow before answering. Do not answer "
+          + "from general capabilities, search workspace filenames, or use generic web search.",
+        replacesPackages: [],
+        requiredBins: ["git"],
+      }],
+      locations: new Map([
+        ["/skills/find-skills/SKILL.md", "find-skills"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
   it("still enforces a prompt skill for a separate parent-owned task", () => {
     const deferral = result();
     const request = [
