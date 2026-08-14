@@ -119,7 +119,36 @@ function isDelegatedCoordination(sentence: string): boolean {
     && normalized.includes(" complete")
     && normalized.includes(" return ")
     && namesDelegatedRole;
-  return assignsCoordinatorRole || waitsForChild || returnsCompletedChildResult;
+  const presentsCompletedChildResult =
+    (normalized.includes(" after ") || normalized.includes(" when "))
+    && normalized.includes(" complete")
+    && [" deliver ", " notify ", " present ", " report ", " share "].some(
+      (phrase) => normalized.includes(phrase),
+    )
+    && namesDelegatedRole;
+  const requestsLaunchAcknowledgement =
+    normalized.includes(" launch ")
+    && normalized.includes(" acknowledgement")
+    && [" reply ", " respond "].some((phrase) => normalized.includes(phrase));
+  return assignsCoordinatorRole
+    || waitsForChild
+    || returnsCompletedChildResult
+    || presentsCompletedChildResult
+    || requestsLaunchAcknowledgement;
+}
+
+function isDelegatedOutputContract(sentence: string): boolean {
+  const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
+  const forbidsExposure = [" do not ", " don't ", " never "].some(
+    (phrase) => normalized.includes(phrase),
+  ) && [" expose ", " include ", " reveal ", " show "].some(
+    (phrase) => normalized.includes(phrase),
+  );
+  const namesRuntimeMetadata = [
+    " completion-envelope", " cost ", " result-store", " runtime ", " session identifier",
+    " token ", " tokens ",
+  ].some((phrase) => normalized.includes(phrase));
+  return forbidsExposure && namesRuntimeMetadata;
 }
 
 function stripDelegatedChildTask(text: string): string {
@@ -135,6 +164,7 @@ function stripDelegatedChildTask(text: string): string {
       && !DELEGATED_DELIVERY_COORDINATION_PATTERN.test(sentence)
       && !isDelegatedNegativeConstraint(sentence)
       && !isDelegatedCoordination(sentence)
+      && !isDelegatedOutputContract(sentence)
     ))
     .join(" ");
 }
