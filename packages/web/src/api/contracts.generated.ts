@@ -11442,6 +11442,14 @@ export const CONTRACTS = {
             "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
           }
         },
+        "requestRelevantPromptSkillNames": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
         "requestRelevanceHistory": {
           "type": "object",
           "properties": {
