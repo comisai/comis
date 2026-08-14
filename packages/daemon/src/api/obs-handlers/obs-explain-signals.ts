@@ -770,10 +770,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
     ...(acc.modelSelection !== undefined ? { modelSelection: acc.modelSelection } : {}),
-    ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
-    ...(acc.requestRelevantToolNames !== undefined
-      ? { requestRelevantToolNames: acc.requestRelevantToolNames }
-      : {}),
+    ...(acc.skillAvailability === undefined ? {} : { skillAvailability: acc.skillAvailability }),
+    ...(acc.requestRelevantToolNames === undefined ? {} : { requestRelevantToolNames: acc.requestRelevantToolNames }),
+    ...(acc.requestRelevantPromptSkillNames === undefined ? {} : { requestRelevantPromptSkillNames: acc.requestRelevantPromptSkillNames }),
     ...(acc.requestRelevanceHistory !== undefined
       ? { requestRelevanceHistory: acc.requestRelevanceHistory }
       : {}),

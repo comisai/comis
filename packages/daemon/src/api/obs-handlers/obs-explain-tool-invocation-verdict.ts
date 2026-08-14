@@ -63,6 +63,8 @@ export function toolInvocationStallVerdict(
 ): RootCause | null {
   if (signals.endReason !== "tool_invocation_stall") return null;
   const tools = signals.requestRelevantToolNames?.join(", ") ?? "none recorded";
+  const promptSkills =
+    signals.requestRelevantPromptSkillNames?.join(", ") ?? "none recorded";
   const recoveryAttempts =
     signals.recoveries?.byReason.request_tool_nudge ?? 0;
   const completedTools = Object.entries(signals.toolStats)
@@ -75,7 +77,8 @@ export function toolInvocationStallVerdict(
   return {
     code: "tool_invocation_stall",
     detail:
-      `the request matched tools [${tools}] and ${invocationDisposition}; `
+      `the request matched tools [${tools}], selected prompt skills [${promptSkills}], `
+      + `and ${invocationDisposition}; `
       + `request_tool_nudge recovery attempts=${String(recoveryAttempts)}`,
     suggestedNextSteps: completedTools.length === 0
       ? [

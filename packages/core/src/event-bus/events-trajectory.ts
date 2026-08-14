@@ -49,6 +49,8 @@ export interface TrajectoryEvents {
     }>;
     /** Bounded tool names selected as relevant to this exact request. */
     requestRelevantToolNames?: readonly string[];
+    /** Bounded prompt-skill names selected as the procedural route for this request. */
+    requestRelevantPromptSkillNames?: readonly string[];
     /** Content-free evidence about the bounded prior-user-turn relevance window. */
     requestRelevanceHistory?: {
       readonly turnCount: number;

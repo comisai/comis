@@ -140,6 +140,10 @@ export interface Acc {
   requestRelevantToolNames?: NonNullable<
     IncidentSignals["requestRelevantToolNames"]
   >;
+  /** The LAST prompt's bounded procedural skill route. */
+  requestRelevantPromptSkillNames?: NonNullable<
+    IncidentSignals["requestRelevantPromptSkillNames"]
+  >;
   /** The LAST prompt's bounded relevance-history evidence. */
   requestRelevanceHistory?: NonNullable<
     IncidentSignals["requestRelevanceHistory"]
