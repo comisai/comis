@@ -1,6 +1,6 @@
 # Comis + DevCrew E0 end-to-end completion plan
 
-**Status:** Draft ready for implementation
+**Status:** Repository implementation complete; protected acceptance remains open (NO-ACCESS)
 
 **Goal:** From a real Telegram conversation, supervise a confined coding task in a real repository through Comis and `comis-dev-crew`, recover safely from an exited worker, validate the exact candidate, deliver an unmerged pull request with current evidence, survive restarts, and clean up without terminal or SSH intervention.
 
@@ -22,11 +22,14 @@ E0 is complete when all of the following are true on the dedicated Linux develop
 ## Current posture
 
 - The Comis capability-service platform, durable managed runs, workspace leases, execution attachments, report/evidence delivery, and Linux confinement mechanisms are implemented and validated on the current feature branch.
-- DevCrew implements task preparation, Codex and Claude Code worker profiles, worktree isolation, candidate validation, pull-request delivery, pause/edit/handback, cleanup, CLI/MCP parity, and restart-safe durable state.
-- The installed real Telegram deployment is healthy and isolated from the protected default Comis service, but its DevCrew repository target is a disposable fixture rather than the Comis repository.
-- The current Snake task demonstrates the main unresolved usability defect: the coding worker exited after creating a clean commit, but it emitted no terminal candidate report. The task correctly became `unknown`; validation and delivery did not run. `task explain` recommends `reconcile_task`, but no CLI, local API, or MCP mutation currently implements that action.
-- DevCrew's pinned Comis source commit is not reachable from a published Comis branch. A clean external checkout therefore cannot reproduce the protocol bundle from the recorded provenance.
-- DevCrew has a published prerelease, while the README still says that no release exists and the implementation-status page understates the completed E0 mechanisms.
+- DevCrew implements task preparation, Codex and Claude Code worker profiles, worktree isolation, candidate validation, pull-request delivery, pause/edit/handback, cleanup, CLI/MCP parity, restart-safe durable state, and server-authoritative clean-candidate reconciliation for eligible `unknown` tasks.
+- The reconciliation action is available through the application layer, local API, CLI, and the eighth MCP tool. Durable diagnostics fail closed when validation, process, or cleanup evidence is absent or contradictory.
+- The protected campaign is implemented as a manual-only, bounded Linux runner for two real ship lanes, a real human Telegram sender, isolated service restarts, current Git and forge truth, reconciliation, handback, cleanup refusals, and content-free closeout evidence.
+- DevCrew's complete local `make verify` and `make verify-full` gates pass with the patched Go toolchain. Comis protocol verification and `pnpm validate:full` pass, including architecture, security, integration coverage, and tarball smoke checks.
+- The protected `make test-live` campaign has not run. The available host is Darwin and has no campaign manifest, evidence root, or protected GitHub credential; it also cannot supply the required real human Telegram checkpoints or isolated Linux systemd services.
+- Neither feature branch has been pushed or merged. Public protocol provenance, the protected campaign, Comis dogfood pull request, release-artifact rerun, and final evidence ledger remain dependent on explicit publication authority and protected operator infrastructure.
+
+Repository implementation is complete, but E0 itself is not declared complete until every item in the definition of done is proven by a passing protected campaign. Missing external authority is recorded as NO-ACCESS, never as a skip or pass.
 
 ## Scope boundary
 
