@@ -234,6 +234,36 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
+  it("does not route a parent nonexecution constraint as a coding workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Use exactly one background sub-agent via sessions_spawn as a coordinator.",
+      "Have that coordinator spawn exactly one child of its own via sessions_spawn, with no further nesting.",
+      "The leaf child must read the exact operator-workspace file .workspace-state.json and return its version value.",
+      "The coordinator must wait for the pushed leaf completion, then return the leaf value and marker.",
+      "Do not read or calculate the value yourself.",
+      "Launch the coordinator, then notify me naturally when the nested work finishes.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:file|read|workspace)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
   it("still enforces a prompt skill for a separate parent-owned task", () => {
     const deferral = result();
     const request = [
