@@ -45,6 +45,7 @@
  * @module
  */
 
+import { createHash } from "node:crypto";
 import { resolve as pathResolve } from "node:path";
 
 import type { FakePtyLike } from "./terminal-worker-types.js";
@@ -103,11 +104,13 @@ function tmuxSocketHead(tmuxPath: string, socketPath: string | undefined): strin
  * costs, so the drive's own memory bounds concurrency long before server count matters.
  *
  * Lives under the data dir (NEVER `/tmp`: systemd `PrivateTmp=yes` gives each daemon start a
- * fresh private `/tmp`, so a `/tmp` socket is unreachable from a restarted daemon). Short by
- * design — well under the ~108-char `AF_UNIX` `sun_path` limit even with a uuid session id.
+ * fresh private `/tmp`, so a `/tmp` socket is unreachable from a restarted daemon). The
+ * filename uses a compact deterministic digest instead of the raw session id so isolated
+ * deployment roots remain below Linux's 108-byte `AF_UNIX` `sun_path` limit.
  */
 export function tmuxSocketPathForSession(dir: string, sessionId: string): string {
-  return pathResolve(dir, `tmux-${sessionId}.sock`);
+  const sessionDigest = createHash("sha256").update(sessionId, "utf8").digest("base64url").slice(0, 22);
+  return pathResolve(dir, `t-${sessionDigest}.sock`);
 }
 
 /**

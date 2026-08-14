@@ -184,8 +184,10 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
     // fallback. And it isolates faults: killing one drive's server cannot take down another's.
     const a = tmuxSocketPathForSession("/data/x/terminal-worker", "sess-aaa");
     const b = tmuxSocketPathForSession("/data/x/terminal-worker", "sess-bbb");
-    expect(a).toBe(resolve("/data/x/terminal-worker", "tmux-sess-aaa.sock"));
+    expect(a).toMatch(/^\/data\/x\/terminal-worker\/t-[A-Za-z0-9_-]{22}\.sock$/u);
+    expect(a).toBe(tmuxSocketPathForSession("/data/x/terminal-worker", "sess-aaa"));
     expect(a).not.toBe(b);
+    expect(a).not.toContain("sess-aaa");
     expect(a.startsWith("/tmp")).toBe(false);
     // Must stay well under the ~108-char AF_UNIX sun_path limit for a real uuid session id.
     const real = tmuxSocketPathForSession("/home/comis/.comis/terminal-worker", "551429eb-ddb9-4666-b800-8b6a17e1324a");

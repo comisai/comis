@@ -73,13 +73,11 @@ describe("terminal-worker-main helpers", () => {
     expect(tmuxSocketPathForSession(terminalWorkerDir(dataDir), "sess-7")).toBe(
       tmuxSocketPathForSession(durableDir(), "sess-7"),
     );
-    // And it is the per-session socket, not the legacy shared one.
-    expect(tmuxSocketPathForSession(durableDir(), "sess-7")).toBe(
-      resolve(dataDir, "terminal-worker", "tmux-sess-7.sock"),
-    );
-    expect(tmuxSocketPathForSession(durableDir(), "sess-7")).not.toBe(
-      resolveTmuxSocketPath(durableDir()),
-    );
+    // And it is a compact per-session socket, not the legacy shared one.
+    const socket = tmuxSocketPathForSession(durableDir(), "sess-7");
+    expect(socket).toMatch(/^\/data\/x\/terminal-worker\/t-[A-Za-z0-9_-]{22}\.sock$/u);
+    expect(socket).not.toContain("sess-7");
+    expect(socket).not.toBe(resolveTmuxSocketPath(durableDir()));
   });
 
   it("resolveTmuxSocketPath = <durableDir>/tmux.sock — the LEGACY fallback socket, under the data dir and NEVER /tmp", () => {
