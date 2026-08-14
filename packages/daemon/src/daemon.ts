@@ -999,14 +999,22 @@ async function bootFoundation(
   // Step 2: Write master key ONLY when storageMode is "encrypted".
   // file/env modes create NO key material on first boot.
   if (storageMode === "encrypted") {
-    _writeMasterKeyIfAbsent(dataDir);
+    // eslint-disable-next-line no-restricted-syntax -- bootstrap secret check is required before EnvPort and SecretManager exist
+    const suppliedMasterKey = process.env["SECRETS_MASTER_KEY"];
+    if (typeof suppliedMasterKey !== "string" || suppliedMasterKey.trim().length === 0) {
+      _writeMasterKeyIfAbsent(dataDir);
+    }
     // Generate the exfiltration-canary seed on the same gate. Without it the canary token derives
     // from tenantId+agentId — stable but PREDICTABLE to anyone who knows those, so the canary can be
     // recognised and stepped around. Idempotent: never rotates an existing value, because rotating
     // would invalidate every canary already embedded in prior outbound content. Deliberately NOT
     // written in file/env mode, preserving the boot invariant that those modes create no key
     // material on first boot.
-    _writeCanarySecretIfAbsent(dataDir);
+    // eslint-disable-next-line no-restricted-syntax -- bootstrap secret check is required before EnvPort and SecretManager exist
+    const suppliedCanarySecret = process.env["CANARY_SECRET"];
+    if (typeof suppliedCanarySecret !== "string" || suppliedCanarySecret.trim().length === 0) {
+      _writeCanarySecretIfAbsent(dataDir);
+    }
     // loadEnvFile below picks up the freshly-written key from the .env file,
     // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }

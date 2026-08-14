@@ -972,9 +972,7 @@ describe("opt-out and same-boot init", () => {
     process.env = originalEnv;
   });
 
-  it("calls writeMasterKeyIfAbsent on first boot with a fresh data directory (encrypted mode)", async () => {
-    // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
-    // writes there rather than the shared sandbox COMIS_DATA_DIR.
+  it("skips data-directory master-key generation when encrypted mode receives an external key", async () => {
     const { randomBytes } = await import("node:crypto");
     const keyHex = randomBytes(32).toString("hex");
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
@@ -988,8 +986,7 @@ describe("opt-out and same-boot init", () => {
     const instance = await main(overrides);
     instances.push(instance);
 
-    // writeMasterKeyIfAbsent must have been called with the dataDir on first boot.
-    expect(mockWriteMasterKeyIfAbsent).toHaveBeenCalledWith(freshDataDir);
+    expect(mockWriteMasterKeyIfAbsent).not.toHaveBeenCalled();
 
     delete process.env["SECRETS_MASTER_KEY"];
     rmSync(freshDataDir, { recursive: true, force: true });
