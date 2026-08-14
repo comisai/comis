@@ -1184,7 +1184,7 @@ export function recoveredFailedToolNames(
  *
  * Pure: no I/O, no side effects.
  */
-function modelAcknowledgedFailure(response: string, failedTools: string[]): boolean {
+export function modelAcknowledgedFailure(response: string, failedTools: string[]): boolean {
   if (!response || failedTools.length === 0) return false;
   const lower = response.toLowerCase();
   return failedTools.some(t => {
@@ -1194,8 +1194,10 @@ function modelAcknowledgedFailure(response: string, failedTools: string[]): bool
     // substrings in unrelated words like "writer" or "writing".
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const nameRe = new RegExp(`\\b${escaped}\\b`);
-    if (!nameRe.test(lower)) return false;
-    return /\b(fail(ed|ure|s)?|error|unable|could\s+not|couldn'?t)\b/.test(lower);
+    const referencesTool = nameRe.test(lower)
+      || (name === "sessions_spawn" && /\bspawn\b/u.test(lower));
+    if (!referencesTool) return false;
+    return /\b(fail(ed|ure|s)?|error|unable|could\s+not|couldn'?t|reject(?:ed|ion)?)\b/u.test(lower);
   });
 }
 

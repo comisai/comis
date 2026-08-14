@@ -115,6 +115,12 @@ const DELEGATION_SUBJECT_PHRASES = [
   " independent check",
 ];
 
+const FAILED_DELEGATION_REPORT_PATTERNS = [
+  /\b(?:spawn|launch)\b[^.!?;\n]{0,80}\b(?:failed|rejected|denied|not accepted)\b/u,
+  /\b(?:failed|rejected|denied|unable)\b[^.!?;\n]{0,80}\b(?:spawn|launch)\b/u,
+  /\bno\s+(?:child|sub-agent|agent)\b[^.!?;\n]{0,80}\b(?:launched|spawned|started)\b/u,
+];
+
 // A successful spawn receipt exists here, so this set only decides whether the
 // reply DISCLOSES the delegation. It therefore admits the ordinary synonyms a
 // model reaches for ("the helper is now researching X", "handed it off",
@@ -285,8 +291,11 @@ export function enforceCurrentTurnDelegationEvidence(params: {
     DELEGATION_SUCCESS_CLAIM_PHRASES,
   );
   const admitsLimitation =
-    containsEvidencePhrase(response, DELEGATION_LIMITATION_PHRASES)
-    && containsEvidencePhrase(response, DELEGATION_SUBJECT_PHRASES);
+    (
+      containsEvidencePhrase(response, DELEGATION_LIMITATION_PHRASES)
+      && containsEvidencePhrase(response, DELEGATION_SUBJECT_PHRASES)
+    )
+    || FAILED_DELEGATION_REPORT_PATTERNS.some((pattern) => pattern.test(response));
   if (admitsLimitation && !claimsDelegation) {
     return { response: params.response, corrected: false };
   }
