@@ -29,11 +29,11 @@ const CONVERSATION_HISTORY_RECALL_PATTERN =
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
   /\b(?:(?:do\s+not|don't|never)\s+(?:(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch))|(?:[\p{L}\p{N}_'-]+\s+){1,8}(?:or|nor)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch)))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
 const DELEGATED_CHILD_ASSIGNMENT_PATTERN =
-  /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children)\b)/iu;
+  /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b)/iu;
 const EXPLICIT_DELEGATION_PATTERN =
-  /\b(?:sessions_spawn|sub-?agents?|child|children)\b/iu;
+  /\b(?:sessions_spawn|sub-?agents?|child|children|coordinator|leaf)\b/iu;
 const DELEGATED_CHILD_CONTINUATION_PATTERN =
-  /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|it|them)\b|(?:sub-?agents?|child|children|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children)\b)/iu;
+  /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf|it|them)\b|(?:sub-?agents?|child|children|coordinator|leaf|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -82,6 +82,17 @@ function terms(text: string): Set<string> {
   );
 }
 
+function isDelegatedCallerNonexecution(sentence: string): boolean {
+  const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
+  const forbidsAction = [" do not ", " don't ", " never "].some(
+    (phrase) => normalized.includes(phrase),
+  );
+  const reservesActionForChild = [" directly", " on your own", " yourself"].some(
+    (phrase) => normalized.includes(phrase),
+  );
+  return forbidsAction && reservesActionForChild;
+}
+
 function stripDelegatedChildTask(text: string): string {
   const hasExplicitDelegation = EXPLICIT_DELEGATION_PATTERN.test(text);
   if (!hasExplicitDelegation) return text;
@@ -91,6 +102,7 @@ function stripDelegatedChildTask(text: string): string {
     .filter((sentence) => (
       !DELEGATED_CHILD_ASSIGNMENT_PATTERN.test(sentence)
       && !DELEGATED_CHILD_CONTINUATION_PATTERN.test(sentence)
+      && !isDelegatedCallerNonexecution(sentence)
     ))
     .join(" ");
 }
