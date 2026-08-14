@@ -28,8 +28,12 @@ const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
   /\b(?:(?:do\s+not|don't|never)\s+(?:(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch))|(?:[\p{L}\p{N}_'-]+\s+){1,8}(?:or|nor)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch)))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
-const DELEGATED_CHILD_TASK_PATTERN =
-  /\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^.!?\n]{0,160}\b(?:sub-?agents?|child|children)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children)\b)[^.!?\n]*(?:[.!?]+|$)/giu;
+const DELEGATED_CHILD_ASSIGNMENT_PATTERN =
+  /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children)\b)/iu;
+const EXPLICIT_DELEGATION_PATTERN =
+  /\b(?:sessions_spawn|sub-?agents?|child|children)\b/iu;
+const DELEGATED_CHILD_CONTINUATION_PATTERN =
+  /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|it|them)\b|(?:sub-?agents?|child|children|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children)\b)/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -78,15 +82,28 @@ function terms(text: string): Set<string> {
   );
 }
 
-/** Exclude quoted payloads and code literals from the caller's own skill intent. */
-function routingIntentText(text: string): string {
+function stripDelegatedChildTask(text: string): string {
+  const hasExplicitDelegation = EXPLICIT_DELEGATION_PATTERN.test(text);
+  if (!hasExplicitDelegation) return text;
+
   return text
+    .split(/(?<=[.!?])\s+|\n+/u)
+    .filter((sentence) => (
+      !DELEGATED_CHILD_ASSIGNMENT_PATTERN.test(sentence)
+      && !DELEGATED_CHILD_CONTINUATION_PATTERN.test(sentence)
+    ))
+    .join(" ");
+}
+
+/** Exclude quoted payloads and code literals from the caller's own skill intent. */
+export function routingIntentText(text: string): string {
+  const unquoted = text
     .replace(/`[^`\n]+`/gu, " ")
     .replace(
       /(^|[\s,:=([])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
       "$1",
-    )
-    .replace(DELEGATED_CHILD_TASK_PATTERN, " ");
+    );
+  return stripDelegatedChildTask(unquoted);
 }
 
 /** Retain preceding context only when the current wording refers back to it. */

@@ -5,6 +5,7 @@ import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import {
   applyPromptSkillRequestRouting,
   physicalUserRequestText,
+  routingIntentText,
 } from "./prompt-skill-request-routing.js";
 
 function tool(name: string): ToolDefinition {
@@ -188,6 +189,7 @@ describe("prompt skill request routing", () => {
       ]),
     });
 
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:file|search|workspace)\b/iu);
     expect(selected).toEqual([]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
@@ -225,6 +227,7 @@ describe("prompt skill request routing", () => {
       ]),
     });
 
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:file|search|workspace)\b/iu);
     expect(selected).toEqual([]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
