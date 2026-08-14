@@ -347,6 +347,30 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["write"]);
   });
 
+  it("ignores completion-contract boilerplate when routing a silent artifact write", () => {
+    const deferral = result();
+    const childRequest = [
+      "Use the write tool to create exactly /workspace/artifacts/silent.txt containing exact content.",
+      "Then return exactly NO_REPLY with no other text.",
+      "Expected output contract: create every file at its exact path.",
+      "The completion runner validates these exact paths before the final response.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: childRequest,
+      requestRelevanceText: childRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual([]);
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
