@@ -357,8 +357,7 @@ export function applyPromptSkillRequestRouting(
   }
   deferral.requestRelevantToolNames = [...new Set([
     ...deferral.requestRelevantToolNames,
-    "read",
-    ...workflowToolNames,
+    ...(workflowEnforceable ? ["read", ...workflowToolNames] : []),
   ])];
   return selected;
 }
