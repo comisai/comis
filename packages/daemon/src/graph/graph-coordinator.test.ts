@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { createGraphCoordinator, type GraphCoordinatorDeps } from "./graph-coordinator.js";
 import {
   type ExecutionGraph,
@@ -68,6 +71,11 @@ vi.mock("./graph-prewarm.js", () => ({
 
 const fsWriteCalls: Array<{ path: string; content: string }> = [];
 const fsMockFiles = new Map<string, string>();
+const graphTestDataDir = mkdtempSync(resolve(tmpdir(), "comis-graph-coordinator-"));
+
+afterAll(() => {
+  rmSync(graphTestDataDir, { recursive: true, force: true });
+});
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -371,7 +379,7 @@ function createTestDeps(
     tenantId: "test-tenant",
     defaultAgentId: "test-agent",
     maxConcurrency: 4,
-    dataDir: "/tmp/test-comis",
+    dataDir: graphTestDataDir,
     nodeTypeRegistry: createNodeTypeRegistry(),
     spawnStaggerMs: 0,  // Disable stagger in tests unless explicitly testing it
     ...overrides,
@@ -2891,7 +2899,7 @@ describe("createGraphCoordinator", () => {
         tenantId: "test-tenant",
         defaultAgentId: "test-agent",
         maxConcurrency: 4,
-        dataDir: "/tmp/test-comis",
+        dataDir: graphTestDataDir,
         nodeTypeRegistry: createNodeTypeRegistry(),
         spawnStaggerMs: 4000,
         // cacheWriteTimeoutMs intentionally NOT set -- tests default value (30000)
@@ -3284,7 +3292,7 @@ describe("createGraphCoordinator", () => {
 
       // Pre-populate mock file in the shared dir (coordinator generates sharedDir from dataDir + graph-runs + graphId)
       const graphId = result.value;
-      const sharedDir = `/tmp/test-comis/graph-runs/${graphId}`;
+      const sharedDir = resolve(graphTestDataDir, "graph-runs", graphId);
       fsMockFiles.set(
         `${sharedDir}/trading-decision-ITRN.md`,
         "Full trading decision content here with detailed analysis of the stock position and risk factors.",
@@ -3341,7 +3349,7 @@ describe("createGraphCoordinator", () => {
       if (!result.ok) return;
 
       const graphId = result.value;
-      const sharedDir = `/tmp/test-comis/graph-runs/${graphId}`;
+      const sharedDir = resolve(graphTestDataDir, "graph-runs", graphId);
       fsMockFiles.set(`${sharedDir}/report.md`, "Short file.");
 
       // Long output (>= 200 chars) that happens to mention a .md file
@@ -3662,7 +3670,7 @@ describe("createGraphCoordinator", () => {
         skippedNodesEmitted: new Set(),
         cumulativeTokens: 100,
         cumulativeCost: 0.01,
-        sharedDir: "/tmp/test-comis/graph-runs/test-graph-1",
+        sharedDir: resolve(graphTestDataDir, "graph-runs", "test-graph-1"),
         driverStates: new Map(),
         driverRunIdMap: new Map(),
         waitHandlers: new Map(),
@@ -4516,7 +4524,7 @@ function seedGraphCheckpoint(
   });
   const digest = createHash("sha256").update(content).digest("hex");
   const ref = `graph-runs/${refId}/durable-checkpoint-${digest}.json`;
-  fsMockFiles.set(`/tmp/test-comis/${ref}`, content);
+  fsMockFiles.set(resolve(graphTestDataDir, ref), content);
   return ref;
 }
 
@@ -5175,7 +5183,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       // protected artifact remains under the original graph-run directory.
       // Resumed nodes must keep sharing that original workspace.
       expect(spawnCalls[0]!.graphSharedDir).toBe(
-        "/tmp/test-comis/graph-runs/checkpoint-resume-1",
+        resolve(graphTestDataDir, "graph-runs", "checkpoint-resume-1"),
       );
 
       await coordinator.shutdown();
@@ -5217,7 +5225,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
 
       expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
       expect(runner._getSpawnCalls()[0]?.graphSharedDir).toBe(
-        "/tmp/test-comis/graph-runs/original-graph-run",
+        resolve(graphTestDataDir, "graph-runs", "original-graph-run"),
       );
       expect(coordinator.getStatus("original-graph-run")).toBeDefined();
       expect(coordinator.getStatus("resume-replacement-authority")).toBeUndefined();
