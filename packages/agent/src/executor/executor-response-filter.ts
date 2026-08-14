@@ -207,8 +207,10 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   response: string;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
+    action?: string;
     success: boolean;
     backgrounded?: boolean;
+    subagentWaitCompletedCount?: number;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
@@ -248,8 +250,21 @@ export function enforceCurrentTurnDelegationEvidence(params: {
       && toolResult.success
       && toolResult.backgrounded !== true,
   );
+  const completedSpawnResult = (params.toolExecResults ?? []).some(
+    (toolResult) =>
+      toolResult.toolName === "subagents"
+      && toolResult.action === "wait"
+      && toolResult.success
+      && (toolResult.subagentWaitCompletedCount ?? 0) > 0,
+  );
   const response = normalizedEvidenceText(params.response);
   if (successfulSpawn) {
+    // A completed wait is structural evidence that the model received a
+    // terminal child result in this execution. The final answer may therefore
+    // report that result directly without repeating launch vocabulary.
+    if (completedSpawnResult) {
+      return { response: params.response, corrected: false };
+    }
     if (
       containsEvidencePhrase(
         normalizedEvidenceWords(params.response),

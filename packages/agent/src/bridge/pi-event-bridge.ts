@@ -1600,6 +1600,18 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const observabilityEvidenceLimits = toolSuccess
             ? extractObservabilityEvidenceLimits(endEvent.toolName, resultDetails)
             : undefined;
+          const subagentWaitCompletedCount =
+            toolSuccess
+            && endEvent.toolName === "subagents"
+            && toolAction === "wait"
+            && Array.isArray(resultDetails?.results)
+              ? resultDetails.results.filter(
+                  (entry) =>
+                    entry !== null
+                    && typeof entry === "object"
+                    && (entry as Record<string, unknown>).status === "completed",
+                ).length
+              : undefined;
           const processSessionObservation = extractProcessSessionObservation({
             toolName: endEvent.toolName,
             resultBackgrounded,
@@ -1635,6 +1647,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(observabilityEvidenceLimits === undefined
               ? {}
               : { observabilityEvidenceLimits }),
+            ...(subagentWaitCompletedCount === undefined
+              ? {}
+              : { subagentWaitCompletedCount }),
           });
 
           // Capture outbound deliveries. The post-execution silent-sentinel
