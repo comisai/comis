@@ -795,6 +795,39 @@ describe("createPiEventBridge", () => {
       ]);
     });
 
+    it("retains only the completed count from a subagent wait receipt", () => {
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "subagents",
+        toolCallId: "tc-subagent-wait",
+        args: { action: "wait", run_ids: ["run-1", "run-2"] },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent(
+        "subagents",
+        "tc-subagent-wait",
+        false,
+        {
+          content: [{ type: "text", text: "child-authored results" }],
+          details: {
+            results: [
+              { runId: "run-1", status: "completed", completion: { summary: "private" } },
+              { runId: "run-2", status: "timeout" },
+            ],
+          },
+        },
+      ) as any);
+
+      const record = bridge.getResult().toolExecResults?.[0] as unknown as {
+        subagentWaitCompletedCount?: number;
+      };
+      expect(record.subagentWaitCompletedCount).toBe(1);
+      expect(JSON.stringify(record)).not.toContain("run-1");
+      expect(JSON.stringify(record)).not.toContain("private");
+      expect(JSON.stringify(record)).not.toContain("child-authored results");
+    });
+
     it("retains only the confirmation-required boolean from a gated cron result", () => {
       const bridge = createPiEventBridge(deps);
 

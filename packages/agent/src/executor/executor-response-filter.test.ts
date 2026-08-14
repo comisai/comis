@@ -893,8 +893,10 @@ type DelegationEvidenceGuard = (params: {
   response: string;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
+    action?: string;
     success: boolean;
     backgrounded?: boolean;
+    subagentWaitCompletedCount?: number;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
@@ -1197,6 +1199,31 @@ describe("current-turn delegation evidence guard", () => {
 
     expect(guarded).toEqual({
       response: groundedResponse,
+      corrected: false,
+    });
+  });
+
+  it("preserves a final child result backed by a completed subagent wait", () => {
+    const completedResult = "version: 1\nNESTED_LEAF\nNESTED_COORD";
+    const guarded = delegationEvidenceGuard()({
+      request: "use sessions_spawn for one nested child and return its result",
+      response: completedResult,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+        {
+          toolName: "subagents",
+          action: "wait",
+          success: true,
+          subagentWaitCompletedCount: 1,
+        },
+      ],
+      honestResponse,
+      verifiedSpawnResponse:
+        "I successfully started the requested sub-agent. Its result is still pending.",
+    });
+
+    expect(guarded).toEqual({
+      response: completedResult,
       corrected: false,
     });
   });
