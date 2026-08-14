@@ -566,13 +566,6 @@ while (Date.now() - start < maxMs) {
     for (const o of tail) {
       seen.push(o);
       after = Math.max(after, o.messageId || after);
-      if (isOutboundMediaDelivery(o)) sawMediaDelivery = true;
-      if (isConversationAnswer(o)) {
-        sawAnswer = true;
-        const observedAtMs = Date.now();
-        firstAnswerAtMs ??= observedAtMs;
-        lastAnswerAtMs = observedAtMs;
-      }
     }
     break;
   }
