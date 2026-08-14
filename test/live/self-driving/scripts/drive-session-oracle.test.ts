@@ -48,6 +48,23 @@ describe("opt-in follow-up delivery wait", () => {
     })).toBe(true);
   });
 
+  it("waits for every explicitly expected fan-out completion", () => {
+    expect(followupWaitFinished({
+      followupAnswerCount: 1,
+      expectedFollowupCount: 2,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(false);
+    expect(followupWaitFinished({
+      followupAnswerCount: 2,
+      expectedFollowupCount: 2,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(true);
+  });
+
   it("ends honestly when the bounded follow-up window expires", () => {
     expect(followupWaitFinished({
       followupAnswerCount: 0,
