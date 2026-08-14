@@ -126,6 +126,56 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent.mock.calls[0]![3]).toContain("A background task has completed.");
   });
 
+  it("stores only a user-safe fallback in a durable parent decision reservation", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn();
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement });
+    const batcher = createAnnouncementBatcher(deps);
+    const announcementText = [
+      "[Subagent Result: market research]",
+      "Status: Completed",
+      "Condensation: Level 1 (Passthrough)",
+      "",
+      "Summary: Research completed. https://example.com/report",
+      "",
+      "---",
+      "Runtime: 130.2s | Steps: 30 | Tokens: 899841 | Cost: $0.9833",
+      "Condensation: Level 1 | Original: 633 tokens | Ratio: 1.00",
+      "Full result (drill in with read/grep/jq): results/private/result.text (2538B, text)",
+      "Session: default:agent:default:user:sub-agent:runtime:child:peer:user",
+      "",
+      "Inform the user about this completed background task. Summarize the result in your own voice. If no user notification is needed, respond with NO_REPLY.",
+    ].join("\n");
+
+    await batcher.enqueue(makeAnnouncement({
+      announcementText,
+      idempotencyKey: "parent::child",
+      reservationRootRunId: "root-1",
+    }));
+
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
+      announcementText: "Research completed. https://example.com/report",
+    }));
+  });
+
+  it("blocks an echoed internal completion envelope at final channel egress", async () => {
+    const rawEnvelope = makeAnnouncement().announcementText;
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue(rawEnvelope),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement());
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "discord",
+      "chan-123",
+      "done",
+      undefined,
+    );
+  });
+
   it("unions successful fetch digests across a batched parent rewrite", async () => {
     const deps = makeDeps();
     const batcher = createAnnouncementBatcher(deps);
@@ -223,6 +273,32 @@ describe("AnnouncementBatcher", () => {
       "discord",
       "chan-123",
       failureNotice,
+      undefined,
+    );
+  });
+
+  it("does not let a parent rewrite suppress a completed-with-tool-errors warning", async () => {
+    const warningNotice =
+      "Note: one of the tools used by this background task reported an error, so part of the result may be incomplete.";
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("The background check found five candidates."),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      terminalOutcome: {
+        status: "completed_with_warnings",
+        warningNotice,
+      } as never,
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await batcher.flush();
+
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "discord",
+      "chan-123",
+      `The background check found five candidates.\n\n${warningNotice}`,
       undefined,
     );
   });
@@ -611,6 +687,43 @@ describe("AnnouncementBatcher", () => {
       "file-no-caption",
       "no_reply",
     );
+  });
+
+  it("does not ask the parent to rewrite a silent child completion into an attachment caption", async () => {
+    const announceToParent = vi.fn().mockResolvedValue(
+      "The attachment was created successfully and delivered.",
+    );
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 4 },
+    }));
+    const batcher = createAnnouncementBatcher(makeDeps({
+      announceToParent,
+      sendGovernedAnnouncement,
+      deadLetterQueue: makeDecisionQueue(),
+    }));
+    const silentAttachment = {
+      ...makeAnnouncement({
+        idempotencyKey: "silent-file",
+        announcementText:
+          "[System Message]\nA background task has completed.\n\nResult: NO_REPLY",
+        attachments: [{ sourceAgentId: "report-agent", path: "/workspace-report/reports/silent.txt" }],
+      }),
+      suppressText: true,
+    } as QueuedAnnouncement;
+
+    await batcher.enqueue(silentAttachment);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      text: "",
+      partId: "attachment:0",
+      attachment: {
+        sourceAgentId: "report-agent",
+        path: "/workspace-report/reports/silent.txt",
+      },
+    }));
   });
 
   it("replaces an attached file absolute path with its filename before delivery", async () => {

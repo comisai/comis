@@ -961,7 +961,11 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
-      governedSendToChannel: vi.fn(async () => ok({ delivered: true, platformMessageId: "m-1" })),
+      governedSendToChannel: vi.fn(async () => ok({
+        delivered: true,
+        status: "accepted",
+        platformMessageId: "m-1",
+      })),
     });
     await queue.reserveDecision(decisionInput({ rootRunId: "root-parent-1" }));
     expect(queue.size()).toBe(1);
@@ -971,6 +975,29 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     // The reservation is adjudicated and no longer parked.
     expect(queue.size()).toBe(0);
     expect(ledger.allocateStep).toHaveBeenCalled();
+  });
+
+  it("does not adjudicate a parent decision while its rewrite can still be running", async () => {
+    const { ledger } = makeStubLedger();
+    const governedSendToChannel = vi.fn(async () =>
+      ok({ delivered: true, status: "accepted", platformMessageId: "m-1" }),
+    );
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+    });
+    await queue.reserveDecision(decisionInput({
+      rootRunId: "root-parent-1",
+      failedAt: Date.now(),
+    }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
   });
 
   it("leaves a reservation parked when the ledger cannot answer", async () => {
@@ -1181,6 +1208,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
   it("committed → SKIP: an entry whose (rootRunId, stepIndex) is committed is NOT re-sent after restart", async () => {
     const eventBus = createMockEventBus();
+    const logger = createMockLogger();
     // A DLQ entry that carries its durable idempotency key.
     const entry = makeFullEntry({
       runId: "run-committed-1",
@@ -1197,6 +1225,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
+      logger,
       retryIntervalMs: 0,
       outwardLedger: ledger,
     });
@@ -1210,11 +1239,22 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(lookupCalls).toEqual([["root-committed-1", 4]]);
     // It is treated as delivered: onDelivered fires + the entry is dropped.
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-committed-1");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-committed-1",
+        rootRunId: "root-committed-1",
+        stepIndex: 4,
+        step: "dlq-ledger-committed-skip",
+        durationMs: expect.any(Number),
+      }),
+      "Committed dead-letter operation removed without replay",
+    );
     expect(dlq.size()).toBe(0);
   });
 
   it("commits a receipt-aware absent-row delivery before removing the dead letter", async () => {
     const eventBus = createMockEventBus();
+    const logger = createMockLogger();
     const entry = makeFullEntry({
       runId: "run-uncommitted-1",
       idempotencyKey: "default:u1:c1::run-uncommitted-1",
@@ -1228,11 +1268,13 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const { ledger, lookupCalls } = makeStubLedger({ lookupResult: ok(undefined) });
     const governedSendToChannel = vi.fn().mockResolvedValue(ok({
       delivered: true,
+      status: "accepted",
       platformMessageId: "telegram-receipt-9",
     }));
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
+      logger,
       retryIntervalMs: 0,
       outwardLedger: ledger,
       governedSendToChannel,
@@ -1271,6 +1313,21 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(JSON.stringify(vi.mocked(ledger.begin).mock.calls[0]![0]))
       .not.toContain(entry.announcementText);
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-uncommitted-1");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-uncommitted-1",
+        rootRunId: "root-uncommitted-1",
+        stepIndex: 9,
+        step: "dlq-ledger-receipt-committed",
+        attemptCount: 1,
+        durationMs: expect.any(Number),
+      }),
+      "Dead-letter entry delivered and platform receipt committed",
+    );
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Committed dead-letter operation removed without replay",
+    );
     expect(dlq.size()).toBe(0);
   });
 
@@ -1457,6 +1514,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const { ledger } = makeStubLedger(failures);
     const governedSendToChannel = vi.fn().mockResolvedValue(ok({
       delivered: true,
+      status: "accepted",
       platformMessageId: "unused-receipt",
     }));
     const dlq = createAnnouncementDeadLetterQueue({

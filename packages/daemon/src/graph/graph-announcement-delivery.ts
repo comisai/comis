@@ -123,6 +123,7 @@ function hasRetainedOperationEvidence(
     case "uncertainty_transition_blocked":
     case "transport_failed":
     case "transport_rejected":
+    case "transport_uncertain":
     case "platform_receipt_missing":
     case "commit_blocked":
       return true;

@@ -356,11 +356,16 @@ describe("AgentToAgentConfigSchema.subAgentMaxSteps", () => {
     if (result.success) expect(result.data.subAgentMaxSteps).toBe(300);
   });
 
-  it("still accepts an explicit operator value in either direction", () => {
-    for (const value of [25, 1000]) {
+  it("accepts an explicit operator ceiling at or above the runtime floor", () => {
+    for (const value of [30, 1000]) {
       const result = AgentToAgentConfigSchema.safeParse({ subAgentMaxSteps: value });
       expect(result.success).toBe(true);
       if (result.success) expect(result.data.subAgentMaxSteps).toBe(value);
     }
+  });
+
+  it("rejects an operator ceiling below the supported runtime floor", () => {
+    const result = AgentToAgentConfigSchema.safeParse({ subAgentMaxSteps: 29 });
+    expect(result.success).toBe(false);
   });
 });

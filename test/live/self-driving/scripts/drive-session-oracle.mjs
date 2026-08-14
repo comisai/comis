@@ -36,6 +36,10 @@ const MEDIA_DELIVERY_LABELS = new Map([
   ["sendAnimation", "animation"],
 ]);
 
+export function isOutboundMediaDelivery(outbound) {
+  return MEDIA_DELIVERY_LABELS.has(outbound?.method);
+}
+
 /** Return comparable visible content, including captionless media deliveries. */
 export function outboundVisibleContent(outbound) {
   const text = outboundVisibleText(outbound);
@@ -404,20 +408,23 @@ export function sharedConversationFinished({
 /**
  * Stop a direct-message drive after both the turn and its wire delivery settle.
  *
- * Session summary can precede delivery post-processing, so an ended turn with
- * no visible answer remains open for a bounded drain window. The bound still
- * lets true empty-final and aborted turns terminate deterministically.
+ * Session summary can precede delivery post-processing. An ended turn with no
+ * visible answer after that terminal remains open for the longer delivery
+ * grace. A launch acknowledgement from before the final child terminal is not
+ * proof that completion delivery has settled.
  */
 export function directConversationFinished({
   sawAnswer,
+  sawMediaDelivery = false,
   turnEnded,
   turnEndedAtMs,
   nowMs,
   deliveryGraceMs,
+  answerQuiesceMs,
   lastOutboundAtMs,
+  lastAnswerAtMs,
 }) {
   if (!turnEnded) return false;
-  if (sawAnswer) return true;
   if (typeof turnEndedAtMs !== "number") return false;
   // The grace measures SILENCE, not an absolute span from turn-end. A background completion's
   // DELIVERY can trail its terminal record: measured live, a turn ended correctly (its spawned
@@ -431,7 +438,12 @@ export function directConversationFinished({
   const anchorMs = typeof lastOutboundAtMs === "number" && lastOutboundAtMs > turnEndedAtMs
     ? lastOutboundAtMs
     : turnEndedAtMs;
-  return nowMs - anchorMs >= deliveryGraceMs;
+  const settledDeliveryObserved = sawMediaDelivery || (
+    sawAnswer
+    && typeof lastAnswerAtMs === "number"
+    && lastAnswerAtMs >= turnEndedAtMs
+  );
+  return nowMs - anchorMs >= (settledDeliveryObserved ? answerQuiesceMs : deliveryGraceMs);
 }
 
 /**
@@ -473,11 +485,12 @@ export function logicalSubstantiveAnswerCount(outbound) {
  */
 export function followupWaitFinished({
   followupAnswerCount,
+  expectedFollowupCount = 1,
   firstAnswerAtMs,
   nowMs,
   waitMs,
 }) {
-  if (followupAnswerCount >= 1) return true;
+  if (followupAnswerCount >= expectedFollowupCount) return true;
   if (typeof firstAnswerAtMs !== "number") return false;
   return nowMs - firstAnswerAtMs >= waitMs;
 }
@@ -521,4 +534,17 @@ export function trajectoryTurnEnded(lines) {
     }
   }
   return terminal && spawned <= completed;
+}
+
+/**
+ * Count persisted JSONL records for a pre-inject trajectory baseline.
+ *
+ * Writers terminate each record with a newline. `String.split("\n").length`
+ * therefore counts the trailing separator as a record and causes the first
+ * appended terminal record to be sliced away by the watcher.
+ */
+export function trajectoryBaselineLineCount(jsonl) {
+  if (jsonl.length === 0) return 0;
+  const lines = jsonl.split("\n");
+  return lines.at(-1) === "" ? lines.length - 1 : lines.length;
 }

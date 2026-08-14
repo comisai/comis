@@ -893,6 +893,8 @@ export function createBackgroundCompletionRunner(
         traceId: origin.traceId,
         hint: outcome.kind === "retryable_pre_send"
           ? "Restore the originating channel adapter; the protected outbox will retry"
+          : outcome.kind === "permanent" && origin.turnScope.endpoint.channelType === "scheduler"
+            ? "No outward delivery is expected for scheduler-originated tasks; inspect the persisted origin if a user-facing channel was intended"
           : "Reconcile the parked delivery before authorizing another outward send",
         errorKind: outcome.errorKind,
       },

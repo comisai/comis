@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, isPairedMemoryEligibleOutcome, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, outputStarvedHint, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, isPairedMemoryEligibleOutcome, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, outputStarvedHint, promoteNarrationStall, promoteToolInvocationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, modelAcknowledgedFailure, buildSubagentTerminalToolFailureReply, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
@@ -1135,11 +1135,11 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/response\.citation_evidence_persistence/);
   });
 
-  it("source-grep — source questions without a durable receipt fail closed", () => {
+  it("source-grep — physical source questions without a durable receipt fail closed", () => {
     const stripped = readPostExecStripped();
 
     expect(stripped).toMatch(
-      /const citationSourceRequest\s*=\s*isCitationSourceRequest\(msg\.text\s*\?\?\s*""\)/,
+      /const citationSourceRequest\s*=\s*isCitationSourceRequestForTurn\(\s*msg\.text\s*\?\?\s*"",\s*trustedRuntimeActionEvidence,\s*\)/,
     );
     expect(stripped).toMatch(
       /const historicalDigests\s*=\s*citationSourceRequest\s*\?\s*historicalCitationDigests\(sm\)/,
@@ -1717,6 +1717,20 @@ describe("modelAcknowledgedFailure word-boundary regression", () => {
       // Must contain word-boundary escape
       expect(fnBlock[0]).toMatch(/\\b|wordBoundary/);
     }
+  });
+
+  it("recognizes an actionable sessions_spawn rejection without appending a redundant warning", () => {
+    expect(modelAcknowledgedFailure(
+      "Spawn rejected. The minimum supported max_steps is 30; no child launched.",
+      ["sessions_spawn"],
+    )).toBe(true);
+  });
+
+  it("does not treat a successful spawn statement as a failure acknowledgement", () => {
+    expect(modelAcknowledgedFailure(
+      "The spawn was accepted and is running.",
+      ["sessions_spawn"],
+    )).toBe(false);
   });
 });
 

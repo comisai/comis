@@ -153,6 +153,7 @@ describe("governed graph announcement delivery", () => {
     "uncertainty_transition_blocked",
     "transport_failed",
     "transport_rejected",
+    "transport_uncertain",
     "platform_receipt_missing",
     "commit_blocked",
   ] as const)("settles proven retained outcome %s", async (failure) => {

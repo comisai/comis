@@ -13,12 +13,13 @@ describe("live Telegram delivery mirror oracle", () => {
         conversation_ref TEXT NOT NULL,
         destination_endpoint TEXT NOT NULL,
         text TEXT NOT NULL,
+        channel_type TEXT NOT NULL,
         status TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
     `);
     const insert = db.prepare(
-      "INSERT INTO delivery_mirror VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO delivery_mirror VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     );
     insert.run(
       "default",
@@ -31,6 +32,7 @@ describe("live Telegram delivery mirror oracle", () => {
         conversationKind: "direct",
       }),
       "requested chat reply",
+      "telegram",
       "pending",
       1,
     );
@@ -45,6 +47,7 @@ describe("live Telegram delivery mirror oracle", () => {
         conversationKind: "direct",
       }),
       "newer other-chat reply",
+      "telegram",
       "pending",
       2,
     );

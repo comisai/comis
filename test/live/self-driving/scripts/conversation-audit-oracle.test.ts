@@ -292,6 +292,69 @@ describe("conversation evidence audit oracle", () => {
     ]);
   });
 
+  it("accepts an explicitly terminal pre-model failure without fabricating session coverage", () => {
+    const traceId = "trace_auth_failure";
+    const report = auditConversationEvidence({
+      trajectoryRecords: [
+        trajectoryRecord("prompt.submitted", traceId, "2026-08-07T16:47:00.000Z", {
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-6",
+        }),
+        trajectoryRecord("session.summary", traceId, "2026-08-07T16:47:01.000Z", {
+          degraded: true,
+          turnCount: 0,
+          endReason: "error",
+        }),
+        trajectoryRecord("delivery.dispatched", traceId, "2026-08-07T16:47:02.000Z", {
+          origin: "agent-runtime-failure",
+          status: "success",
+          totalChunks: 1,
+          deliveredChunks: 1,
+          failedChunks: 0,
+        }),
+        trajectoryRecord("activity.turn_finalized", traceId, "2026-08-07T16:47:03.000Z", {
+          outcome: "failure",
+          errorKind: "auth",
+        }),
+      ],
+      wireRecords: [{ method: "sendMessage", messageId: 71, text: "Authentication failed" }],
+      sessionRecords: [],
+      incidentReport: { cost: { costUsd: 0 }, failures: [] },
+      contract: {},
+    });
+
+    expect(report).toMatchObject({
+      verdict: "pass",
+      coverage: { sessionEvidence: "trajectory_only_pre_model_failure" },
+      violations: [],
+    });
+  });
+
+  it("still rejects an empty session when pre-model failure evidence is incomplete", () => {
+    const traceId = "trace_incomplete_failure";
+    const report = auditConversationEvidence({
+      trajectoryRecords: [
+        trajectoryRecord("prompt.submitted", traceId, "2026-08-07T16:47:00.000Z"),
+        trajectoryRecord("session.summary", traceId, "2026-08-07T16:47:01.000Z", {
+          degraded: true,
+          turnCount: 0,
+          endReason: "error",
+        }),
+      ],
+      wireRecords: [{ method: "sendMessage", messageId: 71, text: "Failure" }],
+      sessionRecords: [],
+      incidentReport: { cost: { costUsd: 0 }, failures: [] },
+      contract: {},
+    });
+
+    expect(report.verdict).toBe("fail");
+    expect(report.coverage).toEqual({ sessionEvidence: "missing" });
+    expect(report.violations).toContainEqual(expect.objectContaining({
+      code: "session_evidence_empty",
+      severity: "hard",
+    }));
+  });
+
   it("fails closed when requested locale grounding and cost evidence is absent", () => {
     const report = auditConversationEvidence({
       trajectoryRecords: [

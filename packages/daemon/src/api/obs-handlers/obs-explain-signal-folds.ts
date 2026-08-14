@@ -127,6 +127,14 @@ export function accumulatePromptRequestRecord(
   acc: Acc,
   data: Record<string, unknown>,
 ): void {
+  const provider = asString(data.provider);
+  const modelId = asString(data.modelId);
+  if (
+    provider !== undefined && provider.length > 0 && provider.length <= 256
+    && modelId !== undefined && modelId.length > 0 && modelId.length <= 256
+  ) {
+    acc.modelSelection = { provider, modelId };
+  }
   delete acc.requestRelevantToolNames;
   if (Array.isArray(data.requestRelevantToolNames)) {
     const names = [...new Set(data.requestRelevantToolNames.filter(

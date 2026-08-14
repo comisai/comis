@@ -61,7 +61,7 @@ describe("governed announcement sender", () => {
     });
     const sendToPlatform = vi.fn(async () => {
       order.push("platform");
-      return ok({ delivered: true, platformMessageId: "telegram-message-1" });
+      return ok({ delivered: true, status: "accepted" as const, platformMessageId: "telegram-message-1" });
     });
     const sender = createGovernedAnnouncementSender({ ledger, sendToPlatform });
 
@@ -99,13 +99,17 @@ describe("governed announcement sender", () => {
         return ok(true);
       }),
     });
-    const sendToPlatform = vi.fn(async () => ok({ delivered: false }));
+    const sendToPlatform = vi.fn(async () => ok({ delivered: false, status: "unknown" as const }));
     const sender = createGovernedAnnouncementSender({ ledger, sendToPlatform });
 
     const first = await sender.send(request);
     const repeated = await sender.send(request);
 
-    expect(first.ok && first.value.delivered).toBe(false);
+    expect(first).toEqual(ok({
+      delivered: false,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 7 },
+      failure: "transport_uncertain",
+    }));
     expect(repeated.ok && repeated.value.delivered).toBe(false);
     expect(sendToPlatform).toHaveBeenCalledOnce();
     expect(ledger.commit).not.toHaveBeenCalled();
@@ -135,6 +139,7 @@ describe("governed announcement sender", () => {
     const ledger = makeLedger();
     const sendToPlatform = vi.fn(async () => ok({
       delivered: true,
+      status: "accepted" as const,
       platformMessageId: "unexpected-receipt",
     }));
     const sender = createGovernedAnnouncementSender({ ledger, sendToPlatform });
@@ -189,6 +194,7 @@ describe("governed announcement sender", () => {
     for (const testCase of cases) {
       const sendToPlatform = vi.fn(async () => ok({
         delivered: true,
+        status: "accepted" as const,
         platformMessageId: testCase.platformReceipt ?? "telegram-message-unexpected",
       }));
       const result = await createGovernedAnnouncementSender({

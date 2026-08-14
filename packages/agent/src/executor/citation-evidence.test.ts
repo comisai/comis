@@ -362,6 +362,24 @@ describe("exact citation evidence grounding", () => {
     }
   });
 
+  it("does not infer citation intent from a trusted completion envelope", () => {
+    const candidate = (citationEvidenceModule as Record<string, unknown>)
+      .isCitationSourceRequestForTurn;
+    expect(candidate).toBeTypeOf("function");
+    const isRequest = candidate as (
+      request: string,
+      trustedRuntimeActionEvidence: boolean,
+    ) => boolean;
+    const completionEnvelope = [
+      "[System Message] A background task has completed.",
+      "Summary: The report includes an illustrative reference and two links.",
+      "Inform the user about this completed background task.",
+    ].join("\n");
+
+    expect(isRequest(completionEnvelope, true)).toBe(false);
+    expect(isRequest("cite your sources", false)).toBe(true);
+  });
+
   it("leaves a bare URL alone when a non-attribution question mentions the source of truth", () => {
     const request = "which config file is the source of truth for the gateway port?";
     const response = "config.yaml decides it; the daemon then listens on http://localhost:4766";

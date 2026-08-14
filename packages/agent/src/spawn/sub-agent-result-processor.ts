@@ -370,6 +370,8 @@ export async function deliverAnnouncement(params: {
   resolvedLanguage?: string;
   citationEvidence?: import("@comis/core").CitationEvidence;
   terminalOutcome: AnnouncementTerminalOutcome;
+  /** Preserve an intentional child silent-control response through parent delivery. */
+  suppressText?: boolean;
   runId: string;
   attachments?: CompletionAttachmentShape[];
 }, deps: {
@@ -439,6 +441,7 @@ export async function deliverAnnouncement(params: {
       ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
       ...(params.citationEvidence ? { citationEvidence: params.citationEvidence } : {}),
       terminalOutcome: params.terminalOutcome,
+      ...(params.suppressText ? { suppressText: true } : {}),
       runId,
       idempotencyKey: announceKey, reservationRootRunId: resolveReservationRoot(deps.resolveRootRunId, callerAgentId, params.callerConversation.conversationScope),
       ...(params.attachments?.length ? { attachments: params.attachments } : {}),
@@ -465,7 +468,7 @@ export async function deliverAnnouncement(params: {
     return;
   }
 
-  let finalText = stripAnnouncementInstruction(announcementText);
+  let finalText = params.suppressText ? "" : stripAnnouncementInstruction(announcementText);
   let decisionReserved = false;
 
   async function resolveDecision(outcome: "receipt_committed" | "no_reply"): Promise<void> {
@@ -481,7 +484,13 @@ export async function deliverAnnouncement(params: {
 
   // Parent execution produces text only. The single irreversible send remains
   // below this branch so a rewritten response cannot bypass the outward ledger.
-  if (deps.announceToParent && callerAgentId && callerSessionKey && params.callerConversation) {
+  if (
+    !params.suppressText
+    && deps.announceToParent
+    && callerAgentId
+    && callerSessionKey
+    && params.callerConversation
+  ) {
     if (deps.sendGovernedAnnouncement) {
       if (!announceKey || !deps.deadLetterQueue) {
         deps.logger?.warn({
@@ -579,15 +588,20 @@ export async function deliverAnnouncement(params: {
     }
   }
 
+  if (params.suppressText && !params.attachments?.length) {
+    if (announceKey) deps.deliveryDedup?.mark(announceKey);
+    return;
+  }
+
   const disclosure = enforceAnnouncementTerminalOutcome(finalText, params.terminalOutcome);
   finalText = disclosure.text ?? "";
   if (disclosure.corrected && deps.announceToParent) {
     deps.logger?.warn({
       runId,
       step: "completion-honesty",
-      hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative failed terminal state",
+      hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative terminal disclosure",
       errorKind: "validation" as const,
-    }, "Failed background-task status omitted by parent rewrite");
+    }, "Background-task terminal disclosure omitted by parent rewrite");
   }
 
   const threadId = params.announceThreadId;

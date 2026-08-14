@@ -132,6 +132,8 @@ export interface Acc {
   groupHistory?: NonNullable<IncidentSignals["groupHistory"]>;
   /** The LAST valid `prompt.submitted` locale decision. */
   responseLocale?: NonNullable<IncidentSignals["responseLocale"]>;
+  /** The LAST prompt's configured provider and model identifiers. */
+  modelSelection?: NonNullable<IncidentSignals["modelSelection"]>;
   /** The LAST prompt's installed-but-unavailable skill facts. */
   skillAvailability?: NonNullable<IncidentSignals["skillAvailability"]>;
   /** The LAST prompt's bounded request-relevant tool names. */

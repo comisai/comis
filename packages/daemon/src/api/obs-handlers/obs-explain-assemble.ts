@@ -72,6 +72,7 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
  */
 const DEGRADED_END_REASONS: ReadonlySet<string> = new Set([
   "completed_with_tool_errors",
+  "killed",
   "provider_degraded",
 ]);
 
@@ -294,9 +295,10 @@ export function assembleIncidentReport(
   // sub-agent boundary to generic "error". In both cases the terminal
   // `execution.aborted` reason is the more specific source. Preserve any
   // non-generic metadata outcome.
-  const executionEndReason =
-    signals.abortReason !== undefined &&
-    (metadataEndReason === undefined || metadataEndReason === "error")
+  const executionEndReason = signals.subagentKilled !== undefined
+    ? "killed"
+    : signals.abortReason !== undefined &&
+      (metadataEndReason === undefined || metadataEndReason === "error")
       ? signals.abortReason
       : metadataEndReason ?? "unknown";
   const backgroundTasks = signals.backgroundTasks;
@@ -333,7 +335,7 @@ export function assembleIncidentReport(
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
   const explicitDegraded =
-    backgroundCompletionAccepted || backgroundCompletionFailed
+    backgroundCompletionAccepted || backgroundCompletionFailed || signals.subagentKilled !== undefined
       ? undefined
       : persistedDegraded;
   const derivedDegraded =

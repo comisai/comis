@@ -1354,6 +1354,55 @@ describe("createSubAgentRunner", () => {
     fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
+  it("marks a silent child completion so its generated file has no rewritten caption", async () => {
+    vi.useRealTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), "silent-completion-output-test-"));
+    const outputPath = join(outputDir, "silent.txt");
+    await writeFile(outputPath, "verified content", "utf8");
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "NO_REPLY",
+      tokensUsed: { total: 20 },
+      cost: { total: 0.002 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "create a file without a completion caption",
+      agentId: "report-agent",
+      expected_outputs: [outputPath],
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      suppressText: true,
+      attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
+    }));
+    await runner.shutdown();
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  });
+
   it("relays successful child web-fetch digests without relaying fetched URLs", async () => {
     let resolveExecution!: (value: {
       response: string;
@@ -2494,6 +2543,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         onProviderStart: expect.any(Function),
       }),
+      "limited steps task",
     );
   });
 
@@ -2547,6 +2597,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         onProviderStart: expect.any(Function),
       }),
+      "budgeted task",
     );
   });
 
@@ -4476,6 +4527,50 @@ describe("abort wiring in spawn", () => {
         status: "failed",
         requiredConfigKey: "tools.web.search",
       }),
+    }));
+  });
+
+  it("pins a localized warning onto a completed-with-tool-errors announcement", async () => {
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "Found five candidates, but one source lookup failed.",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "completed_with_tool_errors",
+      stepsExecuted: 9,
+    });
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "research a current topic",
+      agentId: "research-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      terminalOutcome: {
+        status: "completed_with_warnings",
+        warningNotice: expect.stringContaining("reported an error"),
+      },
     }));
   });
 

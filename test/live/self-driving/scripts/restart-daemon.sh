@@ -95,7 +95,7 @@ if rig_is_local; then
     fi
     if [ "$use_tmux" = 1 ]; then
       tmux_session="${LOCAL_TMUX_SESSION:-comis-${SERVICE}}"
-      tmux kill-session -t "$tmux_session" 2>/dev/null || true
+      tmux kill-session -t "=$tmux_session" 2>/dev/null || true
       for _ in $(seq 1 15); do
         rig_port_listening "$GW_PORT" || break
         sleep 1

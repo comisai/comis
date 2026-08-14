@@ -10,6 +10,7 @@
  */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { MIN_SUB_AGENT_STEPS } from "@comis/core";
 import { Type } from "typebox";
 import {
   jsonResult,
@@ -43,7 +44,7 @@ const SessionsSpawnParams = Type.Object({
         "Floor of 30 (boot sequence needs ~10-15 steps). " +
         "Typical values: 30 for quick lookups, 50 (default) for standard tasks, 80-100 for complex multi-step work. " +
         "Capped at config default.",
-      minimum: 1,
+      minimum: MIN_SUB_AGENT_STEPS,
     }),
   ),
   expected_outputs: Type.Optional(

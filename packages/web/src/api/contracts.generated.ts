@@ -16363,7 +16363,9 @@ export const CONTRACTS = {
           "type": "boolean"
         },
         "max_steps": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 9007199254740991
         },
         "model": {
           "type": "string"

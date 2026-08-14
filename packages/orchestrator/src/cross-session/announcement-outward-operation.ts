@@ -51,15 +51,16 @@ export interface AnnouncementDeliveryOptions {
   extra?: Record<string, unknown>;
 }
 
-export interface AnnouncementPlatformSendOutcome {
-  /**
-   * Local delivery completion. `false` is not proof that the platform did not
-   * accept a request; the transport contract has no safe-rejection
-   * discriminator. Every post-call false/error is therefore parked.
-   */
-  delivered: boolean;
-  platformMessageId?: string;
-}
+export type AnnouncementPlatformSendOutcome =
+  | {
+      delivered: true;
+      status: "accepted";
+      platformMessageId?: string;
+    }
+  | {
+      delivered: false;
+      status: "rejected" | "unknown";
+    };
 
 export type GovernedAnnouncementFailure =
   | "operation_validation_blocked"
@@ -72,6 +73,7 @@ export type GovernedAnnouncementFailure =
   | "uncertainty_transition_blocked"
   | "transport_failed"
   | "transport_rejected"
+  | "transport_uncertain"
   | "platform_receipt_missing"
   | "commit_blocked";
 
@@ -493,7 +495,13 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
     }
     if (!boundary.value.value.delivered) {
       await park(identity);
-      return ok({ delivered: false, identity, failure: "transport_rejected" });
+      return ok({
+        delivered: false,
+        identity,
+        failure: boundary.value.value.status === "unknown"
+          ? "transport_uncertain"
+          : "transport_rejected",
+      });
     }
     const receipt = boundary.value.value.platformMessageId;
     if (receipt === undefined || receipt.length === 0) {

@@ -70,20 +70,23 @@ describe("sessions_spawn tool", () => {
     const tool = createSessionsSpawnTool(mockRpcCall);
     await tool.execute("call-5", {
       task: "limited task",
-      max_steps: 25,
+      max_steps: 30,
     } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("session.spawn", expect.objectContaining({
       task: "limited task",
-      max_steps: 25,
+      max_steps: 30,
     }));
   });
 
-  it("max_steps schema description mentions floor of 30", () => {
+  it("max_steps schema enforces its advertised floor of 30", () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({}));
     const tool = createSessionsSpawnTool(mockRpcCall);
-    const params = tool.parameters as { properties: Record<string, { description?: string }> };
+    const params = tool.parameters as {
+      properties: Record<string, { description?: string; minimum?: number }>;
+    };
     expect(params.properties.max_steps.description).toContain("Floor of 30");
+    expect(params.properties.max_steps.minimum).toBe(30);
   });
 
   it("schema requires explicitly named child tools to use the reachability contract", () => {

@@ -127,6 +127,7 @@ export {
   PermissionConfigSchema,
   ActionConfirmationConfigSchema,
   AgentToAgentConfigSchema,
+  MIN_SUB_AGENT_STEPS,
 } from "./schema-security.js";
 export type { CredentialStorageMode } from "./schema-security.js";
 export { SubagentContextConfigSchema } from "../domain/subagent-context-config.js";

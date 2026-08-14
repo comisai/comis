@@ -73,6 +73,25 @@ describe("sub-agent announcement content", () => {
     expect(disclosure.text?.match(/background task failed/gu)).toHaveLength(1);
     expect(disclosure.text?.match(/governor limit of 6/gu)).toHaveLength(1);
   });
+
+  it("restores a completed-with-tool-errors warning omitted by the parent rewrite", () => {
+    const warningNotice =
+      "Note: one of the tools used by this background task reported an error, so part of the result may be incomplete.";
+    const outcome = {
+      status: "completed_with_warnings",
+      warningNotice,
+    } as never;
+
+    expect(buildAnnouncementRewriteInput("Found five candidates.", outcome)).toContain(
+      warningNotice,
+    );
+    expect(
+      enforceAnnouncementTerminalOutcome("Found five candidates.", outcome),
+    ).toEqual({
+      text: `Found five candidates.\n\n${warningNotice}`,
+      corrected: true,
+    });
+  });
 });
 
 describe("buildAnnouncementMessage — a real response is never rendered as an error", () => {

@@ -15,7 +15,10 @@
 import { describe, it, expect } from "vitest";
 
 import { toIncidentSignals } from "./obs-explain-signals.js";
-import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js";
+import {
+  subagentDeliberatelyKilledVerdict,
+  subagentStuckKilledVerdict,
+} from "./obs-explain-subagent-killed-verdict.js";
 
 function killedSignals(data: Record<string, unknown>) {
   return toIncidentSignals([
@@ -49,6 +52,30 @@ describe("subagentStuckKilledVerdict", () => {
 
   it("does NOT fire when no kill signal exists", () => {
     const v = subagentStuckKilledVerdict(toIncidentSignals([]));
+    expect(v).toBeNull();
+  });
+});
+
+describe("subagentDeliberatelyKilledVerdict", () => {
+  it("names a parent cancellation without recommending a runtime knob", () => {
+    const v = subagentDeliberatelyKilledVerdict(killedSignals({
+      runId: "run_a",
+      killedBy: "parent",
+      runtimeMs: 4_000,
+    }));
+
+    expect(v?.code).toBe("subagent_cancelled");
+    expect(v?.detail).toMatch(/parent/iu);
+    expect(v?.detail).toMatch(/4000ms/iu);
+    expect(v?.suggestedNextSteps.join(" ")).not.toMatch(/Threshold|MaxSteps/iu);
+  });
+
+  it("defers health-monitor kills to the stuck-run verdict", () => {
+    const v = subagentDeliberatelyKilledVerdict(killedSignals({
+      runId: "run_a",
+      killedBy: "health_monitor",
+      runtimeMs: 4_000,
+    }));
     expect(v).toBeNull();
   });
 });

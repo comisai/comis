@@ -60,7 +60,7 @@ describe("live driver session correlation", () => {
     })).toBe(true);
   });
 
-  it("waits for delayed direct-message delivery after the trajectory turn ends", () => {
+  it("waits for delayed direct-message delivery and then drains it", () => {
     expect(directConversationFinished({
       sawAnswer: false,
       turnEnded: true,
@@ -74,6 +74,17 @@ describe("live driver session correlation", () => {
       turnEndedAtMs: 10_000,
       nowMs: 10_001,
       deliveryGraceMs: 30_000,
+      answerQuiesceMs: 1_000,
+      lastAnswerAtMs: 10_001,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 11_001,
+      deliveryGraceMs: 30_000,
+      answerQuiesceMs: 1_000,
+      lastAnswerAtMs: 10_001,
     })).toBe(true);
     expect(directConversationFinished({
       sawAnswer: false,
@@ -300,9 +311,14 @@ describe("trajectoryTurnEnded", () => {
 // ---------------------------------------------------------------------------
 
 describe("directConversationFinished — silence-based grace", () => {
-  it("still returns immediately once an answer is seen", () => {
+  it("returns after the post-terminal answer becomes quiet", () => {
     expect(directConversationFinished({
-      sawAnswer: true, turnEnded: true, turnEndedAtMs: 0, nowMs: 1, deliveryGraceMs: 1000,
+      sawAnswer: true, turnEnded: true, turnEndedAtMs: 0, nowMs: 1,
+      deliveryGraceMs: 1000, answerQuiesceMs: 1000, lastAnswerAtMs: 0,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true, turnEnded: true, turnEndedAtMs: 0, nowMs: 1000,
+      deliveryGraceMs: 1000, answerQuiesceMs: 1000, lastAnswerAtMs: 0,
     })).toBe(true);
   });
 

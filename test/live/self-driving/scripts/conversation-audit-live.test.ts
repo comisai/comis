@@ -21,15 +21,16 @@ afterEach(() => {
   }
 });
 
-function makeLiveSessionLayout() {
+function makeLiveSessionLayout(options: { chatId?: string; threadId?: string } = {}) {
   const dataDir = mkdtempSync(resolve(tmpdir(), "comis-conversation-audit-"));
   temporaryDirectories.push(dataDir);
+  const chatId = options.chatId ?? "678314278";
   const sessionDirectory = resolve(
     dataDir,
     "workspace",
     "sessions",
     "default",
-    "telegram@3atelegram-bot@3a678314278",
+    `telegram@3atelegram-bot@3a${chatId}`,
   );
   mkdirSync(sessionDirectory, { recursive: true });
   const sessionFile = resolve(
@@ -37,7 +38,8 @@ function makeLiveSessionLayout() {
     "platform_sender~peer~platform_sender.jsonl",
   );
   const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
-  const sessionId = "default:default:telegram:peer:platform_sender";
+  const sessionId = "default:default:telegram:peer:platform_sender"
+    + (options.threadId === undefined ? "" : `:thread:${options.threadId}`);
   writeFileSync(
     sessionFile,
     `${JSON.stringify({ role: "user", content: "שלום" })}\n`,
@@ -82,7 +84,7 @@ function makeLiveSessionLayout() {
     `${JSON.stringify({
       customType: "comis.inbound-message-provenance",
       data: {
-        messages: [{ channelId: "678314278", channelType: "telegram" }],
+        messages: [{ channelId: chatId, channelType: "telegram" }],
       },
     })}\n`,
     { mode: 0o600 },
@@ -141,6 +143,46 @@ describe("live conversation audit assembly", () => {
     });
   });
 
+  it("isolates a forum thread session and its thread-bound wire records", async () => {
+    const layout = makeLiveSessionLayout({ chatId: "-1001234567890", threadId: "101" });
+    const output = await auditChatConversation({
+      dataDir: layout.dataDir,
+      chatId: "-1001234567890",
+      threadId: "101",
+      contract: {
+        expectedLocale: "en",
+        forbiddenSurfaceTexts: ["CROSS_THREAD_MARKER"],
+      },
+      loadWireRecords: async () => [
+        {
+          method: "sendMessage",
+          messageId: 71,
+          messageThreadId: 101,
+          text: "OWN_THREAD_MARKER",
+        },
+        {
+          method: "editMessageText",
+          messageId: 71,
+          text: "OWN_THREAD_MARKER_DONE",
+        },
+        {
+          method: "sendMessage",
+          messageId: 72,
+          messageThreadId: 102,
+          text: "CROSS_THREAD_MARKER",
+        },
+        {
+          method: "deleteMessage",
+          messageId: 72,
+        },
+      ],
+      loadIncidentReport: async () => ({ cost: { costUsd: 0 }, failures: [] }),
+    });
+
+    expect(output.artifacts.sessionId).toBe(layout.sessionId);
+    expect(output.report).toMatchObject({ verdict: "pass", violations: [] });
+  });
+
   it("fails closed when a JSONL evidence line is malformed", () => {
     const dataDir = mkdtempSync(resolve(tmpdir(), "comis-conversation-jsonl-"));
     temporaryDirectories.push(dataDir);
@@ -152,9 +194,41 @@ describe("live conversation audit assembly", () => {
     );
   });
 
-  it("reports missing model-session evidence as a hard coverage failure on keyless turns", async () => {
+  it("reports trajectory-only coverage for a terminal keyless pre-model turn", async () => {
     const layout = makeLiveSessionLayout();
     rmSync(layout.sessionFile);
+    const traceId = "trace_keyless";
+    writeFileSync(
+      layout.trajectoryFile,
+      [
+        { type: "prompt.submitted", traceId, ts: "2026-08-07T16:47:00.000Z", data: {} },
+        {
+          type: "session.summary",
+          traceId,
+          ts: "2026-08-07T16:47:01.000Z",
+          data: { degraded: true, turnCount: 0, endReason: "error" },
+        },
+        {
+          type: "delivery.dispatched",
+          traceId,
+          ts: "2026-08-07T16:47:02.000Z",
+          data: {
+            origin: "agent-runtime-failure",
+            status: "success",
+            totalChunks: 1,
+            deliveredChunks: 1,
+            failedChunks: 0,
+          },
+        },
+        {
+          type: "activity.turn_finalized",
+          traceId,
+          ts: "2026-08-07T16:47:03.000Z",
+          data: { outcome: "failure", errorKind: "auth" },
+        },
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      { mode: 0o600 },
+    );
 
     const output = await auditChatConversation({
       dataDir: layout.dataDir,
@@ -163,10 +237,10 @@ describe("live conversation audit assembly", () => {
       loadIncidentReport: async () => ({ cost: { costUsd: 0 }, failures: [] }),
     });
 
-    expect(output.report.verdict).toBe("fail");
-    expect(output.report.violations).toContainEqual(expect.objectContaining({
-      code: "session_evidence_empty",
-      severity: "hard",
-    }));
+    expect(output.report).toMatchObject({
+      verdict: "pass",
+      coverage: { sessionEvidence: "trajectory_only_pre_model_failure" },
+      violations: [],
+    });
   });
 });

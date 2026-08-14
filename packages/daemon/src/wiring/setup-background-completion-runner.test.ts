@@ -178,6 +178,43 @@ function buildOrigin(
   };
 }
 
+function buildSchedulerOrigin(): BackgroundTaskOrigin {
+  const endpoint = {
+    channelType: "scheduler",
+    channelInstanceId: "cron-instance",
+    conversationId: "cron-job-market-scan",
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId: "default",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: "scheduler-cron-default",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return {
+    turnScope: {
+      conversation: locator.value.conversationScope,
+      principal: { principalId: "scheduler-cron-default" },
+      endpoint,
+    },
+    conversationRef: locator.value.conversationRef,
+    deliveryOrigin: {
+      tenantId: "default",
+      userId: "scheduler-cron-default",
+      channelType: "scheduler",
+      channelId: endpoint.conversationId,
+    },
+    traceId: null,
+    trustLevel: "owner",
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    backgroundHopCount: 0,
+  };
+}
+
 describe("setupBackgroundCompletionRunner", () => {
   it("returns a context object with a runner.shutdown function", async () => {
     const ctx = setupBackgroundCompletionRunner({
@@ -540,6 +577,117 @@ describe("setupBackgroundCompletionRunner", () => {
     expect(outwardLedger.markFailed).toHaveBeenCalledOnce();
     expect(taskManager.scheduleDispatchRetry).not.toHaveBeenCalled();
   });
+
+  it.each(["pre_send", "delivering"] as const)(
+    "parks a persisted scheduler outbox from %s because it has no channel adapter",
+    async (initialState) => {
+    const recording = makeRecordingEventBus();
+    const origin = buildSchedulerOrigin();
+    const task: import("@comis/agent").BackgroundTask = {
+      id: "task-scheduler-outbox",
+      toolName: "market_data",
+      status: "completed",
+      startedAt: 1,
+      completedAt: 2,
+      result: "raw result",
+      origin,
+      dispatchState: initialState,
+      continuationExecutionId: "task-scheduler-outbox",
+      dispatchAttempts: 3,
+      continuationOutbox: {
+        kind: "continuation",
+        response: "finalized scheduler result",
+        executionId: "execution-scheduler",
+        idempotencyKey: "background-continuation:task-scheduler-outbox",
+        deliveryProtection: "ledger",
+      },
+    };
+    const commitDispatchState = vi.fn((
+      _taskId: string,
+      next: import("@comis/agent").BackgroundSessionState,
+      expected?: readonly import("@comis/agent").BackgroundSessionState[],
+    ) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected !== undefined && !expected.includes(current)) return ok(false);
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const taskManager = {
+      getTask: vi.fn(() => task),
+      commitDispatchState,
+      persistContinuationOutbox: vi.fn(),
+      persistCleanupPendingOutbox: vi.fn(),
+      persistFinalizedResult: vi.fn().mockReturnValue(ok(undefined)),
+      recordRecoveryIncident: vi.fn().mockReturnValue(ok(undefined)),
+      scheduleDispatchRetry: vi.fn(),
+      scheduleStateRetry: vi.fn(),
+    };
+    const deliverToChannel = vi.fn();
+    const outwardLedger = {
+      allocateStep: vi.fn(),
+      lookup: vi.fn(),
+      begin: vi.fn(),
+      markUnknown: vi.fn(),
+      reclaimPreSend: vi.fn(),
+      commit: vi.fn(),
+      markFailed: vi.fn(),
+      parkUncertain: vi.fn(),
+      hasUncertainty: vi.fn(),
+      listUnreconciled: vi.fn(),
+    };
+    const runnerWarn = vi.fn();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+      child: vi.fn(() => ({ info: vi.fn(), warn: runnerWarn, debug: vi.fn() })),
+    } as unknown as import("@comis/infra").ComisLogger;
+    const ctx = setupBackgroundCompletionRunner({
+      eventBus: recording.bus,
+      adaptersByType: new Map(),
+      deliveryService: { deliverToChannel, drainInFlight: vi.fn() } as never,
+      getExecutor: vi.fn() as never,
+      assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
+      resolveSessionManager: vi.fn(() => undefined),
+      taskManager,
+      fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
+      outwardLedger: outwardLedger as never,
+      resolveMaxBackgroundHops: () => 3,
+      logger,
+    });
+
+    recording.bus.emit("background_task:completed", {
+      agentId: "default",
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin,
+      timestamp: 3,
+    });
+    await ctx.runner.shutdown();
+
+    expect(task.dispatchState).toBe("parked_permanent");
+    if (initialState === "pre_send") {
+      expect(commitDispatchState).toHaveBeenCalledWith(
+        task.id,
+        "delivering",
+        ["pre_send"],
+      );
+    }
+    expect(taskManager.scheduleDispatchRetry).not.toHaveBeenCalled();
+    expect(deliverToChannel).not.toHaveBeenCalled();
+    expect(outwardLedger.allocateStep).not.toHaveBeenCalled();
+    if (initialState === "pre_send") {
+      expect(runnerWarn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hint: "No outward delivery is expected for scheduler-originated tasks; inspect the persisted origin if a user-facing channel was intended",
+        }),
+        "Background completion delivery did not reach accepted state",
+      );
+    }
+    },
+  );
 
   // ---------------------------------------------------------------------------
   // The observation subscriber is installed before the execution owner.

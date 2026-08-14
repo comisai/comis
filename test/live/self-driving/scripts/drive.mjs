@@ -17,7 +17,8 @@
 //     `{"mention":true,"replyTo":42,"thread":7,"forwarded":true}`. The control route validates the closed shape.
 //   - Use `-` or `@/absolute/file` for credential-bearing prompts so values never enter argv/process listings.
 //   - A `pipeline`/`graph.execute` turn ends at the launch acknowledgement while the graph continues.
-//     Set `WAIT_FOR_FOLLOWUP_MS` to keep a direct-message drive open for a second substantive delivery;
+//     Set `WAIT_FOR_FOLLOWUP_MS` to keep a direct-message drive open for later substantive delivery;
+//     set `WAIT_FOR_FOLLOWUP_COUNT` when fan-out should produce more than one later delivery.
 //     always confirm the terminal graph with `graph.status` or `comis explain <graphId> --graph`.
 import { readFileSync, readdirSync, statSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -30,6 +31,7 @@ import {
   findTelegramConversationWireAnswer,
   followupWaitFinished,
   isDriveProgressText,
+  isOutboundMediaDelivery,
   logicalSubstantiveAnswerCount,
   normalizeDriveStdinText,
   normalizedInboundTextError,
@@ -40,6 +42,7 @@ import {
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  trajectoryBaselineLineCount,
   trajectoryTurnEnded,
   wireContainsAssistantReply,
   wireQuiescenceFinished,
@@ -87,6 +90,7 @@ const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
 const followupWaitMs = Number(process.env.WAIT_FOR_FOLLOWUP_MS ?? 0);
+const expectedFollowupCount = Number(process.env.WAIT_FOR_FOLLOWUP_COUNT ?? 1);
 // Guard the #1 mis-invocation: passing DATA in the maxMs slot
 // (arg order is chatId,text,quiesceMs,maxMs,DATA) makes maxMs=NaN → `while (… < NaN)` is false →
 // the loop NEVER runs → an instant, SILENT false "0s [TIMEOUT] — NO SUBSTANTIVE ANSWER" on a reply
@@ -96,9 +100,12 @@ if (
   || Number.isNaN(maxMs)
   || !Number.isFinite(followupWaitMs)
   || followupWaitMs < 0
+  || !Number.isInteger(expectedFollowupCount)
+  || expectedFollowupCount < 1
 ) {
   console.error(`drive.mjs: non-numeric quiesceMs/maxMs (quiesceMs="${quiesceMsArg}", maxMs="${maxMsArg}"). ` +
-    `WAIT_FOR_FOLLOWUP_MS must also be a non-negative number. ` +
+    `WAIT_FOR_FOLLOWUP_MS must also be a non-negative number and ` +
+    `WAIT_FOR_FOLLOWUP_COUNT must be a positive integer. ` +
     `Usage: drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]`);
   process.exit(2);
 }
@@ -220,9 +227,9 @@ const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 const tenantId = process.env.TENANT_ID || 'default';
 const agentId = process.env.AGENT_ID || 'default';
-// Bounded wait for a final message AFTER turn-end. Costs nothing on a turn that produces an answer
-// — `directConversationFinished` returns as soon as `sawAnswer` is set — so this cap only applies to
-// answerless turns. 30 s was too tight once the turn-end signal became background-aware: a
+// Bounded wait for a final message AFTER turn-end on answerless turns. A turn that already has an
+// answer uses the normal quiesce window instead, because a sibling batch can produce useful partial
+// prose before the final child's delivery is ready. 30 s was too tight once the turn-end signal became background-aware: a
 // background completion's delivery can trail its terminal record, and observed sub-agent runtimes
 // in this campaign ran 67–384 s.
 const POST_TURN_DELIVERY_GRACE_MS = 120000;
@@ -352,7 +359,10 @@ const resolveTraj = () => {
       : (candidates.find((c) => c.path === chosen)?.real ?? chosen);
   } catch { return null; }
 };
-const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };
+const trajLineCount = (p) => {
+  try { return trajectoryBaselineLineCount(readFileSync(p, 'utf8')); }
+  catch { return 0; }
+};
 // A PARENT turn that dispatched background work emits its own `session.summary` and finishes with
 // `finishReason:"background_pending"` while the sub-agent keeps running — so treating the first
 // summary as turn-end stops the drive before the answer exists. Measured across 15 heavy questions:
@@ -395,7 +405,9 @@ const normalizedInboundId = telegramInboundGuid(
 process.stderr.write(`injected inboundId=${inj.messageId}, polling after ${after}; trajectory=${trajPath ? 'watched' : 'NONE (wire-only)'}\n`);
 
 const seen = [];
-let sawAnswer = false, turnEnded = false, turnEndedAtMs = null, lastNew = Date.now();
+let sawAnswer = false, sawMediaDelivery = false;
+let turnEnded = false, turnEndedAtMs = null, lastNew = Date.now();
+let lastAnswerAtMs;
 let correlatedAnswer = null;
 let correlatedSessionPath = null;
 const start = Date.now();
@@ -473,6 +485,7 @@ const logicalAnswerCount = () => logicalSubstantiveAnswerCount(seen);
 
 const asyncFollowupFinished = (nowMs) => followupWaitMs === 0 || followupWaitFinished({
   followupAnswerCount: Math.max(0, logicalAnswerCount() - 1),
+  expectedFollowupCount,
   firstAnswerAtMs,
   nowMs,
   waitMs: followupWaitMs,
@@ -493,9 +506,12 @@ while (Date.now() - start < maxMs) {
   if (batch.length) {
     for (const o of batch) {
       seen.push(o); after = Math.max(after, o.messageId || after);
+      if (isOutboundMediaDelivery(o)) sawMediaDelivery = true;
       if (isConversationAnswer(o)) {
         sawAnswer = true;
-        firstAnswerAtMs ??= Date.now();
+        const observedAtMs = Date.now();
+        firstAnswerAtMs ??= observedAtMs;
+        lastAnswerAtMs = observedAtMs;
       }
     }
     lastNew = Date.now();
@@ -536,16 +552,19 @@ while (Date.now() - start < maxMs) {
   const nowMs = Date.now();
   if (directConversationFinished({
     sawAnswer,
+    sawMediaDelivery,
     turnEnded,
     turnEndedAtMs,
     nowMs,
     deliveryGraceMs: POST_TURN_DELIVERY_GRACE_MS,
+    answerQuiesceMs: quiesceMs,
     // `lastNew` is stamped whenever a batch arrives, so the grace measures SILENCE rather than an
     // absolute span from turn-end. A background completion's delivery can trail its terminal record
     // — observed ~200s past turn-end against a 120s window — so a stream of progress cards followed
     // by the real answer now holds the window open instead of closing mid-delivery. An outbound that
     // predates turn-end does not extend it.
     lastOutboundAtMs: lastNew,
+    lastAnswerAtMs,
   }) && asyncFollowupFinished(nowMs)) {
     // Drain any just-delivered final message, then stop. A turn with no answer
     // reaches this branch only after the bounded post-turn delivery grace.
@@ -553,10 +572,6 @@ while (Date.now() - start < maxMs) {
     for (const o of tail) {
       seen.push(o);
       after = Math.max(after, o.messageId || after);
-      if (isConversationAnswer(o)) {
-        sawAnswer = true;
-        firstAnswerAtMs ??= Date.now();
-      }
     }
     break;
   }

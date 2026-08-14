@@ -113,6 +113,8 @@ rig_load_env() {
   shift || true
   local _key=""
   local _index=0
+  local _explicit_data=0
+  local _explicit_trajectory=0
   local -a _explicit_keys=()
   local -a _explicit_values=()
   local -a _selected_keys=()
@@ -125,6 +127,8 @@ rig_load_env() {
       _explicit_keys[_index]="$_key"
       _explicit_values[_index]="${!_key}"
       _index=$((_index + 1))
+      [ "$_key" = "DATA" ] && _explicit_data=1
+      [ "$_key" = "COMIS_TRAJECTORY_DIR" ] && _explicit_trajectory=1
     fi
   done
 
@@ -152,6 +156,10 @@ rig_load_env() {
   for ((_index = 0; _index < ${#_explicit_keys[@]}; _index++)); do
     export "${_explicit_keys[_index]}=${_explicit_values[_index]}"
   done
+  if rig_is_local && [ "$_explicit_data" = 1 ] && [ "$_explicit_trajectory" = 0 ]; then
+    COMIS_TRAJECTORY_DIR="$DATA/trajectories"
+    export COMIS_TRAJECTORY_DIR
+  fi
   rig_defaults
 }
 
@@ -418,7 +426,7 @@ rig_daemon_pid() {
     fi
     if [ "$_supervisor" = "tmux" ] || { [ "$_supervisor" = "auto" ] && rig_tmux_manages; }; then
       rig_tmux_manages || return 0
-      _pid="$(tmux list-panes -t "$_tmux_session" -F '#{pane_pid}' 2>/dev/null | head -1)"
+      _pid="$(tmux list-panes -t "=$_tmux_session" -F '#{pane_pid}' 2>/dev/null | head -1)"
       _pid="$(pgrep -P "${_pid:-0}" 2>/dev/null | head -1)"
     elif { [ "$_supervisor" = "direct" ] || [ "$_supervisor" = "auto" ]; } && [ -f "$_pid_file" ]; then
       _pid="$(tr -d '[:space:]' <"$_pid_file" 2>/dev/null)"
@@ -511,13 +519,13 @@ rig_pm2_manages() {
 
 rig_tmux_has_session() {
   command -v tmux >/dev/null 2>&1 || return 1
-  tmux has-session -t "${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}" 2>/dev/null
+  tmux has-session -t "=${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}" 2>/dev/null
 }
 
 rig_tmux_manages() {
   local _owner=""
   rig_tmux_has_session || return 1
-  _owner="$(tmux show-environment -t "${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}" COMIS_LOCAL_DATA_OWNER 2>/dev/null)"
+  _owner="$(tmux show-environment -t "=${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}" COMIS_LOCAL_DATA_OWNER 2>/dev/null)"
   [ "${_owner#COMIS_LOCAL_DATA_OWNER=}" = "$DATA" ]
 }
 
