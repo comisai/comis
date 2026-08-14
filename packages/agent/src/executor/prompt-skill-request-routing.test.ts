@@ -371,6 +371,26 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual([]);
   });
 
+  it("does not treat absolute path segments as prompt skill intent", () => {
+    const deferral = result();
+    const artifactRequest =
+      "Use write to create exactly /workspace/real-user/artifacts/silent.txt, then return NO_REPLY.";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: artifactRequest,
+      requestRelevanceText: artifactRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(artifactRequest)).not.toContain("real-user");
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual([]);
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
