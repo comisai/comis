@@ -156,6 +156,9 @@ export function createAnnouncementDeadLetterQueue(
   const retryIntervalMs = opts.retryIntervalMs ?? 60_000;
   const maxAgeMs = opts.maxAgeMs ?? 3_600_000;
   const maxEntries = opts.maxEntries ?? 100;
+  // A reservation remains live through the 300-second parent rewrite timeout
+  // plus one drain interval, preventing fallback delivery from racing it.
+  const parentDecisionGraceMs = 300_000 + retryIntervalMs;
   const {
     filePath,
     eventBus,
@@ -744,28 +747,28 @@ export function createAnnouncementDeadLetterQueue(
   /**
    * Settle parked parent-decision reservations against the outward ledger.
    *
-   * A reservation is written when the parent turn that should adjudicate a
-   * sub-agent completion dies before deciding. Nothing drained them, so a
-   * finished job's result was simply never delivered — live, a completed chart
-   * set sat parked until the user asked for it by hand. The quarantine was
-   * right that we must not guess; it was wrong that we had to. The ledger is
-   * built to answer exactly this, and `allocateStep` is idempotent by
-   * `(rootRunId, operationId)`, so the step the send WOULD have used is
-   * recoverable after the fact — including across a restart.
-   *
-   * Converted reservations are handed to `drainGovernedEntry`, which already
-   * owns the lookup, the committed-skip, the identity-mismatch check and the
-   * parking. Nothing here decides to send; it only supplies the identity that
-   * lets the governed path decide.
-   *
-   * Fail-SAFE throughout: a reservation with no `rootRunId` (written before the
-   * field existed) or any ledger error stays parked. An unanswerable ledger is
-   * never read as "not sent".
+   * After the parent rewrite grace expires, idempotent `allocateStep` recovers
+   * the governed identity and `drainGovernedEntry` decides whether delivery is
+   * safe. Missing roots and ledger errors remain parked; uncertainty is never
+   * interpreted as proof that no send occurred.
    */
   async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
     for (const reservation of [...decisionReservations]) {
+      const remainingGraceMs = parentDecisionGraceMs
+        - (systemNowMs() - reservation.failedAt);
+      if (remainingGraceMs > 0) {
+        logger?.debug(
+          {
+            runId: reservation.runId,
+            remainingMs: remainingGraceMs,
+            step: "parent-decision-rewrite-grace",
+          },
+          "Parent decision reservation remains parked while its rewrite can still be running",
+        );
+        continue;
+      }
       if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) {
         // Standing condition, re-reached on every sweep — report the transition
         // into it once, exactly as logLedgerFailure does, or one unadjudicable
@@ -798,7 +801,15 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-      const now = systemNowMs();
+      logger?.warn(
+        {
+          runId: reservation.runId,
+          errorKind: "timeout" as const,
+          hint: "Inspect the parent completion rewrite timeout; the durable user-safe fallback is now eligible for governed delivery",
+          step: "parent-decision-fallback",
+        },
+        "Parent decision rewrite grace elapsed; adjudicating its safe fallback",
+      );
       entries.push({
         id: reservation.id,
         announcementText: reservation.announcementText,
@@ -815,7 +826,6 @@ export function createAnnouncementDeadLetterQueue(
         ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
       } as DeadLetterEntry);
       settled.push(reservation.idempotencyKey);
-      void now;
     }
     if (settled.length === 0) return;
     const remaining = decisionReservations.filter(

@@ -178,14 +178,21 @@ function stripSystemPrefix(text: string): string {
   return result;
 }
 
+function containsInternalAnnouncementEnvelope(text: string): boolean {
+  return text.startsWith("[System Message]\n")
+    || text.includes("Inform the user about this completed background task.")
+    || /\[Subagent Result:/iu.test(text)
+    || text.includes("Full result (drill in with read/grep/jq):");
+}
+
 /**
  * Sanitize announcement text for direct user delivery (fallback path).
  * Extracts human-readable content (Summary or Result sections) and strips
  * internal metadata (session keys, file paths, condensation stats, subagent
  * markers, runtime stats). Returns a safe generic message if no extractable
  * content is found.
- * Used only in fallback `sendToChannel` calls -- the `announceToParent` path
- * goes through the LLM which can filter metadata itself.
+ * Used for durable decision fallbacks and as the final egress guard when a
+ * parent rewrite echoes the internal completion envelope.
  */
 export function sanitizeForUser(text: string): string {
   const GENERIC_FALLBACK =
@@ -217,7 +224,7 @@ export function sanitizeForUser(text: string): string {
   sanitized = sanitized.replace(/\b\w+:\w+:[a-z_-]+:\d+\b/g, "");
 
   // File paths (starting with / or ~)
-  sanitized = sanitized.replace(/(?:\/[\w./-]+|~\/[\w./-]+)/g, "");
+  sanitized = sanitized.replace(/(?<![:/\\\w])(?:\/[\w./-]+|~\/[\w./-]+)/g, "");
 
   // Runtime stats lines (Runtime: ... | Steps: ... | Tokens:)
   sanitized = sanitized.replace(/Runtime:.*\|.*Steps:.*\|.*Tokens:[^\n]*/g, "");
@@ -697,9 +704,28 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             "Egress guard: rewritten announcement scrubbed",
           );
         }
+        const internalEnvelopeBlocked = containsInternalAnnouncementEnvelope(
+          scrubbedCandidate.text,
+        );
+        const egressCandidate = internalEnvelopeBlocked
+          ? sanitizeForUser(scrubbedCandidate.text)
+          : scrubbedCandidate.text;
+        if (internalEnvelopeBlocked) {
+          deps.logger?.warn(
+            {
+              batchKey: key,
+              batchSize: items.length,
+              runId: first.runId,
+              step: "completion-envelope-egress",
+              errorKind: "validation" as const,
+              hint: "Inspect the parent completion rewrite; internal announcement metadata was replaced with its user-safe result section",
+            },
+            "Internal completion envelope blocked at channel egress",
+          );
+        }
         const disclosure = failedOutcome
-          ? enforceAnnouncementTerminalOutcome(scrubbedCandidate.text, failedOutcome)
-          : { text: scrubbedCandidate.text, corrected: false };
+          ? enforceAnnouncementTerminalOutcome(egressCandidate, failedOutcome)
+          : { text: egressCandidate, corrected: false };
         if (disclosure.corrected) {
           deps.logger?.warn(
             {
@@ -785,11 +811,16 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       return err(new Error("Governed announcement decision reservation unavailable"));
     }
     if (deps.sendGovernedAnnouncement && idempotencyKey && reserveDecision) {
+      const safeFallback = sanitizeForUser(params.announcementText);
+      const fallbackDisclosure = enforceAnnouncementTerminalOutcome(
+        safeFallback,
+        params.terminalOutcome,
+      );
       const boundary = await fromPromise(reserveDecision({
         idempotencyKey,
         agentId: params.callerAgentId,
         runId: params.runId,
-        announcementText: params.announcementText,
+        announcementText: fallbackDisclosure.text ?? safeFallback,
         channelType: params.announceChannelType,
         channelId: params.announceChannelId,
         failedAt: systemNowMs(),
