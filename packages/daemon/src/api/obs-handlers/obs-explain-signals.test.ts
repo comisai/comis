@@ -385,6 +385,32 @@ describe("toIncidentSignals — request-relevant tool selection", () => {
     ).toEqual(["mcp_manage", "gateway"]);
   });
 
+  it("retains bounded prompt skill routing facts needed to diagnose a no-call turn", () => {
+    const skillNames = Array.from({ length: 18 }, (_, index) => `skill-${String(index)}`);
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        requestRelevantPromptSkillNames: ["old-skill"],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+      event("prompt.submitted", 2, {
+        requestRelevantPromptSkillNames: [
+          "deep-research",
+          "deep-research",
+          "invalid skill name",
+          ...skillNames,
+        ],
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect(
+      (signals as unknown as { requestRelevantPromptSkillNames?: string[] })
+        .requestRelevantPromptSkillNames,
+    ).toEqual(["deep-research", ...skillNames.slice(0, 15)]);
+  });
+
   it("retains the latest content-free operator-policy tool projection", () => {
     const projection = {
       toolName: "mcp_manage",
