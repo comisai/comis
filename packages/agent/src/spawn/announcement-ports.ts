@@ -88,6 +88,9 @@ export interface QueuedAnnouncementShape {
   citationEvidence?: CitationEvidence;
   /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
   terminalOutcome: AnnouncementTerminalOutcome;
+  /** The child intentionally returned a silent-control response. Attachments
+   * still deliver, but no parent rewrite may manufacture caption text. */
+  suppressText?: boolean;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;

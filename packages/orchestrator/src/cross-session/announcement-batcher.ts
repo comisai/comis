@@ -53,6 +53,9 @@ export interface QueuedAnnouncement {
   citationEvidence?: CitationEvidence;
   /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
   terminalOutcome: AnnouncementTerminalOutcome;
+  /** The child intentionally returned a silent-control response. Attachments
+   * still deliver, but no parent rewrite may manufacture caption text. */
+  suppressText?: boolean;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
@@ -640,6 +643,17 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         } => item.terminalOutcome.status === "completed_with_warnings",
       )?.terminalOutcome;
       const disclosureOutcome = failedOutcome ?? warningOutcome;
+      const suppressEntireBatchText = disclosureOutcome === undefined
+        && items.every((item) => item.suppressText === true);
+      if (suppressEntireBatchText) {
+        if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
+          await sendFinal(key, items, "");
+        } else {
+          await resolveDecisions(items, "no_reply");
+          markItemsDelivered(items);
+        }
+        return;
+      }
       const parentInput = items.length === 1
         ? buildAnnouncementRewriteInput(first.announcementText, first.terminalOutcome)
         : (() => {

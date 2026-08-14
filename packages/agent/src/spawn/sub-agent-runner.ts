@@ -58,7 +58,7 @@ import {
   verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
 } from "@comis/core";
-import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
+import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createCoordinatorProgressFork,
   type CoordinatorProgressForkHandle,
@@ -3794,6 +3794,9 @@ function classifyCompletionErrorKind(
                       ).trim(),
                     }
                   : { status: "completed" },
+              ...(isSuccess && isSilentResponse(result.response)
+                ? { suppressText: true }
+                : {}),
               runId,
               ...(validationResults?.some((output) => output.exists)
                 ? {
