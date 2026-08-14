@@ -458,6 +458,34 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
+  it("does not route a separately declared child task argument as parent coding intent", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live captionless attachment check.",
+      "First call discover_tools with query sessions_spawn.",
+      "Then call sessions_spawn exactly once and do not wait.",
+      "The task argument must be this exact single sentence: Use write to create b2-media-proof.txt containing exactly B2_MEDIA_20260815 followed by one newline, then return exactly NO_REPLY.",
+      "Set required_tools to [write], max_steps to 30, and expected_outputs to [b2-media-proof.txt].",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "The completed file must be delivered to this Telegram chat with no caption and no later terminal text.",
+    ].join(" ");
+
+    applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:create|write)\b/iu);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
   it("ignores completion-contract boilerplate when routing a silent artifact write", () => {
     const deferral = result();
     const childRequest = [
