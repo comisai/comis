@@ -152,9 +152,41 @@ describe("live conversation audit assembly", () => {
     );
   });
 
-  it("reports missing model-session evidence as a hard coverage failure on keyless turns", async () => {
+  it("reports trajectory-only coverage for a terminal keyless pre-model turn", async () => {
     const layout = makeLiveSessionLayout();
     rmSync(layout.sessionFile);
+    const traceId = "trace_keyless";
+    writeFileSync(
+      layout.trajectoryFile,
+      [
+        { type: "prompt.submitted", traceId, ts: "2026-08-07T16:47:00.000Z", data: {} },
+        {
+          type: "session.summary",
+          traceId,
+          ts: "2026-08-07T16:47:01.000Z",
+          data: { degraded: true, turnCount: 0, endReason: "error" },
+        },
+        {
+          type: "delivery.dispatched",
+          traceId,
+          ts: "2026-08-07T16:47:02.000Z",
+          data: {
+            origin: "agent-runtime-failure",
+            status: "success",
+            totalChunks: 1,
+            deliveredChunks: 1,
+            failedChunks: 0,
+          },
+        },
+        {
+          type: "activity.turn_finalized",
+          traceId,
+          ts: "2026-08-07T16:47:03.000Z",
+          data: { outcome: "failure", errorKind: "auth" },
+        },
+      ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      { mode: 0o600 },
+    );
 
     const output = await auditChatConversation({
       dataDir: layout.dataDir,
@@ -163,10 +195,10 @@ describe("live conversation audit assembly", () => {
       loadIncidentReport: async () => ({ cost: { costUsd: 0 }, failures: [] }),
     });
 
-    expect(output.report.verdict).toBe("fail");
-    expect(output.report.violations).toContainEqual(expect.objectContaining({
-      code: "session_evidence_empty",
-      severity: "hard",
-    }));
+    expect(output.report).toMatchObject({
+      verdict: "pass",
+      coverage: { sessionEvidence: "trajectory_only_pre_model_failure" },
+      violations: [],
+    });
   });
 });
