@@ -16,6 +16,7 @@ import {
   selectTelegramConversationTrajectoryPath,
   sharedConversationFinished,
   telegramInjectAddressingError,
+  trajectoryBaselineLineCount,
   trajectoryTurnEnded,
 } from "./drive-session-oracle.mjs";
 
@@ -79,6 +80,15 @@ describe("drive inbound validation", () => {
 });
 
 describe("drive trajectory completion", () => {
+  it("excludes the trailing JSONL separator from the trajectory baseline", () => {
+    expect(trajectoryBaselineLineCount('{"type":"prompt.submitted"}\n')).toBe(1);
+    expect(trajectoryBaselineLineCount([
+      '{"type":"prompt.submitted"}',
+      '{"type":"model.started"}',
+      "",
+    ].join("\n"))).toBe(2);
+  });
+
   it("ends a pre-model clarification turn without waiting for a model summary", () => {
     expect(trajectoryTurnEnded([
       JSON.stringify({
