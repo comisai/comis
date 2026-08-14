@@ -82,15 +82,37 @@ function terms(text: string): Set<string> {
   );
 }
 
-function isDelegatedCallerNonexecution(sentence: string): boolean {
+function isDelegatedNegativeConstraint(sentence: string): boolean {
   const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
-  const forbidsAction = [" do not ", " don't ", " never "].some(
+  const forbidsAction = [" do not ", " don't ", " must not ", " never "].some(
     (phrase) => normalized.includes(phrase),
   );
-  const reservesActionForChild = [" directly", " on your own", " yourself"].some(
+  const introducesAlternative = [" but ", " instead ", " then use "].some(
     (phrase) => normalized.includes(phrase),
   );
-  return forbidsAction && reservesActionForChild;
+  const constrainsCoordinatorExecution = [
+    " directly", " finish early", " modify ", " on your own", " yourself",
+  ].some((phrase) => normalized.includes(phrase));
+  return forbidsAction && constrainsCoordinatorExecution && !introducesAlternative;
+}
+
+function isDelegatedCoordination(sentence: string): boolean {
+  const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
+  const namesDelegatedRole = [
+    " sub-agent", " subagent", " child", " coordinator", " leaf", " it ", " they ",
+  ].some((phrase) => normalized.includes(phrase));
+  const assignsCoordinatorRole =
+    normalized.includes(" act as ") && normalized.includes(" coordinator");
+  const waitsForChild =
+    normalized.includes(" wait for ")
+    && normalized.includes(" completion")
+    && namesDelegatedRole;
+  const returnsCompletedChildResult =
+    normalized.includes(" after ")
+    && normalized.includes(" complete")
+    && normalized.includes(" return ")
+    && namesDelegatedRole;
+  return assignsCoordinatorRole || waitsForChild || returnsCompletedChildResult;
 }
 
 function stripDelegatedChildTask(text: string): string {
@@ -102,7 +124,8 @@ function stripDelegatedChildTask(text: string): string {
     .filter((sentence) => (
       !DELEGATED_CHILD_ASSIGNMENT_PATTERN.test(sentence)
       && !DELEGATED_CHILD_CONTINUATION_PATTERN.test(sentence)
-      && !isDelegatedCallerNonexecution(sentence)
+      && !isDelegatedNegativeConstraint(sentence)
+      && !isDelegatedCoordination(sentence)
     ))
     .join(" ");
 }
