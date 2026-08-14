@@ -1238,6 +1238,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
   it("commits a receipt-aware absent-row delivery before removing the dead letter", async () => {
     const eventBus = createMockEventBus();
+    const logger = createMockLogger();
     const entry = makeFullEntry({
       runId: "run-uncommitted-1",
       idempotencyKey: "default:u1:c1::run-uncommitted-1",
@@ -1256,6 +1257,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
+      logger,
       retryIntervalMs: 0,
       outwardLedger: ledger,
       governedSendToChannel,
@@ -1294,6 +1296,21 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(JSON.stringify(vi.mocked(ledger.begin).mock.calls[0]![0]))
       .not.toContain(entry.announcementText);
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-uncommitted-1");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-uncommitted-1",
+        rootRunId: "root-uncommitted-1",
+        stepIndex: 9,
+        step: "dlq-ledger-receipt-committed",
+        attemptCount: 1,
+        durationMs: expect.any(Number),
+      }),
+      "Dead-letter entry delivered and platform receipt committed",
+    );
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Committed dead-letter operation removed without replay",
+    );
     expect(dlq.size()).toBe(0);
   });
 
