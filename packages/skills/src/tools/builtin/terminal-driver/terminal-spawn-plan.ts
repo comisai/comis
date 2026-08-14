@@ -384,6 +384,11 @@ export async function buildSpawnPlan(
   if ((input.executionAttachments?.length ?? 0) > 0 && (composers.unsafeDisableSandbox === true || composers.bwrapPath === undefined)) {
     throw new AttachmentSandboxUnavailableError();
   }
+  const childEnv = scrubChildEnv(input.env);
+  const terminalType = childEnv.TERM?.trim();
+  if (terminalType === undefined || terminalType.length === 0 || terminalType === "dumb" || terminalType === "unknown") {
+    childEnv.TERM = "xterm-256color";
+  }
 
   // Operator opt-out of the jail (`skills.terminal.unsafeDisableSandbox`). For constrained hosts
   // that cannot run bwrap: run the driven CLI DIRECTLY. NO filesystem/network/uid confinement (the
@@ -399,7 +404,7 @@ export async function buildSpawnPlan(
     return {
       bin: input.bin,
       argv: input.argv,
-      env: scrubChildEnv(input.env),
+      env: childEnv,
       cwd: input.cwd,
       unsandboxed: true,
     };
@@ -483,7 +488,6 @@ export async function buildSpawnPlan(
 
   // bwrap forwards the spawner env to the child (no --clearenv): scrub it, then for
   // listed-hosts merge the relay's HTTPS_PROXY/HTTP_PROXY over the scrubbed env.
-  const childEnv = scrubChildEnv(input.env);
   delete childEnv[MANAGED_TERMINAL_ATTACHMENT_PATH_ENVIRONMENT];
   delete childEnv[MANAGED_TERMINAL_ATTACHMENT_TARGET_ENVIRONMENT];
   const soleAttachment = input.executionAttachments?.length === 1
