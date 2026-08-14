@@ -14,16 +14,17 @@
  * milliseconds after the kill, the parent's status poll reads the kill
  * attribution, and `comis explain` on the child returned NO kill-shaped
  * verdict. Diagnosing a live occurrence took a raw daemon-log grep against the
- * health-handler WARN. This verdict names the kill, the idle/threshold
- * numbers, and the exact knob in one `comis explain` call.
+ * health-handler WARN. The verdicts in this file name either the autonomous
+ * stuck-run kill and its exact knob, or a deliberate cancellation and its
+ * actor, in one `comis explain` call.
  *
  * Keyed on the bridged `subagentKilled` signal (folded from the
  * `subagent.killed` trajectory record, emitted at the runner's killRun
- * chokepoint). Fires ONLY on `killedBy: "health_monitor"` — a parent /
- * operator / system kill is DELIBERATE orchestration, and surfacing it as a
- * scary root cause would cry wolf (the BENIGN_DAG_DEGRADED_REASONS
- * discipline). It keys only on `subagentKilled` (absent on the established cost and breaker
- * fixtures), so it cannot regress them. The return type is structurally
+ * chokepoint). The stuck-run verdict fires only on `killedBy: "health_monitor"`;
+ * parent / operator / system kills receive a neutral cancellation verdict, so
+ * they do not fall through to a false delivery-path diagnosis. The predicates
+ * key only on `subagentKilled` (absent on the established cost and breaker
+ * fixtures), so they cannot regress them. The return type is structurally
  * identical to the registry's `RootCause` (no cross-module type import ⇒ no
  * cycle).
  *
@@ -168,6 +169,28 @@ export function subagentStuckKilledVerdict(s: IncidentSignals): SubagentKilledVe
       "if the run was doing legitimate slow work, raise security.agentToAgent.subagentContext.stuckKillThresholdMs (graph runs: graphStuckKillThresholdMs)",
       "check the parent session for the delivered failure notification and whether the task was re-run",
       "obs.explain depth=full on this session for the final pre-kill tool/model records",
+    ],
+  };
+}
+
+/** A deliberate parent, operator, or system cancellation. */
+export function subagentDeliberatelyKilledVerdict(
+  s: IncidentSignals,
+): SubagentKilledVerdict | null {
+  const killed = s.subagentKilled;
+  if (killed === undefined || killed.killedBy === "health_monitor") return null;
+  const runtime = killed.runtimeMs !== undefined
+    ? ` after ${String(killed.runtimeMs)}ms of runtime`
+    : "";
+  return {
+    code: "subagent_cancelled",
+    detail:
+      `this sub-agent run was deliberately cancelled by ${killed.killedBy}${runtime}; `
+      + "the cancellation, not a provider or delivery failure, is the terminal cause",
+    suggestedNextSteps: [
+      "inspect the owning session's subagents kill receipt to confirm the cancellation was requested",
+      "retry the child only if the cancellation was unintended",
+      "obs.explain depth=full on this session for the final pre-cancellation tool and model records",
     ],
   };
 }
