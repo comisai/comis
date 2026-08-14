@@ -143,6 +143,13 @@ describe("prompt-runner.ts — orchestrator structure", () => {
     expect(helperBlock).toMatch(/\.slice\(0,\s*16\)/);
   });
 
+  it("emits bounded request-relevant prompt skill names for routing diagnosis", () => {
+    const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
+    expect(helperBlock).toMatch(/params\.requestRelevantPromptSkillNames/);
+    expect(helperBlock).toMatch(/requestRelevantPromptSkillNames\.length\s*>\s*0/);
+    expect(helperBlock).toMatch(/requestRelevantPromptSkillNames\.slice\(0,\s*16\)/);
+  });
+
   it("emits content-free request relevance history saturation evidence", () => {
     const helperBlock = source.slice(source.indexOf("function emitPromptSubmitted("));
     expect(helperBlock).toMatch(/params\.requestRelevanceHistory/);
