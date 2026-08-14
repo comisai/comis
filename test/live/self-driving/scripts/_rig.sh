@@ -113,6 +113,8 @@ rig_load_env() {
   shift || true
   local _key=""
   local _index=0
+  local _explicit_data=0
+  local _explicit_trajectory=0
   local -a _explicit_keys=()
   local -a _explicit_values=()
   local -a _selected_keys=()
@@ -125,6 +127,8 @@ rig_load_env() {
       _explicit_keys[_index]="$_key"
       _explicit_values[_index]="${!_key}"
       _index=$((_index + 1))
+      [ "$_key" = "DATA" ] && _explicit_data=1
+      [ "$_key" = "COMIS_TRAJECTORY_DIR" ] && _explicit_trajectory=1
     fi
   done
 
@@ -152,6 +156,10 @@ rig_load_env() {
   for ((_index = 0; _index < ${#_explicit_keys[@]}; _index++)); do
     export "${_explicit_keys[_index]}=${_explicit_values[_index]}"
   done
+  if rig_is_local && [ "$_explicit_data" = 1 ] && [ "$_explicit_trajectory" = 0 ]; then
+    COMIS_TRAJECTORY_DIR="$DATA/trajectories"
+    export COMIS_TRAJECTORY_DIR
+  fi
   rig_defaults
 }
 
