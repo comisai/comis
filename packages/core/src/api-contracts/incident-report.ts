@@ -118,6 +118,10 @@ export const IncidentReportSchema = z.object({
   requestRelevantToolNames: z.array(
     z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
   ).max(16).optional(),
+  /** Bounded prompt skills selected as the procedural route for the selected turn. */
+  requestRelevantPromptSkillNames: z.array(
+    z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u),
+  ).max(16).optional(),
   /** Content-free evidence about the selected prior-user-turn relevance window. */
   requestRelevanceHistory: z.strictObject({
     turnCount: z.number().int().nonnegative().max(8),

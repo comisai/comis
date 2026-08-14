@@ -144,6 +144,15 @@ export function accumulatePromptRequestRecord(
     if (names.length > 0) acc.requestRelevantToolNames = names;
   }
 
+  delete acc.requestRelevantPromptSkillNames;
+  if (Array.isArray(data.requestRelevantPromptSkillNames)) {
+    const names = [...new Set(data.requestRelevantPromptSkillNames.filter(
+      (name): name is string =>
+        typeof name === "string" && /^[A-Za-z0-9_.:-]{1,128}$/u.test(name),
+    ))].slice(0, 16);
+    if (names.length > 0) acc.requestRelevantPromptSkillNames = names;
+  }
+
   delete acc.requestRelevanceHistory;
   const rawHistory = data.requestRelevanceHistory;
   if (rawHistory !== null && typeof rawHistory === "object" && !Array.isArray(rawHistory)) {

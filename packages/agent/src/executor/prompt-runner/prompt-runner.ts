@@ -121,6 +121,9 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
     const requestRelevantToolNames = [
       ...new Set(params.requestRelevantToolNames ?? []),
     ].slice(0, 16);
+    const requestRelevantPromptSkillNames = [
+      ...new Set(params.requestRelevantPromptSkillNames ?? []),
+    ];
 
     params.deps.eventBus.emit("prompt:submitted", {
       agentId: params.agentId ?? params.config.name,
@@ -136,6 +139,12 @@ function emitPromptSubmitted(params: RunPromptParams, messageText: string): void
       unavailableSkills: params.unavailablePromptSkills,
       ...(requestRelevantToolNames.length > 0
         ? { requestRelevantToolNames }
+        : {}),
+      ...(requestRelevantPromptSkillNames.length > 0
+        ? {
+            requestRelevantPromptSkillNames:
+              requestRelevantPromptSkillNames.slice(0, 16),
+          }
         : {}),
       ...(params.requestRelevanceHistory !== undefined
         ? { requestRelevanceHistory: params.requestRelevanceHistory }

@@ -2615,6 +2615,7 @@ describe("assembleIncidentReportFromSources — audit?", () => {
         sessionKey: SESSION_KEY,
         data: {
           requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+          requestRelevantPromptSkillNames: ["deep-research"],
           responseLocaleSource: "unset",
           responseLocaleEnforced: false,
         },
@@ -2687,6 +2688,7 @@ describe("assembleIncidentReportFromSources — audit?", () => {
     expect(report).toMatchObject({
       outcome: { endReason: "tool_invocation_stall", degraded: true },
       requestRelevantToolNames: ["read", "web_search", "web_fetch"],
+      requestRelevantPromptSkillNames: ["deep-research"],
       toolStats: { "mcp__records--summary": { ok: 1, failed: 0 } },
       recoveries: {
         total: 2,
@@ -2700,6 +2702,12 @@ describe("assembleIncidentReportFromSources — audit?", () => {
       },
     });
     expect(report.likelyRootCause?.code).toBe("tool_invocation_stall");
+    expect(report.likelyRootCause?.detail).toContain(
+      "selected prompt skills [deep-research]",
+    );
+    expect(
+      IncidentReportSchema.parse(report).requestRelevantPromptSkillNames,
+    ).toEqual(["deep-research"]);
     expect(report.likelyRootCause?.detail).toMatch(
       /completed current-turn invocations.*later workflow requirement remained incomplete/iu,
     );
