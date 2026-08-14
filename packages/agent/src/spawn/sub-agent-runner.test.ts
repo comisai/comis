@@ -4479,6 +4479,50 @@ describe("abort wiring in spawn", () => {
     }));
   });
 
+  it("pins a localized warning onto a completed-with-tool-errors announcement", async () => {
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "Found five candidates, but one source lookup failed.",
+      tokensUsed: { total: 3000 },
+      cost: { total: 0.3 },
+      finishReason: "completed_with_tool_errors",
+      stepsExecuted: 9,
+    });
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "research a current topic",
+      agentId: "research-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      terminalOutcome: {
+        status: "completed_with_warnings",
+        warningNotice: expect.stringContaining("reported an error"),
+      },
+    }));
+  });
+
   // completion with stop does not include abort in announcement
   it("completion with stop does not include abort in announcement", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({

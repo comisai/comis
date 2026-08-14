@@ -277,6 +277,32 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("does not let a parent rewrite suppress a completed-with-tool-errors warning", async () => {
+    const warningNotice =
+      "Note: one of the tools used by this background task reported an error, so part of the result may be incomplete.";
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("The background check found five candidates."),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      terminalOutcome: {
+        status: "completed_with_warnings",
+        warningNotice,
+      } as never,
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await batcher.flush();
+
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "discord",
+      "chan-123",
+      `The background check found five candidates.\n\n${warningNotice}`,
+      undefined,
+    );
+  });
+
   it("persists the explicit thread route across the debounce boundary", async () => {
     const deps = makeDeps();
     const batcher = createAnnouncementBatcher(deps);
