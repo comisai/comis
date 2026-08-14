@@ -26,10 +26,53 @@ E0 is complete when all of the following are true on the dedicated Linux develop
 - The reconciliation action is available through the application layer, local API, CLI, and the eighth MCP tool. Durable diagnostics fail closed when validation, process, or cleanup evidence is absent or contradictory.
 - The protected campaign is implemented as a manual-only, bounded Linux runner for two real ship lanes, a real human Telegram sender, isolated service restarts, current Git and forge truth, reconciliation, handback, cleanup refusals, and content-free closeout evidence.
 - DevCrew's complete local `make verify` and `make verify-full` gates pass with the patched Go toolchain. Comis protocol verification and `pnpm validate:full` pass, including architecture, security, integration coverage, and tarball smoke checks.
-- The protected `make test-live` campaign has not run. The available host is Darwin and has no campaign manifest, evidence root, or protected GitHub credential; it also cannot supply the required real human Telegram checkpoints or isolated Linux systemd services.
+- The protected real-Telegram `make test-live` campaign has not run. A remote Linux rig is configured, but its SSH transport is currently unavailable. The public DevCrew repository has no protected-live run history, and the expected protected GitHub environment is absent or inaccessible. No real human Telegram checkpoints can be supplied from this session.
 - Neither feature branch has been pushed or merged. Public protocol provenance, the protected campaign, Comis dogfood pull request, release-artifact rerun, and final evidence ledger remain dependent on explicit publication authority and protected operator infrastructure.
 
 Repository implementation is complete, but E0 itself is not declared complete until every item in the definition of done is proven by a passing protected campaign. Missing external authority is recorded as NO-ACCESS, never as a skip or pass.
+
+## Current completion audit
+
+The repository review compared the live local branches with all three current
+public `main` branches. Public Comis is `58a5db0b35440f375768be645802348714108731`,
+public DevCrew is `2f4c0ec20694c397073134f6e205489d4df6c398`, and public planning is
+`02d81b02fcbb577290e48fcd7b1958239b9bbe48`. The local planning checkout contains
+the Linux campaign ratification at `6dc14f4d1729b787cc02c8ddb08be7b17abc7847`,
+two commits beyond public planning, so that ratification is not yet publicly
+reachable.
+
+The audit found and fixed protected-closeout paths that could previously accept
+empty Comis reports, incomplete tool coverage, generic rather than distinct
+cleanup refusals, reordered checkpoints, mutations completed before human
+approval, or a handback after its sibling had already stopped. The closeout now
+requires structural Comis health and incident reports, the complete eight-tool
+campaign catalog, distinct unresolved-decision and dirty-worktree refusals, the
+full causal Telegram sequence, post-approval handback and reconciliation
+operations, and an immediate working-sibling observation after handback.
+
+The protected manifest now pins both source commits to canonical checkout heads,
+the compiled protocol ID and digest, the Comis CLI and all four DevCrew product
+artifacts by canonical path, SHA-256, and reported version, both worker
+installations by profile/path/hash/version, and all three systemd unit definitions
+including drop-ins. Tagged DevCrew release builds inject the exact tag into every
+product executable. `make verify` and `make verify-full` pass at DevCrew
+`653e61fa7be8e1221fd08224d4b61b275cddc646`; the protected live package compiles
+but is not credited as an executed campaign.
+
+The remaining acceptance work cannot be converted into local pass credit:
+
+- rotate and install a replacement real Telegram bot credential, then obtain the
+  eleven checkpoints from a real human sender on the isolated Linux deployment;
+- publish reviewed Comis and DevCrew commits, re-pin the protocol to the public
+  Comis merge commit, and publish the two local planning ratification commits;
+- complete the real Comis dogfood pull request without merging it;
+- publish and install the next DevCrew prerelease, reproduce its archives and
+  four binary identities, and repeat the protected campaign from those artifacts;
+- execute and retain the fresh-install, backup/restore, rollback, one-hour
+  resource, remaining cleanup-negative, and prior-release upgrade evidence rows.
+
+Until those rows have real artifacts and a passing protected verdict, the correct
+result is repository-complete and E0-incomplete, with no release-readiness claim.
 
 ## Scope boundary
 
