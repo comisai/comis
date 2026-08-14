@@ -863,7 +863,7 @@ describe("local rig mode", () => {
     expect(shellRig).toContain('${EMU_JSON:=$DATA/emulator-wiring.json}');
     expect(shellRig).toContain('${EMU_TMUX_SESSION:=emu-${SERVICE}}');
     expect(nodeRig).toContain('isLocal ? `${dataDir}/emulator-wiring.json` : "/tmp/comis-emu.json"');
-    expect(restart).toContain('tmux kill-session -t "$EMU_TMUX_SESSION"');
+    expect(restart).toContain('tmux kill-session -t "=$EMU_TMUX_SESSION"');
     expect(restart).toContain("EMU_JSON='$EMU_JSON'");
     expect(restart).not.toMatch(/^\s*pkill\s+.*vps-emu/mu);
     expect(restart).not.toMatch(/^\s*tmux kill-session -t emu\b/mu);
