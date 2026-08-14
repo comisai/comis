@@ -359,6 +359,11 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     guardProviderDispatch: resolveProviderDispatchGuard(
       params.executionOverrides?.onProviderStart,
     ),
+    currentSuccessfulDelegationCount: () => Number(
+      (params.bridge.getResult().toolExecResults ?? []).some(
+        (record) => record.toolName === "sessions_spawn" && record.success,
+      ),
+    ),
   });
   if (continuationResult.ok) {
     const v = continuationResult.value;
@@ -368,7 +373,9 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     // Stash outcome metrics for executor-post-execution.ts to emit in the
     // Execution complete log.
     result.continuationMetrics = {
-      fired: v.outcome !== "no_match" && v.outcome !== "disabled",
+      fired: v.outcome !== "no_match"
+        && v.outcome !== "disabled"
+        && v.outcome !== "delegation_accepted",
       attempts: v.attempts,
       outcome: v.outcome,
     };
@@ -397,7 +404,7 @@ async function runNarrateNudgeStep(params: RunPromptParams): Promise<void> {
     agentId,
     getVisibleAssistantText,
     currentSuccessfulDelegationCount: () => Number((params.bridge.getResult().toolExecResults ?? []).some(
-      (record) => record.toolName === "sessions_spawn" && record.success && record.backgrounded !== true,
+      (record) => record.toolName === "sessions_spawn" && record.success,
     )),
     guardProviderDispatch: resolveProviderDispatchGuard(params.executionOverrides?.onProviderStart),
   });
