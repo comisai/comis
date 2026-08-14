@@ -646,6 +646,7 @@ describe("local rig mode", () => {
         DATA: data,
         GW_PORT: "4881",
         SERVICE: "comis-local-drive",
+        LOCAL_TMUX_SESSION: `comis-local-drive-${process.pid}`,
       },
     });
 
@@ -699,6 +700,7 @@ describe("local rig mode", () => {
         DATA: data,
         GW_PORT: "4883",
         SERVICE: "comis-local-rpc-secret",
+        LOCAL_TMUX_SESSION: `comis-local-rpc-secret-${process.pid}`,
       },
     });
     expect(initialized.status, `${initialized.stdout}${initialized.stderr}`).toBe(0);
@@ -907,6 +909,23 @@ describe("local rig mode", () => {
     expect(source).not.toContain(
       'rig_load_env "$HERE/.live-env" "$HERE/.rig-env"',
     );
+  });
+
+  it("derives the local trajectory root from an explicitly selected data root", () => {
+    const source = readFileSync(LOCAL_UP, "utf8");
+    const selected = source.indexOf(
+      'SELECTED_TRAJECTORY_DIR="${COMIS_TRAJECTORY_DIR:-$SELECTED_DATA/trajectories}"',
+    );
+    const assigned = source.indexOf(
+      'COMIS_TRAJECTORY_DIR="$SELECTED_TRAJECTORY_DIR"',
+    );
+    const loaded = source.indexOf(
+      'rig_load_env "$HERE/.live-env" "$HERE/.rig-env"',
+    );
+
+    expect(selected).toBeGreaterThan(-1);
+    expect(assigned).toBeGreaterThan(selected);
+    expect(loaded).toBeGreaterThan(assigned);
   });
 
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
