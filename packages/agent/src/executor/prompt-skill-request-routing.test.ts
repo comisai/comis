@@ -453,7 +453,7 @@ describe("prompt skill request routing", () => {
     });
 
     expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:create|write)\b/iu);
-    expect(selected).toEqual([]);
+    expect(selected).toEqual(["claude-code"]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
