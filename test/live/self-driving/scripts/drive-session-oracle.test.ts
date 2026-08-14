@@ -137,6 +137,29 @@ describe("drive trajectory completion", () => {
       lastOutboundAtMs: 17_000,
     })).toBe(false);
   });
+
+  it("does not let a pre-terminal launch acknowledgement shorten an answerless delivery drain", () => {
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 9_000,
+      lastAnswerAtMs: 9_000,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 11_000,
+      lastAnswerAtMs: 11_000,
+    })).toBe(true);
+  });
 });
 
 describe("drive outbound visibility", () => {
