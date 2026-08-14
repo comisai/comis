@@ -95,14 +95,27 @@ export const executionAuthFailureVerdict = (s: IncidentSignals): RecallVerdict |
     s.summaryTopErrorKinds?.auth ?? 0,
     s.turnFinalized?.errorKind === "auth" ? 1 : 0,
   );
+  const agentConfigRoot = s.agentId === undefined ? "agents.<id>" : `agents.${s.agentId}`;
+  const selection = s.modelSelection;
+  const selectionDetail = selection === undefined
+    ? ""
+    : ` (${agentConfigRoot}.provider=${JSON.stringify(selection.provider)}, `
+      + `${agentConfigRoot}.model=${JSON.stringify(selection.modelId)})`;
+  const credentialStep = selection === undefined
+    ? "verify the configured provider profile has a valid credential in the selected Comis data root"
+    : `verify a valid credential for provider ${JSON.stringify(selection.provider)} exists in the selected Comis data root`;
+  const selectionStep = selection === undefined
+    ? "confirm the configured provider and model match that credential, then retry the request"
+    : `confirm ${agentConfigRoot}.provider=${JSON.stringify(selection.provider)} and `
+      + `${agentConfigRoot}.model=${JSON.stringify(selection.modelId)} select the intended credential, then retry the request`;
   return {
     code: "execution_auth_failure",
     detail:
       `the execution ended with ${authFailures} authentication failure(s) before a usable `
-      + "model response or tool result was produced",
+      + `model response or tool result was produced${selectionDetail}`,
     suggestedNextSteps: [
-      "verify the configured provider profile has a valid credential in the selected Comis data root",
-      "confirm the configured provider and model match that credential, then retry the request",
+      credentialStep,
+      selectionStep,
       "use comis secrets list to verify credential metadata without displaying secret values",
     ],
   };

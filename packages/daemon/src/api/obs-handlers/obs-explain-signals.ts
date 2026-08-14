@@ -65,6 +65,18 @@ function handleEventRecord(
       return;
     }
     case "prompt.submitted": {
+      const provider = asString(data.provider);
+      const modelId = asString(data.modelId);
+      if (
+        provider !== undefined
+        && provider.length > 0
+        && provider.length <= 256
+        && modelId !== undefined
+        && modelId.length > 0
+        && modelId.length <= 256
+      ) {
+        acc.modelSelection = { provider, modelId };
+      }
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
       accumulatePromptRequestRecord(acc, data);
       const inboundKind = asString(data.inboundKind);
@@ -769,6 +781,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
+    ...(acc.modelSelection !== undefined ? { modelSelection: acc.modelSelection } : {}),
     ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
     ...(acc.requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames: acc.requestRelevantToolNames }
