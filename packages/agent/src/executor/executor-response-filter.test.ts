@@ -1167,6 +1167,40 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("preserves a leaf result when delegation is only test context and explicitly forbidden", () => {
+    const directResult = "1 NESTED_LEAF";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "You are the leaf in a nested delegation test. Do NOT spawn any further sub-agents and do not delegate. Read the file and return its version.",
+      response: directResult,
+      toolExecResults: [{ toolName: "read", success: true }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: directResult,
+      corrected: false,
+    });
+  });
+
+  it("preserves a grounded spawn disclosure followed by punctuation", () => {
+    const groundedResponse =
+      "The leaf returned no usable value. Exactly one child was spawned; no retry was made.";
+    const guarded = delegationEvidenceGuard()({
+      request: "use sessions_spawn to spawn exactly one child for this nested check",
+      response: groundedResponse,
+      toolExecResults: [{ toolName: "sessions_spawn", success: true }],
+      honestResponse,
+      verifiedSpawnResponse:
+        "I successfully started the requested sub-agent. Its result is still pending.",
+    });
+
+    expect(guarded).toEqual({
+      response: groundedResponse,
+      corrected: false,
+    });
+  });
+
   it("preserves a successful direct result when a coordinated instruction forbids further delegation", () => {
     const directResult =
       "CATALOG CARD framework: price_usd=949; source_id=fixture-catalog/framework-13";
