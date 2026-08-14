@@ -197,6 +197,33 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
+  it("does not route delegation delivery and privacy contracts as coding work", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live reliability test. Delegate exactly one background sub-agent with sessions_spawn and do not wait for it.",
+      "Ask the child to compare FIFO, priority, and fair queuing for a small support queue, return exactly five concise decision bullets, recommend one default, and include the exact marker once.",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "When the child completes, present its useful result naturally to this Telegram chat.",
+      "Never expose internal runtime statistics, token or cost data, result-store paths, session identifiers, or raw completion-envelope labels.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).toBe("Live reliability test.");
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
   it("does not route multi-sentence child instructions as a parent skill workflow", () => {
     const deferral = result();
     deferral.activeTools.push(tool("sessions_spawn"));
