@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -56,5 +56,6 @@ describe("standalone Telegram emulator", () => {
     expect(banner).not.toContain(botToken);
     expect(JSON.parse(banner.slice("EMU_UP ".length))).toMatchObject({ botToken: "[REDACTED]" });
     expect(JSON.parse(readFileSync(wiringPath, "utf8"))).toMatchObject({ botToken });
+    expect(statSync(wiringPath).mode & 0o777).toBe(0o600);
   });
 });
