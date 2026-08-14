@@ -111,9 +111,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
-  // Deliberate parent/operator/system cancellation is not a stuck-run alarm,
-  // but it is still the terminal cause and must not fall through to a generic
-  // delivery-path diagnosis.
+  // Deliberate cancellation is terminal but not a stuck-run alarm.
   subagentDeliberatelyKilledVerdict,
 
   // The unresolved child process is upstream of a missing control-plane delivery route.

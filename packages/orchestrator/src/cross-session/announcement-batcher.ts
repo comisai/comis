@@ -165,19 +165,16 @@ export interface AnnouncementBatcher {
  */
 function stripSystemPrefix(text: string): string {
   let result = text;
-
   // Strip [System Message] prefix
   if (result.startsWith("[System Message]\n")) {
     result = result.slice("[System Message]\n".length);
   }
-
   // Strip trailing instruction line
   const marker = "Inform the user about this completed background task.";
   const idx = result.lastIndexOf(marker);
   if (idx !== -1) {
     result = result.slice(0, idx).trimEnd();
   }
-
   return result;
 }
 
@@ -617,11 +614,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       }
       items.push(item);
     }
-
     if (items.length === 0) return;
-
     const first = items[0]!;
-
     try {
       const projectedKey = conversationScopeToSessionKey(first.callerConversation.conversationScope);
       if (!projectedKey.ok) {
@@ -724,9 +718,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             "Egress guard: rewritten announcement scrubbed",
           );
         }
-        const internalEnvelopeBlocked = containsInternalAnnouncementEnvelope(
-          scrubbedCandidate.text,
-        );
+        const internalEnvelopeBlocked = containsInternalAnnouncementEnvelope(scrubbedCandidate.text);
         const egressCandidate = internalEnvelopeBlocked
           ? sanitizeForUser(scrubbedCandidate.text)
           : scrubbedCandidate.text;

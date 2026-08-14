@@ -147,7 +147,6 @@ interface AnnouncementDeadLetterQueueOptions {
   ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   fileOperations?: DeadLetterWriteOperations;
 }
-
 /** Create a JSONL-backed announcement dead-letter queue. */
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
@@ -156,8 +155,7 @@ export function createAnnouncementDeadLetterQueue(
   const retryIntervalMs = opts.retryIntervalMs ?? 60_000;
   const maxAgeMs = opts.maxAgeMs ?? 3_600_000;
   const maxEntries = opts.maxEntries ?? 100;
-  // A reservation remains live through the 300-second parent rewrite timeout
-  // plus one drain interval, preventing fallback delivery from racing it.
+  // Cover the 300-second rewrite timeout plus a drain interval to prevent a race.
   const parentDecisionGraceMs = 300_000 + retryIntervalMs;
   const {
     filePath,
@@ -167,18 +165,15 @@ export function createAnnouncementDeadLetterQueue(
     governedSendToChannel,
     fileOperations,
   } = opts;
-
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
-
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = operationTail.then(operation, operation);
     operationTail = result.then(() => undefined, () => undefined);
     return result;
   }
-
   async function loadFromDisk(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
     const read = await readDeadLetterEntries(filePath, logger);
@@ -749,14 +744,8 @@ export function createAnnouncementDeadLetterQueue(
     return ok(undefined);
   }
 
-  /**
-   * Settle parked parent-decision reservations against the outward ledger.
-   *
-   * After the parent rewrite grace expires, idempotent `allocateStep` recovers
-   * the governed identity and `drainGovernedEntry` decides whether delivery is
-   * safe. Missing roots and ledger errors remain parked; uncertainty is never
-   * interpreted as proof that no send occurred.
-   */
+  /** Settle reservations after the rewrite grace. The ledger decides whether
+   * delivery is safe; missing roots, errors, and uncertainty remain parked. */
   async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
@@ -765,11 +754,7 @@ export function createAnnouncementDeadLetterQueue(
         - (systemNowMs() - reservation.failedAt);
       if (remainingGraceMs > 0) {
         logger?.debug(
-          {
-            runId: reservation.runId,
-            remainingMs: remainingGraceMs,
-            step: "parent-decision-rewrite-grace",
-          },
+          { runId: reservation.runId, remainingMs: remainingGraceMs, step: "parent-decision-rewrite-grace" },
           "Parent decision reservation remains parked while its rewrite can still be running",
         );
         continue;
@@ -884,7 +869,6 @@ export function createAnnouncementDeadLetterQueue(
       outcome: "untracked_delivery" | "receipt_already_committed" | "receipt_committed_now";
       durationMs: number;
     }> = [];
-
     for (const entry of workingEntries) {
       if (now - entry.lastAttemptAt < retryIntervalMs) continue;
       const deliveryStartedAt = systemNowMs();
@@ -892,15 +876,10 @@ export function createAnnouncementDeadLetterQueue(
         const governed = await drainGovernedEntry(outwardLedger, entry);
         if (governed !== "retained") {
           deliveredIds.add(entry.id);
-          deliveredEntries.push({
-            entry,
-            outcome: governed,
-            durationMs: systemNowMs() - deliveryStartedAt,
-          });
+          deliveredEntries.push({ entry, outcome: governed, durationMs: systemNowMs() - deliveryStartedAt });
         }
         continue;
       }
-
       const boundary = await fromPromise(sendToChannel(
         entry.channelType,
         entry.channelId,
@@ -916,8 +895,7 @@ export function createAnnouncementDeadLetterQueue(
         deliveredIds.add(entry.id);
         deliveredEntries.push({
           entry: { ...entry, attemptCount: entry.attemptCount + 1 },
-          outcome: "untracked_delivery",
-          durationMs: systemNowMs() - deliveryStartedAt,
+          outcome: "untracked_delivery", durationMs: systemNowMs() - deliveryStartedAt,
         });
       } else {
         entry.attemptCount++;
@@ -927,7 +905,6 @@ export function createAnnouncementDeadLetterQueue(
           : "sendToChannel rejected";
       }
     }
-
     const nextEntries = workingEntries.filter((entry) => !deliveredIds.has(entry.id));
     const persisted = await persist(nextEntries);
     if (!persisted.ok) {
@@ -948,12 +925,8 @@ export function createAnnouncementDeadLetterQueue(
         tryCatch(() => onDelivered(idempotencyKey));
       }
       emitDelivered(entry, entry.attemptCount);
-      // INFO, not DEBUG: this is the resolution half of a condition whose opening
-      // half is a WARN. The dead-letter file is unlinked once the queue drains, so
-      // at the default level a resolved quarantine otherwise leaves the WARN
-      // standing with no trace of its outcome and no file to inspect — which reads
-      // as a lost announcement. Once per resolved entry, so the volume is bounded
-      // by the entries that actually cleared.
+      // INFO closes the opening WARN after the queue file is unlinked. It is
+      // emitted once per resolved entry, so volume is naturally bounded.
       logger?.info(
         {
           runId: entry.runId,

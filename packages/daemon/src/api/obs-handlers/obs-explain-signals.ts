@@ -65,18 +65,6 @@ function handleEventRecord(
       return;
     }
     case "prompt.submitted": {
-      const provider = asString(data.provider);
-      const modelId = asString(data.modelId);
-      if (
-        provider !== undefined
-        && provider.length > 0
-        && provider.length <= 256
-        && modelId !== undefined
-        && modelId.length > 0
-        && modelId.length <= 256
-      ) {
-        acc.modelSelection = { provider, modelId };
-      }
       acc.skillAvailability = readSkillAvailability(data.unavailableSkills);
       accumulatePromptRequestRecord(acc, data);
       const inboundKind = asString(data.inboundKind);
