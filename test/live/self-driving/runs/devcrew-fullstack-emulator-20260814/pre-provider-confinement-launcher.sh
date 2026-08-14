@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly CODEX_EXECUTABLE=/home/comisdevcrew/worker-tools/bin/codex
 readonly CLAUDE_EXECUTABLE=/home/comisdevcrew/worker-tools/bin/claude
+readonly CLAUDE_CONFIG_DIRECTORY=/home/comisdevcrew/worker-tools/claude
 readonly SIBLING_BINDING=.e0-sibling.json
 readonly OWN_MARKER=.e0-identity
 readonly EVIDENCE_FILE=.e0-confinement.json
@@ -13,6 +14,7 @@ case "$(basename "$0")" in
     ;;
   claude-e0-launcher)
     readonly REAL_EXECUTABLE="${CLAUDE_EXECUTABLE}"
+    export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIRECTORY}"
     ;;
   *)
     echo "confinement launcher name is not recognized" >&2
