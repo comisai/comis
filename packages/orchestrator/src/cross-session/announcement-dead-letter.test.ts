@@ -1204,6 +1204,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
 
   it("committed → SKIP: an entry whose (rootRunId, stepIndex) is committed is NOT re-sent after restart", async () => {
     const eventBus = createMockEventBus();
+    const logger = createMockLogger();
     // A DLQ entry that carries its durable idempotency key.
     const entry = makeFullEntry({
       runId: "run-committed-1",
@@ -1220,6 +1221,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const dlq = createAnnouncementDeadLetterQueue({
       filePath,
       eventBus,
+      logger,
       retryIntervalMs: 0,
       outwardLedger: ledger,
     });
@@ -1233,6 +1235,16 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     expect(lookupCalls).toEqual([["root-committed-1", 4]]);
     // It is treated as delivered: onDelivered fires + the entry is dropped.
     expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-committed-1");
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-committed-1",
+        rootRunId: "root-committed-1",
+        stepIndex: 4,
+        step: "dlq-ledger-committed-skip",
+        durationMs: expect.any(Number),
+      }),
+      "Committed dead-letter operation removed without replay",
+    );
     expect(dlq.size()).toBe(0);
   });
 

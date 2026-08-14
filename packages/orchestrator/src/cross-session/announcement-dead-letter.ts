@@ -411,7 +411,7 @@ export function createAnnouncementDeadLetterQueue(
   async function drainGovernedEntry(
     ledger: OutwardSendLedgerPort,
     entry: DeadLetterEntry,
-  ): Promise<"committed" | "retained"> {
+  ): Promise<"receipt_already_committed" | "receipt_committed_now" | "retained"> {
     const identityResult = resolveGovernedIdentity(entry);
     if (!identityResult.ok) {
       const invalidOperation = identityResult.error === "operation_validation_blocked";
@@ -491,7 +491,7 @@ export function createAnnouncementDeadLetterQueue(
             return "retained";
           }
           emitLedgerTransition(identity, "lookup", "committed");
-          return "committed";
+          return "receipt_already_committed";
         case "send_attempt_started":
         case "unknown_after_send":
           emitLedgerTransition(identity, "lookup", "in_flight");
@@ -625,7 +625,7 @@ export function createAnnouncementDeadLetterQueue(
       return "retained";
     }
     emitLedgerTransition(identity, "commit", "committed");
-    return "committed";
+    return "receipt_committed_now";
   }
 
   function emitDelivered(entry: DeadLetterEntry, attemptCount: number): void {
@@ -874,15 +874,24 @@ export function createAnnouncementDeadLetterQueue(
         return true;
       });
     const deliveredIds = new Set<string>();
-    const deliveredEntries: DeadLetterEntry[] = [];
+    const deliveredEntries: Array<{
+      entry: DeadLetterEntry;
+      outcome: "untracked_delivery" | "receipt_already_committed" | "receipt_committed_now";
+      durationMs: number;
+    }> = [];
 
     for (const entry of workingEntries) {
       if (now - entry.lastAttemptAt < retryIntervalMs) continue;
+      const deliveryStartedAt = systemNowMs();
       if (outwardLedger) {
         const governed = await drainGovernedEntry(outwardLedger, entry);
-        if (governed === "committed") {
+        if (governed !== "retained") {
           deliveredIds.add(entry.id);
-          deliveredEntries.push(entry);
+          deliveredEntries.push({
+            entry,
+            outcome: governed,
+            durationMs: systemNowMs() - deliveryStartedAt,
+          });
         }
         continue;
       }
@@ -900,7 +909,11 @@ export function createAnnouncementDeadLetterQueue(
       ));
       if (boundary.ok && boundary.value) {
         deliveredIds.add(entry.id);
-        deliveredEntries.push({ ...entry, attemptCount: entry.attemptCount + 1 });
+        deliveredEntries.push({
+          entry: { ...entry, attemptCount: entry.attemptCount + 1 },
+          outcome: "untracked_delivery",
+          durationMs: systemNowMs() - deliveryStartedAt,
+        });
       } else {
         entry.attemptCount++;
         entry.lastAttemptAt = systemNowMs();
@@ -923,7 +936,8 @@ export function createAnnouncementDeadLetterQueue(
       return;
     }
     entries = nextEntries;
-    for (const entry of deliveredEntries) {
+    for (const delivered of deliveredEntries) {
+      const { entry, outcome, durationMs } = delivered;
       const idempotencyKey = entry.idempotencyKey;
       if (idempotencyKey && onDelivered) {
         tryCatch(() => onDelivered(idempotencyKey));
@@ -939,15 +953,22 @@ export function createAnnouncementDeadLetterQueue(
         {
           runId: entry.runId,
           attemptCount: entry.attemptCount,
-          ...(outwardLedger ? {
+          durationMs,
+          ...(outcome !== "untracked_delivery" ? {
             rootRunId: entry.rootRunId,
             stepIndex: entry.stepIndex,
-            step: "dlq-ledger-committed-skip",
           } : {}),
+          step: outcome === "receipt_already_committed"
+            ? "dlq-ledger-committed-skip"
+            : outcome === "receipt_committed_now"
+              ? "dlq-ledger-receipt-committed"
+              : "dead-letter-delivery",
         },
-        outwardLedger
+        outcome === "receipt_already_committed"
           ? "Committed dead-letter operation removed without replay"
-          : "Dead-letter entry delivered successfully",
+          : outcome === "receipt_committed_now"
+            ? "Dead-letter entry delivered and platform receipt committed"
+            : "Dead-letter entry delivered successfully",
       );
     }
   }
