@@ -938,6 +938,38 @@ describe("assembleIncidentReport — per-root budget abort", () => {
     expect(report.outcome.endReason).toBe("max_steps");
   });
 
+  it("prefers an attributed sub-agent kill over a generic metadata error", () => {
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory",
+        type: "subagent.killed",
+        seq: 20,
+        agentId: "default",
+        traceId: "t-killed",
+        data: { runId: "run_a", killedBy: "parent", runtimeMs: 4_000 },
+      },
+    ];
+    const report = assembleIncidentReport(
+      toIncidentSignals(records),
+      makeMetadata({
+        sessionEnd: {
+          type: "session_end",
+          endReason: "error",
+          degraded: true,
+        },
+      }),
+      null,
+      SESSION_KEY,
+      records.length,
+    );
+
+    expect(report.outcome).toEqual({
+      endReason: "killed",
+      degraded: true,
+      severity: "degraded",
+    });
+  });
+
   it("folds exact step-limit values from the terminal abort", () => {
     const signals = toIncidentSignals([
       {
