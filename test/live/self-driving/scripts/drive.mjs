@@ -30,6 +30,7 @@ import {
   findTelegramConversationWireAnswer,
   followupWaitFinished,
   isDriveProgressText,
+  isOutboundMediaDelivery,
   logicalSubstantiveAnswerCount,
   normalizeDriveStdinText,
   normalizedInboundTextError,
@@ -399,7 +400,8 @@ const normalizedInboundId = telegramInboundGuid(
 process.stderr.write(`injected inboundId=${inj.messageId}, polling after ${after}; trajectory=${trajPath ? 'watched' : 'NONE (wire-only)'}\n`);
 
 const seen = [];
-let sawAnswer = false, turnEnded = false, turnEndedAtMs = null, lastNew = Date.now();
+let sawAnswer = false, sawMediaDelivery = false;
+let turnEnded = false, turnEndedAtMs = null, lastNew = Date.now();
 let lastAnswerAtMs;
 let correlatedAnswer = null;
 let correlatedSessionPath = null;
@@ -498,6 +500,7 @@ while (Date.now() - start < maxMs) {
   if (batch.length) {
     for (const o of batch) {
       seen.push(o); after = Math.max(after, o.messageId || after);
+      if (isOutboundMediaDelivery(o)) sawMediaDelivery = true;
       if (isConversationAnswer(o)) {
         sawAnswer = true;
         const observedAtMs = Date.now();
@@ -543,6 +546,7 @@ while (Date.now() - start < maxMs) {
   const nowMs = Date.now();
   if (directConversationFinished({
     sawAnswer,
+    sawMediaDelivery,
     turnEnded,
     turnEndedAtMs,
     nowMs,
@@ -562,6 +566,7 @@ while (Date.now() - start < maxMs) {
     for (const o of tail) {
       seen.push(o);
       after = Math.max(after, o.messageId || after);
+      if (isOutboundMediaDelivery(o)) sawMediaDelivery = true;
       if (isConversationAnswer(o)) {
         sawAnswer = true;
         const observedAtMs = Date.now();

@@ -36,6 +36,10 @@ const MEDIA_DELIVERY_LABELS = new Map([
   ["sendAnimation", "animation"],
 ]);
 
+export function isOutboundMediaDelivery(outbound) {
+  return MEDIA_DELIVERY_LABELS.has(outbound?.method);
+}
+
 /** Return comparable visible content, including captionless media deliveries. */
 export function outboundVisibleContent(outbound) {
   const text = outboundVisibleText(outbound);
@@ -411,6 +415,7 @@ export function sharedConversationFinished({
  */
 export function directConversationFinished({
   sawAnswer,
+  sawMediaDelivery = false,
   turnEnded,
   turnEndedAtMs,
   nowMs,
@@ -433,10 +438,12 @@ export function directConversationFinished({
   const anchorMs = typeof lastOutboundAtMs === "number" && lastOutboundAtMs > turnEndedAtMs
     ? lastOutboundAtMs
     : turnEndedAtMs;
-  const answerAfterTurnEnd = sawAnswer
+  const settledDeliveryObserved = sawMediaDelivery || (
+    sawAnswer
     && typeof lastAnswerAtMs === "number"
-    && lastAnswerAtMs >= turnEndedAtMs;
-  return nowMs - anchorMs >= (answerAfterTurnEnd ? answerQuiesceMs : deliveryGraceMs);
+    && lastAnswerAtMs >= turnEndedAtMs
+  );
+  return nowMs - anchorMs >= (settledDeliveryObserved ? answerQuiesceMs : deliveryGraceMs);
 }
 
 /**
