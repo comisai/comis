@@ -157,7 +157,7 @@ export interface ExecutionResultBase {
   continuationMetrics?: {
     fired: boolean;
     attempts: number;
-    outcome: "recovered" | "still_empty" | "max_attempts_exhausted" | "disabled" | "no_match";
+    outcome: "recovered" | "still_empty" | "max_attempts_exhausted" | "disabled" | "no_match" | "delegation_accepted";
   };
 }
 
