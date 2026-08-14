@@ -24,8 +24,8 @@ E0 is complete when all of the following are true on the dedicated Linux develop
 - The Comis capability-service platform, durable managed runs, workspace leases, execution attachments, report/evidence delivery, and Linux confinement mechanisms are implemented and validated on the current feature branch.
 - DevCrew implements task preparation, Codex and Claude Code worker profiles, worktree isolation, candidate validation, pull-request delivery, pause/edit/handback, cleanup, CLI/MCP parity, restart-safe durable state, and server-authoritative clean-candidate reconciliation for eligible `unknown` tasks.
 - The reconciliation action is available through the application layer, local API, CLI, and the eighth MCP tool. Durable diagnostics fail closed when validation, process, or cleanup evidence is absent or contradictory.
-- The protected campaign is implemented as a manual-only, bounded Linux runner for two real ship lanes, a real human Telegram sender, isolated service restarts, current Git and forge truth, reconciliation, handback, cleanup refusals, and content-free closeout evidence.
-- DevCrew's complete local `make verify` and `make verify-full` gates pass with the patched Go toolchain. Comis protocol verification and `pnpm validate:full` pass, including architecture, security, integration coverage, and tarball smoke checks.
+- The protected campaign is implemented as a manual-only, bounded Linux runner for two real ship lanes, a real human Telegram sender, isolated service restarts, current Git and forge truth, reconciliation, handback, all six cleanup-refusal classes, one-hour resource observation, clean release installation, prior-release upgrade, backup/restore, rollback, and content-free closeout evidence.
+- DevCrew's complete local `make verify` and `make verify-full` gates pass at `34c6e5fd092635a32cf0676a11888af2471b73ac`. Comis protocol verification and `pnpm validate:full` pass at `3c39ee99bfa873e382af1814f5070fd90d12130f`, including architecture, security, integration coverage, and tarball smoke checks.
 - The protected real-Telegram `make test-live` campaign has not run. A remote Linux rig is configured, but its SSH transport is currently unavailable. The public DevCrew repository has no protected-live run history, and the expected protected GitHub environment is absent or inaccessible. No real human Telegram checkpoints can be supplied from this session.
 - Neither feature branch has been pushed or merged. Public protocol provenance, the protected campaign, Comis dogfood pull request, release-artifact rerun, and final evidence ledger remain dependent on explicit publication authority and protected operator infrastructure.
 
@@ -46,9 +46,10 @@ empty Comis reports, incomplete tool coverage, generic rather than distinct
 cleanup refusals, reordered checkpoints, mutations completed before human
 approval, or a handback after its sibling had already stopped. The closeout now
 requires structural Comis health and incident reports, the complete eight-tool
-campaign catalog, distinct unresolved-decision and dirty-worktree refusals, the
-full causal Telegram sequence, post-approval handback and reconciliation
-operations, and an immediate working-sibling observation after handback.
+campaign catalog, distinct open-decision, open-hold, active-execution,
+unknown-execution, dirty-worktree, and stale-forge-truth refusals, the full causal
+Telegram sequence, post-approval handback and reconciliation operations, and an
+immediate working-sibling observation after handback.
 
 The protected manifest now pins both source commits to canonical checkout heads,
 the compiled protocol ID and digest, the Comis CLI and all four DevCrew product
@@ -56,8 +57,23 @@ artifacts by canonical path, SHA-256, and reported version, both worker
 installations by profile/path/hash/version, and all three systemd unit definitions
 including drop-ins. Tagged DevCrew release builds inject the exact tag into every
 product executable. `make verify` and `make verify-full` pass at DevCrew
-`653e61fa7be8e1221fd08224d4b61b275cddc646`; the protected live package compiles
+`34c6e5fd092635a32cf0676a11888af2471b73ac`; the protected live package compiles
 but is not credited as an executed campaign.
+
+Protected closeout now rejects missing operational proof. It retains exact
+systemd `MainPID`/`MemoryCurrent`/`TasksCurrent`, process RSS and file-descriptor
+counts, bubblewrap descendants, database and data-tree growth, active terminals,
+worktrees, and both delivery backlogs across samples at least one hour apart. Its
+recovery artifact excludes plaintext `.env`, inventories hashes and modes,
+rechecks secret residency and SQLite integrity in an isolated restore, validates
+the restored Comis configuration and repository registry, and runs the previous
+Comis and DevCrew binaries against copied synthetic state. Before recovery it
+uses the shipped installers in isolated prefixes, verifies the five candidate
+artifacts, verifies all five previous artifacts, upgrades in place, and verifies
+the five candidate identities again; each DevCrew install must retain the
+published archive-checksum success signal. The manual GitHub workflow now exposes
+and checks every required evidence root instead of invoking a live test that must
+fail before the campaign starts.
 
 The remaining acceptance work cannot be converted into local pass credit:
 
@@ -68,8 +84,9 @@ The remaining acceptance work cannot be converted into local pass credit:
 - complete the real Comis dogfood pull request without merging it;
 - publish and install the next DevCrew prerelease, reproduce its archives and
   four binary identities, and repeat the protected campaign from those artifacts;
-- execute and retain the fresh-install, backup/restore, rollback, one-hour
-  resource, remaining cleanup-negative, and prior-release upgrade evidence rows.
+- execute the protected campaign and retain its now-mandatory fresh-install,
+  prior-release upgrade, backup/restore, rollback, one-hour resource, and six-class
+  cleanup-negative artifacts.
 
 Until those rows have real artifacts and a passing protected verdict, the correct
 result is repository-complete and E0-incomplete, with no release-readiness claim.
