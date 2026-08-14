@@ -141,7 +141,16 @@ export function routingIntentText(text: string): string {
       /(^|[\s,:=([])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
       "$1",
     );
-  return stripDelegatedChildTask(unquoted);
+  // A filesystem path is a tool argument, not intent vocabulary. Letting its
+  // directory names participate made `/.../real-user/...` contribute `user`
+  // to a software-workflow match and armed an unrelated binary procedure.
+  // Require start/whitespace/open-paren before the slash so `https://...`
+  // remains ordinary request text rather than being mistaken for a path.
+  const withoutAbsolutePaths = unquoted.replace(
+    /(^|[\s(])(?:~\/|\/)[^\s,;)\]}]+/gu,
+    "$1",
+  );
+  return stripDelegatedChildTask(withoutAbsolutePaths);
 }
 
 /** Retain preceding context only when the current wording refers back to it. */
