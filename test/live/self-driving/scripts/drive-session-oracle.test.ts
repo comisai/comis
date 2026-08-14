@@ -163,6 +163,20 @@ describe("drive trajectory completion", () => {
       lastAnswerAtMs: 11_000,
     })).toBe(true);
   });
+
+  it("uses the normal quiet drain after a media delivery captured with the terminal poll", () => {
+    expect(directConversationFinished({
+      sawAnswer: true,
+      sawMediaDelivery: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 10_000,
+      lastAnswerAtMs: 9_999,
+    })).toBe(true);
+  });
 });
 
 describe("drive outbound visibility", () => {
