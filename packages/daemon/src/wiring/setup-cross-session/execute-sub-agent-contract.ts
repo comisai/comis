@@ -71,4 +71,6 @@ export type ExecuteSubAgentFn = (
   providerLifecycle?: {
     onProviderStart(): Result<void, Error>;
   },
+  /** Physical child assignment before runtime output-contract enrichment. */
+  requestText?: string,
 ) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "stepLimit" | "toolCallHistory" | "terminalErrorKind" | "errorContext"> & { workspaceDir: string }>;

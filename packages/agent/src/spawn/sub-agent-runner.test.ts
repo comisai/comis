@@ -2543,6 +2543,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         onProviderStart: expect.any(Function),
       }),
+      "limited steps task",
     );
   });
 
@@ -2596,6 +2597,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         onProviderStart: expect.any(Function),
       }),
+      "budgeted task",
     );
   });
 

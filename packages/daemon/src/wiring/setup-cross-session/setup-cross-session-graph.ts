@@ -48,6 +48,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     tokenBudget,
     autonomyContext,
     providerLifecycle,
+    requestText,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -63,15 +64,29 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     const ctx = tryGetContext();
     const originChannelType = ctx?.deliveryOrigin?.channelType ?? ctx?.channelType ?? "gateway";
 
+    const messageId = randomUUID();
+    const messageTimestamp = systemNowMs();
     const msg: NormalizedMessage = {
-      id: randomUUID(),
+      id: messageId,
       channelId: sessionKey.channelId,
       channelType: originChannelType,
       senderId: "parent-agent",
       text: task,
-      timestamp: systemNowMs(),
+      timestamp: messageTimestamp,
       attachments: [],
       metadata: {},
+      ...(requestText === undefined
+        ? {}
+        : {
+            originalMessages: [{
+              id: messageId,
+              channelId: sessionKey.channelId,
+              channelType: originChannelType,
+              senderId: "parent-agent",
+              text: requestText,
+              timestamp: messageTimestamp,
+            }],
+          }),
     };
 
     // Fresh step counter per sub-agent spawn (isolated from parent/siblings).

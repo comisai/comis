@@ -466,6 +466,8 @@ export interface SubAgentRunnerDeps {
     providerLifecycle?: {
       onProviderStart(): Result<void, Error>;
     },
+    /** Physical child assignment before runtime output-contract enrichment. */
+    requestText?: string,
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -3272,6 +3274,7 @@ function classifyCompletionErrorKind(
                   return ok(undefined);
                 },
               },
+              params.task,
             );
             return providerExecution;
           },
