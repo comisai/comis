@@ -973,6 +973,29 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(ledger.allocateStep).toHaveBeenCalled();
   });
 
+  it("does not adjudicate a parent decision while its rewrite can still be running", async () => {
+    const { ledger } = makeStubLedger();
+    const governedSendToChannel = vi.fn(async () =>
+      ok({ delivered: true, platformMessageId: "m-1" }),
+    );
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      outwardLedger: ledger,
+      governedSendToChannel,
+    });
+    await queue.reserveDecision(decisionInput({
+      rootRunId: "root-parent-1",
+      failedAt: Date.now(),
+    }));
+
+    await queue.drain(vi.fn(async () => true));
+
+    expect(ledger.allocateStep).not.toHaveBeenCalled();
+    expect(governedSendToChannel).not.toHaveBeenCalled();
+    expect(queue.size()).toBe(1);
+  });
+
   it("leaves a reservation parked when the ledger cannot answer", async () => {
     // Fail-SAFE: a ledger read that errors must never be read as "not sent".
     const { ledger } = makeStubLedger();

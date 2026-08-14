@@ -126,6 +126,56 @@ describe("AnnouncementBatcher", () => {
     expect(deps.announceToParent.mock.calls[0]![3]).toContain("A background task has completed.");
   });
 
+  it("stores only a user-safe fallback in a durable parent decision reservation", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn();
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement });
+    const batcher = createAnnouncementBatcher(deps);
+    const announcementText = [
+      "[Subagent Result: market research]",
+      "Status: Completed",
+      "Condensation: Level 1 (Passthrough)",
+      "",
+      "Summary: Research completed. https://example.com/report",
+      "",
+      "---",
+      "Runtime: 130.2s | Steps: 30 | Tokens: 899841 | Cost: $0.9833",
+      "Condensation: Level 1 | Original: 633 tokens | Ratio: 1.00",
+      "Full result (drill in with read/grep/jq): results/private/result.text (2538B, text)",
+      "Session: default:agent:default:user:sub-agent:runtime:child:peer:user",
+      "",
+      "Inform the user about this completed background task. Summarize the result in your own voice. If no user notification is needed, respond with NO_REPLY.",
+    ].join("\n");
+
+    await batcher.enqueue(makeAnnouncement({
+      announcementText,
+      idempotencyKey: "parent::child",
+      reservationRootRunId: "root-1",
+    }));
+
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
+      announcementText: "Research completed. https://example.com/report",
+    }));
+  });
+
+  it("blocks an echoed internal completion envelope at final channel egress", async () => {
+    const rawEnvelope = makeAnnouncement().announcementText;
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue(rawEnvelope),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement());
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.sendToChannel).toHaveBeenCalledWith(
+      "discord",
+      "chan-123",
+      "done",
+      undefined,
+    );
+  });
+
   it("unions successful fetch digests across a batched parent rewrite", async () => {
     const deps = makeDeps();
     const batcher = createAnnouncementBatcher(deps);
