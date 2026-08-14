@@ -7,7 +7,7 @@
  * @module
  */
 import type { NormalizedMessage, SpawnPacket, AgentConfig } from "@comis/core";
-import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST, MIN_SUB_AGENT_STEPS } from "@comis/core";
 import {
   createStepCounter,
   createSpawnPacketBuilder,
@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 import { toolResultsReadBoundaryForSession } from "../tool-results-dir.js";
-import { MIN_SUB_AGENT_STEPS, type ExecuteSubAgentDeps, type ExecuteSubAgentFn } from "./execute-sub-agent-contract.js";
+import type { ExecuteSubAgentDeps, ExecuteSubAgentFn } from "./execute-sub-agent-contract.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The

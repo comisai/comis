@@ -69,9 +69,9 @@ import {
   buildExecuteSubAgent,
   resolveGraphCacheRetention,
 } from "./setup-cross-session-graph.js";
-import { MIN_SUB_AGENT_STEPS, type ExecuteSubAgentDeps } from "./execute-sub-agent-contract.js";
+import type { ExecuteSubAgentDeps } from "./execute-sub-agent-contract.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
-import { createConversationLocator, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { createConversationLocator, MIN_SUB_AGENT_STEPS, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ExecutionResult } from "@comis/agent";
 
 function makeConversation(tenantId: string, agentId: string) {

@@ -2,6 +2,9 @@
 import { z } from "zod";
 import { SubagentContextConfigSchema } from "../domain/subagent-context-config.js";
 
+/** Minimum supported tool-execution budget for a sub-agent run. */
+export const MIN_SUB_AGENT_STEPS = 30;
+
 /**
  * Security configuration schema.
  *
@@ -61,7 +64,7 @@ const AgentToAgentBaseSchema = z.strictObject({
      * budget are), so it is set where honest work fits rather than at the
      * cheapest value that usually suffices.
      */
-    subAgentMaxSteps: z.number().int().positive().default(300),
+    subAgentMaxSteps: z.number().int().min(MIN_SUB_AGENT_STEPS).default(300),
     /** Default tool profile groups for sub-agent tool assembly */
     subAgentToolGroups: z.array(z.enum(["minimal", "coding", "messaging", "supervisor", "full"])).default(["coding"]),
     /** MCP tool inheritance policy for sub-agents: "inherit" passes MCP tools, "none" excludes them */
