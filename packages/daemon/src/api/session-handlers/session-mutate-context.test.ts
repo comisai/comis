@@ -342,6 +342,49 @@ describe("session.spawn caller context", () => {
     }));
   });
 
+  it("accepts a shared conversation whose partition differs from the authenticated principal", async () => {
+    const { deps, spawn } = createDeps();
+    const handler = bindSessionMutateHandlers(deps)["session.spawn"]!;
+    const endpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-account",
+      conversationId: "group_a",
+      threadId: "topic_a",
+      conversationKind: "shared" as const,
+    };
+    const callerSessionKey = "tenant_a:agent:parent-agent:conversation:telegram:telegram-account:group_a:thread:topic_a";
+    const deliveryOrigin = createDeliveryOrigin({
+      channelType: "telegram",
+      channelId: "group_a",
+      userId: "user_a",
+      threadId: "topic_a",
+      tenantId: "tenant_a",
+    });
+
+    await runWithContext(context({
+      userId: "conversation",
+      sessionKey: callerSessionKey,
+      deliveryOrigin,
+      turnScope: {
+        conversation: {
+          tenantId: "tenant_a",
+          agentId: "parent-agent",
+          partition: { kind: "endpoint-conversation", endpoint },
+        },
+        principal: { principalId: "user_a" },
+        endpoint,
+      },
+    }), () => handler(spawnParams({
+      _callerSessionKey: callerSessionKey,
+      _callerChannelId: "group_a",
+    })));
+
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({
+      callerSessionKey,
+      requesterOrigin: deliveryOrigin,
+    }));
+  });
+
   it("forwards trusted parent discovery state into the child spawn packet", async () => {
     const { deps, spawn } = createDeps();
     const handler = bindSessionMutateHandlers(deps)["session.spawn"]!;
