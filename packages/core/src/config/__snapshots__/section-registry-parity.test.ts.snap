@@ -26849,8 +26849,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         },
         "subAgentMaxSteps": {
           "default": 300,
-          "exclusiveMinimum": 0,
           "maximum": 9007199254740991,
+          "minimum": 30,
           "type": "integer"
         },
         "subAgentMcpTools": {
@@ -40858,8 +40858,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "subAgentMaxSteps": {
               "default": 300,
-              "exclusiveMinimum": 0,
               "maximum": 9007199254740991,
+              "minimum": 30,
               "type": "integer"
             },
             "subAgentMcpTools": {

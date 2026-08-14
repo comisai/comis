@@ -28,12 +28,25 @@ const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
   /\b(?:(?:do\s+not|don't|never)\s+(?:(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch))|(?:[\p{L}\p{N}_'-]+\s+){1,8}(?:or|nor)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch)))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
+const DELEGATED_CHILD_ASSIGNMENT_PATTERN =
+  /(?<!-)\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^\n]{0,240}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf)\b)/iu;
+const EXPLICIT_DELEGATION_PATTERN =
+  /\b(?:sessions_spawn|sub-?agents?|child|children|coordinator|leaf)\b/iu;
+const DELEGATED_CHILD_CONTINUATION_PATTERN =
+  /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf|it|them)\b|(?:sub-?agents?|child|children|coordinator|leaf|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children|coordinator|leaf)\b)/iu;
+const DELEGATED_TOOL_BINDING_PATTERN =
+  /\b(?:expected_outputs|max_steps|required_tools|token_budget|tool_groups|worktree)\b/iu;
+const DELEGATED_DELIVERY_COORDINATION_PATTERN =
+  /\bafter\s+(?:the\s+)?(?:completion|launch|run)\b[^.!?\n]{0,200}\b(?:deliver|notify|report)\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
   "our", "out", "some", "that", "the", "their", "then", "these", "this", "those",
   "task", "tasks", "tool", "tools", "use", "uses", "using", "want", "wants", "was",
   "were", "when", "where", "which", "with", "would", "you", "your",
+  // Outcome boilerplate appears in artifact contracts across unrelated domains.
+  // It cannot distinguish a software procedure from an ordinary tool request.
+  "completion", "result", "results", "verified", "verify",
 ]);
 
 interface PromptSkillRequestRoutingInput {
@@ -76,14 +89,104 @@ function terms(text: string): Set<string> {
   );
 }
 
-/** Exclude quoted payloads and code literals from the caller's own skill intent. */
-function routingIntentText(text: string): string {
+function isDelegatedNegativeConstraint(sentence: string): boolean {
+  const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
+  const forbidsAction = [" do not ", " don't ", " must not ", " never "].some(
+    (phrase) => normalized.includes(phrase),
+  );
+  const introducesAlternative = [" but ", " instead ", " then use "].some(
+    (phrase) => normalized.includes(phrase),
+  );
+  const constrainsCoordinatorExecution = [
+    " directly", " finish early", " modify ", " on your own", " yourself",
+  ].some((phrase) => normalized.includes(phrase));
+  return forbidsAction && constrainsCoordinatorExecution && !introducesAlternative;
+}
+
+function isDelegatedCoordination(sentence: string): boolean {
+  const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
+  const namesDelegatedRole = [
+    " sub-agent", " subagent", " child", " coordinator", " leaf", " it ", " they ",
+  ].some((phrase) => normalized.includes(phrase));
+  const assignsCoordinatorRole =
+    normalized.includes(" act as ") && normalized.includes(" coordinator");
+  const waitsForChild =
+    normalized.includes(" wait for ")
+    && normalized.includes(" completion")
+    && namesDelegatedRole;
+  const returnsCompletedChildResult =
+    normalized.includes(" after ")
+    && normalized.includes(" complete")
+    && normalized.includes(" return ")
+    && namesDelegatedRole;
+  const presentsCompletedChildResult =
+    (normalized.includes(" after ") || normalized.includes(" when "))
+    && normalized.includes(" complete")
+    && [" deliver ", " notify ", " present ", " report ", " share "].some(
+      (phrase) => normalized.includes(phrase),
+    )
+    && namesDelegatedRole;
+  const requestsLaunchAcknowledgement =
+    normalized.includes(" launch ")
+    && normalized.includes(" acknowledgement")
+    && [" reply ", " respond "].some((phrase) => normalized.includes(phrase));
+  return assignsCoordinatorRole
+    || waitsForChild
+    || returnsCompletedChildResult
+    || presentsCompletedChildResult
+    || requestsLaunchAcknowledgement;
+}
+
+function isDelegatedOutputContract(sentence: string): boolean {
+  const normalized = ` ${sentence.toLocaleLowerCase().replaceAll("’", "'")} `;
+  const forbidsExposure = [" do not ", " don't ", " never "].some(
+    (phrase) => normalized.includes(phrase),
+  ) && [" expose ", " include ", " reveal ", " show "].some(
+    (phrase) => normalized.includes(phrase),
+  );
+  const namesRuntimeMetadata = [
+    " completion-envelope", " cost ", " result-store", " runtime ", " session identifier",
+    " token ", " tokens ",
+  ].some((phrase) => normalized.includes(phrase));
+  return forbidsExposure && namesRuntimeMetadata;
+}
+
+function stripDelegatedChildTask(text: string): string {
+  const hasExplicitDelegation = EXPLICIT_DELEGATION_PATTERN.test(text);
+  if (!hasExplicitDelegation) return text;
+
   return text
+    .split(/(?<=[.!?])\s+|\n+/u)
+    .filter((sentence) => (
+      !DELEGATED_CHILD_ASSIGNMENT_PATTERN.test(sentence)
+      && !DELEGATED_CHILD_CONTINUATION_PATTERN.test(sentence)
+      && !DELEGATED_TOOL_BINDING_PATTERN.test(sentence)
+      && !DELEGATED_DELIVERY_COORDINATION_PATTERN.test(sentence)
+      && !isDelegatedNegativeConstraint(sentence)
+      && !isDelegatedCoordination(sentence)
+      && !isDelegatedOutputContract(sentence)
+    ))
+    .join(" ");
+}
+
+/** Exclude quoted payloads and code literals from the caller's own skill intent. */
+export function routingIntentText(text: string): string {
+  const unquoted = text
     .replace(/`[^`\n]+`/gu, " ")
     .replace(
       /(^|[\s,:=([])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
       "$1",
     );
+  // A filesystem path is a tool argument, not intent vocabulary. Letting its
+  // directory names participate made `/.../real-user/...` contribute `user`
+  // to a software-workflow match and armed an unrelated binary procedure.
+  // Require start/whitespace/open-paren before the slash so `https://...`
+  // remains ordinary request text rather than being mistaken for a path.
+  const withoutAbsolutePaths = unquoted.replace(
+    /(^|[\s(])(?:~\/|\/)[^\s,;)\]}]+/gu,
+    "$1",
+  );
+  return stripDelegatedChildTask(withoutAbsolutePaths);
 }
 
 /** Retain preceding context only when the current wording refers back to it. */
@@ -154,14 +257,16 @@ export function applyPromptSkillRequestRouting(
   // memory recall. Lexical overlap must not turn it into a task procedure.
   if (CONVERSATION_HISTORY_RECALL_PATTERN.test(input.currentRequestText)) return [];
   const currentText = input.currentRequestText.toLocaleLowerCase();
-  const currentTerms = terms(routingIntentText(currentText));
+  const currentIntentText = routingIntentText(currentText);
+  const currentTerms = terms(currentIntentText);
   const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
-  const relevanceTerms = terms(routingIntentText(relevanceText));
+  const relevanceIntentText = routingIntentText(relevanceText);
+  const relevanceTerms = terms(relevanceIntentText);
   const selectedEntries = input.skills
     .map((skill) => ({
       skill,
-      currentScore: scoreSkill(currentTerms, currentText, skill),
-      relevanceScore: scoreSkill(relevanceTerms, relevanceText, skill),
+      currentScore: scoreSkill(currentTerms, currentIntentText, skill),
+      relevanceScore: scoreSkill(relevanceTerms, relevanceIntentText, skill),
     }))
     .filter((entry) => entry.currentScore >= MIN_SHARED_TERMS)
     .sort((left, right) =>

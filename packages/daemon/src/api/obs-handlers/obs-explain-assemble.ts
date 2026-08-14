@@ -72,6 +72,7 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
  */
 const DEGRADED_END_REASONS: ReadonlySet<string> = new Set([
   "completed_with_tool_errors",
+  "killed",
   "provider_degraded",
 ]);
 
@@ -294,19 +295,24 @@ export function assembleIncidentReport(
   // sub-agent boundary to generic "error". In both cases the terminal
   // `execution.aborted` reason is the more specific source. Preserve any
   // non-generic metadata outcome.
+  // A recorded kill outranks BOTH later sources: the kill races the run's own
+  // completion, so the summary/metadata rollup can land a clean end milliseconds
+  // after it. Ranking it first is what keeps that race from erasing the kill.
   const summaryEndReason = signals.summaryOutcome?.endReason;
   const summaryNeedsAbortCause =
     summaryEndReason === undefined
     || summaryEndReason === "unknown"
     || summaryEndReason === "error";
-  const executionEndReason = signals.abortReason !== undefined && summaryNeedsAbortCause
-    ? signals.abortReason
-    : summaryEndReason ?? (
-        signals.abortReason !== undefined &&
-        (metadataEndReason === undefined || metadataEndReason === "error")
-          ? signals.abortReason
-          : metadataEndReason ?? "unknown"
-      );
+  const executionEndReason = signals.subagentKilled !== undefined
+    ? "killed"
+    : signals.abortReason !== undefined && summaryNeedsAbortCause
+      ? signals.abortReason
+      : summaryEndReason ?? (
+          signals.abortReason !== undefined &&
+          (metadataEndReason === undefined || metadataEndReason === "error")
+            ? signals.abortReason
+            : metadataEndReason ?? "unknown"
+        );
   const backgroundTasks = signals.backgroundTasks;
   const backgroundCompletionAccepted =
     executionEndReason === "background_pending"
@@ -342,7 +348,7 @@ export function assembleIncidentReport(
     (metadata !== null ? asBoolean(metadata.degraded) : undefined) ??
     asBoolean(rollupPayload.degraded);
   const explicitDegraded =
-    backgroundCompletionAccepted || backgroundCompletionFailed
+    backgroundCompletionAccepted || backgroundCompletionFailed || signals.subagentKilled !== undefined
       ? undefined
       : persistedDegraded;
   const derivedDegraded =

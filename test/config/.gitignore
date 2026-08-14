@@ -1,0 +1,5 @@
+# Track only YAML config files
+*
+!*.yaml
+!*.yml
+!.gitignore

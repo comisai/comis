@@ -893,8 +893,10 @@ type DelegationEvidenceGuard = (params: {
   response: string;
   toolExecResults?: ReadonlyArray<{
     toolName: string;
+    action?: string;
     success: boolean;
     backgrounded?: boolean;
+    subagentWaitCompletedCount?: number;
   }>;
   runtimeCompletion?: boolean;
   honestResponse: string;
@@ -1101,6 +1103,25 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("preserves an actionable rejection after sessions_spawn validation fails", () => {
+    const rejection =
+      "Spawn rejected. The minimum supported max_steps is 30; requested value was 1. "
+      + "No child launched because no runId was returned.";
+    const guarded = delegationEvidenceGuard()({
+      request: "Call sessions_spawn exactly once with max_steps set to 1.",
+      response: rejection,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: false },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: rejection,
+      corrected: false,
+    });
+  });
+
   it("preserves a configured-agent creation result from a runtime completion envelope", () => {
     const created =
       "The Live Test Helper agent was created successfully and is ready.";
@@ -1163,6 +1184,65 @@ describe("current-turn delegation evidence guard", () => {
 
     expect(guarded).toEqual({
       response: ordinaryResponse,
+      corrected: false,
+    });
+  });
+
+  it("preserves a leaf result when delegation is only test context and explicitly forbidden", () => {
+    const directResult = "1 NESTED_LEAF";
+    const guarded = delegationEvidenceGuard()({
+      request:
+        "You are the leaf in a nested delegation test. Do NOT spawn any further sub-agents and do not delegate. Read the file and return its version.",
+      response: directResult,
+      toolExecResults: [{ toolName: "read", success: true }],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: directResult,
+      corrected: false,
+    });
+  });
+
+  it("preserves a grounded spawn disclosure followed by punctuation", () => {
+    const groundedResponse =
+      "The leaf returned no usable value. Exactly one child was spawned; no retry was made.";
+    const guarded = delegationEvidenceGuard()({
+      request: "use sessions_spawn to spawn exactly one child for this nested check",
+      response: groundedResponse,
+      toolExecResults: [{ toolName: "sessions_spawn", success: true }],
+      honestResponse,
+      verifiedSpawnResponse:
+        "I successfully started the requested sub-agent. Its result is still pending.",
+    });
+
+    expect(guarded).toEqual({
+      response: groundedResponse,
+      corrected: false,
+    });
+  });
+
+  it("preserves a final child result backed by a completed subagent wait", () => {
+    const completedResult = "version: 1\nNESTED_LEAF\nNESTED_COORD";
+    const guarded = delegationEvidenceGuard()({
+      request: "use sessions_spawn for one nested child and return its result",
+      response: completedResult,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: true },
+        {
+          toolName: "subagents",
+          action: "wait",
+          success: true,
+          subagentWaitCompletedCount: 1,
+        },
+      ],
+      honestResponse,
+      verifiedSpawnResponse:
+        "I successfully started the requested sub-agent. Its result is still pending.",
+    });
+
+    expect(guarded).toEqual({
+      response: completedResult,
       corrected: false,
     });
   });

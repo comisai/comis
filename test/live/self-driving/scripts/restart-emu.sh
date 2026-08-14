@@ -42,15 +42,15 @@ fi
 
 # (1) Stop ONLY the emulator owned by this selected wiring/session tuple.
 old_pid="$(rig_emu_pid)"
-if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$EMU_TMUX_SESSION" 2>/dev/null; then
+if command -v tmux >/dev/null 2>&1 && tmux has-session -t "=$EMU_TMUX_SESSION" 2>/dev/null; then
   if rig_is_local; then
-    owner="$(tmux show-environment -t "$EMU_TMUX_SESSION" COMIS_EMU_DATA_OWNER 2>/dev/null)"
+    owner="$(tmux show-environment -t "=$EMU_TMUX_SESSION" COMIS_EMU_DATA_OWNER 2>/dev/null)"
     if [ "${owner#COMIS_EMU_DATA_OWNER=}" != "$DATA" ]; then
       echo "tmux emulator session '$EMU_TMUX_SESSION' belongs to another DATA root; refusing to stop it" >&2
       exit 2
     fi
   fi
-  tmux kill-session -t "$EMU_TMUX_SESSION"
+  tmux kill-session -t "=$EMU_TMUX_SESSION"
 fi
 if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
   kill "$old_pid" 2>/dev/null || true

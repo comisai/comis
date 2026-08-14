@@ -44,7 +44,9 @@ vi.mock("@comis/agent", async (importOriginal) => {
       reset: vi.fn(),
       getCount: vi.fn().mockReturnValue(0),
     })),
-    createSpawnPacketBuilder: vi.fn(),
+    createSpawnPacketBuilder: vi.fn(() => ({
+      build: vi.fn((input: Record<string, unknown>) => input),
+    })),
     generateParentSummary: vi.fn(),
     createEphemeralComisSessionManager: vi.fn(() => ({
       withSession: vi.fn(),
@@ -69,9 +71,9 @@ import {
   buildExecuteSubAgent,
   resolveGraphCacheRetention,
 } from "./setup-cross-session-graph.js";
-import { MIN_SUB_AGENT_STEPS, type ExecuteSubAgentDeps } from "./execute-sub-agent-contract.js";
+import type { ExecuteSubAgentDeps } from "./execute-sub-agent-contract.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
-import { createConversationLocator, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { createConversationLocator, MIN_SUB_AGENT_STEPS, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ExecutionResult } from "@comis/agent";
 
 function makeConversation(tenantId: string, agentId: string) {
@@ -241,6 +243,33 @@ describe("setup-cross-session-graph", () => {
         promptTimeoutMs: 120_000,
         source: "operation_default",
       });
+    });
+
+    it("keeps the physical child task separate from its runtime output contract", async () => {
+      const physicalTask = "Use write to create the requested artifact, then return NO_REPLY.";
+      const runtimeTask = `${physicalTask}\n\nExpected output contract: completion runner workspace details`;
+      const { deps, executor } = makeGraphDeps({ taskDescription: physicalTask });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        runtimeTask,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        physicalTask,
+      );
+
+      const message = executor.execute.mock.calls[0]?.[0];
+      expect(message).toEqual(expect.objectContaining({
+        text: runtimeTask,
+        originalMessages: [expect.objectContaining({ text: physicalTask })],
+      }));
     });
 
     it("acknowledges provider start only after child preparation completes", async () => {

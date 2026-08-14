@@ -36,6 +36,7 @@ export {
   PermissionConfigSchema,
   ActionConfirmationConfigSchema,
   AgentToAgentConfigSchema,
+  MIN_SUB_AGENT_STEPS,
   SkillsConfigSchema,
   DaemonConfigSchema,
   LoggingConfigSchema,

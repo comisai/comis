@@ -67,6 +67,27 @@ describe("recoverInteractiveSilentResponse", () => {
     expect(result.value.response).toBe("HEARTBEAT_OK");
   });
 
+  it("preserves a silent completion relay during an interactive parent turn", async () => {
+    const continueTurn = vi.fn(async () => ({ ok: true as const, value: undefined }));
+    const result = await recoverInteractiveSilentResponse({
+      operationType: "interactive",
+      response: "NO_REPLY",
+      outboundDelivered: false,
+      trustedRuntimeActionEvidence: true,
+      continueTurn,
+      getVisibleResponse: () => "unsolicited completion",
+    } as unknown as Parameters<typeof recoverInteractiveSilentResponse>[0]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(continueTurn).not.toHaveBeenCalled();
+    expect(result.value).toEqual({
+      attempted: false,
+      recovered: false,
+      response: "NO_REPLY",
+    });
+  });
+
   it("returns a visible error when the recovery turn is still silent", async () => {
     const result = await recoverInteractiveSilentResponse({
       operationType: "interactive",

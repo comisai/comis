@@ -58,7 +58,7 @@ import {
   verifyWorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
 } from "@comis/core";
-import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
+import { err, fromPromise, isSilentResponse, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createCoordinatorProgressFork,
   type CoordinatorProgressForkHandle,
@@ -67,6 +67,7 @@ import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipelin
 import {
   buildBackgroundTaskFailedNotice,
   buildLoopDetectedReply,
+  buildToolFailureNoticeUnnamed,
 } from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
@@ -465,6 +466,8 @@ export interface SubAgentRunnerDeps {
     providerLifecycle?: {
       onProviderStart(): Result<void, Error>;
     },
+    /** Physical child assignment before runtime output-contract enrichment. */
+    requestText?: string,
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -3271,6 +3274,7 @@ function classifyCompletionErrorKind(
                   return ok(undefined);
                 },
               },
+              params.task,
             );
             return providerExecution;
           },
@@ -3768,9 +3772,8 @@ function classifyCompletionErrorKind(
                     },
                   }
                 : {}),
-              terminalOutcome: isSuccess
-                ? { status: "completed" }
-                : {
+              terminalOutcome: !isSuccess
+                ? {
                     status: "failed",
                     failureNotice: deps.renderAnnouncementFailureNotice?.(
                       params.callerAgentId ?? params.agentId,
@@ -3785,7 +3788,18 @@ function classifyCompletionErrorKind(
                       && result.errorContext.configKey !== undefined
                       ? { requiredConfigKey: result.errorContext.configKey }
                       : {}),
-                  },
+                  }
+                : result.finishReason === "completed_with_tool_errors"
+                  ? {
+                      status: "completed_with_warnings",
+                      warningNotice: buildToolFailureNoticeUnnamed(
+                        params.resolvedLanguage,
+                      ).trim(),
+                    }
+                  : { status: "completed" },
+              ...(isSuccess && isSilentResponse(result.response)
+                ? { suppressText: true }
+                : {}),
               runId,
               ...(validationResults?.some((output) => output.exists)
                 ? {

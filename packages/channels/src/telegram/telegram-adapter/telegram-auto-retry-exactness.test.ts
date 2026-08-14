@@ -68,11 +68,11 @@ function successfulSend(response: import("node:http").ServerResponse): void {
   }));
 }
 
-function createAdapter(apiRoot: string) {
+function createAdapter(apiRoot: string, logger = createMockLogger()) {
   return createTelegramAdapter({
     getBotToken: () => BOT_TOKEN,
     apiRoot,
-    logger: createMockLogger(),
+    logger,
   });
 }
 
@@ -113,6 +113,7 @@ describe("Telegram wire-level retry exactness", () => {
   });
 
   it("retries a definitive Telegram retry-after rejection", async () => {
+    const logger = createMockLogger();
     const fixture = await startTelegramApi((call, _request, response) => {
       response.setHeader("content-type", "application/json");
       if (call === 1) {
@@ -128,8 +129,28 @@ describe("Telegram wire-level retry exactness", () => {
     });
 
     await expect(
-      createAdapter(fixture.apiRoot).bot.api.sendMessage("1", "probe"),
+      createAdapter(fixture.apiRoot, logger).bot.api.sendMessage("1", "probe"),
     ).resolves.toMatchObject({ message_id: 77 });
     expect(fixture.calls()).toBe(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "telegram",
+        method: "sendMessage",
+        attempt: 1,
+        retryAfterMs: 0,
+        errorKind: "platform",
+        hint: expect.stringContaining("bounded retry"),
+      }),
+      "Telegram API request rate limited; bounded retry scheduled",
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelType: "telegram",
+        method: "sendMessage",
+        attempts: 2,
+        durationMs: expect.any(Number),
+      }),
+      "Telegram API request recovered after retry",
+    );
   });
 });

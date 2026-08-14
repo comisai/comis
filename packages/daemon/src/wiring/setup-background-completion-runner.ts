@@ -30,6 +30,7 @@ import {
   resolvePlatformDeliveryResult,
   isPermanentError,
   type ChannelPort,
+  type ChannelEndpoint,
   type DeliveryService,
   type OutwardSendLedgerPort,
   type TypedEventBus,
@@ -80,6 +81,23 @@ export interface SetupBackgroundCompletionRunnerDeps {
   logger: ComisLogger;
 }
 
+function inactiveChannelAdapterOutcome(
+  endpoint: ChannelEndpoint,
+): Exclude<BackgroundCompletionDeliveryOutcome, { kind: "accepted" } | { kind: "uncertain" }> {
+  if (endpoint.channelType === "scheduler") {
+    return {
+      kind: "permanent",
+      errorKind: "precondition",
+      message: "Scheduler-originated tasks do not have a user-facing delivery channel",
+    };
+  }
+  return {
+    kind: "retryable_pre_send",
+    errorKind: "precondition",
+    message: "The originating channel adapter instance is not active",
+  };
+}
+
 /**
  * Wire the dispatcher + completion runner from daemon-level dependencies.
  * Call this AFTER setupNotifications so fallbackNotifyFn is wired.
@@ -98,11 +116,18 @@ export function setupBackgroundCompletionRunner(
     const endpoint = origin.turnScope.endpoint;
     const adapter = deps.adaptersByType.get(endpoint.channelType);
     if (adapter === undefined || adapter.channelId !== endpoint.channelInstanceId) {
-      return {
-        kind: "retryable_pre_send",
-        errorKind: "precondition" as const,
-        message: "The originating channel adapter instance is not active",
-      };
+      const unavailable = inactiveChannelAdapterOutcome(endpoint);
+      if (unavailable.kind === "permanent") {
+        const deliveryClaimed = input.onSendStart();
+        if (!deliveryClaimed.ok) {
+          return {
+            kind: "retryable_pre_send",
+            errorKind: "resource",
+            message: deliveryClaimed.error.message,
+          };
+        }
+      }
+      return unavailable;
     }
     const rootRunId = `background-task:${input.taskId}`;
     const allocated = deps.outwardLedger
@@ -217,11 +242,7 @@ export function setupBackgroundCompletionRunner(
     const endpoint = input.origin.turnScope.endpoint;
     const adapter = deps.adaptersByType.get(endpoint.channelType);
     if (adapter === undefined || adapter.channelId !== endpoint.channelInstanceId) {
-      return ok({
-        kind: "retryable_pre_send" as const,
-        errorKind: "precondition" as const,
-        message: "The originating channel adapter instance is not active",
-      });
+      return ok(inactiveChannelAdapterOutcome(endpoint));
     }
     if (deps.outwardLedger === undefined) {
       return ok({

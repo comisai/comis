@@ -746,6 +746,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.inboundEdit !== undefined ? { inboundEdit: acc.inboundEdit } : {}),
     ...(acc.groupHistory !== undefined ? { groupHistory: acc.groupHistory } : {}),
     ...(acc.responseLocale !== undefined ? { responseLocale: acc.responseLocale } : {}),
+    ...(acc.modelSelection !== undefined ? { modelSelection: acc.modelSelection } : {}),
     ...(acc.skillAvailability !== undefined ? { skillAvailability: acc.skillAvailability } : {}),
     ...(acc.requestRelevantToolNames !== undefined
       ? { requestRelevantToolNames: acc.requestRelevantToolNames }

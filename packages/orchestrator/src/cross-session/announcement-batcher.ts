@@ -53,6 +53,9 @@ export interface QueuedAnnouncement {
   citationEvidence?: CitationEvidence;
   /** Runtime-owned terminal truth that a model rewrite cannot weaken. */
   terminalOutcome: AnnouncementTerminalOutcome;
+  /** The child intentionally returned a silent-control response. Attachments
+   * still deliver, but no parent rewrite may manufacture caption text. */
+  suppressText?: boolean;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
@@ -162,20 +165,24 @@ export interface AnnouncementBatcher {
  */
 function stripSystemPrefix(text: string): string {
   let result = text;
-
   // Strip [System Message] prefix
   if (result.startsWith("[System Message]\n")) {
     result = result.slice("[System Message]\n".length);
   }
-
   // Strip trailing instruction line
   const marker = "Inform the user about this completed background task.";
   const idx = result.lastIndexOf(marker);
   if (idx !== -1) {
     result = result.slice(0, idx).trimEnd();
   }
-
   return result;
+}
+
+function containsInternalAnnouncementEnvelope(text: string): boolean {
+  return text.startsWith("[System Message]\n")
+    || text.includes("Inform the user about this completed background task.")
+    || /\[Subagent Result:/iu.test(text)
+    || text.includes("Full result (drill in with read/grep/jq):");
 }
 
 /**
@@ -184,8 +191,8 @@ function stripSystemPrefix(text: string): string {
  * internal metadata (session keys, file paths, condensation stats, subagent
  * markers, runtime stats). Returns a safe generic message if no extractable
  * content is found.
- * Used only in fallback `sendToChannel` calls -- the `announceToParent` path
- * goes through the LLM which can filter metadata itself.
+ * Used for durable decision fallbacks and as the final egress guard when a
+ * parent rewrite echoes the internal completion envelope.
  */
 export function sanitizeForUser(text: string): string {
   const GENERIC_FALLBACK =
@@ -217,7 +224,7 @@ export function sanitizeForUser(text: string): string {
   sanitized = sanitized.replace(/\b\w+:\w+:[a-z_-]+:\d+\b/g, "");
 
   // File paths (starting with / or ~)
-  sanitized = sanitized.replace(/(?:\/[\w./-]+|~\/[\w./-]+)/g, "");
+  sanitized = sanitized.replace(/(?<![:/\\\w])(?:\/[\w./-]+|~\/[\w./-]+)/g, "");
 
   // Runtime stats lines (Runtime: ... | Steps: ... | Tokens:)
   sanitized = sanitized.replace(/Runtime:.*\|.*Steps:.*\|.*Tokens:[^\n]*/g, "");
@@ -607,11 +614,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       }
       items.push(item);
     }
-
     if (items.length === 0) return;
-
     const first = items[0]!;
-
     try {
       const projectedKey = conversationScopeToSessionKey(first.callerConversation.conversationScope);
       if (!projectedKey.ok) {
@@ -627,6 +631,23 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           terminalOutcome: Extract<AnnouncementTerminalOutcome, { status: "failed" }>;
         } => item.terminalOutcome.status === "failed",
       )?.terminalOutcome;
+      const warningOutcome = items.find(
+        (item): item is QueuedAnnouncement & {
+          terminalOutcome: Extract<AnnouncementTerminalOutcome, { status: "completed_with_warnings" }>;
+        } => item.terminalOutcome.status === "completed_with_warnings",
+      )?.terminalOutcome;
+      const disclosureOutcome = failedOutcome ?? warningOutcome;
+      const suppressEntireBatchText = disclosureOutcome === undefined
+        && items.every((item) => item.suppressText === true);
+      if (suppressEntireBatchText) {
+        if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
+          await sendFinal(key, items, "");
+        } else {
+          await resolveDecisions(items, "no_reply");
+          markItemsDelivered(items);
+        }
+        return;
+      }
       const parentInput = items.length === 1
         ? buildAnnouncementRewriteInput(first.announcementText, first.terminalOutcome)
         : (() => {
@@ -635,8 +656,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               return `### Task ${idx + 1}\n${stripped}`;
             }).join("\n\n");
             const base = `[System Message]\n${items.length} background tasks have completed.\n\n---\n\n${taskSections}\n\n---\n\nReview these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
-            return failedOutcome
-              ? buildAnnouncementRewriteInput(base, failedOutcome)
+            return disclosureOutcome
+              ? buildAnnouncementRewriteInput(base, disclosureOutcome)
               : base;
           })();
       const citationEvidenceItems = items.filter(
@@ -675,7 +696,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           systemScheduleTimeout,
           "announceToParent",
         );
-        if (candidate === undefined && failedOutcome === undefined) {
+        if (candidate === undefined && disclosureOutcome === undefined) {
           if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
             await sendFinal(key, items, "");
             return;
@@ -697,9 +718,26 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             "Egress guard: rewritten announcement scrubbed",
           );
         }
-        const disclosure = failedOutcome
-          ? enforceAnnouncementTerminalOutcome(scrubbedCandidate.text, failedOutcome)
-          : { text: scrubbedCandidate.text, corrected: false };
+        const internalEnvelopeBlocked = containsInternalAnnouncementEnvelope(scrubbedCandidate.text);
+        const egressCandidate = internalEnvelopeBlocked
+          ? sanitizeForUser(scrubbedCandidate.text)
+          : scrubbedCandidate.text;
+        if (internalEnvelopeBlocked) {
+          deps.logger?.warn(
+            {
+              batchKey: key,
+              batchSize: items.length,
+              runId: first.runId,
+              step: "completion-envelope-egress",
+              errorKind: "validation" as const,
+              hint: "Inspect the parent completion rewrite; internal announcement metadata was replaced with its user-safe result section",
+            },
+            "Internal completion envelope blocked at channel egress",
+          );
+        }
+        const disclosure = disclosureOutcome
+          ? enforceAnnouncementTerminalOutcome(egressCandidate, disclosureOutcome)
+          : { text: egressCandidate, corrected: false };
         if (disclosure.corrected) {
           deps.logger?.warn(
             {
@@ -708,9 +746,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               runId: first.runId,
               step: "completion-honesty",
               errorKind: "validation" as const,
-              hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative failed terminal state",
+              hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative terminal disclosure",
             },
-            "Failed background-task status omitted by parent rewrite",
+            "Background-task terminal disclosure omitted by parent rewrite",
           );
         }
         await sendFinal(key, items, disclosure.text ?? "");
@@ -785,11 +823,16 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       return err(new Error("Governed announcement decision reservation unavailable"));
     }
     if (deps.sendGovernedAnnouncement && idempotencyKey && reserveDecision) {
+      const safeFallback = sanitizeForUser(params.announcementText);
+      const fallbackDisclosure = enforceAnnouncementTerminalOutcome(
+        safeFallback,
+        params.terminalOutcome,
+      );
       const boundary = await fromPromise(reserveDecision({
         idempotencyKey,
         agentId: params.callerAgentId,
         runId: params.runId,
-        announcementText: params.announcementText,
+        announcementText: fallbackDisclosure.text ?? safeFallback,
         channelType: params.announceChannelType,
         channelId: params.announceChannelId,
         failedAt: systemNowMs(),

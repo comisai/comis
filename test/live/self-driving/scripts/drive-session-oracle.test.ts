@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  directConversationFinished,
   findTelegramConversationWireAnswer,
   followupWaitFinished,
   isDriveProgressText,
@@ -18,6 +19,7 @@ import {
   telegramInjectAddressingError,
   telegramEmulatorChatError,
   telegramInjectionIdentityError,
+  trajectoryBaselineLineCount,
   trajectoryTurnEnded,
 } from "./drive-session-oracle.mjs";
 
@@ -42,6 +44,23 @@ describe("opt-in follow-up delivery wait", () => {
     })).toBe(false);
     expect(followupWaitFinished({
       followupAnswerCount: 1,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(true);
+  });
+
+  it("waits for every explicitly expected fan-out completion", () => {
+    expect(followupWaitFinished({
+      followupAnswerCount: 1,
+      expectedFollowupCount: 2,
+      firstAnswerAtMs: 1_000,
+      nowMs: 5_000,
+      waitMs: 30_000,
+    })).toBe(false);
+    expect(followupWaitFinished({
+      followupAnswerCount: 2,
+      expectedFollowupCount: 2,
       firstAnswerAtMs: 1_000,
       nowMs: 5_000,
       waitMs: 30_000,
@@ -97,6 +116,15 @@ describe("drive inbound validation", () => {
 });
 
 describe("drive trajectory completion", () => {
+  it("excludes the trailing JSONL separator from the trajectory baseline", () => {
+    expect(trajectoryBaselineLineCount('{"type":"prompt.submitted"}\n')).toBe(1);
+    expect(trajectoryBaselineLineCount([
+      '{"type":"prompt.submitted"}',
+      '{"type":"model.started"}',
+      "",
+    ].join("\n"))).toBe(2);
+  });
+
   it("ends a pre-model clarification turn without waiting for a model summary", () => {
     expect(trajectoryTurnEnded([
       JSON.stringify({
@@ -113,6 +141,76 @@ describe("drive trajectory completion", () => {
     expect(trajectoryTurnEnded([
       JSON.stringify({ type: "prompt.submitted", data: {} }),
     ])).toBe(false);
+  });
+
+  it("drains a bounded quiet window after a post-terminal answer", () => {
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 10_001,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 9_000,
+      lastAnswerAtMs: 10_000,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 19_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 9_000,
+      lastAnswerAtMs: 10_000,
+    })).toBe(true);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 17_000,
+      lastAnswerAtMs: 17_000,
+    })).toBe(false);
+  });
+
+  it("does not let a pre-terminal launch acknowledgement shorten an answerless delivery drain", () => {
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 9_000,
+      lastAnswerAtMs: 9_000,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 19_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 11_000,
+      lastAnswerAtMs: 11_000,
+    })).toBe(true);
+  });
+
+  it("uses the normal quiet drain after a media delivery captured with the terminal poll", () => {
+    expect(directConversationFinished({
+      sawAnswer: true,
+      sawMediaDelivery: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 10_000,
+      lastAnswerAtMs: 9_999,
+    })).toBe(true);
   });
 });
 

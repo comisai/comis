@@ -5,7 +5,10 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { comisDist, requireCodeRoot, rig } from "./_rig.mjs";
-import { selectLatestTelegramDeliveryMirror } from "./delivery-mirror-oracle.mjs";
+import {
+  renderDeliveryMirrorForWire,
+  selectLatestTelegramDeliveryMirror,
+} from "./delivery-mirror-oracle.mjs";
 
 const core = await import(pathToFileURL(comisDist("core", "dist/index.js")).href);
 const agent = await import(pathToFileURL(comisDist("agent", "dist/index.js")).href);
@@ -182,8 +185,9 @@ async function deliveryProbe() {
   const mirror = selectLatestTelegramDeliveryMirror(db, rig.chatId);
   db.close();
   const wireText = wire?.text ?? "";
-  const mirrorText = mirror?.text ?? "";
-  const matchingWire = outbounds.find((item) => item.text === mirrorText);
+  const sourceMirrorText = mirror?.text ?? "";
+  const renderedMirrorText = renderDeliveryMirrorForWire(mirror, core.formatForChannel);
+  const matchingWire = outbounds.find((item) => item.text === renderedMirrorText);
   const lines = wireText.split(/\r?\n/u).filter((line) => line.trim().length > 0);
   const scriptCount = (pattern) => [...wireText].filter((character) => pattern.test(character)).length;
   const buttons = wire === undefined ? [] : buttonsFor(wire);
@@ -191,9 +195,10 @@ async function deliveryProbe() {
     wireFound: wire !== undefined,
     mirrorFound: mirror !== undefined,
     exactMatch: matchingWire !== undefined,
-    substantiveMatchesLatestMirror: wireText === mirrorText,
+    substantiveMatchesLatestMirror: wireText === renderedMirrorText,
     wireHash: sha256(wireText),
-    mirrorHash: sha256(mirrorText),
+    mirrorHash: sha256(renderedMirrorText),
+    sourceMirrorHash: sha256(sourceMirrorText),
     chars: wireText.length,
     lineCount: lines.length,
     numberedLineCount: lines.filter((line) => /^\s*\d+[.)]\s+/u.test(line)).length,

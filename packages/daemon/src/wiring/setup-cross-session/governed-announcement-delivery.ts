@@ -137,7 +137,9 @@ export function createAnnouncementDelivery(
         { channelType, channelId, success: sent.value, gateway: true },
         "sendToChannel delivery outcome",
       );
-      return ok({ delivered: sent.value });
+      return sent.value
+        ? ok({ delivered: true, status: "accepted" })
+        : ok({ delivered: false, status: "rejected" });
     }
 
     const adapter = deps.adaptersByType.get(channelType);
@@ -146,7 +148,7 @@ export function createAnnouncementDelivery(
         { channelType, channelId, success: false, gateway: false },
         "sendToChannel delivery outcome: no adapter",
       );
-      return ok({ delivered: false });
+      return ok({ delivered: false, status: "rejected" });
     }
     const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
       completionMode: "settled",
@@ -162,8 +164,16 @@ export function createAnnouncementDelivery(
     const platformMessageId = platformDelivery.value.chunks.find(
       (chunk) => chunk.status === "accepted" && typeof chunk.messageId === "string" && chunk.messageId.length > 0,
     )?.messageId;
+    const platformStatus = platformDelivery.value.platform.status;
+    if (platformStatus !== "accepted") {
+      return ok({
+        delivered: false,
+        status: platformStatus === "rejected" ? "rejected" : "unknown",
+      });
+    }
     return ok({
-      delivered: platformDelivery.value.platform.status === "accepted",
+      delivered: true,
+      status: "accepted",
       ...(platformMessageId ? { platformMessageId } : {}),
     });
   };
@@ -204,7 +214,7 @@ export function createAnnouncementDelivery(
         hint: "Enable attachment support for the destination channel before retrying the retained completion",
         step: "completion-attachment-delivery",
       }, "Completion attachment adapter unavailable");
-      return ok({ delivered: false });
+      return ok({ delivered: false, status: "rejected" });
     }
     const sentBoundary = await fromPromise(adapter.sendAttachment(
       channelId,
@@ -255,6 +265,7 @@ export function createAnnouncementDelivery(
     }, "Completion attachment delivery completed");
     return ok({
       delivered: true,
+      status: "accepted",
       ...(receipt.kind === "tracked" ? { platformMessageId: receipt.messageId } : {}),
     });
   };

@@ -172,7 +172,7 @@ import {
   citationEvidenceDigestsToPersist,
   enforceCitationEvidence,
   historicalCitationDigests,
-  isCitationSourceRequest,
+  isCitationSourceRequestForTurn,
 } from "./citation-evidence.js";
 import {
   buildSubagentTerminalToolFailureReply,
@@ -1184,7 +1184,7 @@ export function recoveredFailedToolNames(
  *
  * Pure: no I/O, no side effects.
  */
-function modelAcknowledgedFailure(response: string, failedTools: string[]): boolean {
+export function modelAcknowledgedFailure(response: string, failedTools: string[]): boolean {
   if (!response || failedTools.length === 0) return false;
   const lower = response.toLowerCase();
   return failedTools.some(t => {
@@ -1194,8 +1194,10 @@ function modelAcknowledgedFailure(response: string, failedTools: string[]): bool
     // substrings in unrelated words like "writer" or "writing".
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const nameRe = new RegExp(`\\b${escaped}\\b`);
-    if (!nameRe.test(lower)) return false;
-    return /\b(fail(ed|ure|s)?|error|unable|could\s+not|couldn'?t)\b/.test(lower);
+    const referencesTool = nameRe.test(lower)
+      || (name === "sessions_spawn" && /\bspawn\b/u.test(lower));
+    if (!referencesTool) return false;
+    return /\b(fail(ed|ure|s)?|error|unable|could\s+not|couldn'?t|reject(?:ed|ion)?)\b/u.test(lower);
   });
 }
 
@@ -2528,10 +2530,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     .flatMap((toolResult) =>
       toolResult.citationUrlDigest === undefined ? [] : [toolResult.citationUrlDigest],
     );
-  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+  const trustedRuntimeActionEvidence = hasTrustedRuntimeActionEvidence(msg);
+  const relayedCitationEvidence = trustedRuntimeActionEvidence
     ? msg.metadata.citationEvidence
     : undefined;
-  const citationSourceRequest = isCitationSourceRequest(msg.text ?? "");
+  const citationSourceRequest = isCitationSourceRequestForTurn(
+    msg.text ?? "",
+    trustedRuntimeActionEvidence,
+  );
   const historicalDigests = citationSourceRequest
     ? historicalCitationDigests(sm)
     : [];

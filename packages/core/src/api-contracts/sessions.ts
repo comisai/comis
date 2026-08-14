@@ -13,6 +13,7 @@
  * @module
  */
 import { z } from "zod";
+import { MIN_SUB_AGENT_STEPS } from "../config/schema-security.js";
 import { ChannelEndpointSchema } from "../domain/conversation-scope.js";
 import {
   SubagentFailureCompletionSchema,
@@ -324,7 +325,7 @@ export const SessionSpawnContract = defineContract({
     task: z.string(),
     agent: z.string().optional(),
     async: z.boolean().optional(),
-    max_steps: z.number().optional(),
+    max_steps: z.number().int().min(MIN_SUB_AGENT_STEPS).optional(),
     model: z.string().optional(),
     expected_outputs: z.array(z.string()).optional(),
     artifact_refs: z.array(z.string()).optional(),

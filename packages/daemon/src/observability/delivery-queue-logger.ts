@@ -10,7 +10,7 @@
  * - INFO for boundary events: enqueue (message enters queue), ack (delivery
  *   confirmed), queue_drained (startup drain complete).
  * - WARN for degraded states: nack (transient failure, will retry) and fail
- *   (permanent failure). WARN events include hint and errorKind as required.
+ *   (permanent or uncertain). WARN events include hint and errorKind as required.
  * - DEBUG for the reply->trajectory binding breadcrumb (delivery:reply_bound):
  *   a high-frequency per-reply positive signal, kept at DEBUG so it does
  *   not flood INFO, but present so a reaction map-miss is one-call diagnosable
@@ -78,8 +78,9 @@ export function setupDeliveryQueueLogging(deps: {
     );
   });
 
-  // 4. Fail: permanent failure, no more retries (degraded -> WARN)
+  // 4. Fail: permanent failure or uncertain parked outcome (degraded -> WARN)
   eventBus.on("delivery:failed", (data) => {
+    const uncertain = data.reason === "uncertain_outcome";
     log.warn(
       {
         entryId: data.entryId,
@@ -87,10 +88,14 @@ export function setupDeliveryQueueLogging(deps: {
         channelId: data.channelId,
         err: data.error,
         reason: data.reason,
-        hint: "Message permanently failed -- check channel configuration or error patterns",
+        hint: uncertain
+          ? "Verify the destination manually; this delivery is parked and will not be replayed automatically"
+          : "Message permanently failed -- check channel configuration or error patterns",
         errorKind: "platform" as const,
       },
-      "Message delivery permanently failed",
+      uncertain
+        ? "Message delivery outcome is uncertain"
+        : "Message delivery permanently failed",
     );
   });
 

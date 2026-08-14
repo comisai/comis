@@ -86,6 +86,8 @@ export interface ToolExecutionResultRecord {
   readonly schedulerPolicyEvidence?: readonly SchedulerPolicyEvidence[];
   /** Closed qualifications that prevent a self-report from overstating the receipt. */
   readonly observabilityEvidenceLimits?: ObservabilityEvidenceLimits;
+  /** Number of terminal completions returned by a successful subagent wait. */
+  readonly subagentWaitCompletedCount?: number;
 }
 
 export interface ToolFailureRecoveryClassification {

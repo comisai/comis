@@ -193,7 +193,7 @@ import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
 import {
   historicalCitationDigests,
-  isCitationSourceRequest,
+  isCitationSourceRequestForTurn,
 } from "../citation-evidence.js";
 import { hasTrustedRuntimeActionEvidence } from "../persistent-action-evidence.js";
 import { createTurnLoopDetector } from "../turn-loop-detector.js";
@@ -1958,10 +1958,14 @@ async function runSessionLocked(
   let currentSuccessfulMutationCount = (): number => 0;
   let currentWebResearchObserved = (): boolean => false;
   let currentCitationDigests = (): readonly string[] => [];
-  const inheritedCitationDigests = isCitationSourceRequest(msg.text)
+  const trustedRuntimeActionEvidence = hasTrustedRuntimeActionEvidence(msg);
+  const inheritedCitationDigests = isCitationSourceRequestForTurn(
+    msg.text,
+    trustedRuntimeActionEvidence,
+  )
     ? historicalCitationDigests(sm)
     : [];
-  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+  const relayedCitationEvidence = trustedRuntimeActionEvidence
     ? msg.metadata.citationEvidence
     : undefined;
 

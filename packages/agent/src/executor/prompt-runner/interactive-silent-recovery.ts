@@ -18,6 +18,7 @@ import {
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { runContinuationTurn } from "../continuation-turn.js";
 import { resolveProviderDispatchGuard } from "../provider-dispatch.js";
+import { hasTrustedRuntimeActionEvidence } from "../persistent-action-evidence.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
 export const INTERACTIVE_SILENT_FAILURE_RESPONSE =
@@ -35,6 +36,8 @@ export interface InteractiveSilentRecoveryInput {
   operationType: ModelOperationType;
   response: string;
   outboundDelivered: boolean;
+  /** Authenticated completion transport may legitimately resolve to silence. */
+  trustedRuntimeActionEvidence?: boolean;
   continueTurn: (instruction: string) => Promise<Result<unknown, Error>>;
   getVisibleResponse: () => string;
 }
@@ -52,6 +55,7 @@ export async function recoverInteractiveSilentResponse(
     input.operationType !== "interactive"
     || !isSilentResponse(input.response)
     || input.outboundDelivered
+    || input.trustedRuntimeActionEvidence === true
   ) {
     return ok({
       attempted: false,
@@ -113,6 +117,8 @@ export async function applyInteractiveSilentRecovery(
       channelType: msg.channelType,
       channelId: msg.channelId,
     }),
+    trustedRuntimeActionEvidence:
+      msg.metadata !== undefined && hasTrustedRuntimeActionEvidence(msg),
     continueTurn: (instruction) => runContinuationTurn(
       session,
       instruction,

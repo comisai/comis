@@ -532,6 +532,35 @@ describe("local rig mode", () => {
     expect(resolved.trim()).toBe(`${isolatedData}|4767`);
   });
 
+  it("does not inherit a rendered trajectory path when data is selected explicitly", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-trajectory-precedence-"));
+    temporaryDirectories.push(directory);
+    const selectedData = resolve(directory, "selected-data");
+    const renderedData = resolve(directory, "rendered-data");
+    const liveEnv = resolve(directory, "live.env");
+    const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(liveEnv, "", { mode: 0o600 });
+    writeFileSync(
+      rigEnv,
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export DATA="\${DATA:-${renderedData}}"`,
+        `export COMIS_TRAJECTORY_DIR="\${COMIS_TRAJECTORY_DIR:-${resolve(renderedData, "trajectories")}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    const output = runRigHelper(
+      `rig_load_env ${shellQuote(liveEnv)} ${shellQuote(rigEnv)}; printf '%s|%s\n' "$DATA" "$COMIS_TRAJECTORY_DIR"`,
+      {
+        RIG_MODE: "local",
+        DATA: selectedData,
+      },
+    );
+
+    expect(output.trim()).toBe(`${selectedData}|${resolve(selectedData, "trajectories")}`);
+  });
+
   it("refuses the everyday local service before changing its config", () => {
     const directory = makeCanonicalTempDirectory("comis-local-up-isolation-");
     const data = resolve(directory, "isolated-data");
@@ -647,6 +676,7 @@ describe("local rig mode", () => {
         DATA: data,
         GW_PORT: "4881",
         SERVICE: "comis-local-drive",
+        LOCAL_TMUX_SESSION: `comis-local-drive-${process.pid}`,
       },
     });
 
@@ -700,6 +730,7 @@ describe("local rig mode", () => {
         DATA: data,
         GW_PORT: "4883",
         SERVICE: "comis-local-rpc-secret",
+        LOCAL_TMUX_SESSION: `comis-local-rpc-secret-${process.pid}`,
       },
     });
     expect(initialized.status, `${initialized.stdout}${initialized.stderr}`).toBe(0);
@@ -917,7 +948,7 @@ describe("local rig mode", () => {
     expect(shellRig).toContain('${EMU_JSON:=$DATA/emulator-wiring.json}');
     expect(shellRig).toContain('${EMU_TMUX_SESSION:=emu-${SERVICE}}');
     expect(nodeRig).toContain('isLocal ? `${dataDir}/emulator-wiring.json` : "/tmp/comis-emu.json"');
-    expect(restart).toContain('tmux kill-session -t "$EMU_TMUX_SESSION"');
+    expect(restart).toContain('tmux kill-session -t "=$EMU_TMUX_SESSION"');
     expect(restart).toContain("EMU_JSON='$EMU_JSON'");
     expect(restart).not.toMatch(/^\s*pkill\s+.*vps-emu/mu);
     expect(restart).not.toMatch(/^\s*tmux kill-session -t emu\b/mu);
@@ -997,6 +1028,37 @@ describe("local rig mode", () => {
     for (const key of ["KIT_DIR", "RIG_ENV", "EMU_JSON", "EMU_LOG", "EMU_TMUX_SESSION"]) {
       expect(source).toContain(`export ${key}="` + "\\${" + `${key}:-`);
     }
+  });
+
+  it("derives the local trajectory root from an explicitly selected data root", () => {
+    const source = readFileSync(LOCAL_UP, "utf8");
+    const selected = source.indexOf(
+      'SELECTED_TRAJECTORY_DIR="${COMIS_TRAJECTORY_DIR:-$SELECTED_DATA/trajectories}"',
+    );
+    const assigned = source.indexOf(
+      'COMIS_TRAJECTORY_DIR="$SELECTED_TRAJECTORY_DIR"',
+    );
+    const loaded = source.indexOf(
+      'rig_load_env "$HERE/.live-env" "$HERE/.rig-env"',
+    );
+
+    expect(selected).toBeGreaterThan(-1);
+    expect(assigned).toBeGreaterThan(selected);
+    expect(loaded).toBeGreaterThan(assigned);
+  });
+
+  it("uses exact tmux targets so daemon and emulator name prefixes cannot collide", () => {
+    const shellRig = readFileSync(RIG_HELPER, "utf8");
+    const restartDaemon = readFileSync(RESTART_DAEMON, "utf8");
+    const restartEmulator = readFileSync(RESTART_EMULATOR, "utf8");
+
+    expect(shellRig).toContain('tmux has-session -t "=${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}"');
+    expect(shellRig).toContain('tmux show-environment -t "=${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}"');
+    expect(shellRig).toContain('tmux list-panes -t "=$_tmux_session"');
+    expect(restartDaemon).toContain('tmux kill-session -t "=$tmux_session"');
+    expect(restartEmulator).toContain('tmux has-session -t "=$EMU_TMUX_SESSION"');
+    expect(restartEmulator).toContain('tmux show-environment -t "=$EMU_TMUX_SESSION"');
+    expect(restartEmulator).toContain('tmux kill-session -t "=$EMU_TMUX_SESSION"');
   });
 
   it("probes bubblewrap on a local Linux phase-zero gate", () => {

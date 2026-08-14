@@ -1422,7 +1422,8 @@ describe("obs-explain-heuristics", () => {
   });
 
   it("uses the activity-finalize auth kind when the early session summary has no error kind", () => {
-    const result = rootCause(makeSignals({
+    const signals = makeSignals({
+      agentId: "default",
       endReason: "error",
       degraded: true,
       recall: allMissRecall,
@@ -1433,10 +1434,20 @@ describe("obs-explain-heuristics", () => {
         reason: "a step failed outside the tool timeline",
         reclassified: true,
       },
-    }));
+    }) as IncidentSignals & {
+      modelSelection: { provider: string; modelId: string };
+    };
+    signals.modelSelection = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    };
+    const result = rootCause(signals);
 
     expect(result?.code).toBe("execution_auth_failure");
     expect(result?.detail).toContain("authentication failure");
+    expect(result?.detail).toContain('agents.default.provider="anthropic"');
+    expect(result?.detail).toContain('agents.default.model="claude-sonnet-4-6"');
+    expect(result?.suggestedNextSteps.join(" ")).toContain("comis secrets list");
   });
 
   it("ranks a terminal dependency failure above an incidental recall miss", () => {

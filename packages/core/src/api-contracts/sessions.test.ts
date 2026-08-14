@@ -513,6 +513,20 @@ describe("SessionSpawnContract", () => {
     })).toBeDefined();
   });
 
+  it("rejects max_steps below the supported sub-agent budget", () => {
+    expect(() => SessionSpawnContract.request.parse({
+      task: "inspect records",
+      max_steps: 29,
+    })).toThrow();
+  });
+
+  it("rejects fractional max_steps values", () => {
+    expect(() => SessionSpawnContract.request.parse({
+      task: "inspect records",
+      max_steps: 30.5,
+    })).toThrow();
+  });
+
   it("rejects request missing task", () => {
     expect(() => SessionSpawnContract.request.parse({})).toThrow();
   });

@@ -2,8 +2,8 @@
 /**
  * Contract surface for sub-agent graph execution.
  *
- * The step-budget floor plus the dependency and callback shapes that
- * `buildExecuteSubAgent` is built against. Kept beside the builder rather than
+ * The dependency and callback shapes that `buildExecuteSubAgent` is built
+ * against. Kept beside the builder rather than
  * inside it so the signature a caller wires to can be read without the
  * execution body, and so the builder module stays within its size cap.
  *
@@ -23,9 +23,6 @@ import type { ExecutionResult } from "@comis/agent";
 import type { Result } from "@comis/shared";
 import type { GitExec } from "@comis/skills/tools";
 import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
-
-/** Minimum spawn budget so boot cannot consume every step. */
-export const MIN_SUB_AGENT_STEPS = 30;
 
 /** Closure-captured dependencies for executeSubAgent. */
 export interface ExecuteSubAgentDeps {
@@ -74,4 +71,6 @@ export type ExecuteSubAgentFn = (
   providerLifecycle?: {
     onProviderStart(): Result<void, Error>;
   },
+  /** Physical child assignment before runtime output-contract enrichment. */
+  requestText?: string,
 ) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "stepLimit" | "toolCallHistory" | "terminalErrorKind" | "errorContext"> & { workspaceDir: string }>;

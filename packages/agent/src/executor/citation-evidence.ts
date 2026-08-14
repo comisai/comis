@@ -481,3 +481,17 @@ export function isCitationSourceRequest(request: string): boolean {
   NON_ATTRIBUTION_USE.lastIndex = 0;
   return ATTRIBUTION_NOUN.test(request.replace(NON_ATTRIBUTION_USE, " "));
 }
+
+/**
+ * Decide whether this turn's physical request activates source-attribution
+ * grounding. A trusted runtime action envelope is transport, not fresh user
+ * intent: its result prose may incidentally contain words such as "source" or
+ * "reference". The originating child already applied its own citation guard,
+ * while explicit relayed fetch evidence activates the parent guard separately.
+ */
+export function isCitationSourceRequestForTurn(
+  request: string,
+  trustedRuntimeActionEvidence: boolean,
+): boolean {
+  return !trustedRuntimeActionEvidence && isCitationSourceRequest(request);
+}

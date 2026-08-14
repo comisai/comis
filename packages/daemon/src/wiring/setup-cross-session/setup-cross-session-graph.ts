@@ -7,7 +7,7 @@
  * @module
  */
 import type { NormalizedMessage, SpawnPacket, AgentConfig } from "@comis/core";
-import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST, MIN_SUB_AGENT_STEPS } from "@comis/core";
 import {
   createStepCounter,
   createSpawnPacketBuilder,
@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 import { toolResultsReadBoundaryForSession } from "../tool-results-dir.js";
-import { MIN_SUB_AGENT_STEPS, type ExecuteSubAgentDeps, type ExecuteSubAgentFn } from "./execute-sub-agent-contract.js";
+import type { ExecuteSubAgentDeps, ExecuteSubAgentFn } from "./execute-sub-agent-contract.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
@@ -48,6 +48,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     tokenBudget,
     autonomyContext,
     providerLifecycle,
+    requestText,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -63,15 +64,29 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     const ctx = tryGetContext();
     const originChannelType = ctx?.deliveryOrigin?.channelType ?? ctx?.channelType ?? "gateway";
 
+    const messageId = randomUUID();
+    const messageTimestamp = systemNowMs();
     const msg: NormalizedMessage = {
-      id: randomUUID(),
+      id: messageId,
       channelId: sessionKey.channelId,
       channelType: originChannelType,
       senderId: "parent-agent",
       text: task,
-      timestamp: systemNowMs(),
+      timestamp: messageTimestamp,
       attachments: [],
       metadata: {},
+      ...(requestText === undefined
+        ? {}
+        : {
+            originalMessages: [{
+              id: messageId,
+              channelId: sessionKey.channelId,
+              channelType: originChannelType,
+              senderId: "parent-agent",
+              text: requestText,
+              timestamp: messageTimestamp,
+            }],
+          }),
     };
 
     // Fresh step counter per sub-agent spawn (isolated from parent/siblings).

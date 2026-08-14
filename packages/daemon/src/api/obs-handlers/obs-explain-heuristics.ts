@@ -18,7 +18,7 @@ import {
 // The two BENIGN learning verdicts (sibling — subdir cap).
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
-import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict, subagentWaitDeadlineOverlapVerdict } from "./obs-explain-subagent-killed-verdict.js";
+import { subagentBackgroundProcessesAbandonedVerdict, subagentDeliberatelyKilledVerdict, subagentDeliverySkippedVerdict, subagentFailedVerdict, subagentStuckKilledVerdict, subagentWaitDeadlineOverlapVerdict } from "./obs-explain-subagent-killed-verdict.js";
 import { freshTailOriginLostVerdict } from "./obs-explain-fresh-tail-verdict.js";
 import { backgroundPendingVerdict, backgroundRecoveryVerdict } from "./obs-explain-background-pending-verdict.js";
 import { backgroundHardTimeoutVerdict } from "./obs-explain-background-timeout-verdict.js";
@@ -105,14 +105,14 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     below, and the kill can even race the run's own completion so the
   //     rollup reads clean. Keyed strictly on the bridged subagentKilled signal
   //     with killedBy health_monitor (absent on the established fixtures —
-  //     cannot regress them; deliberate parent/operator kills return null).
+  //     cannot regress them). A deliberate parent/operator kill returns null there
+  //     and falls to the next line's cancellation verdict — terminal, not an alarm.
   subagentStuckKilledVerdict,
+  subagentDeliberatelyKilledVerdict,
 
   // The unresolved child process is upstream of a missing control-plane delivery route.
   subagentBackgroundProcessesAbandonedVerdict,
-
   subagentDeliverySkippedVerdict,
-
   subagentFailedVerdict,
 
   backgroundRecoveryVerdict,

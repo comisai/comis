@@ -2,13 +2,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "node:os";
 import { mkdirSync } from "node:fs";
-import { MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
+import { resolveGraphCacheRetention } from "./index.js";
 import {
   createDeliveryOrigin,
   createConversationLocator,
   DeliveryQueueTransitionError,
   formatSessionKey,
   getContext,
+  MIN_SUB_AGENT_STEPS,
   runWithContext,
   SUB_AGENT_TOOL_DENYLIST,
   type RequestContext,

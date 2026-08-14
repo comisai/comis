@@ -5,6 +5,7 @@ import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import {
   applyPromptSkillRequestRouting,
   physicalUserRequestText,
+  routingIntentText,
 } from "./prompt-skill-request-routing.js";
 
 function tool(name: string): ToolDefinition {
@@ -166,6 +167,282 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn", "read"]);
+  });
+
+  it("does not enforce a parent skill from an unquoted delegated child task", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Use exactly one background sub-agent via sessions_spawn to inspect the repository package.json and report the number of workspace package patterns it declares.",
+      "Require the child to include the marker BGSAFE_20260814_A in its result.",
+      "Do not calculate the answer yourself.",
+      "Launch it, then notify me naturally when the child finishes.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:file|search|workspace)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route delegation delivery and privacy contracts as coding work", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live reliability test. Delegate exactly one background sub-agent with sessions_spawn and do not wait for it.",
+      "Ask the child to compare FIFO, priority, and fair queuing for a small support queue, return exactly five concise decision bullets, recommend one default, and include the exact marker once.",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "When the child completes, present its useful result naturally to this Telegram chat.",
+      "Never expose internal runtime statistics, token or cost data, result-store paths, session identifiers, or raw completion-envelope labels.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).toBe("Live reliability test.");
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route multi-sentence child instructions as a parent skill workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Use exactly one background sub-agent via sessions_spawn.",
+      "In the operator workspace, have the child read the exact file .workspace-state.json and report its version value and number of top-level properties.",
+      "Then have it attempt exactly one read of the exact absent file missing-bg-probe.txt; it must not search for or substitute another file.",
+      "Require the exact marker BGSAFE in the child result.",
+      "Do not calculate the answer yourself.",
+      "Launch it, then notify me naturally when the child finishes.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: [{
+        name: "find-skills",
+        description:
+          "MANDATORY: For requests asking whether a skill or specialized capability exists, "
+          + "load this skill and run its catalog workflow before answering. Do not answer "
+          + "from general capabilities, search workspace filenames, or use generic web search.",
+        replacesPackages: [],
+        requiredBins: ["git"],
+      }],
+      locations: new Map([
+        ["/skills/find-skills/SKILL.md", "find-skills"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:file|search|workspace)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route a parent nonexecution constraint as a coding workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Use exactly one background sub-agent via sessions_spawn as a coordinator.",
+      "Have that coordinator spawn exactly one child of its own via sessions_spawn, with no further nesting.",
+      "The leaf child must read the exact operator-workspace file .workspace-state.json and return its version value.",
+      "The coordinator must wait for the pushed leaf completion, then return the leaf value and marker.",
+      "Do not read or calculate the value yourself.",
+      "Launch the coordinator, then notify me naturally when the nested work finishes.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:file|read|workspace)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route coordinator bookkeeping and negative constraints as coding", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const coordinatorRequest = [
+      "Act as the sole coordinator for this nested delegation task.",
+      "You MUST use sessions_spawn exactly once to spawn exactly one leaf child, and you must not read, inspect, infer, or calculate .workspace-state.json yourself.",
+      "Instruct the leaf child to spawn no further sub-agents, make no modifications, read the exact operator-workspace file, and return its version marker.",
+      "Then wait for the pushed leaf completion without polling.",
+      "After it completes, return the leaf's exact version value and marker.",
+      "Do not finish early with only a launch receipt.",
+      "Do not modify any files.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: coordinatorRequest,
+      requestRelevanceText: coordinatorRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(coordinatorRequest)).toBe("");
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("still enforces a prompt skill for a separate parent-owned task", () => {
+    const deferral = result();
+    const request = [
+      "Spawn a child to inspect package.json.",
+      "After it finishes, use Claude Code to refactor and test the parent project.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: request,
+      requestRelevanceText: request,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/claude-code/SKILL.md",
+    ]);
+    expect(deferral.requestRelevantToolNames).toContain("read");
+  });
+
+  it("does not route a direct artifact write as a software workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("write"));
+    deferral.requestRelevantToolNames.push("write");
+    const artifactRequest = [
+      "Create exactly one CSV file at /workspace/artifacts/report.csv using write.",
+      "The file content must contain the requested item counts.",
+      "Do not inspect other files and do not retry after a successful write.",
+      "Before the final response, verify every listed file exists.",
+      "Return marker FILE1 and a short result summary when complete.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: artifactRequest,
+      requestRelevanceText: artifactRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["write"]);
+  });
+
+  it("does not route delegated tool bindings and delivery instructions as parent coding intent", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Silent attachment check.",
+      "Launch exactly one background sub-agent with sessions_spawn.",
+      "The child must use write to create exactly /workspace/real-user/artifacts/silent.txt, then return NO_REPLY.",
+      "Bind required_tools to write, tool_groups to coding, and declare the path in expected_outputs.",
+      "After launch, deliver the verified document with no terminal text notification.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:terminal|write)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("ignores completion-contract boilerplate when routing a silent artifact write", () => {
+    const deferral = result();
+    const childRequest = [
+      "Use the write tool to create exactly /workspace/artifacts/silent.txt containing exact content.",
+      "Then return exactly NO_REPLY with no other text.",
+      "Expected output contract: create every file at its exact path.",
+      "The completion runner validates these exact paths before the final response.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: childRequest,
+      requestRelevanceText: childRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual([]);
+  });
+
+  it("does not treat absolute path segments as prompt skill intent", () => {
+    const deferral = result();
+    const artifactRequest =
+      "Use write to create exactly /workspace/real-user/artifacts/silent.txt, then return NO_REPLY.";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: artifactRequest,
+      requestRelevanceText: artifactRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(artifactRequest)).not.toContain("real-user");
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual([]);
   });
 
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {

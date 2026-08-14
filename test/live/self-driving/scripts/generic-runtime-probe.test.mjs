@@ -5,7 +5,39 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
+import {
+  renderDeliveryMirrorForWire,
+  selectLatestTelegramDeliveryMirror,
+} from "./delivery-mirror-oracle.mjs";
+
 const SCRIPT = resolve("test/live/self-driving/scripts/generic-runtime-probe.mjs");
+
+test("delivery mirror reconciliation compares the platform-rendered text", () => {
+  const formatForChannel = (text, channelType) => {
+    assert.equal(text, "The **result** is `0`.");
+    assert.equal(channelType, "telegram");
+    return "The <b>result</b> is <code>0</code>.";
+  };
+
+  assert.equal(
+    renderDeliveryMirrorForWire(
+      { text: "The **result** is `0`.", channel_type: "telegram" },
+      formatForChannel,
+    ),
+    "The <b>result</b> is <code>0</code>.",
+  );
+});
+
+test("delivery mirror selection retains the platform renderer discriminator", () => {
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /\bchannel_type\b/u);
+      return { get: () => undefined };
+    },
+  };
+
+  selectLatestTelegramDeliveryMirror(db, "chat_a");
+});
 
 test("receipts probe follows the live nested-session trajectory pointer", () => {
   const dataDir = mkdtempSync(join(tmpdir(), "comis-receipts-probe-"));

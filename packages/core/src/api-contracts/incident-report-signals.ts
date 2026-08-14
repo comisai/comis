@@ -64,7 +64,7 @@ export interface IncidentFailure {
  * tool, "DO NOT retry" signal, most-failed tool, the content-heuristic
  * misclassification signal + offending tool/token).
  */
-// @optional-field-count: 33 — this is the obs.explain signal accumulator, the
+// @optional-field-count: 34 — this is the obs.explain signal accumulator, the
 // single shared contract every root-cause heuristic
 // reads. Each optional field is a presence-conditional signal aggregated from a
 // distinct trajectory record class (contextBudget / rehydration / promptTimeout /
@@ -95,6 +95,11 @@ export interface IncidentSignals {
         source: "unset";
         enforced: false;
       };
+  /** The LAST prompt's content-free configured provider/model identifiers. */
+  modelSelection?: {
+    provider: string;
+    modelId: string;
+  };
   /** Installed prompt skills unavailable to the selected turn. */
   skillAvailability?: {
     unavailable: Array<{ name: string; reason: string }>;

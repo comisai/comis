@@ -147,7 +147,6 @@ interface AnnouncementDeadLetterQueueOptions {
   ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   fileOperations?: DeadLetterWriteOperations;
 }
-
 /** Create a JSONL-backed announcement dead-letter queue. */
 export function createAnnouncementDeadLetterQueue(
   opts: AnnouncementDeadLetterQueueOptions,
@@ -156,6 +155,8 @@ export function createAnnouncementDeadLetterQueue(
   const retryIntervalMs = opts.retryIntervalMs ?? 60_000;
   const maxAgeMs = opts.maxAgeMs ?? 3_600_000;
   const maxEntries = opts.maxEntries ?? 100;
+  // Cover the 300-second rewrite timeout plus a drain interval to prevent a race.
+  const parentDecisionGraceMs = 300_000 + retryIntervalMs;
   const {
     filePath,
     eventBus,
@@ -164,18 +165,15 @@ export function createAnnouncementDeadLetterQueue(
     governedSendToChannel,
     fileOperations,
   } = opts;
-
   let entries: DeadLetterEntry[] = [];
   let decisionReservations: ParentDecisionReservationRecord[] = [];
   let loaded = false;
   let operationTail: Promise<void> = Promise.resolve();
-
   function serialize<T>(operation: () => Promise<T>): Promise<T> {
     const result = operationTail.then(operation, operation);
     operationTail = result.then(() => undefined, () => undefined);
     return result;
   }
-
   async function loadFromDisk(): Promise<Result<void, Error>> {
     if (loaded) return ok(undefined);
     const read = await readDeadLetterEntries(filePath, logger);
@@ -408,7 +406,7 @@ export function createAnnouncementDeadLetterQueue(
   async function drainGovernedEntry(
     ledger: OutwardSendLedgerPort,
     entry: DeadLetterEntry,
-  ): Promise<"committed" | "retained"> {
+  ): Promise<"receipt_already_committed" | "receipt_committed_now" | "retained"> {
     const identityResult = resolveGovernedIdentity(entry);
     if (!identityResult.ok) {
       const invalidOperation = identityResult.error === "operation_validation_blocked";
@@ -488,7 +486,7 @@ export function createAnnouncementDeadLetterQueue(
             return "retained";
           }
           emitLedgerTransition(identity, "lookup", "committed");
-          return "committed";
+          return "receipt_already_committed";
         case "send_attempt_started":
         case "unknown_after_send":
           emitLedgerTransition(identity, "lookup", "in_flight");
@@ -598,11 +596,16 @@ export function createAnnouncementDeadLetterQueue(
       return "retained";
     }
     const outcome = boundary.value.value;
+    if (!outcome.delivered) {
+      entry.lastError = outcome.status === "unknown"
+        ? "outward_transport_uncertain"
+        : "outward_transport_rejected";
+      await parkGovernedEntry(ledger, entry, identity);
+      return "retained";
+    }
     const receipt = outcome.platformMessageId;
-    if (!outcome.delivered || receipt === undefined || receipt.length === 0) {
-      entry.lastError = outcome.delivered
-        ? "outward_platform_receipt_missing"
-        : "outward_transport_rejected_without_no_send_proof";
+    if (receipt === undefined || receipt.length === 0) {
+      entry.lastError = "outward_platform_receipt_missing";
       await parkGovernedEntry(ledger, entry, identity);
       return "retained";
     }
@@ -622,7 +625,7 @@ export function createAnnouncementDeadLetterQueue(
       return "retained";
     }
     emitLedgerTransition(identity, "commit", "committed");
-    return "committed";
+    return "receipt_committed_now";
   }
 
   function emitDelivered(entry: DeadLetterEntry, attemptCount: number): void {
@@ -741,31 +744,21 @@ export function createAnnouncementDeadLetterQueue(
     return ok(undefined);
   }
 
-  /**
-   * Settle parked parent-decision reservations against the outward ledger.
-   *
-   * A reservation is written when the parent turn that should adjudicate a
-   * sub-agent completion dies before deciding. Nothing drained them, so a
-   * finished job's result was simply never delivered — live, a completed chart
-   * set sat parked until the user asked for it by hand. The quarantine was
-   * right that we must not guess; it was wrong that we had to. The ledger is
-   * built to answer exactly this, and `allocateStep` is idempotent by
-   * `(rootRunId, operationId)`, so the step the send WOULD have used is
-   * recoverable after the fact — including across a restart.
-   *
-   * Converted reservations are handed to `drainGovernedEntry`, which already
-   * owns the lookup, the committed-skip, the identity-mismatch check and the
-   * parking. Nothing here decides to send; it only supplies the identity that
-   * lets the governed path decide.
-   *
-   * Fail-SAFE throughout: a reservation with no `rootRunId` (written before the
-   * field existed) or any ledger error stays parked. An unanswerable ledger is
-   * never read as "not sent".
-   */
+  /** Settle reservations after the rewrite grace. The ledger decides whether
+   * delivery is safe; missing roots, errors, and uncertainty remain parked. */
   async function adjudicateReservations(ledger: OutwardSendLedgerPort): Promise<void> {
     if (decisionReservations.length === 0) return;
     const settled: string[] = [];
     for (const reservation of [...decisionReservations]) {
+      const remainingGraceMs = parentDecisionGraceMs
+        - (systemNowMs() - reservation.failedAt);
+      if (remainingGraceMs > 0) {
+        logger?.debug(
+          { runId: reservation.runId, remainingMs: remainingGraceMs, step: "parent-decision-rewrite-grace" },
+          "Parent decision reservation remains parked while its rewrite can still be running",
+        );
+        continue;
+      }
       if (reservation.rootRunId === undefined || reservation.rootRunId.length === 0) {
         // Standing condition, re-reached on every sweep — report the transition
         // into it once, exactly as logLedgerFailure does, or one unadjudicable
@@ -798,7 +791,15 @@ export function createAnnouncementDeadLetterQueue(
         );
         continue;
       }
-      const now = systemNowMs();
+      logger?.warn(
+        {
+          runId: reservation.runId,
+          errorKind: "timeout" as const,
+          hint: "Inspect the parent completion rewrite timeout; the durable user-safe fallback is now eligible for governed delivery",
+          step: "parent-decision-fallback",
+        },
+        "Parent decision rewrite grace elapsed; adjudicating its safe fallback",
+      );
       entries.push({
         id: reservation.id,
         announcementText: reservation.announcementText,
@@ -815,7 +816,6 @@ export function createAnnouncementDeadLetterQueue(
         ...(reservation.threadId ? { threadId: reservation.threadId } : {}),
       } as DeadLetterEntry);
       settled.push(reservation.idempotencyKey);
-      void now;
     }
     if (settled.length === 0) return;
     const remaining = decisionReservations.filter(
@@ -864,19 +864,22 @@ export function createAnnouncementDeadLetterQueue(
         return true;
       });
     const deliveredIds = new Set<string>();
-    const deliveredEntries: DeadLetterEntry[] = [];
-
+    const deliveredEntries: Array<{
+      entry: DeadLetterEntry;
+      outcome: "untracked_delivery" | "receipt_already_committed" | "receipt_committed_now";
+      durationMs: number;
+    }> = [];
     for (const entry of workingEntries) {
       if (now - entry.lastAttemptAt < retryIntervalMs) continue;
+      const deliveryStartedAt = systemNowMs();
       if (outwardLedger) {
         const governed = await drainGovernedEntry(outwardLedger, entry);
-        if (governed === "committed") {
+        if (governed !== "retained") {
           deliveredIds.add(entry.id);
-          deliveredEntries.push(entry);
+          deliveredEntries.push({ entry, outcome: governed, durationMs: systemNowMs() - deliveryStartedAt });
         }
         continue;
       }
-
       const boundary = await fromPromise(sendToChannel(
         entry.channelType,
         entry.channelId,
@@ -890,7 +893,10 @@ export function createAnnouncementDeadLetterQueue(
       ));
       if (boundary.ok && boundary.value) {
         deliveredIds.add(entry.id);
-        deliveredEntries.push({ ...entry, attemptCount: entry.attemptCount + 1 });
+        deliveredEntries.push({
+          entry: { ...entry, attemptCount: entry.attemptCount + 1 },
+          outcome: "untracked_delivery", durationMs: systemNowMs() - deliveryStartedAt,
+        });
       } else {
         entry.attemptCount++;
         entry.lastAttemptAt = systemNowMs();
@@ -899,7 +905,6 @@ export function createAnnouncementDeadLetterQueue(
           : "sendToChannel rejected";
       }
     }
-
     const nextEntries = workingEntries.filter((entry) => !deliveredIds.has(entry.id));
     const persisted = await persist(nextEntries);
     if (!persisted.ok) {
@@ -913,31 +918,35 @@ export function createAnnouncementDeadLetterQueue(
       return;
     }
     entries = nextEntries;
-    for (const entry of deliveredEntries) {
+    for (const delivered of deliveredEntries) {
+      const { entry, outcome, durationMs } = delivered;
       const idempotencyKey = entry.idempotencyKey;
       if (idempotencyKey && onDelivered) {
         tryCatch(() => onDelivered(idempotencyKey));
       }
       emitDelivered(entry, entry.attemptCount);
-      // INFO, not DEBUG: this is the resolution half of a condition whose opening
-      // half is a WARN. The dead-letter file is unlinked once the queue drains, so
-      // at the default level a resolved quarantine otherwise leaves the WARN
-      // standing with no trace of its outcome and no file to inspect — which reads
-      // as a lost announcement. Once per resolved entry, so the volume is bounded
-      // by the entries that actually cleared.
+      // INFO closes the opening WARN after the queue file is unlinked. It is
+      // emitted once per resolved entry, so volume is naturally bounded.
       logger?.info(
         {
           runId: entry.runId,
           attemptCount: entry.attemptCount,
-          ...(outwardLedger ? {
+          durationMs,
+          ...(outcome !== "untracked_delivery" ? {
             rootRunId: entry.rootRunId,
             stepIndex: entry.stepIndex,
-            step: "dlq-ledger-committed-skip",
           } : {}),
+          step: outcome === "receipt_already_committed"
+            ? "dlq-ledger-committed-skip"
+            : outcome === "receipt_committed_now"
+              ? "dlq-ledger-receipt-committed"
+              : "dead-letter-delivery",
         },
-        outwardLedger
+        outcome === "receipt_already_committed"
           ? "Committed dead-letter operation removed without replay"
-          : "Dead-letter entry delivered successfully",
+          : outcome === "receipt_committed_now"
+            ? "Dead-letter entry delivered and platform receipt committed"
+            : "Dead-letter entry delivered successfully",
       );
     }
   }

@@ -216,6 +216,26 @@ describe("setupDeliveryQueueLogging", () => {
       const [fields] = childLog.warn.mock.calls[0];
       expect(fields.reason).toBe("retries_exhausted");
     });
+
+    it("labels uncertain outcomes for manual receipt verification", () => {
+      eventBus.emit("delivery:failed", {
+        entryId: "entry-uncertain",
+        channelId: "chat-uncertain",
+        channelType: "telegram",
+        error: "platform send outcome is uncertain; manual verification required",
+        reason: "uncertain_outcome",
+        timestamp: Date.now(),
+      });
+
+      const [fields, msg] = childLog.warn.mock.calls[0];
+      expect(msg).toBe("Message delivery outcome is uncertain");
+      expect(fields).toMatchObject({
+        entryId: "entry-uncertain",
+        reason: "uncertain_outcome",
+        hint: "Verify the destination manually; this delivery is parked and will not be replayed automatically",
+        errorKind: "platform",
+      });
+    });
   });
 
   // -------------------------------------------------------------------------

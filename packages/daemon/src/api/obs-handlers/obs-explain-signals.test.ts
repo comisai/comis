@@ -341,6 +341,30 @@ function event(
 }
 
 describe("toIncidentSignals — request-relevant tool selection", () => {
+  it("retains the latest provider and model selection for actionable auth diagnosis", () => {
+    const signals = toIncidentSignals([
+      event("prompt.submitted", 1, {
+        provider: "openai-codex",
+        modelId: "gpt-5.6-sol",
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+      event("prompt.submitted", 2, {
+        provider: "anthropic",
+        modelId: "claude-sonnet-4-6",
+        responseLocaleSource: "unset",
+        responseLocaleEnforced: false,
+      }),
+    ]);
+
+    expect((signals as unknown as {
+      modelSelection?: { provider: string; modelId: string };
+    }).modelSelection).toEqual({
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    });
+  });
+
   it("retains the latest prompt tool selection needed to diagnose a no-call turn", () => {
     const signals = toIncidentSignals([
       event("prompt.submitted", 1, {

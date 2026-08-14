@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Assemble a content-free verdict for one emulator-backed Telegram conversation.
 //
-// Usage: node conversation-audit.mjs <chatId> [contract.json]
+// Usage: node conversation-audit.mjs <chatId> [contract.json] [--thread <threadId>]
 //
 // The live command resolves the actual nested session layout, reads its session and
 // trajectory JSONL, fetches the emulator wire, assembles obs.explain offline, then passes
@@ -27,6 +27,23 @@ export function readJsonlEvidence(file) {
     }
   }
   return records;
+}
+
+export function wireRecordsForThread(records, threadId) {
+  if (threadId === undefined) return records;
+  const numericThreadId = Number(threadId);
+  const rootedMessageIds = new Set(
+    records
+      .filter((record) => Number(record?.messageThreadId) === numericThreadId)
+      .map((record) => Number(record?.messageId))
+      .filter(Number.isFinite),
+  );
+  return records.filter((record) =>
+    Number(record?.messageThreadId) === numericThreadId
+    || (
+      record?.messageThreadId === undefined
+      && rootedMessageIds.has(Number(record?.messageId))
+    ));
 }
 
 // A keyless turn can die before any session transcript is written. Absence must reach the
@@ -63,19 +80,21 @@ function sessionIdFor(sessionFile) {
 export async function auditChatConversation({
   dataDir,
   chatId,
+  threadId,
   contract = {},
   loadWireRecords,
   loadIncidentReport,
 }) {
-  const artifacts = resolveChatSessionArtifacts(dataDir, String(chatId));
+  const artifacts = resolveChatSessionArtifacts(dataDir, String(chatId), threadId);
   if (artifacts === undefined) {
     throw new Error(`no current Telegram session artifacts were found for chat ${chatId}`);
   }
   const sessionId = sessionIdFor(artifacts.sessionFile);
-  const [wireRecords, incidentReport] = await Promise.all([
+  const [allWireRecords, incidentReport] = await Promise.all([
     loadWireRecords(),
     loadIncidentReport(sessionId),
   ]);
+  const wireRecords = wireRecordsForThread(allWireRecords, threadId);
   const report = auditConversationEvidence({
     trajectoryRecords: readJsonlEvidence(artifacts.trajectoryFile),
     sessionRecords: readOptionalSessionEvidence(artifacts.sessionFile),
@@ -151,14 +170,31 @@ const invokedPath = process.argv[1] === undefined
   : pathToFileURL(resolve(process.argv[1])).href;
 if (invokedPath === import.meta.url) {
   const chatId = process.argv[2];
-  const contractFile = process.argv[3];
-  if (chatId === undefined || process.argv.length > 4) {
-    process.stderr.write("usage: conversation-audit.mjs <chatId> [contract.json]\n");
+  const args = process.argv.slice(3);
+  const threadFlagIndex = args.indexOf("--thread");
+  const threadId = threadFlagIndex === -1 ? undefined : args[threadFlagIndex + 1];
+  const contractArgs = threadFlagIndex === -1
+    ? args
+    : args.filter((_, index) =>
+      index !== threadFlagIndex && index !== threadFlagIndex + 1);
+  const contractFile = contractArgs[0];
+  const numericThreadId = threadId === undefined ? undefined : Number(threadId);
+  if (
+    chatId === undefined
+    || contractArgs.length > 1
+    || (threadFlagIndex !== -1 && threadId === undefined)
+    || (
+      numericThreadId !== undefined
+      && (!Number.isSafeInteger(numericThreadId) || numericThreadId < 1)
+    )
+  ) {
+    process.stderr.write("usage: conversation-audit.mjs <chatId> [contract.json] [--thread <threadId>]\n");
     process.exitCode = 2;
   } else {
     auditChatConversation({
       dataDir: rig.dataDir,
       chatId,
+      ...(threadId === undefined ? {} : { threadId }),
       contract: loadContract(contractFile),
       loadWireRecords: () => emulatorWireRecords(chatId),
       loadIncidentReport: incidentReportFor,

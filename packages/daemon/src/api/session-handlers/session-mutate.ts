@@ -228,8 +228,9 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
           ?? rejectCallerContextMismatch("resolved principal");
         const resolvedCallerChannelId = callerChannelId
           ?? rejectCallerContextMismatch("resolved principal");
-        const resolvedUserId = resolvedContext.userId
-          ?? rejectCallerContextMismatch("resolved principal");
+        if (resolvedContext.userId === undefined) {
+          rejectCallerContextMismatch("resolved principal");
+        }
         const resolvedSessionKey = resolvedContext.sessionKey
           ?? rejectCallerContextMismatch("resolved principal");
         const resolvedAgentId = resolvedContext.agentId
@@ -240,11 +241,10 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         if (resolvedAgentId !== resolvedCallerAgentId) {
           rejectCallerContextMismatch("agent");
         }
-        const contextOrigin = resolvedContext.deliveryOrigin
-          ?? rejectCallerContextMismatch("resolved principal");
-
         const resolvedTurnScope = resolvedContext.turnScope
           ?? rejectCallerContextMismatch("session identity");
+        const contextOrigin = resolvedContext.deliveryOrigin
+          ?? rejectCallerContextMismatch("resolved principal");
         if (
           resolvedTurnScope.conversation.tenantId !== resolvedContext.tenantId
           || resolvedTurnScope.conversation.agentId !== resolvedAgentId
@@ -254,7 +254,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         if (contextOrigin.tenantId !== resolvedContext.tenantId) {
           rejectCallerContextMismatch("delivery origin tenant");
         }
-        if (contextOrigin.userId !== resolvedUserId) {
+        if (contextOrigin.userId !== resolvedTurnScope.principal.principalId) {
           rejectCallerContextMismatch("delivery origin user");
         }
         if (

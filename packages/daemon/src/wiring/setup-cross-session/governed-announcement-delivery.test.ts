@@ -177,6 +177,63 @@ describe("completion announcement delivery wiring", () => {
     );
   });
 
+  it("preserves an unknown platform outcome as an uncertain governed failure", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
+      chunks: [{
+        status: "unknown" as const,
+        error: new Error("500 Internal Server Error"),
+        errorKind: "platform" as const,
+        charCount: 10,
+        retried: false,
+      }],
+      totalChars: 10,
+      platform: {
+        status: "unknown" as const,
+        errorKind: "platform" as const,
+        deliveredChunks: 0,
+        failedChunks: 1,
+        ambiguousChunks: 1,
+        settledAtMs: 1,
+      },
+      queueDisposition: "settled" as const,
+    }));
+    const adapter = {
+      channelId: "telegram-primary",
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("unused")),
+    };
+    const caller = makeChannelPrincipalCaller();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ({ ok: true, value: "root-uncertain" }),
+    });
+
+    const result = await delivery.sendGovernedAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
+      runId: "run-uncertain",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "completion",
+      options: { threadId: "topic-7" },
+    });
+
+    expect(result).toEqual(ok({
+      delivered: false,
+      identity: { agentId: "agent-1", rootRunId: "root-uncertain", stepIndex: 0 },
+      failure: "transport_uncertain",
+    }));
+    expect(ledger.parkUncertain).toHaveBeenCalledWith("root-uncertain", 0);
+    expect(ledger.commit).not.toHaveBeenCalled();
+  });
+
   it("rejects a governed announcement route that differs from the captured endpoint", async () => {
     const ledger = makeLedger();
     const deliveryService = makeDeliveryService();
