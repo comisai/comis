@@ -422,10 +422,39 @@ describe("prompt skill request routing", () => {
       ]),
     });
 
-    expect(selected).toEqual(["claude-code"]);
+    expect(routingIntentText(delegationRequest)).toBe("Live reliability test.");
+    expect(selected).toEqual([]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
-    expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
-      .toContain("/skills/claude-code/SKILL.md");
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not route an unquoted sessions spawn task argument as parent coding intent", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live captionless attachment check.",
+      "First call discover_tools with query sessions_spawn.",
+      "Then call sessions_spawn exactly once with task set to: Use write to create b2-media-proof.txt containing exactly B2_MEDIA_20260815 followed by one newline.",
+      "After the write succeeds, return exactly NO_REPLY.",
+      "Set required_tools to [write], max_steps to 30, and expected_outputs to [b2-media-proof.txt].",
+      "Do not wait for the child.",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "The completed file must be delivered to this Telegram chat with no caption and no later terminal text.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:create|write)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
