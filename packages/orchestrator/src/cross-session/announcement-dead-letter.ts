@@ -601,11 +601,16 @@ export function createAnnouncementDeadLetterQueue(
       return "retained";
     }
     const outcome = boundary.value.value;
+    if (!outcome.delivered) {
+      entry.lastError = outcome.status === "unknown"
+        ? "outward_transport_uncertain"
+        : "outward_transport_rejected";
+      await parkGovernedEntry(ledger, entry, identity);
+      return "retained";
+    }
     const receipt = outcome.platformMessageId;
-    if (!outcome.delivered || receipt === undefined || receipt.length === 0) {
-      entry.lastError = outcome.delivered
-        ? "outward_platform_receipt_missing"
-        : "outward_transport_rejected_without_no_send_proof";
+    if (receipt === undefined || receipt.length === 0) {
+      entry.lastError = "outward_platform_receipt_missing";
       await parkGovernedEntry(ledger, entry, identity);
       return "retained";
     }

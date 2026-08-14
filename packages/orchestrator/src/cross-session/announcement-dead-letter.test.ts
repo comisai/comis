@@ -961,7 +961,11 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
       filePath,
       eventBus: createMockEventBus(),
       outwardLedger: ledger,
-      governedSendToChannel: vi.fn(async () => ok({ delivered: true, platformMessageId: "m-1" })),
+      governedSendToChannel: vi.fn(async () => ok({
+        delivered: true,
+        status: "accepted",
+        platformMessageId: "m-1",
+      })),
     });
     await queue.reserveDecision(decisionInput({ rootRunId: "root-parent-1" }));
     expect(queue.size()).toBe(1);
@@ -976,7 +980,7 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
   it("does not adjudicate a parent decision while its rewrite can still be running", async () => {
     const { ledger } = makeStubLedger();
     const governedSendToChannel = vi.fn(async () =>
-      ok({ delivered: true, platformMessageId: "m-1" }),
+      ok({ delivered: true, status: "accepted", platformMessageId: "m-1" }),
     );
     const queue = createAnnouncementDeadLetterQueue({
       filePath,
@@ -1264,6 +1268,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const { ledger, lookupCalls } = makeStubLedger({ lookupResult: ok(undefined) });
     const governedSendToChannel = vi.fn().mockResolvedValue(ok({
       delivered: true,
+      status: "accepted",
       platformMessageId: "telegram-receipt-9",
     }));
     const dlq = createAnnouncementDeadLetterQueue({
@@ -1509,6 +1514,7 @@ describe("AnnouncementDeadLetterQueue drain consults the outward ledger", () => 
     const { ledger } = makeStubLedger(failures);
     const governedSendToChannel = vi.fn().mockResolvedValue(ok({
       delivered: true,
+      status: "accepted",
       platformMessageId: "unused-receipt",
     }));
     const dlq = createAnnouncementDeadLetterQueue({
