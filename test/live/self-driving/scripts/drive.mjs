@@ -17,7 +17,8 @@
 //     `{"mention":true,"replyTo":42,"thread":7,"forwarded":true}`. The control route validates the closed shape.
 //   - Use `-` or `@/absolute/file` for credential-bearing prompts so values never enter argv/process listings.
 //   - A `pipeline`/`graph.execute` turn ends at the launch acknowledgement while the graph continues.
-//     Set `WAIT_FOR_FOLLOWUP_MS` to keep a direct-message drive open for a second substantive delivery;
+//     Set `WAIT_FOR_FOLLOWUP_MS` to keep a direct-message drive open for later substantive delivery;
+//     set `WAIT_FOR_FOLLOWUP_COUNT` when fan-out should produce more than one later delivery.
 //     always confirm the terminal graph with `graph.status` or `comis explain <graphId> --graph`.
 import { readFileSync, readdirSync, statSync, openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -89,6 +90,7 @@ const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
 const followupWaitMs = Number(process.env.WAIT_FOR_FOLLOWUP_MS ?? 0);
+const expectedFollowupCount = Number(process.env.WAIT_FOR_FOLLOWUP_COUNT ?? 1);
 // Guard the #1 mis-invocation: passing DATA in the maxMs slot
 // (arg order is chatId,text,quiesceMs,maxMs,DATA) makes maxMs=NaN → `while (… < NaN)` is false →
 // the loop NEVER runs → an instant, SILENT false "0s [TIMEOUT] — NO SUBSTANTIVE ANSWER" on a reply
@@ -98,9 +100,12 @@ if (
   || Number.isNaN(maxMs)
   || !Number.isFinite(followupWaitMs)
   || followupWaitMs < 0
+  || !Number.isInteger(expectedFollowupCount)
+  || expectedFollowupCount < 1
 ) {
   console.error(`drive.mjs: non-numeric quiesceMs/maxMs (quiesceMs="${quiesceMsArg}", maxMs="${maxMsArg}"). ` +
-    `WAIT_FOR_FOLLOWUP_MS must also be a non-negative number. ` +
+    `WAIT_FOR_FOLLOWUP_MS must also be a non-negative number and ` +
+    `WAIT_FOR_FOLLOWUP_COUNT must be a positive integer. ` +
     `Usage: drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]`);
   process.exit(2);
 }
@@ -480,6 +485,7 @@ const logicalAnswerCount = () => logicalSubstantiveAnswerCount(seen);
 
 const asyncFollowupFinished = (nowMs) => followupWaitMs === 0 || followupWaitFinished({
   followupAnswerCount: Math.max(0, logicalAnswerCount() - 1),
+  expectedFollowupCount,
   firstAnswerAtMs,
   nowMs,
   waitMs: followupWaitMs,

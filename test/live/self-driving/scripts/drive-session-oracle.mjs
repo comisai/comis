@@ -485,11 +485,12 @@ export function logicalSubstantiveAnswerCount(outbound) {
  */
 export function followupWaitFinished({
   followupAnswerCount,
+  expectedFollowupCount = 1,
   firstAnswerAtMs,
   nowMs,
   waitMs,
 }) {
-  if (followupAnswerCount >= 1) return true;
+  if (followupAnswerCount >= expectedFollowupCount) return true;
   if (typeof firstAnswerAtMs !== "number") return false;
   return nowMs - firstAnswerAtMs >= waitMs;
 }
