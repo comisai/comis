@@ -29,6 +29,10 @@ export interface ValidationResult {
 export type AnnouncementTerminalOutcome =
   | { status: "completed" }
   | {
+      status: "completed_with_warnings";
+      warningNotice: string;
+    }
+  | {
       status: "failed";
       failureNotice: string;
       /**
@@ -57,10 +61,14 @@ export function enforceAnnouncementTerminalOutcome(
   outcome: AnnouncementTerminalOutcome,
 ): AnnouncementDisclosureResult {
   if (outcome.status === "completed") return { text: candidate, corrected: false };
-  const notice = outcome.failureNotice.trim();
+  const notice = outcome.status === "failed"
+    ? outcome.failureNotice.trim()
+    : outcome.warningNotice.trim();
   let text = candidate?.trim() ?? "";
   let corrected = false;
-  const requiredConfigKey = outcome.requiredConfigKey?.trim();
+  const requiredConfigKey = outcome.status === "failed"
+    ? outcome.requiredConfigKey?.trim()
+    : undefined;
   if (requiredConfigKey && !text.includes(requiredConfigKey)) {
     text = text ? `${text}\n\n${requiredConfigKey}` : requiredConfigKey;
     corrected = true;
@@ -95,10 +103,13 @@ export function buildAnnouncementRewriteInput(
   outcome: AnnouncementTerminalOutcome,
 ): string {
   if (outcome.status === "completed") return announcementText;
-  const requiredRecovery = outcome.requiredConfigKey
+  const requiredRecovery = outcome.status === "failed" && outcome.requiredConfigKey
     ? `\nPreserve the exact configuration key ${outcome.requiredConfigKey}. In the requested language, state that provider capacity or configuration must change before retrying and that splitting or narrowing the request cannot restore provider access.`
     : "";
-  return `${announcementText}${requiredRecovery}\n\nThe final user-facing response must include this exact failure notice verbatim:\n${outcome.failureNotice}`;
+  const notice = outcome.status === "failed"
+    ? outcome.failureNotice
+    : outcome.warningNotice;
+  return `${announcementText}${requiredRecovery}\n\nThe final user-facing response must include this exact terminal notice verbatim:\n${notice}`;
 }
 
 export function buildAnnouncementMessage(params: {

@@ -67,6 +67,7 @@ import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipelin
 import {
   buildBackgroundTaskFailedNotice,
   buildLoopDetectedReply,
+  buildToolFailureNoticeUnnamed,
 } from "../executor/degraded-reply.js";
 import { randomUUID } from "node:crypto";
 import type {
@@ -3768,9 +3769,8 @@ function classifyCompletionErrorKind(
                     },
                   }
                 : {}),
-              terminalOutcome: isSuccess
-                ? { status: "completed" }
-                : {
+              terminalOutcome: !isSuccess
+                ? {
                     status: "failed",
                     failureNotice: deps.renderAnnouncementFailureNotice?.(
                       params.callerAgentId ?? params.agentId,
@@ -3785,7 +3785,15 @@ function classifyCompletionErrorKind(
                       && result.errorContext.configKey !== undefined
                       ? { requiredConfigKey: result.errorContext.configKey }
                       : {}),
-                  },
+                  }
+                : result.finishReason === "completed_with_tool_errors"
+                  ? {
+                      status: "completed_with_warnings",
+                      warningNotice: buildToolFailureNoticeUnnamed(
+                        params.resolvedLanguage,
+                      ).trim(),
+                    }
+                  : { status: "completed" },
               runId,
               ...(validationResults?.some((output) => output.exists)
                 ? {

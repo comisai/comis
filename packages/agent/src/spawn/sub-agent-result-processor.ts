@@ -585,9 +585,9 @@ export async function deliverAnnouncement(params: {
     deps.logger?.warn({
       runId,
       step: "completion-honesty",
-      hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative failed terminal state",
+      hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative terminal disclosure",
       errorKind: "validation" as const,
-    }, "Failed background-task status omitted by parent rewrite");
+    }, "Background-task terminal disclosure omitted by parent rewrite");
   }
 
   const threadId = params.announceThreadId;

@@ -634,6 +634,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           terminalOutcome: Extract<AnnouncementTerminalOutcome, { status: "failed" }>;
         } => item.terminalOutcome.status === "failed",
       )?.terminalOutcome;
+      const warningOutcome = items.find(
+        (item): item is QueuedAnnouncement & {
+          terminalOutcome: Extract<AnnouncementTerminalOutcome, { status: "completed_with_warnings" }>;
+        } => item.terminalOutcome.status === "completed_with_warnings",
+      )?.terminalOutcome;
+      const disclosureOutcome = failedOutcome ?? warningOutcome;
       const parentInput = items.length === 1
         ? buildAnnouncementRewriteInput(first.announcementText, first.terminalOutcome)
         : (() => {
@@ -642,8 +648,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               return `### Task ${idx + 1}\n${stripped}`;
             }).join("\n\n");
             const base = `[System Message]\n${items.length} background tasks have completed.\n\n---\n\n${taskSections}\n\n---\n\nReview these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
-            return failedOutcome
-              ? buildAnnouncementRewriteInput(base, failedOutcome)
+            return disclosureOutcome
+              ? buildAnnouncementRewriteInput(base, disclosureOutcome)
               : base;
           })();
       const citationEvidenceItems = items.filter(
@@ -682,7 +688,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           systemScheduleTimeout,
           "announceToParent",
         );
-        if (candidate === undefined && failedOutcome === undefined) {
+        if (candidate === undefined && disclosureOutcome === undefined) {
           if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
             await sendFinal(key, items, "");
             return;
@@ -723,8 +729,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             "Internal completion envelope blocked at channel egress",
           );
         }
-        const disclosure = failedOutcome
-          ? enforceAnnouncementTerminalOutcome(egressCandidate, failedOutcome)
+        const disclosure = disclosureOutcome
+          ? enforceAnnouncementTerminalOutcome(egressCandidate, disclosureOutcome)
           : { text: egressCandidate, corrected: false };
         if (disclosure.corrected) {
           deps.logger?.warn(
@@ -734,9 +740,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               runId: first.runId,
               step: "completion-honesty",
               errorKind: "validation" as const,
-              hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative failed terminal state",
+              hint: "Inspect the parent announcement rewrite; the runtime appended the authoritative terminal disclosure",
             },
-            "Failed background-task status omitted by parent rewrite",
+            "Background-task terminal disclosure omitted by parent rewrite",
           );
         }
         await sendFinal(key, items, disclosure.text ?? "");
