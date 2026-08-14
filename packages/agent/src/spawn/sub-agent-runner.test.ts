@@ -1354,6 +1354,55 @@ describe("createSubAgentRunner", () => {
     fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
+  it("marks a silent child completion so its generated file has no rewritten caption", async () => {
+    vi.useRealTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), "silent-completion-output-test-"));
+    const outputPath = join(outputDir, "silent.txt");
+    await writeFile(outputPath, "verified content", "utf8");
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "NO_REPLY",
+      tokensUsed: { total: 20 },
+      cost: { total: 0.002 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const callerConversation = createTestConversation({
+      agentId: "parent-agent",
+      channelType: "telegram",
+    });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "create a file without a completion caption",
+      agentId: "report-agent",
+      expected_outputs: [outputPath],
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      suppressText: true,
+      attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
+    }));
+    await runner.shutdown();
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  });
+
   it("relays successful child web-fetch digests without relaying fetched URLs", async () => {
     let resolveExecution!: (value: {
       response: string;

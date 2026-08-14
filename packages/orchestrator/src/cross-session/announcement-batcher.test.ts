@@ -689,6 +689,43 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("does not ask the parent to rewrite a silent child completion into an attachment caption", async () => {
+    const announceToParent = vi.fn().mockResolvedValue(
+      "The attachment was created successfully and delivered.",
+    );
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 4 },
+    }));
+    const batcher = createAnnouncementBatcher(makeDeps({
+      announceToParent,
+      sendGovernedAnnouncement,
+      deadLetterQueue: makeDecisionQueue(),
+    }));
+    const silentAttachment = {
+      ...makeAnnouncement({
+        idempotencyKey: "silent-file",
+        announcementText:
+          "[System Message]\nA background task has completed.\n\nResult: NO_REPLY",
+        attachments: [{ sourceAgentId: "report-agent", path: "/workspace-report/reports/silent.txt" }],
+      }),
+      suppressText: true,
+    } as QueuedAnnouncement;
+
+    await batcher.enqueue(silentAttachment);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      text: "",
+      partId: "attachment:0",
+      attachment: {
+        sourceAgentId: "report-agent",
+        path: "/workspace-report/reports/silent.txt",
+      },
+    }));
+  });
+
   it("replaces an attached file absolute path with its filename before delivery", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
