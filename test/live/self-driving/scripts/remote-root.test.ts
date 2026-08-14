@@ -928,6 +928,20 @@ describe("local rig mode", () => {
     expect(loaded).toBeGreaterThan(assigned);
   });
 
+  it("uses exact tmux targets so daemon and emulator name prefixes cannot collide", () => {
+    const shellRig = readFileSync(RIG_HELPER, "utf8");
+    const restartDaemon = readFileSync(RESTART_DAEMON, "utf8");
+    const restartEmulator = readFileSync(RESTART_EMULATOR, "utf8");
+
+    expect(shellRig).toContain('tmux has-session -t "=${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}"');
+    expect(shellRig).toContain('tmux show-environment -t "=${LOCAL_TMUX_SESSION:-comis-${SERVICE:-comis}}"');
+    expect(shellRig).toContain('tmux list-panes -t "=$_tmux_session"');
+    expect(restartDaemon).toContain('tmux kill-session -t "=$tmux_session"');
+    expect(restartEmulator).toContain('tmux has-session -t "=$EMU_TMUX_SESSION"');
+    expect(restartEmulator).toContain('tmux show-environment -t "=$EMU_TMUX_SESSION"');
+    expect(restartEmulator).toContain('tmux kill-session -t "=$EMU_TMUX_SESSION"');
+  });
+
   it("probes bubblewrap on a local Linux phase-zero gate", () => {
     if (process.platform !== "linux") return;
     const directory = makeCanonicalTempDirectory("comis-phase-zero-linux-");
