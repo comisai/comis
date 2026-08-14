@@ -202,12 +202,18 @@ function buildBootGateOverrides(storageMode: "encrypted" | "file" | "env") {
     path: "/tmp/test/.env",
     keyHex: undefined,
   });
+  const writeCanarySecretSpy = vi.fn().mockReturnValue({
+    written: false,
+    path: "/tmp/test/.env",
+    secretHex: undefined,
+  });
 
   const overrides: DaemonOverrides = {
     // Inject the storage mode directly — no real YAML reads
     preReadStorageMode: vi.fn().mockReturnValue(storageMode),
     // Spy: asserts call count === 0 (file/env) or 1 (encrypted)
     writeMasterKeyIfAbsent: writeMasterKeySpy,
+    writeCanarySecretIfAbsent: writeCanarySecretSpy,
     bootstrap: vi.fn().mockReturnValue({ ok: true, value: container }),
     setupSecrets: vi.fn().mockReturnValue({ ok: true, value: null }),
     createTracingLogger: vi.fn().mockReturnValue(createMockLogger()),
@@ -228,7 +234,7 @@ function buildBootGateOverrides(storageMode: "encrypted" | "file" | "env") {
     exit: vi.fn(),
   };
 
-  return { overrides, writeMasterKeySpy };
+  return { overrides, writeMasterKeySpy, writeCanarySecretSpy };
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +252,7 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate", () => {
     process.env["COMIS_DATA_DIR"] = tmpDir;
     process.env["COMIS_CONFIG_PATHS"] = pathResolve(tmpDir, "config.yaml");
     delete process.env["SECRETS_MASTER_KEY"];
+    delete process.env["CANARY_SECRET"];
   });
 
   afterEach(async () => {
@@ -317,6 +324,22 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate", () => {
     expect(writeMasterKeySpy).toHaveBeenCalledTimes(1);
     // And called with the dataDir
     expect(writeMasterKeySpy.mock.calls[0]![0]).toBe(tmpDir);
+  });
+
+  it("externally supplied bootstrap secrets are not duplicated into the data directory", async () => {
+    process.env["SECRETS_MASTER_KEY"] = "a".repeat(64);
+    process.env["CANARY_SECRET"] = "b".repeat(64);
+    const { overrides, writeMasterKeySpy, writeCanarySecretSpy } = buildBootGateOverrides("encrypted");
+
+    try {
+      const instance = await main(overrides);
+      instances.push(instance);
+    } catch {
+      // The bootstrap writer assertions remain valid if a later mocked boundary fails.
+    }
+
+    expect(writeMasterKeySpy).not.toHaveBeenCalled();
+    expect(writeCanarySecretSpy).not.toHaveBeenCalled();
   });
 });
 
