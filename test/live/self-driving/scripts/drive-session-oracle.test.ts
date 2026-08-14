@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  directConversationFinished,
   findTelegramConversationWireAnswer,
   followupWaitFinished,
   isDriveProgressText,
@@ -105,6 +106,36 @@ describe("drive trajectory completion", () => {
     expect(trajectoryTurnEnded([
       JSON.stringify({ type: "prompt.submitted", data: {} }),
     ])).toBe(false);
+  });
+
+  it("drains a bounded quiet window after the final child terminal even when an earlier answer exists", () => {
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 10_001,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 9_000,
+    })).toBe(false);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 9_000,
+    })).toBe(true);
+    expect(directConversationFinished({
+      sawAnswer: true,
+      turnEnded: true,
+      turnEndedAtMs: 10_000,
+      nowMs: 18_000,
+      deliveryGraceMs: 120_000,
+      answerQuiesceMs: 8_000,
+      lastOutboundAtMs: 17_000,
+    })).toBe(false);
   });
 });
 
