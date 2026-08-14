@@ -1,9 +1,13 @@
 import { appendFileSync, readFileSync } from "node:fs";
 
-const [chatArg, userArg, textPath, evidencePath, timeoutArg] = process.argv.slice(2);
+const [chatArg, userArg, textPath, evidencePath, timeoutArg, expectedPatternArg] =
+  process.argv.slice(2);
 const chat = Number(chatArg);
 const user = Number(userArg);
 const timeoutMs = Number(timeoutArg ?? 180000);
+const expectedPattern = expectedPatternArg === undefined
+  ? undefined
+  : new RegExp(expectedPatternArg, "u");
 const { apiRoot } = JSON.parse(readFileSync(
   "/home/comisdevcrew/e0-full-live-20260814-b/emulator.json",
   "utf8",
@@ -42,7 +46,8 @@ while (Date.now() < deadline) {
     cursor = Math.max(cursor, Number(row.messageId ?? 0));
     const text = typeof row.text === "string" ? row.text : "";
     const activity = text.includes("(running ") || text.startsWith("🔧 ");
-    if (row.method === "sendMessage" && text.length > 0 && !activity) {
+    const expectedReply = expectedPattern?.test(text) ?? text.length > 80;
+    if (row.method === "sendMessage" && expectedReply && !activity) {
       console.log(JSON.stringify({
         messageId: row.messageId,
         textBytes: Buffer.byteLength(text),
