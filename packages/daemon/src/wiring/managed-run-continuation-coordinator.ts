@@ -174,6 +174,37 @@ export function createManagedRunContinuationCoordinator(
       if (claimed.value.kind !== "claimed" && claimed.value.kind !== "identical_replay") {
         return err(new Error(`Managed-run continuation claim failed: ${claimed.value.kind}`));
       }
+      if (claimed.value.kind === "identical_replay" && claimed.value.reducedRecord !== undefined) {
+        const settled = await invoke(() => deps.store.markContinuationOutcome(scope, {
+          managedRunId,
+          claimId: continuationClaimId,
+          outcome: "completed",
+          recordedAtMs: deps.nowMs(),
+        }));
+        if (!settled.ok) return settled;
+        if (settled.value.kind !== "updated" && settled.value.kind !== "identical_replay") {
+          return err(new Error(`Managed-run continuation settlement failed: ${settled.value.kind}`));
+        }
+        const pendingAfterCurrent = settled.value.record.pendingContinuation;
+        log.info({
+          managedRunId,
+          serviceInstanceId: record.serviceInstanceId,
+          throughReportSequence,
+          status: claimed.value.reducedRecord.status,
+          pendingAfterCurrent,
+          durationMs: Math.max(0, deps.nowMs() - startedAtMs),
+        }, "Managed-run continuation completed");
+        emitObservationalEventSafely({ eventBus: deps.eventBus, logger: log }, "managed_run:continuation_completed", {
+          managedRunId,
+          serviceInstanceId: record.serviceInstanceId,
+          throughReportSequence,
+          status: claimed.value.reducedRecord.status,
+          pendingAfterCurrent,
+          durationMs: Math.max(0, deps.nowMs() - startedAtMs),
+          timestamp: deps.nowMs(),
+        });
+        return ok({ kind: "processed", throughReportSequence, pendingAfterCurrent });
+      }
 
       const range = await invoke(() => deps.store.listReportRange(scope, {
         managedRunId,

@@ -38,7 +38,7 @@ export interface ManagedRunReleaseCoordinator {
 }
 
 export interface ManagedRunReleaseCoordinatorDeps {
-  readonly store: Pick<ManagedRunStorePort, "get">;
+  readonly store: Pick<ManagedRunStorePort, "reserveRelease">;
   readonly workspaceLeases: Pick<WorkspaceLeasePort, "release">;
   readonly revokeBoundResources: (
     record: ManagedRunRecord,
@@ -59,18 +59,24 @@ export function createManagedRunReleaseCoordinator(
 ): ManagedRunReleaseCoordinator {
   return {
     async release(input) {
-      const found = await invoke(() => deps.store.get(
+      const reserved = await invoke(() => deps.store.reserveRelease(
         { kind: "service", serviceInstanceId: input.serviceInstanceId },
-        input.managedRunId,
+        {
+          operationId: input.operationId,
+          managedRunId: input.managedRunId,
+          workspaceLeaseId: input.workspaceLeaseId,
+          disposition: input.disposition,
+          releasedAtMs: input.releasedAtMs,
+        },
       ));
-      if (!found.ok) return found;
-      const record = found.value;
-      if (
-        record === undefined
-        || record.serviceInstanceId !== input.serviceInstanceId
-        || record.managedRunId !== input.managedRunId
-        || record.workspaceLeaseId !== input.workspaceLeaseId
-      ) return ok({ kind: "rejected", reasonCode: "authority_mismatch" });
+      if (!reserved.ok) return reserved;
+      if (reserved.value.kind === "replay_conflict") {
+        return ok({ kind: "rejected", reasonCode: "release_conflict" });
+      }
+      if (reserved.value.kind !== "reserved" && reserved.value.kind !== "identical_replay") {
+        return ok({ kind: "rejected", reasonCode: "authority_mismatch" });
+      }
+      const record = reserved.value.record;
 
       const revoked = await fromPromise(
         deps.revokeBoundResources(record, input.operationId),

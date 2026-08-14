@@ -21,7 +21,7 @@ import { join } from "node:path";
 
 import type { EgressControlPort } from "@comis/core";
 
-import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitCommonMount, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
+import { AttachmentSandboxUnavailableError, buildSpawnPlan, JailUnavailableError, planSpawnFromCreateFrame, resolveManagedWorkspaceGitMounts, type CreateFrameSpawnParams, type SpawnPlanInput } from "./terminal-spawn-plan.js";
 import { RELAY_INIT_SCRIPT_URL } from "./terminal-egress-relay.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 
@@ -108,7 +108,7 @@ describe("buildSpawnPlan — verified executable visibility", () => {
 });
 
 describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", () => {
-  it("binds the real shared Git administration directory only for an authority-backed workspace", async () => {
+  it("keeps shared Git administration read-only and only the leased worktree administration writable", async () => {
     const root = mkdtempSync(join(tmpdir(), "managed-linked-worktree-"));
     try {
       const commonDir = join(root, "repository", ".git");
@@ -119,9 +119,13 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       writeFileSync(join(workspace, ".git"), `gitdir: ${gitDir}\n`, "utf8");
       writeFileSync(join(gitDir, "commondir"), "../..\n", "utf8");
       const sourceCommonDir = realpathSync(commonDir);
-      expect(resolveManagedWorkspaceGitCommonMount(workspace)).toEqual({
+      const sourceGitDir = realpathSync(gitDir);
+      expect(resolveManagedWorkspaceGitMounts(workspace)).toEqual({
         ok: true,
-        value: { sourcePath: sourceCommonDir, targetPath: commonDir },
+        value: {
+          common: { sourcePath: sourceCommonDir, targetPath: commonDir },
+          worktree: { sourcePath: sourceGitDir, targetPath: gitDir },
+        },
       });
 
       const params = {
@@ -134,13 +138,16 @@ describe("planSpawnFromCreateFrame — managed linked-worktree Git visibility", 
       } as CreateFrameSpawnParams & { managedWorkspace: true };
       const plan = await planSpawnFromCreateFrame(params, {}, { bwrapPath: "/usr/bin/bwrap" });
 
-      expect(hasBind(plan.argv, "--bind", sourceCommonDir, commonDir)).toBe(true);
+      expect(hasBind(plan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", sourceGitDir, gitDir)).toBe(true);
+      expect(hasBind(plan.argv, "--bind", sourceCommonDir, commonDir)).toBe(false);
       const ordinaryPlan = await planSpawnFromCreateFrame(
         { ...params, managedWorkspace: false },
         {},
         { bwrapPath: "/usr/bin/bwrap" },
       );
-      expect(hasBind(ordinaryPlan.argv, "--bind", sourceCommonDir, commonDir)).toBe(false);
+      expect(hasBind(ordinaryPlan.argv, "--ro-bind", sourceCommonDir, commonDir)).toBe(false);
+      expect(hasBind(ordinaryPlan.argv, "--bind", sourceGitDir, gitDir)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

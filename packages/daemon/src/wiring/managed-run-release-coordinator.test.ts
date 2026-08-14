@@ -25,9 +25,13 @@ function makeCoordinator(overrides: {
   readonly record?: ManagedRunRecord;
   readonly revoke?: ReturnType<typeof vi.fn>;
   readonly release?: ReturnType<typeof vi.fn>;
+  readonly reserveRelease?: ReturnType<typeof vi.fn>;
 } = {}) {
   const durable = overrides.record ?? record();
-  const get = vi.fn(async () => ok(durable));
+  const reserveRelease = overrides.reserveRelease ?? vi.fn(async () => ok({
+    kind: "reserved" as const,
+    record: durable,
+  }));
   const revoke = overrides.revoke ?? vi.fn(async () => true);
   const release = overrides.release ?? vi.fn(async () => ok({
     kind: "released" as const,
@@ -41,11 +45,11 @@ function makeCoordinator(overrides: {
   }));
   return {
     coordinator: createManagedRunReleaseCoordinator({
-      store: { get } as unknown as ManagedRunStorePort,
+      store: { reserveRelease } as unknown as ManagedRunStorePort,
       workspaceLeases: { release } as unknown as WorkspaceLeasePort,
       revokeBoundResources: revoke,
     }),
-    get,
+    reserveRelease,
     revoke,
     release,
   };
@@ -75,11 +79,20 @@ describe("managed run release coordinator", () => {
         releasedAtMs: RELEASED_AT_MS,
       },
     });
-    expect(harness.get).toHaveBeenCalledWith(
+    expect(harness.reserveRelease).toHaveBeenCalledWith(
       { kind: "service", serviceInstanceId: "service-instance_a" },
-      "managed-run_a",
+      {
+        operationId: "operation_release",
+        managedRunId: "managed-run_a",
+        workspaceLeaseId: "workspace-lease_a",
+        disposition: "reap_safe",
+        releasedAtMs: RELEASED_AT_MS,
+      },
     );
     expect(harness.revoke).toHaveBeenCalledWith(record(), "operation_release");
+    expect(harness.reserveRelease.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.revoke.mock.invocationCallOrder[0] ?? 0,
+    );
     expect(harness.revoke.mock.invocationCallOrder[0]).toBeLessThan(
       harness.release.mock.invocationCallOrder[0] ?? 0,
     );
@@ -97,7 +110,9 @@ describe("managed run release coordinator", () => {
   });
 
   it("rejects mismatched authority and incomplete resource revocation", async () => {
-    const mismatch = makeCoordinator({ record: record({ workspaceLeaseId: "workspace-lease_b" }) });
+    const mismatch = makeCoordinator({
+      reserveRelease: vi.fn(async () => ok({ kind: "authority_mismatch" as const })),
+    });
     await expect(mismatch.coordinator.release(input)).resolves.toEqual({
       ok: true,
       value: { kind: "rejected", reasonCode: "authority_mismatch" },

@@ -102,10 +102,12 @@ describe("createContinuationExecutionEngine", () => {
       { name: "managed_status" },
     ];
     const assembleToolsForAgent = vi.fn(async () => currentTools);
+    let currentCapabilityViewHash = "b".repeat(64);
     const engine = createContinuationExecutionEngine({
       eventBus: new TypedEventBus(),
       getExecutor: () => ({ execute }) as unknown as AgentExecutor,
       assembleToolsForAgent: assembleToolsForAgent as never,
+      resolveCurrentCapabilityViewHash: () => currentCapabilityViewHash,
       logger: makeLogger(),
     });
     const beforeExecute = vi.fn();
@@ -127,7 +129,7 @@ describe("createContinuationExecutionEngine", () => {
       combinedHash: "a".repeat(64),
     };
 
-    const outcome = await engine.execute({
+    const input = {
       continuationId: "continuation-a",
       source: "managed_run",
       sourceId: "managed-run-a",
@@ -150,7 +152,8 @@ describe("createContinuationExecutionEngine", () => {
         onJournalFinalizedResult,
         onFinalizedResult,
       },
-    });
+    } as const;
+    const outcome = await engine.execute(input);
 
     expect(outcome).toEqual(ok({
       result: finalized,
@@ -175,6 +178,20 @@ describe("createContinuationExecutionEngine", () => {
     expect(beforeExecute).toHaveBeenCalledOnce();
     expect(onJournalFinalizedResult).toHaveBeenCalledWith(finalized);
     expect(onFinalizedResult).toHaveBeenCalledWith(finalized, "ready");
+    currentCapabilityViewHash = "c".repeat(64);
+    const rejected = await engine.execute({
+      ...input,
+      continuationId: "continuation-b",
+      message: { ...message, id: "continuation-b" },
+    });
+    expect(rejected).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: "Continuation capability view does not match its recorded authority",
+      }),
+    });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(beforeExecute).toHaveBeenCalledOnce();
     await engine.shutdown();
   });
 });

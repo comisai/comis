@@ -144,8 +144,8 @@ export interface SpawnPlanInput {
   argv: string[];
   /** The session workspace root (always --bind RW). */
   workspace: string;
-  /** Host-resolved shared Git administration for a managed linked worktree. */
-  workspaceGitCommonMount?: ManagedWorkspaceGitMount;
+  /** Host-resolved Git administration mounts for a managed linked worktree. */
+  workspaceGitMounts?: ManagedWorkspaceGitMounts;
   /** The --chdir target. */
   cwd: string;
   /** `os.homedir()` (injected for testability — the home/credential roots). */
@@ -232,9 +232,15 @@ export class ManagedWorkspaceGitUnavailableError extends Error {
 }
 
 /** Canonical host source and the exact path recorded in the worktree marker. */
-export interface ManagedWorkspaceGitMount {
-  readonly sourcePath: string;
-  readonly targetPath: string;
+export interface ManagedWorkspaceGitMounts {
+  readonly common: {
+    readonly sourcePath: string;
+    readonly targetPath: string;
+  };
+  readonly worktree: {
+    readonly sourcePath: string;
+    readonly targetPath: string;
+  };
 }
 
 /**
@@ -303,9 +309,9 @@ function isCwdWithinBase(cwd: string, base: string): boolean {
  * directory is a strict child of both the canonical and marker-addressed common
  * directory's `worktrees` subtree; malformed or escaped markers fail closed.
  */
-export function resolveManagedWorkspaceGitCommonMount(
+export function resolveManagedWorkspaceGitMounts(
   workspace: string,
-): Result<ManagedWorkspaceGitMount | undefined, Error> {
+): Result<ManagedWorkspaceGitMounts | undefined, Error> {
   const resolved = tryCatch(() => {
     const marker = safePath(workspace, ".git");
     if (!existsSync(marker)) return undefined;
@@ -345,7 +351,10 @@ export function resolveManagedWorkspaceGitCommonMount(
     }
     return isCwdWithinBase(commonTarget, workspace)
       ? undefined
-      : { sourcePath: commonDir, targetPath: commonTarget };
+      : {
+        common: { sourcePath: commonDir, targetPath: commonTarget },
+        worktree: { sourcePath: gitDir, targetPath: gitDirCandidate },
+      };
   });
   return resolved.ok ? ok(resolved.value) : err(resolved.error);
 }
@@ -457,7 +466,7 @@ export async function buildSpawnPlan(
     scope,
     bwrapPath: composers.bwrapPath,
     workspace: input.workspace,
-    workspaceGitCommonMount: input.workspaceGitCommonMount,
+    workspaceGitMounts: input.workspaceGitMounts,
     cwd: input.cwd,
     executablePath: input.bin,
     home: input.home,
@@ -555,8 +564,8 @@ export async function planSpawnFromCreateFrame(
   const scope = params.scope ?? LEAST_PRIVILEGE_SCOPE;
   const workspace = params.workspace ?? home;
   const gitCommon = params.managedWorkspace === true
-    ? resolveManagedWorkspaceGitCommonMount(workspace)
-    : ok<ManagedWorkspaceGitMount | undefined>(undefined);
+    ? resolveManagedWorkspaceGitMounts(workspace)
+    : ok<ManagedWorkspaceGitMounts | undefined>(undefined);
   if (!gitCommon.ok) throw new ManagedWorkspaceGitUnavailableError();
   return buildSpawnPlan(
     {
@@ -564,7 +573,7 @@ export async function planSpawnFromCreateFrame(
       bin: params.bin,
       argv: params.argv,
       workspace,
-      workspaceGitCommonMount: gitCommon.value,
+      workspaceGitMounts: gitCommon.value,
       cwd: params.cwd ?? workspace,
       home,
       dataDir: safePath(home, ".comis"),

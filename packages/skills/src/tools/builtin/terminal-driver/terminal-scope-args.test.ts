@@ -152,6 +152,26 @@ describe("buildScopeArgs — filesystem dimension", () => {
       "--chmod", "0700", "/run/comis/attachments",
     ]));
   });
+
+  it("overlays only leased worktree Git administration as writable after broad filesystem mounts", () => {
+    const args = buildScopeArgs(makeInput({
+      scope: makeScope({ filesystem: "full" }),
+      workspaceGitMounts: {
+        common: { sourcePath: "/repo/.git", targetPath: "/repo/.git" },
+        worktree: {
+          sourcePath: "/repo/.git/worktrees/task-a",
+          targetPath: "/repo/.git/worktrees/task-a",
+        },
+      },
+    }));
+
+    expect(hasBind(args, "--ro-bind", "/repo/.git", "/repo/.git")).toBe(true);
+    expect(hasBind(args, "--bind", "/repo/.git/worktrees/task-a", "/repo/.git/worktrees/task-a")).toBe(true);
+    expect(hasBind(args, "--bind", "/repo/.git", "/repo/.git")).toBe(false);
+    expect(indexOfPair(args, "--ro-bind", "/repo/.git")).toBeGreaterThan(
+      indexOfPair(args, "--bind", "/"),
+    );
+  });
 });
 
 describe("buildScopeArgs — network dimension (the transport seam)", () => {

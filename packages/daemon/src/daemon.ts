@@ -2215,6 +2215,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus,
     getExecutor: handle.getExecutor,
     assembleToolsForAgent,
+    resolveCurrentCapabilityViewHash: () => capabilityServices.runtime.getActiveView().viewHash,
     ...(activityCoordinatorFactory === undefined ? {} : { activityCoordinatorFactory }),
     logger: daemonLogger,
   });

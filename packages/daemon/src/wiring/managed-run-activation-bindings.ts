@@ -6,6 +6,7 @@ import {
   type ManagedRunRecord,
   type ManagedRunStorePort,
   type WorkspaceLeasePort,
+  type WorkspaceLeaseRecord,
   type WorkspaceLeaseScope,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -80,6 +81,30 @@ function workspaceScope(record: ManagedRunRecord): WorkspaceLeaseScope {
     serviceInstanceId: record.serviceInstanceId,
     managedRunId: record.managedRunId,
   };
+}
+
+function matchesWorkspaceLeaseAuthority(
+  record: WorkspaceLeaseRecord,
+  expected: {
+    readonly workspaceLeaseId: string;
+    readonly managedRunId: string;
+    readonly serviceInstanceId: string;
+    readonly tenantId: string;
+    readonly agentId: string;
+    readonly canonicalPath: string;
+    readonly filesystemIdentity: ValidatedWorkspaceLeasePath["filesystemIdentity"];
+  },
+): boolean {
+  return record.workspaceLeaseId === expected.workspaceLeaseId
+    && record.managedRunId === expected.managedRunId
+    && record.serviceInstanceId === expected.serviceInstanceId
+    && record.tenantId === expected.tenantId
+    && record.agentId === expected.agentId
+    && record.state === "active"
+    && record.canonicalPath === expected.canonicalPath
+    && record.filesystemIdentity.device === expected.filesystemIdentity.device
+    && record.filesystemIdentity.inode === expected.filesystemIdentity.inode
+    && record.filesystemIdentity.birthtimeNs === expected.filesystemIdentity.birthtimeNs;
 }
 
 async function invokeStore<T>(operation: () => Promise<Result<T, Error>>): Promise<Result<T, Error>> {
@@ -205,7 +230,22 @@ export async function ensurePreparedWorkspaceLease(
   }));
   if (!created.ok) return created;
   if (created.value.kind === "replay_conflict") {
-    return err(new Error("workspace lease mint replay conflicted"));
+    const existing = await invokeStore(() => deps.workspaceLeases.get(scope, ids.workspaceLeaseId));
+    if (!existing.ok) return existing;
+    if (
+      existing.value === undefined
+      || !matchesWorkspaceLeaseAuthority(existing.value, {
+        workspaceLeaseId: ids.workspaceLeaseId,
+        managedRunId: record.managedRunId,
+        serviceInstanceId: record.serviceInstanceId,
+        tenantId: record.tenantId,
+        agentId: record.agentId,
+        canonicalPath: authority.canonicalPath,
+        filesystemIdentity: authority.filesystemIdentity,
+      })
+    ) {
+      return err(new Error("workspace lease mint replay conflicted"));
+    }
   }
   const bound = await invokeStore(() => deps.store.setWorkspaceLease(recordOwnerScope(record), {
     managedRunId: record.managedRunId,

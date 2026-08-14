@@ -79,6 +79,13 @@ export const ManagedRunOperationDbRowSchema = z.strictObject({
   result_record: z.string(),
 });
 
+export const ManagedRunReleaseReservationDbRowSchema = z.strictObject({
+  operation_id: z.string(),
+  input_hash: z.string(),
+  result_record: z.string(),
+  reserved_at_ms: z.number().int(),
+});
+
 export const ManagedRunContinuationClaimDbRowSchema = z.strictObject({
   claim_id: z.string(),
   managed_run_id: z.string(),
@@ -127,5 +134,6 @@ export type ManagedRunDbRow = z.infer<typeof ManagedRunDbRowSchema>;
 export type ManagedRunReportDbRow = z.infer<typeof ManagedRunReportDbRowSchema>;
 export type ManagedEvidenceDbRow = z.infer<typeof ManagedEvidenceDbRowSchema>;
 export type ManagedRunOperationDbRow = z.infer<typeof ManagedRunOperationDbRowSchema>;
+export type ManagedRunReleaseReservationDbRow = z.infer<typeof ManagedRunReleaseReservationDbRowSchema>;
 export type ManagedRunContinuationClaimDbRow = z.infer<typeof ManagedRunContinuationClaimDbRowSchema>;
 export type ManagedRunAttentionDbRow = z.infer<typeof ManagedRunAttentionDbRowSchema>;

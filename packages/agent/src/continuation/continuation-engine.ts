@@ -52,6 +52,7 @@ export interface ContinuationExecutionEngineDeps {
     agentId: string,
     options?: { sessionKey?: SessionKey },
   ) => Promise<AgentTool[]>;
+  readonly resolveCurrentCapabilityViewHash?: (agentId: string) => string | undefined;
   readonly activityCoordinatorFactory?: ContinuationActivityCoordinatorFactory;
   readonly logger: ComisLogger;
 }
@@ -318,18 +319,25 @@ export function createContinuationExecutionEngine(
       const scopedInvocation = tryCatch(() => runWithContext(
         input.requestContext,
         async () => {
-          input.beforeExecute();
           const executor = tryCatch(() => deps.getExecutor(input.agentId));
           if (!executor.ok) return executor;
           const toolAssembly = await fromPromise(
             deps.assembleToolsForAgent(input.agentId, { sessionKey: input.sessionKey }),
           );
           if (!toolAssembly.ok) return toolAssembly;
+          if (input.source === "managed_run") {
+            const currentViewHash = tryCatch(() => deps.resolveCurrentCapabilityViewHash?.(input.agentId));
+            if (!currentViewHash.ok) return currentViewHash;
+            if (currentViewHash.value !== input.capturedCapabilityCeiling.viewHash) {
+              return err(new Error("Continuation capability view does not match its recorded authority"));
+            }
+          }
           const intersectedTools = intersectTools(
             toolAssembly.value,
             input.capturedCapabilityCeiling.toolIds,
           );
           if (!intersectedTools.ok) return intersectedTools;
+          input.beforeExecute();
           let finalizedValue: TFinalized | undefined;
           const execution = tryCatch(() => executor.value.execute(
             input.message,

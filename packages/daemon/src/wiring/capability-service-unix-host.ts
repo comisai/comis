@@ -372,7 +372,11 @@ function createEndpoint(
       const response = routed.errorKind === undefined
         ? { jsonrpc: "2.0", id: request.id, result: routed.response }
         : capabilityServiceErrorResponse(routed.errorKind, request.id);
-      rememberResponse(operationId, response);
+      if (routed.errorKind === "deadline_exceeded" || routed.errorKind === "internal_error") {
+        replay.delete(operationId);
+      } else {
+        rememberResponse(operationId, response);
+      }
       reply(socket, response);
     }
 
@@ -398,8 +402,24 @@ function createEndpoint(
       const operationId = request.params.operationId;
       const replayState = beginReplay(operationId, request);
       if (!replayState.ok) {
-        if (typeof replayState.error === "object") reply(socket, replayState.error.response);
-        else rejectRequest(socket, replayState.error === "pending" ? "rate_limited" : "replay_conflict", request.id);
+        if (typeof replayState.error === "object") {
+          const replayed = asRecord(replayState.error.response);
+          if (replayed !== undefined && "result" in replayed) {
+            if (boundSocket !== undefined && boundSocket !== socket && !boundSocket.destroyed) {
+              rejectRequest(socket, "precondition_failed", request.id);
+              return;
+            }
+            boundSocket = socket;
+            handshakeValue = Object.freeze({
+              protocolId: CAPABILITY_SERVICE_PROTOCOL_ID,
+              serviceInstanceId: configured.instance.serviceInstanceId,
+              activeScopes: Object.freeze([...configured.definition.requestedScopes]),
+            });
+          }
+          reply(socket, replayState.error.response);
+        } else {
+          rejectRequest(socket, replayState.error === "pending" ? "rate_limited" : "replay_conflict", request.id);
+        }
         return;
       }
       if (

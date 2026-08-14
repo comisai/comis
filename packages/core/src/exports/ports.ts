@@ -204,6 +204,8 @@ export type {
   ManagedRunWorkspaceBindingInput,
   ManagedRunExecutionAttachmentBindingInput,
   ManagedRunBindingOutcome,
+  ManagedRunReleaseReservationInput,
+  ManagedRunReleaseReservationOutcome,
   ManagedRunReportAppendInput,
   ManagedRunReportAppendOutcome,
   ManagedRunReportRangeInput,

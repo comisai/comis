@@ -200,6 +200,16 @@ describe("createSqliteManagedRunStore durable state machine", () => {
         evidence: { ...input, schemaVersion: 1, serviceInstanceId: "service-instance_a" },
       },
     });
+    expect(await store.appendEvidence(SERVICE_SCOPE, {
+      ...input,
+      receivedAtMs: input.receivedAtMs + 1,
+    })).toEqual({
+      ok: true,
+      value: {
+        kind: "identical_replay",
+        evidence: { ...input, schemaVersion: 1, serviceInstanceId: "service-instance_a" },
+      },
+    });
     expect((await store.appendEvidence(SERVICE_SCOPE, {
       ...input,
       contentHash: "d".repeat(64),
@@ -747,6 +757,17 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       statusReason: "report_activity",
       committedAtMs: 1_800_000_000_300,
     })).value?.kind).toBe("updated");
+    expect(await store.claimContinuation(OWNER_SCOPE, claim)).toMatchObject({
+      ok: true,
+      value: {
+        kind: "identical_replay",
+        reducedRecord: {
+          lastReducedReportSequence: 1,
+          status: "active",
+          statusReason: "report_activity",
+        },
+      },
+    });
     expect((await store.markContinuationOutcome(OWNER_SCOPE, {
       managedRunId: "managed-run_a",
       claimId: "continuation-claim_a",
@@ -896,6 +917,41 @@ describe("createSqliteManagedRunStore durable state machine", () => {
       ok: true,
       value: { terminalSessionIds: [], updatedAtMs: 1_800_000_000_200 },
     });
+  });
+
+  it("atomically blocks new resource bindings after durable lease release reservation", async () => {
+    const store = createSqliteManagedRunStore(db);
+    expect((await store.create(makeRecord({ workspaceLeaseId: "workspace-lease_a" }))).ok).toBe(true);
+    const reservation = {
+      operationId: "operation_release_reserved",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      disposition: "reap_safe" as const,
+      releasedAtMs: 1_800_000_000_100,
+    };
+
+    expect((await store.reserveRelease(SERVICE_SCOPE, reservation)).value?.kind).toBe("reserved");
+    expect((await store.reserveRelease(SERVICE_SCOPE, reservation)).value?.kind).toBe("identical_replay");
+    expect((await store.reserveRelease(SERVICE_SCOPE, {
+      ...reservation,
+      disposition: "preserve",
+    })).value?.kind).toBe("replay_conflict");
+    expect((await store.bindTerminal(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      terminalSessionId: "terminal_after_release_reservation",
+      terminalTenantId: "tenant_a",
+      terminalAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_200,
+    })).value?.kind).toBe("release_reserved");
+    expect((await store.bindExecutionAttachment(OWNER_SCOPE, {
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      executionAttachmentId: "execution-attachment_after_release_reservation",
+      attachmentServiceInstanceId: "service-instance_a",
+      attachmentTenantId: "tenant_a",
+      attachmentAgentId: "agent_a",
+      boundAtMs: 1_800_000_000_200,
+    })).value?.kind).toBe("release_reserved");
   });
 
   it("binds an execution attachment only under the exact run lease and owner", async () => {

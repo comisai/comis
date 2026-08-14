@@ -16,6 +16,7 @@ import type {
   ManagedEvidenceVerificationLevel,
 } from "../domain/managed-run-content.js";
 import type { ManagedRunAttentionRecord } from "../domain/managed-run-attention.js";
+import type { WorkspaceLeaseDisposition } from "../domain/workspace-lease.js";
 
 /** Exact human or configured internal-principal authority for owner operations. */
 export interface ManagedRunOwnerScope {
@@ -103,7 +104,24 @@ export type ManagedRunBindingOutcome =
   | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
-  | { readonly kind: "ownership_mismatch" };
+  | { readonly kind: "ownership_mismatch" }
+  | { readonly kind: "release_reserved" };
+
+export interface ManagedRunReleaseReservationInput {
+  readonly operationId: string;
+  readonly managedRunId: string;
+  readonly workspaceLeaseId: string;
+  readonly disposition: WorkspaceLeaseDisposition;
+  readonly releasedAtMs: number;
+}
+
+export type ManagedRunReleaseReservationOutcome =
+  | { readonly kind: "reserved"; readonly record: ManagedRunRecord }
+  | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "scope_mismatch" }
+  | { readonly kind: "authority_mismatch" }
+  | { readonly kind: "replay_conflict" };
 
 export type ManagedRunTerminalReleaseOutcome =
   | { readonly kind: "released"; readonly record: ManagedRunRecord }
@@ -232,7 +250,11 @@ export interface ManagedRunContinuationClaimInput {
 
 export type ManagedRunContinuationClaimOutcome =
   | { readonly kind: "claimed"; readonly record: ManagedRunRecord }
-  | { readonly kind: "identical_replay"; readonly record: ManagedRunRecord }
+  | {
+    readonly kind: "identical_replay";
+    readonly record: ManagedRunRecord;
+    readonly reducedRecord?: ManagedRunRecord;
+  }
   | { readonly kind: "not_found" }
   | { readonly kind: "scope_mismatch" }
   | { readonly kind: "not_pending" }
@@ -312,6 +334,7 @@ export interface ManagedRunStorePort {
   releaseTerminal(scope: ManagedRunServiceScope, input: ManagedRunTerminalReleaseInput): Promise<Result<ManagedRunTerminalReleaseOutcome, Error>>;
   setWorkspaceLease(scope: ManagedRunOwnerScope, input: ManagedRunWorkspaceBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
   bindExecutionAttachment(scope: ManagedRunOwnerScope, input: ManagedRunExecutionAttachmentBindingInput): Promise<Result<ManagedRunBindingOutcome, Error>>;
+  reserveRelease(scope: ManagedRunServiceScope, input: ManagedRunReleaseReservationInput): Promise<Result<ManagedRunReleaseReservationOutcome, Error>>;
   appendReportAndAdvanceAcceptedCursor(scope: ManagedRunServiceScope, input: ManagedRunReportAppendInput): Promise<Result<ManagedRunReportAppendOutcome, Error>>;
   listReportRange(scope: ManagedRunOwnerScope, input: ManagedRunReportRangeInput): Promise<Result<ManagedRunReportIndex[], Error>>;
   appendEvidence(scope: ManagedRunServiceScope, input: ManagedEvidenceAppendInput): Promise<Result<ManagedEvidenceAppendOutcome, Error>>;

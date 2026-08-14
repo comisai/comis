@@ -287,6 +287,14 @@ export function ensureManagedRunTables(db: Database.Database): void {
       PRIMARY KEY (managed_run_id, operation_id, operation_kind)
     );
 
+    CREATE TABLE IF NOT EXISTS managed_run_release_reservations (
+      managed_run_id TEXT PRIMARY KEY NOT NULL REFERENCES managed_runs(managed_run_id),
+      operation_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      result_record TEXT NOT NULL,
+      reserved_at_ms INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS managed_run_continuation_claims (
       claim_id TEXT PRIMARY KEY NOT NULL,
       managed_run_id TEXT NOT NULL REFERENCES managed_runs(managed_run_id),

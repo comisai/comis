@@ -13,7 +13,7 @@ import {
 } from "@comis/core";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import type { ManagedRunEvidenceBridge } from "./managed-run-evidence-bridge.js";
 import type { ManagedAttentionResponseBridge } from "./managed-attention-response-bridge.js";
 import type { ManagedRunReportBridge } from "./managed-run-report-bridge.js";
@@ -595,6 +595,115 @@ describe("daemon-owned capability-service Unix host", () => {
     acceptedPeer.send(handshake(BEARER));
     expect(await acceptedPeer.next()).toHaveProperty("result");
     expect((await started).ok).toBe(true);
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("restores the connection binding when a successful handshake is replayed after reconnect", async () => {
+    const root = makeRoot();
+    const reportBridge: ManagedRunReportBridge = {
+      ingestReport: vi.fn(async () => ok({
+        kind: "accepted" as const,
+        report: {
+          schemaVersion: 1 as const,
+          serviceInstanceId: "service-instance_a",
+          managedRunId: "managed-run_a",
+          serviceReportId: "service-report_reconnect",
+          sequence: 1,
+          kind: "progress" as const,
+          contentRef: "service-report_reconnect",
+          contentHash: "a".repeat(64),
+          receivedAtMs: NOW_MS,
+          retainedUntilMs: NOW_MS + 60_000,
+        },
+      })),
+    };
+    const host = makeHost(root.socketPath, reportBridge);
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const firstPeer = await connectPeer(root.socketPath);
+    peers.push(firstPeer);
+    firstPeer.send(handshake(BEARER));
+    expect(await firstPeer.next()).toHaveProperty("result");
+    expect((await started).ok).toBe(true);
+    firstPeer.close();
+    await waitForTurn();
+
+    const reconnectedPeer = await connectPeer(root.socketPath);
+    peers.push(reconnectedPeer);
+    reconnectedPeer.send(handshake(BEARER));
+    expect(await reconnectedPeer.next()).toHaveProperty("result");
+    reconnectedPeer.send({
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_report_reconnect",
+      method: "managedRuns.report",
+      params: {
+        operationId: "operation_report_reconnect",
+        managedRunId: "managed-run_a",
+        serviceReportId: "service-report_reconnect",
+        kind: "progress",
+        summary: "Synthetic reconnect progress",
+      },
+    });
+    expect(await reconnectedPeer.next()).toMatchObject({
+      id: "operation_report_reconnect",
+      result: { acceptedSequence: 1 },
+    });
+    expect(reportBridge.ingestReport).toHaveBeenCalledOnce();
+    expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
+  });
+
+  it("retries an exact durable ingress operation after a transient internal response", async () => {
+    const root = makeRoot();
+    const accepted = {
+      kind: "accepted" as const,
+      report: {
+        schemaVersion: 1 as const,
+        serviceInstanceId: "service-instance_a",
+        managedRunId: "managed-run_a",
+        serviceReportId: "service-report_retry",
+        sequence: 1,
+        kind: "progress" as const,
+        contentRef: "service-report_retry",
+        contentHash: "a".repeat(64),
+        receivedAtMs: NOW_MS,
+        retainedUntilMs: NOW_MS + 60_000,
+      },
+    };
+    const ingestReport = vi.fn()
+      .mockResolvedValueOnce(err(new Error("synthetic store interruption")))
+      .mockResolvedValueOnce(ok(accepted));
+    const host = makeHost(root.socketPath, { ingestReport });
+    if (!host.created.ok) throw host.created.error;
+    const constructed = await host.created.value.activators[0]!.construct(makeInstance(root.socketPath));
+    if (!constructed.ok) throw constructed.error;
+    const started = constructed.value.start();
+    const peer = await connectPeer(root.socketPath);
+    peers.push(peer);
+    peer.send(handshake(BEARER));
+    await peer.next();
+    if (!(await started).ok) return;
+    const request = {
+      bearer: BEARER,
+      jsonrpc: "2.0",
+      id: "operation_report_retry",
+      method: "managedRuns.report",
+      params: {
+        operationId: "operation_report_retry",
+        managedRunId: "managed-run_a",
+        serviceReportId: "service-report_retry",
+        kind: "progress",
+        summary: "Synthetic retry progress",
+      },
+    };
+
+    peer.send(request);
+    expect(await peer.next()).toMatchObject({ error: { kind: "internal_error", retryable: true } });
+    peer.send(request);
+    expect(await peer.next()).toMatchObject({ result: { acceptedSequence: 1 } });
+    expect(ingestReport).toHaveBeenCalledTimes(2);
     expect(await constructed.value.close()).toEqual({ ok: true, value: undefined });
   });
 

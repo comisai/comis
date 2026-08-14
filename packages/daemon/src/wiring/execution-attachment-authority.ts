@@ -157,7 +157,19 @@ export function createExecutionAttachmentAuthority(deps: ExecutionAttachmentAuth
         return ok({ kind: "rejected", reason: "source_rejected" });
       }
       if (!run.value.executionAttachmentIds.includes(executionAttachmentId)) {
-        return ok({ kind: "rejected", reason: "binding_refused" });
+        const rebound = await invoke(deps.runs.bindExecutionAttachment(input.owner, {
+          managedRunId: existing.value.managedRunId,
+          workspaceLeaseId: existing.value.workspaceLeaseId,
+          executionAttachmentId: existing.value.executionAttachmentId,
+          attachmentServiceInstanceId: existing.value.serviceInstanceId,
+          attachmentTenantId: existing.value.tenantId,
+          attachmentAgentId: existing.value.agentId,
+          boundAtMs: Math.max(deps.nowMs(), existing.value.updatedAtMs, run.value.updatedAtMs),
+        }));
+        if (!rebound.ok) return rebound;
+        if (rebound.value.kind !== "bound" && rebound.value.kind !== "identical_replay") {
+          return ok({ kind: "rejected", reason: "binding_refused" });
+        }
       }
       return ok({ kind: "identical_replay", record: existing.value });
     }

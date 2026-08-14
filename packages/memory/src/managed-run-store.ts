@@ -21,6 +21,8 @@ import {
   type ManagedRunOwnerScope,
   type ManagedRunRecord,
   type ManagedRunRecoveryScan,
+  type ManagedRunReleaseReservationInput,
+  type ManagedRunReleaseReservationOutcome,
   type ManagedRunReducedStateInput,
   type ManagedRunReportAppendInput,
   type ManagedRunReportAppendOutcome,
@@ -41,6 +43,7 @@ import {
   ManagedRunDbRowSchema,
   ManagedEvidenceDbRowSchema,
   ManagedRunOperationDbRowSchema,
+  ManagedRunReleaseReservationDbRowSchema,
   ManagedRunReportDbRowSchema,
 } from "./managed-run-row-schema.js";
 import {
@@ -61,6 +64,7 @@ const runMapper = createRowMapper(ManagedRunDbRowSchema);
 const reportMapper = createRowMapper(ManagedRunReportDbRowSchema);
 const evidenceMapper = createRowMapper(ManagedEvidenceDbRowSchema);
 const operationMapper = createRowMapper(ManagedRunOperationDbRowSchema);
+const releaseReservationMapper = createRowMapper(ManagedRunReleaseReservationDbRowSchema);
 const claimMapper = createRowMapper(ManagedRunContinuationClaimDbRowSchema);
 const recoveryIdentitySchema = z.object({
   managed_run_id: z.string(),
@@ -133,6 +137,15 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     INSERT INTO managed_run_operations (
       managed_run_id, operation_id, operation_kind, input_hash, result_record, created_at_ms
     ) VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const selectReleaseReservation = db.prepare(`
+    SELECT operation_id, input_hash, result_record, reserved_at_ms
+    FROM managed_run_release_reservations WHERE managed_run_id = ?
+  `);
+  const insertReleaseReservation = db.prepare(`
+    INSERT INTO managed_run_release_reservations (
+      managed_run_id, operation_id, input_hash, result_record, reserved_at_ms
+    ) VALUES (?, ?, ?, ?, ?)
   `);
   const selectReport = db.prepare(`
     SELECT * FROM managed_run_reports
@@ -442,7 +455,8 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     if (previousRow.value !== undefined) {
       const previous = rowToEvidence(previousRow.value);
       if (!previous.ok) return previous;
-      return hashCanonical(previous.value) === hashCanonical(candidate.data)
+      return hashCanonical({ ...previous.value, receivedAtMs: 0 })
+        === hashCanonical({ ...candidate.data, receivedAtMs: 0 })
         ? ok({ kind: "identical_replay", evidence: previous.value })
         : ok({ kind: "replay_conflict" });
     }
@@ -471,6 +485,46 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     return ok({ kind: "accepted", evidence: candidate.data });
   });
 
+  const releaseReservationTransaction = db.transaction((
+    scope: ManagedRunServiceScope,
+    input: ManagedRunReleaseReservationInput,
+  ): Result<ManagedRunReleaseReservationOutcome, Error> => {
+    const inputHash = hashCanonical({
+      managedRunId: input.managedRunId,
+      workspaceLeaseId: input.workspaceLeaseId,
+      disposition: input.disposition,
+      releasedAtMs: input.releasedAtMs,
+    });
+    const previous = releaseReservationMapper.parseOptionalRow(
+      selectReleaseReservation.get(input.managedRunId),
+    );
+    if (!previous.ok) return err(new Error(previous.error.message));
+    if (previous.value !== undefined) {
+      const original = parseStoredManagedRunRecord(previous.value.result_record);
+      if (!original.ok) return original;
+      if (!scopeMatches(original.value, scope)) return ok({ kind: "scope_mismatch" });
+      return previous.value.operation_id === input.operationId
+        && previous.value.input_hash === inputHash
+        ? ok({ kind: "identical_replay", record: original.value })
+        : ok({ kind: "replay_conflict" });
+    }
+    const current = readRecord(input.managedRunId);
+    if (!current.ok) return current;
+    if (current.value === undefined) return ok({ kind: "not_found" });
+    if (!scopeMatches(current.value, scope)) return ok({ kind: "scope_mismatch" });
+    if (current.value.workspaceLeaseId !== input.workspaceLeaseId) {
+      return ok({ kind: "authority_mismatch" });
+    }
+    insertReleaseReservation.run(
+      input.managedRunId,
+      input.operationId,
+      inputHash,
+      serializeManagedRunRecord(current.value),
+      input.releasedAtMs,
+    );
+    return ok({ kind: "reserved", record: current.value });
+  });
+
   const bindingTransaction = db.transaction((
     scope: ManagedRunOwnerScope,
     input: ManagedRunTerminalBindingInput | ManagedRunWorkspaceBindingInput | ManagedRunExecutionAttachmentBindingInput,
@@ -479,6 +533,11 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     if (!current.ok) return current;
     if (current.value === undefined) return ok({ kind: "not_found" });
     if (!scopeMatches(current.value, scope)) return ok({ kind: "scope_mismatch" });
+    const releaseReservation = releaseReservationMapper.parseOptionalRow(
+      selectReleaseReservation.get(input.managedRunId),
+    );
+    if (!releaseReservation.ok) return err(new Error(releaseReservation.error.message));
+    if (releaseReservation.value !== undefined) return ok({ kind: "release_reserved" });
     const isTerminal = "terminalSessionId" in input;
     const isAttachment = "executionAttachmentId" in input;
     const tenantId = isTerminal
@@ -567,9 +626,14 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
       const record = parseStoredManagedRunRecord(existing.value.claim_result_record);
       if (!record.ok) return record;
       if (!scopeMatches(record.value, scope)) return ok({ kind: "scope_mismatch" });
-      return existing.value.claim_hash === inputHash
-        ? ok(resultRecord("identical_replay", record.value))
-        : ok({ kind: "replay_conflict" });
+      if (existing.value.claim_hash !== inputHash) return ok({ kind: "replay_conflict" });
+      if (existing.value.reduction_result_record === null) {
+        return ok(resultRecord("identical_replay", record.value));
+      }
+      const reducedRecord = parseStoredManagedRunRecord(existing.value.reduction_result_record);
+      return reducedRecord.ok
+        ? ok({ kind: "identical_replay", record: record.value, reducedRecord: reducedRecord.value })
+        : reducedRecord;
     }
     const current = readRecord(input.managedRunId);
     if (!current.ok) return current;
@@ -763,6 +827,9 @@ export function createSqliteManagedRunStore(db: Database.Database): ManagedRunSt
     ),
     setWorkspaceLease: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
     bindExecutionAttachment: (scope, input) => boundary(() => bindingTransaction.immediate(scope, input)),
+    reserveRelease: (scope, input) => boundary(
+      () => releaseReservationTransaction.immediate(scope, input),
+    ),
     appendReportAndAdvanceAcceptedCursor: (scope, input) => boundary(
       () => reportTransaction.immediate(scope, input),
     ),

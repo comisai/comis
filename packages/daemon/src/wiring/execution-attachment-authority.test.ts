@@ -210,6 +210,45 @@ describe("execution attachment authority coordinator", () => {
     });
   });
 
+  it("resumes the durable run binding for an attachment created before a crash", async () => {
+    const bindExecutionAttachment = vi.fn(async () => ok({ kind: "bound" as const, record: {} as never }));
+    const deps = makeDeps({
+      runs: {
+        ...(makeDeps().runs as unknown as object),
+        get: vi.fn(async () => ok({
+          managedRunId: "managed-run_a",
+          workspaceLeaseId: "workspace-lease_a",
+          serviceInstanceId: "service-instance_a",
+          tenantId: "tenant_a",
+          agentId: "agent_a",
+          executionAttachmentIds: [],
+          updatedAtMs: ATTACHMENT.updatedAtMs,
+        })),
+        bindExecutionAttachment,
+      } as unknown as ManagedRunStorePort,
+      attachments: {
+        ...(makeDeps().attachments as unknown as object),
+        get: vi.fn(async () => ok(ATTACHMENT)),
+      } as unknown as ExecutionAttachmentPort,
+    });
+    const authority = createExecutionAttachmentAuthority(deps as never);
+
+    const replayed = await authority.create({
+      operationId: "operation_attachment_a",
+      managedRunId: "managed-run_a",
+      workspaceLeaseId: "workspace-lease_a",
+      kind: "unix_socket",
+      sourcePath: ATTACHMENT.sourcePath,
+      owner: OWNER,
+    });
+
+    expect(replayed).toEqual({ ok: true, value: { kind: "identical_replay", record: ATTACHMENT } });
+    expect(bindExecutionAttachment).toHaveBeenCalledWith(OWNER, expect.objectContaining({
+      executionAttachmentId: ATTACHMENT.executionAttachmentId,
+      workspaceLeaseId: ATTACHMENT.workspaceLeaseId,
+    }));
+  });
+
   it("rejects a socket replacement that reuses its device and inode", () => {
     const deps = makeDeps({
       validateSource: vi.fn(() => ok({

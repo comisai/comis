@@ -22,6 +22,7 @@ describe("Managed-run store and private-content port contracts", () => {
       | "releaseTerminal"
       | "setWorkspaceLease"
       | "bindExecutionAttachment"
+      | "reserveRelease"
       | "appendReportAndAdvanceAcceptedCursor"
       | "listReportRange"
       | "appendEvidence"

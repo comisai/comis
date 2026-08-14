@@ -170,6 +170,7 @@ function makeCoordinator(overrides: {
   execute?: (
     input: ManagedRunContinuationExecutionInput,
   ) => Promise<ReturnType<typeof ok<ManagedRunContinuationExecutionOutcome>>>;
+  claimContinuation?: ManagedRunStorePort["claimContinuation"];
 } = {}) {
   const recordValue = overrides.record ?? makeRecord();
   const reports = overrides.reports ?? [report(1, "progress"), report(2, "candidate_complete")];
@@ -183,7 +184,8 @@ function makeCoordinator(overrides: {
   }));
   const store = {
     get: vi.fn(async () => ok(recordValue)),
-    claimContinuation: vi.fn(async () => ok({ kind: "claimed" as const, record: recordValue })),
+    claimContinuation: vi.fn(overrides.claimContinuation
+      ?? (async () => ok({ kind: "claimed" as const, record: recordValue }))),
     listReportRange: vi.fn(async () => ok(reports)),
     listEvidenceByRefs: vi.fn(async () => ok((overrides.evidence ?? []).map((item) => item.index))),
     commitReducedState,
@@ -343,6 +345,36 @@ describe("managed-run continuation coordination", () => {
       err: "continuation provider unavailable",
       errorKind: "dependency",
     }), "Managed-run continuation failed closed");
+  });
+
+  it("settles a durably reduced claim without recomputing its advanced report interval", async () => {
+    const reducedRecord = makeRecord({
+      lastReducedReportSequence: 2,
+      status: "candidate_complete",
+      statusReason: "verification_pending",
+    });
+    const setup = makeCoordinator({
+      record: reducedRecord,
+      claimContinuation: async () => ok({
+        kind: "identical_replay",
+        record: makeRecord(),
+        reducedRecord,
+      }),
+    });
+
+    const result = await setup.coordinator.process(ownerScope(reducedRecord), "managed-run-a");
+
+    expect(result).toEqual(ok({
+      kind: "processed",
+      throughReportSequence: 2,
+      pendingAfterCurrent: false,
+    }));
+    expect(setup.store.listReportRange).not.toHaveBeenCalled();
+    expect(setup.execute).not.toHaveBeenCalled();
+    expect(setup.commitReducedState).not.toHaveBeenCalled();
+    expect(setup.markContinuationOutcome).toHaveBeenCalledWith(ownerScope(reducedRecord), expect.objectContaining({
+      outcome: "completed",
+    }));
   });
 
   it("folds concurrent notifications into at most one follow-up execution per run", async () => {
