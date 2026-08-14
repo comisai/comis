@@ -284,6 +284,21 @@ describe("buildSpawnPlan — daemon secrets MUST NOT enter the jailed CLI env (T
   });
 });
 
+describe("buildSpawnPlan — driven TUI terminal type", () => {
+  it.each([undefined, "", "dumb", "unknown"])(
+    "defaults unusable TERM %j to xterm-256color",
+    async (term) => {
+      const plan = await buildSpawnPlan(makeInput({ env: { TERM: term } }), { bwrapPath: "/usr/bin/bwrap" });
+      expect(plan.env.TERM).toBe("xterm-256color");
+    },
+  );
+
+  it("preserves an explicit usable terminal type", async () => {
+    const plan = await buildSpawnPlan(makeInput({ env: { TERM: "screen-256color" } }), { bwrapPath: "/usr/bin/bwrap" });
+    expect(plan.env.TERM).toBe("screen-256color");
+  });
+});
+
 describe("buildSpawnPlan — operator-declared ephemeral writable paths", () => {
   it("does not inject a platform-specific writable path into an unrelated terminal jail", async () => {
     const plan = await buildSpawnPlan(makeInput(), { bwrapPath: "/usr/bin/bwrap" });
