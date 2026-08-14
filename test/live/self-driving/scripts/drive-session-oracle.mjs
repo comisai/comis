@@ -522,3 +522,16 @@ export function trajectoryTurnEnded(lines) {
   }
   return terminal && spawned <= completed;
 }
+
+/**
+ * Count persisted JSONL records for a pre-inject trajectory baseline.
+ *
+ * Writers terminate each record with a newline. `String.split("\n").length`
+ * therefore counts the trailing separator as a record and causes the first
+ * appended terminal record to be sliced away by the watcher.
+ */
+export function trajectoryBaselineLineCount(jsonl) {
+  if (jsonl.length === 0) return 0;
+  const lines = jsonl.split("\n");
+  return lines.at(-1) === "" ? lines.length - 1 : lines.length;
+}

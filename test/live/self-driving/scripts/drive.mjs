@@ -40,6 +40,7 @@ import {
   sharedConversationFinished,
   telegramInboundGuid,
   telegramInjectAddressingError,
+  trajectoryBaselineLineCount,
   trajectoryTurnEnded,
   wireContainsAssistantReply,
   wireQuiescenceFinished,
@@ -352,7 +353,10 @@ const resolveTraj = () => {
       : (candidates.find((c) => c.path === chosen)?.real ?? chosen);
   } catch { return null; }
 };
-const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };
+const trajLineCount = (p) => {
+  try { return trajectoryBaselineLineCount(readFileSync(p, 'utf8')); }
+  catch { return 0; }
+};
 // A PARENT turn that dispatched background work emits its own `session.summary` and finishes with
 // `finishReason:"background_pending"` while the sub-agent keeps running — so treating the first
 // summary as turn-end stops the drive before the answer exists. Measured across 15 heavy questions:
