@@ -138,7 +138,7 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(deferral.requestRelevantPromptSkillWorkflowContext).toBeUndefined();
-    expect(deferral.requestRelevantToolNames).toEqual(["browser", "read"]);
+    expect(deferral.requestRelevantToolNames).toEqual(["browser"]);
   });
 
   it("does not enforce a parent skill from a quoted child task", () => {
@@ -166,7 +166,7 @@ describe("prompt skill request routing", () => {
     expect(selected).toEqual(["deep-research"]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
-    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn", "read"]);
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
   it("does not enforce a parent skill from an unquoted delegated child task", () => {
@@ -398,6 +398,34 @@ describe("prompt skill request routing", () => {
     expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:terminal|write)\b/iu);
     expect(selected).toEqual([]);
     expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
+  it("does not require a parent read for a captionless delegated attachment", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Live reliability test. Use sessions_spawn exactly once to launch one background sub-agent and do not wait for it.",
+      "Give the child this exact task: in its own workspace, use the write tool to create b2-media-proof.txt containing exactly B2_MEDIA_20260815 followed by one newline; declare b2-media-proof.txt as the only expected output; after the write succeeds return exactly NO_REPLY.",
+      "Use required_tools [write] and max_steps 30.",
+      "Reply now only with a brief natural launch acknowledgement.",
+      "When the child completes, deliver the file to this Telegram chat with no caption and no later terminal text.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.activeTools.find((entry) => entry.name === "read")?.description)
+      .toContain("/skills/claude-code/SKILL.md");
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
