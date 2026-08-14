@@ -36,7 +36,6 @@ import { assertsUnbackedRunIdentifier } from "./fabricated-run-identifier.js";
 const EXPLICIT_DELEGATION_REQUEST_PHRASES = [
   " background helper",
   " delegate ",
-  " delegation ",
   " ask someone",
   " ask somebody",
   " ask another agent",
@@ -142,6 +141,14 @@ function containsEvidencePhrase(text: string, phrases: readonly string[]): boole
   return phrases.some((phrase) => text.includes(phrase));
 }
 
+function normalizedEvidenceWords(value: string): string {
+  return ` ${value
+    .toLocaleLowerCase()
+    .replaceAll("’", "'")
+    .replaceAll(/[^\p{L}\p{N}_'-]+/gu, " ")
+    .trim()} `;
+}
+
 function containsUnnegatedEvidencePhrase(
   text: string,
   phrases: readonly string[],
@@ -243,7 +250,12 @@ export function enforceCurrentTurnDelegationEvidence(params: {
   );
   const response = normalizedEvidenceText(params.response);
   if (successfulSpawn) {
-    if (containsEvidencePhrase(response, GROUNDED_DELEGATION_RESPONSE_PHRASES)) {
+    if (
+      containsEvidencePhrase(
+        normalizedEvidenceWords(params.response),
+        GROUNDED_DELEGATION_RESPONSE_PHRASES,
+      )
+    ) {
       return { response: params.response, corrected: false };
     }
     return {
