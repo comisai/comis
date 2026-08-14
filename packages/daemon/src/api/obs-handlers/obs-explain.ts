@@ -38,7 +38,7 @@ import { rootCause } from "./obs-explain-heuristics.js";
 import { boundIncidentReport } from "./obs-explain-bound.js";
 import { joinBackgroundTaskFollowups } from "./obs-explain-background-trace.js";
 import {
-  completionEvidenceGuardVerdict,
+  completionEvidenceGuardShouldOverride, completionEvidenceGuardVerdict,
   outboundAudioEvidenceGuardVerdict,
   outboundCompletionEvidenceGuardVerdict,
   outboundImageEvidenceGuardVerdict,
@@ -723,7 +723,7 @@ export async function assembleIncidentReportFromSources(
     auditRows,
     report.traceId,
   );
-  if (completionEvidenceVerdict !== null) {
+  if (completionEvidenceVerdict !== null && completionEvidenceGuardShouldOverride(report)) {
     report.likelyRootCause = completionEvidenceVerdict;
   }
   const outboundCompletionEvidenceVerdict = outboundCompletionEvidenceGuardVerdict(

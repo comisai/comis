@@ -25,6 +25,8 @@
  * mutable state. Pure: no I/O, no logger, no clock.
  */
 
+import type { LoopEvidence, LoopNoProgressKind } from "@comis/core";
+
 /** Consecutive no-progress steps that break the turn early (well under maxSteps). */
 export const NO_PROGRESS_LOOP_THRESHOLD = 6;
 
@@ -77,6 +79,8 @@ export interface TurnLoopDetector {
   recordProgress(): void;
   /** True once consecutive no-progress steps reach the threshold. */
   shouldBreakLoop(): boolean;
+  /** Fixed-shape diagnostic summary; never includes arguments or results. */
+  getLoopEvidence(): LoopEvidence;
   /** True once consecutive empty turns reach the cap. */
   shouldBreakEmptyTurns(): boolean;
 }
@@ -150,6 +154,34 @@ export function createTurnLoopDetector(): TurnLoopDetector {
   let noProgressCount = 0;
   let emptyTurnCount = 0;
   let lastSuccessfulMutationFingerprint: string | undefined;
+  let lastNoProgressKind: LoopNoProgressKind | undefined;
+  let repeatedToolName: string | undefined;
+  let duplicateCallCount = 0;
+  let stagnantResultCount = 0;
+
+  function resetLoopEvidence(): void {
+    lastNoProgressKind = undefined;
+    repeatedToolName = undefined;
+    duplicateCallCount = 0;
+    stagnantResultCount = 0;
+  }
+
+  function recordNoProgress(
+    toolName: string,
+    kind: LoopNoProgressKind,
+    duplicate: boolean,
+    stagnant: boolean,
+  ): void {
+    noProgressCount++;
+    lastNoProgressKind = kind;
+    repeatedToolName = toolName;
+    if (duplicate) duplicateCallCount++;
+    if (stagnant) stagnantResultCount++;
+  }
+
+  function saturateAtThreshold(count: number): number {
+    return Math.min(count, NO_PROGRESS_LOOP_THRESHOLD);
+  }
 
   function isIdempotentRead(toolName: string): boolean {
     return IDEMPOTENT_READONLY_TOOLS.has(toolName);
@@ -161,7 +193,7 @@ export function createTurnLoopDetector(): TurnLoopDetector {
       const key = cacheKey(toolName, args);
       if (!readCache.has(key)) return { kind: "allow" };
       // A repeat of an already-cached read is a no-progress step.
-      noProgressCount++;
+      recordNoProgress(toolName, "cached_read", true, true);
       return {
         kind: "short_circuit",
         cachedResult: readCache.get(key),
@@ -178,21 +210,23 @@ export function createTurnLoopDetector(): TurnLoopDetector {
         // instead of running to makespan.
         readCache.clear();
         if (isFailureResult(result)) {
-          noProgressCount++;
+          recordNoProgress(toolName, "failed_call", false, false);
         } else {
           const fingerprint =
             `${cacheKey(toolName, args)}::${canonicalize(semanticToolResult(result))}`;
           if (fingerprint === lastSuccessfulMutationFingerprint) {
-            noProgressCount++;
+            recordNoProgress(toolName, "identical_success", true, true);
           } else {
             noProgressCount = 0;
             emptyTurnCount = 0;
+            resetLoopEvidence();
           }
           lastSuccessfulMutationFingerprint = fingerprint;
         }
         return;
       }
       const key = cacheKey(toolName, args);
+      const previousResult = readCache.get(key);
       const isNewSignature = !readCache.has(key);
       readCache.set(key, result);
       if (isNewSignature) {
@@ -200,8 +234,11 @@ export function createTurnLoopDetector(): TurnLoopDetector {
         noProgressCount = 0;
         emptyTurnCount = 0;
         lastSuccessfulMutationFingerprint = undefined;
+        resetLoopEvidence();
       } else {
-        noProgressCount++;
+        const stagnant = canonicalize(semanticToolResult(previousResult))
+          === canonicalize(semanticToolResult(result));
+        recordNoProgress(toolName, "cached_read", true, stagnant);
       }
     },
 
@@ -213,10 +250,22 @@ export function createTurnLoopDetector(): TurnLoopDetector {
       noProgressCount = 0;
       emptyTurnCount = 0;
       lastSuccessfulMutationFingerprint = undefined;
+      resetLoopEvidence();
     },
 
     shouldBreakLoop(): boolean {
       return noProgressCount >= NO_PROGRESS_LOOP_THRESHOLD;
+    },
+
+    getLoopEvidence(): LoopEvidence {
+      return {
+        ...(lastNoProgressKind !== undefined ? { lastNoProgressKind } : {}),
+        ...(repeatedToolName !== undefined ? { repeatedToolName } : {}),
+        consecutiveNoProgress: saturateAtThreshold(noProgressCount),
+        threshold: NO_PROGRESS_LOOP_THRESHOLD,
+        duplicateCallCount: saturateAtThreshold(duplicateCallCount),
+        stagnantResultCount: saturateAtThreshold(stagnantResultCount),
+      };
     },
 
     shouldBreakEmptyTurns(): boolean {

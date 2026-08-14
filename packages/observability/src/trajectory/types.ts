@@ -136,9 +136,13 @@ export const TRAJECTORY_EVENT_TYPES = [
   // A direct child's terminal outcome routed to the parent trajectory.
   // Content-free: run/agent ids, success, duration, tokens, and cost only.
   "subagent.completed",
-  // A synchronous parent wait observed the child's terminal outcome.
-  // Content-free: run id and success only.
-  "subagent.wait_completed",
+  // A synchronous parent wait finished for one target. Content-free: parent/
+  // child ids, closed outcome, optional success, and duration budgets only.
+  "subagent.wait_finished",
+
+  // An abnormal parent end preserved a routed child for independent delivery.
+  // Content-free: parent/child ids and a closed reason only.
+  "subagent.routed_child_preserved",
 
   // The reserved trajectory type for the
   // counts-only subagent:steered event emitted when a running child is
@@ -240,6 +244,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "delivery.aborted",
   "activity.turn_finalized",
   "execution.recovery_attempted",
+  "tool.discovery_activation",
 
   // Lifecycle envelopes. Direct-emit by the agent executor — NOT via the
   // EventBus bridge.

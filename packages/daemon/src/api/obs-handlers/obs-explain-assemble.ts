@@ -654,6 +654,9 @@ export function assembleIncidentReport(
     // Runtime recovery events — model re-entry or a deterministic response
     // correction — were previously log-only and invisible in explain.
     ...(signals.recoveries !== undefined ? { recoveries: signals.recoveries } : {}),
+    ...(signals.discoveryActivation !== undefined
+      ? { discoveryActivation: signals.discoveryActivation }
+      : {}),
     ...(signals.backgroundRecovery !== undefined
       ? { backgroundRecovery: signals.backgroundRecovery }
       : {}),

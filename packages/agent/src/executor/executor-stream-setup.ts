@@ -77,6 +77,7 @@ import { installMicrocompactionGuard } from "../context-engine/index.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { AdaptiveCacheRetention } from "./adaptive-cache-retention.js";
 import type { ExcludeDeferralResult } from "./tool-deferral.js";
+import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { SystemPromptBlocks } from "../bootstrap/index.js";
 import type { ExecutionOverrides } from "./types.js";
 import { homedir } from "node:os";
@@ -130,6 +131,7 @@ export interface StreamSetupParams {
   modelProfile?: ModelProfile;
   executionOverrides?: ExecutionOverrides;
   deferralResult?: ExcludeDeferralResult;
+  discoveryTracker?: DiscoveryTracker;
   systemPromptBlocks?: SystemPromptBlocks;
   agentId?: string;
 
@@ -251,7 +253,7 @@ export function buildOffloadCallback(
 export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResult {
   const {
     config, deps, formattedKey, sm,
-    capabilityClass, executionOverrides, deferralResult, systemPromptBlocks, agentId,
+    capabilityClass, executionOverrides, deferralResult, discoveryTracker, systemPromptBlocks, agentId,
     cacheTrace, modelProfile,
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
     onBreakpointsPlaced, onGeminiCacheHit, recoverInvalidatedOAuth,
@@ -653,7 +655,11 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       {
         getStubToolNames: () => {
           if (!deferralResult?.deferredEntries.length) return new Set<string>();
-          return new Set(deferralResult.deferredEntries.map(e => e.name));
+          return new Set(
+            deferralResult.deferredEntries
+              .filter(entry => discoveryTracker?.isDiscovered(entry.name) !== true)
+              .map(entry => entry.name),
+          );
         },
       },
       deps.logger,

@@ -39,6 +39,7 @@ function createMockDeps(): SubagentHandlerDeps {
         callerAgentId: "parent-agent",
         callerConversation,
       }),
+      getRunBySessionKey: vi.fn().mockReturnValue({ runId: "run-parent" }),
       listRuns: vi.fn().mockReturnValue([
         {
           runId: "run-1",
@@ -258,6 +259,35 @@ describe("createSubagentHandlers", () => {
     });
   });
 
+  it("caps the security default at the active execution progress budget", async () => {
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
+      runId: "run-1",
+      status: "timeout",
+    }]);
+
+    await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerSessionKey: "default:user1:channel1",
+      _callerConversationScope: CALLER_SCOPE,
+      _subagentWaitProgressBudgetMs: 10_000,
+    });
+
+    expect(deps.subAgentRunner.waitForCompletions).toHaveBeenCalledWith(
+      ["run-1"],
+      10_000,
+      undefined,
+      "default:user1:channel1",
+    );
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_wait_finished",
+      expect.objectContaining({
+        runId: "run-1",
+        requestedTimeoutMs: 30_000,
+        effectiveTimeoutMs: 10_000,
+      }),
+    );
+  });
+
   it("agent wait emits the terminal child outcome on the waiting turn", async () => {
     vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
       runId: "run-1",
@@ -277,14 +307,66 @@ describe("createSubagentHandlers", () => {
     });
 
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
-      "session:sub_agent_wait_completed",
+      "session:sub_agent_wait_finished",
       {
         runId: "run-1",
         parentSessionKey: "default:user1:channel1",
+        parentRunId: "run-parent",
+        status: "completed",
         success: false,
+        requestedTimeoutMs: 30_000,
+        effectiveTimeoutMs: 30_000,
+        durationMs: expect.any(Number),
         timestamp: expect.any(Number),
       },
     );
+  });
+
+  it("agent wait emits timeout cancellation and denied outcomes with both budgets", async () => {
+    const callerConversation = makeCallerConversation();
+    vi.mocked(deps.subAgentRunner.getRunStatus).mockImplementation((runId) => (
+      runId === "timed" || runId === "cancelled"
+        ? {
+            runId,
+            status: "running",
+            agentId: "researcher",
+            callerAgentId: "parent-agent",
+            callerConversation,
+          } as never
+        : undefined
+    ));
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([
+      { runId: "timed", status: "timeout" },
+      { runId: "cancelled", status: "cancelled" },
+    ]);
+
+    await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerSessionKey: "default:user1:channel1",
+      _callerConversationScope: CALLER_SCOPE,
+      _subagentWaitRequestedTimeoutMs: 300_000,
+      runIds: ["timed", "cancelled", "missing"],
+      timeoutMs: 60_000,
+    });
+
+    for (const [runId, status] of [
+      ["timed", "timeout"],
+      ["cancelled", "cancelled"],
+      ["missing", "denied_unknown"],
+    ] as const) {
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "session:sub_agent_wait_finished",
+        expect.objectContaining({
+          runId,
+          parentSessionKey: "default:user1:channel1",
+          parentRunId: "run-parent",
+          status,
+          requestedTimeoutMs: 300_000,
+          effectiveTimeoutMs: 60_000,
+          durationMs: expect.any(Number),
+        }),
+      );
+    }
   });
 
   it("agent wait returns indistinguishable denied outcomes without waiting on foreign or missing ids", async () => {

@@ -69,6 +69,12 @@ export const INTERNAL_FIELD_NAMES = [
   "_parentLeaseId",
   "_rootRunId",
   "_sessionKey",
+  // The model-requested wait duration before platform policy caps it. The
+  // trusted agent RPC factory injects this from tool-call metadata after
+  // stripping forged inbound fields; the wait handler uses it only for
+  // content-free requested-vs-effective diagnostics.
+  "_subagentWaitProgressBudgetMs",
+  "_subagentWaitRequestedTimeoutMs",
   "_tenantId",
   "_traceId",
   "_trustLevel",

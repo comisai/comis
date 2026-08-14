@@ -90,7 +90,7 @@ describe("prompt skill request routing", () => {
     });
 
     expect(selected).toEqual(["find-skills"]);
-    expect(deferral.requestRelevantToolNames).toEqual(["read", "exec"]);
+    expect(deferral.requestRelevantToolNames).toEqual(["find", "read", "exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual(["exec"]);
     expect(deferral.requestRelevantPromptSkillWorkflowContext)
       .toContain("u dont really know how to make flash cards properly");
@@ -210,6 +210,31 @@ describe("prompt skill request routing", () => {
       .toContain("/skills/deep-research/SKILL.md");
   });
 
+  it("preserves a request-relevant specialized read tool beside a prompt-skill workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("mcp__records--summary"));
+    deferral.requestRelevantToolNames.push("mcp__records--summary");
+    const currentRequestText =
+      "conduct multi-angle research to understand the connected records properly and deeply";
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText,
+      requestRelevanceText: currentRequestText,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+
+    expect(selected).toEqual(["deep-research"]);
+    expect(deferral.requestRelevantToolNames).toEqual([
+      "mcp__records--summary",
+      "read",
+      "web_search",
+      "web_fetch",
+    ]);
+  });
+
   it("does not enforce web evidence when the current request excludes web sources", () => {
     const deferral = result();
     const currentRequestText = [
@@ -261,6 +286,49 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(deferral.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
     expect(deferral.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
+  });
+
+  it("keeps coordinated web exclusions from arming research floors", () => {
+    const excluded = result();
+    const excludedRequest = [
+      "Conduct deep research to understand the connected records properly.",
+      "Work directly and do not delegate or use web research or prior reports.",
+    ].join(" ");
+
+    expect(applyPromptSkillRequestRouting(excluded, {
+      currentRequestText: excludedRequest,
+      requestRelevanceText: excludedRequest,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    })).toEqual(["deep-research"]);
+    expect(excluded.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(excluded.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(excluded.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
+    expect(excluded.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
+    expect(excluded.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
+    expect(excluded.requestRelevantToolNames).toEqual(["read"]);
+
+    const permitted = result();
+    const permittedRequest = [
+      "Conduct deep research to understand the connected records properly.",
+      "Work directly and use web research instead of prior reports.",
+    ].join(" ");
+
+    applyPromptSkillRequestRouting(permitted, {
+      currentRequestText: permittedRequest,
+      requestRelevanceText: permittedRequest,
+      skills: skills.filter((skill) => skill.name === "deep-research"),
+      locations: new Map([
+        ["/skills/deep-research/SKILL.md", "deep-research"],
+      ]),
+    });
+    expect(permitted.requestRelevantPromptSkillNames).toEqual(["deep-research"]);
+    expect(permitted.requestRelevantPromptSkillWorkflowToolNames).toEqual([
+      "web_search",
+      "web_fetch",
+    ]);
   });
 
   // A floor whose receipt tool is unreachable can never be met, so the

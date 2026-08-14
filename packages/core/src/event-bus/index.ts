@@ -4,7 +4,11 @@ export type { EventHandler } from "./bus.js";
 export { emitObservationalEventSafely } from "./observational-emission.js";
 export type { ObservationalEmissionDeps } from "./observational-emission.js";
 export type { EventMap } from "./events.js";
-export type { MessagingEvents } from "./events-messaging.js";
+export type {
+  LoopEvidence,
+  LoopNoProgressKind,
+  MessagingEvents,
+} from "./events-messaging.js";
 export type { AgentEvents } from "./events-agent.js";
 // SpendScopeKind — the closed wire enum for the spend kill-switch (agent|tenant|global).
 // Defined in events-agent.ts (the source of truth for the events that carry it) and

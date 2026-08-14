@@ -37,6 +37,9 @@ export interface RpcCallMetadata {
   outwardOperationId?: string;
   /** In-process tool cancellation propagated to long-running read-only RPCs. */
   signal?: AbortSignal;
+  /** Model-requested wait duration before platform policy applies its cap. */
+  subagentWaitRequestedTimeoutMs?: number;
+  subagentWaitProgressBudgetMs?: number;
 }
 
 export type RpcCall = (

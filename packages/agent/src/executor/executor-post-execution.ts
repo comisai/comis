@@ -42,7 +42,6 @@ import {
   type ExecutionSideEffectSummary,
   createConversationRef,
   SessionCompactionConfigSchema,
-  getToolMetadata,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -162,6 +161,7 @@ import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
 import type { BackgroundTaskManager } from "../background/background-task-manager.js";
 import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
+import { isReadOnlyTool } from "./tool-parallelism.js";
 import {
   synchronizeFinalAssistantResponse,
   type FinalAssistantSyncDiagnostics,
@@ -2169,12 +2169,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const successfulReadOnlyToolResult = bridgeResult.toolExecResults?.some(
     (toolResult) =>
       toolResult.success
-      && getToolMetadata(toolResult.toolName)?.isReadOnly === true,
+      && isReadOnlyTool(toolResult.toolName),
   ) ?? false;
   const onlyReadOnlyFailures =
     unrecoveredToolFailures.length > 0
     && unrecoveredToolFailures.every(
-      (toolName) => getToolMetadata(toolName)?.isReadOnly === true,
+      (toolName) => isReadOnlyTool(toolName),
     );
   const completionEvidenceGrounding = enforceCompletionEvidence({
     response: result.response ?? "",

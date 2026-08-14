@@ -242,6 +242,15 @@ export const CORE_TOOLS = new Set([
  */
 export const SMALL_CLASS_ORCHESTRATION_TOOLS = new Set(["pipeline"]);
 
+const DISCOVERY_CONTROL_TOOL_NAMES = new Set([
+  "discover_tools",
+  "tool_search_tool_regex",
+]);
+
+export function isDiscoveryControlToolName(toolName: string): boolean {
+  return DISCOVERY_CONTROL_TOOL_NAMES.has(toolName);
+}
+
 function normalizedToolReference(value: string): string {
   return value.toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
 }
@@ -1320,7 +1329,8 @@ function bm25Score(
  * Modes (checked in order):
  * 1. "select:tool1,tool2" -- batch fetch by exact name
  * 2. Exact name match -- single tool by exact name
- * 3. MCP prefix match -- tools starting with mcp__ or mcp: prefix
+ * 3. Exact MCP callable suffix match -- tools ending in `--<query>`
+ * 4. MCP prefix match -- tools starting with mcp__ or mcp: prefix
  */
 function structuredSearch(
   deferredTools: ToolDefinition[],
@@ -1341,13 +1351,27 @@ function structuredSearch(
   const exact = deferredTools.find(t => t.name.toLowerCase() === q);
   if (exact) return [exact];
 
-  // Mode 3: MCP prefix match (mcp__ or mcp:)
+  // Mode 3: exact MCP callable suffix match. Callable names qualify the
+  // server before `--`, while agents commonly retain only the stable tool
+  // suffix. Identifier equality must resolve before relevance ranking so
+  // corpus term frequency cannot substitute a semantic neighbor.
+  const exactSuffixMatches = deferredTools
+    .filter((tool) => {
+      const serverName = extractMcpServerName(tool.name);
+      if (serverName === undefined) return false;
+      const suffixStart = "mcp__".length + serverName.length + "--".length;
+      return tool.name.slice(suffixStart).toLowerCase() === q;
+    })
+    .slice(0, maxResults);
+  if (exactSuffixMatches.length > 0) return exactSuffixMatches;
+
+  // Mode 4: MCP prefix match (mcp__ or mcp:)
   if ((q.startsWith("mcp__") || q.startsWith("mcp:")) && q.length > 5) {
     const prefixMatches = deferredTools.filter(t => t.name.toLowerCase().startsWith(q)).slice(0, maxResults);
     if (prefixMatches.length > 0) return prefixMatches;
   }
 
-  // Mode 4: Server name match (e.g., bare server token -> all mcp__<server>--* tools)
+  // Mode 5: Server name match (e.g., bare server token -> all mcp__<server>--* tools)
   const serverPrefix = `mcp__${q}--`;
   const serverMatches = deferredTools.filter(t => t.name.toLowerCase().startsWith(serverPrefix));
   if (serverMatches.length > 0) return serverMatches.slice(0, maxResults);
@@ -1672,7 +1696,7 @@ function findActiveToolMatches(query: string, activeToolNames: ReadonlySet<strin
 
 /**
  * Format matched tool definitions as a `<functions>` block with full JSON schemas,
- * applying server-expansion and co-discovery.
+ * applying explicit co-discovery.
  *
  * Extracted from the inline block in `createDiscoverTool.execute()` so the two
  * return paths (structured + BM25) share one formatter.
@@ -1687,21 +1711,6 @@ function formatDiscoveryResponse(
   sideEffects: { discoveredTools: string[] };
 } {
   const discoveredNames = matches.map(m => m.name);
-
-  // Server-level activation: expand to all tools from same MCP server(s)
-  const serverNames = new Set<string>();
-  for (const name of discoveredNames) {
-    const server = extractMcpServerName(name);
-    if (server) serverNames.add(server);
-  }
-  if (serverNames.size > 0) {
-    for (const entry of deferredEntries) {
-      const server = extractMcpServerName(entry.name);
-      if (server && serverNames.has(server) && !discoveredNames.includes(entry.name)) {
-        discoveredNames.push(entry.name);
-      }
-    }
-  }
 
   // Co-discovery: expand to related tools via ComisToolMetadata.coDiscoverWith
   const coDiscoveryNames: string[] = [];

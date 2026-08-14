@@ -579,6 +579,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           1,
           Math.floor((agentConfig?.promptTimeout?.promptTimeoutMs ?? 180_000) / 3),
         ),
+        getSubagentWaitProgressBudgetMs: () =>
+          tryGetContext()?.subagentWaitProgressBudgetMs,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
         // Opt-out gates for the memory_ask (dialectic) tool. The master cost

@@ -773,7 +773,29 @@ Synthetic/test-harness session rows are excluded by default; pass `includeSynthe
 
 ### `obs.explain`
 
-Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for a single agent session: outcome, cost, timing, per-tool stats, the normalized failures (newest-first), the circuit-breaker timeline, large-result offloads, a one-line summary, and a deterministic `likelyRootCause`. The report is derived from log evidence only -- no LLM is invoked -- so it reproduces the same verdict from the same session forever.
+Assemble a self-contained, redaction-safe post-mortem (an `IncidentReport`) for a single agent session: outcome, cost, timing, per-tool stats, the normalized failures (newest-first), the circuit-breaker timeline, large-result offloads, a one-line summary, and a deterministic `likelyRootCause`. The report folds persisted trajectory, rollup, audit, and bounded log evidence; no LLM is invoked, so the same persisted evidence reproduces the same verdict.
+
+Connected-tool recovery is diagnosable from this report without joining raw
+logs. The optional `recoveries` block carries `{ total, succeeded, byReason,
+groundedResponseBeforeRecoveryCount?, groundedResponsePreservedCount?,
+successfulReceiptsOutsideRoute? }`, and `discoveryActivation` carries
+`{ displayedCount, activatedCount, replacedCount, skippedCount, failedCount }`.
+These are counts only: they prove the presence, handoff, and activation of
+runtime evidence, not the factual completeness of an external data source.
+`likelyRootCause` uses them to name `recovery_replaced_grounded_response` or
+`discovered_tool_not_activated` before downstream completion-correction noise.
+When a grounded answer was preserved but the routed workflow still stalled,
+the report retains the specific `tool_invocation_stall` diagnosis instead of
+overwriting it with the later completion-evidence guard.
+
+The same one-call diagnosis applies to bounded execution stalls. A local MCP
+queue refusal produces `mcp_queue_contention` with the resolved concurrency and
+queue/deadline budgets; a detector-owned repeating-call abort produces
+`execution_no_progress_loop` with bounded duplicate and stagnant-result counts;
+and a parent timeout overlapping `subagent.wait` produces
+`subagent_wait_deadline_overlap` with requested/effective wait budgets and
+whether the routed child remained independently deliverable. These specific
+causes outrank incidental recall misses and generic terminal summaries.
 
 `outcome.endReason` names the terminal cause. Three degradation causes are named individually rather than collapsing into a generic `error` (and drive `likelyRootCause`): **`context_exhausted`** (the context-window pre-flight guard aborted the run before the model could continue), **`output_starved`** (the final response was truncated at a length limit; the accompanying WARN's `hint` names the remedy that applies, because the cause splits three ways -- output that consumed the whole allowance is fixed by raising the agent's `maxTokens` or enabling `contextEngine.outputEscalation`; output that ended *below* the model's own ceiling (`recoverableLength: true` on the WARN) was truncated early under context pressure, which is fixed by reducing assembled context, and the SDK already compacted and retried that turn once; a turn that stopped at the cap having emitted nothing usually spent its whole output allowance on thinking), and **`timeout`** (the prompt-level stall budget or makespan ceiling killed the turn; `likelyRootCause` code `prompt_timeout` -- when the trajectory carries the enriched `execution.prompt_timeout` record the verdict is numbers-backed: the stall variant names the binding knob, e.g. `agents.<id>.promptTimeout.promptTimeoutMs`, with the configured budget and elapsed time, and the makespan variant names `agents.<id>.promptTimeout.stallCeilingMultiplier` for a streaming runaway; sessions whose trajectory lacks that record fall back to a generic knob suggestion). A tool-failure root cause still out-ranks them -- they explain the terminal state, not a tool crash. The same causes are aggregated deployment-wide by [`obs.system.health`](#obs-system-health)'s `degradedByCause`.
 

@@ -395,6 +395,14 @@ describe("isReadOnlyTool fallback chain", () => {
     expect(isReadOnlyTool("mcp__par_test__write_tool")).toBe(false);
   });
 
+  it("explicit external mutation hints override the MCP heuristic", () => {
+    registerToolMetadata("mcp__par_test__destructive_tool", {
+      isReadOnly: true,
+      externalMutationHint: true,
+    });
+    expect(isReadOnlyTool("mcp__par_test__destructive_tool")).toBe(false);
+  });
+
   it("priority 2: MCP heuristic returns true when no metadata", () => {
     expect(isReadOnlyTool("mcp__par_test_unregistered__tool")).toBe(true);
   });

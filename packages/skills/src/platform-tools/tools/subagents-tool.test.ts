@@ -87,7 +87,10 @@ describe("subagents tool", () => {
     expect(mockRpcCall).toHaveBeenCalledWith(
       "subagent.wait",
       { runIds: ["run-1", "run-2"], timeoutMs: 20_000 },
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        subagentWaitRequestedTimeoutMs: 20_000,
+      },
     );
     const parsed = parseResult(result) as {
       results: Array<{ completion: { summary: string } }>;
@@ -103,6 +106,62 @@ describe("subagents tool", () => {
     await tool.execute("call-wait-default", { action: "wait" } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("subagent.wait", {}, { signal: undefined });
+  });
+
+  it("forwards an explicit wait with the current progress budget", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
+    const logger = { debug: vi.fn(), info: vi.fn() };
+    const tool = createSubagentsTool(mockRpcCall, logger, {
+      getWaitProgressBudgetMs: () => 60_000,
+    });
+
+    await tool.execute("call-wait-capped", {
+      action: "wait",
+      timeout_ms: 300_000,
+    } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith(
+      "subagent.wait",
+      { timeoutMs: 300_000 },
+      {
+        signal: undefined,
+        subagentWaitRequestedTimeoutMs: 300_000,
+        subagentWaitProgressBudgetMs: 60_000,
+      },
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedTimeoutMs: 300_000,
+        progressBudgetMs: 60_000,
+      }),
+      "Subagent completion wait started",
+    );
+  });
+
+  it("keeps omitted wait provenance separate from the progress budget", async () => {
+    const mockRpcCall: RpcCall = vi.fn(async () => ({ results: [] }));
+    const logger = { debug: vi.fn(), info: vi.fn() };
+    const tool = createSubagentsTool(mockRpcCall, logger, {
+      getWaitProgressBudgetMs: () => 45_000,
+    });
+
+    await tool.execute("call-wait-default-capped", { action: "wait" } as never);
+
+    expect(mockRpcCall).toHaveBeenCalledWith(
+      "subagent.wait",
+      {},
+      {
+        signal: undefined,
+        subagentWaitProgressBudgetMs: 45_000,
+      },
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedTimeoutMs: undefined,
+        progressBudgetMs: 45_000,
+      }),
+      "Subagent completion wait started",
+    );
   });
 
   // -------------------------------------------------------------------------

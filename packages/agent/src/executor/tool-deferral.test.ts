@@ -1849,6 +1849,46 @@ describe("discover_tools -- structured search", () => {
     expect(text).toContain('"name":"mcp__slack__send"');
   });
 
+  it("returns an exact callable suffix before a stronger semantic neighbor", async () => {
+    const logger = createMockLogger();
+    const exact = {
+      ...makeMcpTool("mcp__records--speed_offenders"),
+      description: "Return threshold exceptions",
+    } as unknown as ToolDefinition;
+    const semanticNeighbor = {
+      ...makeMcpTool("mcp__records--trips_over_speeding"),
+      description: "Use speed_offenders evidence to rank speed_offenders exceptions and speed_offenders trends for offenders",
+    } as unknown as ToolDefinition;
+    const tools = [makeTool("read"), exact, semanticNeighbor];
+    const ctx = makeContext({
+      trustLevel: "admin",
+      capabilityClass: "nano",
+      toolNames: tools.map((tool) => tool.name),
+    });
+    const result = applyToolDeferral(tools, 128_000, ctx, logger);
+
+    const exactResult = await result.discoverTool!.execute!("call-exact-suffix", {
+      query: "speed_offenders",
+    });
+    const exactText = (exactResult.content[0] as { text: string }).text;
+    const exactSideEffects = (exactResult as unknown as {
+      sideEffects: { discoveredTools: string[] };
+    }).sideEffects;
+
+    expect(exactText).toContain('"name":"mcp__records--speed_offenders"');
+    expect(exactText).not.toContain('"name":"mcp__records--trips_over_speeding"');
+    expect(exactSideEffects.discoveredTools).toEqual(["mcp__records--speed_offenders"]);
+
+    const partialResult = await result.discoverTool!.execute!("call-partial-suffix", {
+      query: "offenders",
+    });
+    const partialSideEffects = (partialResult as unknown as {
+      sideEffects: { discoveredTools: string[] };
+    }).sideEffects;
+
+    expect(partialSideEffects.discoveredTools).toContain("mcp__records--trips_over_speeding");
+  });
+
   it("MCP prefix match returns all matching tools", async () => {
     const { discoverTool } = setupMcpDiscovery(MCP_TOOLS);
     const searchResult = await discoverTool.execute!("call-1", {
@@ -2076,34 +2116,28 @@ describe("discover_tools -- sideEffects", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 13b: discover_tools -- server-level activation
+// Suite 13b: discover_tools -- explicit schema activation
 // ---------------------------------------------------------------------------
 
-describe("discover_tools -- server-level activation", () => {
-  it("activates all sibling tools from the same MCP server on discovery", async () => {
+describe("discover_tools -- explicit schema activation", () => {
+  it("activates only the exact MCP schema shown to the model", async () => {
     const tools = [
       makeTool("read"),
-      makeTool("mcp__yfinance--get_stock_info"),
-      makeTool("mcp__yfinance--get_chart"),
-      makeTool("mcp__yfinance--get_history"),
-      makeTool("mcp__context7--resolve"),
+      makeTool("mcp__records--list_current"),
+      makeTool("mcp__records--summarize_current"),
+      makeTool("mcp__records--audit_current"),
+      makeTool("mcp__catalog--resolve"),
     ];
     const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    // Search for one specific yfinance tool
-    const execResult = await (result.discoverTool as any).execute("call-1", { query: "mcp__yfinance--get_stock_info" });
+    const execResult = await (result.discoverTool as any).execute("call-1", { query: "mcp__records--list_current" });
     const discoveredNames = execResult.sideEffects.discoveredTools as string[];
 
-    // Should include ALL yfinance tools, not just the queried one
-    expect(discoveredNames).toContain("mcp__yfinance--get_stock_info");
-    expect(discoveredNames).toContain("mcp__yfinance--get_chart");
-    expect(discoveredNames).toContain("mcp__yfinance--get_history");
-    // Should NOT include tools from other servers
-    expect(discoveredNames).not.toContain("mcp__context7--resolve");
+    expect(discoveredNames).toEqual(["mcp__records--list_current"]);
   });
 
-  it("activates tools from multiple servers when results span servers", async () => {
+  it("activates only explicitly selected schemas across multiple MCP servers", async () => {
     const tools = [
       makeTool("mcp__srv1--tool_a"),
       makeTool("mcp__srv1--tool_b"),
@@ -2113,18 +2147,13 @@ describe("discover_tools -- server-level activation", () => {
     const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    // select: both servers' tools
     const execResult = await (result.discoverTool as any).execute("call-1", { query: "select:mcp__srv1--tool_a,mcp__srv2--tool_c" });
     const discoveredNames = execResult.sideEffects.discoveredTools as string[];
 
-    // All siblings from both servers
-    expect(discoveredNames).toContain("mcp__srv1--tool_a");
-    expect(discoveredNames).toContain("mcp__srv1--tool_b");
-    expect(discoveredNames).toContain("mcp__srv2--tool_c");
-    expect(discoveredNames).toContain("mcp__srv2--tool_d");
+    expect(discoveredNames).toEqual(["mcp__srv1--tool_a", "mcp__srv2--tool_c"]);
   });
 
-  it("does not expand non-MCP tool discoveries to server siblings", async () => {
+  it("keeps exact non-MCP discovery scoped to the displayed schema", async () => {
     const tools = [
       makeTool("read"),
       makeTool("mcp__srv--tool_a"),
@@ -2137,31 +2166,47 @@ describe("discover_tools -- server-level activation", () => {
     const execResult = await (result.discoverTool as any).execute("call-1", { query: "read" });
     const discoveredNames = execResult.sideEffects.discoveredTools as string[];
 
-    // "read" has no MCP server, so no expansion
-    expect(discoveredNames).toContain("read");
-    expect(discoveredNames).not.toContain("mcp__srv--tool_a");
-    expect(discoveredNames).not.toContain("mcp__srv--tool_b");
+    expect(discoveredNames).toEqual(["read"]);
   });
 
-  it("functionsBlock only contains queried tools, not siblings", async () => {
+  it("keeps the displayed and callable sets scoped to the queried MCP schema", async () => {
     const tools = [
-      makeTool("mcp__yfinance--get_stock_info"),
-      makeTool("mcp__yfinance--get_chart"),
+      makeTool("mcp__records--list_current"),
+      makeTool("mcp__records--summarize_current"),
     ];
     const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    // Exact match for one tool
-    const execResult = await (result.discoverTool as any).execute("call-1", { query: "mcp__yfinance--get_stock_info" });
+    const execResult = await (result.discoverTool as any).execute("call-1", { query: "mcp__records--list_current" });
     const text = execResult.content[0].text as string;
 
-    // functionsBlock should only show the matched tool schema
-    expect(text).toContain("mcp__yfinance--get_stock_info");
-    expect(text).not.toContain("mcp__yfinance--get_chart");
+    expect(text).toContain("mcp__records--list_current");
+    expect(text).not.toContain("mcp__records--summarize_current");
 
-    // But sideEffects includes sibling
     const discoveredNames = execResult.sideEffects.discoveredTools as string[];
-    expect(discoveredNames).toContain("mcp__yfinance--get_chart");
+    expect(discoveredNames).toEqual(["mcp__records--list_current"]);
+  });
+
+  it("keeps callable discovery side effects identical to the schemas shown to the model", async () => {
+    const tools = [
+      makeTool("mcp__records--list_current"),
+      makeTool("mcp__records--summarize_current"),
+      makeTool("mcp__records--audit_current"),
+    ];
+    const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map((tool) => tool.name) });
+    const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
+
+    const raw = await result.discoverTool!.execute!("call-1", {
+      query: "mcp__records--list_current",
+    });
+    const response = raw as unknown as {
+      content: Array<{ type: "text"; text: string }>;
+      sideEffects: { discoveredTools: string[] };
+    };
+    const shownNames = [...response.content[0]!.text.matchAll(/"name":"([^"]+)"/g)]
+      .map((match) => match[1]);
+
+    expect(response.sideEffects.discoveredTools).toEqual(shownNames);
   });
 });
 
@@ -2627,26 +2672,21 @@ describe("discover_tools -- mid-turn injection support", () => {
     }
   });
 
-  it("server-level activation returns all sibling tools with originals for injection", async () => {
+  it("exact MCP discovery returns only the displayed tool with its original for injection", async () => {
     const tools = [
       makeTool("read"),
-      makeTool("mcp__yfinance--get_stock_info"),
-      makeTool("mcp__yfinance--get_chart"),
-      makeTool("mcp__yfinance--get_history"),
+      makeTool("mcp__records--list_current"),
+      makeTool("mcp__records--summarize_current"),
+      makeTool("mcp__records--audit_current"),
     ];
     const ctx = makeContext({ capabilityClass: "nano", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    // Search for one specific yfinance tool
-    const execResult = await (result.discoverTool as any).execute("call-1", { query: "mcp__yfinance--get_stock_info" });
+    const execResult = await (result.discoverTool as any).execute("call-1", { query: "mcp__records--list_current" });
     const discoveredNames = execResult.sideEffects.discoveredTools as string[];
 
-    // Should include all 3 yfinance tools (server-level activation)
-    expect(discoveredNames).toContain("mcp__yfinance--get_stock_info");
-    expect(discoveredNames).toContain("mcp__yfinance--get_chart");
-    expect(discoveredNames).toContain("mcp__yfinance--get_history");
+    expect(discoveredNames).toEqual(["mcp__records--list_current"]);
 
-    // All 3 must have matching deferredEntries with callable .original
     for (const name of discoveredNames) {
       const entry = result.deferredEntries.find(e => e.name === name);
       expect(entry, `deferredEntry for "${name}"`).toBeDefined();
@@ -2733,7 +2773,7 @@ describe("discover_tools -- co-discovery", () => {
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 128_000, ctx, createMockLogger());
 
-    const searchResult = await result.discoverTool!.execute!("call-1", { query: "system manage agents configure" });
+    const searchResult = await result.discoverTool!.execute!("call-1", { query: "agents_manage" });
     const sideEffects = (searchResult as Record<string, unknown>).sideEffects as { discoveredTools: string[] };
 
     expect(sideEffects.discoveredTools).toContain("agents_manage");

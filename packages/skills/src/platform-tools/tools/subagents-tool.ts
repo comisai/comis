@@ -84,6 +84,10 @@ interface ToolLogger {
   info(obj: Record<string, unknown>, msg: string): void;
 }
 
+interface SubagentsToolOptions {
+  readonly getWaitProgressBudgetMs?: () => number | undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -124,7 +128,11 @@ function frameWaitCompletionSummaries(value: unknown): unknown {
   };
 }
 
-export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): AgentTool<typeof SubagentsParams> {
+export function createSubagentsTool(
+  rpcCall: RpcCall,
+  logger?: ToolLogger,
+  options: SubagentsToolOptions = {},
+): AgentTool<typeof SubagentsParams> {
   const killGate = createActionGate("subagent.kill");
 
   return {
@@ -165,18 +173,28 @@ export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): Agen
           const runIds = Array.isArray(p.run_ids)
             ? p.run_ids.filter((runId): runId is string => typeof runId === "string")
             : undefined;
-          const timeoutMs = readNumberParam(p, "timeout_ms", false);
+          const requestedTimeoutMs = readNumberParam(p, "timeout_ms", false);
+          const progressBudgetMs = options.getWaitProgressBudgetMs?.();
           const waitParams = {
             ...(runIds ? { runIds: [...new Set(runIds)] } : {}),
-            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            ...(requestedTimeoutMs !== undefined ? { timeoutMs: requestedTimeoutMs } : {}),
           };
           logger?.debug({
             toolName: "subagents",
             action: "wait",
             requestedCount: runIds?.length ?? 0,
-            timeoutMs,
+            requestedTimeoutMs,
+            progressBudgetMs,
           }, "Subagent completion wait started");
-          const result = await rpcCall("subagent.wait", waitParams, { signal });
+          const result = await rpcCall("subagent.wait", waitParams, {
+            signal,
+            ...(requestedTimeoutMs !== undefined
+              ? { subagentWaitRequestedTimeoutMs: requestedTimeoutMs }
+              : {}),
+            ...(progressBudgetMs !== undefined
+              ? { subagentWaitProgressBudgetMs: progressBudgetMs }
+              : {}),
+          });
           return jsonResult(frameWaitCompletionSummaries(result));
         }
 

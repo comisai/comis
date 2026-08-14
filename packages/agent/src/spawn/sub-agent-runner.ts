@@ -75,7 +75,13 @@ import type {
   SendGovernedCompletionAnnouncement,
 } from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
-import { liveChildRunIds, selectOrphanedChildRuns, MAX_SPAWN_TREE_WALK } from "./abort-fallout.js";
+import {
+  activelyAwaitedChildRunIds,
+  hasIndependentAnnouncementAuthority,
+  liveChildRunIds,
+  selectOrphanedChildRuns,
+  MAX_SPAWN_TREE_WALK,
+} from "./abort-fallout.js";
 import {
   classifyAbortReason,
   isSubAgentAbortFinishReason,
@@ -1079,6 +1085,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
   const completionDeferreds = new Map<string, CompletionDeferred>();
   const completionAnnouncementWaitClaims = new Map<string, number>();
+  const abortedCompletionWaitClaimsByParentRunId = new Map<string, Set<string>>();
   const startDeferreds = new Map<string, StartDeferred>();
   const durableResumeHandshakeRunIds = new Set<string>();
   const activePromises = new Set<Promise<void>>();
@@ -1243,11 +1250,10 @@ function classifyCompletionErrorKind(
   /**
    * Cancel children left without a consumer by an abnormally-terminated parent.
    *
-   * A parent that ends abnormally can never read what its children return, so
-   * every still-live child burns tokens for a result nobody will see. Observed
-   * live: a parent timed out at 17:28:46 and two orphans ran on to 17:29:12 and
-   * 17:29:31, the latter alone spending 1.33M tokens / $1.80 after its reader
-   * was already gone.
+   * A route-less child has no remaining consumer after an abnormal parent end
+   * and is cancelled. A child with a complete authenticated announcement route
+   * remains deliverable, so it continues and the preservation is recorded on
+   * the parent trajectory.
    *
    * Recursion terminates: each killRun re-enters terminalizeRun for the child,
    * which returns early once that child is terminal, so the cascade walks the
@@ -1257,7 +1263,23 @@ function classifyCompletionErrorKind(
    * legitimate pattern and its children are expected to outlive the turn.
    */
   function cancelOrphanedChildren(parentRunId: string, parentEndReason: string): void {
+    if (parentEndReason === "completed") return;
+    const liveChildIds = liveChildRunIds(parentRunId, runs.values());
     const orphaned = selectOrphanedChildRuns(parentRunId, parentEndReason, runs.values());
+    const orphanedSet = new Set(orphaned);
+    const parent = runs.get(parentRunId);
+    if (parent !== undefined) {
+      for (const childRunId of liveChildIds) {
+        if (orphanedSet.has(childRunId)) continue;
+        deps.eventBus.emit("subagent:routed_child_preserved", {
+          parentRunId,
+          childRunId,
+          sessionKey: parent.sessionKey,
+          reason: "announcement_route",
+          timestamp: deps.clock.now(),
+        });
+      }
+    }
     for (const childRunId of orphaned) {
       killRun(childRunId, {
         killedBy: "system",
@@ -1291,6 +1313,19 @@ function classifyCompletionErrorKind(
     if (current === undefined) return;
     if (current <= 1) completionAnnouncementWaitClaims.delete(runId);
     else completionAnnouncementWaitClaims.set(runId, current - 1);
+  }
+
+  function snapshotAbortedCompletionWaitClaims(
+    consumerSessionKey: string | undefined,
+    claimedRunIds: readonly string[],
+  ): void {
+    if (consumerSessionKey === undefined || claimedRunIds.length === 0) return;
+    const parentRunId = getRunBySessionKey(consumerSessionKey)?.runId;
+    if (parentRunId === undefined) return;
+    const snapshot = abortedCompletionWaitClaimsByParentRunId.get(parentRunId)
+      ?? new Set<string>();
+    for (const runId of claimedRunIds) snapshot.add(runId);
+    abortedCompletionWaitClaimsByParentRunId.set(parentRunId, snapshot);
   }
 
   function activeWaitOwnsCompletionAnnouncement(
@@ -1351,6 +1386,10 @@ function classifyCompletionErrorKind(
         .map(({ runId }) => runId);
     try {
       if (signal?.aborted) {
+        snapshotAbortedCompletionWaitClaims(
+          announcementConsumerSessionKey,
+          claimedRunIds,
+        );
         for (const entry of pending) {
           immediate.set(entry.runId, { runId: entry.runId, status: "cancelled" });
         }
@@ -1369,7 +1408,13 @@ function classifyCompletionErrorKind(
         deadlineHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
         deadlineHandle.unref();
         if (signal) {
-          const onAbort = (): void => resolve("cancelled");
+          const onAbort = (): void => {
+            snapshotAbortedCompletionWaitClaims(
+              announcementConsumerSessionKey,
+              claimedRunIds,
+            );
+            resolve("cancelled");
+          };
           signal.addEventListener("abort", onAbort, { once: true });
           removeAbortListener = () => signal.removeEventListener("abort", onAbort);
         }
@@ -1683,6 +1728,7 @@ function classifyCompletionErrorKind(
   function forceTerminalCleanup(run: SubAgentRun): void {
     if (forcedTerminalRunIds.has(run.runId)) return;
     forcedTerminalRunIds.add(run.runId);
+    abortedCompletionWaitClaimsByParentRunId.delete(run.runId);
     watchdogTimers.get(run.runId)?.cancel();
     watchdogTimers.delete(run.runId);
     stopProgressFork(run);
@@ -3324,16 +3370,27 @@ function classifyCompletionErrorKind(
         // Classified here (not only at the WARN further down) so the halt account can name the
         // category and its hint. Classification must never block a completion path.
         let abortClassification: AbortClassification | undefined;
+        const abortedWaitClaims = abortedCompletionWaitClaimsByParentRunId.get(runId);
+        abortedCompletionWaitClaimsByParentRunId.delete(runId);
         if (isSubAgentAbortFinishReason(result.finishReason)) {
           try {
-            // Live children at the abort are exactly what the run was awaiting,
-            // so a timeout hint can name them instead of the timeout knob.
+            const awaitedChildRunIds = activelyAwaitedChildRunIds(
+              runId,
+              runs.values(),
+              (childRunId) => (abortedWaitClaims?.has(childRunId) ?? false)
+                || (completionAnnouncementWaitClaims.get(childRunId) ?? 0) > 0,
+            );
+            const routedChildRunIds = awaitedChildRunIds.filter((childRunId) => {
+              const child = runs.get(childRunId);
+              return child !== undefined && hasIndependentAnnouncementAuthority(child);
+            });
             abortClassification = classifyAbortReason(
               result.finishReason,
               undefined,
               undefined,
               {
-                awaitedChildRunIds: liveChildRunIds(runId, runs.values()),
+                awaitedChildRunIds,
+                routedChildRunIds,
                 ...(result.stepLimit === undefined ? {} : { stepLimit: result.stepLimit }),
               },
             );

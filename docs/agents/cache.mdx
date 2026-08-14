@@ -226,7 +226,7 @@ Sending every tool schema on every request can add substantial repeated input.
 Comis can defer non-essential tools using a **BM25-backed discovery tool**
 (`discover_tools`).
 
-Deferred tools are removed from the `tools` parameter entirely. Their schemas are stored in a `DiscoveryTracker`. When the agent needs a deferred tool, it calls `discover_tools` with a natural-language query. Comis runs BM25 search over the deferred set and re-injects matching tool schemas mid-turn.
+Deferred tools are removed from the `tools` parameter entirely. Their schemas are stored in a `DiscoveryTracker`. When the agent needs a deferred tool, it calls `discover_tools` with a natural-language query. Exact callable names and exact MCP callable suffixes (the part after `--`) resolve before BM25 relevance search. Comis re-injects only the matched schemas plus relationships declared through explicit `coDiscoverWith` metadata; matching one MCP tool does not activate every tool on that server. A discovered full schema replaces any same-name deferral placeholder in the live callable set, so a tool displayed by discovery is callable in that turn.
 
 Tool deferral is configurable per-agent:
 

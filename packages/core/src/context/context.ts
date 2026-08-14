@@ -84,6 +84,7 @@ export const RequestContextSchema = z.strictObject({
     resolvedLanguage: z.string().optional(),
     /** Exact per-turn locale decision captured for durable descendants. */
     responseLocalePolicy: ResponseLocalePolicySchema.optional(),
+    subagentWaitProgressBudgetMs: z.number().int().min(1).max(300_000).optional(),
     /** Immutable operator-policy snapshot hash used by this turn and durable descendants. */
     workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   });
@@ -139,6 +140,7 @@ export interface ResolvedRequestContextSeed {
   resolvedModel?: string;
   resolvedLanguage?: string;
   responseLocalePolicy?: ResponseLocalePolicy;
+  subagentWaitProgressBudgetMs?: number;
   workspacePolicyHash?: string;
   turnScope?: ResolvedTurnScope;
 }
@@ -175,6 +177,7 @@ const mutableContextFields = [
   "resolvedModel",
   "resolvedLanguage",
   "responseLocalePolicy",
+  "subagentWaitProgressBudgetMs",
   "workspacePolicyHash",
 ] as const satisfies readonly (keyof RequestContext)[];
 
@@ -283,6 +286,7 @@ function lockResolvedContext(
       ["resolvedModel", parsed.resolvedModel],
       ["resolvedLanguage", parsed.resolvedLanguage],
       ["responseLocalePolicy", parsed.responseLocalePolicy],
+      ["subagentWaitProgressBudgetMs", parsed.subagentWaitProgressBudgetMs],
       ["workspacePolicyHash", parsed.workspacePolicyHash],
     ];
     const descriptors = Object.fromEntries([
@@ -337,6 +341,7 @@ export function createResolvedRequestContext(
     resolvedModel: seed.resolvedModel,
     resolvedLanguage: seed.resolvedLanguage,
     responseLocalePolicy: seed.responseLocalePolicy,
+    subagentWaitProgressBudgetMs: seed.subagentWaitProgressBudgetMs,
     workspacePolicyHash: seed.workspacePolicyHash,
     turnScope: seed.turnScope,
   }));

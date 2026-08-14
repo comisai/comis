@@ -13065,12 +13065,65 @@ export const CONTRACTS = {
               "additionalProperties": {
                 "type": "number"
               }
+            },
+            "groundedResponseBeforeRecoveryCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "groundedResponsePreservedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "successfulReceiptsOutsideRoute": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             }
           },
           "required": [
             "total",
             "succeeded",
             "byReason"
+          ],
+          "additionalProperties": false
+        },
+        "discoveryActivation": {
+          "type": "object",
+          "properties": {
+            "displayedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "activatedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "replacedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "skippedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "failedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "displayedCount",
+            "activatedCount",
+            "replacedCount",
+            "skippedCount",
+            "failedCount"
           ],
           "additionalProperties": false
         },

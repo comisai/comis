@@ -198,14 +198,14 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     | `message` | string | For steer | The steering message for the subagent |
     | `recent_minutes` | integer | No | Include runs from the last N minutes (default 30, for `list`) |
     | `run_ids` | string[] | No | Exact owned run IDs to wait for (1--32). Omit to wait for active direct children. |
-    | `timeout_ms` | integer | No | Wait deadline from 0 to 300000 ms. |
+    | `timeout_ms` | integer | No | Requested wait deadline from 0 to 300000 ms. The model-facing tool caps the effective interval at one third of the owning agent's `promptTimeout.promptTimeoutMs` (minimum 1 ms), so an unfinished wait yields control before the parent reaches its no-progress deadline. |
 
     **Actions:**
 
     | Action | What It Does |
     |--------|-------------|
     | `list` | Show all running sub-agents with their status and progress |
-    | `wait` | Await selected owned runs, or all active direct children when `run_ids` is omitted. Each result is `completed`, `denied_unknown`, `timeout`, or `cancelled`; terminal completions retain `completed`, `failed`, `killed`, `watchdog_timeout`, or `ghost_sweep` as the end reason. |
+    | `wait` | Await selected owned runs, or all active direct children when `run_ids` is omitted. Each result is `completed`, `denied_unknown`, `timeout`, or `cancelled`; terminal completions retain `completed`, `failed`, `killed`, `watchdog_timeout`, or `ghost_sweep` as the end reason. Requested and effective wait budgets are recorded so `comis explain` can distinguish a bounded wait from the parent deadline. |
     | `kill` | Terminate a sub-agent by its run ID (discards its in-flight work) |
     | `steer` | Redirect a running sub-agent with a steering message. By default this kills the child and respawns it with the message as the new task; when [`security.agentToAgent.steerInject`](/reference/config-yaml#security) is enabled it instead **injects** the message into the running child at its next step boundary, preserving its transcript and progress. A steer never widens the child's tool set -- a denied tool stays denied. See [Steering a running sub-agent](/agents/subagent-lifecycle#steering-a-running-sub-agent). |
 
@@ -217,7 +217,7 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
     **Example -- Wait for direct children:**
     ```yaml
     action: wait
-    timeout_ms: 300000
+    timeout_ms: 60000
     ```
 
     **Example -- Steer a running sub-agent:**

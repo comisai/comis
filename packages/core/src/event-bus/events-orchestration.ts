@@ -158,6 +158,20 @@ export interface OrchestrationEvents {
   };
 
   /**
+   * An abnormal parent end left a live child running because the child retains
+   * its own authenticated completion route. IDs plus a closed reason only;
+   * never the task, result, or delivery destination.
+   */
+  "subagent:routed_child_preserved": {
+    parentRunId: string;
+    childRunId: string;
+    /** The parent session receives the lifecycle explanation. */
+    sessionKey: string;
+    reason: "announcement_route";
+    timestamp: number;
+  };
+
+  /**
    * A child provider returned while one or more exec auto-background handoffs
    * were still running. The runner rejects terminal success and emits this
    * content-free cleanup request before post-processing, so the composition

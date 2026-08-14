@@ -13,22 +13,106 @@
  * @module
  */
 
+import {
+  conversationScopeToSessionKey,
+  formatSessionKey,
+  type ChannelEndpoint,
+  type ConversationLocator,
+  type DeliveryOrigin,
+} from "@comis/core";
+
 /** The run fields orphan selection needs; a structural subset of SubAgentRun. */
 export interface OrphanCandidateRun {
   readonly runId: string;
   readonly status: string;
   readonly parentRunId?: string;
+  readonly announceChannelType?: string;
+  readonly announceChannelId?: string;
+  readonly requesterOrigin?: DeliveryOrigin;
+  readonly callerAgentId?: string;
+  readonly callerSessionKey?: string;
+  readonly callerConversation?: ConversationLocator;
+  readonly callerEndpoint?: ChannelEndpoint;
 }
 
 /** Statuses from which a run can still be cancelled. */
 const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set(["running", "queued"]);
 
+function endpointsEqual(left: ChannelEndpoint, right: ChannelEndpoint): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}
+
+function partitionMatchesEndpoint(
+  partition: ConversationLocator["conversationScope"]["partition"],
+  endpoint: ChannelEndpoint,
+): boolean {
+  switch (partition.kind) {
+    case "agent":
+    case "principal":
+      return endpoint.conversationKind === "direct";
+    case "channel-principal":
+      return endpoint.conversationKind === "direct"
+        && partition.channelType === endpoint.channelType;
+    case "endpoint-conversation":
+      return endpoint.conversationKind === "shared"
+        && endpointsEqual(partition.endpoint, endpoint);
+    case "endpoint-conversation-principal":
+      return endpoint.conversationKind === "direct"
+        && endpointsEqual(partition.endpoint, endpoint);
+    default: {
+      const _exhaustive: never = partition;
+      return _exhaustive;
+    }
+  }
+}
+
+export function hasIndependentAnnouncementAuthority(run: OrphanCandidateRun): boolean {
+  const {
+    announceChannelType,
+    announceChannelId,
+    callerAgentId,
+    callerSessionKey,
+    callerConversation,
+    callerEndpoint,
+    requesterOrigin,
+  } = run;
+  if (
+    !announceChannelType
+    || !announceChannelId
+    || !callerAgentId
+    || !callerSessionKey
+    || callerConversation === undefined
+    || callerEndpoint === undefined
+  ) return false;
+  const scope = callerConversation.conversationScope;
+  const projected = conversationScopeToSessionKey(scope);
+  if (
+    !projected.ok
+    || formatSessionKey(projected.value) !== callerSessionKey
+    || scope.agentId !== callerAgentId
+    || !partitionMatchesEndpoint(scope.partition, callerEndpoint)
+    || callerEndpoint.channelType !== announceChannelType
+    || callerEndpoint.conversationId !== announceChannelId
+    || callerEndpoint.threadId !== requesterOrigin?.threadId
+  ) return false;
+  return requesterOrigin === undefined || (
+    requesterOrigin.tenantId === scope.tenantId
+    && requesterOrigin.channelType === announceChannelType
+    && requesterOrigin.channelId === announceChannelId
+  );
+}
+
 /**
  * Child runs to cancel when `parentRunId` reaches a terminal state.
  *
- * A parent that ends abnormally can never consume what its children return, so
- * every still-live child is burning tokens for a result with no reader. In the
- * incident one such orphan ran 46s past its dead parent and spent $1.80.
+ * A parent that ends abnormally cannot consume an unrouted child's result, so
+ * that child would continue working without a reader. A child with a complete
+ * announcement route still has an independently authenticated consumer and is
+ * not an orphan merely because its parent ended.
  *
  * A parent that completes CLEANLY is left alone: background delegation is a
  * legitimate pattern, and a child announcing to its own channel is expected to
@@ -45,15 +129,21 @@ export function selectOrphanedChildRuns(
   runs: Iterable<OrphanCandidateRun>,
 ): string[] {
   if (parentEndReason === "completed") return [];
-  return liveChildRunIds(parentRunId, runs);
+  const orphaned: string[] = [];
+  for (const run of runs) {
+    if (run.parentRunId !== parentRunId) continue;
+    if (!CANCELLABLE_STATUSES.has(run.status)) continue;
+    if (hasIndependentAnnouncementAuthority(run)) continue;
+    orphaned.push(run.runId);
+  }
+  return orphaned;
 }
 
 /**
  * Children of `parentRunId` that have not reached a terminal state.
  *
- * At the moment a parent aborts, this set is exactly what it was still waiting
- * on — so the same computation answers both "what should be cancelled" and
- * "what was this run blocked on".
+ * This is the cancellable child set. Caller-specific completion waits are a
+ * narrower subset selected from active ownership claims.
  *
  * @param parentRunId - The parent whose children to list
  * @param runs - Snapshot of all tracked runs
@@ -72,10 +162,20 @@ export function liveChildRunIds(
   return live;
 }
 
+export function activelyAwaitedChildRunIds(
+  parentRunId: string,
+  runs: Iterable<OrphanCandidateRun>,
+  hasActiveClaim: (runId: string) => boolean,
+): string[] {
+  return liveChildRunIds(parentRunId, runs).filter(hasActiveClaim);
+}
+
 /** Authoritative runtime facts that choose an abort's remediation hint. */
 export interface AbortEvidence {
   /** Child runs still being awaited at the deadline. */
   readonly awaitedChildRunIds?: readonly string[];
+  /** Awaited children that retain an authenticated independent announcement route. */
+  readonly routedChildRunIds?: readonly string[];
   /** Authoritative step ceiling retained by the executor on a max-steps halt. */
   readonly stepLimit?: {
     readonly bindingKnob: string;
@@ -92,11 +192,9 @@ const TIMEOUT_KNOB_HINT =
  * Remediation hint for a `prompt_timeout` abort, branched by what the run was
  * actually doing when the clock ran out.
  *
- * The unbranched hint names the timeout knob for every timeout. When the run was
- * blocked on children that were themselves doomed, raising that knob buys more
- * waiting — and its "reduce the task scope" clause is a diagnosis the agent then
- * relays to the user as its own, which is how a tool-reachability failure got
- * reported as "the scope was too broad for one run".
+ * A wait may overlap the parent deadline even when a routed child can continue
+ * independently. The hint distinguishes that case from a run whose own model
+ * execution simply exceeded its operation timeout.
  *
  * @param evidence - Delegation state at the deadline; undefined when unknown
  * @returns The hint text for the prompt_timeout classification
@@ -105,11 +203,16 @@ export function promptTimeoutHint(evidence: AbortEvidence | undefined): string {
   const awaited = evidence?.awaitedChildRunIds ?? [];
   if (awaited.length > 0) {
     const first = awaited[0] as string;
+    const routed = evidence?.routedChildRunIds ?? [];
+    const routedGuidance = routed.length > 0
+      ? ` ${routed.length === 1 ? "The routed child will" : "The routed children will"} `
+        + "continue and announce independently."
+      : " Children without an independent announcement route are cancelled with the parent.";
     return `This run timed out while awaiting ${awaited.length} delegated `
-      + `${awaited.length === 1 ? "child" : "children"}, so its own deadline is not the `
-      + "binding constraint — the children are. Inspect them first "
-      + `(comis explain "${first}") and fix their abort reason; raising the parent timeout `
-      + "only buys more waiting.";
+      + `${awaited.length === 1 ? "child" : "children"}; the parent deadline was binding.`
+      + routedGuidance
+      + ` Inspect the first child (comis explain "${first}") and keep each wait interval `
+      + "below the prompt progress budget so the parent can process the result.";
   }
 
   return TIMEOUT_KNOB_HINT;

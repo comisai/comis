@@ -7,6 +7,74 @@ interface RootCause {
   suggestedNextSteps: string[];
 }
 
+/** Diagnose a scheduler-state claim replaced after model execution. */
+export function schedulerStateEvidenceGroundingVerdict(
+  signals: IncidentSignals,
+): RootCause | null {
+  if ((signals.recoveries?.byReason.missing_scheduler_state_evidence ?? 0) === 0) {
+    return null;
+  }
+  return {
+    code: "scheduler_state_evidence_grounding",
+    detail:
+      "the scheduler-state evidence guard replaced the model response because no successful "
+      + "current-turn cron receipt supported the detected claim",
+    suggestedNextSteps: [
+      "compare the original session response with the delivered message to confirm the deterministic replacement",
+      "inspect the response-grounding scheduler claim matcher when the original response contains no reminder or scheduled-job claim",
+      "use a successful current-turn cron list or status receipt before affirming mutable scheduler state",
+    ],
+  };
+}
+
+/** Diagnose an explicit displayed-to-activated deferred-tool mismatch. */
+export function discoveredToolNotActivatedVerdict(
+  signals: IncidentSignals,
+): RootCause | null {
+  if (signals.endReason !== "success") return null;
+  const activation = signals.discoveryActivation;
+  if (activation === undefined || activation.displayedCount <= activation.activatedCount) {
+    return null;
+  }
+  return {
+    code: "discovered_tool_not_activated",
+    detail:
+      `deferred tool activation mismatch: displayed=${String(activation.displayedCount)}, `
+      + `activated=${String(activation.activatedCount)}, replaced=${String(activation.replacedCount)}, `
+      + `skipped=${String(activation.skippedCount)}, failed=${String(activation.failedCount)}`,
+    suggestedNextSteps: [
+      "inspect the discovery activation record beside the discover_tools result",
+      "verify displayed deferred tools replace placeholders in the live callable set",
+      "obs.explain depth=full",
+    ],
+  };
+}
+
+/** Diagnose a user-visible recovery handoff that discarded grounded evidence. */
+export function groundedResponseReplacementVerdict(
+  signals: IncidentSignals,
+): RootCause | null {
+  if (signals.endReason !== "success") return null;
+  const groundedBefore =
+    signals.recoveries?.groundedResponseBeforeRecoveryCount ?? 0;
+  const groundedPreserved =
+    signals.recoveries?.groundedResponsePreservedCount ?? 0;
+  if (groundedBefore <= groundedPreserved) return null;
+  const outsideRoute = signals.recoveries?.successfulReceiptsOutsideRoute ?? 0;
+  return {
+    code: "recovery_replaced_grounded_response",
+    detail:
+      `${String(groundedBefore - groundedPreserved)} grounded response(s) backed by `
+      + `${String(outsideRoute)} successful receipt(s) outside the selected workflow route `
+      + "were replaced by request-tool recovery",
+    suggestedNextSteps: [
+      "inspect request-relevant tool routing and the request_tool_nudge handoff",
+      "confirm the terminal response preserves the receipt-grounded pre-recovery answer",
+      "obs.explain depth=full",
+    ],
+  };
+}
+
 /** Explain a terminal turn whose required tool-backed action or workflow
  * evidence remained incomplete. This acute execution outcome outranks
  * incidental recall misses from the same turn. */

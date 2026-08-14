@@ -262,6 +262,7 @@ export function accumulateBackgroundTaskRecord(
         "skill_import_incomplete",
         "mcp_connection_details_missing",
         "mcp_secret_reference_missing",
+        "mcp_queue_contention",
         "mcp_call_deadline_exceeded",
         "background_hard_timeout_exceeded",
       ] as const,
@@ -271,6 +272,23 @@ export function accumulateBackgroundTaskRecord(
     const configuredMs = nonnegativeInteger(data.failureConfiguredMs);
     const queueWaitedMs = nonnegativeInteger(data.failureQueueWaitedMs);
     const requestBudgetMs = nonnegativeInteger(data.failureRequestBudgetMs);
+    const minViableMs = nonnegativeInteger(data.failureMinViableMs);
+    const serverName = asString(data.failureServerName);
+    const configuredConcurrency = nonnegativeInteger(data.failureConfiguredConcurrency);
+    const queueDiagnosticPreview =
+      failureCode === "mcp_queue_contention"
+      && configKey === "integrations.mcp.servers[].maxConcurrency"
+      && serverName !== undefined
+      && configuredConcurrency !== undefined
+      && configuredConcurrency > 0
+      && configuredMs !== undefined
+      && queueWaitedMs !== undefined
+      && requestBudgetMs !== undefined
+      && minViableMs !== undefined
+        ? `${configKey}; serverName=${serverName}; maxConcurrency=${String(configuredConcurrency)}; `
+          + `queueWaitedMs=${String(queueWaitedMs)}; requestBudgetMs=${String(requestBudgetMs)}; `
+          + `configuredMs=${String(configuredMs)}; minViableMs=${String(minViableMs)}`
+        : "";
     const mcpDiagnosticPreview =
       failureCode === "mcp_call_deadline_exceeded"
       && configKey === "integrations.mcp.callToolTimeoutMs"
@@ -286,7 +304,7 @@ export function accumulateBackgroundTaskRecord(
       && /^agents\.[^.]+\.backgroundTasks\.maxBackgroundDurationMs$/.test(configKey)
       && configuredMs !== undefined
         ? `${configKey}=${String(configuredMs)}ms`
-        : mcpDiagnosticPreview;
+        : queueDiagnosticPreview.length > 0 ? queueDiagnosticPreview : mcpDiagnosticPreview;
     entry.errorKinds.set(errorKind, (entry.errorKinds.get(errorKind) ?? 0) + 1);
     acc.failures.push({
       seq,

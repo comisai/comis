@@ -69,6 +69,13 @@ export function toolFailureHint(errorText?: string, errorKind?: string): string 
         ? "Background task capacity was exhausted; inspect the owning agent's backgroundTasks limits before retrying"
         : `Background task capacity was exhausted at ${binding}; wait for a running task to finish before retrying`;
     }
+    if (runtimeGuard === "mcp_queue_contention") {
+      return (
+        "The MCP request never reached its server because the local concurrency queue consumed "
+        + "its call budget; retry after calls ahead drain, reduce fan-out, or raise maxConcurrency "
+        + "only when the server supports parallel calls"
+      );
+    }
     if (runtimeGuard === "spawn_ceiling") {
       const match = SPAWN_CEILING_BINDING.exec(errorText);
       const binding = match?.[1];

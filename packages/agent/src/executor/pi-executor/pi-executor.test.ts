@@ -343,12 +343,16 @@ vi.mock("../../envelope/message-envelope.js", () => ({
   wrapInEnvelope: mockWrapInEnvelope,
 }));
 
-// Mock tool-parallelism module -- passthrough so existing tests are unaffected
-vi.mock("../tool-parallelism.js", () => ({
-  createMutationSerializer: vi.fn().mockReturnValue((tools: unknown[]) => tools),
-  isReadOnlyTool: vi.fn().mockReturnValue(false),
-  isConcurrencySafe: vi.fn().mockReturnValue(false),
-}));
+// Keep the authoritative read-only classifier while bypassing serializer
+// wrapping so executor tests remain focused on their own behavior.
+vi.mock("../tool-parallelism.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../tool-parallelism.js")>();
+  return {
+    ...actual,
+    createMutationSerializer: vi.fn().mockReturnValue((tools: unknown[]) => tools),
+    isConcurrencySafe: vi.fn().mockReturnValue(false),
+  };
+});
 
 // Mock node:fs -- appendFileSync, statSync, renameSync, unlinkSync for JSONL trace verification
 vi.mock("node:fs", async (importOriginal) => {
@@ -382,6 +386,7 @@ import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../sessi
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { INTERACTIVE_SILENT_FAILURE_RESPONSE } from "../prompt-runner/interactive-silent-recovery.js";
+import { DEFERRAL_STUB_MARKER } from "../tool-deferral.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -6755,6 +6760,180 @@ describe("PiExecutor", () => {
       );
     });
 
+    it("activates a discovered deferred stub in the next provider payload", async () => {
+      const summaryTool = {
+        name: "mcp__records--summary",
+        label: "Record Summary",
+        description: "Return the current record summary",
+        parameters: {
+          type: "object",
+          properties: {
+            scope: { type: "string" },
+            filters: { type: "array", items: { type: "string" } },
+          },
+          required: ["scope", "filters"],
+          additionalProperties: false,
+        },
+        execute: vi.fn().mockResolvedValue({
+          content: [{ type: "text", text: "summary" }],
+          isError: false,
+        }),
+      };
+      const deps = createMockDeps({
+        customTools: [summaryTool] as any,
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai", id: "gpt-4o" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const openaiConfig = {
+        ...testConfig,
+        provider: "openai",
+        model: "gpt-4o",
+        deferredTools: { alwaysDefer: [summaryTool.name] },
+      } as PerAgentConfig;
+      const executor = createPiExecutor(openaiConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const sessionOptions = (createAgentSession as Mock).mock.calls.at(-1)![0];
+      const liveTools = sessionOptions.customTools as Array<Record<string, any>>;
+      const originalStub = liveTools.find(tool => tool.name === summaryTool.name);
+      expect(originalStub?.[DEFERRAL_STUB_MARKER]).toBe(true);
+      expect(originalStub?.parameters).toEqual({
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+      });
+
+      const discoverTool = liveTools.find(tool => tool.name === "discover_tools");
+      const discoveryResult = await discoverTool.execute(
+        "discover-summary",
+        { query: "summary" },
+        undefined,
+        vi.fn(),
+        undefined,
+      );
+      expect(discoveryResult.sideEffects.discoveredTools).toContain(summaryTool.name);
+
+      await mockSession.agent.afterToolCall({
+        toolCall: { name: "discover_tools" },
+        args: { query: "summary" },
+        result: discoveryResult,
+        isError: false,
+        context: { tools: liveTools },
+      });
+
+      const activationEventsAfterReconciliation = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.filter(([event]) => event === "tool:discovery_activation");
+      expect(activationEventsAfterReconciliation).toHaveLength(1);
+
+      const activatedTools = liveTools.filter(tool => tool.name === summaryTool.name);
+      expect(activatedTools).toHaveLength(1);
+      expect(activatedTools[0]).not.toBe(originalStub);
+      expect(activatedTools[0]?.[DEFERRAL_STUB_MARKER]).not.toBe(true);
+      expect(activatedTools[0]?.parameters).toEqual(summaryTool.parameters);
+      expect(activatedTools[0]?.execute).toBe(originalStub.execute);
+      expect(activatedTools[0]?.prepareArguments({
+        scope: "active",
+        filters: '["idle"]',
+      })).toEqual({ scope: "active", filters: ["idle"] });
+
+      mockSession.agent.streamFunction(
+        { provider: "openai" } as any,
+        { systemPrompt: "test", messages: [], tools: liveTools } as any,
+        {},
+      );
+      const providerOptions = mockStreamFn.mock.calls.at(-1)![2] as Record<string, unknown>;
+      const onPayload = providerOptions.onPayload as (
+        payload: unknown,
+        model: unknown,
+      ) => Promise<Record<string, unknown>>;
+      const payload = {
+        tools: liveTools.map(tool => ({
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          },
+        })),
+      };
+      const filteredPayload = await onPayload(payload, { provider: "openai" });
+      const providerTools = filteredPayload.tools as Array<Record<string, any>>;
+      const providerSummary = providerTools.find(
+        tool => tool.function?.name === summaryTool.name,
+      );
+
+      expect(providerSummary?.function?.parameters).toEqual(summaryTool.parameters);
+      const activationEvents = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.filter(([event]) => event === "tool:discovery_activation");
+      expect(activationEvents).toHaveLength(1);
+      expect(activationEvents[0]?.[1]).toMatchObject({
+        displayedCount: 1,
+        activatedCount: 1,
+        replacedCount: 1,
+        skippedCount: 0,
+        failedCount: 0,
+      });
+      expect(JSON.stringify(activationEvents[0]?.[1])).not.toContain("summaryTool");
+    });
+
+    it("keeps an already active discovered tool unchanged", async () => {
+      const deps = createMockDeps({
+        customTools: [{
+          name: "mcp__records--active_summary",
+          label: "Active Summary",
+          description: "Return an active summary",
+          parameters: { type: "object", properties: {} },
+          execute: vi.fn(),
+        }] as any,
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai", id: "gpt-4o" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const executor = createPiExecutor({
+        ...testConfig,
+        provider: "openai",
+        model: "gpt-4o",
+      } as PerAgentConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const activeTool = {
+        name: "mcp__records--active_summary",
+        description: "Already active",
+        parameters: { type: "object", properties: { current: { type: "boolean" } } },
+        execute: vi.fn(),
+      };
+      const liveTools = [activeTool];
+      await mockSession.agent.afterToolCall({
+        toolCall: { name: "discover_tools" },
+        args: { query: "active summary" },
+        result: { sideEffects: { discoveredTools: [activeTool.name] } },
+        isError: false,
+        context: { tools: liveTools },
+      });
+
+      expect(liveTools).toEqual([activeTool]);
+      expect(liveTools[0]).toBe(activeTool);
+      const activationEvent = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.find(([event]) => event === "tool:discovery_activation");
+      expect(activationEvent?.[1]).toMatchObject({
+        displayedCount: 1,
+        activatedCount: 1,
+        replacedCount: 0,
+        skippedCount: 1,
+        failedCount: 0,
+      });
+    });
+
     it("does NOT skip mid-turn tool injection for Anthropic providers", async () => {
       const deps = createMockDeps(); // default mock returns anthropic provider
       const executor = createPiExecutor(testConfig, deps);
@@ -6780,11 +6959,118 @@ describe("PiExecutor", () => {
 
       await afterToolCall(mockCtx);
 
+      const activationEvent = (
+        deps.eventBus.emitSafely as unknown as Mock
+      ).mock.calls.find(([event]) => event === "tool:discovery_activation");
+      expect(activationEvent?.[1]).toMatchObject({
+        displayedCount: 1,
+        activatedCount: 0,
+        replacedCount: 0,
+        skippedCount: 0,
+        failedCount: 1,
+      });
+
       // The skip debug log should NOT have been emitted (handler proceeds past guard)
       const skipCalls = (deps.logger.debug as Mock).mock.calls.filter(
         (args: unknown[]) => typeof args[1] === "string" && args[1].includes("Skipped mid-turn injection"),
       );
       expect(skipCalls).toHaveLength(0);
+    });
+  });
+
+  describe("partial response preservation after tool failures", () => {
+    const partialReport =
+      "Research complete. The retrieved records agree that current storage is origin-scoped.";
+
+    function setBridgeReceipts(params: {
+      failedTool: string;
+      includeSuccessfulRead?: boolean;
+    }): void {
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.01 },
+        stepsExecuted: 3,
+        llmCalls: 1,
+        finishReason: "stop",
+        failedTools: [params.failedTool],
+        toolExecResults: [
+          ...(params.includeSuccessfulRead === false ? [] : [{
+            toolName: "mcp__records--summary",
+            success: true,
+            durationMs: 4,
+            invocationSequence: 0,
+          }]),
+          {
+            toolName: params.failedTool,
+            success: false,
+            durationMs: 3,
+            invocationSequence: 1,
+            errorKind: "dependency" as const,
+          },
+        ],
+      });
+    }
+
+    it("preserves a grounded partial report after an unrelated dynamic MCP probe fails", async () => {
+      const failedProbe = "mcp__records--optional_probe";
+      setMockAssistantText(partialReport);
+      setBridgeReceipts({ failedTool: failedProbe });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.response).toContain("Treat the result below as partial");
+      expect(result.response).toContain(partialReport);
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "response.completion_evidence_guard",
+          metadata: expect.objectContaining({
+            responseDisposition: "prefixed_partial",
+            unrecoveredToolFailureCount: 1,
+          }),
+        }),
+      );
+    });
+
+    it("replaces the report when explicit metadata classifies the failed MCP tool as mutating", async () => {
+      const failedMutation = "mcp__records--update_state_strict_test";
+      registerToolMetadata(failedMutation, { isReadOnly: false });
+      setMockAssistantText(partialReport);
+      setBridgeReceipts({ failedTool: failedMutation });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.response).not.toContain(partialReport);
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "response.completion_evidence_guard",
+          metadata: expect.objectContaining({ responseDisposition: "replaced" }),
+        }),
+      );
+    });
+
+    it("replaces the report when no successful read-only receipt exists", async () => {
+      const failedProbe = "mcp__records--only_failed_probe";
+      setMockAssistantText(partialReport);
+      setBridgeReceipts({ failedTool: failedProbe, includeSuccessfulRead: false });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.response).not.toContain(partialReport);
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "audit:event",
+        expect.objectContaining({
+          actionType: "response.completion_evidence_guard",
+          metadata: expect.objectContaining({ responseDisposition: "replaced" }),
+        }),
+      );
     });
   });
 
@@ -7020,6 +7306,41 @@ describe("ExcludeDeferralResult wiring", () => {
         expect((currentCtx as Record<string, unknown>).resolvedModel).toBe(
           "anthropic:claude-sonnet-4-5-20250929",
         );
+        expect(currentCtx?.subagentWaitProgressBudgetMs).toBe(60_000);
+      });
+    });
+
+    it("derives the subagent wait progress budget from the active operation timeout", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: testSessionKey.tenantId,
+        userId: "u1",
+        sessionKey: formatSessionKey(testSessionKey),
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+      };
+
+      await runWithContext(ctx, async () => {
+        await executor.execute(
+          testMessage,
+          testSessionKey,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          {
+            operationType: "subagent",
+            promptTimeout: {
+              promptTimeoutMs: 30_000,
+              retryPromptTimeoutMs: 30_000,
+              source: "operation_explicit",
+            },
+          },
+        );
+        expect(tryGetContext()?.subagentWaitProgressBudgetMs).toBe(10_000);
       });
     });
 

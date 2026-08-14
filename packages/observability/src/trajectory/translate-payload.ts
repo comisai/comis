@@ -20,7 +20,6 @@
  *
  * @module
  */
-
 import type { TrajectoryBridgedEventName } from "./event-bus-bridge.js";
 import { translateCacheBreakPayload } from "./translate-cache-break-payload.js";
 import { translateImagePayload } from "./translate-image-payload.js";
@@ -33,7 +32,6 @@ import { translateVoicePayload } from "./translate-voice-payload.js";
 import { translateSessionSummaryPayload } from "./translate-session-summary.js";
 import { translatePromptPayload } from "./translate-prompt-payload.js";
 import { translateBackgroundTaskPayload } from "./translate-background-task-payload.js";
-
 /**
  * Translate one EventBus payload into the `data` payload of a trajectory event.
  *
@@ -46,7 +44,6 @@ export function translatePayload(
   rawPayload: unknown,
 ): Record<string, unknown> {
   const payload = rawPayload as Record<string, unknown>;
-
   switch (eventName) {
     case "tool:started":
       return {
@@ -323,9 +320,10 @@ export function translatePayload(
     case "graph:synthesized_from_intent":
     case "session:sub_agent_spawned":
     case "session:sub_agent_completed":
-    case "session:sub_agent_wait_completed":
+    case "session:sub_agent_wait_finished":
     case "subagent:steered":
     case "subagent:killed": // Attributed kill — {runId, killedBy, runtimeMs, idleMs?, thresholdMs?}; the free-text reason never crosses the bus.
+    case "subagent:routed_child_preserved":
     case "subagent:background_processes_abandoned":
     case "security:sandbox_downgrade_refused":
     case "subagent:delivery_deadlettered":
@@ -549,6 +547,7 @@ export function translatePayload(
         // limb/unit strings + 2 numbers) so `explain` names the exact tripped knob.
         ...(payload.perRootBudget !== undefined ? { perRootBudget: payload.perRootBudget } : {}),
         ...(payload.stepLimit !== undefined ? { stepLimit: payload.stepLimit } : {}),
+        ...(payload.loopEvidence !== undefined ? { loopEvidence: payload.loopEvidence } : {}),
       };
 
     case "execution:budget_warning":
@@ -581,12 +580,24 @@ export function translatePayload(
       };
 
         case "execution:recovery_attempted":
-      // Closed recovery reason + a boolean — content-free.
+      // Closed recovery reason, booleans, and a bounded receipt count — content-free.
       return {
         reason: payload.reason,
         succeeded: payload.succeeded,
+        ...(payload.groundedResponseBeforeRecovery !== undefined
+          ? { groundedResponseBeforeRecovery: payload.groundedResponseBeforeRecovery }
+          : {}),
+        ...(payload.groundedResponsePreserved !== undefined
+          ? { groundedResponsePreserved: payload.groundedResponsePreserved }
+          : {}),
+        ...(payload.successfulReceiptsOutsideRoute !== undefined
+          ? { successfulReceiptsOutsideRoute: payload.successfulReceiptsOutsideRoute }
+          : {}),
       };
 
+    case "tool:discovery_activation":
+      return { displayedCount: payload.displayedCount, activatedCount: payload.activatedCount,
+        replacedCount: payload.replacedCount, skippedCount: payload.skippedCount, failedCount: payload.failedCount };
     case "execution:signed_replay_recovered":
       return {
         blocksRemoved: payload.blocksRemoved,
