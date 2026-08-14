@@ -1103,6 +1103,25 @@ describe("current-turn delegation evidence guard", () => {
     });
   });
 
+  it("preserves an actionable rejection after sessions_spawn validation fails", () => {
+    const rejection =
+      "Spawn rejected. The minimum supported max_steps is 30; requested value was 1. "
+      + "No child launched because no runId was returned.";
+    const guarded = delegationEvidenceGuard()({
+      request: "Call sessions_spawn exactly once with max_steps set to 1.",
+      response: rejection,
+      toolExecResults: [
+        { toolName: "sessions_spawn", success: false },
+      ],
+      honestResponse,
+    });
+
+    expect(guarded).toEqual({
+      response: rejection,
+      corrected: false,
+    });
+  });
+
   it("preserves a configured-agent creation result from a runtime completion envelope", () => {
     const created =
       "The Live Test Helper agent was created successfully and is ready.";
