@@ -192,6 +192,15 @@ describe("terminal-tmux-backend — pure command builders (every command -S the 
     expect(real.length).toBeLessThan(108);
   });
 
+  it("keeps isolated deployment socket paths below the Linux AF_UNIX limit", () => {
+    const socket = tmuxSocketPathForSession(
+      "/home/service-user/campaigns/capability-validation/comis-data/terminal-worker",
+      "551429eb-ddb9-4666-b800-8b6a17e1324a",
+    );
+
+    expect(Buffer.byteLength(socket, "utf8")).toBeLessThan(108);
+  });
+
   it("buildTmuxHasSessionArgv probes by name on the same socket (the re-attach decision)", () => {
     expect(buildTmuxHasSessionArgv({ tmuxPath, socketPath: SOCK, name: "comis-abc" })).toEqual([
       tmuxPath,
