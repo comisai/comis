@@ -28,6 +28,8 @@ const CONVERSATION_HISTORY_RECALL_PATTERN =
   /\bwhat\s+(?:did|have)\s+i\s+(?:say|tell|mention|ask)\b/iu;
 const WEB_EVIDENCE_EXCLUSION_PATTERN =
   /\b(?:(?:do\s+not|don't|never)\s+(?:(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch))|(?:[\p{L}\p{N}_'-]+\s+){1,8}(?:or|nor)\s+(?:(?:use|call|invoke|rely\s+on)\s+(?!only\b)(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|(?:browse|web\s+(?:search|fetch)|web_search|web_fetch)))|without\s+(?:using\s+)?(?:the\s+)?(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch)|no\s+(?:web(?:\s+(?:search|fetch|sources?|tools?))?|web_search|web_fetch))\b/iu;
+const DELEGATED_CHILD_TASK_PATTERN =
+  /\b(?:(?:delegate|use|start|spawn|launch)\b(?=[^.!?\n]{0,160}\b(?:sub-?agents?|child|children)\b)|(?:ask|tell|instruct|require)\s+(?:the\s+)?(?:sub-?agents?|child|children)\b)[^.!?\n]*(?:[.!?]+|$)/giu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "all", "and", "any", "are", "ask", "asks", "each", "for", "from", "give",
   "has", "have", "into", "its", "make", "need", "needs", "not", "one", "only",
@@ -83,7 +85,8 @@ function routingIntentText(text: string): string {
     .replace(
       /(^|[\s,:=([])(["'])(?:(?!\2)[^\n]){2,}?\2(?=$|[\s,.;)\]])/gu,
       "$1",
-    );
+    )
+    .replace(DELEGATED_CHILD_TASK_PATTERN, " ");
 }
 
 /** Retain preceding context only when the current wording refers back to it. */
@@ -154,14 +157,16 @@ export function applyPromptSkillRequestRouting(
   // memory recall. Lexical overlap must not turn it into a task procedure.
   if (CONVERSATION_HISTORY_RECALL_PATTERN.test(input.currentRequestText)) return [];
   const currentText = input.currentRequestText.toLocaleLowerCase();
-  const currentTerms = terms(routingIntentText(currentText));
+  const currentIntentText = routingIntentText(currentText);
+  const currentTerms = terms(currentIntentText);
   const relevanceText = input.requestRelevanceText.toLocaleLowerCase();
-  const relevanceTerms = terms(routingIntentText(relevanceText));
+  const relevanceIntentText = routingIntentText(relevanceText);
+  const relevanceTerms = terms(relevanceIntentText);
   const selectedEntries = input.skills
     .map((skill) => ({
       skill,
-      currentScore: scoreSkill(currentTerms, currentText, skill),
-      relevanceScore: scoreSkill(relevanceTerms, relevanceText, skill),
+      currentScore: scoreSkill(currentTerms, currentIntentText, skill),
+      relevanceScore: scoreSkill(relevanceTerms, relevanceIntentText, skill),
     }))
     .filter((entry) => entry.currentScore >= MIN_SHARED_TERMS)
     .sort((left, right) =>

@@ -195,6 +195,30 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
   });
 
+  it("still enforces a prompt skill for a separate parent-owned task", () => {
+    const deferral = result();
+    const request = [
+      "Spawn a child to inspect package.json.",
+      "After it finishes, use Claude Code to refactor and test the parent project.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: request,
+      requestRelevanceText: request,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillNames).toEqual(["claude-code"]);
+    expect(deferral.requestRelevantPromptSkillLocations).toEqual([
+      "/skills/claude-code/SKILL.md",
+    ]);
+    expect(deferral.requestRelevantToolNames).toContain("read");
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
