@@ -404,9 +404,10 @@ export function sharedConversationFinished({
 /**
  * Stop a direct-message drive after both the turn and its wire delivery settle.
  *
- * Session summary can precede delivery post-processing, so an ended turn with
- * no visible answer remains open for a bounded drain window. The bound still
- * lets true empty-final and aborted turns terminate deterministically.
+ * Session summary can precede delivery post-processing. An ended turn with no
+ * visible answer remains open for the longer delivery grace; an ended turn
+ * with an earlier answer still waits for one normal quiet window so a final
+ * sibling completion cannot land just after the driver exits.
  */
 export function directConversationFinished({
   sawAnswer,
@@ -414,10 +415,10 @@ export function directConversationFinished({
   turnEndedAtMs,
   nowMs,
   deliveryGraceMs,
+  answerQuiesceMs,
   lastOutboundAtMs,
 }) {
   if (!turnEnded) return false;
-  if (sawAnswer) return true;
   if (typeof turnEndedAtMs !== "number") return false;
   // The grace measures SILENCE, not an absolute span from turn-end. A background completion's
   // DELIVERY can trail its terminal record: measured live, a turn ended correctly (its spawned
@@ -431,7 +432,7 @@ export function directConversationFinished({
   const anchorMs = typeof lastOutboundAtMs === "number" && lastOutboundAtMs > turnEndedAtMs
     ? lastOutboundAtMs
     : turnEndedAtMs;
-  return nowMs - anchorMs >= deliveryGraceMs;
+  return nowMs - anchorMs >= (sawAnswer ? answerQuiesceMs : deliveryGraceMs);
 }
 
 /**

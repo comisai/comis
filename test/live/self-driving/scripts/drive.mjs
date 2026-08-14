@@ -221,9 +221,9 @@ const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
 const tenantId = process.env.TENANT_ID || 'default';
 const agentId = process.env.AGENT_ID || 'default';
-// Bounded wait for a final message AFTER turn-end. Costs nothing on a turn that produces an answer
-// — `directConversationFinished` returns as soon as `sawAnswer` is set — so this cap only applies to
-// answerless turns. 30 s was too tight once the turn-end signal became background-aware: a
+// Bounded wait for a final message AFTER turn-end on answerless turns. A turn that already has an
+// answer uses the normal quiesce window instead, because a sibling batch can produce useful partial
+// prose before the final child's delivery is ready. 30 s was too tight once the turn-end signal became background-aware: a
 // background completion's delivery can trail its terminal record, and observed sub-agent runtimes
 // in this campaign ran 67–384 s.
 const POST_TURN_DELIVERY_GRACE_MS = 120000;
@@ -544,6 +544,7 @@ while (Date.now() - start < maxMs) {
     turnEndedAtMs,
     nowMs,
     deliveryGraceMs: POST_TURN_DELIVERY_GRACE_MS,
+    answerQuiesceMs: quiesceMs,
     // `lastNew` is stamped whenever a batch arrives, so the grace measures SILENCE rather than an
     // absolute span from turn-end. A background completion's delivery can trail its terminal record
     // — observed ~200s past turn-end against a 120s window — so a stream of progress cards followed
