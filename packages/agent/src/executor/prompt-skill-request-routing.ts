@@ -40,6 +40,9 @@ const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
   "our", "out", "some", "that", "the", "their", "then", "these", "this", "those",
   "task", "tasks", "tool", "tools", "use", "uses", "using", "want", "wants", "was",
   "were", "when", "where", "which", "with", "would", "you", "your",
+  // Outcome boilerplate appears in artifact contracts across unrelated domains.
+  // It cannot distinguish a software procedure from an ordinary tool request.
+  "result", "results", "verified", "verify",
 ]);
 
 interface PromptSkillRequestRoutingInput {
