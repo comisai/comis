@@ -20,6 +20,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   startTestDaemon,
   makeAuthHeaders,
@@ -49,10 +51,12 @@ const SOURCE_CONFIG_PATH = resolve(
   __dirname,
   "../config/config.test-approval-gate-e2e.yaml",
 );
+const APPROVAL_TEST_ROOT = mkdtempSync(resolve(tmpdir(), "comis-approval-gate-e2e-"));
+const APPROVAL_DATA_DIR = resolve(APPROVAL_TEST_ROOT, "data");
 // persistToConfig (RPC handler) writes created agents back to the source
 // YAML. To keep the checked-in fixture pristine across runs, the test copies
 // the source config to a tmp path and starts the daemon against that copy.
-const CONFIG_PATH = "/tmp/comis-test-approval-gate-e2e-config.yaml";
+const CONFIG_PATH = resolve(APPROVAL_TEST_ROOT, "config.yaml");
 
 // Approval requests + the admin.approval.* RPCs now address a request by
 // explicit conversation authority (tenant + agent + opaque conversation_ref)
@@ -238,19 +242,18 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
   let rpcCall: TestDaemonHandle["daemon"]["rpcCall"];
 
   beforeAll(async () => {
-    // Wipe the test dataDir so the daemon does not restore approval cache
-    // entries (restart-approval-cache.json) or pending requests
-    // (restart-approvals.json) from a prior test run -- those would
-    // auto-approve / auto-deny new requests via cache hits and break the
-    // deterministic pending-count and denial-flow assertions below.
-    const { rmSync, copyFileSync } = await import("node:fs");
-    rmSync("/tmp/comis-test-approval-gate-e2e", { recursive: true, force: true });
-    rmSync(CONFIG_PATH, { force: true });
-
     // Copy the source config to a tmp location so persistToConfig
     // (which writes back the agents created by the tool-wrapper tests) does
     // not mutate the checked-in fixture between runs.
-    copyFileSync(SOURCE_CONFIG_PATH, CONFIG_PATH);
+    const sourceConfig = readFileSync(SOURCE_CONFIG_PATH, "utf8");
+    const isolatedConfig = sourceConfig.replace(
+      "dataDir: /tmp/comis-test-approval-gate-e2e",
+      `dataDir: ${APPROVAL_DATA_DIR}`,
+    );
+    if (isolatedConfig === sourceConfig) {
+      throw new Error("Approval gate fixture dataDir was not replaced");
+    }
+    writeFileSync(CONFIG_PATH, isolatedConfig);
 
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
 
@@ -264,16 +267,20 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
   }, 120_000);
 
   afterAll(async () => {
-    if (handle) {
-      try {
-        await handle.cleanup();
-      } catch (err) {
-        // Expected: graceful shutdown calls the overridden exit() which throws.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes("Daemon exit with code")) {
-          throw err;
+    try {
+      if (handle) {
+        try {
+          await handle.cleanup();
+        } catch (err) {
+          // Expected: graceful shutdown calls the overridden exit() which throws.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("Daemon exit with code")) {
+            throw err;
+          }
         }
       }
+    } finally {
+      rmSync(APPROVAL_TEST_ROOT, { recursive: true, force: true });
     }
   }, 30_000);
 
