@@ -168,6 +168,33 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn", "read"]);
   });
 
+  it("does not enforce a parent skill from an unquoted delegated child task", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Use exactly one background sub-agent via sessions_spawn to inspect the repository package.json and report the number of workspace package patterns it declares.",
+      "Require the child to include the marker BGSAFE_20260814_A in its result.",
+      "Do not calculate the answer yourself.",
+      "Launch it, then notify me naturally when the child finishes.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
