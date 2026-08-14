@@ -531,6 +531,35 @@ describe("local rig mode", () => {
     expect(resolved.trim()).toBe(`${isolatedData}|4767`);
   });
 
+  it("does not inherit a rendered trajectory path when data is selected explicitly", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "comis-local-rig-trajectory-precedence-"));
+    temporaryDirectories.push(directory);
+    const selectedData = resolve(directory, "selected-data");
+    const renderedData = resolve(directory, "rendered-data");
+    const liveEnv = resolve(directory, "live.env");
+    const rigEnv = resolve(directory, "rig.env");
+    writeFileSync(liveEnv, "", { mode: 0o600 });
+    writeFileSync(
+      rigEnv,
+      [
+        'export RIG_MODE="${RIG_MODE:-local}"',
+        `export DATA="\${DATA:-${renderedData}}"`,
+        `export COMIS_TRAJECTORY_DIR="\${COMIS_TRAJECTORY_DIR:-${resolve(renderedData, "trajectories")}}"`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    const output = runRigHelper(
+      `rig_load_env ${shellQuote(liveEnv)} ${shellQuote(rigEnv)}; printf '%s|%s\n' "$DATA" "$COMIS_TRAJECTORY_DIR"`,
+      {
+        RIG_MODE: "local",
+        DATA: selectedData,
+      },
+    );
+
+    expect(output.trim()).toBe(`${selectedData}|${resolve(selectedData, "trajectories")}`);
+  });
+
   it("refuses the everyday local service before changing its config", () => {
     const directory = makeCanonicalTempDirectory("comis-local-up-isolation-");
     const data = resolve(directory, "isolated-data");
