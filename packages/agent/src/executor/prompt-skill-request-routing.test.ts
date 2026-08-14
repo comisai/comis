@@ -347,6 +347,33 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toEqual(["write"]);
   });
 
+  it("does not route delegated tool bindings and delivery instructions as parent coding intent", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("sessions_spawn"));
+    deferral.requestRelevantToolNames.push("sessions_spawn");
+    const delegationRequest = [
+      "Silent attachment check.",
+      "Launch exactly one background sub-agent with sessions_spawn.",
+      "The child must use write to create exactly /workspace/real-user/artifacts/silent.txt, then return NO_REPLY.",
+      "Bind required_tools to write, tool_groups to coding, and declare the path in expected_outputs.",
+      "After launch, deliver the verified document with no terminal text notification.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: delegationRequest,
+      requestRelevanceText: delegationRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(routingIntentText(delegationRequest)).not.toMatch(/\b(?:terminal|write)\b/iu);
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["sessions_spawn"]);
+  });
+
   it("ignores completion-contract boilerplate when routing a silent artifact write", () => {
     const deferral = result();
     const childRequest = [
