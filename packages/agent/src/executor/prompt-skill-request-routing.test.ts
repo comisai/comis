@@ -613,7 +613,7 @@ describe("prompt skill request routing", () => {
     expect(excluded.requestRelevantPromptSkillWorkflowToolNames).toEqual([]);
     expect(excluded.requestRelevantPromptSkillMinDistinctWebFetchUrls).toBeUndefined();
     expect(excluded.requestRelevantPromptSkillMinDistinctWebSearchQueries).toBeUndefined();
-    expect(excluded.requestRelevantToolNames).toEqual(["read"]);
+    expect(excluded.requestRelevantToolNames).toEqual([]);
 
     const permitted = result();
     const permittedRequest = [
