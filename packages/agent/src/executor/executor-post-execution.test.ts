@@ -1135,11 +1135,11 @@ describe("tool-failure endReason and notice", () => {
     expect(stripped).toMatch(/response\.citation_evidence_persistence/);
   });
 
-  it("source-grep — source questions without a durable receipt fail closed", () => {
+  it("source-grep — physical source questions without a durable receipt fail closed", () => {
     const stripped = readPostExecStripped();
 
     expect(stripped).toMatch(
-      /const citationSourceRequest\s*=\s*isCitationSourceRequest\(msg\.text\s*\?\?\s*""\)/,
+      /const citationSourceRequest\s*=\s*isCitationSourceRequestForTurn\(\s*msg\.text\s*\?\?\s*"",\s*trustedRuntimeActionEvidence,\s*\)/,
     );
     expect(stripped).toMatch(
       /const historicalDigests\s*=\s*citationSourceRequest\s*\?\s*historicalCitationDigests\(sm\)/,

@@ -172,7 +172,7 @@ import {
   citationEvidenceDigestsToPersist,
   enforceCitationEvidence,
   historicalCitationDigests,
-  isCitationSourceRequest,
+  isCitationSourceRequestForTurn,
 } from "./citation-evidence.js";
 import {
   buildSubagentTerminalToolFailureReply,
@@ -2530,10 +2530,14 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     .flatMap((toolResult) =>
       toolResult.citationUrlDigest === undefined ? [] : [toolResult.citationUrlDigest],
     );
-  const relayedCitationEvidence = hasTrustedRuntimeActionEvidence(msg)
+  const trustedRuntimeActionEvidence = hasTrustedRuntimeActionEvidence(msg);
+  const relayedCitationEvidence = trustedRuntimeActionEvidence
     ? msg.metadata.citationEvidence
     : undefined;
-  const citationSourceRequest = isCitationSourceRequest(msg.text ?? "");
+  const citationSourceRequest = isCitationSourceRequestForTurn(
+    msg.text ?? "",
+    trustedRuntimeActionEvidence,
+  );
   const historicalDigests = citationSourceRequest
     ? historicalCitationDigests(sm)
     : [];
