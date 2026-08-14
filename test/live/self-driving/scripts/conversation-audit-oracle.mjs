@@ -396,6 +396,42 @@ function incidentViolations(incidentReport, failedToolResults, failedToolNames) 
     : [];
 }
 
+function hasCompletePreModelFailureEvidence(trajectoryRecords) {
+  if (trajectoryRecords.some((record) => record?.type === "model.completed")) return false;
+  const promptTraceIds = new Set(
+    trajectoryRecords
+      .filter((record) => record?.type === "prompt.submitted")
+      .map((record) => record?.traceId)
+      .filter((traceId) => typeof traceId === "string" && traceId.length > 0),
+  );
+  if (promptTraceIds.size === 0) return false;
+
+  for (const traceId of promptTraceIds) {
+    const records = trajectoryRecords.filter((record) => record?.traceId === traceId);
+    const terminalSummary = records.some((record) => {
+      if (record?.type !== "session.summary") return false;
+      const data = recordData(record);
+      return data.degraded === true && data.turnCount === 0 && data.endReason === "error";
+    });
+    const failedFinalization = records.some((record) => (
+      record?.type === "activity.turn_finalized"
+      && recordData(record).outcome === "failure"
+    ));
+    const committedFailureDelivery = records.some((record) => {
+      if (record?.type !== "delivery.dispatched") return false;
+      const data = recordData(record);
+      return data.origin === "agent-runtime-failure"
+        && data.status === "success"
+        && typeof data.totalChunks === "number"
+        && data.totalChunks > 0
+        && data.deliveredChunks === data.totalChunks
+        && data.failedChunks === 0;
+    });
+    if (!terminalSummary || !failedFinalization || !committedFailureDelivery) return false;
+  }
+  return true;
+}
+
 export function auditConversationEvidence(input) {
   const trajectoryRecords = Array.isArray(input?.trajectoryRecords) ? input.trajectoryRecords : [];
   const wireRecords = Array.isArray(input?.wireRecords) ? input.wireRecords : [];
@@ -407,6 +443,11 @@ export function auditConversationEvidence(input) {
   const lifecycle = lifecycleViolations(trajectoryRecords);
   const grounding = groundingViolations(contract.grounding);
   const usage = usageMetrics(trajectoryRecords, input?.incidentReport);
+  const sessionEvidence = sessionRecords.length > 0
+    ? "persisted"
+    : hasCompletePreModelFailureEvidence(trajectoryRecords)
+      ? "trajectory_only_pre_model_failure"
+      : "missing";
   const violations = [
     ...temporal.violations,
     ...approvalControlViolations(wireRecords),
@@ -445,7 +486,7 @@ export function auditConversationEvidence(input) {
       "no wire records were available; user-visible behavior is unverified",
     ));
   }
-  if (sessionRecords.length === 0) {
+  if (sessionEvidence === "missing") {
     violations.push(violation(
       "session_evidence_empty",
       "no session records were available; persisted conversation evidence is unverified",
@@ -460,6 +501,7 @@ export function auditConversationEvidence(input) {
   return {
     schemaVersion: 1,
     verdict: violations.length === 0 ? "pass" : "fail",
+    coverage: { sessionEvidence },
     metrics: {
       approvalRequests: temporal.approvalRequests,
       approvalResolutions: temporal.approvalResolutions,
