@@ -405,9 +405,9 @@ export function sharedConversationFinished({
  * Stop a direct-message drive after both the turn and its wire delivery settle.
  *
  * Session summary can precede delivery post-processing. An ended turn with no
- * visible answer remains open for the longer delivery grace; an ended turn
- * with an earlier answer still waits for one normal quiet window so a final
- * sibling completion cannot land just after the driver exits.
+ * visible answer after that terminal remains open for the longer delivery
+ * grace. A launch acknowledgement from before the final child terminal is not
+ * proof that completion delivery has settled.
  */
 export function directConversationFinished({
   sawAnswer,
@@ -417,6 +417,7 @@ export function directConversationFinished({
   deliveryGraceMs,
   answerQuiesceMs,
   lastOutboundAtMs,
+  lastAnswerAtMs,
 }) {
   if (!turnEnded) return false;
   if (typeof turnEndedAtMs !== "number") return false;
@@ -432,7 +433,10 @@ export function directConversationFinished({
   const anchorMs = typeof lastOutboundAtMs === "number" && lastOutboundAtMs > turnEndedAtMs
     ? lastOutboundAtMs
     : turnEndedAtMs;
-  return nowMs - anchorMs >= (sawAnswer ? answerQuiesceMs : deliveryGraceMs);
+  const answerAfterTurnEnd = sawAnswer
+    && typeof lastAnswerAtMs === "number"
+    && lastAnswerAtMs >= turnEndedAtMs;
+  return nowMs - anchorMs >= (answerAfterTurnEnd ? answerQuiesceMs : deliveryGraceMs);
 }
 
 /**

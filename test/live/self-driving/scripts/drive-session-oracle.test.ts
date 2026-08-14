@@ -108,7 +108,7 @@ describe("drive trajectory completion", () => {
     ])).toBe(false);
   });
 
-  it("drains a bounded quiet window after the final child terminal even when an earlier answer exists", () => {
+  it("drains a bounded quiet window after a post-terminal answer", () => {
     expect(directConversationFinished({
       sawAnswer: true,
       turnEnded: true,
@@ -117,15 +117,17 @@ describe("drive trajectory completion", () => {
       deliveryGraceMs: 120_000,
       answerQuiesceMs: 8_000,
       lastOutboundAtMs: 9_000,
+      lastAnswerAtMs: 10_000,
     })).toBe(false);
     expect(directConversationFinished({
       sawAnswer: true,
       turnEnded: true,
       turnEndedAtMs: 10_000,
-      nowMs: 18_000,
+      nowMs: 19_000,
       deliveryGraceMs: 120_000,
       answerQuiesceMs: 8_000,
       lastOutboundAtMs: 9_000,
+      lastAnswerAtMs: 10_000,
     })).toBe(true);
     expect(directConversationFinished({
       sawAnswer: true,
@@ -135,6 +137,7 @@ describe("drive trajectory completion", () => {
       deliveryGraceMs: 120_000,
       answerQuiesceMs: 8_000,
       lastOutboundAtMs: 17_000,
+      lastAnswerAtMs: 17_000,
     })).toBe(false);
   });
 
@@ -153,7 +156,7 @@ describe("drive trajectory completion", () => {
       sawAnswer: true,
       turnEnded: true,
       turnEndedAtMs: 10_000,
-      nowMs: 18_000,
+      nowMs: 19_000,
       deliveryGraceMs: 120_000,
       answerQuiesceMs: 8_000,
       lastOutboundAtMs: 11_000,

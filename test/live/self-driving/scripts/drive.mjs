@@ -400,6 +400,7 @@ process.stderr.write(`injected inboundId=${inj.messageId}, polling after ${after
 
 const seen = [];
 let sawAnswer = false, turnEnded = false, turnEndedAtMs = null, lastNew = Date.now();
+let lastAnswerAtMs;
 let correlatedAnswer = null;
 let correlatedSessionPath = null;
 const start = Date.now();
@@ -499,7 +500,9 @@ while (Date.now() - start < maxMs) {
       seen.push(o); after = Math.max(after, o.messageId || after);
       if (isConversationAnswer(o)) {
         sawAnswer = true;
-        firstAnswerAtMs ??= Date.now();
+        const observedAtMs = Date.now();
+        firstAnswerAtMs ??= observedAtMs;
+        lastAnswerAtMs = observedAtMs;
       }
     }
     lastNew = Date.now();
@@ -551,6 +554,7 @@ while (Date.now() - start < maxMs) {
     // by the real answer now holds the window open instead of closing mid-delivery. An outbound that
     // predates turn-end does not extend it.
     lastOutboundAtMs: lastNew,
+    lastAnswerAtMs,
   }) && asyncFollowupFinished(nowMs)) {
     // Drain any just-delivered final message, then stop. A turn with no answer
     // reaches this branch only after the bounded post-turn delivery grace.
@@ -560,7 +564,9 @@ while (Date.now() - start < maxMs) {
       after = Math.max(after, o.messageId || after);
       if (isConversationAnswer(o)) {
         sawAnswer = true;
-        firstAnswerAtMs ??= Date.now();
+        const observedAtMs = Date.now();
+        firstAnswerAtMs ??= observedAtMs;
+        lastAnswerAtMs = observedAtMs;
       }
     }
     break;
