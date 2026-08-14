@@ -72,7 +72,7 @@ function createAdapter(apiRoot: string, logger = createMockLogger()) {
   return createTelegramAdapter({
     getBotToken: () => BOT_TOKEN,
     apiRoot,
-    logger: createMockLogger(),
+    logger,
   });
 }
 

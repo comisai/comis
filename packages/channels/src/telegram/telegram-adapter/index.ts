@@ -21,6 +21,7 @@
 
 import { autoRetry } from "@grammyjs/auto-retry";
 import { hydrateFiles } from "@grammyjs/files";
+import { systemNowMs } from "@comis/core";
 import { Bot } from "grammy";
 import {
   type TelegramAdapterDeps,
@@ -58,12 +59,61 @@ function createConfiguredBot(deps: TelegramAdapterDeps, botToken: string): Bot {
     ? new Bot(botToken, { client: { apiRoot: deps.apiRoot } })
     : new Bot(botToken);
 
-  bot.api.config.use(autoRetry({
+  const retryTransformer = autoRetry({
     maxRetryAttempts: 3,
     maxDelaySeconds: 10,
     rethrowHttpErrors: true,
     rethrowInternalServerErrors: true,
-  }));
+  });
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const startedAt = systemNowMs();
+    let attempts = 0;
+    const result = await retryTransformer(
+      async (innerMethod, innerPayload, innerSignal) => {
+        attempts += 1;
+        const attemptResult = await prev(innerMethod, innerPayload, innerSignal);
+        const retryAfterSeconds = attemptResult.ok === false
+          ? attemptResult.parameters?.retry_after
+          : undefined;
+        if (
+          attemptResult.ok !== true
+          && typeof retryAfterSeconds === "number"
+          && Number.isFinite(retryAfterSeconds)
+          && retryAfterSeconds >= 0
+          && retryAfterSeconds <= 10
+          && attempts <= 3
+        ) {
+          deps.logger.warn(
+            {
+              channelType: "telegram",
+              method: innerMethod,
+              attempt: attempts,
+              retryAfterMs: retryAfterSeconds * 1_000,
+              errorKind: "platform" as const,
+              hint: "Telegram rejected the request before acceptance; the configured bounded retry will honor retry_after",
+            },
+            "Telegram API request rate limited; bounded retry scheduled",
+          );
+        }
+        return attemptResult;
+      },
+      method,
+      payload,
+      signal,
+    );
+    if (attempts > 1 && result.ok === true) {
+      deps.logger.info(
+        {
+          channelType: "telegram",
+          method,
+          attempts,
+          durationMs: Math.max(0, systemNowMs() - startedAt),
+        },
+        "Telegram API request recovered after retry",
+      );
+    }
+    return result;
+  });
   bot.api.config.use(hydrateFiles(botToken));
   return bot;
 }
