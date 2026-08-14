@@ -35,7 +35,7 @@ const EXPLICIT_DELEGATION_PATTERN =
 const DELEGATED_CHILD_CONTINUATION_PATTERN =
   /\b(?:have\s+(?:the\s+)?(?:sub-?agents?|child|children|coordinator|leaf|it|them)\b|(?:sub-?agents?|child|children|coordinator|leaf|it|they)\s+(?:must|should)\b|require\b[^.!?\n]{0,160}\b(?:sub-?agents?|child|children|coordinator|leaf)\b|after\b[^.!?\n]{0,160}\b(?:succeeds?|completes?|finishes?)\b[^.!?\n]{0,160}\b(?:return|reply|respond)\b)/iu;
 const DELEGATED_TOOL_BINDING_PATTERN =
-  /\b(?:expected_outputs|max_steps|required_tools|token_budget|tool_groups|worktree)\b/iu;
+  /\b(?:expected_outputs|max_steps|required_tools|token_budget|tool_groups|worktree|task\s+(?:argument|body|parameter))\b/iu;
 const DELEGATED_DELIVERY_COORDINATION_PATTERN =
   /\bafter\s+(?:the\s+)?(?:completion|launch|run)\b[^.!?\n]{0,200}\b(?:deliver|notify|report)\b/iu;
 const ROUTING_STOPWORDS: ReadonlySet<string> = new Set([
