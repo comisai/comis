@@ -319,6 +319,34 @@ describe("prompt skill request routing", () => {
     expect(deferral.requestRelevantToolNames).toContain("read");
   });
 
+  it("does not route a direct artifact write as a software workflow", () => {
+    const deferral = result();
+    deferral.activeTools.push(tool("write"));
+    deferral.requestRelevantToolNames.push("write");
+    const artifactRequest = [
+      "Create exactly one CSV file at /workspace/artifacts/report.csv using write.",
+      "The file content must contain the requested item counts.",
+      "Do not inspect other files and do not retry after a successful write.",
+      "Before the final response, verify every listed file exists.",
+      "Return marker FILE1 and a short result summary when complete.",
+    ].join(" ");
+
+    const selected = applyPromptSkillRequestRouting(deferral, {
+      currentRequestText: artifactRequest,
+      requestRelevanceText: artifactRequest,
+      skills: skills.filter((skill) => skill.name === "claude-code"),
+      locations: new Map([
+        ["/skills/claude-code/SKILL.md", "claude-code"],
+      ]),
+    });
+
+    expect(selected).toEqual([]);
+    expect(deferral.requestRelevantPromptSkillNames).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillLocations).toBeUndefined();
+    expect(deferral.requestRelevantPromptSkillWorkflowToolNames).toBeUndefined();
+    expect(deferral.requestRelevantToolNames).toEqual(["write"]);
+  });
+
   it("routes a frontier thorough-understanding request through its matched prompt skill", () => {
     const deferral = result();
 
