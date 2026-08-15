@@ -905,13 +905,27 @@ export function enforceActiveModelSelfStatus(params: {
   provider: string;
   modelId: string;
 }): ActiveModelSelfStatusGuardResult {
-  const tokens = new Set(params.request.toLocaleLowerCase().match(/[a-z0-9]+/gu) ?? []);
-  const asksModel = tokens.has("model")
-    && containsAnyToken(tokens, ["what", "which"]);
-  const explicitCurrent = containsAnyToken(tokens, ["active", "current", "currently", "now"]);
-  const selfUse = containsAnyToken(tokens, ["u", "ur", "you", "your"])
-    && containsAnyToken(tokens, ["running", "use", "using"]);
-  const actuallySelfUse = containsAnyToken(tokens, ["actual", "actually"]) && selfUse;
+  const requestTokens = params.request.toLocaleLowerCase().match(/[a-z0-9]+/gu) ?? [];
+  const tokens = new Set(requestTokens);
+  const tokenPositions = requestTokens.map((token, index) => ({ token, index }));
+  const modelQuery = tokenPositions.find((position) =>
+    position.token === "model"
+    && tokenPositions.some((candidate) =>
+      (candidate.token === "what" || candidate.token === "which")
+      && Math.abs(candidate.index - position.index) <= 4
+    )
+  );
+  const hasNearModelQuery = (candidates: readonly string[], distance: number): boolean =>
+    modelQuery !== undefined
+    && tokenPositions.some((position) =>
+      candidates.includes(position.token)
+      && Math.abs(position.index - modelQuery.index) <= distance
+    );
+  const asksModel = modelQuery !== undefined;
+  const explicitCurrent = hasNearModelQuery(["active", "current", "currently", "now"], 6);
+  const selfUse = hasNearModelQuery(["u", "ur", "you", "your"], 8)
+    && hasNearModelQuery(["running", "use", "using"], 8);
+  const actuallySelfUse = hasNearModelQuery(["actual", "actually"], 8) && selfUse;
   const requestsChoice = containsAnyToken(tokens, [
     "better", "change", "cheaper", "choose", "pick", "recommend", "recommended", "should", "switch",
   ]);
