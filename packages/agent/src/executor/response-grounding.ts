@@ -340,22 +340,28 @@ export function enforceSchedulerStateEvidence(params: {
   honestResponse: string;
   pendingConfirmationResponse?: string;
 }): SchedulerStateEvidenceGuardResult {
-  const normalizedResponse = normalizedEvidenceText(params.response);
-  const explicitStateClaim = SCHEDULER_STATE_SUBJECTS.some(
-    (subject) => SCHEDULER_STATE_PREDICATES.some(
-      (predicate) => SCHEDULER_STATE_TERMINATORS.some(
-        (terminator) => normalizedResponse.includes(` ${subject}${predicate}${terminator}`),
+  const claimSegments = params.response
+    .split(/(?<=[.!?])\s+(?=[\p{Lu}\p{Lt}\d])|\n+/u)
+    .map(normalizedEvidenceText);
+  const explicitStateClaim = claimSegments.some((segment) =>
+    SCHEDULER_STATE_SUBJECTS.some(
+      (subject) => SCHEDULER_STATE_PREDICATES.some(
+        (predicate) => SCHEDULER_STATE_TERMINATORS.some(
+          (terminator) => segment.includes(` ${subject}${predicate}${terminator}`),
+        ),
       ),
     ),
   );
-  const futureBehaviorClaim =
-    SCHEDULER_MUTATION_CONFIRMATION.test(normalizedResponse)
-    && SCHEDULER_FUTURE_BEHAVIOR.test(normalizedResponse)
-    && SCHEDULER_TEMPORAL_CONTEXT.test(normalizedResponse);
-  const temporalPolicyConfirmation =
-    SCHEDULER_DIRECT_CONFIRMATION.test(normalizedResponse)
-    && SCHEDULER_POLICY_TEMPORAL_CONTEXT.test(normalizedResponse);
-  const policyClaims = schedulerPolicyClaims(normalizedResponse);
+  const futureBehaviorClaim = claimSegments.some((segment) =>
+    SCHEDULER_MUTATION_CONFIRMATION.test(segment)
+    && SCHEDULER_FUTURE_BEHAVIOR.test(segment)
+    && SCHEDULER_TEMPORAL_CONTEXT.test(segment)
+  );
+  const temporalPolicyConfirmation = claimSegments.some((segment) =>
+    SCHEDULER_DIRECT_CONFIRMATION.test(segment)
+    && SCHEDULER_POLICY_TEMPORAL_CONTEXT.test(segment)
+  );
+  const policyClaims = [...new Set(claimSegments.flatMap(schedulerPolicyClaims))];
   const claimsCurrentSchedulerState =
     explicitStateClaim
     || futureBehaviorClaim
