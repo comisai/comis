@@ -432,7 +432,7 @@ export function createAnnouncementDeadLetterQueue(
         && entry.stepIndex >= 0
       ) {
         emitLedgerTransition(
-          entry,
+          { ...entry, rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
           "lookup",
           "blocked",
         );
