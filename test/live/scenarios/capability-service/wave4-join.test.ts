@@ -43,6 +43,7 @@ const REVIEWED_CLAUDE_TOKEN = "wave4-claude-reviewed";
 const MIXED_WORKER_JOIN = process.env["COMIS_WAVE4_MIXED_WORKERS"] === "1";
 const isLiveLinux = process.env["COMIS_LIVE"] === "1" && process.platform === "linux";
 const REAL_WORKER_JOIN_TIMEOUT_MS = 180_000;
+const CANDIDATE_BARRIER_FILE = ".wave4-candidate-barrier";
 const CANDIDATE_RELEASE_FILE = ".wave4-candidate-release";
 
 const CURRENT_MUTATION_BINDINGS = [
@@ -1010,6 +1011,8 @@ describe.skipIf(!isLiveLinux || process.env["COMIS_E0_FULL"] === "1")("wave-four
       expect(initialSessionList).toContain(sessionA);
       expect(initialSessionList).toContain(sessionB);
 
+      writeFileSync(join(bindingA.canonical_path, CANDIDATE_BARRIER_FILE), "hold\n", { mode: 0o600 });
+      writeFileSync(join(bindingB.canonical_path, CANDIDATE_BARRIER_FILE), "hold\n", { mode: 0o600 });
       writeFileSync(join(bindingA.canonical_path, ".wave4-start"), "go\n", { mode: 0o600 });
       writeFileSync(join(bindingB.canonical_path, ".wave4-start"), "go\n", { mode: 0o600 });
       await pollUntil(

@@ -4,9 +4,10 @@ set -u
 readonly REAL_REPORTER=/home/comis/.wave4-tools/devcrew-report
 readonly REPORTER_LOG="${PWD}/.wave4-reporter.log"
 readonly STDERR_FILE="${PWD}/.wave4-reporter-stderr.$$"
+readonly CANDIDATE_BARRIER_FILE="${PWD}/.wave4-candidate-barrier"
 readonly CANDIDATE_RELEASE_FILE="${PWD}/.wave4-candidate-release"
 
-if [[ "${1:-}" == "candidate-complete" ]]; then
+if [[ "${1:-}" == "candidate-complete" && -f "${CANDIDATE_BARRIER_FILE}" ]]; then
   for _ in $(seq 1 3600); do
     [[ -f "${CANDIDATE_RELEASE_FILE}" ]] && break
     sleep 0.05
