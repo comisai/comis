@@ -138,6 +138,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "subagent.completed",
   // A checkpoint-backed child suspended during graceful restart.
   "durable.suspended",
+  "durable.resumed",
   // A synchronous parent wait finished for one target. Content-free: parent/
   // child ids, closed outcome, optional success, and duration budgets only.
   "subagent.wait_finished",

@@ -21,6 +21,7 @@ import { accumulateDiscoveryActivation, accumulateOauthRefreshFailure, ensureToo
 import { foldModelErrorCategory, modelErrorsField } from "./obs-explain-model-errors.js";
 import { accumulateQueueRecord } from "./obs-explain-queue-fold.js";
 import { accumulateDeliveryDispatch, accumulateDeliveryReplyBound, accumulateOutwardDelivery } from "./obs-explain-delivery-fold.js";
+import { accumulateCacheBreak, accumulateRestartRecovery } from "./obs-explain-lifecycle-fold.js";
 import { accumulateSubagentIncidentRecord, selectedSubagentWaitSignals } from "./obs-explain-subagent-fold.js";
 import { accumulateSubAgentCompletedRecord } from "./obs-explain-subagent-output-fold.js";
 import { accumulateMediaAttachmentRejection, previousPromptSequence } from "./obs-explain-attachment-fold.js";
@@ -374,23 +375,12 @@ function handleEventRecord(
       return;
     }
     case "cache.break": {
-      // Fold the cache-break per reason → {count, estCostUsd}.
-      // The bridged record carries a closed `reason`, `tokenDrop`,
-      // and a COMPUTED `estCostUsd` (the directly-lost cache-read saving) — counts +
-      // a number ONLY, never the changed tool names (only the changed-dims digest
-      // crosses the trajectory boundary). A blank/missing reason folds to "unknown".
-      const reason = asString(data.reason) ?? "unknown";
-      const estCostUsd = asNumber(data.estCostUsd) ?? 0;
-      // `tokenDrop` rides the report beside the cost: estCostUsd is only the forgone cache-READ
-      // saving, while a break's real cost is re-WRITING the dropped prefix at the write rate. Live,
-      // that gap made a $30.64 incident read as $0.46 while the drop count told the true story.
-      const tokenDrop = asNumber(data.tokenDrop) ?? 0;
-      const prev = acc.cacheBreaksByReason.get(reason) ?? { count: 0, estCostUsd: 0, tokenDrop: 0 };
-      acc.cacheBreaksByReason.set(reason, {
-        count: prev.count + 1,
-        estCostUsd: prev.estCostUsd + estCostUsd,
-        tokenDrop: prev.tokenDrop + tokenDrop,
-      });
+      accumulateCacheBreak(acc, data);
+      return;
+    }
+    case "durable.suspended":
+    case "durable.resumed": {
+      accumulateRestartRecovery(acc, type, data);
       return;
     }
     case "delivery.reply_bound": accumulateDeliveryReplyBound(acc, data); return;
@@ -677,7 +667,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     contextBudgetHistory: [],
     cacheBreaksByReason: new Map(),
     deliveryMessageIds: [],
+    outwardDeliveriesByRoot: new Map(),
     outwardDeliveryParts: new Map(),
+    preparedAttachmentParts: new Set(),
     learning: emptyLearningFold(),
     sessionKey: "",
     seq: 0,
@@ -903,7 +895,10 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     ...(acc.turnFinalized !== undefined ? { turnFinalized: acc.turnFinalized } : {}),
     ...(acc.turnFinalizeCounts !== undefined ? { turnFinalizeCounts: acc.turnFinalizeCounts } : {}),
     ...(acc.deliveryDispatch !== undefined ? { deliveryDispatch: acc.deliveryDispatch } : {}),
-    ...(acc.outwardDelivery !== undefined ? { outwardDelivery: acc.outwardDelivery } : {}),
+    ...(acc.outwardDeliveriesByRoot.size > 0
+      ? { outwardDeliveries: [...acc.outwardDeliveriesByRoot.values()] }
+      : {}),
+    ...(acc.restartRecovery !== undefined ? { restartRecovery: acc.restartRecovery } : {}),
     ...(acc.deliveryAborts !== undefined ? { deliveryAborts: acc.deliveryAborts } : {}),
     ...(acc.recoveries !== undefined ? { recoveries: acc.recoveries } : {}),
     ...(acc.discoveryActivation !== undefined ? { discoveryActivation: acc.discoveryActivation } : {}),

@@ -3335,7 +3335,7 @@ function classifyCompletionErrorKind(
         }
         const expectedOutputCount = validationResults?.length;
         const verifiedOutputCount = validationResults?.filter((output) => output.exists).length;
-        let attachmentsPrepared = 0;
+        const attachmentsPrepared = 0;
 
         const backgroundProcesses = backgroundProcessCounts(runId);
         // Only a process the child NEVER polled to a terminal state invalidates the run: the
@@ -3776,7 +3776,6 @@ function classifyCompletionErrorKind(
                 sourceAgentId: params.agentId,
                 path: output.resolvedPath ?? output.path,
               })) ?? [];
-            attachmentsPrepared = completionAttachments.length;
             await deliverAnnouncement({
               announcementText,
               announceChannelType: params.announceChannelType,

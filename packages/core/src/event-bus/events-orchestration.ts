@@ -403,6 +403,8 @@ export interface OrchestrationEvents {
    */
   "durable:resumed": {
     rootRunId: string;
+    /** Routes this boot-time recovery record to its resumed session. */
+    sessionKey: string;
     sourceCheckpointId: string;
     checkpointId: string;
     sourceTerminalReason: "superseded";

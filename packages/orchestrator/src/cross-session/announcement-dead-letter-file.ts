@@ -55,6 +55,7 @@ export interface DeadLetterEntry {
   channelId: string;
   agentId?: string;
   runId: string;
+  sessionKey: string;
   failedAt: number;
   attemptCount: number;
   lastAttemptAt: number;
@@ -318,6 +319,8 @@ function isDeadLetterEntry(
     && isAnnouncementChannelType(record.channelType)
     && typeof record.channelId === "string"
     && typeof record.runId === "string"
+    && typeof record.sessionKey === "string"
+    && record.sessionKey.length > 0
     && typeof record.failedAt === "number"
     && Number.isFinite(record.failedAt)
     && typeof record.attemptCount === "number"

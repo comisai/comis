@@ -207,9 +207,11 @@ export async function reconcileLedgerRow(
     if (eventBus === undefined) return;
     emitObservationalEventSafely({ eventBus, logger }, "delivery:outward_ledger_transition", {
       rootRunId,
+      runId: null,
       stepIndex,
       transition,
       outcome,
+      sessionKey: null,
       timestamp: nowMs(),
     });
   };
@@ -700,6 +702,7 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           resumed++;
           emitObservationalEventSafely({ eventBus, logger }, "durable:resumed", {
             rootRunId,
+            sessionKey: formatSessionKey(displaySession.value),
             sourceCheckpointId: sourceRecord.checkpointId,
             checkpointId: record.checkpointId,
             sourceTerminalReason: "superseded",

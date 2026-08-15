@@ -65,7 +65,8 @@ export function accumulateOutwardDelivery(
   const stepIndex = data.stepIndex;
   const hasStepIndex = Number.isSafeInteger(stepIndex) && (stepIndex as number) >= 0;
   if (
-    (outcome !== "blocked"
+    (outcome !== "prepared"
+      && outcome !== "blocked"
       && outcome !== "in_flight"
       && outcome !== "committed"
       && outcome !== "failed"
@@ -81,6 +82,26 @@ export function accumulateOutwardDelivery(
     || (transition !== "prepare" && !hasStepIndex)
   ) return;
   const deliveryKind = data.deliveryKind;
+  const runId = typeof data.runId === "string" ? data.runId : undefined;
+  const rawPartId = typeof data.partId === "string" && data.partId.length > 0
+    ? data.partId
+    : hasStepIndex ? String(stepIndex) : "prepare";
+  if (
+    transition === "prepare"
+    && outcome === "prepared"
+    && deliveryKind === "attachment"
+    && runId !== undefined
+  ) {
+    const preparedKey = runId + ":" + rawPartId;
+    const node = acc.spawnNodesByLease.get(runId);
+    if (node?.outputValidation !== undefined && !acc.preparedAttachmentParts.has(preparedKey)) {
+      acc.preparedAttachmentParts.add(preparedKey);
+      node.outputValidation.attachmentsPrepared = Math.min(
+        node.outputValidation.verified,
+        node.outputValidation.attachmentsPrepared + 1,
+      );
+    }
+  }
   const partId = `${rootRunId}:${
     typeof data.partId === "string" && data.partId.length > 0
       ? data.partId
@@ -101,15 +122,18 @@ export function accumulateOutwardDelivery(
     ...(typeof data.platformMessageId === "string"
       ? { platformMessageId: data.platformMessageId }
       : {}),
-  } satisfies NonNullable<IncidentSignals["outwardDelivery"]>;
+  } satisfies NonNullable<IncidentSignals["outwardDeliveries"]>[number];
   acc.outwardDeliveryParts.set(partId, signal);
 
   const rootParts = [...acc.outwardDeliveryParts.values()]
     .filter((part) => part.rootRunId === rootRunId);
   const committed = rootParts.filter((part) => part.status === "committed");
-  if (committed.length > 0 && committed.length < rootParts.length) {
+  const terminalFailures = rootParts.filter(
+    (part) => part.status === "failed" || part.status === "blocked" || part.status === "parked",
+  );
+  if (committed.length > 0 && terminalFailures.length > 0) {
     const receipt = committed.at(-1)!;
-    acc.outwardDelivery = {
+    acc.outwardDeliveriesByRoot.set(rootRunId, {
       status: "partial",
       rootRunId,
       transition,
@@ -120,8 +144,12 @@ export function accumulateOutwardDelivery(
       ...(receipt.platformMessageId === undefined
         ? {}
         : { platformMessageId: receipt.platformMessageId }),
-    };
+    });
     return;
   }
-  acc.outwardDelivery = signal;
+  if (terminalFailures.length > 0) {
+    acc.outwardDeliveriesByRoot.set(rootRunId, terminalFailures.at(-1)!);
+    return;
+  }
+  acc.outwardDeliveriesByRoot.set(rootRunId, signal);
 }

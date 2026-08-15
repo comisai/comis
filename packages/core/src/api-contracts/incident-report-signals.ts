@@ -511,18 +511,22 @@ export interface IncidentSignals {
     /** Platform response IDs bound to this trace, in delivery order. */
     messageIds?: string[];
   };
-  /**
-   * The LAST durable outward-ledger transition associated with a background
-   * completion. A committed transition may include the platform receipt that
-   * anchors the cross-session announcement to the channel transcript.
-   */
-  outwardDelivery?: {
-    status: "blocked" | "in_flight" | "committed" | "failed" | "parked" | "partial";
+  /** One bounded delivery summary per background root. */
+  outwardDeliveries?: Array<{
+    status: "prepared" | "blocked" | "in_flight" | "committed" | "failed" | "parked" | "partial";
     rootRunId: string;
     stepIndex?: number;
     transition: "prepare" | "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
     deliveryKind?: "text" | "attachment";
     platformMessageId?: string;
+  }>;
+  /** Bounded graceful-restart lifecycle evidence for this session. */
+  restartRecovery?: {
+    suspended: number;
+    resumed: number;
+    lastStatus: "suspended" | "resumed";
+    rootRunId: string;
+    checkpointId: string;
   };
   /**
    * Σ over the session's `delivery.aborted` records — aborted-delivery events

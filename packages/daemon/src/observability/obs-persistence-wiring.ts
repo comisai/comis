@@ -22,6 +22,7 @@ import { wireAuditSink } from "./obs-audit-sink.js";
 import {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
+  outwardAttachmentFailureEventToRow,
   deliverySkippedEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
@@ -268,6 +269,7 @@ export {
 export {
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
+  outwardAttachmentFailureEventToRow,
   deliverySkippedEventToRow,
   nodeBudgetExceededEventToRow,
   subagentKilledEventToRow,
@@ -647,6 +649,14 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   eventBus.on("subagent:delivery_skipped", (payload) => {
     diagnosticBuffer.push(deliverySkippedEventToRow(payload));
+  });
+  eventBus.on("delivery:outward_ledger_transition", (payload) => {
+    if (
+      payload.deliveryKind === "attachment"
+      && (payload.outcome === "failed" || payload.outcome === "blocked" || payload.outcome === "parked")
+    ) {
+      diagnosticBuffer.push(outwardAttachmentFailureEventToRow(payload));
+    }
   });
   eventBus.on("subagent:budget_exceeded", (payload) => {
     diagnosticBuffer.push(nodeBudgetExceededEventToRow(payload));

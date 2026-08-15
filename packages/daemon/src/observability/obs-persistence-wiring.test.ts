@@ -2108,6 +2108,7 @@ describe("setupObsPersistence", () => {
     eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
     eventBus.emit("durable:resumed", {
       rootRunId: "root-2",
+      sessionKey: "sk-1",
       sourceCheckpointId: "checkpoint-2",
       checkpointId: "checkpoint-3",
       sourceTerminalReason: "superseded",
@@ -2176,9 +2177,9 @@ describe("setupObsPersistence", () => {
       "context:dag_degraded",
       "context:script_zero_hit",
       "context:summary_language_mismatch",
+      "delivery:outward_attachment_failed",
       "durable:orphaned",
       "durable:resumed",
-      "delivery:outward_attachment_failed",
       "health:budget_exceeded",
       "mcp:server:reconnect_failed",
       "message:inbound_persistence_failed",

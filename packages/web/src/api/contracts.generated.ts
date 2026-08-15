@@ -13082,42 +13082,96 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
-        "outwardDelivery": {
+        "outwardDeliveries": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "prepared",
+                  "blocked",
+                  "in_flight",
+                  "committed",
+                  "failed",
+                  "parked",
+                  "partial"
+                ]
+              },
+              "rootRunId": {
+                "type": "string"
+              },
+              "stepIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "prepare",
+                  "lookup",
+                  "begin",
+                  "mark_unknown",
+                  "commit",
+                  "mark_failed",
+                  "park"
+                ]
+              },
+              "deliveryKind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "attachment"
+                ]
+              },
+              "platformMessageId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "rootRunId",
+              "transition"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "restartRecovery": {
           "type": "object",
           "properties": {
-            "status": {
+            "suspended": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "resumed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "lastStatus": {
               "type": "string",
               "enum": [
-                "blocked",
-                "in_flight",
-                "committed",
-                "failed",
-                "parked",
-                "partial"
+                "suspended",
+                "resumed"
               ]
             },
             "rootRunId": {
               "type": "string"
             },
-            "stepIndex": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "deliveryKind": {
-              "type": "string",
-              "enum": [
-                "text",
-                "attachment"
-              ]
-            },
-            "platformMessageId": {
+            "checkpointId": {
               "type": "string"
             }
           },
           "required": [
-            "status",
-            "rootRunId"
+            "suspended",
+            "resumed",
+            "lastStatus",
+            "rootRunId",
+            "checkpointId"
           ],
           "additionalProperties": false
         },

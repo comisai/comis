@@ -759,7 +759,9 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
 
     bus.emit("delivery:outward_ledger_transition", {
       rootRunId: "root-1",
+      runId: "run-1",
       stepIndex: 7,
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
       transition: "park",
       outcome: "parked",
       timestamp: 1_000,
@@ -769,6 +771,7 @@ describe("attachTrajectoryToEventBus -- delivery events", () => {
       type: "delivery.outward_ledger_transition",
       data: {
         rootRunId: "root-1",
+        runId: "run-1",
         stepIndex: 7,
         transition: "park",
         outcome: "parked",
@@ -1561,7 +1564,9 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     },
     "delivery:outward_ledger_transition": {
       rootRunId: "root-1",
+      runId: "run-1",
       stepIndex: 7,
+      sessionKey: "t1:u1:c1",
       transition: "park",
       outcome: "parked",
       timestamp: 1000,
@@ -2167,6 +2172,14 @@ describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", ()
     "durable:suspended": {
       rootRunId: "root-session-1",
       checkpointId: "run-child-1",
+      sessionKey: "child-session",
+      timestamp: 0,
+    },
+    "durable:resumed": {
+      rootRunId: "root-session-1",
+      sourceCheckpointId: "run-child-1",
+      checkpointId: "run-child-2",
+      sourceTerminalReason: "superseded",
       sessionKey: "child-session",
       timestamp: 0,
     },
@@ -4757,7 +4770,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // The exact count keeps every bridge addition or removal deliberate.
-    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(148);
+    expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(149);
   });
 
   it("health:budget_exceeded mapped to health.budget_exceeded", () => {

@@ -233,15 +233,15 @@ export function createAnnouncementDeadLetterQueue(
     rootRunId: string;
     stepIndex: number;
     agentId: string;
+    runId: string;
+    sessionKey: string;
     contentDigest: string;
     operationFingerprint: string;
   }
-
   type LedgerTransition = "lookup" | "begin" | "mark_unknown" | "commit" | "park";
   type LedgerOutcome = "blocked" | "in_flight" | "committed" | "failed" | "parked";
-
   function emitLedgerTransition(
-    identity: Pick<GovernedEntryIdentity, "rootRunId" | "stepIndex">,
+    identity: Pick<GovernedEntryIdentity, "rootRunId" | "stepIndex" | "runId" | "sessionKey">,
     transition: LedgerTransition,
     outcome: LedgerOutcome,
   ): void {
@@ -250,14 +250,15 @@ export function createAnnouncementDeadLetterQueue(
       "delivery:outward_ledger_transition",
       {
         rootRunId: identity.rootRunId,
+        runId: identity.runId,
         stepIndex: identity.stepIndex,
         transition,
         outcome,
+        sessionKey: identity.sessionKey,
         timestamp: systemNowMs(),
       },
     );
   }
-
   /** Ledger-failure conditions already reported, keyed by entry + message.
    *
    *  A retained entry is re-reached on EVERY drain, so re-logging its standing
@@ -343,6 +344,8 @@ export function createAnnouncementDeadLetterQueue(
       rootRunId: entry.rootRunId,
       stepIndex: entry.stepIndex,
       agentId: entry.agentId,
+      runId: entry.runId,
+      sessionKey: entry.sessionKey,
       contentDigest,
       operationFingerprint,
     });
@@ -429,7 +432,7 @@ export function createAnnouncementDeadLetterQueue(
         && entry.stepIndex >= 0
       ) {
         emitLedgerTransition(
-          { rootRunId: entry.rootRunId, stepIndex: entry.stepIndex },
+          entry,
           "lookup",
           "blocked",
         );
