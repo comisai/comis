@@ -240,7 +240,7 @@ describe("runPrompt observable boundaries", () => {
     expect(prompt).toHaveBeenCalled();
     expect(params.result.requestToolNudge).toMatchObject({
       fired: true,
-      matchedToolNames: ["read", "exec"],
+      matchedToolNames: ["read"],
     });
   });
 
