@@ -17187,6 +17187,28 @@ export const CONTRACTS = {
             "runId"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "already_terminal"
+            },
+            "runId": {
+              "type": "string"
+            },
+            "terminalStatus": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "required": [
+            "status",
+            "runId",
+            "terminalStatus"
+          ],
+          "additionalProperties": false
         }
       ]
     },

@@ -312,9 +312,27 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
 
       const userParams = stripInternalFields(rawParams);
       SubagentSteerContract.request.parse(userParams);
+      const steerStartedAt = systemNowMs();
 
       const run = deps.subAgentRunner.getRunStatus(target);
       assertSubagentTargetAuthorized(controller, run);
+      if (run?.status === "completed") {
+        const alreadyTerminal = {
+          status: "already_terminal" as const,
+          runId: target,
+          terminalStatus: "completed" as const,
+        };
+        deps.logger?.info(
+          {
+            runId: target,
+            agentId: run.agentId,
+            durationMs: Math.max(0, systemNowMs() - steerStartedAt),
+          },
+          "Sub-agent steer skipped because the child already completed",
+        );
+        if (IS_DEV) SubagentSteerContract.response.parse(alreadyTerminal);
+        return alreadyTerminal;
+      }
 
       // Rate limit: 2s between steers by the same controller to the same target.
       const rateKey = subagentControllerRateKey(controller, target);
